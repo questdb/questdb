@@ -36,6 +36,7 @@ set(
         src/main/c/share/vec_agg_vanilla.h
         src/main/c/share/util.cpp
         src/main/c/share/ooo.cpp
+        src/main/c/share/vect.cpp
 )
 
 # JNI includes
@@ -108,7 +109,8 @@ else ()
             SOURCE_FILES
             ${SOURCE_FILES}
             src/main/c/share/files.c
-            src/main/c/share/os.c)
+            src/main/c/share/os.c
+    )
 endif (WIN32)
 
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${OUTPUT})
@@ -116,7 +118,7 @@ set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${OUTPUT})
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${OUTPUT})
 
 #assembler subroutines by Agner Fog
-set(ASMLIB_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src/main/c/share/asm/)
+set(ASMLIB_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src/main/c/share/asmlib/)
 include(${ASMLIB_SOURCE_DIR}CMakeLists.txt)
 
 #zlib
@@ -211,12 +213,12 @@ else ()
     )
 
     target_link_libraries(
-            questdb      
+            questdb
             questdb-sse2
             questdb-sse4
             questdb-avx2
             questdb-avx512
-            asm            
+            asm
     )
 endif (AARCH64)
 

@@ -2629,7 +2629,7 @@ public class TableWriter implements Closeable {
             final long o1 = Unsafe.getUnsafe().getLong(srcIndxAddr + row * Long.BYTES);
             final long o2 = Unsafe.getUnsafe().getLong(srcIndxAddr + row * Long.BYTES + Long.BYTES);
             final long len = o2 - o1;
-            Unsafe.getUnsafe().copyMemory(srcDataAddr + o1, tgtDataAddr + offset, len);
+            Vect.memcpy(srcDataAddr + o1, tgtDataAddr + offset, len);
             Unsafe.getUnsafe().putLong(tgtIndxAddr + l * Long.BYTES, offset);
             offset += len;
         }

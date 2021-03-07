@@ -68,7 +68,7 @@ public class ContiguousVirtualMemoryTest {
             try {
                 // supply length of our buffer
                 // blob content would be shorter
-                Unsafe.getUnsafe().setMemory(buffer, 1024, (byte) 5);
+                Vect.memset(buffer, 1024, 5);
                 actual.copyTo(buffer, 0, 1024);
 
                 for (int i = 0; i < N; i++) {
@@ -81,7 +81,7 @@ public class ContiguousVirtualMemoryTest {
                 }
 
                 // copy from middle
-                Unsafe.getUnsafe().setMemory(buffer, 1024, (byte) 5);
+                Vect.memset(buffer, 1024, 5);
                 actual.copyTo(buffer, O, 1024);
 
                 for (int i = 0; i < N - O; i++) {

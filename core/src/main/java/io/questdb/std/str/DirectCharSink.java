@@ -24,13 +24,12 @@
 
 package io.questdb.std.str;
 
-import io.questdb.std.Mutable;
 import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
 
-public class DirectCharSink extends AbstractCharSink implements CharSequence, Closeable, Mutable {
+public class DirectCharSink extends AbstractCharSink implements MutableCharSink, Closeable {
     private long ptr;
     private int capacity;
     private long lo;

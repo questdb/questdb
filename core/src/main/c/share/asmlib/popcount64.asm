@@ -21,7 +21,7 @@ global A_popcount
 global popcountGeneric
 global popcountSSE42
 
-; Imported from instrset32.asm:
+; Imported from instrset64.asm:
 extern InstructionSet                 ; Instruction set for CPU dispatcher
 
 section .text

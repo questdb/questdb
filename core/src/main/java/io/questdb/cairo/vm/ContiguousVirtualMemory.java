@@ -235,7 +235,7 @@ public class ContiguousVirtualMemory implements ReadWriteVirtualMemory, Mutable,
     @Override
     public void putBlockOfBytes(long from, long len) {
         checkLimits(len);
-        Unsafe.getUnsafe().copyMemory(from, appendAddress, len);
+        Vect.memcpy(from, appendAddress, len);
         appendAddress += len;
     }
 
@@ -262,7 +262,7 @@ public class ContiguousVirtualMemory implements ReadWriteVirtualMemory, Mutable,
             return offset;
         }
 
-        Unsafe.getUnsafe().copyMemory(from, appendAddress, len);
+        Vect.memcpy(from, appendAddress, len);
         appendAddress += len;
         return offset;
     }
@@ -476,7 +476,7 @@ public class ContiguousVirtualMemory implements ReadWriteVirtualMemory, Mutable,
 
     public void zero() {
         long baseLength = baseAddressHi - baseAddress;
-        Unsafe.getUnsafe().setMemory(baseAddress, baseLength, (byte) 0);
+        Vect.memset(baseAddress, baseLength, 0);
     }
 
     private static void copyStrChars(CharSequence value, int pos, int len, long address) {
@@ -596,7 +596,7 @@ public class ContiguousVirtualMemory implements ReadWriteVirtualMemory, Mutable,
         public void copyTo(long address, final long start, final long length) {
             long bytesRemaining = Math.min(length, this.len - start);
             long offset = this.offset + start;
-            Unsafe.getUnsafe().copyMemory(baseAddress + offset, address, bytesRemaining);
+            Vect.memcpy(baseAddress + offset, address, bytesRemaining);
         }
 
         @Override

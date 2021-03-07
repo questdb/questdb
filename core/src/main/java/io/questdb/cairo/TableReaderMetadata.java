@@ -99,7 +99,7 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
             this.columnCount = columnCount;
         }
 
-        Unsafe.getUnsafe().setMemory(stateAddress, columnCount, (byte) 0);
+        Vect.memset(stateAddress, columnCount, 0);
 
         // this is a silly exercise in walking the index
         for (int i = 0; i < columnCount; i++) {

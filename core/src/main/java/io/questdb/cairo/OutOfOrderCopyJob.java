@@ -756,7 +756,7 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
     }
 
     private static void oooCopyFixedSizeCol(long src, long srcLo, long srcHi, long dst, final int shl) {
-        Unsafe.getUnsafe().copyMemory(src + (srcLo << shl), dst, (srcHi - srcLo + 1) << shl);
+        Vect.memcpy(src + (srcLo << shl), dst, (srcHi - srcLo + 1) << shl);
     }
 
     private static void oooCopyOOO(
@@ -838,7 +838,7 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
         // copy this before it changes
         final long dest = dstVarAddr + dstVarOffset;
         final long len = hi - lo;
-        Unsafe.getUnsafe().copyMemory(srcVarAddr + lo, dest, len);
+        Vect.memcpy(srcVarAddr + lo, dest, len);
         if (lo == dstVarOffset) {
             oooCopyFixedSizeCol(srcFixAddr, srcLo, srcHi, dstFixAddr, 3);
         } else {

@@ -30,7 +30,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 import io.questdb.std.str.LPSZ;
 
 public class PagedMappedReadWriteMemory extends PagedVirtualMemory implements MappedReadWriteMemory {
@@ -180,7 +180,7 @@ public class PagedMappedReadWriteMemory extends PagedVirtualMemory implements Ma
         // truncate file to the size of first page
         final long firstPage = getPageAddress(0);
         final long pageSize = getMapPageSize();
-        Unsafe.getUnsafe().setMemory(firstPage, pageSize, (byte) 0);
+        Vect.memset(firstPage, pageSize, 0);
         for (int i = 1, n = pages.size(); i < n; i++) {
             release(i, pages.getQuick(i));
             pages.setQuick(i, 0);
@@ -194,7 +194,7 @@ public class PagedMappedReadWriteMemory extends PagedVirtualMemory implements Ma
 
             // we could not truncate the file; we have to clear it via memory mapping
             long mem = ff.mmap(fd, fileSize, 0, Files.MAP_RW);
-            Unsafe.getUnsafe().setMemory(mem + pageSize, fileSize - pageSize, (byte) 0);
+            Vect.memset(mem + pageSize, fileSize - pageSize, 0);
             ff.munmap(mem, fileSize);
             LOG.debug().$("could not truncate, zeroed [fd=").$(fd).$(']').$();
         }

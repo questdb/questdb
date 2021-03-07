@@ -24,29 +24,18 @@
 
 package io.questdb.cutlass.http;
 
-import java.io.Closeable;
-
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.network.Net;
-import io.questdb.network.NetworkFacade;
-import io.questdb.network.NoSpaceLeftInResponseBufferException;
-import io.questdb.network.PeerDisconnectedException;
-import io.questdb.network.PeerIsSlowToReadException;
-import io.questdb.std.Chars;
-import io.questdb.std.IntObjHashMap;
-import io.questdb.std.Misc;
-import io.questdb.std.Mutable;
-import io.questdb.std.Numbers;
-import io.questdb.std.Unsafe;
-import io.questdb.std.Zip;
+import io.questdb.network.*;
+import io.questdb.std.*;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.ex.ZLibException;
 import io.questdb.std.str.AbstractCharSink;
 import io.questdb.std.str.CharSink;
-import io.questdb.std.str.DirectUnboundedByteSink;
 import io.questdb.std.str.StdoutSink;
+
+import java.io.Closeable;
 
 public class HttpResponseSink implements Closeable, Mutable {
     private final static Log LOG = LogFactory.getLog(HttpResponseSink.class);
@@ -123,7 +112,7 @@ public class HttpResponseSink implements Closeable, Mutable {
 
     @Override
     public void clear() {
-        Unsafe.getUnsafe().setMemory(out, responseBufferSize, (byte) 0);
+        Vect.memset(out, responseBufferSize, 0);
         headerImpl.clear();
         this._wPtr = outPtr;
         this.zpos = this.zlimit = 0;

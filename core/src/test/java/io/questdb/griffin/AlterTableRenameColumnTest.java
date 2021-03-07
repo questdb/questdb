@@ -50,18 +50,33 @@ public class AlterTableRenameColumnTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testExpectActionKeyword() throws Exception {
+        assertFailure("alter table x", 13, "'add', 'alter' or 'drop' expected");
+    }
+
+    @Test
+    public void testExpectTableKeyword() throws Exception {
+        assertFailure("alter x", 6, "'table' or 'system' expected");
+    }
+
+    @Test
+    public void testExpectTableKeyword2() throws Exception {
+        assertFailure("alter", 5, "'table' or 'system' expected");
+    }
+
+    @Test
+    public void testExpectTableName() throws Exception {
+        assertFailure("alter table", 11, "table name expected");
+    }
+
+    @Test
+    public void testInvalidColumn() throws Exception {
+        assertFailure("alter table x rename column y yy", 28, "Invalid column: y");
+    }
+
+    @Test
     public void testNewNameAlreadyExists() throws Exception {
         assertFailure("alter table x rename column l to b", 33, " column already exists");
-    }
-
-    @Test
-    public void testRenameExpectColumnKeyword() throws Exception {
-        assertFailure("alter table x rename", 20, "'column' expected");
-    }
-
-    @Test
-    public void testRenameExpectColumnName() throws Exception {
-        assertFailure("alter table x rename column", 27, "column name expected");
     }
 
     @Test
@@ -79,32 +94,6 @@ public class AlterTableRenameColumnTest extends AbstractGriffinTest {
                             reader.getMetadata().toJson(sink);
                             TestUtils.assertEquals(expected, sink);
                         }
-                        Assert.assertEquals(0, engine.getBusyWriterCount());
-                        Assert.assertEquals(0, engine.getBusyReaderCount());
-                    } finally {
-                        engine.releaseAllReaders();
-                        engine.releaseAllWriters();
-                    }
-                }
-        );
-    }
-
-    @Test
-    public void testRenameColumnExistingReader() throws Exception {
-        TestUtils.assertMemoryLeak(
-                () -> {
-                    try {
-                        createX();
-
-                        try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_VERSION)) {
-                            Assert.assertEquals(ALTER, compiler.compile("alter table x rename column e to z", sqlExecutionContext).getType());
-                            String expected = "{\"columnCount\":16,\"columns\":[{\"index\":0,\"name\":\"i\",\"type\":\"INT\"},{\"index\":1,\"name\":\"sym\",\"type\":\"SYMBOL\"},{\"index\":2,\"name\":\"amt\",\"type\":\"DOUBLE\"},{\"index\":3,\"name\":\"timestamp\",\"type\":\"TIMESTAMP\"},{\"index\":4,\"name\":\"b\",\"type\":\"BOOLEAN\"},{\"index\":5,\"name\":\"c\",\"type\":\"STRING\"},{\"index\":6,\"name\":\"d\",\"type\":\"DOUBLE\"},{\"index\":7,\"name\":\"z\",\"type\":\"FLOAT\"},{\"index\":8,\"name\":\"f\",\"type\":\"SHORT\"},{\"index\":9,\"name\":\"g\",\"type\":\"DATE\"},{\"index\":10,\"name\":\"ik\",\"type\":\"SYMBOL\"},{\"index\":11,\"name\":\"j\",\"type\":\"LONG\"},{\"index\":12,\"name\":\"k\",\"type\":\"TIMESTAMP\"},{\"index\":13,\"name\":\"l\",\"type\":\"BYTE\"},{\"index\":14,\"name\":\"m\",\"type\":\"BINARY\"},{\"index\":15,\"name\":\"n\",\"type\":\"STRING\"}],\"timestampIndex\":3}";
-                            sink.clear();
-                            reader.reload();
-                            reader.getMetadata().toJson(sink);
-                            TestUtils.assertEquals(expected, sink);
-                        }
-
                         Assert.assertEquals(0, engine.getBusyWriterCount());
                         Assert.assertEquals(0, engine.getBusyReaderCount());
                     } finally {
@@ -169,9 +158,7 @@ public class AlterTableRenameColumnTest extends AbstractGriffinTest {
             try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "x")) {
                 Assert.assertEquals("b", reader.getMetadata().getColumnName(4));
                 //check cursor before renaming column
-                sink.clear();
-                printer.print(reader.getCursor(), reader.getMetadata(), true, sink);
-                TestUtils.assertEquals(expectedBefore, sink);
+                TestUtils.assertReader(expectedBefore, reader, sink);
 
                 try (TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x")) {
                     writer.renameColumn("b", "bb");
@@ -181,19 +168,85 @@ public class AlterTableRenameColumnTest extends AbstractGriffinTest {
                 //reload reader
                 Assert.assertTrue(reader.reload());
                 //check cursor after reload
-                sink.clear();
-                printer.print(reader.getCursor(), reader.getMetadata(), true, sink);
-                TestUtils.assertEquals(expectedAfter, sink);
 
-                try (TableReader reader2 = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "x")) {
-                    sink.clear();
-                    printer.print(reader2.getCursor(), reader.getMetadata(), true, sink);
-                    TestUtils.assertEquals(expectedAfter, sink);
-                }
+                TestUtils.assertReader(expectedAfter, reader, sink);
+
+                assertReader(expectedAfter, "x");
 
                 Assert.assertEquals("bb", reader.getMetadata().getColumnName(4));
             }
         });
+    }
+
+    @Test
+    public void testRenameColumnExistingReader() throws Exception {
+        TestUtils.assertMemoryLeak(
+                () -> {
+                    try {
+                        createX();
+
+                        try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_VERSION)) {
+                            Assert.assertEquals(ALTER, compiler.compile("alter table x rename column e to z", sqlExecutionContext).getType());
+                            String expected = "{\"columnCount\":16,\"columns\":[{\"index\":0,\"name\":\"i\",\"type\":\"INT\"},{\"index\":1,\"name\":\"sym\",\"type\":\"SYMBOL\"},{\"index\":2,\"name\":\"amt\",\"type\":\"DOUBLE\"},{\"index\":3,\"name\":\"timestamp\",\"type\":\"TIMESTAMP\"},{\"index\":4,\"name\":\"b\",\"type\":\"BOOLEAN\"},{\"index\":5,\"name\":\"c\",\"type\":\"STRING\"},{\"index\":6,\"name\":\"d\",\"type\":\"DOUBLE\"},{\"index\":7,\"name\":\"z\",\"type\":\"FLOAT\"},{\"index\":8,\"name\":\"f\",\"type\":\"SHORT\"},{\"index\":9,\"name\":\"g\",\"type\":\"DATE\"},{\"index\":10,\"name\":\"ik\",\"type\":\"SYMBOL\"},{\"index\":11,\"name\":\"j\",\"type\":\"LONG\"},{\"index\":12,\"name\":\"k\",\"type\":\"TIMESTAMP\"},{\"index\":13,\"name\":\"l\",\"type\":\"BYTE\"},{\"index\":14,\"name\":\"m\",\"type\":\"BINARY\"},{\"index\":15,\"name\":\"n\",\"type\":\"STRING\"}],\"timestampIndex\":3}";
+                            sink.clear();
+                            reader.reload();
+                            reader.getMetadata().toJson(sink);
+                            TestUtils.assertEquals(expected, sink);
+                        }
+
+                        Assert.assertEquals(0, engine.getBusyWriterCount());
+                        Assert.assertEquals(0, engine.getBusyReaderCount());
+                    } finally {
+                        engine.releaseAllReaders();
+                        engine.releaseAllWriters();
+                    }
+                }
+        );
+    }
+
+    @Test
+    public void testRenameColumnWithBadName() throws Exception {
+        assertFailure("alter table x rename column e to z/ssd", 34, "',' expected");
+    }
+
+    @Test
+    public void testRenameColumnWithBadName2() throws Exception {
+        assertFailure("alter table x rename column e to //", 33, "new column name contains invalid characters");
+    }
+
+    @Test
+    public void testRenameColumnWithBadName3() throws Exception {
+        assertFailure("alter table x rename column e to ..", 33, "new column name contains invalid characters");
+    }
+
+    @Test
+    public void testRenameColumnWithBadName4() throws Exception {
+        assertFailure("alter table x rename column e to a.", 34, "',' expected");
+    }
+
+    @Test
+    public void testRenameColumnWithBadName5() throws Exception {
+        assertFailure("alter table x rename column e to -", 33, "new column name contains invalid characters");
+    }
+
+    @Test
+    public void testRenameColumnWithBadName6() throws Exception {
+        assertFailure("alter table x rename column e to -", 33, "new column name contains invalid characters");
+    }
+
+    @Test
+    public void testRenameColumnWithBadName7() throws Exception {
+        assertFailure("alter table x rename column e to *", 33, "new column name contains invalid characters");
+    }
+
+    @Test
+    public void testRenameExpectColumnKeyword() throws Exception {
+        assertFailure("alter table x rename", 20, "'column' expected");
+    }
+
+    @Test
+    public void testRenameExpectColumnName() throws Exception {
+        assertFailure("alter table x rename column", 27, "column name expected");
     }
 
     @Test
@@ -230,9 +283,7 @@ public class AlterTableRenameColumnTest extends AbstractGriffinTest {
             try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "x")) {
                 Assert.assertEquals("timestamp", reader.getMetadata().getColumnName(3));
                 //check cursor before renaming column
-                sink.clear();
-                printer.print(reader.getCursor(), reader.getMetadata(), true, sink);
-                TestUtils.assertEquals(expectedBefore, sink);
+                TestUtils.assertReader(expectedBefore, reader, sink);
 
                 try (TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x")) {
                     writer.renameColumn("timestamp", "ts");
@@ -241,44 +292,13 @@ public class AlterTableRenameColumnTest extends AbstractGriffinTest {
                 //reload reader
                 Assert.assertTrue(reader.reload());
                 //check cursor after reload
-                sink.clear();
-                printer.print(reader.getCursor(), reader.getMetadata(), true, sink);
-                TestUtils.assertEquals(expectedAfter, sink);
+                TestUtils.assertReader(expectedAfter, reader, sink);
 
-                try (TableReader reader2 = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "x")) {
-                    sink.clear();
-                    printer.print(reader2.getCursor(), reader.getMetadata(), true, sink);
-                    TestUtils.assertEquals(expectedAfter, sink);
-                }
+                assertReader(expectedAfter, "x");
 
                 Assert.assertEquals("ts", reader.getMetadata().getColumnName(3));
             }
         });
-    }
-
-    @Test
-    public void testExpectActionKeyword() throws Exception {
-        assertFailure("alter table x", 13, "'add', 'alter' or 'drop' expected");
-    }
-
-    @Test
-    public void testExpectTableKeyword() throws Exception {
-        assertFailure("alter x", 6, "'table' or 'system' expected");
-    }
-
-    @Test
-    public void testExpectTableKeyword2() throws Exception {
-        assertFailure("alter", 5, "'table' or 'system' expected");
-    }
-
-    @Test
-    public void testExpectTableName() throws Exception {
-        assertFailure("alter table", 11, "table name expected");
-    }
-
-    @Test
-    public void testInvalidColumn() throws Exception {
-        assertFailure("alter table x rename column y yy", 28, "Invalid column: y");
     }
 
     @Test
@@ -289,41 +309,6 @@ public class AlterTableRenameColumnTest extends AbstractGriffinTest {
     @Test
     public void testTableDoesNotExist() throws Exception {
         assertFailure("alter table y", 12, "table 'y' does not");
-    }
-
-    @Test
-    public void testRenameColumnWithBadName() throws Exception {
-        assertFailure("alter table x rename column e to z/ssd", 34, "',' expected");
-    }
-
-    @Test
-    public void testRenameColumnWithBadName2() throws Exception {
-        assertFailure("alter table x rename column e to //", 33, "new column name contains invalid characters");
-    }
-
-    @Test
-    public void testRenameColumnWithBadName3() throws Exception {
-        assertFailure("alter table x rename column e to ..", 33, "new column name contains invalid characters");
-    }
-
-    @Test
-    public void testRenameColumnWithBadName4() throws Exception {
-        assertFailure("alter table x rename column e to a.", 34, "',' expected");
-    }
-
-    @Test
-    public void testRenameColumnWithBadName5() throws Exception {
-        assertFailure("alter table x rename column e to -", 33, "new column name contains invalid characters");
-    }
-
-    @Test
-    public void testRenameColumnWithBadName6() throws Exception {
-        assertFailure("alter table x rename column e to -", 33, "new column name contains invalid characters");
-    }
-
-    @Test
-    public void testRenameColumnWithBadName7() throws Exception {
-        assertFailure("alter table x rename column e to *", 33, "new column name contains invalid characters");
     }
 
     private void assertFailure(String sql, int position, String message) throws Exception {

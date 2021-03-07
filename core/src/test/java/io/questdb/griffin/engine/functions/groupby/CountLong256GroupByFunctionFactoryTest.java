@@ -24,13 +24,9 @@
 
 package io.questdb.griffin.engine.functions.groupby;
 
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.AbstractGriffinTest;
-import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.std.Rnd;
-import io.questdb.test.tools.TestUtils;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -99,23 +95,13 @@ public class CountLong256GroupByFunctionFactoryTest extends AbstractGriffinTest 
 
     @Test
     public void testSampleFillNone() throws Exception {
-        assertMemoryLeak(() -> {
-            final String sql = "with x as (select * from (select rnd_long256(8) s, timestamp_sequence(50000, 100000L/4) ts from long_sequence(100)) timestamp(ts))\n" +
-                    "select ts, count(s) from x sample by 2s";
-            CompiledQuery cq = compiler.compile(sql, sqlExecutionContext);
-
-            try (RecordCursorFactory factory = cq.getRecordCursorFactory()) {
-                sink.clear();
-                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    printer.print(cursor, factory.getMetadata(), true, sink);
-                }
-            }
-
-            TestUtils.assertEquals("ts\tcount\n" +
-                            "1970-01-01T00:00:00.050000Z\t8\n" +
-                            "1970-01-01T00:00:02.050000Z\t8\n",
-                    sink);
-        });
+        assertMemoryLeak(() -> assertSql(
+                "with x as (select * from (select rnd_long256(8) s, timestamp_sequence(50000, 100000L/4) ts from long_sequence(100)) timestamp(ts))\n" +
+                        "select ts, count(s) from x sample by 2s",
+                "ts\tcount\n" +
+                        "1970-01-01T00:00:00.050000Z\t8\n" +
+                        "1970-01-01T00:00:02.050000Z\t8\n"
+        ));
     }
 
     @Test

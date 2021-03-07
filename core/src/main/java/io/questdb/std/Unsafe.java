@@ -54,7 +54,7 @@ public final class Unsafe {
 
     public static long calloc(long size) {
         long ptr = malloc(size);
-        getUnsafe().setMemory(ptr, size, (byte) 0);
+        Vect.memset(ptr, size, 0);
         return ptr;
     }
 

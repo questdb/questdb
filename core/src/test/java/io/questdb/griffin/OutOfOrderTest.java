@@ -27,8 +27,6 @@ package io.questdb.griffin;
 import io.questdb.WorkerPoolAwareConfiguration;
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -36,8 +34,8 @@ import io.questdb.mp.WorkerPool;
 import io.questdb.std.Chars;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
-import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectCharSink;
+import io.questdb.std.str.MutableCharSink;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
@@ -619,7 +617,7 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                 w.commit();
             }
 
-            printSqlResult(compiler, sqlExecutionContext, sink, "x");
+            printSqlResult(compiler, sqlExecutionContext, "x");
 
             final String expected = "a\tb\tc\tts\n" +
                     "NaN\tNaN\t10\t2013-02-10T00:05:00.000000Z\n" +
@@ -954,11 +952,11 @@ public class OutOfOrderTest extends AbstractGriffinTest {
 
         final String sqlTemplate = "select i,sym,amt,timestamp,b,c,d,e,f,g,ik,ts,l,n,t,m from ";
 
-        printSqlResult(compiler, sqlExecutionContext, sink, sqlTemplate + "y");
+        printSqlResult(compiler, sqlExecutionContext, sqlTemplate + "y");
 
         String expected = Chars.toString(sink);
 
-        printSqlResult(compiler, sqlExecutionContext, sink, sqlTemplate + "x");
+        printSqlResult(compiler, sqlExecutionContext, sqlTemplate + "x");
         TestUtils.assertEquals(expected, sink);
 
         assertIndexConsistency(compiler, sqlExecutionContext);
@@ -1052,7 +1050,7 @@ public class OutOfOrderTest extends AbstractGriffinTest {
         compiler.compile("create table y as (select * from x union all 1am union all tail)", sqlExecutionContext);
 
         // expected outcome
-        printSqlResult(compiler, sqlExecutionContext, sink, "y order by ts");
+        printSqlResult(compiler, sqlExecutionContext, "y order by ts");
 
         String expected = Chars.toString(sink);
 
@@ -1062,7 +1060,7 @@ public class OutOfOrderTest extends AbstractGriffinTest {
         compiler.compile("insert into x select * from 1am", sqlExecutionContext);
         compiler.compile("insert into x select * from tail", sqlExecutionContext);
 
-        printSqlResult(compiler, sqlExecutionContext, sink, "x");
+        printSqlResult(compiler, sqlExecutionContext, "x");
 
         TestUtils.assertEquals(expected, sink);
 
@@ -1251,7 +1249,7 @@ public class OutOfOrderTest extends AbstractGriffinTest {
         compiler.compile("create table y as (x union all 1am union all tail)", sqlExecutionContext);
 
         // expected outcome
-        printSqlResult(compiler, sqlExecutionContext, sink, "y order by ts");
+        printSqlResult(compiler, sqlExecutionContext, "y order by ts");
 
         String expected = Chars.toString(sink);
 
@@ -1262,14 +1260,14 @@ public class OutOfOrderTest extends AbstractGriffinTest {
         compiler.compile("insert into x select * from 1am", sqlExecutionContext);
         compiler.compile("insert into x select * from tail", sqlExecutionContext);
 
-        printSqlResult(compiler, sqlExecutionContext, sink, "x");
+        printSqlResult(compiler, sqlExecutionContext, "x");
 
         TestUtils.assertEquals(expected, sink);
 
         //
         engine.releaseAllReaders();
 
-        printSqlResult(compiler, sqlExecutionContext, sink, "x");
+        printSqlResult(compiler, sqlExecutionContext, "x");
 
         TestUtils.assertEquals(expected, sink);
 
@@ -1434,7 +1432,7 @@ public class OutOfOrderTest extends AbstractGriffinTest {
         compiler.compile("create table y as (select * from x union all 1am union all tail)", sqlExecutionContext);
 
         // expected outcome
-        printSqlResult(compiler, sqlExecutionContext, sink, "y order by ts");
+        printSqlResult(compiler, sqlExecutionContext, "y order by ts");
 
         String expected = Chars.toString(sink);
 
@@ -1444,13 +1442,13 @@ public class OutOfOrderTest extends AbstractGriffinTest {
         compiler.compile("insert into x select * from 1am", sqlExecutionContext);
         compiler.compile("insert into x select * from tail", sqlExecutionContext);
 
-        printSqlResult(compiler, sqlExecutionContext, sink, "x");
+        printSqlResult(compiler, sqlExecutionContext, "x");
 
         TestUtils.assertEquals(expected, sink);
 
         engine.releaseAllReaders();
 
-        printSqlResult(compiler, sqlExecutionContext, sink, "x");
+        printSqlResult(compiler, sqlExecutionContext, "x");
 
         TestUtils.assertEquals(expected, sink);
 
@@ -1543,7 +1541,7 @@ public class OutOfOrderTest extends AbstractGriffinTest {
         compiler.compile("create table y as (x union all 1am union all tail)", sqlExecutionContext);
 
         // expected outcome
-        printSqlResult(compiler, sqlExecutionContext, sink, "y order by ts");
+        printSqlResult(compiler, sqlExecutionContext, "y order by ts");
 
 //                    String expected = Chars.toString(sink);
         engine.releaseAllReaders();
@@ -1652,7 +1650,7 @@ public class OutOfOrderTest extends AbstractGriffinTest {
         compiler.compile("create table y as (x union all 1am union all tail)", sqlExecutionContext);
 
         // expected outcome
-        printSqlResult(compiler, sqlExecutionContext, sink, "y order by ts");
+        printSqlResult(compiler, sqlExecutionContext, "y order by ts");
 
         final String expected = Chars.toString(sink);
 
@@ -1673,7 +1671,7 @@ public class OutOfOrderTest extends AbstractGriffinTest {
         // Cached reader will assume smaller partition size for "1970-01-01", which out-of-order insert updated
         engine.releaseAllReaders();
 
-        printSqlResult(compiler, sqlExecutionContext, sink, "x");
+        printSqlResult(compiler, sqlExecutionContext, "x");
 
         TestUtils.assertEquals(expected, sink);
 
@@ -1993,29 +1991,28 @@ public class OutOfOrderTest extends AbstractGriffinTest {
             String referenceSQL,
             String outOfOrderInsertSQL,
             String assertSQL,
-            CharSink sink1,
-            CharSink sink2
+            MutableCharSink sink1,
+            MutableCharSink sink2
     ) throws SqlException {
         // create third table, which will contain both X and 1AM
         compiler.compile(referenceTableDDL, sqlExecutionContext);
 
-            // expected outcome
-            printSqlResult0(compiler, sqlExecutionContext, sink1, referenceSQL);
+        // expected outcome
+        TestUtils.printSql(compiler, sqlExecutionContext, referenceSQL, sink1);
 
-            // release reader "before" out-of-order is handled
-            // we aim directory rename operations to succeed on Windows
-            // Linux should be fine without closing readers
-            engine.releaseAllReaders();
+        // release reader "before" out-of-order is handled
+        // we aim directory rename operations to succeed on Windows
+        // Linux should be fine without closing readers
+        engine.releaseAllReaders();
 
-            compiler.compile(outOfOrderInsertSQL, sqlExecutionContext);
+        compiler.compile(outOfOrderInsertSQL, sqlExecutionContext);
 
-            // todo: ensure reader can pick up out of order stuff
-            // release reader for now because it is unable to reload out-of-order results
-            engine.releaseAllReaders();
+        // todo: ensure reader can pick up out of order stuff
+        // release reader for now because it is unable to reload out-of-order results
+        engine.releaseAllReaders();
 
-            printSqlResult0(compiler, sqlExecutionContext, sink2, assertSQL);
-
-            TestUtils.assertEquals((CharSequence) sink1, (CharSequence) sink2);
+        TestUtils.printSql(compiler, sqlExecutionContext, assertSQL, sink2);
+        TestUtils.assertEquals(sink1, sink2);
     }
 
     private static void testPartitionedDataAppendOODataIndexed0(
@@ -3121,26 +3118,21 @@ public class OutOfOrderTest extends AbstractGriffinTest {
     ) throws SqlException {
         // index test
         // expected outcome
-        printSqlResult(compiler, sqlExecutionContext, sink, "y where sym = 'googl' order by ts");
+        printSqlResult(compiler, sqlExecutionContext, "y where sym = 'googl' order by ts");
 
         String expected = Chars.toString(sink);
 
-        printSqlResult(compiler, sqlExecutionContext, sink, "x where sym = 'googl'");
+        printSqlResult(compiler, sqlExecutionContext, "x where sym = 'googl'");
 
         TestUtils.assertEquals(expected, sink);
     }
 
-    private static void printSqlResult(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, StringSink sink, String sql) throws SqlException {
-        sink.clear();
-        printSqlResult0(compiler, sqlExecutionContext, sink, sql);
-    }
-
-    private static void printSqlResult0(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, CharSink sink, String sql) throws SqlException {
-        try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
-            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                printer.print(cursor, factory.getMetadata(), true, sink);
-            }
-        }
+    private static void printSqlResult(
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext,
+            String sql
+    ) throws SqlException {
+        TestUtils.printSql(compiler, sqlExecutionContext, sql, AbstractCairoTest.sink);
     }
 
     private static void assertIndexResultAgainstFile(
@@ -3163,7 +3155,7 @@ public class OutOfOrderTest extends AbstractGriffinTest {
         compiler.compile(referenceTableDDL, sqlExecutionContext);
 
         // expected outcome - output ignored, but useful for debug
-        printSqlResult(compiler, sqlExecutionContext, sink, "y order by ts");
+        printSqlResult(compiler, sqlExecutionContext, "y order by ts");
 
         engine.releaseAllReaders();
 
@@ -3181,7 +3173,7 @@ public class OutOfOrderTest extends AbstractGriffinTest {
             String sql,
             String resourceName
     ) throws URISyntaxException, SqlException {
-        printSqlResult(compiler, sqlExecutionContext, sink, sql);
+        printSqlResult(compiler, sqlExecutionContext, sql);
 
         URL url = OutOfOrderTest.class.getResource(resourceName);
         Assert.assertNotNull(url);
@@ -4073,7 +4065,7 @@ public class OutOfOrderTest extends AbstractGriffinTest {
         // create table with 1AM data
 
         compiler.compile(
-                "create table 1am as (" +
+                "create table append as (" +
                         "select" +
                         " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
@@ -4099,7 +4091,22 @@ public class OutOfOrderTest extends AbstractGriffinTest {
 
         engine.releaseAllReaders();
 
-        compiler.compile("insert into x select * from 1am", sqlExecutionContext);
+        try (
+                DirectCharSink sink1 = new DirectCharSink(16 * 1024 * 1024);
+                DirectCharSink sink2 = new DirectCharSink(16 * 1024 * 1024)
+        ) {
+            assertOutOfOrderDataConsistency(
+                    engine,
+                    compiler,
+                    sqlExecutionContext,
+                    "create table y as (x union all append)",
+                    "y order by ts",
+                    "insert into x select * from append",
+                    "x",
+                    sink1,
+                    sink2
+            );
+        }
     }
 
     private void executeWithPool(int workerCount, OutOfOrderCode runnable) throws Exception {
@@ -4264,8 +4271,5 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                     sink2
             );
         }
-
-//        compiler.compile("insert into x select * from 1am", sqlExecutionContext);
     }
-
 }

@@ -46,6 +46,12 @@ public class AbstractGriffinTest extends AbstractCairoTest {
     protected static CairoEngine engine;
     protected static SqlCompiler compiler;
 
+    public static void assertReader(String expected, CharSequence tableName) {
+        try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+            TestUtils.assertReader(expected, reader, sink);
+        }
+    }
+
     public static void assertVariableColumns(RecordCursorFactory factory, boolean checkSameStr) {
         try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
             RecordMetadata metadata = factory.getMetadata();
@@ -819,5 +825,15 @@ public class AbstractGriffinTest extends AbstractCairoTest {
         try (final RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
             assertFactoryCursor(expected, null, factory, true, sqlExecutionContext, true, true);
         }
+    }
+
+    protected void assertSql(CharSequence sql, CharSequence expected) throws SqlException {
+        TestUtils.assertSql(
+                compiler,
+                sqlExecutionContext,
+                sql,
+                sink,
+                expected
+        );
     }
 }

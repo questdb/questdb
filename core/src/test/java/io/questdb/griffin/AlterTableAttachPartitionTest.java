@@ -27,8 +27,6 @@ package io.questdb.griffin;
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.DataFrame;
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
@@ -709,14 +707,13 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
     }
 
     private CharSequence executeSql(String sql) throws SqlException {
-        try (RecordCursorFactory rcf = compiler.compile(sql
-                , sqlExecutionContext).getRecordCursorFactory()) {
-            try (RecordCursor cursor = rcf.getCursor(sqlExecutionContext)) {
-                sink.clear();
-                printer.print(cursor, rcf.getMetadata(), true, sink);
-                return sink;
-            }
-        }
+        TestUtils.printSql(
+                compiler,
+                sqlExecutionContext,
+                sql,
+                sink
+        );
+        return sink;
     }
 
     private int readAllRows(TableReader tableReader) {

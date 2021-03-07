@@ -315,22 +315,18 @@ public class PagedVirtualMemory implements ReadWriteVirtualMemory, Closeable {
         return offset;
     }
 
-    @Override
-    public final long putBin(long from, long len) {
-        final long offset = getAppendOffset();
-        putLong(len > 0 ? len : TableUtils.NULL_LEN);
-        if (len < 1) {
-            return offset;
+    public void copyTo(long address, long offset, long len) {
+        while (len > 0) {
+            final int page = pageIndex(offset);
+            final long pageSize = getPageSize(page);
+            final long pageAddress = getPageAddress(page);
+            final long offsetInPage = offsetInPage(offset);
+            final long bytesToCopy = Math.min(len, pageSize - offsetInPage);
+            Vect.memcpy(pageAddress + offsetInPage, address, bytesToCopy);
+            len -= bytesToCopy;
+            offset += bytesToCopy;
+            address += bytesToCopy;
         }
-
-        if (len < pageHi - appendPointer) {
-            Unsafe.getUnsafe().copyMemory(from, appendPointer, len);
-            appendPointer += len;
-        } else {
-            putBinSlit(from, len);
-        }
-
-        return offset;
     }
 
     @Override
@@ -559,7 +555,7 @@ public class PagedVirtualMemory implements ReadWriteVirtualMemory, Closeable {
     @Override
     public final void putBlockOfBytes(long from, long len) {
         if (len < pageHi - appendPointer) {
-            Unsafe.getUnsafe().copyMemory(from, appendPointer, len);
+            Vect.memcpy(from, appendPointer, len);
             appendPointer += len;
         } else {
             putBinSlit(from, len);
@@ -648,15 +644,22 @@ public class PagedVirtualMemory implements ReadWriteVirtualMemory, Closeable {
         }
     }
 
-    public void zero() {
-        for (int i = 0, n = pages.size(); i < n; i++) {
-            long address = pages.getQuick(i);
-            if (address == 0) {
-                address = allocateNextPage(i);
-                pages.setQuick(i, address);
-            }
-            Unsafe.getUnsafe().setMemory(address, pageSize, (byte) 0);
+    @Override
+    public final long putBin(long from, long len) {
+        final long offset = getAppendOffset();
+        putLong(len > 0 ? len : TableUtils.NULL_LEN);
+        if (len < 1) {
+            return offset;
         }
+
+        if (len < pageHi - appendPointer) {
+            Vect.memcpy(from, appendPointer, len);
+            appendPointer += len;
+        } else {
+            putBinSlit(from, len);
+        }
+
+        return offset;
     }
 
     private long addressOf0(long offset) {
@@ -959,20 +962,15 @@ public class PagedVirtualMemory implements ReadWriteVirtualMemory, Closeable {
         value.copyTo(appendPointer, pos, len);
     }
 
-    private void putBinSlit(long start, long len) {
-        do {
-            int half = (int) (pageHi - appendPointer);
-            if (len <= half) {
-                Unsafe.getUnsafe().copyMemory(start, appendPointer, len);
-                appendPointer += len;
-                break;
+    public void zero() {
+        for (int i = 0, n = pages.size(); i < n; i++) {
+            long address = pages.getQuick(i);
+            if (address == 0) {
+                address = allocateNextPage(i);
+                pages.setQuick(i, address);
             }
-
-            Unsafe.getUnsafe().copyMemory(start, appendPointer, half);
-            pageAt(getAppendOffset() + half);  // +1?
-            len -= half;
-            start += half;
-        } while (true);
+            Vect.memset(address, pageSize, 0);
+        }
     }
 
     private void putByteRnd(long offset, byte value) {
@@ -1203,18 +1201,20 @@ public class PagedVirtualMemory implements ReadWriteVirtualMemory, Closeable {
         }
     }
 
-    public void copyTo(long address, long offset, long len) {
-        while (len > 0) {
-            final int page = pageIndex(offset);
-            final long pageSize = getPageSize(page);
-            final long pageAddress = getPageAddress(page);
-            final long offsetInPage = offsetInPage(offset);
-            final long bytesToCopy = Math.min(len, pageSize - offsetInPage);
-            Unsafe.getUnsafe().copyMemory(pageAddress + offsetInPage, address, bytesToCopy);
-            len -= bytesToCopy;
-            offset += bytesToCopy;
-            address += bytesToCopy;
-        }
+    private void putBinSlit(long start, long len) {
+        do {
+            int half = (int) (pageHi - appendPointer);
+            if (len <= half) {
+                Vect.memcpy(start, appendPointer, len);
+                appendPointer += len;
+                break;
+            }
+
+            Vect.memcpy(start, appendPointer, half);
+            pageAt(getAppendOffset() + half);  // +1?
+            len -= half;
+            start += half;
+        } while (true);
     }
 
     private class InPageLong256FromCharSequenceDecoder extends Long256FromCharSequenceDecoder {

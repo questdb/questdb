@@ -34,7 +34,7 @@ global A_strcmp             ; Function A_strcmp
 global strcmpGeneric            ; Generic version for processors without SSE4.2
 global strcmpSSE42          ; Version for processors with SSE4.2
 
-; Imported from instrset32.asm:
+; Imported from instrset64.asm:
 extern InstructionSet                 ; Instruction set for CPU dispatcher
 
 section .text

@@ -26,7 +26,6 @@ package io.questdb.cairo.pool;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.pool.ex.EntryLockedException;
-import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.pool.ex.PoolClosedException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -311,9 +310,11 @@ public class ReaderPoolTest extends AbstractCairoTest {
                                 Assert.assertTrue(reader.isOpen());
 
                                 // read rows
-                                sink.clear();
-                                printer.print(reader.getCursor(), reader.getMetadata(), true, sink);
-                                TestUtils.assertEquals(expectedRowMap.get(reader.getTableName()), sink);
+                                TestUtils.assertReader(
+                                        expectedRowMap.get(reader.getTableName()),
+                                        reader,
+                                        sink
+                                );
 
                                 Thread.yield();
 
@@ -599,10 +600,11 @@ public class ReaderPoolTest extends AbstractCairoTest {
                         int index = rnd.nextPositiveInt() % readerCount;
                         String name = names[index];
                         try (TableReader r = pool.get(name)) {
-                            sink.clear();
-                            printer.print(r.getCursor(), r.getMetadata(), true, sink);
-                            TestUtils.assertEquals(expectedRows[index], sink);
-
+                            TestUtils.assertReader(
+                                    expectedRows[index],
+                                    r,
+                                    sink
+                            );
                             if (name.equals(names[readerCount - 1]) && barrier.getNumberWaiting() > 0) {
                                 barrier.await();
                             }

@@ -24,16 +24,26 @@
 
 package io.questdb.test.tools;
 
+import io.questdb.cairo.RecordCursorPrinter;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.Unsafe;
+import io.questdb.std.str.MutableCharSink;
 import io.questdb.std.str.Path;
 import org.junit.Assert;
 
 import java.io.*;
 
 public final class TestUtils {
+
+    private static final RecordCursorPrinter printer = new RecordCursorPrinter();
 
     private TestUtils() {
     }
@@ -195,7 +205,7 @@ public final class TestUtils {
                 length++;
                 byte1 = expectedStream.read();
                 byte2 = actualStream.read();
-            } while (byte1 == byte2 && byte1 > 0 && byte2 > 0);
+            } while (byte1 == byte2 && byte1 > 0);
 
             if (byte1 != byte2) {
                 Assert.fail("Files are different at offset " + (length - 1));
@@ -256,6 +266,42 @@ public final class TestUtils {
     public static void writeStringToFile(File file, String s) throws IOException {
         try (FileOutputStream fos = new FileOutputStream(file)) {
             fos.write(s.getBytes(Files.UTF_8));
+        }
+    }
+
+    public static void assertReader(String expected, TableReader reader, MutableCharSink sink) {
+        sink.clear();
+        printer.print(reader.getCursor(), reader.getMetadata(), true, sink);
+        assertEquals(expected, sink);
+    }
+
+    public static void assertSql(
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext,
+            CharSequence sql,
+            MutableCharSink sink,
+            CharSequence expected
+    ) throws SqlException {
+        printSql(
+                compiler,
+                sqlExecutionContext,
+                sql,
+                sink
+        );
+        assertEquals(expected, sink);
+    }
+
+    public static void printSql(
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext,
+            CharSequence sql,
+            MutableCharSink sink
+    ) throws SqlException {
+        sink.clear();
+        try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                printer.print(cursor, factory.getMetadata(), true, sink);
+            }
         }
     }
 

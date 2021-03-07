@@ -26,13 +26,9 @@ package io.questdb.griffin.engine.functions.str;
 
 import io.questdb.cairo.CairoTestUtils;
 import io.questdb.cairo.PartitionBy;
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.AbstractGriffinTest;
-import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.std.Rnd;
-import io.questdb.test.tools.TestUtils;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -66,16 +62,9 @@ public class ConcatFunctionFactoryTest extends AbstractGriffinTest {
                             " timestamp_sequence(0L, 10L) ts from long_sequence(10)) timestamp(ts)",
                     sqlExecutionContext
             );
-            CompiledQuery cq = compiler.compile("select concat(int, '/', short, '/', byte, '/', double, '/', float, '/', long, '/', str, '/', sym, '/', bool, '/', bin, '/', date, '/', long256, '/', chr, '/', timestamp) from all2 order by 1", sqlExecutionContext);
-
-            try (RecordCursorFactory factory = cq.getRecordCursorFactory()) {
-                sink.clear();
-                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    printer.print(cursor, factory.getMetadata(), true, sink);
-                }
-            }
-
-            TestUtils.assertEquals("concat\n" +
+            assertSql(
+                    "select concat(int, '/', short, '/', byte, '/', double, '/', float, '/', long, '/', str, '/', sym, '/', bool, '/', bin, '/', date, '/', long256, '/', chr, '/', timestamp) from all2 order by 1",
+                    "concat\n" +
                             "-10505757/-15119/119/0.2282233596526786/0.174/3518554007419864093/WE/D/true/[]/4676168/0x1872e79ea10322460cb5f439cbc22e9d1f0481ab7acd1f4a77827c4f6b03027b/L/20\n" +
                             "-1148479920/24814/27/0.12966659791573354/0.285/-7611843578141082998/YR/A/false/[]/2827518/0x63eb3740c80f661e9c8afa23e6ca6ca17c1b058af93c08086bafc47f4abcd93b/D/0\n" +
                             "-1182156192/-20816/116/0.5025890936351257/0.995/2151565237758036093/NZ/A/false/[]/3201942/0x6c3493fcb2d0272d6046e5d137dd8f0f2e8575ff5c2587f584a7624f383eb28b/T/50\n" +
@@ -85,8 +74,8 @@ public class ConcatFunctionFactoryTest extends AbstractGriffinTest {
                             "-86791548/-32683/36/0.039509582146767475/0.720/6260580881559018466/PI/A/false/[]/132849/0xbabcd0482f05618f926cdd99e63abb35650d1fb462d014df59070392ef6aa389/W/90\n" +
                             "1570930196/-3021/88/0.7694744648762927/0.114/-4284648096271470489/RO/D/true/[]/8955510/0x7a43ccd77f510b47a21b64e62e9e70cd840f0e1e4477981455b0586d1c02dfb3/T/60\n" +
                             "1864113037/-1315/111/0.8940917126581895/0.198/-8082754367165748693/OV/A/false/[]/8611401/0x3d9491e7e14eba8e1de93a9cf1483e290ec6c3651b1c029f825c96def9f2fcc2/L/30\n" +
-                            "2067844108/-6087/114/0.10227682008381178/0.089/-7724577649125721868/GMX/D/false/[]/4170699/0x6fff79101ec5c1cf61ca7a1ff52a4ccf7ab72c8ee7c4dea1c54dc9aa8e01394b/G/70\n",
-                    sink);
+                            "2067844108/-6087/114/0.10227682008381178/0.089/-7724577649125721868/GMX/D/false/[]/4170699/0x6fff79101ec5c1cf61ca7a1ff52a4ccf7ab72c8ee7c4dea1c54dc9aa8e01394b/G/70\n"
+            );
         });
     }
 }

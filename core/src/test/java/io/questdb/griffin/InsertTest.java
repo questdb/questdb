@@ -210,17 +210,12 @@ public class InsertTest extends AbstractGriffinTest {
                 method.commit();
             }
 
-            sink.clear();
             try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), insertStatement.getTableName())) {
-                printer.print(reader.getCursor(), reader.getMetadata(), true, sink);
-            }
-
-        });
-        TestUtils.assertEquals("cust_id\tccy\tbalance\n" +
+                TestUtils.assertReader("cust_id\tccy\tbalance\n" +
                         "1\tGBP\t150.4\n" +
-                        "1\tGBP\t56.4\n",
-                sink
-        );
+                        "1\tGBP\t56.4\n", reader, sink);
+            }
+        });
     }
 
     @Test
@@ -256,11 +251,7 @@ public class InsertTest extends AbstractGriffinTest {
             String expected = "timestamp\tfield\tvalue\n" +
                     "2019-12-04T13:20:49.000000Z\tX\t123.33\n";
 
-            sink.clear();
-            try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), insert.getTableName())) {
-                printer.print(reader.getCursor(), reader.getMetadata(), true, sink);
-                TestUtils.assertEquals(expected, sink);
-            }
+            assertReader(expected, insert.getTableName());
         });
     }
 
@@ -279,11 +270,7 @@ public class InsertTest extends AbstractGriffinTest {
             String expected = "timestamp\tfield\tvalue\n" +
                     "2019-12-04T13:20:49.000000Z\tX\t123.33\n";
 
-            sink.clear();
-            try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), insert.getTableName())) {
-                printer.print(reader.getCursor(), reader.getMetadata(), true, sink);
-                TestUtils.assertEquals(expected, sink);
-            }
+            assertReader(expected, insert.getTableName());
         });
     }
 
@@ -330,11 +317,7 @@ public class InsertTest extends AbstractGriffinTest {
             String expected = "cust_id\tccy\tbalance\n" +
                     "1\tUSD\t356.12\n";
 
-            sink.clear();
-            try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), insert.getTableName())) {
-                printer.print(reader.getCursor(), reader.getMetadata(), true, sink);
-                TestUtils.assertEquals(expected, sink);
-            }
+            assertReader(expected, insert.getTableName());
         });
     }
 
@@ -400,11 +383,7 @@ public class InsertTest extends AbstractGriffinTest {
             String expected = "id\tsym\n" +
                     "2\tA\n";
 
-            sink.clear();
-            try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), insert.getTableName())) {
-                printer.print(reader.getCursor(), reader.getMetadata(), true, sink);
-                TestUtils.assertEquals(expected, sink);
-            }
+            assertReader(expected, insert.getTableName());
         });
     }
 
@@ -419,11 +398,7 @@ public class InsertTest extends AbstractGriffinTest {
                     "USDJPY\tfalse\n" +
                     "USDFJD\ttrue\n";
 
-            sink.clear();
-            try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "symbols")) {
-                printer.print(reader.getCursor(), reader.getMetadata(), true, sink);
-                TestUtils.assertEquals(expected, sink);
-            }
+            assertReader(expected, "symbols");
         });
     }
 
@@ -438,11 +413,7 @@ public class InsertTest extends AbstractGriffinTest {
                     "2010-01-04T10:00:00.000000Z\tUSDJPY\t1.0\t2.0\n" +
                     "2010-01-04T10:01:40.000000Z\tUSDFJD\t2.0\t4.0\n";
 
-            sink.clear();
-            try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "trades")) {
-                printer.print(reader.getCursor(), reader.getMetadata(), true, sink);
-                TestUtils.assertEquals(expected, sink);
-            }
+            assertReader(expected, "trades");
         });
     }
 
@@ -455,11 +426,7 @@ public class InsertTest extends AbstractGriffinTest {
             String expected1 = "ts\tsym\tbid\task\n" +
                     "2010-01-04T10:00:00.000000Z\tUSDJPY\t1.0\t2.0\n";
 
-            sink.clear();
-            try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "trades")) {
-                printer.print(reader.getCursor(), reader.getMetadata(), true, sink);
-                TestUtils.assertEquals(expected1, sink);
-            }
+            assertReader(expected1, "trades");
 
             try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "trades")) {
                 w.truncate();
@@ -470,11 +437,7 @@ public class InsertTest extends AbstractGriffinTest {
             String expected2 = "ts\tsym\tbid\task\n" +
                     "2073-05-21T13:35:00.000000Z\tUSDFJD\t2.0\t4.0\n";
 
-            sink.clear();
-            try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "trades")) {
-                printer.print(reader.getCursor(), reader.getMetadata(), true, sink);
-                TestUtils.assertEquals(expected2, sink);
-            }
+            assertReader(expected2, "trades");
         });
     }
 
@@ -489,11 +452,7 @@ public class InsertTest extends AbstractGriffinTest {
                     "2010-01-04T10:00:00.000000Z\tUSDJPY\t1.0\t2.0\n" +
                     "2073-05-21T13:35:00.000000Z\tUSDFJD\t2.0\t4.0\n";
 
-            sink.clear();
-            try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "trades")) {
-                printer.print(reader.getCursor(), reader.getMetadata(), true, sink);
-                TestUtils.assertEquals(expected, sink);
-            }
+            assertReader(expected, "trades");
         });
     }
 

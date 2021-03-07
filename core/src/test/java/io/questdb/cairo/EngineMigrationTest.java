@@ -24,8 +24,6 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.vm.PagedMappedReadWriteMemory;
 import io.questdb.griffin.AbstractGriffinTest;
 import io.questdb.griffin.SqlException;
@@ -491,13 +489,12 @@ public class EngineMigrationTest extends AbstractGriffinTest {
     }
 
     private CharSequence executeSql(String sql) throws SqlException {
-        try (RecordCursorFactory rcf = compiler.compile(sql
-                , sqlExecutionContext).getRecordCursorFactory()) {
-            try (RecordCursor cursor = rcf.getCursor(sqlExecutionContext)) {
-                sink.clear();
-                printer.print(cursor, rcf.getMetadata(), true, sink);
-                return sink;
-            }
-        }
+        TestUtils.printSql(
+                compiler,
+                sqlExecutionContext,
+                sql,
+                sink
+        );
+        return sink;
     }
 }

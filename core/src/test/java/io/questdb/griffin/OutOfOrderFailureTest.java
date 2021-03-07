@@ -27,8 +27,6 @@ package io.questdb.griffin;
 import io.questdb.WorkerPoolAwareConfiguration;
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -36,6 +34,7 @@ import io.questdb.mp.WorkerPool;
 import io.questdb.std.*;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
@@ -50,6 +49,8 @@ public class OutOfOrderFailureTest extends AbstractGriffinTest {
 
     private final static Log LOG = LogFactory.getLog(OutOfOrderFailureTest.class);
     private final static AtomicInteger counter = new AtomicInteger(0);
+    private final static StringSink sink2 = new StringSink();
+
     private static final FilesFacade ff19700107Backup = new FilesFacadeImpl() {
         @Override
         public boolean rename(LPSZ from, LPSZ to) {
@@ -1206,17 +1207,15 @@ public class OutOfOrderFailureTest extends AbstractGriffinTest {
         compiler.compile(referenceTableDDL, sqlExecutionContext);
 
         // expected outcome
-        sink.clear();
-        try (RecordCursorFactory factory = compiler.compile("y order by ts", sqlExecutionContext).getRecordCursorFactory()) {
-            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                printer.print(cursor, factory.getMetadata(), true, sink);
-            }
-        }
+        TestUtils.printSql(
+                compiler,
+                sqlExecutionContext,
+                "y order by ts",
+                sink
+        );
 
         // uncomment these to look at result comparison from two queries
         // we are using file comparison here because of ordering issue on the identical timestamps
-        String expected = Chars.toString(sink);
-
         // release reader "before" out-of-order is handled
         // we aim directory rename operations to succeed on Windows
         // Linux should be fine without closing readers
@@ -1228,14 +1227,14 @@ public class OutOfOrderFailureTest extends AbstractGriffinTest {
         // release reader for now because it is unable to reload out-of-order results
         engine.releaseAllReaders();
 
-        sink.clear();
-        try (RecordCursorFactory factory = compiler.compile("x", sqlExecutionContext).getRecordCursorFactory()) {
-            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                printer.print(cursor, factory.getMetadata(), true, sink);
-            }
-        }
+        TestUtils.printSql(
+                compiler,
+                sqlExecutionContext,
+                "x",
+                sink2
+        );
 
-        TestUtils.assertEquals(expected, sink);
+        TestUtils.assertEquals(sink, sink2);
     }
 
     private static void testPartitionedDataAppendOODataIndexedFailRetry0(
@@ -1455,7 +1454,6 @@ public class OutOfOrderFailureTest extends AbstractGriffinTest {
         assertSqlResultAgainstFile(
                 compiler,
                 sqlExecutionContext,
-                "x",
                 "/oo/testColumnTopLastDataOOOData.txt"
         );
 
@@ -1594,7 +1592,6 @@ public class OutOfOrderFailureTest extends AbstractGriffinTest {
         assertSqlResultAgainstFile(
                 compiler,
                 sqlExecutionContext,
-                "x",
                 "/oo/testColumnTopMidDataMergeData.txt"
         );
     }
@@ -1731,7 +1728,6 @@ public class OutOfOrderFailureTest extends AbstractGriffinTest {
         assertSqlResultAgainstFile(
                 compiler,
                 sqlExecutionContext,
-                "x",
                 "/oo/testColumnTopLastOOOPrefix.txt"
         );
     }
@@ -1742,23 +1738,20 @@ public class OutOfOrderFailureTest extends AbstractGriffinTest {
     ) throws SqlException {
         // index test
         // expected outcome
-        sink.clear();
-        try (RecordCursorFactory factory = compiler.compile("y where sym = 'googl' order by ts", sqlExecutionContext).getRecordCursorFactory()) {
-            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                printer.print(cursor, factory.getMetadata(), true, sink);
-            }
-        }
+        TestUtils.printSql(
+                compiler,
+                sqlExecutionContext,
+                "y where sym = 'googl' order by ts",
+                sink
+        );
 
-        String expected = Chars.toString(sink);
-
-        sink.clear();
-        try (RecordCursorFactory factory = compiler.compile("x where sym = 'googl'", sqlExecutionContext).getRecordCursorFactory()) {
-            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                printer.print(cursor, factory.getMetadata(), true, sink);
-            }
-        }
-
-        TestUtils.assertEquals(expected, sink);
+        TestUtils.assertSql(
+                compiler,
+                sqlExecutionContext,
+                "x where sym = 'googl'",
+                sink2,
+                sink
+        );
     }
 
     private static void assertOutOfOrderDataConsistency(
@@ -1769,14 +1762,6 @@ public class OutOfOrderFailureTest extends AbstractGriffinTest {
         // create third table, which will contain both X and 1AM
         compiler.compile("create table y as (x union all append)", sqlExecutionContext);
 
-        // expected outcome - output ignored, but useful for debug
-        sink.clear();
-        try (RecordCursorFactory factory = compiler.compile("y order by ts", sqlExecutionContext).getRecordCursorFactory()) {
-            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                printer.print(cursor, factory.getMetadata(), true, sink);
-            }
-        }
-
         engine.releaseAllReaders();
 
         compiler.compile("insert into x select * from append", sqlExecutionContext);
@@ -1784,21 +1769,20 @@ public class OutOfOrderFailureTest extends AbstractGriffinTest {
         // release reader
         engine.releaseAllReaders();
 
-        assertSqlResultAgainstFile(compiler, sqlExecutionContext, "x", "/oo/testColumnTopMidAppendColumn.txt");
+        assertSqlResultAgainstFile(compiler, sqlExecutionContext, "/oo/testColumnTopMidAppendColumn.txt");
     }
 
     private static void assertSqlResultAgainstFile(
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext,
-            String sql,
             String resourceName
     ) throws URISyntaxException, SqlException {
-        sink.clear();
-        try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
-            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                printer.print(cursor, factory.getMetadata(), true, sink);
-            }
-        }
+        TestUtils.printSql(
+                compiler,
+                sqlExecutionContext,
+                "x",
+                sink
+        );
 
         URL url = OutOfOrderFailureTest.class.getResource(resourceName);
         Assert.assertNotNull(url);

@@ -24,10 +24,11 @@
 
 package io.questdb.griffin;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
@@ -36,6 +37,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.TimestampFormatCompiler;
 import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.MutableCharSink;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
@@ -45,8 +47,8 @@ import org.junit.rules.TemporaryFolder;
 import java.io.IOException;
 
 public class TableBackupTest {
-    private static final StringSink sink = new StringSink();
-    private static final RecordCursorPrinter printer = new RecordCursorPrinter();
+    private static final StringSink sink1 = new StringSink();
+    private static final StringSink sink2 = new StringSink();
     private static final int ERRNO_EIO = 5;
     @Rule
     public TemporaryFolder temp = new TemporaryFolder();
@@ -160,9 +162,7 @@ public class TableBackupTest {
 
             mainCompiler.compile("backup table " + tableName, mainSqlExecutionContext);
             setFinalBackupPath();
-            String sourceSelectAll = selectAll(tableName, false);
-            String backupSelectAll = selectAll(tableName, true);
-            Assert.assertEquals(sourceSelectAll, backupSelectAll);
+            xxxxx(tableName);
         });
     }
 
@@ -185,13 +185,8 @@ public class TableBackupTest {
 
             setFinalBackupPath();
 
-            String sourceSelectAll = selectAll("tb1", false);
-            String backupSelectAll = selectAll("tb1", true);
-            Assert.assertEquals(sourceSelectAll, backupSelectAll);
-
-            sourceSelectAll = selectAll("tb2", false);
-            backupSelectAll = selectAll("tb2", true);
-            Assert.assertEquals(sourceSelectAll, backupSelectAll);
+            xxxxx("tb1");
+            xxxxx("tb2");
         });
     }
 
@@ -324,13 +319,8 @@ public class TableBackupTest {
 
             setFinalBackupPath();
 
-            String sourceSelectAll = selectAll("tb1", false);
-            String backupSelectAll = selectAll("tb1", true);
-            Assert.assertEquals(sourceSelectAll, backupSelectAll);
-
-            sourceSelectAll = selectAll("tb2", false);
-            backupSelectAll = selectAll("tb2", true);
-            Assert.assertEquals(sourceSelectAll, backupSelectAll);
+            xxxxx("tb1");
+            xxxxx("tb2");
         });
     }
 
@@ -356,9 +346,7 @@ public class TableBackupTest {
 
             mainCompiler.compile("backup table " + tableName + ";", mainSqlExecutionContext);
             setFinalBackupPath(1);
-            String sourceSelectAll = selectAll(tableName, false);
-            String backupSelectAll = selectAll(tableName, true);
-            Assert.assertEquals(sourceSelectAll, backupSelectAll);
+            xxxxx(tableName);
         });
     }
 
@@ -376,9 +364,7 @@ public class TableBackupTest {
 
             mainCompiler.compile("backup table " + tableName + ";", mainSqlExecutionContext);
             setFinalBackupPath();
-            String sourceSelectAll = selectAll(tableName, false);
-            String backupSelectAll = selectAll(tableName, true);
-            Assert.assertEquals(sourceSelectAll, backupSelectAll);
+            xxxxx(tableName);
         });
     }
 
@@ -396,9 +382,10 @@ public class TableBackupTest {
 
             mainCompiler.compile("backup table " + tableName, mainSqlExecutionContext);
             setFinalBackupPath();
-            String sourceSelectAll = selectAll(tableName, false);
-            String backupSelectAll1 = selectAll(tableName, true);
-            Assert.assertEquals(sourceSelectAll, backupSelectAll1);
+            StringSink sink3 = new StringSink();
+            selectAll(tableName, false, sink1);
+            selectAll(tableName, true, sink3);
+            Assert.assertEquals(sink1, sink3);
 
             // @formatter:off
             mainCompiler.compile("insert into " + tableName +
@@ -409,15 +396,15 @@ public class TableBackupTest {
 
             mainCompiler.compile("backup table " + tableName, mainSqlExecutionContext);
 
-            sourceSelectAll = selectAll(tableName, false);
+            selectAll(tableName, false, sink1);
             setFinalBackupPath(1);
-            String backupSelectAll2 = selectAll(tableName, true);
-            Assert.assertEquals(sourceSelectAll, backupSelectAll2);
+            selectAll(tableName, true, sink2);
+            TestUtils.assertEquals(sink1, sink2);
 
             // Check previous backup is unaffected
             setFinalBackupPath();
-            String backupSelectAllOriginal = selectAll(tableName, true);
-            Assert.assertEquals(backupSelectAll1, backupSelectAllOriginal);
+            selectAll(tableName, true, sink1);
+            TestUtils.assertEquals(sink3, sink1);
         });
     }
 
@@ -484,16 +471,7 @@ public class TableBackupTest {
         });
     }
 
-    private String selectAll(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, String tableName) throws Exception {
-        CompiledQuery compiledQuery = compiler.compile("select * from " + tableName, sqlExecutionContext);
-        try (RecordCursorFactory factory = compiledQuery.getRecordCursorFactory(); RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-            sink.clear();
-            printer.print(cursor, factory.getMetadata(), true, sink);
-        }
-        return sink.toString();
-    }
-
-    private String selectAll(String tableName, boolean backup) throws Exception {
+    private void selectAll(String tableName, boolean backup, MutableCharSink sink) throws Exception {
         CairoEngine engine = null;
         SqlCompiler compiler = null;
         SqlExecutionContext sqlExecutionContext;
@@ -512,7 +490,12 @@ public class TableBackupTest {
                 compiler = mainCompiler;
                 sqlExecutionContext = mainSqlExecutionContext;
             }
-            return selectAll(compiler, sqlExecutionContext, tableName);
+            TestUtils.printSql(
+                    compiler,
+                    sqlExecutionContext,
+                    "select * from " + tableName,
+                    sink
+            );
         } finally {
             if (backup) {
                 Misc.free(engine);
@@ -534,5 +517,11 @@ public class TableBackupTest {
 
     private void setFinalBackupPath() {
         setFinalBackupPath(0);
+    }
+
+    private void xxxxx(String tb1) throws Exception {
+        selectAll(tb1, false, sink1);
+        selectAll(tb1, true, sink2);
+        TestUtils.assertEquals(sink1, sink2);
     }
 }

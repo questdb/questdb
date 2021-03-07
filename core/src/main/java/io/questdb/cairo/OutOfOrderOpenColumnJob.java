@@ -2333,7 +2333,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                     srcDataFixSize = srcDataActualBytes + srcDataMaxBytes;
                     srcDataFixAddr = OutOfOrderUtils.mapRW(ff, srcFixFd, srcDataFixSize);
                     setNull(columnType, srcDataFixAddr + srcDataActualBytes, srcDataTop);
-                    Unsafe.getUnsafe().copyMemory(srcDataFixAddr, srcDataFixAddr + srcDataMaxBytes, srcDataActualBytes);
+                    Vect.memcpy(srcDataFixAddr, srcDataFixAddr + srcDataMaxBytes, srcDataActualBytes);
                     srcDataTop = 0;
                     srcDataFixOffset = srcDataActualBytes;
                 } else {
@@ -2600,7 +2600,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                         // we need to shift copy the original column so that new block points at strings "below" the
                         // nulls we created above
                         OutOfOrderUtils.shiftCopyFixedSizeColumnData(-srcDataTop * Integer.BYTES, srcDataFixAddr, 0, srcDataMax - srcDataTop, srcDataFixAddr + srcDataMaxBytes);
-                        Unsafe.getUnsafe().copyMemory(srcDataVarAddr, srcDataVarAddr + srcDataVarOffset + srcDataTop * Integer.BYTES, srcDataVarOffset);
+                        Vect.memcpy(srcDataVarAddr, srcDataVarAddr + srcDataVarOffset + srcDataTop * Integer.BYTES, srcDataVarOffset);
                     } else {
                         srcDataVarOffset = srcDataVarSize;
                         srcDataVarSize += srcDataTop * Long.BYTES + srcDataVarSize;
@@ -2614,7 +2614,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                         // we need to shift copy the original column so that new block points at strings "below" the
                         // nulls we created above
                         OutOfOrderUtils.shiftCopyFixedSizeColumnData(-srcDataTop * Long.BYTES, srcDataFixAddr, 0, srcDataMax - srcDataTop, srcDataFixAddr + srcDataMaxBytes);
-                        Unsafe.getUnsafe().copyMemory(srcDataVarAddr, srcDataVarAddr + srcDataVarOffset + srcDataTop * Long.BYTES, srcDataVarOffset);
+                        Vect.memcpy(srcDataVarAddr, srcDataVarAddr + srcDataVarOffset + srcDataTop * Long.BYTES, srcDataVarOffset);
                     }
                     srcDataTop = 0;
                     srcDataFixOffset = srcDataActualBytes;
@@ -2810,7 +2810,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
         switch (columnType) {
             case ColumnType.BOOLEAN:
             case ColumnType.BYTE:
-                Unsafe.getUnsafe().setMemory(addr, count, (byte) 0);
+                Vect.memset(addr, count, 0);
                 break;
             case ColumnType.CHAR:
             case ColumnType.SHORT:

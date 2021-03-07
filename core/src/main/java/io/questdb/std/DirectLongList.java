@@ -148,7 +148,7 @@ public class DirectLongList implements Mutable, Closeable {
     }
 
     public void zero(long v) {
-        Unsafe.getUnsafe().setMemory(start, pos - start, (byte) v);
+        Vect.memset(start, pos - start, (int) v);
     }
 
     void ensureCapacity() {

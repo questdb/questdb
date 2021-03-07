@@ -77,6 +77,20 @@ public final class Vect {
 
     public static native long maxLong(long pLong, long count);
 
+    public static void memcpy(long src, long dst, long len) {
+        // the split length was determined experimentally
+        // using 'MemCopyBenchmark' bench
+        if (len < 4096) {
+            Unsafe.getUnsafe().copyMemory(src, dst, len);
+        } else {
+            memcpy0(src, dst, len);
+        }
+    }
+
+    public static native void memmove(long src, long dst, long len);
+
+    public static native void memset(long dst, long len, int value);
+
     public static native long mergeLongIndexesAsc(long pIndexStructArray, int count);
 
     public static native void mergeShuffle16Bit(long pSrc1, long pSrc2, long pDest, long pIndex, long count);
@@ -115,6 +129,19 @@ public final class Vect {
             long dstVarOffset
     );
 
+    public static native void oooMergeCopyBinColumnWithTop(
+            long mergeIndexAddr,
+            long mergeIndexSize,
+            long srcDataFixAddr,
+            long srcDataFixOffset,
+            long srcDataVarAddr,
+            long srcOooFixAddr,
+            long srcOooVarAddr,
+            long dstFixAddr,
+            long dstVarAddr,
+            long dstVarOffset
+    );
+
     public static native void oooMergeCopyStrColumn(
             long mergeIndexAddr,
             long mergeIndexSize,
@@ -128,19 +155,6 @@ public final class Vect {
     );
 
     public static native void oooMergeCopyStrColumnWithTop(
-            long mergeIndexAddr,
-            long mergeIndexSize,
-            long srcDataFixAddr,
-            long srcDataFixOffset,
-            long srcDataVarAddr,
-            long srcOooFixAddr,
-            long srcOooVarAddr,
-            long dstFixAddr,
-            long dstVarAddr,
-            long dstVarOffset
-    );
-
-    public static native void oooMergeCopyBinColumnWithTop(
             long mergeIndexAddr,
             long mergeIndexSize,
             long srcDataFixAddr,
@@ -178,4 +192,6 @@ public final class Vect {
     public static native long sumInt(long pInt, long count);
 
     public static native long sumLong(long pLong, long count);
+
+    private static native void memcpy0(long src, long dst, long len);
 }

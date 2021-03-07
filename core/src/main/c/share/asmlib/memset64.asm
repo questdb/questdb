@@ -21,6 +21,7 @@
 ; www.agner.org/optimize/asmexamples.zip
 ; Copyright (c) 2008-2016 GNU General Public License www.gnu.org/licenses
 ;******************************************************************************
+%include "piccall.asi"
 
 default rel
 
@@ -122,7 +123,7 @@ L100:   ; main loop, aligned
         add     Rdest, 40H
         jnz     L100
 
-L110    ; remaining 0 - 3FH bytes
+L110:   ; remaining 0 - 3FH bytes
 %if 0
         ; use masked write, only for AVX512BW       
         lea     Rcount, [Rdest2 + Rcount2]
@@ -433,11 +434,11 @@ memsetCPUDispatch:    ; CPU dispatcher, check for instruction sets and which met
         ; set CacheBypassLimit to half the size of the largest level cache
         call    GetMemsetCacheLimit@
         lea     rbx, [memsetSSE2@]
-        call    Store256BitIsFaster    ; Test if 256-bit read/write is available and faster than 128-bit read/write
+        callW    Store256BitIsFaster    ; Test if 256-bit read/write is available and faster than 128-bit read/write
         test    eax, eax
         jz      Q100
         lea     rbx, [memsetAVX@]
-        call    InstructionSet
+        callW    InstructionSet
         cmp     eax, 15
         jb      Q100
         lea     rbx, [memsetAVX512F@]
@@ -470,7 +471,7 @@ GetMemsetCacheLimit@:
 %else
         xor     edi, edi               ; 0 means largest level cache
 %endif
-        call    DataCacheSize          ; get cache size
+        callW    DataCacheSize          ; get cache size
         shr     eax, 1                 ; half the size
         jnz     U100
         mov     eax, 400000H           ; cannot determine cache size. use 4 Mbytes

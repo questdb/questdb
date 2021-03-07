@@ -344,7 +344,7 @@ public class SinglePageMappedReadOnlyPageMemory implements MappedReadOnlyMemory 
         public void copyTo(long address, final long start, final long length) {
             long bytesRemaining = Math.min(length, this.len - start);
             long offset = this.offset + start;
-            Unsafe.getUnsafe().copyMemory(page + offset, address, bytesRemaining);
+            Vect.memcpy(page + offset, address, bytesRemaining);
         }
 
         @Override

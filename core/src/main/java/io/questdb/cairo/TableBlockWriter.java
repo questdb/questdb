@@ -787,7 +787,7 @@ public class TableBlockWriter implements Closeable {
                 try {
                     switch (taskType) {
                         case AppendBlock:
-                            Unsafe.getUnsafe().copyMemory(sourceAddress, destAddress, sourceSizeOrEnd);
+                            Vect.memcpy(sourceAddress, destAddress, sourceSizeOrEnd);
                             return true;
 
                         case GenerateStringIndex:

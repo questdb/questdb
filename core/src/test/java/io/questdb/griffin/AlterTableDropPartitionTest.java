@@ -26,8 +26,6 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.std.Rnd;
 import io.questdb.test.tools.TestUtils;
@@ -524,23 +522,17 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
     }
 
     private void assertPartitionResult(String expectedBeforeDrop, String intervalSearch) throws SqlException {
-        try (RecordCursorFactory factory = compiler.compile("select count() from x where timestamp = '" + intervalSearch + "'", sqlExecutionContext).getRecordCursorFactory()) {
-            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                sink.clear();
-                printer.print(cursor, factory.getMetadata(), true, sink);
-                TestUtils.assertEquals(expectedBeforeDrop, sink);
-            }
-        }
+        assertSql(
+                "select count() from x where timestamp = '" + intervalSearch + "'",
+                expectedBeforeDrop
+        );
     }
 
     private void assertPartitionResultForTimestampColumnNameTs(String expectedBeforeDrop, String intervalSearch) throws SqlException {
-        try (RecordCursorFactory factory = compiler.compile("select count() from x where ts = '" + intervalSearch + "'", sqlExecutionContext).getRecordCursorFactory()) {
-            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                sink.clear();
-                printer.print(cursor, factory.getMetadata(), true, sink);
-                TestUtils.assertEquals(expectedBeforeDrop, sink);
-            }
-        }
+        assertSql(
+                "select count() from x where ts = '" + intervalSearch + "'",
+                expectedBeforeDrop
+        );
     }
 
     private void createX(String partitionBy, long increment) throws SqlException {

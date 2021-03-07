@@ -25,7 +25,7 @@
 #include <cstring>
 #include <xmmintrin.h>
 #include "util.h"
-#include "asmlib.h"
+#include "asmlib/asmlib.h"
 
 typedef struct {
     uint64_t c8[256];

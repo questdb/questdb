@@ -26,8 +26,6 @@ package io.questdb.cutlass.text;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.http.ex.NotEnoughLinesException;
 import io.questdb.cutlass.json.JsonLexer;
 import io.questdb.griffin.AbstractGriffinTest;
@@ -2644,14 +2642,13 @@ public class TextLoaderTest extends AbstractGriffinTest {
     }
 
     private void assertTable(String expected) throws SqlException {
-        try (
-                RecordCursorFactory factory = compiler.compile("test", sqlExecutionContext).getRecordCursorFactory();
-                RecordCursor cursor = factory.getCursor(sqlExecutionContext)
-        ) {
-            sink.clear();
-            printer.print(cursor, factory.getMetadata(), true, sink);
-            TestUtils.assertEquals(expected, sink);
-        }
+        TestUtils.assertSql(
+                compiler,
+                sqlExecutionContext,
+                "test",
+                sink,
+                expected
+        );
     }
 
     private void configureLoaderDefaults(TextLoader textLoader) {

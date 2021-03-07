@@ -33,7 +33,6 @@ import io.questdb.network.NetworkError;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.Os;
-import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -281,9 +280,7 @@ public class LinuxLineProtoReceiverTest extends AbstractCairoTest {
                         Assert.assertTrue(count > 0);
                         receiver.close();
 
-                        StringSink sink = new StringSink();
-                        printer.print(reader.getCursor(), reader.getMetadata(), true, sink);
-                        TestUtils.assertEquals(expected, sink);
+                        TestUtils.assertReader(expected, reader, sink);
                     }
                 }
             }

@@ -401,7 +401,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             symbolMapReaders.setPos(columnCount);
         }
 
-        Unsafe.getUnsafe().setMemory(stateAddress, columnCount, (byte) 0);
+        Vect.memset(stateAddress, columnCount, 0);
 
         // this is a silly exercise in walking the index
         for (int i = 0; i < columnCount; i++) {
@@ -1152,7 +1152,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                 final long partitionRowCount = openPartitionSize.getQuick(partitionIndex);
                 final boolean lastPartition = partitionIndex == partitionCount - 1;
 
-                Unsafe.getUnsafe().setMemory(pState, columnCount, (byte) 0);
+                Vect.memset(pState, columnCount, 0);
 
                 for (int i = 0; i < columnCount; i++) {
 
