@@ -49,10 +49,6 @@ import io.questdb.std.str.StdoutSink;
 
 public class HttpResponseSink implements Closeable, Mutable {
     private final static Log LOG = LogFactory.getLog(HttpResponseSink.class);
-    private static final int MULTI_CHUNK = 4;
-    private static final int DONE = 8;
-    private static final int SEND_DEFLATED_CONT = 10;
-    private static final int SEND_DEFLATED_END = 11;
     private static final IntObjHashMap<String> httpStatusMap = new IntObjHashMap<>();
 
     static {
@@ -78,8 +74,6 @@ public class HttpResponseSink implements Closeable, Mutable {
     private final boolean dumpNetworkTraffic;
     private final String httpVersion;
     private long fd;
-    private int flushBufSize;
-    private int state;
     private long z_streamp = 0;
     private boolean deflateBeforeSend = false;
     private int crc = 0;
@@ -87,7 +81,9 @@ public class HttpResponseSink implements Closeable, Mutable {
     private long totalBytesSent = 0;
     private final boolean connectionCloseHeader;
     private boolean chunkedRequestDone;
-    private boolean compressedChunk;
+    private boolean compressedHeaderDone;
+    private boolean compressedOutputReady;
+    private boolean compressionComplete;
 
     public HttpResponseSink(HttpContextConfiguration configuration) {
         this.responseBufferSize = Numbers.ceilPow2(configuration.getSendBufferSize());
@@ -138,42 +134,34 @@ public class HttpResponseSink implements Closeable, Mutable {
     }
 
     public void resumeSend() throws PeerDisconnectedException, PeerIsSlowToReadException {
-        while (true) {
+        if (!deflateBeforeSend) {
+            sendBuffer(buffer);
+            return;
+        }
 
-            if (flushBufSize > 0) {
-                sendBuffer();
+        while (true) {
+            if (!compressedOutputReady && !compressionComplete) {
+                deflate();
             }
 
-            switch (state) {
-                case MULTI_CHUNK:
-                    if (deflateBeforeSend) {
-                        state = deflate();
-                    } else {
-                        state = DONE;
-                    }
+            if (compressedOutputReady) {
+                sendBuffer(compressOutBuffer);
+                compressedOutputReady = false;
+                if (compressionComplete) {
                     break;
-                case SEND_DEFLATED_END:
-                    flushBufSize = (int) compressOutBuffer.getReadNAvailable();
-                    state = DONE;
-                    break;
-                case SEND_DEFLATED_CONT:
-                    flushBufSize = (int) compressOutBuffer.getReadNAvailable();
-                    state = MULTI_CHUNK;
-                    break;
-                case DONE:
-                    return;
-                default:
-                    break;
+                }
+            } else {
+                break;
             }
         }
     }
 
-    private int deflate() {
-        if (!compressedChunk) {
+    private void deflate() {
+        if (!compressedHeaderDone) {
             int len = Zip.gzipHeaderLen;
             Unsafe.getUnsafe().copyMemory(Zip.gzipHeader, compressOutBuffer.getWriteAddress(len), len);
             compressOutBuffer.onWrite(len);
-            compressedChunk = true;
+            compressedHeaderDone = true;
         }
 
         int nInAvailable = (int) buffer.getReadNAvailable();
@@ -221,8 +209,10 @@ public class HttpResponseSink implements Closeable, Mutable {
         }
 
         if (len == 0) {
-            return DONE;
+            compressedOutputReady = false;
+            return;
         }
+        compressedOutputReady = true;
 
         // this is ZLib error, can't continue
         if (len < 0) {
@@ -232,21 +222,17 @@ public class HttpResponseSink implements Closeable, Mutable {
         // trailer
         boolean finished = chunkedRequestDone && ret == Zip.Z_STREAM_END;
         if (finished) {
-            assert compressOutBuffer.getWriteNAvailable() >= 8;
             long p = compressOutBuffer.getWriteAddress(0);
             Unsafe.getUnsafe().putInt(p, crc); // crc
             Unsafe.getUnsafe().putInt(p + 4, (int) total); // total
             compressOutBuffer.onWrite(8);
+            compressionComplete = true;
         }
         compressOutBuffer.prepareToReadFromBuffer(true, finished);
-
-        // if there is input remaining, don't change
-        return finished ? SEND_DEFLATED_END : SEND_DEFLATED_CONT;
     }
 
     private void flushSingle() throws PeerDisconnectedException, PeerIsSlowToReadException {
-        state = DONE;
-        sendBuffer();
+        sendBuffer(buffer);
     }
 
     HttpResponseHeader getHeader() {
@@ -272,17 +258,13 @@ public class HttpResponseSink implements Closeable, Mutable {
             compressOutBuffer.clear();
             this.crc = 0;
             this.total = 0;
-            compressedChunk = false;
+            compressedHeaderDone = false;
+            compressedOutputReady = false;
+            compressionComplete = false;
         }
     }
 
-    private void resumeSend(int nextState) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        state = nextState;
-        resumeSend();
-    }
-
-    private void sendBuffer() throws PeerDisconnectedException, PeerIsSlowToReadException {
-        ChunkBuffer sendBuf = compressedChunk ? compressOutBuffer : buffer;
+    private void sendBuffer(ChunkBuffer sendBuf) throws PeerDisconnectedException, PeerIsSlowToReadException {
         int nSend = (int) sendBuf.getReadNAvailable();
         while (nSend > 0) {
             int n = nf.send(fd, sendBuf.getReadAddress(), nSend);
@@ -305,7 +287,6 @@ public class HttpResponseSink implements Closeable, Mutable {
             }
         }
         assert sendBuf.getReadNAvailable() == 0;
-        flushBufSize = 0;
         sendBuf.clearAndPrepareToWriteToBuffer();
     }
 
@@ -401,7 +382,6 @@ public class HttpResponseSink implements Closeable, Mutable {
             if (!chunky) {
                 put(Misc.EOL);
             }
-            flushBufSize = (int) buffer.getReadNAvailable();
         }
 
     }
@@ -416,7 +396,7 @@ public class HttpResponseSink implements Closeable, Mutable {
             buffer.clearAndPrepareToWriteToBuffer();
             sink.put(message == null ? std : message).put(Misc.EOL);
             buffer.prepareToReadFromBuffer(true, true);
-            resumeSend(MULTI_CHUNK);
+            resumeSend();
         }
 
         public void sendStatus(int code) throws PeerDisconnectedException, PeerIsSlowToReadException {
@@ -555,9 +535,9 @@ public class HttpResponseSink implements Closeable, Mutable {
 
         @Override
         public void done() throws PeerDisconnectedException, PeerIsSlowToReadException {
-            chunkedRequestDone = true;
-            flushBufSize = 0;
-            resumeSend(MULTI_CHUNK);
+            if (!chunkedRequestDone) {
+                sendChunk(true);
+            }
         }
 
         @Override
@@ -574,16 +554,11 @@ public class HttpResponseSink implements Closeable, Mutable {
         @Override
         public void sendChunk(boolean done) throws PeerDisconnectedException, PeerIsSlowToReadException {
             chunkedRequestDone = done;
-            if (buffer.getReadNAvailable() > 0) {
-                if (deflateBeforeSend) {
-                    flushBufSize = 0;
-                } else {
+            if (buffer.getReadNAvailable() > 0 || done) {
+                if (!deflateBeforeSend) {
                     buffer.prepareToReadFromBuffer(true, chunkedRequestDone);
                 }
-                resumeSend(MULTI_CHUNK);
-            }
-            if (done) {
-                done();
+                resumeSend();
             }
         }
 
@@ -719,7 +694,6 @@ public class HttpResponseSink implements Closeable, Mutable {
                 _wptr += len;
                 LOG.debug().$("end chunk sent [fd=").$(fd).$(']').$();
             }
-            flushBufSize = (int) getReadNAvailable();
         }
     }
 }
