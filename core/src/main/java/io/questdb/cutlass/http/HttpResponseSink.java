@@ -178,7 +178,7 @@ public class HttpResponseSink implements Closeable, Mutable {
         do {
             int sz = (int) compressOutBuffer.getWriteNAvailable() - 8;
             long p = compressOutBuffer.getWriteAddress(0);
-            LOG.info().$("deflate starting [p=").$(p).$(", sz=").$(sz).$(", chunkedRequestDone=").$(chunkedRequestDone).$(']').$();
+            LOG.debug().$("deflate starting [p=").$(p).$(", sz=").$(sz).$(", chunkedRequestDone=").$(chunkedRequestDone).$(']').$();
             ret = Zip.deflate(z_streamp, p, sz, chunkedRequestDone);
             len = sz - Zip.availOut(z_streamp);
             compressOutBuffer.onWrite(len);
@@ -201,7 +201,7 @@ public class HttpResponseSink implements Closeable, Mutable {
                 nInAvailable = availIn;
             }
 
-            LOG.info().$("deflate finished [ret=").$(ret).$(", len=").$(len).$(", availIn=").$(availIn).$(']').$();
+            LOG.debug().$("deflate finished [ret=").$(ret).$(", len=").$(len).$(", availIn=").$(availIn).$(']').$();
         } while (len == 0 && nInAvailable > 0);
 
         if (nInAvailable == 0) {
