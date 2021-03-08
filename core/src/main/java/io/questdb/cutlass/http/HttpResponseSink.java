@@ -80,6 +80,7 @@ public class HttpResponseSink implements Closeable, Mutable {
     private long total = 0;
     private long totalBytesSent = 0;
     private final boolean connectionCloseHeader;
+    private boolean headersSent;
     private boolean chunkedRequestDone;
     private boolean compressedHeaderDone;
     private boolean compressedOutputReady;
@@ -103,6 +104,8 @@ public class HttpResponseSink implements Closeable, Mutable {
     public void clear() {
         headerImpl.clear();
         totalBytesSent = 0;
+        headersSent = false;
+        chunkedRequestDone = false;
         resetZip();
     }
 
@@ -134,7 +137,7 @@ public class HttpResponseSink implements Closeable, Mutable {
     }
 
     public void resumeSend() throws PeerDisconnectedException, PeerIsSlowToReadException {
-        if (!deflateBeforeSend) {
+        if (!headersSent || !deflateBeforeSend) {
             sendBuffer(buffer);
             return;
         }
@@ -553,6 +556,7 @@ public class HttpResponseSink implements Closeable, Mutable {
 
         @Override
         public void sendChunk(boolean done) throws PeerDisconnectedException, PeerIsSlowToReadException {
+            headersSent = true;
             chunkedRequestDone = done;
             if (buffer.getReadNAvailable() > 0 || done) {
                 if (!deflateBeforeSend) {
