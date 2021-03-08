@@ -51,8 +51,6 @@ public interface HttpContextConfiguration {
 
     int getRequestHeaderBufferSize();
 
-    int getResponseHeaderBufferSize();
-
     int getSendBufferSize();
 
     boolean getServerKeepAlive();
