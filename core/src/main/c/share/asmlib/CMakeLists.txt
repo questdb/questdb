@@ -26,12 +26,12 @@ elseif (APPLE)
     set(CMAKE_ASM_NASM_FLAGS "-dWINDOWS")
     set(CMAKE_ASM_NASM_OBJECT_FORMAT macho64)
 else ()
+    set(CMAKE_SHARED_LINKER_FLAGS "-z noexecstack")
     set(CMAKE_ASM_NASM_FLAGS "-dUNIX")
     set(CMAKE_ASM_NASM_OBJECT_FORMAT elf64)
 endif ()
 
 set(CMAKE_ASM_NASM_FLAGS "${CMAKE_ASM_NASM_FLAGS} -dPOSITIONINDEPENDENT")
-set(CMAKE_SHARED_LINKER_FLAGS "-z noexecstack")
 
 add_library(asm ${ASM_SOURCES})
 

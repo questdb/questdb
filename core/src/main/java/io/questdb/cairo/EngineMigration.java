@@ -335,7 +335,7 @@ public class EngineMigration {
                         // Update tx file with 4 longs per partition
                         writeTo.putLong(ts);
                         writeTo.putLong(partitionSize);
-                        writeTo.putLong(0L);
+                        writeTo.putLong(-1L);
                         writeTo.putLong(0L);
                     }
                 }

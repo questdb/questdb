@@ -47,7 +47,9 @@ public class OutOfOrderOpenColumnTask {
     private long srcOooFixSize;
     private long srcOooVarAddr;
     private long srcOooVarSize;
+    private long srcDataTop;
     private long srcDataMax;
+    private long srcDataTxn;
     private long tableFloorOfMaxTimestamp;
     private long dataTimestampHi;
     private long srcOooLo;
@@ -70,7 +72,6 @@ public class OutOfOrderOpenColumnTask {
     private long suffixHi;
     private long activeFixFd;
     private long activeVarFd;
-    private long activeTop;
     private TableWriter tableWriter;
     private SOUnboundedCountDownLatch doneLatch;
 
@@ -78,8 +79,8 @@ public class OutOfOrderOpenColumnTask {
         return activeFixFd;
     }
 
-    public long getActiveTop() {
-        return activeTop;
+    public long getSrcDataTop() {
+        return srcDataTop;
     }
 
     public long getActiveVarFd() {
@@ -168,6 +169,10 @@ public class OutOfOrderOpenColumnTask {
 
     public long getSrcDataMax() {
         return srcDataMax;
+    }
+
+    public long getSrcDataTxn() {
+        return srcDataTxn;
     }
 
     public long getSrcOooFixAddr() {
@@ -261,7 +266,9 @@ public class OutOfOrderOpenColumnTask {
             long oooTimestampMax,
             long oooTimestampLo,
             long oooTimestampHi,
+            long srcDataTop,
             long srcDataMax,
+            long srcDataTxn,
             long tableFloorOfMaxTimestamp,
             long dataTimestampHi,
             long txn,
@@ -282,7 +289,6 @@ public class OutOfOrderOpenColumnTask {
             boolean isIndexed,
             long activeFixFd,
             long activeVarFd,
-            long activeTop,
             TableWriter tableWriter,
             SOUnboundedCountDownLatch doneLatch
     ) {
@@ -304,7 +310,9 @@ public class OutOfOrderOpenColumnTask {
         this.oooTimestampMax = oooTimestampMax;
         this.oooTimestampLo = oooTimestampLo;
         this.oooTimestampHi = oooTimestampHi;
+        this.srcDataTop = srcDataTop;
         this.srcDataMax = srcDataMax;
+        this.srcDataTxn = srcDataTxn;
         this.tableFloorOfMaxTimestamp = tableFloorOfMaxTimestamp;
         this.dataTimestampHi = dataTimestampHi;
         this.txn = txn;
@@ -325,7 +333,6 @@ public class OutOfOrderOpenColumnTask {
         this.isIndexed = isIndexed;
         this.activeFixFd = activeFixFd;
         this.activeVarFd = activeVarFd;
-        this.activeTop = activeTop;
         this.tableWriter = tableWriter;
         this.doneLatch = doneLatch;
     }

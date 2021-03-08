@@ -105,6 +105,14 @@ public class TxReader implements Closeable {
         return -1;
     }
 
+    public long getPartitionTxnByPartitionTimestamp(long ts) {
+        final int index = findAttachedPartitionIndex(getPartitionTimestampLo(ts));
+        if (index > -1) {
+            return attachedPartitions.getQuick(index + PARTITION_TX_OFFSET);
+        }
+        return -1;
+    }
+
     public long getPartitionTxn(int i) {
         return attachedPartitions.getQuick(i * LONGS_PER_TX_ATTACHED_PARTITION + PARTITION_TX_OFFSET);
     }
@@ -240,8 +248,7 @@ public class TxReader implements Closeable {
 
         attachedPartitions.setQuick(index + PARTITION_TS_OFFSET, partitionTimestamp);
         attachedPartitions.setQuick(index + PARTITION_SIZE_OFFSET, partitionSize);
-        // Out of order transaction which added this partition
-        attachedPartitions.setQuick(index + PARTITION_TX_OFFSET, (index < size) ? txn + 1 : 0);
+        attachedPartitions.setQuick(index + PARTITION_TX_OFFSET, -1);
         return index;
     }
 

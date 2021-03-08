@@ -549,7 +549,7 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
                     ff.close(srcTimestampFd);
                 }
 
-                if (tableWriter.getOooErrorCount() == 0) {
+                if (false && tableWriter.getOooErrorCount() == 0) {
                     renamePartition(
                             ff,
                             pathToTable,
@@ -710,7 +710,7 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
         final Path other = Path.getThreadLocal2(path);
         TableUtils.oldPartitionName(other, txn);
         if (ff.rename(path, other.$())) {
-            TableUtils.newPartitionName(other.trimTo(plen), txn);
+            TableUtils.txnPartition(other.trimTo(plen), txn);
             if (ff.rename(other.$(), path)) {
                 LOG.info().$("renamed").$();
                 return;

@@ -1542,8 +1542,6 @@ public class OutOfOrderTest extends AbstractGriffinTest {
 
         // expected outcome
         printSqlResult(compiler, sqlExecutionContext, "y order by ts");
-
-//                    String expected = Chars.toString(sink);
         engine.releaseAllReaders();
 
         compiler.compile("insert into x select * from 1am", sqlExecutionContext);

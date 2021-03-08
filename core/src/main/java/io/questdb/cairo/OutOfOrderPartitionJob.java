@@ -98,8 +98,12 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
     ) {
         final Path path = Path.getThreadLocal(pathToTable);
         final long oooTimestampLo = getTimestampIndexValue(sortedTimestampsAddr, srcOooLo);
+        // todo: inefficient
         final long partitionSize = tableWriter.getPartitionSizeByTimestamp(oooTimestampLo);
+        final long srcDataTxn = tableWriter.getPartitionTxnByTimestamp(oooTimestampLo);
         TableUtils.setPathForPartition(path, partitionBy, oooTimestampLo);
+        final int pplen = path.length();
+        TableUtils.txnPartitionConditionally(path, srcDataTxn);
         final RecordMetadata metadata = tableWriter.getMetadata();
         final int timestampIndex = metadata.getTimestampIndex();
         final int plen = path.length();
@@ -163,6 +167,7 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                     0,
                     0,
                     0,
+                    srcDataTxn,
                     tableFloorOfMaxTimestamp,
                     0,
                     OPEN_NEW_PARTITION_FOR_APPEND,
@@ -430,7 +435,7 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                         openColumnMode = OPEN_LAST_PARTITION_FOR_APPEND;
                     }
                 } else {
-                    newPartitionName(path.trimTo(plen), txn);
+                    txnPartition(path.trimTo(pplen), txn);
                     createDirsOrFail(ff, path.put(Files.SEPARATOR).$(), configuration.getMkDirMode());
                     if (srcTimestampFd > -1) {
                         openColumnMode = OPEN_MID_PARTITION_FOR_MERGE;
@@ -481,6 +486,7 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                     suffixLo,
                     suffixHi,
                     srcDataMax,
+                    srcDataTxn,
                     tableFloorOfMaxTimestamp,
                     dataTimestampHi,
                     openColumnMode,
@@ -613,7 +619,9 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
             long oooTimestampMax,
             long oooTimestampLo,
             long oooTimestampHi,
-            long srcDataTop, long srcDataMax,
+            long srcDataTop,
+            long srcDataMax,
+            long srcDataTxn,
             long tableFloorOfMaxTimestamp,
             long dataTimestampHi,
             long txn,
@@ -657,7 +665,9 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                 oooTimestampMax,
                 oooTimestampLo,
                 oooTimestampHi,
+                srcDataTop,
                 srcDataMax,
+                srcDataTxn,
                 tableFloorOfMaxTimestamp,
                 dataTimestampHi,
                 txn,
@@ -678,7 +688,6 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                 isIndexed,
                 activeFixFd,
                 activeVarFd,
-                srcDataTop,
                 tableWriter,
                 doneLatch
         );
@@ -718,6 +727,7 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
             long suffixLo,
             long suffixHi,
             long srcDataMax,
+            long srcDataTxn,
             long tableFloorOfMaxTimestamp,
             long dataTimestampHi,
             int openColumnMode,
@@ -817,6 +827,7 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                                 oooTimestampHi,
                                 srcDataTop,
                                 srcDataMax,
+                                srcDataTxn,
                                 tableFloorOfMaxTimestamp,
                                 dataTimestampHi,
                                 txn,
@@ -869,10 +880,11 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                                 oooTimestampMax,
                                 oooTimestampLo,
                                 oooTimestampHi,
-                                tableFloorOfMaxTimestamp,
-                                dataTimestampHi,
                                 srcDataTop,
                                 srcDataMax,
+                                srcDataTxn,
+                                tableFloorOfMaxTimestamp,
+                                dataTimestampHi,
                                 txn,
                                 prefixType,
                                 prefixLo,
@@ -945,10 +957,11 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
             long oooTimestampMax,
             long oooTimestampLo,
             long oooTimestampHi,
-            long tableFloorOfMaxTimestamp,
-            long dataTimestampHi,
             long srcDataTop,
             long srcDataMax,
+            long srcDataTxn,
+            long tableFloorOfMaxTimestamp,
+            long dataTimestampHi,
             long txn,
             int prefixType,
             long prefixLo,
@@ -997,7 +1010,9 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                     oooTimestampMax,
                     oooTimestampLo,
                     oooTimestampHi,
-                    srcDataTop, srcDataMax,
+                    srcDataTop,
+                    srcDataMax,
+                    srcDataTxn,
                     tableFloorOfMaxTimestamp,
                     dataTimestampHi,
                     txn,
@@ -1049,6 +1064,7 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                     oooTimestampHi,
                     srcDataTop,
                     srcDataMax,
+                    srcDataTxn,
                     tableFloorOfMaxTimestamp,
                     dataTimestampHi,
                     txn,

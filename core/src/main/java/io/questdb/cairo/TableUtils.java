@@ -113,8 +113,14 @@ public final class TableUtils {
     private TableUtils() {
     }
 
-    public static void newPartitionName(Path path, long txn) {
+    public static void txnPartition(Path path, long txn) {
         path.put("-n-").put(txn);
+    }
+
+    public static void txnPartitionConditionally(Path path, long txn) {
+        if (txn > -1) {
+            txnPartition(path, txn);
+        }
     }
 
     public static void oldPartitionName(Path path, long txn) {
@@ -386,7 +392,7 @@ public final class TableUtils {
         int y, m, d;
         boolean leap;
         path.put(Files.SEPARATOR);
-        final long partitionHi;
+        final long partitionTimestampHi;
         switch (partitionBy) {
             case PartitionBy.DAY:
                 y = Timestamps.getYear(timestamp);
@@ -399,7 +405,7 @@ public final class TableUtils {
                 path.put('-');
                 TimestampFormatUtils.append0(path, d);
 
-                partitionHi = Timestamps.yearMicros(y, leap)
+                partitionTimestampHi = Timestamps.yearMicros(y, leap)
                         + Timestamps.monthOfYearMicros(m, leap)
                         + (d - 1) * Timestamps.DAY_MICROS + 24 * Timestamps.HOUR_MICROS - 1;
                 break;
@@ -411,7 +417,7 @@ public final class TableUtils {
                 path.put('-');
                 TimestampFormatUtils.append0(path, m);
 
-                partitionHi = Timestamps.yearMicros(y, leap)
+                partitionTimestampHi = Timestamps.yearMicros(y, leap)
                         + Timestamps.monthOfYearMicros(m, leap)
                         + Timestamps.getDaysPerMonth(m, leap) * 24L * Timestamps.HOUR_MICROS - 1;
                 break;
@@ -419,15 +425,15 @@ public final class TableUtils {
                 y = Timestamps.getYear(timestamp);
                 leap = Timestamps.isLeapYear(y);
                 TimestampFormatUtils.append000(path, y);
-                partitionHi = Timestamps.addYear(Timestamps.yearMicros(y, leap), 1) - 1;
+                partitionTimestampHi = Timestamps.addYear(Timestamps.yearMicros(y, leap), 1) - 1;
                 break;
             default:
                 path.put(DEFAULT_PARTITION_NAME);
-                partitionHi = Long.MAX_VALUE;
+                partitionTimestampHi = Long.MAX_VALUE;
                 break;
         }
 
-        return partitionHi;
+        return partitionTimestampHi;
     }
 
     public static int toIndexKey(int symbolKey) {

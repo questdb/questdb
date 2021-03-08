@@ -89,6 +89,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
             long oooTimestampHi,
             long srcDataTop,
             long srcDataMax,
+            long srcDataTxn,
             long tableFloorOfMaxTimestamp,
             long dataTimestampHi,
             long txn,
@@ -115,6 +116,8 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
         final long mergeLen = mergeOOOHi - mergeOOOLo + 1 + mergeDataHi - mergeDataLo + 1;
         final Path path = Path.getThreadLocal(pathToTable);
         TableUtils.setPathForPartition(path, tableWriter.getPartitionBy(), oooTimestampLo);
+        final int pplen = path.length();
+        TableUtils.txnPartitionConditionally(path, srcDataTxn);
         final int plen = path.length();
         // append jobs do not set value of part counter, we do it here for those
         // todo: cache
@@ -209,6 +212,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                         ff,
                         path,
                         plen,
+                        pplen,
                         pathToTable,
                         columnName,
                         partCounter,
@@ -260,7 +264,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                         updPartitionSizePubSeq,
                         ff,
                         path,
-                        plen,
+                        pplen,
                         pathToTable,
                         columnName,
                         partCounter,
@@ -366,6 +370,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
         final long oooTimestampLo = task.getOooTimestampLo();
         final long oooTimestampHi = task.getOooTimestampHi();
         final long srcDataMax = task.getSrcDataMax();
+        final long srcDataTxn = task.getSrcDataTxn();
         final long tableFloorOfMaxTimestamp = task.getTableFloorOfMaxTimestamp();
         final long dataTimestampHi = task.getDataTimestampHi();
         final long srcTimestampFd = task.getSrcTimestampFd();
@@ -392,7 +397,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
         final long timestampMergeIndexAddr = task.getTimestampMergeIndexAddr();
         final long activeFixFd = task.getActiveFixFd();
         final long activeVarFd = task.getActiveVarFd();
-        final long activeTop = task.getActiveTop();
+        final long srcDataTop = task.getSrcDataTop();
         final TableWriter tableWriter = task.getTableWriter();
         final SOUnboundedCountDownLatch doneLatch = task.getDoneLatch();
 
@@ -423,7 +428,9 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                 oooTimestampMax,
                 oooTimestampLo,
                 oooTimestampHi,
-                activeTop, srcDataMax,
+                srcDataTop,
+                srcDataMax,
+                srcDataTxn,
                 tableFloorOfMaxTimestamp,
                 dataTimestampHi,
                 txn,
@@ -1796,7 +1803,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
             MPSequence updPartitionSizePubSeq,
             FilesFacade ff,
             Path path,
-            int plen,
+            int pplen,
             CharSequence pathToTable,
             CharSequence columnName,
             AtomicInteger partCounter,
@@ -1856,7 +1863,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                         updPartitionSizePubSeq,
                         ff,
                         path,
-                        plen,
+                        pplen,
                         pathToTable,
                         columnName,
                         partCounter,
@@ -1911,7 +1918,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                         updPartitionSizePubSeq,
                         ff,
                         path,
-                        plen,
+                        pplen,
                         pathToTable,
                         columnName,
                         partCounter,
@@ -1967,6 +1974,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
             FilesFacade ff,
             Path path,
             int plen,
+            int pplen,
             CharSequence pathToTable,
             CharSequence columnName,
             AtomicInteger partCounter,
@@ -2090,7 +2098,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                         updPartitionSizePubSeq,
                         ff,
                         path,
-                        plen,
+                        pplen,
                         pathToTable,
                         columnName,
                         partCounter,
@@ -2180,7 +2188,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                         updPartitionSizePubSeq,
                         ff,
                         path,
-                        plen,
+                        pplen,
                         pathToTable,
                         columnName,
                         partCounter,
@@ -2263,7 +2271,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
             MPSequence updPartitionSizePubSeq,
             FilesFacade ff,
             Path path,
-            int plen,
+            int pplen,
             CharSequence pathToTable,
             CharSequence columnName,
             AtomicInteger partCounter,
@@ -2322,7 +2330,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
         final int shl = ColumnType.pow2SizeOf(Math.abs(columnType));
 
         try {
-            newPartitionName(path.trimTo(plen), txn);
+            txnPartition(path.trimTo(pplen), txn);
             pDirNameLen = path.length();
 
             if (srcDataTop > 0) {
@@ -2499,7 +2507,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
             MPSequence updPartitionSizePubSeq,
             FilesFacade ff,
             Path path,
-            int plen,
+            int pplen,
             CharSequence pathToTable,
             CharSequence columnName,
             AtomicInteger partCounter,
@@ -2565,7 +2573,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
         final long srcVarFd = Math.abs(srcDataVarFd);
 
         try {
-            newPartitionName(path.trimTo(plen), txn);
+            txnPartition(path.trimTo(pplen), txn);
             pDirNameLen = path.length();
 
             if (srcDataTop > 0) {

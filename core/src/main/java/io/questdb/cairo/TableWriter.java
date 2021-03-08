@@ -135,7 +135,7 @@ public class TableWriter implements Closeable {
     private int columnCount;
     private RowFunction rowFunction = openPartitionFunction;
     private boolean avoidIndexOnCommit = false;
-    private long partitionHi;
+    private long partitionTimestampHi;
     private long masterRef = 0;
     private boolean removeDirOnCancelRow = true;
     private long tempMem16b = Unsafe.malloc(16);
@@ -1880,12 +1880,16 @@ public class TableWriter implements Closeable {
         return txFile.getPartitionSizeByPartitionTimestamp(ts);
     }
 
+    long getPartitionTxnByTimestamp(long ts) {
+        return txFile.getPartitionTxnByPartitionTimestamp(ts);
+    }
+
     long getPrimaryAppendOffset(long timestamp, int columnIndex) {
         if (txFile.getAppendedPartitionCount() == 0) {
             openFirstPartition(timestamp);
         }
 
-        if (timestamp > partitionHi) {
+        if (timestamp > partitionTimestampHi) {
             return 0;
         }
 
@@ -1902,7 +1906,7 @@ public class TableWriter implements Closeable {
             openFirstPartition(timestamp);
         }
 
-        if (timestamp > partitionHi) {
+        if (timestamp > partitionTimestampHi) {
             return 0;
         }
 
@@ -2691,6 +2695,11 @@ public class TableWriter implements Closeable {
             // data in existing partition.
             // When partition is new, the data timestamp is MIN_LONG
             this.txFile.maxTimestamp = Math.max(dataTimestampHi, oooTimestampMax);
+            if (partitionMutates) {
+                long partitionTimestampLo = txFile.getPartitionTimestampLo(oooTimestampHi);
+                int index = txFile.findAttachedPartitionIndexByLoTimestamp(partitionTimestampLo);
+                txFile.updatePartitionSizeByIndexAndTxn(index, partitionSize);
+            }
         }
     }
 
@@ -3502,9 +3511,14 @@ public class TableWriter implements Closeable {
      * @param updatePartitionInterval flag indicating that partition interval partitionLo and
      */
     private void setStateForTimestamp(Path path, long timestamp, boolean updatePartitionInterval) {
-        long partitionHi = TableUtils.setPathForPartition(path, partitionBy, timestamp);
+        final long partitionTimestampHi = TableUtils.setPathForPartition(path, partitionBy, timestamp);
+        // todo: we can lookup partition particulars by partition index, this code always works only with last partition
+        TableUtils.txnPartitionConditionally(
+                path,
+                txFile.getPartitionTxnByPartitionTimestamp(partitionTimestampHi)
+        );
         if (updatePartitionInterval) {
-            this.partitionHi = partitionHi;
+            this.partitionTimestampHi = partitionTimestampHi;
         }
     }
 
@@ -3517,7 +3531,7 @@ public class TableWriter implements Closeable {
             openFirstPartition(timestampLo);
         }
 
-        if (partitionBy != PartitionBy.NONE && timestampLo > partitionHi) {
+        if (partitionBy != PartitionBy.NONE && timestampLo > partitionTimestampHi) {
             // Need close memory without truncating
             for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
                 AppendOnlyVirtualMemory mem1 = getPrimaryColumn(columnIndex);
@@ -3861,7 +3875,7 @@ public class TableWriter implements Closeable {
         @Override
         public Row newRow(long timestamp) {
             bumpMasterRef();
-            if (timestamp > partitionHi || timestamp < txFile.getMaxTimestamp()) {
+            if (timestamp > partitionTimestampHi || timestamp < txFile.getMaxTimestamp()) {
                 return newRow0(timestamp);
             }
             updateMaxTimestamp(timestamp);
@@ -3887,7 +3901,7 @@ public class TableWriter implements Closeable {
                 throw CairoException.instance(ff.errno()).put("Cannot insert rows out of order. Table=").put(path);
             }
 
-            if (timestamp > partitionHi && partitionBy != PartitionBy.NONE) {
+            if (timestamp > partitionTimestampHi && partitionBy != PartitionBy.NONE) {
                 switchPartition(timestamp);
             }
 
