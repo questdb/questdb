@@ -98,11 +98,15 @@ public class TxReader implements Closeable {
     }
 
     public long getPartitionSizeByPartitionTimestamp(long ts) {
-        final int index = findAttachedPartitionIndex(getPartitionLo(ts));
+        final int index = findAttachedPartitionIndex(getPartitionTimestampLo(ts));
         if (index > -1) {
             return attachedPartitions.getQuick(index + PARTITION_SIZE_OFFSET);
         }
         return -1;
+    }
+
+    public long getPartitionTxn(int i) {
+        return attachedPartitions.getQuick(i * LONGS_PER_TX_ATTACHED_PARTITION + PARTITION_TX_OFFSET);
     }
 
     public long getPartitionTableVersion() {
@@ -196,7 +200,11 @@ public class TxReader implements Closeable {
     }
 
     protected int findAttachedPartitionIndex(long ts) {
-        ts = getPartitionLo(ts);
+        ts = getPartitionTimestampLo(ts);
+        return findAttachedPartitionIndexByLoTimestamp(ts);
+    }
+
+    int findAttachedPartitionIndexByLoTimestamp(long ts) {
         // Start from the end, usually it will be last partition searched / appended
         int hi = attachedPartitions.size() - LONGS_PER_TX_ATTACHED_PARTITION;
         if (hi > -1) {
@@ -215,7 +223,7 @@ public class TxReader implements Closeable {
         return attachedPartitions.binarySearchBlock(0, hi, blockHint, ts);
     }
 
-    protected long getPartitionLo(long timestamp) {
+    long getPartitionTimestampLo(long timestamp) {
         return timestampFloorMethod != null ? timestampFloorMethod.floor(timestamp) : Long.MIN_VALUE;
     }
 
@@ -269,16 +277,19 @@ public class TxReader implements Closeable {
         }
     }
 
-    protected int updateAttachedPartitionSizeByTimestamp(long maxTimestamp, long partitionSize) {
-        long partitionTimestamp = getPartitionLo(maxTimestamp);
-        int index = findAttachedPartitionIndex(partitionTimestamp);
+    protected int updateAttachedPartitionSizeByTimestamp(long timestamp, long partitionSize) {
+        // todo: asses the opportunity to not round timestamp down if possible
+        //    but instead perhaps maintain already rounded timestamp
+        long partitionTimestampLo = getPartitionTimestampLo(timestamp);
+//        assert partitionTimestampLo == timestamp;
+        int index = findAttachedPartitionIndexByLoTimestamp(partitionTimestampLo);
         if (index > -1) {
             // Update
             updatePartitionSizeByIndex(index, partitionSize);
             return index;
         }
 
-        return insertPartitionSizeByTimestamp(index, partitionTimestamp, partitionSize);
+        return insertPartitionSizeByTimestamp(index, partitionTimestampLo, partitionSize);
     }
 
     private void updatePartitionSizeByIndex(int index, long partitionSize) {

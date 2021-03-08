@@ -2220,17 +2220,6 @@ public class OutOfOrderTest extends AbstractGriffinTest {
 
         compiler.compile("insert into x select * from append", sqlExecutionContext);
 
-        // use this code to debug
-//        assertOutOfOrderDataConsistency(
-//                engine,
-//                compiler,
-//                sqlExecutionContext,
-//                "create table y as (x union all append)",
-//                "y order by ts",
-//                "insert into x select * from append",
-//                "x'"
-//        );
-
         assertSqlResultAgainstFile(
                 compiler,
                 sqlExecutionContext,
@@ -2377,17 +2366,6 @@ public class OutOfOrderTest extends AbstractGriffinTest {
 
         compiler.compile("insert into x select * from append", sqlExecutionContext);
 
-        // use this code to debug
-//        assertOutOfOrderDataConsistency(
-//                engine,
-//                compiler,
-//                sqlExecutionContext,
-//                "create table y as (x union all append)",
-//                "y order by ts",
-//                "insert into x select * from append",
-//                "x'"
-//        );
-//
         assertSqlResultAgainstFile(
                 compiler,
                 sqlExecutionContext,
@@ -2520,17 +2498,6 @@ public class OutOfOrderTest extends AbstractGriffinTest {
         );
 
         compiler.compile("insert into x select * from append", sqlExecutionContext);
-
-        // use this code to debug
-//        assertOutOfOrderDataConsistency(
-//                engine,
-//                compiler,
-//                sqlExecutionContext,
-//                "create table y as (x union all append)",
-//                "y order by ts",
-//                "insert into x select * from append",
-//                "x'"
-//        );
 
         assertSqlResultAgainstFile(
                 compiler,
@@ -2667,17 +2634,6 @@ public class OutOfOrderTest extends AbstractGriffinTest {
 
         compiler.compile("insert into x select * from append", sqlExecutionContext);
 
-        // use this code to debug
-//        assertOutOfOrderDataConsistency(
-//                engine,
-//                compiler,
-//                sqlExecutionContext,
-//                "create table y as (x union all append)",
-//                "y order by ts",
-//                "insert into x select * from append",
-//                "x'"
-//        );
-
         assertSqlResultAgainstFile(
                 compiler,
                 sqlExecutionContext,
@@ -2808,17 +2764,6 @@ public class OutOfOrderTest extends AbstractGriffinTest {
         );
 
         compiler.compile("insert into x select * from append", sqlExecutionContext);
-
-        // use this code to debug
-//        assertOutOfOrderDataConsistency(
-//                engine,
-//                compiler,
-//                sqlExecutionContext,
-//                "create table y as (x union all append)",
-//                "y order by ts",
-//                "insert into x select * from append",
-//                "x'"
-//        );
 
         assertSqlResultAgainstFile(
                 compiler,
@@ -2951,17 +2896,6 @@ public class OutOfOrderTest extends AbstractGriffinTest {
 
         compiler.compile("insert into x select * from append", sqlExecutionContext);
 
-        // use this code to debug
-//        assertOutOfOrderDataConsistency(
-//                engine,
-//                compiler,
-//                sqlExecutionContext,
-//                "create table y as (x union all append)",
-//                "y order by ts",
-//                "insert into x select * from append",
-//                "x'"
-//        );
-
         assertSqlResultAgainstFile(
                 compiler,
                 sqlExecutionContext,
@@ -3092,17 +3026,6 @@ public class OutOfOrderTest extends AbstractGriffinTest {
         );
 
         compiler.compile("insert into x select * from append", sqlExecutionContext);
-
-        // use this code to debug
-//        assertOutOfOrderDataConsistency(
-//                engine,
-//                compiler,
-//                sqlExecutionContext,
-//                "create table y as (x union all append)",
-//                "y order by ts",
-//                "insert into x select * from append",
-//                "x'"
-//        );
 
         assertSqlResultAgainstFile(
                 compiler,

@@ -30,6 +30,7 @@ public class OutOfOrderUpdPartitionSizeTask {
     private long srcOooPartitionHi;
     private long srcDataMax;
     private long dataTimestampHi;
+    private boolean partitionMutates;
 
     public long getDataTimestampHi() {
         return dataTimestampHi;
@@ -51,17 +52,23 @@ public class OutOfOrderUpdPartitionSizeTask {
         return srcOooPartitionLo;
     }
 
+    public boolean isPartitionMutates() {
+        return partitionMutates;
+    }
+
     public void of(
             long oooTimestampHi,
             long srcOooPartitionLo,
             long srcOooPartitionHi,
             long srcDataMax,
-            long dataTimestampHi
+            long dataTimestampHi,
+            boolean partitionMutates
     ) {
         this.oooTimestampHi = oooTimestampHi;
         this.srcOooPartitionLo = srcOooPartitionLo;
         this.srcOooPartitionHi = srcOooPartitionHi;
         this.srcDataMax = srcDataMax;
         this.dataTimestampHi = dataTimestampHi;
+        this.partitionMutates = partitionMutates;
     }
 }

@@ -2065,6 +2065,7 @@ public class TableWriter implements Closeable {
                 final long srcOooPartitionHi = task.getSrcOooPartitionHi();
                 final long srcDataMax = task.getSrcDataMax();
                 final long dataTimestampHi = task.getDataTimestampHi();
+                final boolean partitionMutates = task.isPartitionMutates();
 
                 this.oooUpdRemaining.decrementAndGet();
 
@@ -2079,6 +2080,7 @@ public class TableWriter implements Closeable {
                             srcOooPartitionHi,
                             tableFloorOfMaxTimestamp,
                             dataTimestampHi,
+                            partitionMutates,
                             srcOooMax,
                             srcDataMax
                     );
@@ -2649,6 +2651,7 @@ public class TableWriter implements Closeable {
             long srcOooPartitionHi,
             long tableFloorOfMaxTimestamp,
             long dataTimestampHi,
+            boolean partitionMutates,
             long srcOooMax,
             long srcDataMax
     ) {
@@ -2674,7 +2677,13 @@ public class TableWriter implements Closeable {
             // (it has been incremented before out-of-order logic kicked in) and
             // we use partition size from "txPendingPartitionSizes" to subtract from "txPartitionCount"
 
-            txFile.updatePartitionSizeByTimestamp(oooTimestampHi, partitionSize);
+            if (partitionMutates) {
+                long partitionTimestampLo = txFile.getPartitionTimestampLo(oooTimestampHi);
+                int index = txFile.findAttachedPartitionIndexByLoTimestamp(partitionTimestampLo);
+                txFile.updatePartitionSizeByIndexAndTxn(index, partitionSize);
+            } else {
+                txFile.updatePartitionSizeByTimestamp(oooTimestampHi, partitionSize);
+            }
         } else {
             // this is last partition
             this.txFile.transientRowCount = partitionSize;
@@ -2693,6 +2702,7 @@ public class TableWriter implements Closeable {
             long srcOooPartitionHi,
             long tableFloorOfMaxTimestamp,
             long dataTimestampHi,
+            boolean partitionMutates,
             long srcOooMax,
             long srcDataMax
     ) {
@@ -2706,6 +2716,7 @@ public class TableWriter implements Closeable {
                 srcOooPartitionHi,
                 tableFloorOfMaxTimestamp,
                 dataTimestampHi,
+                partitionMutates,
                 srcOooMax,
                 srcDataMax
         );

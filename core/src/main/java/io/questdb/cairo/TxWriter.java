@@ -221,7 +221,7 @@ public final class TxWriter extends TxReader implements Closeable {
     }
 
     public void removeAttachedPartitions(long timestamp) {
-        int index = findAttachedPartitionIndex(getPartitionLo(timestamp));
+        int index = findAttachedPartitionIndex(getPartitionTimestampLo(timestamp));
         if (index > -1) {
             int size = attachedPartitions.size();
             if (index + LONGS_PER_TX_ATTACHED_PARTITION < size) {
@@ -291,10 +291,8 @@ public final class TxWriter extends TxReader implements Closeable {
     public void switchPartitions() {
         fixedRowCount += transientRowCount;
         prevTransientRowCount = transientRowCount;
-
         updatePartitionSizeByTimestamp(maxTimestamp, transientRowCount);
         transientRowCount = 0;
-
         txPartitionCount++;
     }
 
@@ -333,5 +331,11 @@ public final class TxWriter extends TxReader implements Closeable {
             }
             attachedPositionDirtyIndex = size;
         }
+    }
+
+    void updatePartitionSizeByIndexAndTxn(int index, long partitionSize) {
+        attachedPartitions.set(index + PARTITION_SIZE_OFFSET, partitionSize);
+        attachedPartitions.set(index + PARTITION_TX_OFFSET, txn);
+        attachedPositionDirtyIndex = Math.min(attachedPositionDirtyIndex, index);
     }
 }
