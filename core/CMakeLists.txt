@@ -28,6 +28,7 @@ set(
 
 set(
         SOURCE_FILES
+        src/main/c/share/simd.h
         src/main/c/share/files.h
         src/main/c/share/zip.h
         src/main/c/share/net.h
@@ -68,6 +69,11 @@ elseif (UNIX)
         )
     else (CMAKE_SYSTEM_NAME MATCHES "FreeBSD")
         MESSAGE("Building for GNU/Linux")
+        MESSAGE("Enabling multiversion compilation")
+        add_compile_definitions(ENABLE_MULTIVERSION)
+#        add_compile_definitions(ENABLE_ASMLIB)
+#        add_compile_definitions(ENABLE_MANUAL_MEMCPY)
+
         include_directories($ENV{JAVA_HOME}/include/linux/)
         message(${CMAKE_SYSTEM_PROCESSOR})
         if (CMAKE_SYSTEM_PROCESSOR MATCHES "^aarch64")

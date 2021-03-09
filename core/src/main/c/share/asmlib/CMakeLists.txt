@@ -4,16 +4,9 @@ set(
         ASM_SOURCES
         ${ASMLIB_SOURCE_DIR}instrset64.asm
         ${ASMLIB_SOURCE_DIR}procname64.asm
-        #    ${ASMLIB_SOURCE_DIR}rdtsc64.asm
-        #    ${ASMLIB_SOURCE_DIR}round64.asm
-        #    ${ASMLIB_SOURCE_DIR}libad64.asm
-        #    ${ASMLIB_SOURCE_DIR}libad64.def
         ${ASMLIB_SOURCE_DIR}memcpy64.asm
         ${ASMLIB_SOURCE_DIR}memset64.asm
         ${ASMLIB_SOURCE_DIR}cputype64.asm
-        #    ${ASMLIB_SOURCE_DIR}mother64.asm
-        #    ${ASMLIB_SOURCE_DIR}mersenne64.asm
-        #    ${ASMLIB_SOURCE_DIR}debugbreak64.asm
         ${ASMLIB_SOURCE_DIR}unalignedisfaster64.asm
         ${ASMLIB_SOURCE_DIR}cachesize64.asm
         )
