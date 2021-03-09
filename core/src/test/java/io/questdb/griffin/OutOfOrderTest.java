@@ -2638,6 +2638,56 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                 "x",
                 "/oo/testColumnTopLastDataMerge2Data.txt"
         );
+
+        // 599820000000
+        compiler.compile(
+                "create table append2 as (" +
+                        "select" +
+                        " cast(x as int) i," +
+                        " rnd_symbol('msft','ibm', 'googl') sym," +
+                        " round(rnd_double(0)*100, 3) amt," +
+                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                        " rnd_boolean() b," +
+                        " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                        " rnd_double(2) d," +
+                        " rnd_float(2) e," +
+                        " rnd_short(10,1024) f," +
+                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                        " rnd_symbol(4,4,4,2) ik," +
+                        " rnd_long() j," +
+                        " timestamp_sequence(599820000001L,50000000L) ts," +
+                        " rnd_byte(2,50) l," +
+                        " rnd_bin(10, 20, 2) m," +
+                        " rnd_str(5,16,2) n," +
+                        " rnd_char() t," +
+//        --------     new columns here ---------------
+                        " rnd_double() v," +
+                        " rnd_float() v1," +
+                        " rnd_int() v2," +
+                        " rnd_byte() v3," +
+                        " rnd_short() v4," +
+                        " rnd_boolean() v5," +
+                        " rnd_date() v6," +
+                        " rnd_timestamp(10,100000,356) v7," +
+                        " rnd_symbol('AAA','BBB', null) v8," +
+                        " rnd_char() v10," +
+                        " rnd_str() v11," +
+                        " rnd_bin() v12," +
+                        " rnd_long() v9" +
+                        " from long_sequence(100)" +
+                        ") timestamp (ts) partition by DAY",
+                sqlExecutionContext
+        );
+
+        // straight append
+        compiler.compile("insert into x select * from append2", sqlExecutionContext);
+
+        assertSqlResultAgainstFile(
+                compiler,
+                sqlExecutionContext,
+                "x",
+                "/oo/testColumnTopLastDataMerge2DataStep2.txt"
+        );
     }
 
     private static void testColumnTopLastOOOPrefix0(
@@ -3170,6 +3220,44 @@ public class OutOfOrderTest extends AbstractGriffinTest {
         );
 
         assertIndexConsistency(compiler, sqlExecutionContext);
+
+        // x ends with timestamp 549900000000
+        // straight append
+        compiler.compile(
+                "create table append2 as (" +
+                        "select" +
+                        " cast(x as int) i," +
+                        " rnd_symbol('msft','ibm', 'googl') sym," +
+                        " round(rnd_double(0)*100, 3) amt," +
+                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                        " rnd_boolean() b," +
+                        " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                        " rnd_double(2) d," +
+                        " rnd_float(2) e," +
+                        " rnd_short(10,1024) f," +
+                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                        " rnd_symbol(4,4,4,2) ik," +
+                        " rnd_long() j," +
+                        " timestamp_sequence(549900000001L,100000L) ts," +
+                        " rnd_byte(2,50) l," +
+                        " rnd_bin(10, 20, 2) m," +
+                        " rnd_str(5,16,2) n," +
+                        " rnd_char() t" +
+                        " from long_sequence(100)" +
+                        ") timestamp (ts) partition by DAY",
+                sqlExecutionContext
+        );
+
+        // create third table, which will contain both X and 1AM
+        assertOutOfOrderDataConsistency(
+                engine,
+                compiler,
+                executionContext,
+                "create table y2 as (y union all append2)",
+                "y2 order by ts",
+                "insert into x select * from append2",
+                "x"
+        );
     }
 
     private static void testColumnTopMidAppendBlankColumn0(
