@@ -28,6 +28,12 @@
 #include "simd.h"
 #include "asmlib/asmlib.h"
 
+#ifdef __APPLE__
+#define __JLONG_REINTERPRET_CAST__(type, var)  (type)var
+#else
+#define __JLONG_REINTERPRET_CAST__(type, var)  reinterpret_cast<type>(var)
+#endif
+
 typedef struct {
     uint64_t c8[256];
     uint64_t c7[256];
@@ -600,14 +606,14 @@ Java_io_questdb_std_Vect_oooMergeCopyStrColumn(JNIEnv *env, jclass cl,
                                                jlong dst_var_offset) {
     merge_copy_var_column<int32_t>(
             reinterpret_cast<index_t *>(merge_index),
-            reinterpret_cast<int64_t>(merge_index_size),
+            __JLONG_REINTERPRET_CAST__(int64_t, merge_index_size),
             reinterpret_cast<int64_t *>(src_data_fix),
             reinterpret_cast<char *>(src_data_var),
             reinterpret_cast<int64_t *>(src_ooo_fix),
             reinterpret_cast<char *>(src_ooo_var),
             reinterpret_cast<int64_t *>(dst_fix),
             reinterpret_cast<char *>(dst_var),
-            reinterpret_cast<int64_t>(dst_var_offset),
+            __JLONG_REINTERPRET_CAST__(int64_t, dst_var_offset),
             2
     );
 }
@@ -627,7 +633,7 @@ Java_io_questdb_std_Vect_oooMergeCopyStrColumnWithTop(JNIEnv *env, jclass cl,
                                                       jlong dst_var_offset) {
     merge_copy_var_column_top<int32_t>(
             reinterpret_cast<index_t *>(merge_index),
-            reinterpret_cast<int64_t>(merge_index_size),
+            __JLONG_REINTERPRET_CAST__(int64_t, merge_index_size),
             reinterpret_cast<int64_t *>(src_data_fix),
             src_data_fix_offset,
             reinterpret_cast<char *>(src_data_var),
@@ -635,7 +641,7 @@ Java_io_questdb_std_Vect_oooMergeCopyStrColumnWithTop(JNIEnv *env, jclass cl,
             reinterpret_cast<char *>(src_ooo_var),
             reinterpret_cast<int64_t *>(dst_fix),
             reinterpret_cast<char *>(dst_var),
-            reinterpret_cast<int64_t>(dst_var_offset),
+            __JLONG_REINTERPRET_CAST__(int64_t, dst_var_offset),
             2);
 }
 
@@ -654,7 +660,7 @@ Java_io_questdb_std_Vect_oooMergeCopyBinColumnWithTop(JNIEnv *env, jclass cl,
                                                       jlong dst_var_offset) {
     merge_copy_var_column_top<int64_t>(
             reinterpret_cast<index_t *>(merge_index),
-            reinterpret_cast<int64_t>(merge_index_size),
+            __JLONG_REINTERPRET_CAST__(int64_t, merge_index_size),
             reinterpret_cast<int64_t *>(src_data_fix),
             src_data_fix_offset,
             reinterpret_cast<char *>(src_data_var),
@@ -662,7 +668,7 @@ Java_io_questdb_std_Vect_oooMergeCopyBinColumnWithTop(JNIEnv *env, jclass cl,
             reinterpret_cast<char *>(src_ooo_var),
             reinterpret_cast<int64_t *>(dst_fix),
             reinterpret_cast<char *>(dst_var),
-            reinterpret_cast<int64_t>(dst_var_offset),
+            __JLONG_REINTERPRET_CAST__(int64_t, dst_var_offset),
             1);
 }
 
@@ -680,14 +686,14 @@ Java_io_questdb_std_Vect_oooMergeCopyBinColumn(JNIEnv *env, jclass cl,
                                                jlong dst_var_offset) {
     merge_copy_var_column<int64_t>(
             reinterpret_cast<index_t *>(merge_index),
-            reinterpret_cast<int64_t>(merge_index_size),
+            __JLONG_REINTERPRET_CAST__(int64_t, merge_index_size),
             reinterpret_cast<int64_t *>(src_data_fix),
             reinterpret_cast<char *>(src_data_var),
             reinterpret_cast<int64_t *>(src_ooo_fix),
             reinterpret_cast<char *>(src_ooo_var),
             reinterpret_cast<int64_t *>(dst_fix),
             reinterpret_cast<char *>(dst_var),
-            reinterpret_cast<int64_t>(dst_var_offset),
+            __JLONG_REINTERPRET_CAST__(int64_t,dst_var_offset),
             1
     );
 }
@@ -872,7 +878,7 @@ Java_io_questdb_std_Vect_setMemoryLong(JNIEnv *env, jclass cl, jlong pData, jlon
                                        jlong count) {
     set_memory_vanilla<int64_t>(
             reinterpret_cast<int64_t *>(pData),
-            reinterpret_cast<int64_t>(value),
+            __JLONG_REINTERPRET_CAST__(int64_t,value),
             (int64_t) (count)
     );
 }
@@ -927,8 +933,8 @@ Java_io_questdb_std_Vect_setVarColumnRefs32Bit(JNIEnv *env, jclass cl, jlong pDa
                                                jlong count) {
     set_var_refs<int32_t>(
             reinterpret_cast<int64_t *>(pData),
-            reinterpret_cast<int64_t>(offset),
-            reinterpret_cast<int64_t>(count)
+            __JLONG_REINTERPRET_CAST__(int64_t,offset),
+            __JLONG_REINTERPRET_CAST__(int64_t,count)
     );
 }
 
@@ -938,8 +944,8 @@ Java_io_questdb_std_Vect_setVarColumnRefs64Bit(JNIEnv *env, jclass cl, jlong pDa
                                                jlong count) {
     set_var_refs<int64_t>(
             reinterpret_cast<int64_t *>(pData),
-            reinterpret_cast<int64_t>(offset),
-            reinterpret_cast<int64_t>(count)
+            __JLONG_REINTERPRET_CAST__(int64_t,offset),
+            __JLONG_REINTERPRET_CAST__(int64_t,count)
     );
 }
 
@@ -949,7 +955,7 @@ Java_io_questdb_std_Vect_oooCopyIndex(JNIEnv *env, jclass cl, jlong pIndex, jlon
                                       jlong pDest) {
     copy_index(
             reinterpret_cast<index_t *>(pIndex),
-            reinterpret_cast<int64_t>(index_size),
+            __JLONG_REINTERPRET_CAST__(int64_t,index_size),
             reinterpret_cast<int64_t *>(pDest)
     );
 }
@@ -1022,14 +1028,14 @@ Java_io_questdb_std_Vect_oooMergeCopyStrColumn##_SUFFIX(JNIEnv *env, jclass cl, 
                                                  jlong dst_var_offset) {\
         merge_copy_var_column##_SUFFIX<int32_t>(\
                 reinterpret_cast<index_t *>(merge_index),\
-                reinterpret_cast<int64_t>(merge_index_size),\
+                __JLONG_REINTERPRET_CAST__(int64_t,merge_index_size),\
                 reinterpret_cast<int64_t *>(src_data_fix),\
                 reinterpret_cast<char *>(src_data_var),\
                 reinterpret_cast<int64_t *>(src_ooo_fix),\
                 reinterpret_cast<char *>(src_ooo_var),\
                 reinterpret_cast<int64_t *>(dst_fix),\
                 reinterpret_cast<char *>(dst_var),\
-                reinterpret_cast<int64_t>(dst_var_offset),\
+                __JLONG_REINTERPRET_CAST__(int64_t,dst_var_offset),\
                 2\
         );\
     }                                           \
@@ -1083,14 +1089,14 @@ Java_io_questdb_std_Vect_oooMergeCopyStrColumn##_SUFFIX(JNIEnv *env, jclass cl, 
                                                  jlong dst_var_offset) {\
         merge_copy_var_column##_SUFFIX<int32_t>(\
                 reinterpret_cast<index_t *>(merge_index),\
-                reinterpret_cast<int64_t>(merge_index_size),\
+                __JLONG_REINTERPRET_CAST__(int64_t,merge_index_size),\
                 reinterpret_cast<int64_t *>(src_data_fix),\
                 reinterpret_cast<char *>(src_data_var),\
                 reinterpret_cast<int64_t *>(src_ooo_fix),\
                 reinterpret_cast<char *>(src_ooo_var),\
                 reinterpret_cast<int64_t *>(dst_fix),\
                 reinterpret_cast<char *>(dst_var),\
-                reinterpret_cast<int64_t>(dst_var_offset),\
+                __JLONG_REINTERPRET_CAST__(int64_t,dst_var_offset),\
                 2\
         );\
     }                                                      \
