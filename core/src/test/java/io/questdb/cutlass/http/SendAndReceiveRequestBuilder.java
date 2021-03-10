@@ -24,6 +24,15 @@
 
 package io.questdb.cutlass.http;
 
+import java.io.BufferedOutputStream;
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.util.concurrent.BrokenBarrierException;
+
+import org.junit.Assert;
+
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.NetworkFacade;
@@ -33,14 +42,6 @@ import io.questdb.std.IntList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.ByteSequence;
 import io.questdb.test.tools.TestUtils;
-import org.junit.Assert;
-
-import java.io.BufferedOutputStream;
-import java.io.File;
-import java.io.FileOutputStream;
-import java.io.IOException;
-import java.nio.charset.StandardCharsets;
-import java.util.concurrent.BrokenBarrierException;
 
 public class SendAndReceiveRequestBuilder {
     public final static String RequestHeaders = "Host: localhost:9000\r\n" +
@@ -98,6 +99,28 @@ public class SendAndReceiveRequestBuilder {
         } finally {
             nf.close(fd);
         }
+    }
+
+    public long connectAndSendRequest(String request) throws InterruptedException {
+        final long fd = nf.socketTcp(true);
+        nf.configureNoLinger(fd);
+        long sockAddr = nf.sockaddr("127.0.0.1", 9001);
+        try {
+            Assert.assertTrue(fd > -1);
+            long ret = nf.connect(fd, sockAddr);
+            if (ret != 0) {
+                Assert.fail("could not connect: " + nf.errno());
+            }
+            Assert.assertEquals(0, nf.setTcpNoDelay(fd, true));
+            if (!expectDisconnect) {
+                NetworkFacadeImpl.INSTANCE.configureNonBlocking(fd);
+            }
+
+            executeWithSocket(request, "", fd);
+        } finally {
+            nf.freeSockAddr(sockAddr);
+        }
+        return fd;
     }
 
     private void executeWithSocket(String request, CharSequence response, long fd) throws InterruptedException {
