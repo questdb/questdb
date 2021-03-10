@@ -27,11 +27,14 @@ package io.questdb.griffin;
 import io.questdb.WorkerPoolAwareConfiguration;
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
+import io.questdb.cairo.sql.BindVariableService;
+import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.Chars;
+import io.questdb.std.Misc;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.DirectCharSink;
@@ -39,18 +42,20 @@ import io.questdb.std.str.MutableCharSink;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
-import org.junit.Assert;
-import org.junit.Before;
-import org.junit.Test;
+import org.junit.*;
 
 import java.io.File;
 import java.net.URISyntaxException;
 import java.net.URL;
 
-public class OutOfOrderTest extends AbstractGriffinTest {
+public class OutOfOrderTest extends AbstractCairoTest {
 
     protected static final StringSink sink2 = new StringSink();
     private final static Log LOG = LogFactory.getLog(OutOfOrderTest.class);
+
+    private CairoEngine engine;
+    private SqlCompiler compiler;
+    private SqlExecutionContext sqlExecutionContext;
 
     @Before
     public void setUp3() {
@@ -62,6 +67,7 @@ public class OutOfOrderTest extends AbstractGriffinTest {
         };
 
         engine = new CairoEngine(configuration);
+        BindVariableService bindVariableService  = new BindVariableServiceImpl(configuration);
         compiler = new SqlCompiler(engine);
         sqlExecutionContext = new SqlExecutionContextImpl(
                 engine, 1)
@@ -79,6 +85,27 @@ public class OutOfOrderTest extends AbstractGriffinTest {
         Path.PATH.get();
         Path.PATH2.get();
     }
+
+    @After
+    public void tearDown3() {
+        Misc.free(compiler);
+        Misc.free(engine);
+    }
+
+    protected void assertMemoryLeak(TestUtils.LeakProneCode code) throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try {
+                code.run();
+                engine.releaseInactive();
+                Assert.assertEquals(0, engine.getBusyWriterCount());
+                Assert.assertEquals(0, engine.getBusyReaderCount());
+            } finally {
+                engine.releaseAllReaders();
+                engine.releaseAllWriters();
+            }
+        });
+    }
+
 
     @Test
     public void testBench() throws Exception {
@@ -734,7 +761,7 @@ public class OutOfOrderTest extends AbstractGriffinTest {
         );
     }
 
-    private static void executeVanilla(TestUtils.LeakProneCode code) throws Exception {
+    private void executeVanilla(TestUtils.LeakProneCode code) throws Exception {
         OutOfOrderUtils.initBuf();
         try {
             assertMemoryLeak(code);
@@ -3180,7 +3207,7 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                         " rnd_char() t" +
                         " from long_sequence(500)" +
                         "), index(sym) timestamp (ts) partition by DAY",
-                sqlExecutionContext
+                executionContext
         );
 
         compiler.compile(
@@ -3205,7 +3232,7 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                         " rnd_char() t" +
                         " from long_sequence(100)" +
                         ") timestamp (ts) partition by DAY",
-                sqlExecutionContext
+                executionContext
         );
 
         // create third table, which will contain both X and 1AM
@@ -3219,7 +3246,7 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                 "x"
         );
 
-        assertIndexConsistency(compiler, sqlExecutionContext);
+        assertIndexConsistency(compiler, executionContext);
 
         // x ends with timestamp 549900000000
         // straight append
@@ -3245,7 +3272,7 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                         " rnd_char() t" +
                         " from long_sequence(100)" +
                         ") timestamp (ts) partition by DAY",
-                sqlExecutionContext
+                executionContext
         );
 
         // create third table, which will contain both X and 1AM
@@ -3288,22 +3315,22 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                         " rnd_char() t" +
                         " from long_sequence(500)" +
                         "), index(sym) timestamp (ts) partition by DAY",
-                sqlExecutionContext
+                executionContext
         );
 
-        compiler.compile("alter table x add column v double", sqlExecutionContext);
-        compiler.compile("alter table x add column v1 float", sqlExecutionContext);
-        compiler.compile("alter table x add column v2 int", sqlExecutionContext);
-        compiler.compile("alter table x add column v3 byte", sqlExecutionContext);
-        compiler.compile("alter table x add column v4 short", sqlExecutionContext);
-        compiler.compile("alter table x add column v5 boolean", sqlExecutionContext);
-        compiler.compile("alter table x add column v6 date", sqlExecutionContext);
-        compiler.compile("alter table x add column v7 timestamp", sqlExecutionContext);
-        compiler.compile("alter table x add column v8 symbol", sqlExecutionContext);
-        compiler.compile("alter table x add column v10 char", sqlExecutionContext);
-        compiler.compile("alter table x add column v11 string", sqlExecutionContext);
-        compiler.compile("alter table x add column v12 binary", sqlExecutionContext);
-        compiler.compile("alter table x add column v9 long", sqlExecutionContext);
+        compiler.compile("alter table x add column v double", executionContext);
+        compiler.compile("alter table x add column v1 float", executionContext);
+        compiler.compile("alter table x add column v2 int", executionContext);
+        compiler.compile("alter table x add column v3 byte", executionContext);
+        compiler.compile("alter table x add column v4 short", executionContext);
+        compiler.compile("alter table x add column v5 boolean", executionContext);
+        compiler.compile("alter table x add column v6 date", executionContext);
+        compiler.compile("alter table x add column v7 timestamp", executionContext);
+        compiler.compile("alter table x add column v8 symbol", executionContext);
+        compiler.compile("alter table x add column v10 char", executionContext);
+        compiler.compile("alter table x add column v11 string", executionContext);
+        compiler.compile("alter table x add column v12 binary", executionContext);
+        compiler.compile("alter table x add column v9 long", executionContext);
 
         compiler.compile(
                 "create table append as (" +
@@ -3341,7 +3368,7 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                         " rnd_long() v9" +
                         " from long_sequence(100)" +
                         ") timestamp (ts) partition by DAY",
-                sqlExecutionContext
+                executionContext
         );
 
         // create third table, which will contain both X and 1AM
@@ -3355,7 +3382,7 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                 "x"
         );
 
-        assertIndexConsistency(compiler, sqlExecutionContext);
+        assertIndexConsistency(compiler, executionContext);
     }
 
     private static void testColumnTopLastAppendBlankColumn0(
@@ -3386,22 +3413,22 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                         " rnd_char() t" +
                         " from long_sequence(500)" +
                         "), index(sym) timestamp (ts) partition by DAY",
-                sqlExecutionContext
+                executionContext
         );
 
-        compiler.compile("alter table x add column v double", sqlExecutionContext);
-        compiler.compile("alter table x add column v1 float", sqlExecutionContext);
-        compiler.compile("alter table x add column v2 int", sqlExecutionContext);
-        compiler.compile("alter table x add column v3 byte", sqlExecutionContext);
-        compiler.compile("alter table x add column v4 short", sqlExecutionContext);
-        compiler.compile("alter table x add column v5 boolean", sqlExecutionContext);
-        compiler.compile("alter table x add column v6 date", sqlExecutionContext);
-        compiler.compile("alter table x add column v7 timestamp", sqlExecutionContext);
-        compiler.compile("alter table x add column v8 symbol", sqlExecutionContext);
-        compiler.compile("alter table x add column v10 char", sqlExecutionContext);
-        compiler.compile("alter table x add column v11 string", sqlExecutionContext);
-        compiler.compile("alter table x add column v12 binary", sqlExecutionContext);
-        compiler.compile("alter table x add column v9 long", sqlExecutionContext);
+        compiler.compile("alter table x add column v double", executionContext);
+        compiler.compile("alter table x add column v1 float", executionContext);
+        compiler.compile("alter table x add column v2 int", executionContext);
+        compiler.compile("alter table x add column v3 byte", executionContext);
+        compiler.compile("alter table x add column v4 short", executionContext);
+        compiler.compile("alter table x add column v5 boolean", executionContext);
+        compiler.compile("alter table x add column v6 date", executionContext);
+        compiler.compile("alter table x add column v7 timestamp", executionContext);
+        compiler.compile("alter table x add column v8 symbol", executionContext);
+        compiler.compile("alter table x add column v10 char", executionContext);
+        compiler.compile("alter table x add column v11 string", executionContext);
+        compiler.compile("alter table x add column v12 binary", executionContext);
+        compiler.compile("alter table x add column v9 long", executionContext);
 
         compiler.compile(
                 "create table append as (" +
@@ -3439,7 +3466,7 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                         " rnd_long() v9" +
                         " from long_sequence(100)" +
                         ") timestamp (ts) partition by DAY",
-                sqlExecutionContext
+                executionContext
         );
 
         // create third table, which will contain both X and 1AM
@@ -3453,7 +3480,7 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                 "x"
         );
 
-        assertIndexConsistency(compiler, sqlExecutionContext);
+        assertIndexConsistency(compiler, executionContext);
     }
 
     private static void testColumnTopMidMergeBlankColumn0(
@@ -3483,22 +3510,22 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                         " rnd_char() t" +
                         " from long_sequence(500)" +
                         "), index(sym) timestamp (ts) partition by DAY",
-                sqlExecutionContext
+                executionContext
         );
 
-        compiler.compile("alter table x add column v double", sqlExecutionContext);
-        compiler.compile("alter table x add column v1 float", sqlExecutionContext);
-        compiler.compile("alter table x add column v2 int", sqlExecutionContext);
-        compiler.compile("alter table x add column v3 byte", sqlExecutionContext);
-        compiler.compile("alter table x add column v4 short", sqlExecutionContext);
-        compiler.compile("alter table x add column v5 boolean", sqlExecutionContext);
-        compiler.compile("alter table x add column v6 date", sqlExecutionContext);
-        compiler.compile("alter table x add column v7 timestamp", sqlExecutionContext);
-        compiler.compile("alter table x add column v8 symbol index", sqlExecutionContext);
-        compiler.compile("alter table x add column v10 char", sqlExecutionContext);
-        compiler.compile("alter table x add column v11 string", sqlExecutionContext);
-        compiler.compile("alter table x add column v12 binary", sqlExecutionContext);
-        compiler.compile("alter table x add column v9 long", sqlExecutionContext);
+        compiler.compile("alter table x add column v double", executionContext);
+        compiler.compile("alter table x add column v1 float", executionContext);
+        compiler.compile("alter table x add column v2 int", executionContext);
+        compiler.compile("alter table x add column v3 byte", executionContext);
+        compiler.compile("alter table x add column v4 short", executionContext);
+        compiler.compile("alter table x add column v5 boolean", executionContext);
+        compiler.compile("alter table x add column v6 date", executionContext);
+        compiler.compile("alter table x add column v7 timestamp", executionContext);
+        compiler.compile("alter table x add column v8 symbol index", executionContext);
+        compiler.compile("alter table x add column v10 char", executionContext);
+        compiler.compile("alter table x add column v11 string", executionContext);
+        compiler.compile("alter table x add column v12 binary", executionContext);
+        compiler.compile("alter table x add column v9 long", executionContext);
 
         compiler.compile(
                 "create table append as (" +
@@ -3536,7 +3563,7 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                         " rnd_long() v9" +
                         " from long_sequence(100)" +
                         ") timestamp (ts) partition by DAY",
-                sqlExecutionContext
+                executionContext
         );
 
         // create third table, which will contain both X and 1AM
@@ -3550,13 +3577,13 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                 "x"
         );
 
-        assertIndexConsistency(compiler, sqlExecutionContext);
+        assertIndexConsistency(compiler, executionContext);
     }
 
     private static void testColumnTopNewPartitionMiddleOfTable0(
             CairoEngine engine,
             SqlCompiler compiler,
-            SqlExecutionContext executionContext
+            SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
         // 1970-01-06
         compiler.compile(
@@ -3667,7 +3694,7 @@ public class OutOfOrderTest extends AbstractGriffinTest {
         assertOutOfOrderDataConsistency(
                 engine,
                 compiler,
-                executionContext,
+                sqlExecutionContext,
                 "create table y as (x union all append)",
                 "y order by ts",
                 "insert into x select * from append",
@@ -3680,7 +3707,7 @@ public class OutOfOrderTest extends AbstractGriffinTest {
     private static void testColumnTopMidAppendColumn0(
             CairoEngine engine,
             SqlCompiler compiler,
-            SqlExecutionContext executionContext
+            SqlExecutionContext sqlExecutionContext
     ) throws SqlException, URISyntaxException {
         compiler.compile(
                 "create table x as (" +
@@ -3814,7 +3841,7 @@ public class OutOfOrderTest extends AbstractGriffinTest {
     private static void testColumnTopLastAppendColumn0(
             CairoEngine engine,
             SqlCompiler compiler,
-            SqlExecutionContext executionContext
+            SqlExecutionContext sqlExecutionContext
     ) throws SqlException, URISyntaxException {
         compiler.compile(
                 "create table x as (" +
