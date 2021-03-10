@@ -225,7 +225,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private long multipartIdleSpinCount;
     private int recvBufferSize;
     private int requestHeaderBufferSize;
-    private int responseHeaderBufferSize;
     private int httpWorkerCount;
     private boolean httpWorkerHaltOnError;
     private long httpWorkerYieldThreshold;
@@ -402,7 +401,6 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.multipartIdleSpinCount = getLong(properties, env, "http.multipart.idle.spin.count", 10_000);
             this.recvBufferSize = getIntSize(properties, env, "http.receive.buffer.size", 1024 * 1024);
             this.requestHeaderBufferSize = getIntSize(properties, env, "http.request.header.buffer.size", 32 * 2014);
-            this.responseHeaderBufferSize = getIntSize(properties, env, "http.response.header.buffer.size", 32 * 1024);
             this.httpWorkerCount = getInt(properties, env, "http.worker.count", 0);
             this.httpWorkerAffinity = getAffinity(properties, env, "http.worker.affinity", httpWorkerCount);
             this.httpWorkerHaltOnError = getBoolean(properties, env, "http.worker.haltOnError", false);
@@ -1269,11 +1267,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getRequestHeaderBufferSize() {
             return requestHeaderBufferSize;
-        }
-
-        @Override
-        public int getResponseHeaderBufferSize() {
-            return responseHeaderBufferSize;
         }
 
         @Override
