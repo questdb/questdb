@@ -50,10 +50,6 @@ public interface MapValue extends Record {
 
     long getTimestamp(int index);
 
-    CharSequence getStr(int index);
-
-    CharSequence getStrB(int index);
-
     boolean isNew();
 
     void putBool(int index, boolean value);
@@ -87,14 +83,6 @@ public interface MapValue extends Record {
     void putChar(int index, char value);
 
     void putTimestamp(int index, long value);
-
-    void putStr(int index, CharSequence value);
-
-    void putNullStr(int index);
-
-    void appendChar(int index, char value);
-
-    void appendStr(int index, CharSequence value);
 
     void setMapRecordHere();
 }

@@ -1318,7 +1318,7 @@ public class SqlCodeGenerator implements Mutable {
                                 groupByFunctions,
                                 recordFunctions,
                                 timestampIndex,
-                                valueTypes
+                                valueTypes.getColumnCount()
                         );
                     }
 
@@ -1347,7 +1347,7 @@ public class SqlCodeGenerator implements Mutable {
                                 groupByMetadata,
                                 groupByFunctions,
                                 recordFunctions,
-                                valueTypes,
+                                valueTypes.getColumnCount(),
                                 timestampIndex
                         );
                     }
@@ -1375,7 +1375,7 @@ public class SqlCodeGenerator implements Mutable {
                                 groupByMetadata,
                                 groupByFunctions,
                                 recordFunctions,
-                                valueTypes,
+                                valueTypes.getColumnCount(),
                                 timestampIndex
                         );
                     }
@@ -1405,7 +1405,7 @@ public class SqlCodeGenerator implements Mutable {
                             groupByMetadata,
                             groupByFunctions,
                             recordFunctions,
-                            valueTypes,
+                            valueTypes.getColumnCount(),
                             timestampIndex
                     );
                 }
@@ -2009,7 +2009,7 @@ public class SqlCodeGenerator implements Mutable {
                         groupByMetadata,
                         groupByFunctions,
                         recordFunctions,
-                        valueTypes
+                        valueTypes.getColumnCount()
                 );
             }
 

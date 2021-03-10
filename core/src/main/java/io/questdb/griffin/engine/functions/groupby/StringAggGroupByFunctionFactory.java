@@ -35,6 +35,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.DirectCharSink;
 
 public class StringAggGroupByFunctionFactory implements FunctionFactory {
 
@@ -54,10 +55,11 @@ public class StringAggGroupByFunctionFactory implements FunctionFactory {
     }
 
     private static class StringAggGroupByFunction extends StrFunction implements GroupByFunction {
+        private static final int INITIAL_SINK_CAPACITY = 8 * 1024;
         private final Function arg;
         private final char delimiter;
-        private int valueIndex;
-        private boolean empty;
+        private final DirectCharSink sink = new DirectCharSink(INITIAL_SINK_CAPACITY);
+        private boolean nullValue = true;
 
         public StringAggGroupByFunction(int position, Function arg, char delimiter) {
             super(position);
@@ -67,13 +69,10 @@ public class StringAggGroupByFunctionFactory implements FunctionFactory {
 
         @Override
         public void computeFirst(MapValue mapValue, Record record) {
+            setNull();
             CharSequence str = arg.getStr(record);
             if (str != null) {
-                mapValue.putStr(valueIndex, str);
-                empty = false;
-            } else {
-                mapValue.putNullStr(valueIndex);
-                empty = true;
+                append(str);
             }
         }
 
@@ -81,40 +80,58 @@ public class StringAggGroupByFunctionFactory implements FunctionFactory {
         public void computeNext(MapValue mapValue, Record record) {
             CharSequence str = arg.getStr(record);
             if (str != null) {
-                if (!empty) {
-                    mapValue.appendChar(valueIndex, delimiter);
-                } else {
-                    empty = false;
+                if (!nullValue) {
+                    appendDelimiter();
                 }
-                mapValue.appendStr(valueIndex, arg.getStr(record));
+                append(str);
             }
         }
 
         @Override
         public void pushValueTypes(ArrayColumnTypes columnTypes) {
-            this.valueIndex = columnTypes.getColumnCount();
             columnTypes.add(ColumnType.STRING);
         }
 
         @Override
         public void setNull(MapValue mapValue) {
-            mapValue.putNullStr(valueIndex);
-            empty = true;
+            setNull();
+        }
+
+        @Override
+        public void close() {
+            sink.close();
         }
 
         @Override
         public CharSequence getStr(Record rec) {
-            return rec.getStr(valueIndex);
+            if (nullValue) {
+                return null;
+            }
+            return sink;
         }
 
         @Override
         public CharSequence getStrB(Record rec) {
-            return rec.getStrB(valueIndex);
+            return getStr(rec);
         }
 
         @Override
         public boolean isConstant() {
             return false;
+        }
+
+        private void setNull() {
+            sink.clear();
+            nullValue = true;
+        }
+
+        private void appendDelimiter() {
+            sink.put(delimiter);
+        }
+
+        private void append(CharSequence str) {
+            sink.put(str);
+            nullValue = false;
         }
     }
 }

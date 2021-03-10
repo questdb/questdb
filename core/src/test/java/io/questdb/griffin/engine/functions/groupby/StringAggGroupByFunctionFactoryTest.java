@@ -71,7 +71,7 @@ public class StringAggGroupByFunctionFactoryTest extends AbstractGriffinTest {
                 "create table x as (select * from (select rnd_str('abc', 'aaa', 'bbb', 'ccc') s, timestamp_sequence(0, 100000) ts from long_sequence(5)) timestamp(ts))",
                 null,
                 false,
-                true,
+                false,
                 true
         );
     }
@@ -85,7 +85,7 @@ public class StringAggGroupByFunctionFactoryTest extends AbstractGriffinTest {
                 "create table x as (select * from (select timestamp_sequence(0, 100000) ts from long_sequence(5)) timestamp(ts))",
                 null,
                 false,
-                true,
+                false,
                 true
         );
     }
@@ -116,7 +116,7 @@ public class StringAggGroupByFunctionFactoryTest extends AbstractGriffinTest {
                 "string_agg\n" +
                         "abc\n",
                 false,
-                true,
+                false,
                 true
         );
     }
