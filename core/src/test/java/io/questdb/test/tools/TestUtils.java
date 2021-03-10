@@ -230,6 +230,8 @@ public final class TestUtils {
 
                         offset += reada;
                     }
+
+                    Assert.assertEquals(strp - str, actual.length());
                 } finally {
                     Unsafe.free(bufa, 4096);
                     Unsafe.free(str, actual.length());
