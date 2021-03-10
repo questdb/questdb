@@ -25,6 +25,10 @@
 package io.questdb.std;
 
 public final class Zip {
+    // return codes from zlib version 1.2.8
+    public static final int Z_OK = 0;
+    public static final int Z_STREAM_END = 1;
+    public static final int Z_BUF_ERROR = -5;
     public static final long gzipHeader;
     public static final int gzipHeaderLen = 10;
     private final static int GZIP_MAGIC = 0x8b1f;
@@ -36,6 +40,10 @@ public final class Zip {
         Unsafe.getUnsafe().putByte(p++, (byte) GZIP_MAGIC);
         Unsafe.getUnsafe().putByte(p++, (byte) (GZIP_MAGIC >> 8));
         Unsafe.getUnsafe().putByte(p, (byte) 8); // compression method
+    }
+
+    public static void init() {
+        // Method used for testing to force invocation of static class methods and hence memory initialisation
     }
 
     private Zip() {
