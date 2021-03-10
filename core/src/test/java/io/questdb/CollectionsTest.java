@@ -150,9 +150,7 @@ public class CollectionsTest {
         list.add(0);
         list.add(0);
         list.add(0);
-
-        int index = list.binarySearchBlock(0, list.size(), 2, 20);
-        System.out.println(index);
+        Assert.assertEquals(-5, list.binarySearchBlock(0, list.size(), 2, 20));
     }
 
     @Test

@@ -41,7 +41,8 @@ import static io.questdb.cairo.TableUtils.*;
 public class TxReader implements Closeable {
     protected static final int PARTITION_TS_OFFSET = 0;
     protected static final int PARTITION_SIZE_OFFSET = 1;
-    protected static final int PARTITION_TX_OFFSET = 2;
+    protected static final int PARTITION_NAME_TX_OFFSET = 2;
+    protected static final int PARTITION_DATA_TX_OFFSET = 3;
 
     protected final FilesFacade ff;
     protected final int rootLen;
@@ -94,27 +95,19 @@ public class TxReader implements Closeable {
     }
 
     public long getPartitionSize(int i) {
-        return attachedPartitions.getQuick(i * LONGS_PER_TX_ATTACHED_PARTITION + PARTITION_SIZE_OFFSET);
+        return getPartitionSizeByIndex(i * LONGS_PER_TX_ATTACHED_PARTITION);
+    }
+
+    public long getPartitionSizeByIndex(int index) {
+        return attachedPartitions.getQuick(index + PARTITION_SIZE_OFFSET);
     }
 
     public long getPartitionSizeByPartitionTimestamp(long ts) {
-        final int index = findAttachedPartitionIndex(getPartitionTimestampLo(ts));
+        final int index = findAttachedPartitionIndex(ts);
         if (index > -1) {
             return attachedPartitions.getQuick(index + PARTITION_SIZE_OFFSET);
         }
         return -1;
-    }
-
-    public long getPartitionTxnByPartitionTimestamp(long ts) {
-        final int index = findAttachedPartitionIndex(getPartitionTimestampLo(ts));
-        if (index > -1) {
-            return attachedPartitions.getQuick(index + PARTITION_TX_OFFSET);
-        }
-        return -1;
-    }
-
-    public long getPartitionTxn(int i) {
-        return attachedPartitions.getQuick(i * LONGS_PER_TX_ATTACHED_PARTITION + PARTITION_TX_OFFSET);
     }
 
     public long getPartitionTableVersion() {
@@ -123,6 +116,30 @@ public class TxReader implements Closeable {
 
     public long getPartitionTimestamp(int i) {
         return attachedPartitions.getQuick(i * LONGS_PER_TX_ATTACHED_PARTITION + PARTITION_TS_OFFSET);
+    }
+
+    public long getPartitionNameTxn(int i) {
+        return getPartitionNameTxnByIndex(i * LONGS_PER_TX_ATTACHED_PARTITION);
+    }
+
+    public long getPartitionDataTxn(int i) {
+        return getPartitionDataTxnByIndex(i * LONGS_PER_TX_ATTACHED_PARTITION);
+    }
+
+    public long getPartitionNameTxnByIndex(int index) {
+        return attachedPartitions.getQuick(index + PARTITION_NAME_TX_OFFSET);
+    }
+
+    public long getPartitionDataTxnByIndex(int index) {
+        return attachedPartitions.getQuick(index + PARTITION_DATA_TX_OFFSET);
+    }
+
+    public long getPartitionNameTxnByPartitionTimestamp(long ts) {
+        final int index = findAttachedPartitionIndex(ts);
+        if (index > -1) {
+            return attachedPartitions.getQuick(index + PARTITION_NAME_TX_OFFSET);
+        }
+        return -1;
     }
 
     public int getPartitionsCount() {
@@ -208,8 +225,7 @@ public class TxReader implements Closeable {
     }
 
     protected int findAttachedPartitionIndex(long ts) {
-        ts = getPartitionTimestampLo(ts);
-        return findAttachedPartitionIndexByLoTimestamp(ts);
+        return findAttachedPartitionIndexByLoTimestamp(getPartitionTimestampLo(ts));
     }
 
     int findAttachedPartitionIndexByLoTimestamp(long ts) {
@@ -224,10 +240,7 @@ public class TxReader implements Closeable {
                 return hi;
             }
         }
-        int blockHint = 2;
-        //noinspection ConstantConditions
-        assert (1 << blockHint) == LONGS_PER_TX_ATTACHED_PARTITION;
-        return attachedPartitions.binarySearchBlock(0, hi, blockHint, ts);
+        return attachedPartitions.binarySearchBlock(0, attachedPartitions.size(), LONGS_PER_TX_ATTACHED_PARTITION_MSB, ts);
     }
 
     long getPartitionTimestampLo(long timestamp) {
@@ -238,12 +251,12 @@ public class TxReader implements Closeable {
         attachedPartitions.clear();
         roTxMem.grow(getPartitionTableIndexOffset(symbolsCount, 0));
         if (partitionBy != PartitionBy.NONE) {
-            int partitionTableSize = roTxMem.getInt(getPartitionTableSizeOffset(symbolsCount)) / Long.BYTES;
+            int lastPartitionIndex = roTxMem.getInt(getPartitionTableSizeOffset(symbolsCount)) / Long.BYTES;
             boolean transientRowsSet = false;
             long lastPartition = getPartitionTimestampLo(maxTimestamp);
-            if (partitionTableSize > 0) {
-                roTxMem.grow(getPartitionTableIndexOffset(symbolsCount, partitionTableSize));
-                for (int i = 0; i < partitionTableSize; i++) {
+            if (lastPartitionIndex > 0) {
+                roTxMem.grow(getPartitionTableIndexOffset(symbolsCount, lastPartitionIndex));
+                for (int i = 0; i < lastPartitionIndex; i++) {
                     long fileValue = roTxMem.getLong(getPartitionTableIndexOffset(symbolsCount, i));
                     attachedPartitions.add(fileValue);
                     if (i % LONGS_PER_TX_ATTACHED_PARTITION == 0 && fileValue == lastPartition) {
@@ -259,17 +272,19 @@ public class TxReader implements Closeable {
             }
 
             if (maxTimestamp > Long.MIN_VALUE && !transientRowsSet) {
-                attachedPartitions.extendAndSet(partitionTableSize + LONGS_PER_TX_ATTACHED_PARTITION - 1, 0);
-                attachedPartitions.setQuick(partitionTableSize + PARTITION_TS_OFFSET, lastPartition);
-                attachedPartitions.setQuick(partitionTableSize + PARTITION_SIZE_OFFSET, transientRowCount);
-                attachedPartitions.setQuick(partitionTableSize + PARTITION_TX_OFFSET, -1L);
+                attachedPartitions.extendAndSet(lastPartitionIndex + LONGS_PER_TX_ATTACHED_PARTITION - 1, 0);
+                attachedPartitions.setQuick(lastPartitionIndex + PARTITION_TS_OFFSET, lastPartition);
+                attachedPartitions.setQuick(lastPartitionIndex + PARTITION_SIZE_OFFSET, transientRowCount);
+                attachedPartitions.setQuick(lastPartitionIndex + PARTITION_NAME_TX_OFFSET, -1L);
+                attachedPartitions.setQuick(lastPartitionIndex + PARTITION_DATA_TX_OFFSET, -1L);
             }
         } else {
             // Add transient row count as the only partition in attached partitions list
             attachedPartitions.extendAndSet(LONGS_PER_TX_ATTACHED_PARTITION - 1, 0L);
             attachedPartitions.setQuick(PARTITION_TS_OFFSET, Long.MIN_VALUE);
             attachedPartitions.setQuick(PARTITION_SIZE_OFFSET, transientRowCount);
-            attachedPartitions.setQuick(PARTITION_TX_OFFSET, -1L);
+            attachedPartitions.setQuick(PARTITION_NAME_TX_OFFSET, -1L);
+            attachedPartitions.setQuick(PARTITION_DATA_TX_OFFSET, -1L);
         }
     }
 

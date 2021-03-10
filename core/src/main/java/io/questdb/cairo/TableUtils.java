@@ -61,6 +61,7 @@ public final class TableUtils {
     public static final String FILE_SUFFIX_I = ".i";
     public static final String FILE_SUFFIX_D = ".d";
     public static final int LONGS_PER_TX_ATTACHED_PARTITION = 4;
+    public static final int LONGS_PER_TX_ATTACHED_PARTITION_MSB = Numbers.msb(LONGS_PER_TX_ATTACHED_PARTITION);
     static final int MIN_INDEX_VALUE_BLOCK_SIZE = Numbers.ceilPow2(4);
     static final byte TODO_RESTORE_META = 2;
     static final byte TODO_TRUNCATE = 1;

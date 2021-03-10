@@ -90,7 +90,6 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
             long sortedTimestampsAddr,
             long lastPartitionSize,
             long tableCeilOfMaxTimestamp,
-            long tableFloorOfMinTimestamp,
             long tableFloorOfMaxTimestamp,
             long tableMaxTimestamp,
             TableWriter tableWriter,
@@ -98,9 +97,17 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
     ) {
         final Path path = Path.getThreadLocal(pathToTable);
         final long oooTimestampLo = getTimestampIndexValue(sortedTimestampsAddr, srcOooLo);
-        // todo: inefficient
-        final long partitionSize = tableWriter.getPartitionSizeByTimestamp(oooTimestampLo);
-        final long srcDataTxn = tableWriter.getPartitionTxnByTimestamp(oooTimestampLo);
+        final int partitionIndex = tableWriter.getPartitionInfoOffset(oooTimestampLo);
+        final long partitionSize;
+        final long srcDataTxn;
+        if (partitionIndex > -1) {
+            partitionSize = tableWriter.getPartitionSizeByIndex(partitionIndex);
+            srcDataTxn = tableWriter.getPartitionTxnByIndex(partitionIndex);
+        } else {
+            partitionSize = -1;
+            srcDataTxn = -1;
+        }
+
         TableUtils.setPathForPartition(path, partitionBy, oooTimestampLo);
         final int pplen = path.length();
         TableUtils.txnPartitionConditionally(path, srcDataTxn);
@@ -532,7 +539,6 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
         final long sortedTimestampsAddr = task.getSortedTimestampsAddr();
         final long lastPartitionSize = task.getLastPartitionSize();
         final long tableCeilOfMaxTimestamp = task.getTableCeilOfMaxTimestamp();
-        final long tableFloorOfMinTimestamp = task.getTableFloorOfMinTimestamp();
         final long tableFloorOfMaxTimestamp = task.getTableFloorOfMaxTimestamp();
         final long tableMaxTimestamp = task.getTableMaxTimestamp();
         final TableWriter tableWriter = task.getTableWriter();
@@ -564,7 +570,6 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                 sortedTimestampsAddr,
                 lastPartitionSize,
                 tableCeilOfMaxTimestamp,
-                tableFloorOfMinTimestamp,
                 tableFloorOfMaxTimestamp,
                 tableMaxTimestamp,
                 tableWriter,

@@ -1888,12 +1888,16 @@ public class TableWriter implements Closeable {
         return timestampFloorMethod.floor(timestamp);
     }
 
-    long getPartitionSizeByTimestamp(long ts) {
-        return txFile.getPartitionSizeByPartitionTimestamp(ts);
+    int getPartitionInfoOffset(long ts) {
+        return txFile.findAttachedPartitionIndex(ts);
     }
 
-    long getPartitionTxnByTimestamp(long ts) {
-        return txFile.getPartitionTxnByPartitionTimestamp(ts);
+    long getPartitionSizeByIndex(int index) {
+        return txFile.getPartitionSizeByIndex(index);
+    }
+
+    long getPartitionTxnByIndex(int index) {
+        return txFile.getPartitionNameTxnByIndex(index);
     }
 
     long getPrimaryAppendOffset(long timestamp, int columnIndex) {
@@ -2290,7 +2294,6 @@ public class TableWriter implements Closeable {
             final long srcOooMax = oooRowCount;
             final long oooTimestampMin = getTimestampIndexValue(sortedTimestampsAddr, 0);
             final long oooTimestampMax = getTimestampIndexValue(sortedTimestampsAddr, srcOooMax - 1);
-            final long tableFloorOfMinTimestamp = timestampFloorMethod.floor(txFile.getMinTimestamp());
             final long tableFloorOfMaxTimestamp = timestampFloorMethod.floor(txFile.getMaxTimestamp());
             final long tableCeilOfMaxTimestamp = ceilMaxTimestamp();
             final long tableMaxTimestamp = txFile.getMaxTimestamp();
@@ -2333,7 +2336,6 @@ public class TableWriter implements Closeable {
                                     sortedTimestampsAddr,
                                     lastPartitionSize,
                                     tableCeilOfMaxTimestamp,
-                                    tableFloorOfMinTimestamp,
                                     tableFloorOfMaxTimestamp,
                                     tableMaxTimestamp,
                                     this,
@@ -2365,7 +2367,6 @@ public class TableWriter implements Closeable {
                                     sortedTimestampsAddr,
                                     lastPartitionSize,
                                     tableCeilOfMaxTimestamp,
-                                    tableFloorOfMinTimestamp,
                                     tableFloorOfMaxTimestamp,
                                     tableMaxTimestamp,
                                     this,
@@ -3518,7 +3519,7 @@ public class TableWriter implements Closeable {
         // todo: we can lookup partition particulars by partition index, this code always works only with last partition
         TableUtils.txnPartitionConditionally(
                 path,
-                txFile.getPartitionTxnByPartitionTimestamp(partitionTimestampHi)
+                txFile.getPartitionNameTxnByPartitionTimestamp(partitionTimestampHi)
         );
         if (updatePartitionInterval) {
             this.partitionTimestampHi = partitionTimestampHi;

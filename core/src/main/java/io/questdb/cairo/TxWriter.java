@@ -222,7 +222,7 @@ public final class TxWriter extends TxReader implements Closeable {
     }
 
     public void removeAttachedPartitions(long timestamp) {
-        int index = findAttachedPartitionIndex(getPartitionTimestampLo(timestamp));
+        int index = findAttachedPartitionIndex(timestamp);
         if (index > -1) {
             int size = attachedPartitions.size();
             if (index + LONGS_PER_TX_ATTACHED_PARTITION < size) {
@@ -325,7 +325,8 @@ public final class TxWriter extends TxReader implements Closeable {
 
         attachedPartitions.setQuick(index + PARTITION_TS_OFFSET, partitionTimestamp);
         attachedPartitions.setQuick(index + PARTITION_SIZE_OFFSET, partitionSize);
-        attachedPartitions.setQuick(index + PARTITION_TX_OFFSET, -1);
+        attachedPartitions.setQuick(index + PARTITION_NAME_TX_OFFSET, -1);
+        attachedPartitions.setQuick(index + PARTITION_DATA_TX_OFFSET, txn);
         return index;
     }
 
@@ -350,7 +351,7 @@ public final class TxWriter extends TxReader implements Closeable {
         }
     }
 
-    protected int updateAttachedPartitionSizeByTimestamp(long timestamp, long partitionSize) {
+    private int updateAttachedPartitionSizeByTimestamp(long timestamp, long partitionSize) {
         // todo: asses the opportunity to not round timestamp down if possible
         //    but instead perhaps maintain already rounded timestamp
         long partitionTimestampLo = getPartitionTimestampLo(timestamp);
@@ -368,12 +369,13 @@ public final class TxWriter extends TxReader implements Closeable {
     private void updatePartitionSizeByIndex(int index, long partitionSize) {
         if (attachedPartitions.getQuick(index + PARTITION_SIZE_OFFSET) != partitionSize) {
             attachedPartitions.set(index + PARTITION_SIZE_OFFSET, partitionSize);
+            attachedPartitions.set(index + PARTITION_DATA_TX_OFFSET, txn);
         }
     }
 
     void updatePartitionSizeByIndexAndTxn(int index, long partitionSize) {
         attachedPartitions.set(index + PARTITION_SIZE_OFFSET, partitionSize);
-        attachedPartitions.set(index + PARTITION_TX_OFFSET, txn);
+        attachedPartitions.set(index + PARTITION_NAME_TX_OFFSET, txn);
         attachedPositionDirtyIndex = Math.min(attachedPositionDirtyIndex, index);
     }
 }

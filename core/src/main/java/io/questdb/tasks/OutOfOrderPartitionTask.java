@@ -47,7 +47,6 @@ public class OutOfOrderPartitionTask {
     private long sortedTimestampsAddr;
     private long lastPartitionSize;
     private long tableCeilOfMaxTimestamp;
-    private long tableFloorOfMinTimestamp;
     private long tableFloorOfMaxTimestamp;
     private long tableMaxTimestamp;
     private TableWriter tableWriter;
@@ -117,10 +116,6 @@ public class OutOfOrderPartitionTask {
         return tableFloorOfMaxTimestamp;
     }
 
-    public long getTableFloorOfMinTimestamp() {
-        return tableFloorOfMinTimestamp;
-    }
-
     public long getTableMaxTimestamp() {
         return tableMaxTimestamp;
     }
@@ -149,7 +144,6 @@ public class OutOfOrderPartitionTask {
             long sortedTimestampsAddr,
             long lastPartitionSize,
             long tableCeilOfMaxTimestamp,
-            long tableFloorOfMinTimestamp,
             long tableFloorOfMaxTimestamp,
             long tableMaxTimestamp,
             TableWriter tableWriter,
@@ -167,7 +161,6 @@ public class OutOfOrderPartitionTask {
         this.sortedTimestampsAddr = sortedTimestampsAddr;
         this.tableMaxTimestamp = tableMaxTimestamp;
         this.tableCeilOfMaxTimestamp = tableCeilOfMaxTimestamp;
-        this.tableFloorOfMinTimestamp = tableFloorOfMinTimestamp;
         this.tableFloorOfMaxTimestamp = tableFloorOfMaxTimestamp;
         this.ff = ff;
         this.partitionBy = partitionBy;
