@@ -224,7 +224,6 @@ public class TxReader implements Closeable {
                 return hi;
             }
         }
-
         int blockHint = 2;
         //noinspection ConstantConditions
         assert (1 << blockHint) == LONGS_PER_TX_ATTACHED_PARTITION;

@@ -140,6 +140,22 @@ public class CollectionsTest {
     }
 
     @Test
+    public void testLongBinaryBlockSearch2() {
+        LongList list = new LongList();
+        list.add(10);
+        list.add(0);
+        list.add(0);
+        list.add(0);
+        list.add(30);
+        list.add(0);
+        list.add(0);
+        list.add(0);
+
+        int index = list.binarySearchBlock(0, list.size(), 2, 20);
+        System.out.println(index);
+    }
+
+    @Test
     public void testObjIntHashMap() {
         ObjIntHashMap<String> map = new ObjIntHashMap<>();
         Rnd rnd = new Rnd();

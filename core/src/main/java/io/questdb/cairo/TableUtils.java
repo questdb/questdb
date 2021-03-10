@@ -113,11 +113,11 @@ public final class TableUtils {
     private TableUtils() {
     }
 
-    public static void txnPartition(Path path, long txn) {
+    public static void txnPartition(CharSink path, long txn) {
         path.put("-n-").put(txn);
     }
 
-    public static void txnPartitionConditionally(Path path, long txn) {
+    public static void txnPartitionConditionally(CharSink path, long txn) {
         if (txn > -1) {
             txnPartition(path, txn);
         }

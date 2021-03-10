@@ -243,13 +243,13 @@ public class TableReader implements Closeable, SymbolTableSource {
 
     public int getPartitionIndexByTimestamp(long timestamp) {
         // todo: 2 is msb of SLOT_SIZE - replace with constant
-        int end = openPartitions.binarySearchBlock(0, openPartitions.size(), 2, timestamp) / PARTITIONS_SLOT_SIZE;
+        int end = openPartitions.binarySearchBlock(0, openPartitions.size(), 2, timestamp);
         if (end < 0) {
             // This will return -1 if searched timestamp is before the first partition
             // The caller should handle negative return values
-            end = -end - 2;
+            return (-end - 2) / PARTITIONS_SLOT_SIZE;
         }
-        return end;
+        return end / PARTITIONS_SLOT_SIZE;
     }
 
     public int getPartitionedBy() {
@@ -654,7 +654,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             final int oldBase = partitionIndex << columnCountBits;
             try {
                 final Path path = pathGenPartitioned(partitionIndex).$();
-                long partitionRowCount = openPartitions.getQuick(partitionIndex *  PARTITIONS_SLOT_SIZE + 1);
+                long partitionRowCount = openPartitions.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE + 1);
                 final boolean lastPartition = partitionIndex == partitionCount - 1;
                 for (int i = 0; i < columnCount; i++) {
                     final int copyFrom = Unsafe.getUnsafe().getInt(pIndexBase + i * 8L) - 1;
@@ -877,6 +877,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                 LOG.info()
                         .$("open partition ").utf8(path.$())
                         .$(" [rowCount=").$(partitionSize)
+                        .$(", partitionTxn=").$(partitionTxn)
                         .$(", transientRowCount=").$(txFile.getTransientRowCount())
                         .$(", partitionIndex=").$(partitionIndex)
                         .$(", partitionCount=").$(partitionCount)
@@ -894,10 +895,12 @@ public class TableReader implements Closeable, SymbolTableSource {
             if (getPartitionedBy() != PartitionBy.NONE) {
                 var exception = CairoException.instance(0).put("Partition '");
                 formatPartitionDirName(partitionIndex, exception.message);
+                TableUtils.txnPartitionConditionally(exception.message, partitionTxn);
                 exception.put("' does not exist in table '")
                         .put(tableName)
                         .put("' directory. Run [ALTER TABLE ").put(tableName).put(" DROP PARTITION LIST '");
                 formatPartitionDirName(partitionIndex, exception.message);
+                TableUtils.txnPartitionConditionally(exception.message, partitionTxn);
                 exception.put("'] to repair the table or restore the partition directory.");
                 throw exception;
             } else {

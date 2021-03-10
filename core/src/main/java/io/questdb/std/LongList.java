@@ -122,7 +122,7 @@ public class LongList implements Mutable, LongVec {
 
         while (low < high) {
             if (high - low < 65) {
-                return scanSearch(v, low, high, shift);
+                return scanSearchBlock(v, low, high, shift);
             }
 
             int mid = (low + high - 1) / 2;
@@ -407,7 +407,7 @@ public class LongList implements Mutable, LongVec {
         return -(high + 1);
     }
 
-    private int scanSearch(long v, int low, int high, int bitHint) {
+    private int scanSearchBlock(long v, int low, int high, int bitHint) {
         for (int i = low; i < high; i++) {
             int index = i << bitHint;
             long f = buffer[index];
