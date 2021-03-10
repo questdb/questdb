@@ -65,6 +65,17 @@ public final class TxWriter extends TxReader implements Closeable {
         this.transientRowCount += nRowsAdded;
     }
 
+    public void beginPartitionSizeUpdate() {
+        if (maxTimestamp != Long.MIN_VALUE) {
+            // Last partition size is usually not stored in attached partitions list
+            // but in transientRowCount only.
+            // To resolve transientRowCount after out of order partition update
+            // let's store it in attached partitions list
+            // before out of order partition update happens
+            updatePartitionSizeByTimestamp(maxTimestamp, transientRowCount);
+        }
+    }
+
     public void bumpStructureVersion(ObjList<SymbolMapWriter> denseSymbolMapWriters) {
         txMem.putLong(TX_OFFSET_TXN, ++txn);
         Unsafe.getUnsafe().storeFence();
@@ -95,7 +106,7 @@ public final class TxWriter extends TxReader implements Closeable {
             txPartitionCount--;
             fixedRowCount -= prevTransientRowCount;
             transientRowCount = prevTransientRowCount;
-            popAttachedPartitions();
+            attachedPartitions.setPos(attachedPartitions.size() - LONGS_PER_TX_ATTACHED_PARTITION);
         }
 
         maxTimestamp = prevMaxTimestamp;
@@ -128,10 +139,6 @@ public final class TxWriter extends TxReader implements Closeable {
         this.prevTransientRowCount = this.transientRowCount;
         this.prevMaxTimestamp = maxTimestamp;
         this.prevMinTimestamp = minTimestamp;
-    }
-
-    public void writeTransientSymbolCount(int symbolIndex, int symCount) {
-        txMem.putInt(getSymbolWriterTransientIndexOffset(symbolIndex), symCount);
     }
 
     @Override
@@ -178,38 +185,32 @@ public final class TxWriter extends TxReader implements Closeable {
         prevTransientRowCount = transientRowCount;
     }
 
-    private void storeSymbolCounts(ObjList<SymbolMapWriter> denseSymbolMapWriters) {
-        for (int i = 0, n = denseSymbolMapWriters.size(); i < n; i++) {
-            long offset = getSymbolWriterIndexOffset(i);
-            int symCount = denseSymbolMapWriters.getQuick(i).getSymbolCount();
-            txMem.putInt(offset, symCount);
-            offset += Integer.BYTES;
-            txMem.putInt(offset, symCount);
-        }
-    }
-
     public void finishPartitionSizeUpdate(long minTimestamp, long maxTimestamp) {
         this.minTimestamp = minTimestamp;
         this.maxTimestamp = maxTimestamp;
         assert getPartitionsCount() > 0;
         this.transientRowCount = getPartitionSize(getPartitionsCount() - 1);
         this.fixedRowCount = 0;
-        for (int i = 0, hi = getPartitionsCount() - 1; i < hi; i ++) {
+        for (int i = 0, hi = getPartitionsCount() - 1; i < hi; i++) {
             this.fixedRowCount += getPartitionSize(i);
         }
         txPartitionCount++;
-    }
-
-    public long getLastTxSize() {
-        return txPartitionCount == 1 ? transientRowCount - prevTransientRowCount : transientRowCount;
     }
 
     public int getAppendedPartitionCount() {
         return txPartitionCount;
     }
 
+    public long getLastTxSize() {
+        return txPartitionCount == 1 ? transientRowCount - prevTransientRowCount : transientRowCount;
+    }
+
     public boolean inTransaction() {
         return txPartitionCount > 1 || transientRowCount != prevTransientRowCount;
+    }
+
+    public boolean isActivePartition(long timestamp) {
+        return getPartitionTimestampLo(maxTimestamp) == timestamp;
     }
 
     public void newBlock() {
@@ -277,17 +278,6 @@ public final class TxWriter extends TxReader implements Closeable {
         }
     }
 
-    public void beginPartitionSizeUpdate() {
-        if (maxTimestamp != Long.MIN_VALUE) {
-            // Last partition size is usually not stored in attached partitions list
-            // but in transientRowCount only.
-            // To resolve transientRowCount after out of order partition update
-            // let's store it in attached partitions list
-            // before out of order partition update happens
-            updatePartitionSizeByTimestamp(maxTimestamp, transientRowCount);
-        }
-    }
-
     public void switchPartitions() {
         fixedRowCount += transientRowCount;
         prevTransientRowCount = transientRowCount;
@@ -318,8 +308,25 @@ public final class TxWriter extends TxReader implements Closeable {
         attachedPositionDirtyIndex = Math.min(attachedPositionDirtyIndex, updateAttachedPartitionSizeByTimestamp(timestamp, rowCount));
     }
 
-    private void popAttachedPartitions() {
-        attachedPartitions.setPos(attachedPartitions.size() - LONGS_PER_TX_ATTACHED_PARTITION);
+    public void writeTransientSymbolCount(int symbolIndex, int symCount) {
+        txMem.putInt(getSymbolWriterTransientIndexOffset(symbolIndex), symCount);
+    }
+
+    private int insertPartitionSizeByTimestamp(int index, long partitionTimestamp, long partitionSize) {
+        // Insert
+        int size = attachedPartitions.size();
+        attachedPartitions.extendAndSet(size + LONGS_PER_TX_ATTACHED_PARTITION - 1, 0);
+        index = -(index + 1);
+        if (index < size) {
+            // Insert in the middle
+            attachedPartitions.arrayCopy(index, index + LONGS_PER_TX_ATTACHED_PARTITION, size - index);
+            partitionTableVersion++;
+        }
+
+        attachedPartitions.setQuick(index + PARTITION_TS_OFFSET, partitionTimestamp);
+        attachedPartitions.setQuick(index + PARTITION_SIZE_OFFSET, partitionSize);
+        attachedPartitions.setQuick(index + PARTITION_TX_OFFSET, -1);
+        return index;
     }
 
     private void saveAttachedPartitionsToTx(int symCount) {
@@ -330,6 +337,37 @@ public final class TxWriter extends TxReader implements Closeable {
                 txMem.putLong(getPartitionTableIndexOffset(symCount, i), attachedPartitions.getQuick(i));
             }
             attachedPositionDirtyIndex = size;
+        }
+    }
+
+    private void storeSymbolCounts(ObjList<SymbolMapWriter> denseSymbolMapWriters) {
+        for (int i = 0, n = denseSymbolMapWriters.size(); i < n; i++) {
+            long offset = getSymbolWriterIndexOffset(i);
+            int symCount = denseSymbolMapWriters.getQuick(i).getSymbolCount();
+            txMem.putInt(offset, symCount);
+            offset += Integer.BYTES;
+            txMem.putInt(offset, symCount);
+        }
+    }
+
+    protected int updateAttachedPartitionSizeByTimestamp(long timestamp, long partitionSize) {
+        // todo: asses the opportunity to not round timestamp down if possible
+        //    but instead perhaps maintain already rounded timestamp
+        long partitionTimestampLo = getPartitionTimestampLo(timestamp);
+//        assert partitionTimestampLo == timestamp;
+        int index = findAttachedPartitionIndexByLoTimestamp(partitionTimestampLo);
+        if (index > -1) {
+            // Update
+            updatePartitionSizeByIndex(index, partitionSize);
+            return index;
+        }
+
+        return insertPartitionSizeByTimestamp(index, partitionTimestampLo, partitionSize);
+    }
+
+    private void updatePartitionSizeByIndex(int index, long partitionSize) {
+        if (attachedPartitions.getQuick(index + PARTITION_SIZE_OFFSET) != partitionSize) {
+            attachedPartitions.set(index + PARTITION_SIZE_OFFSET, partitionSize);
         }
     }
 

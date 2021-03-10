@@ -235,41 +235,42 @@ public class TxReader implements Closeable {
         return timestampFloorMethod != null ? timestampFloorMethod.floor(timestamp) : Long.MIN_VALUE;
     }
 
-    private int insertPartitionSizeByTimestamp(int index, long partitionTimestamp, long partitionSize) {
-        // Insert
-        int size = attachedPartitions.size();
-        attachedPartitions.extendAndSet(size + LONGS_PER_TX_ATTACHED_PARTITION - 1, 0);
-        index = -(index + 1);
-        if (index < size) {
-            // Insert in the middle
-            attachedPartitions.arrayCopy(index, index + LONGS_PER_TX_ATTACHED_PARTITION, size - index);
-            partitionTableVersion++;
-        }
-
-        attachedPartitions.setQuick(index + PARTITION_TS_OFFSET, partitionTimestamp);
-        attachedPartitions.setQuick(index + PARTITION_SIZE_OFFSET, partitionSize);
-        attachedPartitions.setQuick(index + PARTITION_TX_OFFSET, -1);
-        return index;
-    }
-
     private void loadAttachedPartitions(long maxTimestamp, long transientRowCount) {
         attachedPartitions.clear();
+        roTxMem.grow(getPartitionTableIndexOffset(symbolsCount, 0));
         if (partitionBy != PartitionBy.NONE) {
-            roTxMem.grow(getPartitionTableIndexOffset(symbolsCount, 0));
             int partitionTableSize = roTxMem.getInt(getPartitionTableSizeOffset(symbolsCount)) / Long.BYTES;
+            boolean transientRowsSet = false;
+            long lastPartition = getPartitionTimestampLo(maxTimestamp);
             if (partitionTableSize > 0) {
                 roTxMem.grow(getPartitionTableIndexOffset(symbolsCount, partitionTableSize));
                 for (int i = 0; i < partitionTableSize; i++) {
-                    attachedPartitions.add(roTxMem.getLong(getPartitionTableIndexOffset(symbolsCount, i)));
+                    long fileValue = roTxMem.getLong(getPartitionTableIndexOffset(symbolsCount, i));
+                    attachedPartitions.add(fileValue);
+                    if (i % LONGS_PER_TX_ATTACHED_PARTITION == 0 && fileValue == lastPartition) {
+                        // Add transient row count as last partition in attached partitions list
+                        // Sometimes last partition is written in Tx file in attached partition section
+                        // and size has to overwritten then
+                        // Todo: simplify the load by never storing transientRowCount in partition section of tx file
+                        attachedPartitions.add(transientRowCount);
+                        transientRowsSet = true;
+                        i++;
+                    }
                 }
             }
 
-            if (maxTimestamp != Long.MIN_VALUE) {
-                updateAttachedPartitionSizeByTimestamp(maxTimestamp, transientRowCount);
+            if (maxTimestamp > Long.MIN_VALUE && !transientRowsSet) {
+                attachedPartitions.extendAndSet(partitionTableSize + LONGS_PER_TX_ATTACHED_PARTITION - 1, 0);
+                attachedPartitions.setQuick(partitionTableSize + PARTITION_TS_OFFSET, lastPartition);
+                attachedPartitions.setQuick(partitionTableSize + PARTITION_SIZE_OFFSET, transientRowCount);
+                attachedPartitions.setQuick(partitionTableSize + PARTITION_TX_OFFSET, -1L);
             }
         } else {
-            roTxMem.grow(getPartitionTableIndexOffset(symbolsCount, 0));
-            updateAttachedPartitionSizeByTimestamp(0L, transientRowCount);
+            // Add transient row count as the only partition in attached partitions list
+            attachedPartitions.extendAndSet(LONGS_PER_TX_ATTACHED_PARTITION - 1, 0L);
+            attachedPartitions.setQuick(PARTITION_TS_OFFSET, Long.MIN_VALUE);
+            attachedPartitions.setQuick(PARTITION_SIZE_OFFSET, transientRowCount);
+            attachedPartitions.setQuick(PARTITION_TX_OFFSET, -1L);
         }
     }
 
@@ -281,27 +282,6 @@ public class TxReader implements Closeable {
             throw CairoException.instance(ff.errno()).put("Cannot append. File does not exist: ").put(this.path);
         } finally {
             this.path.trimTo(rootLen);
-        }
-    }
-
-    protected int updateAttachedPartitionSizeByTimestamp(long timestamp, long partitionSize) {
-        // todo: asses the opportunity to not round timestamp down if possible
-        //    but instead perhaps maintain already rounded timestamp
-        long partitionTimestampLo = getPartitionTimestampLo(timestamp);
-//        assert partitionTimestampLo == timestamp;
-        int index = findAttachedPartitionIndexByLoTimestamp(partitionTimestampLo);
-        if (index > -1) {
-            // Update
-            updatePartitionSizeByIndex(index, partitionSize);
-            return index;
-        }
-
-        return insertPartitionSizeByTimestamp(index, partitionTimestampLo, partitionSize);
-    }
-
-    private void updatePartitionSizeByIndex(int index, long partitionSize) {
-        if (attachedPartitions.getQuick(index + PARTITION_SIZE_OFFSET) != partitionSize) {
-            attachedPartitions.set(index + PARTITION_SIZE_OFFSET, partitionSize);
         }
     }
 }

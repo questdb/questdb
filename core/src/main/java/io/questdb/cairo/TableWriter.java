@@ -153,8 +153,7 @@ public class TableWriter implements Closeable {
     private long oooRowCount;
     private final LongConsumer mergeTimestampMethodRef = this::mergeTimestampSetter;
     private long transientRowCountBeforeOutOfOrder;
-    private long removePartitionDirsNewerThanTimestamp;
-    private final FindVisitor removePartitionDirsNewerThanVisitor = this::removePartitionDirsNewerThanTimestamp;
+    private final FindVisitor removePartitionDirsNotAttached = this::removePartitionDirsNotAttached;
 
     public TableWriter(CairoConfiguration configuration, CharSequence name) {
         this(configuration, name, new MessageBusImpl(configuration));
@@ -553,6 +552,7 @@ public class TableWriter implements Closeable {
             return TABLE_HAS_SYMBOLS;
         }
 
+        boolean rollbackRename = false;
         try {
             setPathForPartition(path, partitionBy, timestamp);
             if (!ff.exists(path.$())) {
@@ -561,6 +561,7 @@ public class TableWriter implements Closeable {
 
                 if (ff.exists(other.$())) {
                     if (ff.rename(other, path)) {
+                        rollbackRename = true;
                         LOG.info().$("moved partition dir: ").$(other).$(" to ").$(path).$();
                     } else {
                         throw CairoException.instance(ff.errno()).put("File system error on trying to rename [from=")
@@ -600,6 +601,7 @@ public class TableWriter implements Closeable {
                     }
 
                     LOG.info().$("partition attached [path=").$(path).$(']').$();
+                    rollbackRename = false;
                 } else {
                     LOG.error().$("cannot detect partition size [path=").$(path).$(",timestampColumn=").$(timestampCol).$(']').$();
                     return PARTITION_EMPTY;
@@ -610,6 +612,16 @@ public class TableWriter implements Closeable {
             }
 
         } finally {
+            if (rollbackRename) {
+                // rename back to .detached
+                // otherwise it can be deleted on writer re-open
+                if (ff.rename(path.$(), other.$())) {
+                    LOG.info().$("moved partition dir after failed attach attempt: ").$(path).$(" to ").$(other).$();
+                } else {
+                    LOG.info().$("file system error on trying to rename partition folder [errno=").$(ff.errno())
+                            .$(",from=").$(path).$(",to=").$(other).I$();
+                }
+            }
             path.trimTo(rootLen);
             other.trimTo(rootLen);
         }
@@ -895,7 +907,7 @@ public class TableWriter implements Closeable {
                     LOG.info().$("partition marked for delete [path=").$(path).$(']').$();
                 }
             } else {
-                LOG.info().$("partition absent on disk now delached from table [path=").$(path).$(']').$();
+                LOG.info().$("partition absent on disk now detached from table [path=").$(path).$(']').$();
             }
             return true;
         } finally {
@@ -2886,7 +2898,7 @@ public class TableWriter implements Closeable {
 
     void purgeUnusedPartitions() {
         if (partitionBy != PartitionBy.NONE) {
-            removePartitionDirsNewerThan(txFile.getMaxTimestamp());
+            removeNonAttachedPartitions();
             removePartitionDirsCreatedByOOO();
         }
     }
@@ -3125,28 +3137,28 @@ public class TableWriter implements Closeable {
         }
     }
 
-    private void removePartitionDirsNewerThan(long timestamp) {
-        if (timestamp > Long.MIN_VALUE) {
-            LOG.info().$("purging [newerThen=").$ts(timestamp).$(", path=").$(path.$()).$(']').$();
-        } else {
-            LOG.debug().$("cleaning [path=").$(path.$()).$(']').$();
-        }
-        this.removePartitionDirsNewerThanTimestamp = timestamp;
+    private void removeNonAttachedPartitions() {
+        LOG.info().$("purging non attached partitions [path=").$(path.$()).$(']').$();
         try {
-            ff.iterateDir(path.$(), removePartitionDirsNewerThanVisitor);
+            ff.iterateDir(path.$(), removePartitionDirsNotAttached);
         } finally {
             path.trimTo(rootLen);
         }
     }
 
-    private void removePartitionDirsNewerThanTimestamp(long pName, int type) {
+    private void removePartitionDirsNotAttached(long pName, int type) {
         path.trimTo(rootLen);
         path.concat(pName).$();
         nativeLPSZ.of(pName);
         if (!isDots(nativeLPSZ) && type == Files.DT_DIR) {
+            if (Chars.endsWith(nativeLPSZ, DETACHED_DIR_MARKER)) {
+                // Do not remove detached partitions
+                // They are probably about to be attached.
+                return;
+            }
             try {
                 long dirTimestamp = partitionDirFmt.parse(nativeLPSZ, null);
-                if (dirTimestamp <= removePartitionDirsNewerThanTimestamp) {
+                if (txFile.attachedPartitionsContains(dirTimestamp) || txFile.isActivePartition(dirTimestamp)) {
                     return;
                 }
             } catch (NumericException ignore) {
@@ -3154,19 +3166,10 @@ public class TableWriter implements Closeable {
                 // ignore exception and remove directory
                 // we rely on this behaviour to remove leftover directories created by OOO processing
             }
-            // Do not remove, try to rename instead
-            try {
-                other.concat(pName);
-                other.put(DETACHED_DIR_MARKER);
-                other.$();
-
-                if (ff.rename(path, other)) {
-                    LOG.info().$("moved partition dir: ").$(path).$(" to ").$(other).$();
-                } else {
-                    LOG.error().$("cannot rename: ").$(path).$(" [errno=").$(ff.errno()).$(']').$();
-                }
-            } finally {
-                other.trimTo(rootLen);
+            if (ff.rmdir(path)) {
+                LOG.info().$("removed partition dir: ").$(path).$();
+            } else {
+                LOG.error().$("cannot remove: ").$(path).$(" [errno=").$(ff.errno()).$(']').$();
             }
         }
     }
