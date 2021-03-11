@@ -171,6 +171,16 @@
       "contributions": [
         "code"
       ]
+    },
+    {
+      "login": "kovid-r",
+      "name": "kovid-r",
+      "avatar_url": "https://avatars.githubusercontent.com/u/62409489?v=4",
+      "profile": "https://github.com/kovid-r",
+      "contributions": [
+        "tutorial",
+        "example"
+      ]
     }
   ],
   "badgeTemplate": "[![All Contributors](https://img.shields.io/badge/all_contributors-<%= contributors.length %>-orange.svg)](#contributors)",
