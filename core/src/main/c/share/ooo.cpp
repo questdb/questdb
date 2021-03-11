@@ -575,12 +575,10 @@ inline void set_memory_vanilla(T * addr, const T value, int64_t count) {
     }
 }
 
-template<class T>
 __SIMD_MULTIVERSION__
-inline void set_var_refs(int64_t *addr, int64_t offset, int64_t count) {
-    auto inc = sizeof(T);
+inline void set_var_refs(int64_t *addr, int64_t offset, int64_t count, int bitshift) {
     for (int64_t i = 0; i < count; i++) {
-        addr[i] = offset + i * inc;
+        addr[i] = offset + (i << bitshift);
     }
 }
 
@@ -932,10 +930,11 @@ __SIMD_MULTIVERSION__
 JNIEXPORT void JNICALL
 Java_io_questdb_std_Vect_setVarColumnRefs32Bit(JNIEnv *env, jclass cl, jlong pData, jlong offset,
                                                jlong count) {
-    set_var_refs<int32_t>(
+    set_var_refs(
             reinterpret_cast<int64_t *>(pData),
             __JLONG_REINTERPRET_CAST__(int64_t, offset),
-            __JLONG_REINTERPRET_CAST__(int64_t, count)
+            __JLONG_REINTERPRET_CAST__(int64_t, count),
+            2
     );
 }
 
@@ -943,10 +942,11 @@ __SIMD_MULTIVERSION__
 JNIEXPORT void JNICALL
 Java_io_questdb_std_Vect_setVarColumnRefs64Bit(JNIEnv *env, jclass cl, jlong pData, jlong offset,
                                                jlong count) {
-    set_var_refs<int64_t>(
+    set_var_refs(
             reinterpret_cast<int64_t *>(pData),
             __JLONG_REINTERPRET_CAST__(int64_t, offset),
-            __JLONG_REINTERPRET_CAST__(int64_t, count)
+            __JLONG_REINTERPRET_CAST__(int64_t, count),
+            3
     );
 }
 

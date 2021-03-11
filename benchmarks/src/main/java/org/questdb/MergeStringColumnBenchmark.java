@@ -340,6 +340,24 @@ public class MergeStringColumnBenchmark {
         );
     }
 
+    @Benchmark
+    public void testSetVarColumnRefs32Bit() {
+        Vect.setVarColumnRefs32Bit(
+                bigStrMerge.destVarAddress,
+                0,
+                (bigStrMerge.addressesTbl1.varSizeBytes + bigStrMerge.addressesTbl2.varSizeBytes) / 8
+        );
+    }
+
+    @Benchmark
+    public void testSetVarColumnRefs64Bit() {
+        Vect.setVarColumnRefs64Bit(
+                bigStrMerge.destVarAddress,
+                0,
+                (bigStrMerge.addressesTbl1.varSizeBytes + bigStrMerge.addressesTbl2.varSizeBytes) / 8
+        );
+    }
+
     private ColumnAddress getAddresses(TableReader readerTbl1, String columnName) {
         ColumnAddress columnAddress = new ColumnAddress();
         int columnIndex1 = readerTbl1.getMetadata().getColumnIndex(columnName);

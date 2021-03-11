@@ -215,7 +215,7 @@ else ()
 
     set_target_properties(
             questdb PROPERTIES
-            COMPILE_FLAGS "-m64 -O3 -mavx"
+            COMPILE_FLAGS "-m64 -O3"
     )
 
 #    TODO: SSE2 and SSE4 are redundant on 64 bit CPUs
