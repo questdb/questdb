@@ -8,7 +8,7 @@
 #include "func_dispatcher.h"
 
 #ifdef ENABLE_MULTIVERSION
-#define __SIMD_MULTIVERSION__ __attribute__((target_clones("avx2","avx","sse4.1","default")))
+#define __SIMD_MULTIVERSION__ __attribute__((target_clones("avx2","avx","avx512f","default")))
 #else
 #define __SIMD_MULTIVERSION__
 #endif
@@ -20,7 +20,7 @@
 #ifdef ENABLE_MANUAL_MEMCPY
 #define __MEMCPY man_memcpy
 #else
-#define __MEMCPY memcpy
+#define __MEMCPY std::memcpy
 #endif
 #endif
 
