@@ -171,6 +171,16 @@
       "contributions": [
         "code"
       ]
+    },
+    {
+      "login": "gabor-boros",
+      "name": "Gábor Boros",
+      "avatar_url": "https://avatars.githubusercontent.com/u/19173947?v=4",
+      "profile": "https://www.gaboros.hu",
+      "contributions": [
+        "tutorial",
+        "example"
+      ]
     }
   ],
   "badgeTemplate": "[![All Contributors](https://img.shields.io/badge/all_contributors-<%= contributors.length %>-orange.svg)](#contributors)",
