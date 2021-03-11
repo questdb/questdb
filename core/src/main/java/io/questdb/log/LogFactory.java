@@ -371,7 +371,7 @@ public class LogFactory implements Closeable {
         // enable all LOG levels above the minimum set one
         // ((-1 >>> (msb-1)) << msb) | level
         final int msb = Numbers.msb(level);
-        level = (((-1 >>> (msb-1)) << msb) | level) & LogLevel.LOG_LEVEL_MASK;
+        level = (((-1 >>> (msb - 1)) << msb) | level) & LogLevel.LOG_LEVEL_MASK;
 
         return new LogWriterConfig(scope == null ? EMPTY_STR : scope, level, (ring, seq, level1) -> {
             try {

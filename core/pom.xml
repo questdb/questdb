@@ -35,7 +35,7 @@
         <nodejs.version>v12.16.2</nodejs.version>
         <runtime.assembly>none</runtime.assembly>
         <javac.target>11</javac.target>
-        <argLine>-Xmx512m --add-exports java.base/jdk.internal.math=ALL-UNNAMED -Dfile.encoding=UTF-8</argLine>
+        <argLine>-Xmx512m -Dfile.encoding=UTF-8</argLine>
     </properties>
 
     <version>6.0.0-SNAPSHOT</version>
@@ -215,12 +215,6 @@
                                 </goals>
                             </execution>
                         </executions>
-                        <configuration>
-                            <additionalJOptions>
-                                <additionalJOption>--add-exports</additionalJOption>
-                                <additionalJOption>java.base/jdk.internal.math=io.questdb</additionalJOption>
-                            </additionalJOptions>
-                        </configuration>
                     </plugin>
                     <plugin>
                         <groupId>org.apache.maven.plugins</groupId>
