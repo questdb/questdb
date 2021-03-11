@@ -14,10 +14,10 @@ typedef void RostiCount(rosti_t *map, int64_t *p_micros, int64_t count, int32_t 
 \
 RostiCount F_SSE2(func), F_SSE41(func), F_AVX2(func), F_AVX512(func), F_DISPATCH(func); \
 \
-RostiCount *POINTER_NAME(func) = &func ## _dispatch; \
+RostiCount *POINTER_NAME(func) = &F_DISPATCH(func); \
 \
 void F_DISPATCH(func) (rosti_t *map, int64_t *p_micros, int64_t count, int32_t valueOffset) { \
-    const int iset = instrset_detect();  \
+        const int iset = instrset_detect();  \
     if (iset >= 10) { \
         POINTER_NAME(func) = &F_AVX512(func); \
     } else if (iset >= 8) { \

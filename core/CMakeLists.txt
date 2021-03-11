@@ -14,6 +14,7 @@ set(
         VCL_FILES
         src/main/c/share/vec_agg.cpp
         src/main/c/share/vec_ts_agg.cpp
+        src/main/c/share/ooo_multiversion.cpp
 )
 
 set(
@@ -217,6 +218,10 @@ else ()
             questdb PROPERTIES
             COMPILE_FLAGS "-m64 -O3 "
     )
+
+#    TODO: SSE2 and SSE4 are redundant on 64 bit CPUs
+#    gcc  -O3 -dM -E - < /dev/null | egrep "SSE|AVX" | sort
+#    SEE2 and 4.1 are already defined with -O3 flag
 
     target_link_libraries(
             questdb

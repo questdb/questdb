@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 #Set to verbose to see NASM command line
-#set(CMAKE_VERBOSE_MAKEFILE ON)
+set(CMAKE_VERBOSE_MAKEFILE ON)
 
 set(
         ASM_SOURCES

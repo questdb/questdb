@@ -1108,6 +1108,8 @@ oooMergeCopyStrColumnMv(MvMemcpy, memcpy)
 oooMergeCopyStrColumnMv(MvAMemcpy, A_memcpy)
 
 oooMergeCopyStrColumnMv(MvManMemcpy, man_mv_memcpy)
+#else
+
 #endif
 
 oooMergeCopyStrColumnInline(InlMemcpy, memcpy)
