@@ -210,6 +210,16 @@
         "tutorial",
         "example"
       ]
+    },
+    {
+      "login": "TimBo93",
+      "name": "Tim B.",
+      "avatar_url": "https://avatars.githubusercontent.com/u/8701341?v=4",
+      "profile": "https://borowski-software.de/",
+      "contributions": [
+        "bug",
+        "userTesting"
+      ]
     }
   ],
   "badgeTemplate": "[![All Contributors](https://img.shields.io/badge/all_contributors-<%= contributors.length %>-orange.svg)](#contributors)",
