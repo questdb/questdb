@@ -35,6 +35,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.Chars;
 import io.questdb.std.Misc;
+import io.questdb.std.NumericException;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.DirectCharSink;
@@ -67,7 +68,7 @@ public class OutOfOrderTest extends AbstractCairoTest {
         };
 
         engine = new CairoEngine(configuration);
-        BindVariableService bindVariableService  = new BindVariableServiceImpl(configuration);
+        BindVariableService bindVariableService = new BindVariableServiceImpl(configuration);
         compiler = new SqlCompiler(engine);
         sqlExecutionContext = new SqlExecutionContextImpl(
                 engine, 1)
@@ -91,21 +92,6 @@ public class OutOfOrderTest extends AbstractCairoTest {
         Misc.free(compiler);
         Misc.free(engine);
     }
-
-    protected void assertMemoryLeak(TestUtils.LeakProneCode code) throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try {
-                code.run();
-                engine.releaseInactive();
-                Assert.assertEquals(0, engine.getBusyWriterCount());
-                Assert.assertEquals(0, engine.getBusyReaderCount());
-            } finally {
-                engine.releaseAllReaders();
-                engine.releaseAllWriters();
-            }
-        });
-    }
-
 
     @Test
     public void testBench() throws Exception {
@@ -353,6 +339,11 @@ public class OutOfOrderTest extends AbstractCairoTest {
     @Test
     public void testColumnTopNewPartitionMiddleOfTableContended() throws Exception {
         executeWithPool(0, OutOfOrderTest::testColumnTopNewPartitionMiddleOfTable0);
+    }
+
+    @Test
+    public void testColumnTopNewPartitionMiddleOfTableParallel() throws Exception {
+        executeWithPool(4, OutOfOrderTest::testColumnTopNewPartitionMiddleOfTable0);
     }
 
     @Test
@@ -617,43 +608,55 @@ public class OutOfOrderTest extends AbstractCairoTest {
 
     @Test
     public void testPartitionedOOONullSetters() throws Exception {
-        executeVanilla(() -> {
+        executeVanilla(() -> testPartitionedOOONullSetters0(engine, compiler, sqlExecutionContext));
+    }
 
-            compiler.compile("create table x (a int, b int, c int, ts timestamp) timestamp(ts) partition by DAY", sqlExecutionContext);
-            try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x")) {
-                TableWriter.Row r;
+    @Test
+    public void testPartitionedOOONullSettersContended() throws Exception {
+        executeWithPool(0, OutOfOrderTest::testPartitionedOOONullSetters0);
+    }
 
-                r = w.newRow(TimestampFormatUtils.parseUTCTimestamp("2013-02-10T00:10:00.000000Z"));
-                r.putInt(2, 30);
-                r.append();
+    @Test
+    public void testPartitionedOOONullSettersParallel() throws Exception {
+        executeWithPool(4, OutOfOrderTest::testPartitionedOOONullSetters0);
+    }
 
-                r = w.newRow(TimestampFormatUtils.parseUTCTimestamp("2013-02-10T00:05:00.000000Z"));
-                r.putInt(2, 10);
-                r.append();
+    private static void testPartitionedOOONullSetters0(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext)
+            throws SqlException, NumericException {
+        compiler.compile("create table x (a int, b int, c int, ts timestamp) timestamp(ts) partition by DAY", sqlExecutionContext);
+        try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x")) {
+            TableWriter.Row r;
 
-                r = w.newRow(TimestampFormatUtils.parseUTCTimestamp("2013-02-10T00:06:00.000000Z"));
-                r.putInt(2, 20);
-                r.append();
+            r = w.newRow(TimestampFormatUtils.parseUTCTimestamp("2013-02-10T00:10:00.000000Z"));
+            r.putInt(2, 30);
+            r.append();
 
-                w.commit();
+            r = w.newRow(TimestampFormatUtils.parseUTCTimestamp("2013-02-10T00:05:00.000000Z"));
+            r.putInt(2, 10);
+            r.append();
 
-                r = w.newRow(TimestampFormatUtils.parseUTCTimestamp("2013-02-10T00:11:00.000000Z"));
-                r.putInt(2, 40);
-                r.append();
+            r = w.newRow(TimestampFormatUtils.parseUTCTimestamp("2013-02-10T00:06:00.000000Z"));
+            r.putInt(2, 20);
+            r.append();
 
-                w.commit();
-            }
+            w.commit();
 
-            printSqlResult(compiler, sqlExecutionContext, "x");
+            r = w.newRow(TimestampFormatUtils.parseUTCTimestamp("2013-02-10T00:11:00.000000Z"));
+            r.putInt(2, 40);
+            r.append();
 
-            final String expected = "a\tb\tc\tts\n" +
-                    "NaN\tNaN\t10\t2013-02-10T00:05:00.000000Z\n" +
-                    "NaN\tNaN\t20\t2013-02-10T00:06:00.000000Z\n" +
-                    "NaN\tNaN\t30\t2013-02-10T00:10:00.000000Z\n" +
-                    "NaN\tNaN\t40\t2013-02-10T00:11:00.000000Z\n";
+            w.commit();
+        }
 
-            TestUtils.assertEquals(expected, sink);
-        });
+        printSqlResult(compiler, sqlExecutionContext, "x");
+
+        final String expected = "a\tb\tc\tts\n" +
+                "NaN\tNaN\t10\t2013-02-10T00:05:00.000000Z\n" +
+                "NaN\tNaN\t20\t2013-02-10T00:06:00.000000Z\n" +
+                "NaN\tNaN\t30\t2013-02-10T00:10:00.000000Z\n" +
+                "NaN\tNaN\t40\t2013-02-10T00:11:00.000000Z\n";
+
+        TestUtils.assertEquals(expected, sink);
     }
 
     @Test
@@ -759,15 +762,6 @@ public class OutOfOrderTest extends AbstractCairoTest {
                 compiler,
                 sqlExecutionContext
         );
-    }
-
-    private void executeVanilla(TestUtils.LeakProneCode code) throws Exception {
-        OutOfOrderUtils.initBuf();
-        try {
-            assertMemoryLeak(code);
-        } finally {
-            OutOfOrderUtils.freeBuf();
-        }
     }
 
     private static void testPartitionedOOPrefixesExistingPartitions0(
@@ -1081,16 +1075,22 @@ public class OutOfOrderTest extends AbstractCairoTest {
 
         String expected = Chars.toString(sink);
 
-        engine.releaseAllReaders();
-
         // insert 1AM data into X
         compiler.compile("insert into x select * from 1am", sqlExecutionContext);
         compiler.compile("insert into x select * from tail", sqlExecutionContext);
 
+        testXAndIndex(engine, compiler, sqlExecutionContext, expected);
+    }
+
+    private static void testXAndIndex(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, String expected) throws SqlException {
         printSqlResult(compiler, sqlExecutionContext, "x");
-
         TestUtils.assertEquals(expected, sink);
+        assertIndexConsistency(compiler, sqlExecutionContext);
 
+        // test that after reader is re-opened we can still see the same data
+        engine.releaseAllReaders();
+        printSqlResult(compiler, sqlExecutionContext, "x");
+        TestUtils.assertEquals(expected, sink);
         assertIndexConsistency(compiler, sqlExecutionContext);
     }
 
@@ -1280,9 +1280,6 @@ public class OutOfOrderTest extends AbstractCairoTest {
 
         String expected = Chars.toString(sink);
 
-        // close reader to enable "rename" to succeed
-        engine.releaseAllReaders();
-
         // insert 1AM data into X
         compiler.compile("insert into x select * from 1am", sqlExecutionContext);
         compiler.compile("insert into x select * from tail", sqlExecutionContext);
@@ -1291,14 +1288,8 @@ public class OutOfOrderTest extends AbstractCairoTest {
 
         TestUtils.assertEquals(expected, sink);
 
-        //
-        engine.releaseAllReaders();
+        testXAndIndex(engine, compiler, sqlExecutionContext, expected);
 
-        printSqlResult(compiler, sqlExecutionContext, "x");
-
-        TestUtils.assertEquals(expected, sink);
-
-        assertIndexConsistency(compiler, sqlExecutionContext);
     }
 
     private static void testPartitionedOODataOOCollapsed0(
@@ -1462,24 +1453,15 @@ public class OutOfOrderTest extends AbstractCairoTest {
         printSqlResult(compiler, sqlExecutionContext, "y order by ts");
 
         String expected = Chars.toString(sink);
-
-        engine.releaseAllReaders();
-
-        // insert 1AM data into X
         compiler.compile("insert into x select * from 1am", sqlExecutionContext);
         compiler.compile("insert into x select * from tail", sqlExecutionContext);
 
-        printSqlResult(compiler, sqlExecutionContext, "x");
-
-        TestUtils.assertEquals(expected, sink);
-
-        engine.releaseAllReaders();
-
-        printSqlResult(compiler, sqlExecutionContext, "x");
-
-        TestUtils.assertEquals(expected, sink);
-
-        assertIndexConsistency(compiler, sqlExecutionContext);
+        testXAndIndex(
+                engine,
+                compiler,
+                sqlExecutionContext,
+                expected
+        );
     }
 
     private static void testPartitionedDataOOIntoLastOverflowIntoNewPartition0(
@@ -1569,15 +1551,9 @@ public class OutOfOrderTest extends AbstractCairoTest {
 
         // expected outcome
         printSqlResult(compiler, sqlExecutionContext, "y order by ts");
-        engine.releaseAllReaders();
 
         compiler.compile("insert into x select * from 1am", sqlExecutionContext);
         compiler.compile("insert into x select * from tail", sqlExecutionContext);
-
-        // It is necessary to release cached "x" reader because as of yet
-        // reader cannot reload any partition other than "current".
-        // Cached reader will assume smaller partition size for "1970-01-01", which out-of-order insert updated
-        engine.releaseAllReaders();
 
         assertSqlResultAgainstFile(
                 compiler,
@@ -1586,6 +1562,17 @@ public class OutOfOrderTest extends AbstractCairoTest {
                 "/oo/testPartitionedDataOOIntoLastOverflowIntoNewPartition.txt"
         );
 
+        assertIndexConsistency(compiler, sqlExecutionContext);
+
+        // check if the same remains true when we open fresh TableReader instance
+
+        engine.releaseAllReaders();
+        assertSqlResultAgainstFile(
+                compiler,
+                sqlExecutionContext,
+                "x",
+                "/oo/testPartitionedDataOOIntoLastOverflowIntoNewPartition.txt"
+        );
         assertIndexConsistency(compiler, sqlExecutionContext);
     }
 
@@ -1679,9 +1666,6 @@ public class OutOfOrderTest extends AbstractCairoTest {
 
         final String expected = Chars.toString(sink);
 
-        // close readers to allow "rename" to succeed on Windows
-        engine.releaseAllReaders();
-
         // The query above generates expected result, but there is a problem using it
         // This test produces duplicate timestamps. Those are being sorted in different order by OOO implementation
         // and the reference query. So they cannot be directly compared. The parts with duplicate timestamps will
@@ -1694,13 +1678,12 @@ public class OutOfOrderTest extends AbstractCairoTest {
         // It is necessary to release cached "x" reader because as of yet
         // reader cannot reload any partition other than "current".
         // Cached reader will assume smaller partition size for "1970-01-01", which out-of-order insert updated
-        engine.releaseAllReaders();
-
-        printSqlResult(compiler, sqlExecutionContext, "x");
-
-        TestUtils.assertEquals(expected, sink);
-
-        assertIndexConsistency(compiler, sqlExecutionContext);
+        testXAndIndex(
+                engine,
+                compiler,
+                sqlExecutionContext,
+                expected
+        );
     }
 
     private static void testPartitionedDataMergeData0(
@@ -2021,21 +2004,13 @@ public class OutOfOrderTest extends AbstractCairoTest {
     ) throws SqlException {
         // create third table, which will contain both X and 1AM
         compiler.compile(referenceTableDDL, sqlExecutionContext);
-
         // expected outcome
         TestUtils.printSql(compiler, sqlExecutionContext, referenceSQL, sink1);
-
-        // release reader "before" out-of-order is handled
-        // we aim directory rename operations to succeed on Windows
-        // Linux should be fine without closing readers
-        engine.releaseAllReaders();
-
         compiler.compile(outOfOrderInsertSQL, sqlExecutionContext);
 
-        // todo: ensure reader can pick up out of order stuff
-        // release reader for now because it is unable to reload out-of-order results
+        TestUtils.printSql(compiler, sqlExecutionContext, assertSQL, sink2);
+        TestUtils.assertEquals(sink1, sink2);
         engine.releaseAllReaders();
-
         TestUtils.printSql(compiler, sqlExecutionContext, assertSQL, sink2);
         TestUtils.assertEquals(sink1, sink2);
     }
@@ -2398,7 +2373,6 @@ public class OutOfOrderTest extends AbstractCairoTest {
                 "/oo/testColumnTopLastDataMergeData.txt"
         );
     }
-
 
     private static void testColumnTopMidDataMergeData0(
             CairoEngine engine,
@@ -3151,17 +3125,13 @@ public class OutOfOrderTest extends AbstractCairoTest {
     ) throws SqlException, URISyntaxException {
         // create third table, which will contain both X and 1AM
         compiler.compile(referenceTableDDL, sqlExecutionContext);
-
         // expected outcome - output ignored, but useful for debug
         printSqlResult(compiler, sqlExecutionContext, "y order by ts");
-
-        engine.releaseAllReaders();
-
         compiler.compile(outOfOrderSQL, sqlExecutionContext);
+        assertSqlResultAgainstFile(compiler, sqlExecutionContext, "x", resourceName);
 
-        // release reader
+        // check that reader can process out of order partition layout after fresh open
         engine.releaseAllReaders();
-
         assertSqlResultAgainstFile(compiler, sqlExecutionContext, "x", resourceName);
     }
 
@@ -3172,10 +3142,8 @@ public class OutOfOrderTest extends AbstractCairoTest {
             String resourceName
     ) throws URISyntaxException, SqlException {
         printSqlResult(compiler, sqlExecutionContext, sql);
-
         URL url = OutOfOrderTest.class.getResource(resourceName);
         Assert.assertNotNull(url);
-//        System.out.println(sink);
         TestUtils.assertEquals(new File(url.toURI()), sink);
     }
 
@@ -4071,6 +4039,20 @@ public class OutOfOrderTest extends AbstractCairoTest {
         );
     }
 
+    protected void assertMemoryLeak(TestUtils.LeakProneCode code) throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try {
+                code.run();
+                engine.releaseInactive();
+                Assert.assertEquals(0, engine.getBusyWriterCount());
+                Assert.assertEquals(0, engine.getBusyReaderCount());
+            } finally {
+                engine.releaseAllReaders();
+                engine.releaseAllWriters();
+            }
+        });
+    }
+
     private void bench20(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext executionContext) throws SqlException {
         // create table with roughly 2AM data
         compiler.compile(
@@ -4125,8 +4107,6 @@ public class OutOfOrderTest extends AbstractCairoTest {
                 sqlExecutionContext
         );
 
-        engine.releaseAllReaders();
-
         try (
                 DirectCharSink sink1 = new DirectCharSink(16 * 1024 * 1024);
                 DirectCharSink sink2 = new DirectCharSink(16 * 1024 * 1024)
@@ -4142,6 +4122,15 @@ public class OutOfOrderTest extends AbstractCairoTest {
                     sink1,
                     sink2
             );
+        }
+    }
+
+    private void executeVanilla(TestUtils.LeakProneCode code) throws Exception {
+        OutOfOrderUtils.initBuf();
+        try {
+            assertMemoryLeak(code);
+        } finally {
+            OutOfOrderUtils.freeBuf();
         }
     }
 
@@ -4289,11 +4278,9 @@ public class OutOfOrderTest extends AbstractCairoTest {
                 sqlExecutionContext
         );
 
-        engine.releaseAllReaders();
-
         try (
-                DirectCharSink sink1 = new DirectCharSink(16*1024*1024);
-                DirectCharSink sink2 = new DirectCharSink(16*1024*1024)
+                DirectCharSink sink1 = new DirectCharSink(16 * 1024 * 1024);
+                DirectCharSink sink2 = new DirectCharSink(16 * 1024 * 1024)
         ) {
             assertOutOfOrderDataConsistency(
                     engine,

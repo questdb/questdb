@@ -102,7 +102,6 @@ public class TableReader implements Closeable, SymbolTableSource {
             this.bitmapIndexes = new ObjList<>(capacity);
             this.bitmapIndexes.setPos(capacity + 2);
 
-
             this.openPartitionInfo = new LongList(partitionCount * PARTITIONS_SLOT_SIZE);
             this.openPartitionInfo.setPos(partitionCount * PARTITIONS_SLOT_SIZE);
             for (int i = 0; i < partitionCount; i++) {
@@ -329,24 +328,16 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     public void reconcileOpenPartitionsFrom(int partitionIndex) {
-        int txSize = txFile.getPartitionsCount();
-
-        // Example of reconciliation between open partitions
-        // and updated tx file
-        // old      1    2   10   11   13
-        // new      3    4    5   11   12    13    14
-        // --------------------------------------------------------------
-        // old      1    2    -    -     -    10    11     -     13     -
-        // new      -    -    3    4     5     -    11    12     13    14
-        // op       d    d    i    i     i     d     r     d      r     i
-        // d=delete, i=insert, r=refresh
+        int txPartitionCount = txFile.getPartitionsCount();
         int txPartitionIndex = partitionIndex;
         boolean changed = false;
 
-        while (partitionIndex < partitionCount && txPartitionIndex < txSize) {
+        while (partitionIndex < partitionCount && txPartitionIndex < txPartitionCount) {
             final int offset = partitionIndex * PARTITIONS_SLOT_SIZE;
-            long openPartitionTimestamp = openPartitionInfo.getQuick(offset);
-            long openPartitionSize = openPartitionInfo.getQuick(offset + 1);
+            final long openPartitionTimestamp = openPartitionInfo.getQuick(offset);
+            final long openPartitionSize = openPartitionInfo.getQuick(offset + 1);
+            final long openPartitionNameTxn = openPartitionInfo.getQuick(offset + 2);
+
             long txPartTs = txFile.getPartitionTimestamp(txPartitionIndex);
 
             if (openPartitionTimestamp < txPartTs) {
@@ -356,18 +347,25 @@ public class TableReader implements Closeable, SymbolTableSource {
             } else if (openPartitionTimestamp > txPartTs) {
                 // Insert partition
                 insertPartition(partitionIndex, txPartTs);
+                changed = true;
                 txPartitionIndex++;
                 partitionIndex++;
             } else {
                 // Refresh partition
                 long newPartitionSize = txFile.getPartitionSize(txPartitionIndex);
-                if (openPartitionSize != newPartitionSize) {
-                    if (openPartitionSize > -1L) {
-                        // Resize partition
-                        reloadPartition(partitionIndex, newPartitionSize);
-                        this.openPartitionInfo.setQuick(partitionIndex * PARTITIONS_SLOT_SIZE + 1, newPartitionSize);
-                        LOG.info().$("updated partition size [partition=").$(openPartitionTimestamp).I$();
+                final long txPartitionNameTxn = txFile.getPartitionNameTxn(partitionIndex);
+                if (openPartitionNameTxn == txPartitionNameTxn) {
+                    if (openPartitionSize != newPartitionSize) {
+                        if (openPartitionSize > -1L) {
+                            reloadPartition(partitionIndex, newPartitionSize, txPartitionNameTxn, partitionIndex == txPartitionCount - 1);
+                            this.openPartitionInfo.setQuick(partitionIndex * PARTITIONS_SLOT_SIZE + 1, newPartitionSize);
+                            LOG.info().$("updated partition size [partition=").$(openPartitionTimestamp).I$();
+                        }
+                        changed = true;
                     }
+                } else {
+                    openPartition0(partitionIndex);
+                    this.openPartitionInfo.setQuick(offset + 2, txPartitionNameTxn);
                     changed = true;
                 }
                 txPartitionIndex++;
@@ -375,7 +373,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             }
         }
 
-        // if while finished on txPartitionIndex == txSize condition
+        // if while finished on txPartitionIndex == txPartitionCount condition
         // remove deleted opened partitions
         while (partitionIndex < partitionCount) {
             deletePartition(partitionIndex);
@@ -384,7 +382,7 @@ public class TableReader implements Closeable, SymbolTableSource {
 
         // if while finished on partitionIndex == partitionCount condition
         // insert new partitions at the end
-        for (; partitionIndex < txSize; partitionIndex++) {
+        for (; partitionIndex < txPartitionCount; partitionIndex++) {
             insertPartition(partitionIndex, txFile.getPartitionTimestamp(partitionIndex));
             changed = true;
         }
@@ -813,21 +811,23 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     private void insertPartition(int partitionIndex, long timestamp) {
-        int columnBase = getColumnBase(partitionIndex);
-        int baseIndex = getPrimaryColumnIndex(columnBase, 0);
-        int newBaseIndex = getPrimaryColumnIndex(getColumnBase(partitionIndex + 1), 0);
-
-        int columnResize = newBaseIndex - baseIndex;
-        columns.insert(baseIndex, columnResize);
-        columns.set(baseIndex, baseIndex + columnCount * 2 - 1, null);
-
-        bitmapIndexes.insert(columnBase, columnResize);
-        columnTops.insert(columnBase, columnResize / 2);
+        final int columnBase = getColumnBase(partitionIndex);
+        final int columnSlotSize = getColumnBase(1);
+        final int topBase = columnBase / 2;
+        final int topSlotSize = columnSlotSize / 2;
+        columns.insert(columnBase, columnSlotSize);
+        columns.set(columnBase, columnBase + columnSlotSize, NullColumn.INSTANCE);
+        bitmapIndexes.insert(columnBase, columnSlotSize);
+        bitmapIndexes.set(columnBase, columnBase + columnSlotSize, null);
+        columnTops.insert(topBase, topSlotSize);
+        columnTops.seed(topBase, topSlotSize, 0);
 
         final int offset = partitionIndex * PARTITIONS_SLOT_SIZE;
         openPartitionInfo.insert(offset, PARTITIONS_SLOT_SIZE);
         openPartitionInfo.setQuick(offset, timestamp);
         openPartitionInfo.setQuick(offset + 1, -1L); // size
+        openPartitionInfo.setQuick(offset + 2, -1L); // name txn
+        openPartitionInfo.setQuick(offset + 3, -1L); // data txn
         partitionCount++;
         LOG.info().$("inserted partition [path=").$(path).$(",timestamp=").$ts(timestamp).I$();
     }
@@ -887,6 +887,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                 if (partitionSize > 0) {
                     openPartitionColumns(path, getColumnBase(partitionIndex), partitionSize, partitionIndex, lastPartition);
                     this.openPartitionInfo.setQuick(partitionIndex * PARTITIONS_SLOT_SIZE + 1, partitionSize);
+                    // todo: perhaps set data txn here so we don't reload partition when we don't need to
                 }
 
                 return partitionSize;
@@ -1005,7 +1006,66 @@ public class TableReader implements Closeable, SymbolTableSource {
         // Reconcile partition full or partial
         // Partial will only update row count of last partition and append new partitions
         if (this.txFile.getPartitionTableVersion() == prevPartitionVersion) {
-            reconcileOpenPartitionsFrom(Math.max(0, partitionCount - 1));
+            int partitionIndex = Math.max(0, partitionCount - 1);
+            final int prevPartitionCount = partitionIndex;
+            final int txPartitionCount = txFile.getPartitionsCount();
+            if (partitionIndex < txPartitionCount) {
+                if (partitionIndex < partitionCount) {
+                    final int offset = partitionIndex * PARTITIONS_SLOT_SIZE;
+                    final long openPartitionSize = openPartitionInfo.getQuick(offset + 1);
+                    // we check that open partition size is non-negative to avoid loading
+                    // partition that is not yet in memory
+                    if (openPartitionSize > -1) {
+                        final long openPartitionNameTxn = openPartitionInfo.getQuick(offset + 2);
+                        final long openPartitionDataTxn = openPartitionInfo.getQuick(offset + 1);
+                        final long txPartitionSize = txFile.getPartitionSize(partitionIndex);
+                        final long txPartitionNameTxn = txFile.getPartitionNameTxn(partitionIndex);
+                        final long txPartitionDataTxn = txFile.getPartitionDataTxn(partitionIndex);
+
+                        if (openPartitionNameTxn == txPartitionNameTxn) {
+                            if (openPartitionSize != txPartitionSize || openPartitionDataTxn != txPartitionDataTxn) {
+                                reloadPartition(partitionIndex, txPartitionSize, txPartitionNameTxn, partitionIndex == txPartitionCount - 1);
+                                this.openPartitionInfo.setQuick(partitionIndex * PARTITIONS_SLOT_SIZE + 1, txPartitionSize);
+                                LOG.info().$("updated partition size [partition=").$(openPartitionInfo.getQuick(offset)).I$();
+                            }
+                        } else {
+                            openPartition0(partitionIndex);
+                            this.openPartitionInfo.setQuick(offset + 2, txPartitionNameTxn);
+                        }
+                    }
+                    partitionIndex++;
+                }
+                for (; partitionIndex < txPartitionCount; partitionIndex++) {
+                    insertPartition(partitionIndex, txFile.getPartitionTimestamp(partitionIndex));
+                }
+                reloadSymbolMapCounts();
+            }
+
+            // todo: do this conditionally when data version changes
+            for (int i = 0; i < prevPartitionCount; i++) {
+                final int offset = i * PARTITIONS_SLOT_SIZE;
+                final long openPartitionSize = openPartitionInfo.getQuick(offset + 1);
+                if (openPartitionSize > -1) {
+                    final long openPartitionNameTxn = openPartitionInfo.getQuick(offset + 2);
+                    final long openPartitionDataTxn = openPartitionInfo.getQuick(offset + 3);
+
+                    final long txPartitionSize = txFile.getPartitionSize(i);
+                    final long txPartitionNameTxn = txFile.getPartitionNameTxn(i);
+                    final long txPartitionDataTxn = txFile.getPartitionDataTxn(i);
+
+                    if (openPartitionNameTxn == txPartitionNameTxn) {
+                        if (openPartitionDataTxn != txPartitionDataTxn && openPartitionSize != txPartitionSize) {
+                            reloadPartition(i, txPartitionSize, txPartitionNameTxn, false);
+                            this.openPartitionInfo.setQuick(offset + 1, txPartitionSize);
+                            this.openPartitionInfo.setQuick(offset + 3, txPartitionDataTxn);
+                            LOG.info().$("updated partition size [partition=").$(openPartitionInfo.getQuick(offset)).I$();
+                        }
+                    } else {
+                        openPartition0(i);
+                        this.openPartitionInfo.setQuick(offset + 2, txPartitionNameTxn);
+                    }
+                }
+            }
             return;
         }
         reconcileOpenPartitionsFrom(0);
@@ -1112,24 +1172,46 @@ public class TableReader implements Closeable, SymbolTableSource {
      * @param partitionIndex index of partition
      * @param rowCount       number of rows in partition
      */
-    private void reloadPartition(int partitionIndex, long rowCount) {
-        int symbolMapIndex = 0;
-        int columnBase = getColumnBase(partitionIndex);
-        for (int i = 0; i < columnCount; i++) {
-            final int index = getPrimaryColumnIndex(columnBase, i);
-            growColumn(
-                    columns.getQuick(index),
-                    columns.getQuick(index + 1),
-                    metadata.getColumnType(i),
-                    rowCount - getColumnTop(columnBase, i)
-            );
+    private void reloadPartition(int partitionIndex, long rowCount, long openPartitionNameTxn, boolean lastPartition) {
+        // todo: we know timestamp, pass it here
+        Path path = pathGenPartitioned(partitionIndex);
+        TableUtils.txnPartitionConditionally(path, openPartitionNameTxn);
+        try {
+            int symbolMapIndex = 0;
+            int columnBase = getColumnBase(partitionIndex);
+            for (int i = 0; i < columnCount; i++) {
+                final int index = getPrimaryColumnIndex(columnBase, i);
+                final MappedReadOnlyMemory mem1 = columns.getQuick(index);
+                if (mem1 instanceof NullColumn) {
+                    reloadColumnAt(
+                            path,
+                            columns,
+                            columnTops,
+                            bitmapIndexes,
+                            columnBase,
+                            i,
+                            rowCount,
+                            partitionIndex,
+                            lastPartition
+                    );
+                } else {
+                    growColumn(
+                            mem1,
+                            columns.getQuick(index + 1),
+                            metadata.getColumnType(i),
+                            rowCount - getColumnTop(columnBase, i)
+                    );
+                }
 
-            // reload symbol map
-            SymbolMapReader reader = symbolMapReaders.getQuick(i);
-            if (reader == null) {
-                continue;
+                // reload symbol map
+                SymbolMapReader reader = symbolMapReaders.getQuick(i);
+                if (reader == null) {
+                    continue;
+                }
+                reader.updateSymbolCount(symbolCountSnapshot.getQuick(symbolMapIndex++));
             }
-            reader.updateSymbolCount(symbolCountSnapshot.getQuick(symbolMapIndex++));
+        } finally {
+            path.trimTo(rootLen);
         }
     }
 

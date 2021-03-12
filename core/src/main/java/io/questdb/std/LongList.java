@@ -306,8 +306,6 @@ public class LongList implements Mutable, LongVec {
         }
         pos -= slotSize;
         Arrays.fill(buffer, pos, pos + slotSize, noEntryValue);
-//        pos -= slotSize;
-//        buffer[--pos] = noEntryValue;
     }
 
     public void seed(int capacity, long value) {
@@ -319,7 +317,6 @@ public class LongList implements Mutable, LongVec {
     public void seed(int fromIndex, int count, long value) {
         int capacity = fromIndex + count;
         ensureCapacity(capacity);
-        pos = capacity;
         Arrays.fill(buffer, fromIndex, capacity, value);
     }
 
