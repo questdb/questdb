@@ -15,6 +15,17 @@ GOPATH=~/tmp/go go install -v ./...
 # Full data set
 ~/tmp/go/bin/tsbs_generate_data --use-case="iot" --seed=123 --scale=4000 --timestamp-start="2016-01-01T00:00:00Z" --timestamp-end="2016-01-04T00:00:00Z" --log-interval="10s" --format="influx" > /tmp/data
 cat /tmp/data | ~/tmp/go/bin/tsbs_load_influx 
+# Show help
 ~/tmp/go/bin/tsbs_load_questdb -help
 cat /tmp/data | ~/tmp/go/bin/tsbs_load_questdb 
+
+
+#
+# Loading data using the shell scripts
+#
+# Change to install directory see above
+cd ~/tmp/go/src/github.com/timescale/
+# generate data file /tmp/bulk_data/influx-data.gz
+PATH=${PATH}:~/tmp/go/bin FORMATS=influx TS_END=2016-01-01T02:00:00Z bash ./scripts/generate_data.sh 
+PATH=${PATH}:~/tmp/go/bin NUM_WORKERS=1 ./scripts/load/load_questdb.sh
 
