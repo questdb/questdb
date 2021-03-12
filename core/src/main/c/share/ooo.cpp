@@ -569,9 +569,9 @@ void merge_copy_var_column_top(
 
 template<class T>
 __SIMD_MULTIVERSION__
-inline void set_memory_vanilla(T * addr, const T value, int64_t count) {
-    while(count-- > 0) {
-        *addr++ = value;
+inline void set_memory_vanilla(T * __restrict__ addr, const T value, int64_t count) {
+    for (int i = 0; i < count; ++i) {
+        addr[i] = value;
     }
 }
 
@@ -875,29 +875,53 @@ __SIMD_MULTIVERSION__
 JNIEXPORT void JNICALL
 Java_io_questdb_std_Vect_setMemoryLong(JNIEnv *env, jclass cl, jlong pData, jlong value,
                                        jlong count) {
-    set_memory_vanilla<int64_t>(
-            reinterpret_cast<int64_t *>(pData),
-            __JLONG_REINTERPRET_CAST__(int64_t, value),
-            (int64_t) (count)
-    );
+    switch (value) {
+        case -1l:
+            // -1L is 0xffffffffffffffffffffff
+            // so it is same as setting all bytes to 0xff
+            memset(reinterpret_cast<int64_t *>(pData), 0xff, count * 8);
+            break;
+        case 0l:
+            memset(reinterpret_cast<int64_t *>(pData), 0x0, count * 8);
+            break;
+        default:
+            set_memory_vanilla<int64_t>(
+                    reinterpret_cast<int64_t *>(pData),
+                    __JLONG_REINTERPRET_CAST__(int64_t, value),
+                    (int64_t) (count)
+            );
+            break;
+    }
 }
 
 __SIMD_MULTIVERSION__
 JNIEXPORT void JNICALL
 Java_io_questdb_std_Vect_setMemoryInt(JNIEnv *env, jclass cl, jlong pData, jint value,
                                       jlong count) {
-    set_memory_vanilla<jint>(
-            reinterpret_cast<jint *>(pData),
-            value,
-            (int64_t) (count)
-    );
+    switch (value) {
+        case -1:
+            // -1L is 0xfffffffff
+            // so it is same as setting all bytes to 0xff
+            A_memset(reinterpret_cast<int64_t *>(pData), 0xff, count * 4);
+            break;
+        case 0:
+            A_memset(reinterpret_cast<int64_t *>(pData), 0x0, count * 4);
+            break;
+        default:
+            set_memory_vanilla<jint>(
+                    reinterpret_cast<jint *>(pData),
+                    value,
+                    (int64_t) (count)
+            );
+            break;
+    }
 }
 
 __SIMD_MULTIVERSION__
 JNIEXPORT void JNICALL
 Java_io_questdb_std_Vect_setMemoryDouble(JNIEnv *env, jclass cl, jlong pData, jdouble value,
                                          jlong count) {
-    set_memory_vanilla<jdouble>(
+    set_memory_vanilla_double(
             reinterpret_cast<jdouble *>(pData),
             value,
             (int64_t) (count)

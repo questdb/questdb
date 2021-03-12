@@ -313,23 +313,23 @@ public class MergeStringColumnBenchmark {
 //                0);
 //    }
 
-    @Benchmark
-    public void testSetMemoryLong() {
-        Vect.setMemoryLong(
-                bigStrMerge.destVarAddress,
-                -1L,
-                (bigStrMerge.addressesTbl1.varSizeBytes + bigStrMerge.addressesTbl2.varSizeBytes) / Long.BYTES
-        );
-    }
-
-    @Benchmark
-    public void testSetMemoryInt() {
-        Vect.setMemoryInt(
-                bigStrMerge.destVarAddress,
-                -1,
-                (bigStrMerge.addressesTbl1.varSizeBytes + bigStrMerge.addressesTbl2.varSizeBytes) / Integer.BYTES
-        );
-    }
+//    @Benchmark
+//    public void testSetMemoryLong() {
+//        Vect.setMemoryLong(
+//                bigStrMerge.destVarAddress,
+//                -1L,
+//                (bigStrMerge.addressesTbl1.varSizeBytes + bigStrMerge.addressesTbl2.varSizeBytes) / Long.BYTES
+//        );
+//    }
+//
+//    @Benchmark
+//    public void testSetMemoryInt() {
+//        Vect.setMemoryInt(
+//                bigStrMerge.destVarAddress,
+//                -1,
+//                (bigStrMerge.addressesTbl1.varSizeBytes + bigStrMerge.addressesTbl2.varSizeBytes) / Integer.BYTES
+//        );
+//    }
 
     @Benchmark
     public void testSetMemoryShort() {
@@ -341,22 +341,31 @@ public class MergeStringColumnBenchmark {
     }
 
     @Benchmark
-    public void testSetVarColumnRefs32Bit() {
-        Vect.setVarColumnRefs32Bit(
+    public void testSetMemoryDouble() {
+        Vect.setMemoryDouble(
                 bigStrMerge.destVarAddress,
-                0,
-                (bigStrMerge.addressesTbl1.varSizeBytes + bigStrMerge.addressesTbl2.varSizeBytes) / 8
+                -1.0,
+                (bigStrMerge.addressesTbl1.varSizeBytes + bigStrMerge.addressesTbl2.varSizeBytes) / Double.BYTES
         );
     }
-
-    @Benchmark
-    public void testSetVarColumnRefs64Bit() {
-        Vect.setVarColumnRefs64Bit(
-                bigStrMerge.destVarAddress,
-                0,
-                (bigStrMerge.addressesTbl1.varSizeBytes + bigStrMerge.addressesTbl2.varSizeBytes) / 8
-        );
-    }
+//
+//    @Benchmark
+//    public void testSetVarColumnRefs32Bit() {
+//        Vect.setVarColumnRefs32Bit(
+//                bigStrMerge.destVarAddress,
+//                0,
+//                (bigStrMerge.addressesTbl1.varSizeBytes + bigStrMerge.addressesTbl2.varSizeBytes) / 8
+//        );
+//    }
+//
+//    @Benchmark
+//    public void testSetVarColumnRefs64Bit() {
+//        Vect.setVarColumnRefs64Bit(
+//                bigStrMerge.destVarAddress,
+//                0,
+//                (bigStrMerge.addressesTbl1.varSizeBytes + bigStrMerge.addressesTbl2.varSizeBytes) / 8
+//        );
+//    }
 
     private ColumnAddress getAddresses(TableReader readerTbl1, String columnName) {
         ColumnAddress columnAddress = new ColumnAddress();
