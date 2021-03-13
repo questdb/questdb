@@ -135,4 +135,21 @@ public class TableUtilsTest {
     public void testUnknownTodo() {
         TestUtils.assertEquals("unknown", TableUtils.getTodoText(7879797987L));
     }
+
+    @Test
+    public void testIsValidInfluxColumnName() {
+        Assert.assertTrue(TableUtils.isValidInfluxColumnName("a"));
+
+        Assert.assertFalse(TableUtils.isValidInfluxColumnName("_a"));
+
+        Assert.assertFalse(TableUtils.isValidInfluxColumnName("-a"));
+
+        Assert.assertFalse(TableUtils.isValidInfluxColumnName("a-"));
+
+        Assert.assertTrue(TableUtils.isValidInfluxColumnName("a_"));
+
+        Assert.assertTrue(TableUtils.isValidInfluxColumnName("a_b"));
+
+        Assert.assertTrue(TableUtils.isValidInfluxColumnName("data_connectionSource_user-agent"));
+    }
 }

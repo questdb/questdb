@@ -283,6 +283,44 @@ public final class TableUtils {
         return true;
     }
 
+    public static boolean isValidInfluxColumnName(CharSequence seq) {
+        char c = seq.charAt(0); 
+        if (c == '_' || c == '-') {
+            return false;
+        }
+        c = seq.charAt(seq.length() - 1);
+        if (c == '-') {
+            return false;
+        }
+
+        for (int i = 0, l = seq.length(); i < l; i++) {
+            c = seq.charAt(i);
+            switch (c) {
+                case ' ':
+                case '?':
+                case '.':
+                case ',':
+                case '\'':
+                case '\"':
+                case '\\':
+                case '/':
+                case '\0':
+                case ':':
+                case ')':
+                case '(':
+                case '+':
+                case '*':
+                case '%':
+                case '~':
+                case 0xfeff: // UTF-8 BOM (Byte Order Mark) can appear at the beginning of a character stream
+                    return false;
+                default:
+                    break;
+            }
+        }
+        return true;
+    }
+
     public static long lock(FilesFacade ff, Path path) {
         long fd = ff.openRW(path);
         if (fd == -1) {
