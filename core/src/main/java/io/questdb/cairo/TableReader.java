@@ -359,7 +359,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                         if (openPartitionSize > -1L) {
                             reloadPartition(partitionIndex, newPartitionSize, txPartitionNameTxn, partitionIndex == txPartitionCount - 1);
                             this.openPartitionInfo.setQuick(partitionIndex * PARTITIONS_SLOT_SIZE + 1, newPartitionSize);
-                            LOG.info().$("updated partition size [partition=").$(openPartitionTimestamp).I$();
+                            LOG.debug().$("updated partition size [partition=").$(openPartitionTimestamp).I$();
                         }
                         changed = true;
                     }
@@ -980,7 +980,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                     // good, very stable, congrats
                     this.txn = txn;
                     this.rowCount = txFile.getFixedRowCount() + txFile.getTransientRowCount();
-                    LOG.info()
+                    LOG.debug()
                             .$("new transaction [txn=").$(txn)
                             .$(", transientRowCount=").$(txFile.getTransientRowCount())
                             .$(", fixedRowCount=").$(txFile.getFixedRowCount())
@@ -1026,7 +1026,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                             if (openPartitionSize != txPartitionSize || openPartitionDataTxn != txPartitionDataTxn) {
                                 reloadPartition(partitionIndex, txPartitionSize, txPartitionNameTxn, partitionIndex == txPartitionCount - 1);
                                 this.openPartitionInfo.setQuick(partitionIndex * PARTITIONS_SLOT_SIZE + 1, txPartitionSize);
-                                LOG.info().$("updated partition size [partition=").$(openPartitionInfo.getQuick(offset)).I$();
+                                LOG.debug().$("updated partition size [partition=").$(openPartitionInfo.getQuick(offset)).I$();
                             }
                         } else {
                             openPartition0(partitionIndex);
