@@ -3512,7 +3512,6 @@ public class TableWriter implements Closeable {
      */
     private void setStateForTimestamp(Path path, long timestamp, boolean updatePartitionInterval) {
         final long partitionTimestampHi = TableUtils.setPathForPartition(path, partitionBy, timestamp);
-        // todo: we can lookup partition particulars by partition index, this code always works only with last partition
         TableUtils.txnPartitionConditionally(
                 path,
                 txFile.getPartitionNameTxnByPartitionTimestamp(partitionTimestampHi)

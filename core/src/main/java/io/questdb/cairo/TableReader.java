@@ -885,7 +885,6 @@ public class TableReader implements Closeable, SymbolTableSource {
                 if (partitionSize > 0) {
                     openPartitionColumns(path, getColumnBase(partitionIndex), partitionSize, partitionIndex, lastPartition);
                     this.openPartitionInfo.setQuick(partitionIndex * PARTITIONS_SLOT_SIZE + 1, partitionSize);
-                    // todo: perhaps set data txn here so we don't reload partition when we don't need to
                 }
 
                 return partitionSize;
@@ -1144,7 +1143,6 @@ public class TableReader implements Closeable, SymbolTableSource {
      * @param rowCount       number of rows in partition
      */
     private void reloadPartition(int partitionIndex, long rowCount, long openPartitionNameTxn, boolean lastPartition) {
-        // todo: we know timestamp, pass it here
         Path path = pathGenPartitioned(partitionIndex);
         TableUtils.txnPartitionConditionally(path, openPartitionNameTxn);
         try {
