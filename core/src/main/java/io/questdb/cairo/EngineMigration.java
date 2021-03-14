@@ -31,6 +31,7 @@ import io.questdb.cairo.vm.ReadWriteVirtualMemory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
+import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.NativeLPSZ;
 import io.questdb.std.str.Path;
 
@@ -44,8 +45,6 @@ public class EngineMigration {
     // in future code version
     public static final long TX_STRUCT_UPDATE_1_OFFSET_MAP_WRITER_COUNT = 72;
     public static final long TX_STRUCT_UPDATE_1_META_OFFSET_PARTITION_BY = 4;
-    public static final long TX_STRUCT_UPDATE_1_OFFSET_MIN_TIMESTAMP = 24;
-    public static final long TX_STRUCT_UPDATE_1_OFFSET_MAX_TIMESTAMP = 32;
     public static final String TX_STRUCT_UPDATE_1_ARCHIVE_FILE_NAME = "_archive";
     public static final String TX_STRUCT_UPDATE_1_BACKUP_NAME = TXN_FILE_NAME + ".v" + (VERSION_TX_STRUCT_UPDATE_1 - 1);
 
@@ -217,6 +216,13 @@ public class EngineMigration {
         void migrate(MigrationContext context);
     }
 
+    static int readIntAtOffset(FilesFacade ff, Path path, long tempMem4b, long fd) {
+        if (ff.read(fd, tempMem4b, Integer.BYTES, EngineMigration.TX_STRUCT_UPDATE_1_META_OFFSET_PARTITION_BY) != Integer.BYTES) {
+            throw CairoException.instance(ff.errno()).put("Cannot read: ").put(path);
+        }
+        return Unsafe.getUnsafe().getInt(tempMem4b);
+    }
+
     private static class MigrationActions {
         private static void assignTableId(MigrationContext migrationContext) {
             long mem = migrationContext.getTempMemory(8);
@@ -263,7 +269,7 @@ public class EngineMigration {
             }
 
             LOG.debug().$("opening for rw [path=").$(path).I$();
-            var txMem = migrationContext.creteRwMemoryOf(ff, path.$(), ff.getPageSize());
+            var txMem = migrationContext.createRwMemoryOf(ff, path.$(), ff.getPageSize());
             var tempMem8b = migrationContext.getTempMemory(8);
 
             var txFileUpdate = migrationContext.getTempVirtualMem();
@@ -283,7 +289,7 @@ public class EngineMigration {
                 long partitionSegmentOffset = txFileUpdate.getAppendOffset();
                 txFileUpdate.putInt(0);
 
-                int partitionBy = readIntAtOffset(ff, path, tempMem8b, TX_STRUCT_UPDATE_1_META_OFFSET_PARTITION_BY, migrationContext.getMetadataFd());
+                int partitionBy = readIntAtOffset(ff, path, tempMem8b, migrationContext.getMetadataFd());
                 if (partitionBy != PartitionBy.NONE) {
                     path.trimTo(pathDirLen);
                     writeAttachedPartitions(ff, tempMem8b, path, txMem, partitionBy, symbolsCount, txFileUpdate);
@@ -315,14 +321,16 @@ public class EngineMigration {
                 MappedReadWriteMemory txMem,
                 int partitionBy,
                 int symbolsCount,
-                PagedVirtualMemory writeTo) {
+                PagedVirtualMemory writeTo
+        ) {
             int rootLen = path.length();
 
-            long minTimestamp = txMem.getLong(TX_STRUCT_UPDATE_1_OFFSET_MIN_TIMESTAMP);
-            long maxTimestamp = txMem.getLong(TX_STRUCT_UPDATE_1_OFFSET_MAX_TIMESTAMP);
+            long minTimestamp = txMem.getLong(TX_OFFSET_MIN_TIMESTAMP);
+            long maxTimestamp = txMem.getLong(TX_OFFSET_MAX_TIMESTAMP);
+            long transientCount = txMem.getLong(TX_OFFSET_TRANSIENT_ROW_COUNT);
 
-            var timestampFloorMethod = getPartitionFloor(partitionBy);
-            var timestampAddMethod = getPartitionAdd(partitionBy);
+            Timestamps.TimestampFloorMethod timestampFloorMethod = getPartitionFloor(partitionBy);
+            Timestamps.TimestampAddMethod timestampAddMethod = getPartitionAdd(partitionBy);
 
             final long tsLimit = timestampFloorMethod.floor(maxTimestamp);
             for (long ts = timestampFloorMethod.floor(minTimestamp); ts < tsLimit; ts = timestampAddMethod.calculate(ts, 1)) {
@@ -340,6 +348,11 @@ public class EngineMigration {
                     }
                 }
             }
+            // last partition
+            writeTo.putLong(tsLimit);
+            writeTo.putLong(transientCount);
+            writeTo.putLong(-1);
+            writeTo.putLong(0);
         }
 
         private static boolean removedPartitionsIncludes(long ts, ReadWriteVirtualMemory txMem, int symbolsCount) {
@@ -355,13 +368,6 @@ public class EngineMigration {
             }
             return false;
         }
-    }
-
-    static int readIntAtOffset(FilesFacade ff, Path path, long tempMem4b, long offset, long fd) {
-        if (ff.read(fd, tempMem4b, Integer.BYTES, offset) != Integer.BYTES) {
-            throw CairoException.instance(ff.errno()).put("Cannot read: ").put(path);
-        }
-        return Unsafe.getUnsafe().getInt(tempMem4b);
     }
 
     class MigrationContext {
@@ -392,7 +398,7 @@ public class EngineMigration {
             return (int) engine.getNextTableId();
         }
 
-        public MappedReadWriteMemory creteRwMemoryOf(FilesFacade ff, Path path, long pageSize) {
+        public MappedReadWriteMemory createRwMemoryOf(FilesFacade ff, Path path, long pageSize) {
             // re-use same rwMemory
             // assumption that it is re-usable after the close() and then of()  methods called.
             rwMemory.of(ff, path, pageSize);

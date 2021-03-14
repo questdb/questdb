@@ -429,9 +429,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
             var symbolCounts = new IntList();
             path.trimTo(0).concat(root).concat(src.getName());
             var attachedPartitions = new LongList();
-            try (var txFile = new TxReader(ff, path.$())) {
-                txFile.initPartitionBy(src.getPartitionBy());
-                txFile.open();
+            try (var txFile = new TxReader(ff, path.$(), src.getPartitionBy())) {
                 txFile.readUnchecked();
 
                 for (int i = 0; i < txFile.getPartitionsCount() - 1; i++) {

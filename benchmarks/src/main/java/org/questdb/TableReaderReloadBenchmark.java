@@ -60,13 +60,13 @@ public class TableReaderReloadBenchmark {
             try (SqlCompiler compiler = new SqlCompiler(engine)) {
                 compiler.compile("create table if not exists test(f timestamp) timestamp (f) PARTITION BY DAY", sqlExecutionContext);
             } catch (SqlException e) {
-                e.printStackTrace();
+               throw new ExceptionInInitializerError();
             }
         }
         Options opt = new OptionsBuilder()
                 .include(TableReaderReloadBenchmark.class.getSimpleName())
-                .warmupIterations(5)
-                .measurementIterations(5)
+                .warmupIterations(2)
+                .measurementIterations(2)
                 .forks(1)
                 .build();
 

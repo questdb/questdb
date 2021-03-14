@@ -24,8 +24,8 @@
 
 package org.questdb;
 
-import io.questdb.cairo.vm.PagedVirtualMemory;
 import io.questdb.cairo.vm.ContiguousVirtualMemory;
+import io.questdb.cairo.vm.PagedVirtualMemory;
 import org.openjdk.jmh.annotations.*;
 import org.openjdk.jmh.runner.Runner;
 import org.openjdk.jmh.runner.RunnerException;

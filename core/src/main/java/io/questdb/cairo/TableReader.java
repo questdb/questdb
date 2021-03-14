@@ -80,13 +80,11 @@ public class TableReader implements Closeable, SymbolTableSource {
         this.rootLen = path.length();
         try {
             failOnPendingTodo();
-            this.txFile = new TxReader(ff, path);
-            this.txFile.open();
             this.metadata = openMetaFile();
             this.columnCount = this.metadata.getColumnCount();
             this.columnCountBits = getColumnBits(columnCount);
             int partitionBy = this.metadata.getPartitionBy();
-            txFile.initPartitionBy(partitionBy);
+            this.txFile = new TxReader(ff, path, partitionBy);
             readTxnSlow();
             openSymbolMaps();
 
@@ -1007,7 +1005,6 @@ public class TableReader implements Closeable, SymbolTableSource {
         // Partial will only update row count of last partition and append new partitions
         if (this.txFile.getPartitionTableVersion() == prevPartitionVersion) {
             int partitionIndex = Math.max(0, partitionCount - 1);
-            final int prevPartitionCount = partitionIndex;
             final int txPartitionCount = txFile.getPartitionsCount();
             if (partitionIndex < txPartitionCount) {
                 if (partitionIndex < partitionCount) {
@@ -1039,32 +1036,6 @@ public class TableReader implements Closeable, SymbolTableSource {
                     insertPartition(partitionIndex, txFile.getPartitionTimestamp(partitionIndex));
                 }
                 reloadSymbolMapCounts();
-            }
-
-            // todo: do this conditionally when data version changes
-            for (int i = 0; i < prevPartitionCount; i++) {
-                final int offset = i * PARTITIONS_SLOT_SIZE;
-                final long openPartitionSize = openPartitionInfo.getQuick(offset + 1);
-                if (openPartitionSize > -1) {
-                    final long openPartitionNameTxn = openPartitionInfo.getQuick(offset + 2);
-                    final long openPartitionDataTxn = openPartitionInfo.getQuick(offset + 3);
-
-                    final long txPartitionSize = txFile.getPartitionSize(i);
-                    final long txPartitionNameTxn = txFile.getPartitionNameTxn(i);
-                    final long txPartitionDataTxn = txFile.getPartitionDataTxn(i);
-
-                    if (openPartitionNameTxn == txPartitionNameTxn) {
-                        if (openPartitionDataTxn != txPartitionDataTxn && openPartitionSize != txPartitionSize) {
-                            reloadPartition(i, txPartitionSize, txPartitionNameTxn, false);
-                            this.openPartitionInfo.setQuick(offset + 1, txPartitionSize);
-                            this.openPartitionInfo.setQuick(offset + 3, txPartitionDataTxn);
-                            LOG.info().$("updated partition size [partition=").$(openPartitionInfo.getQuick(offset)).I$();
-                        }
-                    } else {
-                        openPartition0(i);
-                        this.openPartitionInfo.setQuick(offset + 2, txPartitionNameTxn);
-                    }
-                }
             }
             return;
         }

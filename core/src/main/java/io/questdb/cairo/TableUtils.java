@@ -263,7 +263,11 @@ public final class TableUtils {
     }
 
     public static long getPartitionTableIndexOffset(int symbolWriterCount, int index) {
-        return getPartitionTableSizeOffset(symbolWriterCount) + 4 + index * 8L;
+        return getPartitionTableIndexOffset(getPartitionTableSizeOffset(symbolWriterCount), index);
+    }
+
+    public static long getPartitionTableIndexOffset(long partitionTableOffset, int index) {
+        return partitionTableOffset + 4 + index * 8L;
     }
 
     public static long getPartitionTableSizeOffset(int symbolWriterCount) {

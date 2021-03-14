@@ -224,12 +224,13 @@ public class SinglePageMappedReadOnlyPageMemory implements MappedReadOnlyMemory 
         if (newSize > grownLength) {
             grownLength = newSize;
         }
-        final long fileSize = ff.length(fd);
-        newSize = Math.max(newSize, fileSize);
+
         if (newSize <= size) {
             return;
         }
 
+        final long fileSize = ff.length(fd);
+        newSize = Math.max(newSize, fileSize);
         long offset = absolutePointer - page;
         long previousSize = size;
         if (previousSize > 0) {

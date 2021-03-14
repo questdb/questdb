@@ -217,11 +217,7 @@ public class TableWriter implements Closeable {
             openMetaFile(ff, path, rootLen, metaMem);
             this.metadata = new TableWriterMetadata(ff, metaMem);
             this.partitionBy = metaMem.getInt(META_OFFSET_PARTITION_BY);
-
-            this.txFile = new TxWriter(this.ff, this.path);
-            this.txFile.open();
-            this.txFile.initPartitionBy(partitionBy);
-            this.txFile.readUnchecked();
+            this.txFile = new TxWriter(ff, path, partitionBy);
 
             // we have to do truncate repair at this stage of constructor
             // because this operation requires metadata
@@ -265,9 +261,9 @@ public class TableWriter implements Closeable {
                 partitionDirFmt = null;
             }
 
-            this.txFile.initPartitionBy(partitionBy);
             configureColumnMemory();
             timestampSetter = configureTimestampSetter();
+            this.txFile.readRowCounts();
             configureAppendPosition();
             purgeUnusedPartitions();
             clearTodoLog();
@@ -990,6 +986,7 @@ public class TableWriter implements Closeable {
         if (inTransaction()) {
             LOG.info().$("tx rollback [name=").$(name).$(']').$();
             freeColumns(false);
+            this.txFile.readUnchecked();
             configureAppendPosition();
             rollbackIndexes();
             purgeUnusedPartitions();
@@ -1606,7 +1603,7 @@ public class TableWriter implements Closeable {
     }
 
     private void configureAppendPosition() {
-        this.txFile.readUnchecked();
+//        this.txFile.readUnchecked();
         if (this.txFile.getMaxTimestamp() > Long.MIN_VALUE || partitionBy == PartitionBy.NONE) {
             openFirstPartition(this.txFile.getMaxTimestamp());
             if (partitionBy == PartitionBy.NONE) {
@@ -2695,11 +2692,10 @@ public class TableWriter implements Closeable {
             // we use partition size from "txPendingPartitionSizes" to subtract from "txPartitionCount"
 
             if (partitionMutates) {
-                long partitionTimestampLo = txFile.getPartitionTimestampLo(oooTimestampHi);
-                int index = txFile.findAttachedPartitionIndexByLoTimestamp(partitionTimestampLo);
-                txFile.updatePartitionSizeByIndexAndTxn(index, partitionSize);
+                txFile.updatePartitionSizeAndNameTxnByTimestamp(oooTimestampHi, partitionSize);
             } else {
                 txFile.updatePartitionSizeByTimestamp(oooTimestampHi, partitionSize);
+                txFile.bumpPartitionTableVersion();
             }
         } else {
             // this is last partition
@@ -2709,9 +2705,9 @@ public class TableWriter implements Closeable {
             // When partition is new, the data timestamp is MIN_LONG
             this.txFile.maxTimestamp = Math.max(dataTimestampHi, oooTimestampMax);
             if (partitionMutates) {
-                long partitionTimestampLo = txFile.getPartitionTimestampLo(oooTimestampHi);
-                int index = txFile.findAttachedPartitionIndexByLoTimestamp(partitionTimestampLo);
-                txFile.updatePartitionSizeByIndexAndTxn(index, partitionSize);
+                txFile.updatePartitionSizeAndNameTxnByTimestamp(oooTimestampHi, partitionSize);
+            } else {
+                txFile.updatePartitionSizeByTimestamp(oooTimestampHi, partitionSize);
             }
         }
     }
@@ -2763,7 +2759,7 @@ public class TableWriter implements Closeable {
         if (performRecovery) {
             performRecovery();
         }
-        txFile.openFirstPartition();
+        txFile.openFirstPartition(timestamp);
     }
 
     private void openMergePartition() {
@@ -3574,12 +3570,7 @@ public class TableWriter implements Closeable {
         // added so far. Index writers will start point to different
         // files after switch.
         updateIndexes();
-
-        // We need to store reference on partition so that archive
-        // file can be created in appropriate directory.
-        // For simplicity use partitionLo, which can be
-        // translated to directory name when needed
-        txFile.switchPartitions();
+        txFile.switchPartitions(timestamp);
         openPartition(timestamp);
         setAppendPosition(0, false);
     }
