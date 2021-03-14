@@ -171,6 +171,55 @@
       "contributions": [
         "code"
       ]
+    },
+    {
+      "login": "siddheshlatkar",
+      "name": "siddheshlatkar",
+      "avatar_url": "https://avatars.githubusercontent.com/u/39632173?v=4",
+      "profile": "https://github.com/siddheshlatkar",
+      "contributions": [
+        "code"
+      ]
+    },
+    {
+      "login": "Yitaek",
+      "name": "Yitaek Hwang",
+      "avatar_url": "https://avatars.githubusercontent.com/u/6628444?v=4",
+      "profile": "http://yitaekhwang.com",
+      "contributions": [
+        "tutorial",
+        "example"
+      ]
+    },
+    {
+      "login": "gabor-boros",
+      "name": "Gábor Boros",
+      "avatar_url": "https://avatars.githubusercontent.com/u/19173947?v=4",
+      "profile": "https://www.gaboros.hu",
+      "contributions": [
+        "tutorial",
+        "example"
+      ]
+    },
+    {
+      "login": "kovid-r",
+      "name": "kovid-r",
+      "avatar_url": "https://avatars.githubusercontent.com/u/62409489?v=4",
+      "profile": "https://github.com/kovid-r",
+      "contributions": [
+        "tutorial",
+        "example"
+      ]
+    },
+    {
+      "login": "TimBo93",
+      "name": "Tim B.",
+      "avatar_url": "https://avatars.githubusercontent.com/u/8701341?v=4",
+      "profile": "https://borowski-software.de/",
+      "contributions": [
+        "bug",
+        "userTesting"
+      ]
     }
   ],
   "badgeTemplate": "[![All Contributors](https://img.shields.io/badge/all_contributors-<%= contributors.length %>-orange.svg)](#contributors)",
