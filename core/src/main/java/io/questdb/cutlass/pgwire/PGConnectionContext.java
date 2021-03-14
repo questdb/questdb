@@ -1452,13 +1452,10 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
 
     private void processBind(long lo, long msgLimit, @Transient SqlCompiler compiler)
             throws BadProtocolException, SqlException, PeerDisconnectedException, PeerIsSlowToReadException {
-        long hi;
-        short parameterFormatCount;
-        short parameterValueCount;
-
         LOG.debug().$("bind").$();
+
         // portal name
-        hi = getStringLength(lo, msgLimit, "bad portal name length [msgType='B']");
+        long hi = getStringLength(lo, msgLimit, "bad portal name length [msgType='B']");
 
         // named statement
         lo = hi + 1;
@@ -1468,7 +1465,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
 
         //parameter format count
         lo = hi + 1;
-        parameterFormatCount = getShort(lo, msgLimit, "could not read parameter format code count");
+        short parameterFormatCount = getShort(lo, msgLimit, "could not read parameter format code count");
         lo += Short.BYTES;
         if (parameterFormatCount > 0) {
             if (parameterFormatCount == 1) {
@@ -1481,7 +1478,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
 
         // parameter value count
         lo += parameterFormatCount * Short.BYTES;
-        parameterValueCount = getShort(lo, msgLimit, "could not read parameter value count");
+        short parameterValueCount = getShort(lo, msgLimit, "could not read parameter value count");
 
         LOG.debug().$("binding [parameterValueCount=").$(parameterValueCount).$(", thread=").$(Thread.currentThread().getId()).$(']').$();
 
@@ -1540,11 +1537,12 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     }
 
     private void processClose(long lo, long msgLimit) throws BadProtocolException {
-        final byte type = Unsafe.getUnsafe().getByte(lo);
+        LOG.debug().$("close").$();
+
+        final byte type = Unsafe.getUnsafe().getByte(lo++);
         switch (type) {
             case 'S':
-                lo = lo + 1;
-                final long hi = getStringLength(lo, msgLimit, "bad prepared statement name length");
+                final long hi = getStringLength(lo, msgLimit, "bad prepared statement name length [msgType='C']");
                 final CharSequence statementName = getStatementName(lo, hi);
                 if (statementName != null) {
                     final int index = namedStatementMap.keyIndex(statementName);
@@ -1570,11 +1568,22 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     private void processDescribe(long lo, long msgLimit, @Transient SqlCompiler compiler)
             throws SqlException, BadProtocolException, PeerDisconnectedException, PeerIsSlowToReadException {
         LOG.debug().$("describe").$();
-        configureContextFromNamedStatement(
-                lo + 1,
-                getStringLength(lo + 1, msgLimit, "bad portal name length [msgType='D']"),
-                compiler
-        );
+
+        final byte type = Unsafe.getUnsafe().getByte(lo++);
+        final long hi = getStringLength(lo, msgLimit, "bad prepared statement/portal name length [msgType='D']");
+
+        switch (type) {
+            case 'P':
+                if (hi != lo) {
+                    break;
+                }
+            case 'S':
+                configureContextFromNamedStatement(lo, hi, compiler);
+                break;
+            default:
+                LOG.error().$("invalid type for describe message [type=").$(type).$(']').$();
+                throw BadProtocolException.INSTANCE;
+        }
 
         // initialize activeBindVariableTypes from bind variable service
         final int n = bindVariableService.getIndexedVariableCount();

@@ -29,7 +29,6 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.NetUtils;
-import io.questdb.griffin.AbstractGriffinTest;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -53,10 +52,12 @@ import org.postgresql.util.PSQLException;
 
 import java.io.IOException;
 import java.io.InputStream;
-import java.sql.Date;
 import java.sql.*;
 import java.text.SimpleDateFormat;
-import java.util.*;
+import java.util.GregorianCalendar;
+import java.util.List;
+import java.util.Properties;
+import java.util.TimeZone;
 import java.util.stream.Collectors;
 import java.util.stream.LongStream;
 import java.util.stream.Stream;
@@ -64,7 +65,7 @@ import java.util.stream.Stream;
 import static io.questdb.std.Numbers.hexDigits;
 import static org.junit.Assert.assertTrue;
 
-public class PGJobContextTest extends AbstractGriffinTest {
+public class PGJobContextTest extends AbstractPGContextTest {
 
     private static final Log LOG = LogFactory.getLog(PGJobContextTest.class);
     private static final long DAY_MICROS = Timestamps.HOUR_MICROS * 24L;
@@ -2906,41 +2907,6 @@ nodejs code:
         });
     }
 
-    private PGWireServer createPGServer(PGWireConfiguration configuration) {
-        return PGWireServer.create(
-                configuration,
-                null,
-                LOG,
-                engine,
-                compiler.getFunctionFactoryCache()
-        );
-    }
-
-    private PGWireServer createPGServer(int workerCount) {
-
-        final int[] affinity = new int[workerCount];
-        Arrays.fill(affinity, -1);
-
-        final PGWireConfiguration conf = new DefaultPGWireConfiguration() {
-            @Override
-            public Rnd getRandom() {
-                return new Rnd();
-            }
-
-            @Override
-            public int[] getWorkerAffinity() {
-                return affinity;
-            }
-
-            @Override
-            public int getWorkerCount() {
-                return workerCount;
-            }
-        };
-
-        return createPGServer(conf);
-    }
-
     private void execSelectWithParam(PreparedStatement select, int value) throws SQLException {
         sink.clear();
         select.setInt(1, value);
@@ -2951,20 +2917,6 @@ nodejs code:
                 sink.put('\n');
             }
         }
-    }
-
-    private Connection getConnection(boolean simple, boolean binary) throws SQLException {
-        Properties properties = new Properties();
-        properties.setProperty("user", "admin");
-        properties.setProperty("password", "quest");
-        properties.setProperty("sslmode", "disable");
-        properties.setProperty("binaryTransfer", Boolean.toString(binary));
-        if (simple) {
-            properties.setProperty("preferQueryMode", "simple");
-        }
-
-        TimeZone.setDefault(TimeZone.getTimeZone("EDT"));
-        return DriverManager.getConnection("jdbc:postgresql://127.0.0.1:8812/qdb", properties);
     }
 
     @NotNull
