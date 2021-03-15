@@ -220,6 +220,15 @@
         "bug",
         "userTesting"
       ]
+    },
+    {
+      "login": "zikani03",
+      "name": "Zikani Nyirenda Mwase",
+      "avatar_url": "https://avatars.githubusercontent.com/u/1501387?v=4",
+      "profile": "http://zikani.me",
+      "contributions": [
+        "code"
+      ]
     }
   ],
   "badgeTemplate": "[![All Contributors](https://img.shields.io/badge/all_contributors-<%= contributors.length %>-orange.svg)](#contributors)",
