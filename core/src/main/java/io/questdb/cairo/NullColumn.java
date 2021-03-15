@@ -58,6 +58,10 @@ public class NullColumn implements MappedReadOnlyMemory {
     }
 
     @Override
+    public void growToFileSize() {
+    }
+
+    @Override
     public BinarySequence getBin(long offset) {
         return null;
     }

@@ -90,8 +90,9 @@ public class AppendOnlyVirtualMemory extends PagedVirtualMemory implements Mappe
         }
     }
 
-    public long getFd() {
-        return fd;
+    @Override
+    public void growToFileSize() {
+        throw new UnsupportedOperationException();
     }
 
     public boolean isClosed() {
@@ -111,11 +112,6 @@ public class AppendOnlyVirtualMemory extends PagedVirtualMemory implements Mappe
     }
 
     @Override
-    public boolean isDeleted() {
-        return !ff.exists(fd);
-    }
-
-    @Override
     public void of(FilesFacade ff, LPSZ name, long pageSize, long size) {
         // size of file does not mapper for mapping file for append
         of(ff, name, pageSize);
@@ -128,6 +124,15 @@ public class AppendOnlyVirtualMemory extends PagedVirtualMemory implements Mappe
         setPageSize(pageSize);
         fd = TableUtils.openFileRWOrFail(ff, name);
         LOG.debug().$("open ").$(name).$(" [fd=").$(fd).$(", pageSize=").$(pageSize).$(']').$();
+    }
+
+    @Override
+    public boolean isDeleted() {
+        return !ff.exists(fd);
+    }
+
+    public long getFd() {
+        return fd;
     }
 
     public final void of(FilesFacade ff, long fd, long pageSize) {

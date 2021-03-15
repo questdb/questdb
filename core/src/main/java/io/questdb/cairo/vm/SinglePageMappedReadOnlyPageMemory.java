@@ -90,19 +90,6 @@ public class SinglePageMappedReadOnlyPageMemory implements MappedReadOnlyMemory 
         map(ff, name, ff.length(fd));
     }
 
-    private void openFile(FilesFacade ff, LPSZ name) {
-        close();
-        this.ff = ff;
-        boolean exists = ff.exists(name);
-        if (!exists) {
-            throw CairoException.instance(0).put("File not found: ").put(name);
-        }
-        fd = ff.openRO(name);
-        if (fd == -1) {
-            throw CairoException.instance(ff.errno()).put("Cannot open file: ").put(name);
-        }
-    }
-
     @Override
     public boolean isDeleted() {
         return !ff.exists(fd);
@@ -248,6 +235,10 @@ public class SinglePageMappedReadOnlyPageMemory implements MappedReadOnlyMemory 
         absolutePointer = page + offset;
     }
 
+    public long size() {
+        return size;
+    }
+
     public long getGrownLength() {
         return grownLength;
     }
@@ -271,6 +262,11 @@ public class SinglePageMappedReadOnlyPageMemory implements MappedReadOnlyMemory 
         throw CairoException.instance(0).put("String is outside of file boundary [offset=").put(offset).put(", len=").put(len).put(", size=").put(size).put(", fd=").put(fd).put(']');
     }
 
+    @Override
+    public void growToFileSize() {
+        grow(ff.length(fd));
+    }
+
     public void of(FilesFacade ff, long fd, LPSZ name, long size) {
         close();
         this.ff = ff;
@@ -278,10 +274,6 @@ public class SinglePageMappedReadOnlyPageMemory implements MappedReadOnlyMemory 
         if (fd != -1) {
             map(ff, name, size);
         }
-    }
-
-    public long size() {
-        return size;
     }
 
     protected void map(FilesFacade ff, LPSZ name, long size) {
@@ -307,6 +299,19 @@ public class SinglePageMappedReadOnlyPageMemory implements MappedReadOnlyMemory 
             this.absolutePointer = -1;
         }
         LOG.debug().$("open ").$(name).$(" [fd=").$(fd).$(", pageSize=").$(size).$(", size=").$(this.size).$(']').$();
+    }
+
+    private void openFile(FilesFacade ff, LPSZ name) {
+        close();
+        this.ff = ff;
+        boolean exists = ff.exists(name);
+        if (!exists) {
+            throw CairoException.instance(0).put("File not found: ").put(name);
+        }
+        fd = ff.openRO(name);
+        if (fd == -1) {
+            throw CairoException.instance(ff.errno()).put("Cannot open file: ").put(name);
+        }
     }
 
     public class CharSequenceView extends AbstractCharSequence {
