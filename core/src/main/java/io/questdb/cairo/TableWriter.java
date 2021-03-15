@@ -127,6 +127,7 @@ public class TableWriter implements Closeable {
     private final AtomicInteger oooErrorCount = new AtomicInteger();
     private final MappedReadWriteMemory todoMem = new PagedMappedReadWriteMemory();
     private final TxWriter txFile;
+    private final FindVisitor removePartitionDirsNotAttached = this::removePartitionDirsNotAttached;
     private long todoTxn;
     private ContiguousVirtualMemory timestampMergeMem;
     private long lockFd;
@@ -153,7 +154,6 @@ public class TableWriter implements Closeable {
     private long oooRowCount;
     private final LongConsumer mergeTimestampMethodRef = this::mergeTimestampSetter;
     private long transientRowCountBeforeOutOfOrder;
-    private final FindVisitor removePartitionDirsNotAttached = this::removePartitionDirsNotAttached;
 
     public TableWriter(CairoConfiguration configuration, CharSequence name) {
         this(configuration, name, new MessageBusImpl(configuration));
@@ -844,7 +844,9 @@ public class TableWriter implements Closeable {
         if (timestamp) {
             metadata.setTimestampIndex(-1);
         } else if (timestampColumnName != null) {
-            metadata.setTimestampIndex(metadata.getColumnIndex(timestampColumnName));
+            int timestampIndex2 = metadata.getColumnIndex(timestampColumnName);
+            metadata.setTimestampIndex(timestampIndex2);
+            timestampMergeMem = oooColumns.getQuick(getPrimaryColumnIndex(timestampIndex2));
         }
 
         LOG.info().$("REMOVED column '").utf8(name).$("' from ").$(path).$();
@@ -1678,7 +1680,6 @@ public class TableWriter implements Closeable {
         }
         final int timestampIndex = metadata.getTimestampIndex();
         if (timestampIndex != -1) {
-            // todo: when column is removed we need to update this again to reflect shifted columns
             timestampMergeMem = oooColumns.getQuick(getPrimaryColumnIndex(timestampIndex));
         }
         populateDenseIndexerList();
@@ -1881,12 +1882,15 @@ public class TableWriter implements Closeable {
         return oooErrorCount.get();
     }
 
-    private long getPartitionLo(long timestamp) {
-        return timestampFloorMethod.floor(timestamp);
+    private void freeAndRemoveColumnPair(ObjList<?> columns, int pi, int si) {
+        Misc.free(columns.getQuick(pi));
+        Misc.free(columns.getQuick(si));
+        columns.remove(pi);
+        columns.remove(pi);
     }
 
-    int getPartitionInfoOffset(long ts) {
-        return txFile.findAttachedPartitionIndex(ts);
+    private long getPartitionLo(long timestamp) {
+        return timestampFloorMethod.floor(timestamp);
     }
 
     long getPartitionSizeByIndex(int index) {
@@ -2252,176 +2256,8 @@ public class TableWriter implements Closeable {
         }
     }
 
-    private void oooProcess() {
-        oooErrorCount.set(0);
-        final int workerId;
-        final Thread thread = Thread.currentThread();
-        if (thread instanceof Worker) {
-            workerId = ((Worker) thread).getWorkerId();
-        } else {
-            workerId = 0;
-        }
-
-        final int timestampIndex = metadata.getTimestampIndex();
-        try {
-
-            // we may need to re-use file descriptors when this partition is the "current" one
-            // we cannot open file again due to sharing violation
-            //
-            // to determine that 'ooTimestampLo' goes into current partition
-            // we need to compare 'partitionTimestampHi', which is appropriately truncated to DAY/MONTH/YEAR
-            // to this.maxTimestamp, which isn't truncated yet. So we need to truncate it first
-            LOG.info().$("sorting [name=").$(name).$(']').$();
-            final long sortedTimestampsAddr = timestampMergeMem.addressOf(0);
-            Vect.sortLongIndexAscInPlace(sortedTimestampsAddr, oooRowCount);
-            // reshuffle all variable length columns
-            // todo: writer must be aware of worker count
-            if (this.messageBus == null) {
-                oooSort(sortedTimestampsAddr, timestampIndex);
-            } else {
-                oooSortParallel(sortedTimestampsAddr, timestampIndex);
-            }
-            Vect.flattenIndex(sortedTimestampsAddr, oooRowCount);
-
-            // we have three frames:
-            // partition logical "lo" and "hi" - absolute bounds (partitionLo, partitionHi)
-            // partition actual data "lo" and "hi" (dataLo, dataHi)
-            // out of order "lo" and "hi" (indexLo, indexHi)
-
-            final long srcOooMax = oooRowCount;
-            final long oooTimestampMin = getTimestampIndexValue(sortedTimestampsAddr, 0);
-            final long oooTimestampMax = getTimestampIndexValue(sortedTimestampsAddr, srcOooMax - 1);
-            final long tableFloorOfMaxTimestamp = timestampFloorMethod.floor(txFile.getMaxTimestamp());
-            final long tableCeilOfMaxTimestamp = ceilMaxTimestamp();
-            final long tableMaxTimestamp = txFile.getMaxTimestamp();
-            final RingQueue<OutOfOrderPartitionTask> oooPartitionQueue = messageBus.getOutOfOrderPartitionQueue();
-            final Sequence oooPartitionPubSeq = messageBus.getOutOfOrderPartitionPubSeq();
-
-            // todo: we should not need to compile list and then process it, we can perhaps process data before
-            //    it hits the list
-            final LongList oooPartitions = oooComputePartitions(sortedTimestampsAddr, srcOooMax, oooTimestampMin, oooTimestampMax);
-            final int affectedPartitionCount = oooPartitions.size() / 2 - 1;
-            final int latchCount = affectedPartitionCount - 1;
-
-            this.oooLatch.reset();
-            this.oooUpdRemaining.set(affectedPartitionCount - 1);
-            boolean success = true;
-            int partitionsInFlight = affectedPartitionCount;
-            try {
-                for (int i = 1; i < affectedPartitionCount; i++) {
-                    try {
-                        final long srcOooLo = oooPartitions.getQuick(i * 2 - 2) + 1;
-                        final long srcOooHi = oooPartitions.getQuick(i * 2);
-                        final long oooTimestampHi = oooPartitions.getQuick(i * 2 + 1);
-                        final long lastPartitionSize = transientRowCountBeforeOutOfOrder;
-                        long cursor = oooPartitionPubSeq.next();
-                        if (cursor > -1) {
-                            OutOfOrderPartitionTask task = oooPartitionQueue.get(cursor);
-                            task.of(
-                                    ff,
-                                    path,
-                                    partitionBy,
-                                    columns,
-                                    oooColumns,
-                                    srcOooLo,
-                                    srcOooHi,
-                                    srcOooMax,
-                                    oooTimestampMin,
-                                    oooTimestampMax,
-                                    oooTimestampHi,
-                                    getTxn(),
-                                    sortedTimestampsAddr,
-                                    lastPartitionSize,
-                                    tableCeilOfMaxTimestamp,
-                                    tableFloorOfMaxTimestamp,
-                                    tableMaxTimestamp,
-                                    this,
-                                    this.oooLatch
-                            );
-                            oooPartitionPubSeq.done(cursor);
-                        } else {
-                            OutOfOrderPartitionJob.processPartition(
-                                    workerId,
-                                    configuration,
-                                    messageBus.getOutOfOrderOpenColumnQueue(),
-                                    messageBus.getOutOfOrderOpenColumnPubSequence(),
-                                    messageBus.getOutOfOrderCopyQueue(),
-                                    messageBus.getOutOfOrderCopyPubSequence(),
-                                    messageBus.getOutOfOrderUpdPartitionSizeQueue(),
-                                    messageBus.getOutOfOrderUpdPartitionSizePubSequence(),
-                                    ff,
-                                    path,
-                                    partitionBy,
-                                    columns,
-                                    oooColumns,
-                                    srcOooLo,
-                                    srcOooHi,
-                                    srcOooMax,
-                                    oooTimestampMin,
-                                    oooTimestampMax,
-                                    oooTimestampHi,
-                                    getTxn(),
-                                    sortedTimestampsAddr,
-                                    lastPartitionSize,
-                                    tableCeilOfMaxTimestamp,
-                                    tableFloorOfMaxTimestamp,
-                                    tableMaxTimestamp,
-                                    this,
-                                    oooLatch
-                            );
-                        }
-                    } catch (CairoException | CairoError e) {
-                        LOG.error().$((Sinkable) e).$();
-                        success = false;
-                        partitionsInFlight = i + 1;
-                        throw e;
-                    } finally {
-                        for (; partitionsInFlight < affectedPartitionCount; partitionsInFlight++) {
-                            if (oooUpdRemaining.decrementAndGet() == 0) {
-                                oooLatch.countDown();
-                            }
-                        }
-                    }
-                }
-            } finally {
-                // we are stealing work here it is possible we get exception from this method
-                oooConsumeUpdPartitionSizeTasks(
-                        workerId,
-                        srcOooMax,
-                        oooTimestampMin,
-                        oooTimestampMax,
-                        tableFloorOfMaxTimestamp
-                );
-
-                oooLatch.await(latchCount);
-
-                if (success && oooErrorCount.get() > 0) {
-                    //noinspection ThrowFromFinallyBlock
-                    throw CairoException.instance(0).put("bulk update failed and will be rolled back");
-                }
-            }
-            if (columns.getQuick(0).isClosed()) {
-                openPartition(txFile.getMaxTimestamp());
-            }
-            setAppendPosition(txFile.getTransientRowCount(), true);
-        } finally {
-            if (denseIndexers.size() == 0) {
-                populateDenseIndexerList();
-            }
-            path.trimTo(rootLen);
-            this.oooRowCount = 0;
-            // Alright, we finished updating partitions. Now we need to get this writer instance into
-            // a consistent state.
-            //
-            // We start with ensuring append memory is in ready-to-use state. When max timestamp changes we need to
-            // move append memory to new set of files. Otherwise we stay on the same set but advance the append position.
-            avoidIndexOnCommit = oooErrorCount.get() == 0;
-            rowFunction = switchPartitionFunction;
-            row.activeColumns = columns;
-            row.activeNullSetters = nullSetters;
-            timestampSetter = prevTimestampSetter;
-            transientRowCountBeforeOutOfOrder = 0;
-        }
+    int getPartitionInfoOffset(long ts) {
+        return txFile.findAttachedPartitionIndex(ts);
     }
 
     private void oooProcessPartitionSafe(
@@ -2453,14 +2289,6 @@ public class TableWriter implements Closeable {
             LOG.error().$((Sinkable) e).$();
         } catch (Throwable e) {
             LOG.error().$(e).$();
-        }
-    }
-
-    private void oooSort(long mergedTimestamps, int timestampIndex) {
-        for (int i = 0; i < columnCount; i++) {
-            if (timestampIndex != i) {
-                oooSortColumn(mergedTimestamps, i, metadata.getColumnType(i));
-            }
         }
     }
 
@@ -2956,6 +2784,173 @@ public class TableWriter implements Closeable {
         removeSymbolMapWriter(index);
     }
 
+    private void oooProcess() {
+        oooErrorCount.set(0);
+        final int workerId;
+        final Thread thread = Thread.currentThread();
+        if (thread instanceof Worker) {
+            workerId = ((Worker) thread).getWorkerId();
+        } else {
+            workerId = 0;
+        }
+
+        final int timestampIndex = metadata.getTimestampIndex();
+        try {
+
+            // we may need to re-use file descriptors when this partition is the "current" one
+            // we cannot open file again due to sharing violation
+            //
+            // to determine that 'ooTimestampLo' goes into current partition
+            // we need to compare 'partitionTimestampHi', which is appropriately truncated to DAY/MONTH/YEAR
+            // to this.maxTimestamp, which isn't truncated yet. So we need to truncate it first
+            LOG.info().$("sorting [name=").$(name).$(']').$();
+            final long sortedTimestampsAddr = timestampMergeMem.addressOf(0);
+            Vect.sortLongIndexAscInPlace(sortedTimestampsAddr, oooRowCount);
+            // reshuffle all variable length columns
+            oooSortParallel(sortedTimestampsAddr, timestampIndex);
+            Vect.flattenIndex(sortedTimestampsAddr, oooRowCount);
+
+            // we have three frames:
+            // partition logical "lo" and "hi" - absolute bounds (partitionLo, partitionHi)
+            // partition actual data "lo" and "hi" (dataLo, dataHi)
+            // out of order "lo" and "hi" (indexLo, indexHi)
+
+            final long srcOooMax = oooRowCount;
+            final long oooTimestampMin = getTimestampIndexValue(sortedTimestampsAddr, 0);
+            final long oooTimestampMax = getTimestampIndexValue(sortedTimestampsAddr, srcOooMax - 1);
+            final long tableFloorOfMaxTimestamp = timestampFloorMethod.floor(txFile.getMaxTimestamp());
+            final long tableCeilOfMaxTimestamp = ceilMaxTimestamp();
+            final long tableMaxTimestamp = txFile.getMaxTimestamp();
+            final RingQueue<OutOfOrderPartitionTask> oooPartitionQueue = messageBus.getOutOfOrderPartitionQueue();
+            final Sequence oooPartitionPubSeq = messageBus.getOutOfOrderPartitionPubSeq();
+
+            // todo: we should not need to compile list and then process it, we can perhaps process data before
+            //    it hits the list
+            final LongList oooPartitions = oooComputePartitions(sortedTimestampsAddr, srcOooMax, oooTimestampMin, oooTimestampMax);
+            final int affectedPartitionCount = oooPartitions.size() / 2 - 1;
+            final int latchCount = affectedPartitionCount - 1;
+
+            this.oooLatch.reset();
+            this.oooUpdRemaining.set(affectedPartitionCount - 1);
+            boolean success = true;
+            int partitionsInFlight = affectedPartitionCount;
+            try {
+                for (int i = 1; i < affectedPartitionCount; i++) {
+                    try {
+                        final long srcOooLo = oooPartitions.getQuick(i * 2 - 2) + 1;
+                        final long srcOooHi = oooPartitions.getQuick(i * 2);
+                        final long oooTimestampHi = oooPartitions.getQuick(i * 2 + 1);
+                        final long lastPartitionSize = transientRowCountBeforeOutOfOrder;
+                        long cursor = oooPartitionPubSeq.next();
+                        if (cursor > -1) {
+                            OutOfOrderPartitionTask task = oooPartitionQueue.get(cursor);
+                            task.of(
+                                    ff,
+                                    path,
+                                    partitionBy,
+                                    columns,
+                                    oooColumns,
+                                    srcOooLo,
+                                    srcOooHi,
+                                    srcOooMax,
+                                    oooTimestampMin,
+                                    oooTimestampMax,
+                                    oooTimestampHi,
+                                    getTxn(),
+                                    sortedTimestampsAddr,
+                                    lastPartitionSize,
+                                    tableCeilOfMaxTimestamp,
+                                    tableFloorOfMaxTimestamp,
+                                    tableMaxTimestamp,
+                                    this,
+                                    this.oooLatch
+                            );
+                            oooPartitionPubSeq.done(cursor);
+                        } else {
+                            OutOfOrderPartitionJob.processPartition(
+                                    workerId,
+                                    configuration,
+                                    messageBus.getOutOfOrderOpenColumnQueue(),
+                                    messageBus.getOutOfOrderOpenColumnPubSequence(),
+                                    messageBus.getOutOfOrderCopyQueue(),
+                                    messageBus.getOutOfOrderCopyPubSequence(),
+                                    messageBus.getOutOfOrderUpdPartitionSizeQueue(),
+                                    messageBus.getOutOfOrderUpdPartitionSizePubSequence(),
+                                    ff,
+                                    path,
+                                    partitionBy,
+                                    columns,
+                                    oooColumns,
+                                    srcOooLo,
+                                    srcOooHi,
+                                    srcOooMax,
+                                    oooTimestampMin,
+                                    oooTimestampMax,
+                                    oooTimestampHi,
+                                    getTxn(),
+                                    sortedTimestampsAddr,
+                                    lastPartitionSize,
+                                    tableCeilOfMaxTimestamp,
+                                    tableFloorOfMaxTimestamp,
+                                    tableMaxTimestamp,
+                                    this,
+                                    oooLatch
+                            );
+                        }
+                    } catch (CairoException | CairoError e) {
+                        LOG.error().$((Sinkable) e).$();
+                        success = false;
+                        partitionsInFlight = i + 1;
+                        throw e;
+                    } finally {
+                        for (; partitionsInFlight < affectedPartitionCount; partitionsInFlight++) {
+                            if (oooUpdRemaining.decrementAndGet() == 0) {
+                                oooLatch.countDown();
+                            }
+                        }
+                    }
+                }
+            } finally {
+                // we are stealing work here it is possible we get exception from this method
+                oooConsumeUpdPartitionSizeTasks(
+                        workerId,
+                        srcOooMax,
+                        oooTimestampMin,
+                        oooTimestampMax,
+                        tableFloorOfMaxTimestamp
+                );
+
+                oooLatch.await(latchCount);
+
+                if (success && oooErrorCount.get() > 0) {
+                    //noinspection ThrowFromFinallyBlock
+                    throw CairoException.instance(0).put("bulk update failed and will be rolled back");
+                }
+            }
+            if (columns.getQuick(0).isClosed()) {
+                openPartition(txFile.getMaxTimestamp());
+            }
+            setAppendPosition(txFile.getTransientRowCount(), true);
+        } finally {
+            if (denseIndexers.size() == 0) {
+                populateDenseIndexerList();
+            }
+            path.trimTo(rootLen);
+            this.oooRowCount = 0;
+            // Alright, we finished updating partitions. Now we need to get this writer instance into
+            // a consistent state.
+            //
+            // We start with ensuring append memory is in ready-to-use state. When max timestamp changes we need to
+            // move append memory to new set of files. Otherwise we stay on the same set but advance the append position.
+            avoidIndexOnCommit = oooErrorCount.get() == 0;
+            rowFunction = switchPartitionFunction;
+            row.activeColumns = columns;
+            row.activeNullSetters = nullSetters;
+            timestampSetter = prevTimestampSetter;
+            transientRowCountBeforeOutOfOrder = 0;
+        }
+    }
+
     private void releaseLock(boolean distressed) {
         if (lockFd != -1L) {
             ff.close(lockFd);
@@ -2975,15 +2970,9 @@ public class TableWriter implements Closeable {
     private void removeColumn(int columnIndex) {
         final int pi = getPrimaryColumnIndex(columnIndex);
         final int si = getSecondaryColumnIndex(columnIndex);
-        Misc.free(columns.getQuick(pi));
-        Misc.free(columns.getQuick(si));
-        columns.remove(pi);
-        columns.remove(pi);
-        Misc.free(oooColumns.getQuick(pi));
-        Misc.free(oooColumns.getQuick(si));
-        oooColumns.remove(pi);
-        oooColumns.remove(pi);
-
+        freeAndRemoveColumnPair(columns, pi, si);
+        freeAndRemoveColumnPair(oooColumns, pi, si);
+        freeAndRemoveColumnPair(oooColumns2, pi, si);
         columnTops.removeIndex(columnIndex);
         nullSetters.remove(columnIndex);
         oooNullSetters.remove(columnIndex);
@@ -3093,6 +3082,15 @@ public class TableWriter implements Closeable {
         }
     }
 
+    private void removeNonAttachedPartitions() {
+        LOG.info().$("purging non attached partitions [path=").$(path.$()).$(']').$();
+        try {
+            ff.iterateDir(path.$(), removePartitionDirsNotAttached);
+        } finally {
+            path.trimTo(rootLen);
+        }
+    }
+
     private void removePartitionDirectories() {
         try {
             ff.iterateDir(path.$(), removePartitionDirectories);
@@ -3131,15 +3129,6 @@ public class TableWriter implements Closeable {
                     LOG.error().$("cannot remove: ").$(path).$(" [errno=").$(ff.errno()).$(']').$();
                 }
             }
-        }
-    }
-
-    private void removeNonAttachedPartitions() {
-        LOG.info().$("purging non attached partitions [path=").$(path.$()).$(']').$();
-        try {
-            ff.iterateDir(path.$(), removePartitionDirsNotAttached);
-        } finally {
-            path.trimTo(rootLen);
         }
     }
 
@@ -3779,11 +3768,6 @@ public class TableWriter implements Closeable {
     @FunctionalInterface
     public interface OutOfOrderNativeSortMethod {
         void shuffle(long pSrc, long pDest, long pIndex, long valueCount);
-    }
-
-    @FunctionalInterface
-    public interface MergeShuffleOutOfOrderDataInternal {
-        void shuffle(long pSrc1, long pSrc2, long pDest, long pIndex, long count);
     }
 
     @FunctionalInterface
