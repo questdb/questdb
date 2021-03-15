@@ -1214,18 +1214,7 @@ public class OutOfOrderFailureTest extends AbstractGriffinTest {
                 sink
         );
 
-        // uncomment these to look at result comparison from two queries
-        // we are using file comparison here because of ordering issue on the identical timestamps
-        // release reader "before" out-of-order is handled
-        // we aim directory rename operations to succeed on Windows
-        // Linux should be fine without closing readers
-        engine.releaseAllReaders();
-
         compiler.compile(outOfOrderInsertSQL, sqlExecutionContext);
-
-        // todo: ensure reader can pick up out of order stuff
-        // release reader for now because it is unable to reload out-of-order results
-        engine.releaseAllReaders();
 
         TestUtils.printSql(
                 compiler,
@@ -1761,14 +1750,7 @@ public class OutOfOrderFailureTest extends AbstractGriffinTest {
     ) throws SqlException, URISyntaxException {
         // create third table, which will contain both X and 1AM
         compiler.compile("create table y as (x union all append)", sqlExecutionContext);
-
-        engine.releaseAllReaders();
-
         compiler.compile("insert into x select * from append", sqlExecutionContext);
-
-        // release reader
-        engine.releaseAllReaders();
-
         assertSqlResultAgainstFile(compiler, sqlExecutionContext, "/oo/testColumnTopMidAppendColumn.txt");
     }
 

@@ -2823,9 +2823,6 @@ public class TableWriter implements Closeable {
             final long tableMaxTimestamp = txFile.getMaxTimestamp();
             final RingQueue<OutOfOrderPartitionTask> oooPartitionQueue = messageBus.getOutOfOrderPartitionQueue();
             final Sequence oooPartitionPubSeq = messageBus.getOutOfOrderPartitionPubSeq();
-
-            // todo: we should not need to compile list and then process it, we can perhaps process data before
-            //    it hits the list
             final LongList oooPartitions = oooComputePartitions(sortedTimestampsAddr, srcOooMax, oooTimestampMin, oooTimestampMax);
             final int affectedPartitionCount = oooPartitions.size() / 2 - 1;
             final int latchCount = affectedPartitionCount - 1;

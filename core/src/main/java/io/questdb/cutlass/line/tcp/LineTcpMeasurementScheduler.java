@@ -28,8 +28,8 @@ import io.questdb.Telemetry;
 import io.questdb.cairo.*;
 import io.questdb.cairo.TableWriter.Row;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
-import io.questdb.cairo.vm.AppendOnlyVirtualMemory;
 import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.vm.AppendOnlyVirtualMemory;
 import io.questdb.cutlass.line.LineProtoTimestampAdapter;
 import io.questdb.cutlass.line.tcp.NewLineProtoParser.ProtoEntity;
 import io.questdb.log.Log;
@@ -461,7 +461,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                     int colNameLen = entity.getName().length();
                     Unsafe.getUnsafe().putInt(bufPos, -1 * colNameLen);
                     bufPos += Integer.BYTES;
-                    Unsafe.getUnsafe().copyMemory(entity.getName().getLo(), bufPos, colNameLen);
+                    Vect.memcpy(entity.getName().getLo(), bufPos, colNameLen);
                     bufPos += colNameLen;
                 } else {
                     Unsafe.getUnsafe().putInt(bufPos, colIndex);

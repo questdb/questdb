@@ -59,7 +59,7 @@ public class DirectLongList implements Mutable, Closeable {
         if (limit - pos < thatCapacity) {
             extend(this.capacity + thatCapacity - (limit - pos));
         }
-        Unsafe.getUnsafe().copyMemory(that.start, this.pos, thatCapacity);
+        Vect.memcpy(that.start, this.pos, thatCapacity);
         this.pos += thatCapacity;
     }
 

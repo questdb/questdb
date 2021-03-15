@@ -118,11 +118,8 @@ public class DirectCharSink extends AbstractCharSink implements MutableCharSink,
     }
 
     private void resize(int cap) {
-        long temp = Unsafe.malloc(cap);
+        long temp = Unsafe.realloc(ptr, capacity, cap);
         int len = (int) (lo - ptr);
-        Unsafe.getUnsafe().copyMemory(ptr, temp, len);
-        Unsafe.free(ptr, capacity);
-
         this.ptr = temp;
         this.capacity = cap;
         this.lo = ptr + len;

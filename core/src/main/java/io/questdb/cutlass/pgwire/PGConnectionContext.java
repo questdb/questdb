@@ -371,7 +371,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
                 .$(", len=").$(len)
                 .$(']').$();
 
-        Unsafe.getUnsafe().copyMemory(
+        Vect.memcpy(
                 recvBuffer + readOffsetBeforeParse,
                 recvBuffer,
                 len

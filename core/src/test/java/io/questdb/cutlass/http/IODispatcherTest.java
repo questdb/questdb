@@ -24,37 +24,7 @@
 
 package io.questdb.cutlass.http;
 
-import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
-
-import java.io.BufferedInputStream;
-import java.io.IOException;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.CyclicBarrier;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicLong;
-import java.util.concurrent.locks.LockSupport;
-
-import org.jetbrains.annotations.NotNull;
-import org.junit.Assert;
-import org.junit.Before;
-import org.junit.Ignore;
-import org.junit.Rule;
-import org.junit.Test;
-import org.junit.rules.TemporaryFolder;
-
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.CairoTestUtils;
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.DefaultCairoConfiguration;
-import io.questdb.cairo.PartitionBy;
-import io.questdb.cairo.RecordCursorPrinter;
-import io.questdb.cairo.TableModel;
-import io.questdb.cairo.TableReader;
-import io.questdb.cairo.TableUtils;
-import io.questdb.cairo.TableWriter;
-import io.questdb.cairo.TestRecord;
+import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cutlass.NetUtils;
@@ -70,32 +40,9 @@ import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.engine.functions.test.TestLatchedCounterFunctionFactory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.mp.MPSequence;
-import io.questdb.mp.RingQueue;
-import io.questdb.mp.SCSequence;
-import io.questdb.mp.SOCountDownLatch;
-import io.questdb.mp.WorkerPool;
-import io.questdb.mp.WorkerPoolConfiguration;
-import io.questdb.network.DefaultIODispatcherConfiguration;
-import io.questdb.network.IOContext;
-import io.questdb.network.IOContextFactory;
-import io.questdb.network.IODispatcher;
-import io.questdb.network.IODispatcherConfiguration;
-import io.questdb.network.IODispatchers;
-import io.questdb.network.IOOperation;
-import io.questdb.network.Net;
-import io.questdb.network.NetworkFacade;
-import io.questdb.network.NetworkFacadeImpl;
-import io.questdb.network.PeerDisconnectedException;
-import io.questdb.network.PeerIsSlowToReadException;
-import io.questdb.std.Chars;
-import io.questdb.std.Files;
-import io.questdb.std.ObjList;
-import io.questdb.std.Os;
-import io.questdb.std.Rnd;
-import io.questdb.std.StationaryMillisClock;
-import io.questdb.std.Unsafe;
-import io.questdb.std.Zip;
+import io.questdb.mp.*;
+import io.questdb.network.*;
+import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.AbstractCharSequence;
@@ -103,6 +50,22 @@ import io.questdb.std.str.ByteSequence;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
+import org.junit.Assert;
+import org.junit.Before;
+import org.junit.Rule;
+import org.junit.Test;
+import org.junit.rules.TemporaryFolder;
+
+import java.io.BufferedInputStream;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.locks.LockSupport;
+
+import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 
 public class IODispatcherTest {
     private static final Log LOG = LogFactory.getLog(IODispatcherTest.class);
@@ -1125,7 +1088,7 @@ public class IODispatcherTest {
                         "--------------------------27d997ca93d2689d--"
                 , NetworkFacadeImpl.INSTANCE
                 , false
-                , 1 // todo: we need to fix writer queuing and increase request count
+                , 5
         );
     }
 
@@ -1196,7 +1159,7 @@ public class IODispatcherTest {
                     }
                 },
                 false,
-                1 // todo: fix writer queue and increase request count
+                10
         );
     }
 
@@ -1771,7 +1734,7 @@ public class IODispatcherTest {
 
                     ByteArrayResponse expectedResponse;
                     try (BufferedInputStream is = new BufferedInputStream(getClass().getResourceAsStream(getClass().getSimpleName() + ".testJsonQueryWithCompressedResults1.bin"))) {
-                        byte bytes[] = new byte[20 * 1024];
+                        byte[] bytes = new byte[20 * 1024];
                         int len = is.read(bytes);
                         expectedResponse = new ByteArrayResponse(bytes, len);
                     }
@@ -1861,7 +1824,7 @@ public class IODispatcherTest {
 
                     ByteArrayResponse expectedResponse;
                     try (BufferedInputStream is = new BufferedInputStream(getClass().getResourceAsStream(getClass().getSimpleName() + ".testJsonQueryWithCompressedResults2.bin"))) {
-                        byte bytes[] = new byte[100 * 1024];
+                        byte[] bytes = new byte[100 * 1024];
                         int len = is.read(bytes);
                         expectedResponse = new ByteArrayResponse(bytes, len);
                     }

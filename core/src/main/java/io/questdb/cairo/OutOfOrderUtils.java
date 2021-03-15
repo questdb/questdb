@@ -50,7 +50,6 @@ public class OutOfOrderUtils {
     }
 
     public static void initBuf(int workerCount) {
-//        assert temp8ByteBuf == null;
         temp8ByteBuf = new long[workerCount];
         for (int i = 0; i < workerCount; i++) {
             temp8ByteBuf[i] = Unsafe.malloc(Long.BYTES);

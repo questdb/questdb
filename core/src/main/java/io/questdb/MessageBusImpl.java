@@ -26,10 +26,7 @@ package io.questdb;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.TableBlockWriter.TableBlockWriterTaskHolder;
-import io.questdb.mp.MCSequence;
-import io.questdb.mp.MPSequence;
-import io.questdb.mp.RingQueue;
-import io.questdb.mp.Sequence;
+import io.questdb.mp.*;
 import io.questdb.tasks.*;
 import org.jetbrains.annotations.NotNull;
 
@@ -64,7 +61,7 @@ public class MessageBusImpl implements MessageBus {
 
     private final RingQueue<OutOfOrderUpdPartitionSizeTask> outOfOrderUpdPartitionSizeQueue;
     private final MPSequence outOfOrderUpdPartitionSizePubSeq;
-    private final MCSequence outOfOrderUpdPartitionSizeSubSeq;
+    private final SCSequence outOfOrderUpdPartitionSizeSubSeq;
 
     private final CairoConfiguration configuration;
 
@@ -107,7 +104,7 @@ public class MessageBusImpl implements MessageBus {
 
         this.outOfOrderUpdPartitionSizeQueue = new RingQueue<>(OutOfOrderUpdPartitionSizeTask::new, configuration.getOutOfOrderUpdPartitionSizeQueueCapacity());
         this.outOfOrderUpdPartitionSizePubSeq = new MPSequence(this.outOfOrderUpdPartitionSizeQueue.getCapacity());
-        this.outOfOrderUpdPartitionSizeSubSeq = new MCSequence(this.outOfOrderUpdPartitionSizeQueue.getCapacity());
+        this.outOfOrderUpdPartitionSizeSubSeq = new SCSequence();
         outOfOrderUpdPartitionSizePubSeq.then(outOfOrderUpdPartitionSizeSubSeq).then(outOfOrderUpdPartitionSizePubSeq);
     }
 
@@ -232,7 +229,7 @@ public class MessageBusImpl implements MessageBus {
     }
 
     @Override
-    public MCSequence getOutOfOrderUpdPartitionSizeSubSequence() {
+    public SCSequence getOutOfOrderUpdPartitionSizeSubSequence() {
         return outOfOrderUpdPartitionSizeSubSeq;
     }
 }

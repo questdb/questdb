@@ -261,10 +261,8 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
     }
 
     private void extend(int len) {
-        long p = Unsafe.malloc(len + 1);
-        Unsafe.getUnsafe().copyMemory(ptr, p, this.len);
+        long p = Unsafe.realloc(ptr, this.capacity + 1, len + 1);
         long d = wptr - ptr;
-        Unsafe.free(this.ptr, this.capacity + 1);
         this.ptr = p;
         this.wptr = p + d;
         this.capacity = len;

@@ -52,7 +52,7 @@ public class HttpResponseSink implements Closeable, Mutable {
         httpStatusMap.put(500, "Internal server error");
     }
 
-    private ChunkBuffer buffer;
+    private final ChunkBuffer buffer;
     private ChunkBuffer compressOutBuffer;
     private final HttpResponseHeaderImpl headerImpl;
     private final SimpleResponseImpl simple = new SimpleResponseImpl();
@@ -152,7 +152,7 @@ public class HttpResponseSink implements Closeable, Mutable {
     private void deflate() {
         if (!compressedHeaderDone) {
             int len = Zip.gzipHeaderLen;
-            Unsafe.getUnsafe().copyMemory(Zip.gzipHeader, compressOutBuffer.getWriteAddress(len), len);
+            Vect.memcpy(Zip.gzipHeader, compressOutBuffer.getWriteAddress(len), len);
             compressOutBuffer.onWrite(len);
             compressedHeaderDone = true;
         }
