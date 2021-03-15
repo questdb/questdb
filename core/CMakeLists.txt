@@ -35,9 +35,17 @@ set(
         src/main/c/share/os.h
         src/main/c/share/vec_agg_vanilla.h
         src/main/c/share/util.cpp
+        src/main/c/share/double-conversion.cpp
         src/main/c/share/ooo.cpp
         src/main/c/share/tab_scoreboard.cpp
         src/main/c/share/vect.cpp
+
+        src/main/c/share/double-conversion/bignum.cc
+        src/main/c/share/double-conversion/bignum-dtoa.cc
+        src/main/c/share/double-conversion/cached-powers.cc
+        src/main/c/share/double-conversion/double-to-string.cc
+        src/main/c/share/double-conversion/fast-dtoa.cc
+        src/main/c/share/double-conversion/fixed-dtoa.cc
 )
 
 # JNI includes
