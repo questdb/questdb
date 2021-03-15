@@ -284,18 +284,10 @@ public final class TableUtils {
     }
 
     public static boolean isValidInfluxColumnName(CharSequence seq) {
-        char c = seq.charAt(0); 
-        if (c == '_' || c == '-') {
-            return false;
-        }
-        c = seq.charAt(seq.length() - 1);
-        if (c == '-') {
-            return false;
-        }
-
         for (int i = 0, l = seq.length(); i < l; i++) {
-            c = seq.charAt(i);
-            switch (c) {
+            switch (seq.charAt(i)) {
+                default:
+                    break;
                 case ' ':
                 case '?':
                 case '.':
@@ -314,7 +306,15 @@ public final class TableUtils {
                 case '~':
                 case 0xfeff: // UTF-8 BOM (Byte Order Mark) can appear at the beginning of a character stream
                     return false;
-                default:
+                case '_':
+                    if (i < 1) {
+                        return false;
+                    }
+                    break;
+                case '-':
+                    if (i == 0 || i == l - 1) {
+                        return false;
+                    }
                     break;
             }
         }
