@@ -21,7 +21,7 @@ cat /tmp/data | ~/tmp/go/bin/tsbs_load_questdb
 
 
 #
-# Loading data using the shell scripts
+# Loading data benchmarks using the shell scripts
 #
 # Change to install directory see above
 cd ~/tmp/go/src/github.com/timescale/
@@ -29,3 +29,20 @@ cd ~/tmp/go/src/github.com/timescale/
 PATH=${PATH}:~/tmp/go/bin FORMATS=influx TS_END=2016-01-01T02:00:00Z bash ./scripts/generate_data.sh 
 PATH=${PATH}:~/tmp/go/bin NUM_WORKERS=1 ./scripts/load/load_questdb.sh
 
+
+#
+# Running query benchmarks against the iot data set (cpu-only use case)
+# Assumes a iot data set including periods 2016-01-01T00:00:00Z -> 2016-01-02T00:00:01Z is loaded
+#
+# Change to install directory see above
+cd ~/tmp/go/src/github.com/timescale/
+# Run the single-groupby-5-8-1
+~/tmp/go/bin/tsbs_generate_queries --use-case="cpu-only" --seed=123 --scale=4000 --timestamp-start="2016-01-01T00:00:00Z" --timestamp-end="2016-01-02T00:00:01Z" --queries=1000 --query-type="single-groupby-5-8-1" --format="questdb" > /tmp/queries_questdb
+~/tmp/go/bin/tsbs_run_queries_questdb --file /tmp/queries_questdb --print-interval 500
+
+
+#
+# Running query benchmarks using the shell scripts
+#
+PATH=${PATH}:~/tmp/go/bin FORMATS=questdb TS_END=2016-01-02T00:00:00Z bash ./scripts/generate_queries.sh
+PATH=${PATH}:~/tmp/go/bin ./scripts/run_queries/run_queries_questdb.sh
