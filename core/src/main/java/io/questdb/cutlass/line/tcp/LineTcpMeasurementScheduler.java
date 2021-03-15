@@ -573,7 +573,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                             row.cancel();
                             row = null;
                             int colType = DEFAULT_COLUMN_TYPES[entityType];
-                            if (TableUtils.isValidColumnName(job.charSink)) {
+                            if (TableUtils.isValidInfluxColumnName(job.charSink)) {
                                 writer.addColumn(job.charSink, colType);
                             } else {
                                 throw CairoException.instance(0).put("invalid column name [table=").put(writer.getName())
