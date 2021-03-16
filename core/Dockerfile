@@ -1,7 +1,7 @@
-FROM openjdk:11.0.7-jdk
+FROM amd64/openjdk:16-jdk-oraclelinux7
 
-RUN apt-get update \
-  && apt-get install git curl -y
+RUN yum update -y \
+  && yum install git curl unzip -y
 
 WORKDIR /build
 
@@ -19,11 +19,7 @@ RUN tar xvfz questdb-*-rt-linux-amd64.tar.gz
 
 FROM debian:stretch-slim
 
-WORKDIR /app
-
-COPY --from=0 /build/questdb/core/target/questdb-*-rt-linux-amd64 .
-
-WORKDIR /app/bin
+COPY --from=0 /build/questdb/core/target/questdb-*-rt-linux-amd64 /app
 
 # QuestDB root directory
 RUN mkdir -p /root/.questdb

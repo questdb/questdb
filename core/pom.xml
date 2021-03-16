@@ -34,7 +34,7 @@
         <nodejs.npm.cmd>npm</nodejs.npm.cmd>
         <nodejs.version>v12.16.2</nodejs.version>
         <runtime.assembly>none</runtime.assembly>
-        <javac.target>11</javac.target>
+        <maven.compiler.release>11</maven.compiler.release>
         <argLine>-Xmx512m -Dfile.encoding=UTF-8</argLine>
     </properties>
 
@@ -89,8 +89,6 @@
                         <arg>java.base/jdk.internal.math=io.questdb</arg>
                     </compilerArgs>
                     <fork>true</fork>
-                    <source>${javac.target}</source>
-                    <target>${javac.target}</target>
                 </configuration>
             </plugin>
             <plugin>
