@@ -98,11 +98,14 @@ public class OutOfOrderTest extends AbstractCairoTest {
 
     @Test
     public void testBench() throws Exception {
-        executeVanilla(() -> testBench0(
-                engine,
-                compiler,
-                sqlExecutionContext
-        ));
+        // On OSX it's not trivial to increase open file limit per process
+        if (Os.type != Os.OSX) {
+            executeVanilla(() -> testBench0(
+                    engine,
+                    compiler,
+                    sqlExecutionContext
+            ));
+        }
     }
 
     @Test
@@ -117,12 +120,18 @@ public class OutOfOrderTest extends AbstractCairoTest {
 
     @Test
     public void testBenchContended() throws Exception {
-        executeWithPool(0, this::testBench0);
+        // On OSX it's not trivial to increase open file limit per process
+        if (Os.type != Os.OSX) {
+            executeWithPool(0, this::testBench0);
+        }
     }
 
     @Test
     public void testBenchParallel() throws Exception {
-        executeWithPool(4, this::testBench0);
+        // On OSX it's not trivial to increase open file limit per process
+        if (Os.type != Os.OSX) {
+            executeWithPool(4, this::testBench0);
+        }
     }
 
     @Test
