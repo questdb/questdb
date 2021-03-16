@@ -25,7 +25,6 @@
 #include <cstring>
 #include <xmmintrin.h>
 #include "util.h"
-#include "asmlib/asmlib.h"
 
 typedef struct {
     uint64_t c8[256];
@@ -432,39 +431,6 @@ void k_way_merge_long_index(
         _mm_prefetch(winner, _MM_HINT_NTA);
         dest[merged_index_pos++] = winner->index[winner->pos];
     }
-}
-
-template<class T>
-inline int64_t binary_search(T *data, int64_t value, int64_t low, int64_t high, int32_t scan_dir) {
-    while (low < high) {
-        int64_t mid = (low + high) / 2;
-        T midVal = data[mid];
-
-        if (midVal < value) {
-            if (low < mid) {
-                low = mid;
-            } else {
-                if (data[high] > value) {
-                    return low;
-                }
-                return high;
-            }
-        } else if (midVal > value)
-            high = mid;
-        else {
-            // In case of multiple equal values, find the first
-            mid += scan_dir;
-            while (mid > 0 && mid <= high && data[mid] == midVal) {
-                mid += scan_dir;
-            }
-            return mid - scan_dir;
-        }
-    }
-
-    if (data[low] > value) {
-        return low - 1;
-    }
-    return low;
 }
 
 inline void make_timestamp_index(const int64_t *data, int64_t low, int64_t high, index_t *dest) {

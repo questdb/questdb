@@ -57,4 +57,37 @@ inline uint32_t ceil_pow_2(uint32_t v) {
     return v + 1;
 }
 
+template<class T, class V>
+inline int64_t binary_search(T *data, V value, int64_t low, int64_t high, int32_t scan_dir) {
+    while (low < high) {
+        int64_t mid = (low + high) / 2;
+        T midVal = data[mid];
+
+        if (midVal < value) {
+            if (low < mid) {
+                low = mid;
+            } else {
+                if (data[high] > value) {
+                    return low;
+                }
+                return high;
+            }
+        } else if (midVal > value)
+            high = mid;
+        else {
+            // In case of multiple equal values, find the first
+            mid += scan_dir;
+            while (mid > 0 && mid <= high && data[mid] == midVal) {
+                mid += scan_dir;
+            }
+            return mid - scan_dir;
+        }
+    }
+
+    if (data[low] > value) {
+        return low - 1;
+    }
+    return low;
+}
+
 #endif //UTIL_H
