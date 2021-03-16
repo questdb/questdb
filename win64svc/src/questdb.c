@@ -82,7 +82,8 @@ void buildJavaArgs(CONFIG *config) {
     // put together static java opts
     LPCSTR javaOpts = "-XX:+UnlockExperimentalVMOptions"
                       " -XX:+AlwaysPreTouch"
-                      " -XX:+UseParallelOldGC"
+                      " -XX:+UseLargePages"
+                      " -XX:+UseZGC"
                       " --add-exports java.base/jdk.internal.math=io.questdb"
                       " ";
 
