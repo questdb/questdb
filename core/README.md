@@ -44,7 +44,7 @@ docker buildx inspect --bootstrap
 ```
 Create AMD64 image. You can test this image locally and push it only when its ready.
 ```
-docker build -t questdb/questdb:4.0.0-linux-amd64 --file Dockerfile-linux .
+docker build -t questdb/questdb:4.0.0-linux-amd64 --file Dockerfile .
 ```
 
 Push this image eventually:
@@ -54,24 +54,12 @@ docker push questdb/questdb:4.0.0-linux-amd64
 
 Create ARM64 image.
 ```
-docker buildx build --platform linux/arm64 -t questdb/questdb:4.0.0-linux-arm64 --file Dockerfile-linux-arm64 . --load
+docker buildx build --platform linux/arm64 -t questdb/questdb:4.0.0-linux-arm64 --file Dockerfile-arm64 . --load
 ```
 
 Push that eventually as well:
 ```
 docker push questdb/questdb:4.0.0-linux-arm64
-```
-
-### Switch Docker Desktop to Windows
-
-Build Windows image. Notice that this build does not use `buildx`. Also make sure that tag (:4.0.0-windows) reflect QuestDB version.
-```
-docker build -t questdb/questdb:4.0.0-windows-amd64 --file Dockerfile-windows .
-```
-
-Push to Docker Hub:
-```
-docker push questdb/questdb:4.0.0-windows-amd64
 ```
 
 ### Create manifest
