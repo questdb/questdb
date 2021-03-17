@@ -61,6 +61,24 @@ public class ScoreboardWriter implements Closeable {
         }
     }
 
+    public boolean addPartition(long timestamp, long txn) {
+        acquireHeaderLock(pScoreboard);
+        try {
+            long newSize = getScoreboardSize(partitionCount + 1);
+            if (newSize > size) {
+                pScoreboard = ff.mremap(fd, pScoreboard, size, newSize, 0, Files.MAP_RW);
+                size = newSize;
+            }
+            if (addPartitionUnsafe(pScoreboard, timestamp, txn)) {
+                partitionCount++;
+                return true;
+            }
+            return false;
+        } finally {
+            releaseHeaderLock(pScoreboard);
+        }
+    }
+
     public void acquireReadLock(long timestamp, long txn) {
         acquireReadLock(pScoreboard, timestamp, txn);
     }
@@ -69,14 +87,22 @@ public class ScoreboardWriter implements Closeable {
         return acquireWriteLock(pScoreboard, timestamp, txn);
     }
 
-    public void addPartition(long timestamp, long txn) {
+    public long getAccessCounter(long timestamp, long txn) {
+        return getAccessCounter(pScoreboard, timestamp, txn);
+    }
+
+    public int getPartitionCount() {
+        return getPartitionCount(pScoreboard);
+    }
+
+    public boolean removePartition(long timestamp, long txn) {
         acquireHeaderLock(pScoreboard);
         try {
-            long newSize = getScoreboardSize(partitionCount + 1);
-            pScoreboard = ff.mremap(fd, pScoreboard, size, newSize, 0, Files.MAP_RW);
-            size = newSize;
-            addPartitionUnsafe(pScoreboard, timestamp, txn);
-            partitionCount++;
+            if (removePartitionUnsafe(pScoreboard, timestamp, txn)) {
+                partitionCount--;
+                return true;
+            }
+            return false;
         } finally {
             releaseHeaderLock(pScoreboard);
         }
@@ -102,19 +128,25 @@ public class ScoreboardWriter implements Closeable {
         releaseWriteLock(pScoreboard, timestamp, txn);
     }
 
-    static native long getScoreboardSize(int partitionCount);
+    private static native long getScoreboardSize(int partitionCount);
 
-    static native void addPartitionUnsafe(long pScoreboard, long timestamp, long txn);
+    private static native boolean addPartitionUnsafe(long pScoreboard, long timestamp, long txn);
 
-    static native void acquireHeaderLock(long pScoreboard);
+    private static native boolean removePartitionUnsafe(long pScoreboard, long timestamp, long txn);
 
-    static native void releaseHeaderLock(long pScoreboard);
+    private static native void acquireHeaderLock(long pScoreboard);
 
-    static native boolean acquireWriteLock(long pScoreboard, long timestamp, long txn);
+    private static native void releaseHeaderLock(long pScoreboard);
 
-    static native void releaseWriteLock(long pScoreboard, long timestamp, long txn);
+    private static native boolean acquireWriteLock(long pScoreboard, long timestamp, long txn);
 
-    static native void acquireReadLock(long pScoreboard, long timestamp, long txn);
+    private static native void releaseWriteLock(long pScoreboard, long timestamp, long txn);
 
-    static native void releaseReadLock(long pScoreboard, long timestamp, long txn);
+    private static native void acquireReadLock(long pScoreboard, long timestamp, long txn);
+
+    private static native void releaseReadLock(long pScoreboard, long timestamp, long txn);
+
+    private static native int getPartitionCount(long pScoreboard);
+
+    private static native long getAccessCounter(long pScoreboard, long timestamp, long txn);
 }

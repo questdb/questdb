@@ -24,6 +24,7 @@
 
 #include <cstdint>
 #include <tuple>
+#include <cstring>
 #include "util.h"
 
 typedef std::tuple<int64_t, int64_t> slot_val_t;
@@ -33,7 +34,7 @@ typedef struct scoreboard_slot {
     int64_t timestamp;
     int64_t txn;
     volatile int64_t access_counter{};
-    uint64_t _unused{};
+//    uint64_t _unused{};
 
     scoreboard_slot(scoreboard_slot &other) {
         timestamp = other.timestamp;
@@ -41,11 +42,11 @@ typedef struct scoreboard_slot {
     }
 
     bool operator<(slot_val_t other) const {
-        return timestamp < std::get<0>(other) && txn < std::get<1>(other);
+        return timestamp < std::get<0>(other) || timestamp == std::get<0>(other) && txn < std::get<1>(other);
     }
 
     bool operator>(slot_val_t other) const {
-        return timestamp > std::get<0>(other) && txn > std::get<1>(other);
+        return timestamp > std::get<0>(other) || timestamp == std::get<0>(other) && txn > std::get<1>(other);
     }
 
     bool operator==(const scoreboard_slot &other) const {
@@ -120,7 +121,12 @@ inline void process_partition_for_read(scoreboard_t *scoreboard, int64_t timesta
             scoreboard->header.partition_count,
             1
     );
-    cas_loop(&(scoreboard->slot[index].access_counter), next, positive);
+
+    // check if partition exists
+    if (scoreboard->slot[index].timestamp == timestamp && scoreboard->slot[index].txn == txn) {
+        cas_loop(&(scoreboard->slot[index].access_counter), next, positive);
+    }
+
     cas_loop(scoreboard, dec, positive);
 }
 
@@ -154,7 +160,7 @@ inline int64_t get_scoreboard_size(int32_t partitionCount) {
     return sizeof(scoreboard_t) + sizeof(scoreboard_slot_t) * partitionCount;
 }
 
-inline void add_partition_unsafe(scoreboard_t *scoreboard, int64_t timestamp, int64_t txn) {
+inline bool add_partition_unsafe(scoreboard_t *scoreboard, int64_t timestamp, int64_t txn) {
     const slot_val_t slot_val(timestamp, txn);
     int64_t index = binary_search(
             scoreboard->slot,
@@ -164,23 +170,72 @@ inline void add_partition_unsafe(scoreboard_t *scoreboard, int64_t timestamp, in
             1
     );
 
+    bool ok;
     if (scoreboard->slot[index].timestamp != timestamp || scoreboard->slot[index].txn != txn) {
         // extend the scoreboard
-        memcpy(
-                &(scoreboard->slot[index + 1]),
-                &(scoreboard->slot[index]),
-                (scoreboard->header.partition_count - index) * sizeof(scoreboard_slot_t)
-        );
+        const int64_t len = (scoreboard->header.partition_count - index);
+        if (len > 0) {
+            memmove(
+                    scoreboard->slot + index + 1,
+                    scoreboard->slot + index,
+                    len * sizeof(scoreboard_slot_t)
+            );
+        }
         scoreboard->slot[index].timestamp = timestamp;
         scoreboard->slot[index].txn = txn;
         scoreboard->slot[index].access_counter = 0;
-        printf("hello, all good \n");
+        scoreboard->header.partition_count++;
+        ok = true;
     } else {
-        printf("partition exists index=%d\n", index);
+        ok = false;
     }
-
-    scoreboard->header.partition_count++;
+    return ok;
 }
+
+inline bool remove_partition_unsafe(scoreboard_t *scoreboard, int64_t timestamp, int64_t txn) {
+    const slot_val_t slot_val(timestamp, txn);
+    int64_t index = binary_search(
+            scoreboard->slot,
+            slot_val,
+            0,
+            scoreboard->header.partition_count,
+            1
+    );
+
+    bool ok;
+    if (scoreboard->slot[index].timestamp == timestamp && scoreboard->slot[index].txn == txn) {
+        // extend the scoreboard
+        int64_t len = (scoreboard->header.partition_count - index - 1);
+        memmove(
+                &(scoreboard->slot[index]),
+                &(scoreboard->slot[index+1]),
+                len * sizeof(scoreboard_slot_t)
+        );
+        scoreboard->header.partition_count--;
+        ok = true;
+    } else {
+        ok = false;
+    }
+    return ok;
+}
+
+inline int64_t get_access_counter(scoreboard_t *scoreboard, int64_t timestamp, int64_t txn) {
+    const slot_val_t slot_val(timestamp, txn);
+    int64_t index = binary_search(
+            scoreboard->slot,
+            slot_val,
+            0,
+            scoreboard->header.partition_count,
+            1
+    );
+
+    if (scoreboard->slot[index].timestamp == timestamp && scoreboard->slot[index].txn == txn) {
+        return scoreboard->slot[index].access_counter;
+    } else {
+        return -2;
+    }
+}
+
 
 inline bool lock_partition_for_write(scoreboard_t *scoreboard, int64_t timestamp, int64_t txn) {
     // single write mode, process/thread that owns the writer would not
@@ -193,10 +248,13 @@ inline bool lock_partition_for_write(scoreboard_t *scoreboard, int64_t timestamp
             scoreboard->header.partition_count,
             1
     );
-    int64_t current = *&(scoreboard->slot[index].access_counter);
-    int64_t prev = current > 0 ? 0 : current;
-    current = __sync_val_compare_and_swap(&(scoreboard->slot[index].access_counter), prev, prev - 1);
-    return current == prev;
+    if (scoreboard->slot[index].timestamp == timestamp && scoreboard->slot[index].txn == txn) {
+        int64_t current = *&(scoreboard->slot[index].access_counter);
+        int64_t prev = current > 0 ? 0 : current;
+        current = __sync_val_compare_and_swap(&(scoreboard->slot[index].access_counter), prev, prev - 1);
+        return current == prev;
+    }
+    return false;
 }
 
 inline void unlock_partition_for_write(scoreboard_t *scoreboard, int64_t timestamp, int64_t txn) {
@@ -208,8 +266,10 @@ inline void unlock_partition_for_write(scoreboard_t *scoreboard, int64_t timesta
             scoreboard->header.partition_count,
             1
     );
-    // single-writer mode, this does not require CAS
-    scoreboard->slot[index].access_counter = 0;
+    if (scoreboard->slot[index].timestamp == timestamp && scoreboard->slot[index].txn == txn) {
+        // single-writer mode, this does not require CAS
+        scoreboard->slot[index].access_counter = 0;
+    }
 }
 
 extern "C" {
@@ -218,9 +278,27 @@ JNIEXPORT jlong JNICALL Java_io_questdb_cairo_ScoreboardWriter_getScoreboardSize
     return get_scoreboard_size(partitionCount);
 }
 
-JNIEXPORT void JNICALL Java_io_questdb_cairo_ScoreboardWriter_addPartitionUnsafe
+JNIEXPORT jboolean JNICALL Java_io_questdb_cairo_ScoreboardWriter_addPartitionUnsafe
         (JNIEnv *e, jclass cl, jlong pScoreboard, jlong timestamp, jlong txn) {
-    add_partition_unsafe(
+    return add_partition_unsafe(
+            reinterpret_cast<scoreboard_t *>(pScoreboard),
+            timestamp,
+            txn
+    );
+}
+
+JNIEXPORT jboolean JNICALL Java_io_questdb_cairo_ScoreboardWriter_removePartitionUnsafe
+        (JNIEnv *e, jclass cl, jlong pScoreboard, jlong timestamp, jlong txn) {
+    return remove_partition_unsafe(
+            reinterpret_cast<scoreboard_t *>(pScoreboard),
+            timestamp,
+            txn
+    );
+}
+
+JNIEXPORT jlong JNICALL Java_io_questdb_cairo_ScoreboardWriter_getAccessCounter
+        (JNIEnv *e, jclass cl, jlong pScoreboard, jlong timestamp, jlong txn) {
+    return get_access_counter(
             reinterpret_cast<scoreboard_t *>(pScoreboard),
             timestamp,
             txn
@@ -271,5 +349,10 @@ JNIEXPORT void JNICALL Java_io_questdb_cairo_ScoreboardWriter_releaseReadLock
             partition,
             txn
     );
+}
+
+JNIEXPORT jint JNICALL Java_io_questdb_cairo_ScoreboardWriter_getPartitionCount
+        (JNIEnv *e, jclass cl, jlong pScoreboard) {
+    return reinterpret_cast<scoreboard_t*>(pScoreboard)->header.partition_count;
 }
 }
