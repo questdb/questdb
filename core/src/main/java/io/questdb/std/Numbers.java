@@ -30,6 +30,10 @@ import jdk.internal.math.FDBigInteger;
 import java.util.Arrays;
 
 public final class Numbers {
+    static {
+        Module currentModule = Numbers.class.getModule();
+        Unsafe.addExports(Unsafe.JAVA_BASE_MODULE, currentModule, "jdk.internal.math");
+    }
 
     public static final int INT_NaN = Integer.MIN_VALUE;
     public static final long LONG_NaN = Long.MIN_VALUE;
