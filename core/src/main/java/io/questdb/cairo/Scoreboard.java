@@ -31,14 +31,14 @@ import io.questdb.std.str.Path;
 
 import java.io.Closeable;
 
-public class ScoreboardWriter implements Closeable {
+public class Scoreboard implements Closeable {
     private final FilesFacade ff;
     private long fd;
     private long pScoreboard;
     private long size;
     private int partitionCount;
 
-    public ScoreboardWriter(FilesFacade ff, @Transient Path path, int initialPartitionCount) {
+    public Scoreboard(FilesFacade ff, @Transient Path path, int initialPartitionCount) {
         this.ff = ff;
         int plen = path.length();
         try {
@@ -61,6 +61,18 @@ public class ScoreboardWriter implements Closeable {
         }
     }
 
+    public static native boolean addPartitionUnsafe(long pScoreboard, long timestamp, long txn);
+
+    public static native long getScoreboardSize(int partitionCount);
+
+    public void acquireReadLock(long timestamp, long txn) {
+        acquireReadLock(pScoreboard, timestamp, txn);
+    }
+
+    public boolean acquireWriteLock(long timestamp, long txn) {
+        return acquireWriteLock(pScoreboard, timestamp, txn);
+    }
+
     public boolean addPartition(long timestamp, long txn) {
         acquireHeaderLock(pScoreboard);
         try {
@@ -71,35 +83,6 @@ public class ScoreboardWriter implements Closeable {
             }
             if (addPartitionUnsafe(pScoreboard, timestamp, txn)) {
                 partitionCount++;
-                return true;
-            }
-            return false;
-        } finally {
-            releaseHeaderLock(pScoreboard);
-        }
-    }
-
-    public void acquireReadLock(long timestamp, long txn) {
-        acquireReadLock(pScoreboard, timestamp, txn);
-    }
-
-    public boolean acquireWriteLock(long timestamp, long txn) {
-        return acquireWriteLock(pScoreboard, timestamp, txn);
-    }
-
-    public long getAccessCounter(long timestamp, long txn) {
-        return getAccessCounter(pScoreboard, timestamp, txn);
-    }
-
-    public int getPartitionCount() {
-        return getPartitionCount(pScoreboard);
-    }
-
-    public boolean removePartition(long timestamp, long txn) {
-        acquireHeaderLock(pScoreboard);
-        try {
-            if (removePartitionUnsafe(pScoreboard, timestamp, txn)) {
-                partitionCount--;
                 return true;
             }
             return false;
@@ -120,6 +103,30 @@ public class ScoreboardWriter implements Closeable {
         }
     }
 
+    public long getAccessCounter(long timestamp, long txn) {
+        return getAccessCounter(pScoreboard, timestamp, txn);
+    }
+
+    public long getActiveReaderCounter() {
+        return getActiveReaderCounter(pScoreboard);
+    }
+
+    public int getPartitionCount() {
+        return getPartitionCount(pScoreboard);
+    }
+
+    public int getPartitionIndex(long timestamp, long txn) {
+        return getPartitionIndex(pScoreboard, timestamp, txn);
+    }
+
+    public void readerActive() {
+        readerActive(pScoreboard);
+    }
+
+    public void readerInactive() {
+        readerInactive(pScoreboard);
+    }
+
     public void releaseReadLock(long timestamp, long txn) {
         releaseReadLock(pScoreboard, timestamp, txn);
     }
@@ -128,9 +135,18 @@ public class ScoreboardWriter implements Closeable {
         releaseWriteLock(pScoreboard, timestamp, txn);
     }
 
-    private static native long getScoreboardSize(int partitionCount);
-
-    private static native boolean addPartitionUnsafe(long pScoreboard, long timestamp, long txn);
+    public boolean removePartition(long timestamp, long txn) {
+        acquireHeaderLock(pScoreboard);
+        try {
+            if (removePartitionUnsafe(pScoreboard, timestamp, txn)) {
+                partitionCount--;
+                return true;
+            }
+            return false;
+        } finally {
+            releaseHeaderLock(pScoreboard);
+        }
+    }
 
     private static native boolean removePartitionUnsafe(long pScoreboard, long timestamp, long txn);
 
@@ -149,4 +165,43 @@ public class ScoreboardWriter implements Closeable {
     private static native int getPartitionCount(long pScoreboard);
 
     private static native long getAccessCounter(long pScoreboard, long timestamp, long txn);
+
+    private static native void readerActive(long pScoreboard);
+
+    private static native void readerInactive(long pScoreboard);
+
+    private static native long getActiveReaderCounter(long pScoreboard);
+
+    public static native long getHeaderAccessCounter(long pScoreboard);
+
+    public static native int getPartitionIndex(long pScoreboard, long timestamp, long txn);
+
+    static void createScoreboard(FilesFacade ff, Path path, int partitionBy) {
+        // create scoreboard
+        long scoreboardFd = -1;
+        long memSize = 0;
+        long pScoreboard = 0;
+        try {
+            scoreboardFd = ff.openRW(path.concat("scoreboard.d").$());
+            if (scoreboardFd == -1) {
+                throw CairoException.instance(ff.errno()).put("Could not open scoreboard file [name=").put(path).put(']');
+            }
+            memSize = getScoreboardSize(partitionBy == PartitionBy.NONE ? 1 : 0);
+            if (!ff.allocate(scoreboardFd, memSize)) {
+                throw CairoException.instance(ff.errno()).put("No space left on device [name=").put(path).put(", size=").put(memSize).put(']');
+            }
+            pScoreboard = ff.mmap(scoreboardFd, memSize, 0, Files.MAP_RW);
+            if (partitionBy == PartitionBy.NONE) {
+                addPartitionUnsafe(pScoreboard, 0, 0);
+            }
+        } finally {
+            if (pScoreboard != 0) {
+                ff.munmap(pScoreboard, memSize);
+            }
+
+            if (scoreboardFd != -1) {
+                ff.close(scoreboardFd);
+            }
+        }
+    }
 }

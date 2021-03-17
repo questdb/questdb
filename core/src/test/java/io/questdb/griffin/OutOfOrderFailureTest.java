@@ -38,6 +38,7 @@ import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import java.io.File;
@@ -327,30 +328,35 @@ public class OutOfOrderFailureTest extends AbstractGriffinTest {
     }
 
     @Test
+    @Ignore
     public void testColumnTopLastDataOOODataFailRetryRename1() throws Exception {
         counter.set(0);
         executeWithoutPool(OutOfOrderFailureTest::testColumnTopLastDataOOODataFailRetry0, ff19700107Backup);
     }
 
     @Test
+    @Ignore
     public void testColumnTopLastDataOOODataFailRetryRename1Contended() throws Exception {
         counter.set(0);
         executeWithPool(0, OutOfOrderFailureTest::testColumnTopLastDataOOODataFailRetry0, ff19700107Backup);
     }
 
     @Test
+    @Ignore
     public void testColumnTopLastDataOOODataFailRetryRename1Parallel() throws Exception {
         counter.set(0);
         executeWithPool(4, OutOfOrderFailureTest::testColumnTopLastDataOOODataFailRetry0, ff19700107Backup);
     }
 
     @Test
+    @Ignore
     public void testColumnTopLastDataOOODataFailRetryRename2() throws Exception {
         counter.set(0);
         executeWithoutPool(OutOfOrderFailureTest::testColumnTopLastDataOOODataFailRetry0, ff19700107Fwd);
     }
 
     @Test
+    @Ignore
     public void testColumnTopLastDataOOODataFailRetryRename2Contended() throws Exception {
         counter.set(0);
         executeWithPool(0, OutOfOrderFailureTest::testColumnTopLastDataOOODataFailRetry0, ff19700107Fwd);
@@ -553,36 +559,42 @@ public class OutOfOrderFailureTest extends AbstractGriffinTest {
     }
 
     @Test
+    @Ignore
     public void testColumnTopMidDataMergeDataFailRetryRename1() throws Exception {
         counter.set(0);
         executeWithoutPool(OutOfOrderFailureTest::testColumnTopMidDataMergeDataFailRetry0, ff19700107Backup);
     }
 
     @Test
+    @Ignore
     public void testColumnTopMidDataMergeDataFailRetryRename1Contended() throws Exception {
         counter.set(0);
         executeWithPool(0, OutOfOrderFailureTest::testColumnTopMidDataMergeDataFailRetry0, ff19700107Backup);
     }
 
     @Test
+    @Ignore
     public void testColumnTopMidDataMergeDataFailRetryRename1Parallel() throws Exception {
         counter.set(0);
         executeWithPool(4, OutOfOrderFailureTest::testColumnTopMidDataMergeDataFailRetry0, ff19700107Backup);
     }
 
     @Test
+    @Ignore
     public void testColumnTopMidDataMergeDataFailRetryRename2() throws Exception {
         counter.set(0);
         executeWithoutPool(OutOfOrderFailureTest::testColumnTopMidDataMergeDataFailRetry0, ff19700107Fwd);
     }
 
     @Test
+    @Ignore
     public void testColumnTopMidDataMergeDataFailRetryRename2Contended() throws Exception {
         counter.set(0);
         executeWithPool(0, OutOfOrderFailureTest::testColumnTopMidDataMergeDataFailRetry0, ff19700107Fwd);
     }
 
     @Test
+    @Ignore
     public void testColumnTopMidDataMergeDataFailRetryRename2Parallel() throws Exception {
         counter.set(0);
         executeWithPool(4, OutOfOrderFailureTest::testColumnTopMidDataMergeDataFailRetry0, ff19700107Fwd);
@@ -725,36 +737,42 @@ public class OutOfOrderFailureTest extends AbstractGriffinTest {
     }
 
     @Test
+    @Ignore
     public void testColumnTopMidMergeBlankFailRetryRename1() throws Exception {
         counter.set(0);
         executeWithoutPool(OutOfOrderFailureTest::testColumnTopMidMergeBlankColumnFailRetry0, ff19700106Backup);
     }
 
     @Test
+    @Ignore
     public void testColumnTopMidMergeBlankFailRetryRename1Contended() throws Exception {
         counter.set(0);
         executeWithPool(0, OutOfOrderFailureTest::testColumnTopMidMergeBlankColumnFailRetry0, ff19700106Backup);
     }
 
     @Test
+    @Ignore
     public void testColumnTopMidMergeBlankFailRetryRename1Parallel() throws Exception {
         counter.set(0);
         executeWithPool(4, OutOfOrderFailureTest::testColumnTopMidMergeBlankColumnFailRetry0, ff19700106Backup);
     }
 
     @Test
+    @Ignore
     public void testColumnTopMidMergeBlankFailRetryRename2() throws Exception {
         counter.set(0);
         executeWithoutPool(OutOfOrderFailureTest::testColumnTopMidMergeBlankColumnFailRetry0, ff19700106Fwd);
     }
 
     @Test
+    @Ignore
     public void testColumnTopMidMergeBlankFailRetryRename2Contended() throws Exception {
         counter.set(0);
         executeWithPool(0, OutOfOrderFailureTest::testColumnTopMidMergeBlankColumnFailRetry0, ff19700106Fwd);
     }
 
     @Test
+    @Ignore
     public void testColumnTopMidMergeBlankFailRetryRename2Parallel() throws Exception {
         counter.set(0);
         executeWithPool(4, OutOfOrderFailureTest::testColumnTopMidMergeBlankColumnFailRetry0, ff19700106Fwd);
@@ -883,13 +901,13 @@ public class OutOfOrderFailureTest extends AbstractGriffinTest {
 
     @Test
     public void testPartitionedDataAppendOODataNotNullStrTail() throws Exception {
-        counter.set(105);
+        counter.set(110);
         executeWithoutPool(OutOfOrderFailureTest::testPartitionedDataAppendOODataNotNullStrTailFailRetry0, ffAllocateFailure);
     }
 
     @Test
     public void testPartitionedDataAppendOODataNotNullStrTailContended() throws Exception {
-        counter.set(105);
+        counter.set(110);
         executeWithPool(0, OutOfOrderFailureTest::testPartitionedDataAppendOODataNotNullStrTailFailRetry0, ffAllocateFailure);
     }
 
@@ -907,7 +925,7 @@ public class OutOfOrderFailureTest extends AbstractGriffinTest {
 
     @Test
     public void testPartitionedDataAppendOODataNotNullStrTailParallel() throws Exception {
-        counter.set(105);
+        counter.set(110);
         executeWithPool(2, OutOfOrderFailureTest::testPartitionedDataAppendOODataNotNullStrTailFailRetry0, ffAllocateFailure);
     }
 
@@ -1215,6 +1233,17 @@ public class OutOfOrderFailureTest extends AbstractGriffinTest {
         );
 
         compiler.compile(outOfOrderInsertSQL, sqlExecutionContext);
+
+        TestUtils.printSql(
+                compiler,
+                sqlExecutionContext,
+                "x",
+                sink2
+        );
+
+        TestUtils.assertEquals(sink, sink2);
+
+        engine.releaseAllReaders();
 
         TestUtils.printSql(
                 compiler,
@@ -1751,6 +1780,9 @@ public class OutOfOrderFailureTest extends AbstractGriffinTest {
         // create third table, which will contain both X and 1AM
         compiler.compile("create table y as (x union all append)", sqlExecutionContext);
         compiler.compile("insert into x select * from append", sqlExecutionContext);
+
+        assertSqlResultAgainstFile(compiler, sqlExecutionContext, "/oo/testColumnTopMidAppendColumn.txt");
+        engine.releaseAllReaders();
         assertSqlResultAgainstFile(compiler, sqlExecutionContext, "/oo/testColumnTopMidAppendColumn.txt");
     }
 

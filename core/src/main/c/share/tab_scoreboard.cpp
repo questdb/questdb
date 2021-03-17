@@ -1,4 +1,5 @@
 /*******************************************************************************
+/*******************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -49,6 +50,10 @@ typedef struct scoreboard_slot {
         return timestamp > std::get<0>(other) || timestamp == std::get<0>(other) && txn > std::get<1>(other);
     }
 
+    bool operator==(slot_val_t other) const {
+        return timestamp == std::get<0>(other) && txn == std::get<1>(other);
+    }
+
     bool operator==(const scoreboard_slot &other) const {
         return timestamp == other.timestamp && txn == other.txn;
     }
@@ -58,7 +63,7 @@ typedef struct scoreboard_slot {
 typedef struct {
     uint64_t partition_count;
     volatile int64_t access_counter;
-    uint64_t _unused1;
+    volatile int64_t active_reader_counter;
     uint64_t _unused2;
 } scoreboard_header_t;
 
@@ -89,6 +94,10 @@ inline int64_t positive(int64_t a) {
 
 inline int64_t negative(int64_t a) {
     return a > 0 ? 0 : a;
+}
+
+inline int64_t entity(int64_t a) {
+    return a;
 }
 
 template<typename F, typename M>
@@ -148,6 +157,27 @@ inline void unlock_partition_for_read(scoreboard_t *scoreboard, int64_t timestam
     );
 }
 
+inline int64_t get_partition_index(scoreboard_t *scoreboard, int64_t timestamp, int64_t txn) {
+    cas_loop(scoreboard, inc, positive);
+    const slot_val_t slotVal(timestamp, txn);
+    int64_t index = binary_search(
+            scoreboard->slot,
+            slotVal,
+            0,
+            scoreboard->header.partition_count,
+            1
+    );
+
+    // check if partition exists
+    if (scoreboard->slot[index].timestamp == timestamp && scoreboard->slot[index].txn == txn) {
+        return index;
+    } else {
+        return -2;
+    }
+
+    cas_loop(scoreboard, dec, positive);
+}
+
 inline void prepare(void *pTxn, uint32_t pTxnCount, scoreboard_t *scoreboard) {
     auto *slots = reinterpret_cast<txn_slot_t *>(pTxn);
     for (uint32_t i = 0; i < pTxnCount; i++) {
@@ -162,18 +192,24 @@ inline int64_t get_scoreboard_size(int32_t partitionCount) {
 
 inline bool add_partition_unsafe(scoreboard_t *scoreboard, int64_t timestamp, int64_t txn) {
     const slot_val_t slot_val(timestamp, txn);
-    int64_t index = binary_search(
-            scoreboard->slot,
-            slot_val,
-            0,
-            scoreboard->header.partition_count,
-            1
-    );
+    const int64_t partition_count = scoreboard->header.partition_count;
+    int64_t index;
+    if (partition_count > 0) {
+        index = binary_search(
+                scoreboard->slot,
+                slot_val,
+                0,
+                partition_count,
+                1
+        );
+    } else {
+        index = 0;
+    }
 
     bool ok;
     if (scoreboard->slot[index].timestamp != timestamp || scoreboard->slot[index].txn != txn) {
         // extend the scoreboard
-        const int64_t len = (scoreboard->header.partition_count - index);
+        const int64_t len = (partition_count - index);
         if (len > 0) {
             memmove(
                     scoreboard->slot + index + 1,
@@ -208,7 +244,7 @@ inline bool remove_partition_unsafe(scoreboard_t *scoreboard, int64_t timestamp,
         int64_t len = (scoreboard->header.partition_count - index - 1);
         memmove(
                 &(scoreboard->slot[index]),
-                &(scoreboard->slot[index+1]),
+                &(scoreboard->slot[index + 1]),
                 len * sizeof(scoreboard_slot_t)
         );
         scoreboard->header.partition_count--;
@@ -230,7 +266,7 @@ inline int64_t get_access_counter(scoreboard_t *scoreboard, int64_t timestamp, i
     );
 
     if (scoreboard->slot[index].timestamp == timestamp && scoreboard->slot[index].txn == txn) {
-        return scoreboard->slot[index].access_counter;
+        return __atomic_load_n(&(scoreboard->slot[index].access_counter), __ATOMIC_RELAXED);
     } else {
         return -2;
     }
@@ -272,13 +308,26 @@ inline void unlock_partition_for_write(scoreboard_t *scoreboard, int64_t timesta
     }
 }
 
+inline void reader_active(scoreboard_t *scoreboard) {
+    cas_loop(&(scoreboard->header.active_reader_counter), inc, entity);
+}
+
+
+inline void reader_inactive(scoreboard_t *scoreboard) {
+    cas_loop(&(scoreboard->header.active_reader_counter), dec, entity);
+}
+
+inline int64_t get_active_reader_counter(scoreboard_t *scoreboard) {
+    return __atomic_load_n(&(scoreboard->header.active_reader_counter), __ATOMIC_RELAXED);
+}
+
 extern "C" {
-JNIEXPORT jlong JNICALL Java_io_questdb_cairo_ScoreboardWriter_getScoreboardSize
+JNIEXPORT jlong JNICALL Java_io_questdb_cairo_Scoreboard_getScoreboardSize
         (JNIEnv *e, jclass cl, jint partitionCount) {
     return get_scoreboard_size(partitionCount);
 }
 
-JNIEXPORT jboolean JNICALL Java_io_questdb_cairo_ScoreboardWriter_addPartitionUnsafe
+JNIEXPORT jboolean JNICALL Java_io_questdb_cairo_Scoreboard_addPartitionUnsafe
         (JNIEnv *e, jclass cl, jlong pScoreboard, jlong timestamp, jlong txn) {
     return add_partition_unsafe(
             reinterpret_cast<scoreboard_t *>(pScoreboard),
@@ -287,7 +336,7 @@ JNIEXPORT jboolean JNICALL Java_io_questdb_cairo_ScoreboardWriter_addPartitionUn
     );
 }
 
-JNIEXPORT jboolean JNICALL Java_io_questdb_cairo_ScoreboardWriter_removePartitionUnsafe
+JNIEXPORT jboolean JNICALL Java_io_questdb_cairo_Scoreboard_removePartitionUnsafe
         (JNIEnv *e, jclass cl, jlong pScoreboard, jlong timestamp, jlong txn) {
     return remove_partition_unsafe(
             reinterpret_cast<scoreboard_t *>(pScoreboard),
@@ -296,7 +345,7 @@ JNIEXPORT jboolean JNICALL Java_io_questdb_cairo_ScoreboardWriter_removePartitio
     );
 }
 
-JNIEXPORT jlong JNICALL Java_io_questdb_cairo_ScoreboardWriter_getAccessCounter
+JNIEXPORT jlong JNICALL Java_io_questdb_cairo_Scoreboard_getAccessCounter
         (JNIEnv *e, jclass cl, jlong pScoreboard, jlong timestamp, jlong txn) {
     return get_access_counter(
             reinterpret_cast<scoreboard_t *>(pScoreboard),
@@ -305,17 +354,17 @@ JNIEXPORT jlong JNICALL Java_io_questdb_cairo_ScoreboardWriter_getAccessCounter
     );
 }
 
-JNIEXPORT void JNICALL Java_io_questdb_cairo_ScoreboardWriter_acquireHeaderLock
+JNIEXPORT void JNICALL Java_io_questdb_cairo_Scoreboard_acquireHeaderLock
         (JNIEnv *e, jclass cl, jlong pScoreboard) {
     cas_loop(reinterpret_cast<scoreboard_t *>(pScoreboard), dec, negative);
 }
 
-JNIEXPORT void JNICALL Java_io_questdb_cairo_ScoreboardWriter_releaseHeaderLock
+JNIEXPORT void JNICALL Java_io_questdb_cairo_Scoreboard_releaseHeaderLock
         (JNIEnv *e, jclass cl, jlong pScoreboard) {
     cas_loop(reinterpret_cast<scoreboard_t *>(pScoreboard), inc, negative);
 }
 
-JNIEXPORT jboolean JNICALL Java_io_questdb_cairo_ScoreboardWriter_acquireWriteLock
+JNIEXPORT jboolean JNICALL Java_io_questdb_cairo_Scoreboard_acquireWriteLock
         (JNIEnv *e, jclass cl, jlong pScoreboard, jlong partition, jlong txn) {
     return lock_partition_for_write(
             reinterpret_cast<scoreboard_t *>(pScoreboard),
@@ -324,7 +373,7 @@ JNIEXPORT jboolean JNICALL Java_io_questdb_cairo_ScoreboardWriter_acquireWriteLo
     );
 }
 
-JNIEXPORT void JNICALL Java_io_questdb_cairo_ScoreboardWriter_releaseWriteLock
+JNIEXPORT void JNICALL Java_io_questdb_cairo_Scoreboard_releaseWriteLock
         (JNIEnv *e, jclass cl, jlong pScoreboard, jlong partition, jlong txn) {
     unlock_partition_for_write(
             reinterpret_cast<scoreboard_t *>(pScoreboard),
@@ -333,7 +382,7 @@ JNIEXPORT void JNICALL Java_io_questdb_cairo_ScoreboardWriter_releaseWriteLock
     );
 }
 
-JNIEXPORT void JNICALL Java_io_questdb_cairo_ScoreboardWriter_acquireReadLock
+JNIEXPORT void JNICALL Java_io_questdb_cairo_Scoreboard_acquireReadLock
         (JNIEnv *e, jclass cl, jlong pScoreboard, jlong partition, jlong txn) {
     lock_partition_for_read(
             reinterpret_cast<scoreboard_t *>(pScoreboard),
@@ -342,7 +391,7 @@ JNIEXPORT void JNICALL Java_io_questdb_cairo_ScoreboardWriter_acquireReadLock
     );
 }
 
-JNIEXPORT void JNICALL Java_io_questdb_cairo_ScoreboardWriter_releaseReadLock
+JNIEXPORT void JNICALL Java_io_questdb_cairo_Scoreboard_releaseReadLock
         (JNIEnv *e, jclass cl, jlong pScoreboard, jlong partition, jlong txn) {
     unlock_partition_for_read(
             reinterpret_cast<scoreboard_t *>(pScoreboard),
@@ -351,8 +400,22 @@ JNIEXPORT void JNICALL Java_io_questdb_cairo_ScoreboardWriter_releaseReadLock
     );
 }
 
-JNIEXPORT jint JNICALL Java_io_questdb_cairo_ScoreboardWriter_getPartitionCount
+JNIEXPORT jint JNICALL Java_io_questdb_cairo_Scoreboard_getPartitionIndex
+        (JNIEnv *e, jclass cl, jlong pScoreboard, jlong partition, jlong txn) {
+    return get_partition_index(
+            reinterpret_cast<scoreboard_t *>(pScoreboard),
+            partition,
+            txn
+    );
+}
+
+JNIEXPORT jint JNICALL Java_io_questdb_cairo_Scoreboard_getPartitionCount
         (JNIEnv *e, jclass cl, jlong pScoreboard) {
-    return reinterpret_cast<scoreboard_t*>(pScoreboard)->header.partition_count;
+    return __atomic_load_n(&(reinterpret_cast<scoreboard_t *>(pScoreboard)->header.partition_count), __ATOMIC_RELAXED);
+}
+
+JNIEXPORT jint JNICALL Java_io_questdb_cairo_Scoreboard_getHeaderAccessCounter
+        (JNIEnv *e, jclass cl, jlong pScoreboard) {
+    return __atomic_load_n(&(reinterpret_cast<scoreboard_t *>(pScoreboard)->header.access_counter), __ATOMIC_RELAXED);
 }
 }

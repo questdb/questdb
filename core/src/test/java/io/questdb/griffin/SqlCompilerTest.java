@@ -2974,7 +2974,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
 
                 @Override
                 public long mmap(long fd, long len, long offset, int mode) {
-                    if (inError.get() && pageCount++ > 10) {
+                    if (inError.get() && pageCount++ > 12) {
                         return -1;
                     }
                     return super.mmap(fd, len, offset, mode);
@@ -3039,7 +3039,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
 
                 @Override
                 public long mmap(long fd, long len, long offset, int mode) {
-                    if (inError.get() && pageCount++ == 11) {
+                    if (inError.get() && pageCount++ == 13) {
                         return -1;
                     }
                     return super.mmap(fd, len, offset, mode);

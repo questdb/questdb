@@ -24,12 +24,19 @@
 
 package io.questdb.cairo;
 
+import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Os;
+import io.questdb.std.Rnd;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
+
+import java.util.concurrent.BrokenBarrierException;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.atomic.AtomicInteger;
 
 public class ScoreboardTest extends AbstractCairoTest {
     @Test
@@ -37,8 +44,9 @@ public class ScoreboardTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             try (
                     Path path = new Path().of(root);
-                    ScoreboardWriter w = new ScoreboardWriter(FilesFacadeImpl.INSTANCE, path, 0)
+                    Scoreboard w = new Scoreboard(FilesFacadeImpl.INSTANCE, path, 0)
             ) {
+                Assert.assertTrue(w.addPartition(0, -1));
                 Assert.assertTrue(w.addPartition(100000, -1));
                 Assert.assertTrue(w.addPartition(100000, 0));
                 Assert.assertTrue(w.addPartition(100000, 1));
@@ -56,7 +64,7 @@ public class ScoreboardTest extends AbstractCairoTest {
                 // assert that lock is still held in place
                 // we are going to memmove this when we insert partition in the middle
                 Assert.assertEquals(1, w.getAccessCounter(300000, 1));
-                Assert.assertEquals(8, w.getPartitionCount());
+                Assert.assertEquals(9, w.getPartitionCount());
 
                 // inserting this partition should shift down partition with reader lock on
                 Assert.assertTrue(w.addPartition(200000, 2));
@@ -83,6 +91,91 @@ public class ScoreboardTest extends AbstractCairoTest {
 
                 // check that after removing partition the access counter remains intact
                 Assert.assertEquals(1, w.getAccessCounter(300000, 1));
+            }
+        });
+    }
+
+    @Test
+    public void testReaderCutoff() throws BrokenBarrierException, InterruptedException {
+        // Main thread locks "writer" to mutate memory area.
+        // During the mutation writer will writer a series of negative values to memory area.
+        // Finally writer will write positive value and unlocks the area
+        // Reader is expected to read only that positive value
+
+        long memory = Unsafe.malloc(64);
+        try (
+                Path path = new Path().of(root);
+                Scoreboard w = new Scoreboard(FilesFacadeImpl.INSTANCE, path, 0)
+        ) {
+            w.addPartition(1000000, 10);
+            w.addPartition(1000000, 12);
+            w.addPartition(1000000, 13);
+
+            // lock #12
+            w.acquireWriteLock(1000000, 12);
+
+            // start off with "bad" value, reader should be waiting from the get go
+            Unsafe.getUnsafe().putLong(memory, -3);
+
+            // start reader thread
+            SOCountDownLatch doneLatch = new SOCountDownLatch(1);
+            CyclicBarrier barrier = new CyclicBarrier(2);
+            AtomicInteger errorCount = new AtomicInteger();
+            new Thread(() -> {
+                try {
+                    barrier.await();
+                    w.acquireReadLock(1000000, 12);
+                    Assert.assertEquals(505, Unsafe.getUnsafe().getLong(memory));
+                } catch (Throwable e) {
+                    errorCount.incrementAndGet();
+                    e.printStackTrace();
+                } finally {
+                    doneLatch.countDown();
+                }
+            }).start();
+
+            barrier.await();
+            Rnd rnd = new Rnd();
+            for (int i = 0; i < 1_000_000; i++) {
+                Unsafe.getUnsafe().putLong(memory, -rnd.nextPositiveLong());
+            }
+
+            // finally put expected value
+            Unsafe.getUnsafe().putLong(memory, 505);
+            // and release lock
+            w.releaseWriteLock(1000000, 12);
+
+            doneLatch.await();
+
+            Assert.assertEquals(0, errorCount.get());
+        }
+    }
+
+    @Test
+    public void testAddPartitionSequence1() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (
+                    Path path = new Path().of(root);
+                    Scoreboard w = new Scoreboard(FilesFacadeImpl.INSTANCE, path, 0)
+            ) {
+                Assert.assertTrue(w.addPartition(1578614400000000L, -1));
+                Assert.assertTrue(w.addPartition(1578528000000000L, -1));
+                Assert.assertEquals(1, w.getPartitionIndex(1578614400000000L, -1));
+                Assert.assertEquals(0, w.getPartitionIndex(1578528000000000L, -1));
+            }
+        });
+    }
+
+    @Test
+    public void testAddPartitionSequence2() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (
+                    Path path = new Path().of(root);
+                    Scoreboard w = new Scoreboard(FilesFacadeImpl.INSTANCE, path, 0)
+            ) {
+                Assert.assertTrue(w.addPartition(432000000000L, -1));
+                Assert.assertTrue(w.addPartition(518400000000L, -1));
+                Assert.assertFalse(w.addPartition(432000000000L, -1));
             }
         });
     }

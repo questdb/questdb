@@ -164,6 +164,9 @@ public final class TableUtils {
             try (AppendOnlyVirtualMemory mem = memory) {
                 mem.of(ff, path.trimTo(rootLen).concat(META_FILE_NAME).$(), ff.getPageSize());
                 final int count = structure.getColumnCount();
+                final int partitionBy = structure.getPartitionBy();
+                Scoreboard.createScoreboard(ff, path.trimTo(rootLen), partitionBy);
+                path.trimTo(rootLen);
                 mem.putInt(count);
                 mem.putInt(structure.getPartitionBy());
                 mem.putInt(structure.getTimestampIndex());

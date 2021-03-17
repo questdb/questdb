@@ -27,10 +27,7 @@ package io.questdb.cairo;
 import io.questdb.cairo.vm.Mappable;
 import io.questdb.cairo.vm.MappedReadOnlyMemory;
 import io.questdb.cairo.vm.SinglePageMappedReadOnlyPageMemory;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.IntList;
-import io.questdb.std.LongList;
-import io.questdb.std.Misc;
+import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
 
@@ -257,7 +254,7 @@ public class TxReader implements Closeable {
     }
 
     long getPartitionTimestampLo(long timestamp) {
-        return timestampFloorMethod != null ? timestampFloorMethod.floor(timestamp) : Long.MIN_VALUE;
+        return timestampFloorMethod != null && timestamp != Numbers.LONG_NaN ? timestampFloorMethod.floor(timestamp) : Long.MIN_VALUE;
     }
 
     protected void initPartitionAt(int index, long partitionTimestampLo, long partitionSize) {

@@ -58,6 +58,10 @@ typedef struct index_t {
     bool operator==(index_t other) const {
         return ts == other.ts;
     }
+
+    bool operator==(int64_t other) const {
+        return ts == other;
+    }
 } index_t;
 
 #define RADIX_SHUFFLE 0
@@ -66,7 +70,7 @@ typedef struct index_t {
 
 template<uint16_t sh>
 inline void radix_shuffle(uint64_t *counts, index_t *src, index_t *dest, uint64_t size) {
-    _mm_prefetch(counts, _MM_HINT_NTA);
+    _mm_prefetch(counts, _MM_HINT_ET0);
     for (uint64_t x = 0; x < size; x++) {
         const auto digit = (src[x].ts >> sh) & 0xffu;
         dest[counts[digit]] = src[x];

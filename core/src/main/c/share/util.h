@@ -24,6 +24,7 @@
 
 #ifndef UTIL_H
 #define UTIL_H
+
 #include <cmath>
 #include <cstdint>
 #include "jni.h"
@@ -58,8 +59,28 @@ inline uint32_t ceil_pow_2(uint32_t v) {
 }
 
 template<class T, class V>
+inline int64_t scan_search(T data, V value, int64_t low, int64_t high, int32_t scan_dir) {
+    for (int64_t p = low; p <= high; p++) {
+        if (data[p] == value) {
+            if (scan_dir > 0) {
+                while (data[++p] == value);
+                return p - 1 > -1 ? p -1 : 0;
+            }
+            return p;
+        }
+        if (data[p] > value) {
+            return p - 1 > -1 ? p -1 : 0;
+        }
+    }
+    return high;
+}
+
+template<class T, class V>
 inline int64_t binary_search(T *data, V value, int64_t low, int64_t high, int32_t scan_dir) {
     while (low < high) {
+        if (high - low < 65) {
+            return scan_search(data, value, low, high, scan_dir);
+        }
         int64_t mid = (low + high) / 2;
         T midVal = data[mid];
 
