@@ -265,7 +265,7 @@ public class ImportIODispatcherTest {
             "{\"name\":\"PickupDateTime\",\"type\":\"TIMESTAMP\",\"size\":8,\"errors\":0}," +
             "{\"name\":\"DropOffDatetime\",\"type\":\"STRING\",\"size\":0,\"errors\":0}" +
             "]}\r\n" +
-            "00\r\n"+
+            "00\r\n" +
             "\r\n";
 
     private final String DdlCols1 = "(Col1+STRING,PickupDateTime+TIMESTAMP,DropOffDatetime+STRING)";

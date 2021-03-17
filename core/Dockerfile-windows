@@ -46,4 +46,4 @@ RUN mkdir C:\questdb
 VOLUME C:/questdb/db
 
 # Run questdb when the container launches
-CMD ["/app/bin/java", "--add-exports", "java.base/jdk.internal.math=io.questdb", "-m", "io.questdb/io.questdb.ServerMain", "-d", "c:/questdb", "-f"]
+CMD ["/app/bin/java", "-m", "io.questdb/io.questdb.ServerMain", "-d", "c:/questdb", "-f"]
