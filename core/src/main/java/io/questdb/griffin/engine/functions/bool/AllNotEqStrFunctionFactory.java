@@ -59,7 +59,7 @@ public class AllNotEqStrFunctionFactory implements FunctionFactory {
         Function var = args.getQuick(0);
         if (var.isConstant()) {
             CharSequence str = var.getStr(null);
-            return new BooleanConstant(position, str != null && !set.contains(str));
+            return new BooleanConstant(position, str != null && set.excludes(str));
         }
 
         return new AllNotEqualStrFunction(position, var, set);
@@ -83,7 +83,7 @@ public class AllNotEqStrFunctionFactory implements FunctionFactory {
         @Override
         public boolean getBool(Record rec) {
             CharSequence str = arg.getStr(rec);
-            return str != null && !set.contains(str);
+            return str != null && set.excludes(str);
         }
     }
 }
