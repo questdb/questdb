@@ -1,5 +1,4 @@
 /*******************************************************************************
-/*******************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -119,23 +118,31 @@ inline void cas_loop(scoreboard_t *scoreboard, F next, M limiter) {
     );
 }
 
+int64_t binary_search(scoreboard_t *scoreboard, int64_t timestamp, int64_t txn) {
+    const slot_val_t slot_val(timestamp, txn);
+    int64_t partition_count = scoreboard->header.partition_count;
+    if (partition_count > 0) {
+        int64_t index = binary_search(
+                scoreboard->slot,
+                slot_val,
+                0,
+                partition_count - 1,
+                1
+        );
+        return index;
+    }
+    return 0;
+}
+
+
 template<typename F>
 inline void process_partition_for_read(scoreboard_t *scoreboard, int64_t timestamp, int64_t txn, F next) {
     cas_loop(scoreboard, inc, positive);
-    const slot_val_t slot_val(timestamp, txn);
-    int64_t index = binary_search(
-            scoreboard->slot,
-            slot_val,
-            0,
-            scoreboard->header.partition_count,
-            1
-    );
-
+    const int64_t index = binary_search(scoreboard, timestamp, txn);
     // check if partition exists
     if (scoreboard->slot[index].timestamp == timestamp && scoreboard->slot[index].txn == txn) {
         cas_loop(&(scoreboard->slot[index].access_counter), next, positive);
     }
-
     cas_loop(scoreboard, dec, positive);
 }
 
@@ -159,23 +166,15 @@ inline void unlock_partition_for_read(scoreboard_t *scoreboard, int64_t timestam
 
 inline int64_t get_partition_index(scoreboard_t *scoreboard, int64_t timestamp, int64_t txn) {
     cas_loop(scoreboard, inc, positive);
-    const slot_val_t slotVal(timestamp, txn);
-    int64_t index = binary_search(
-            scoreboard->slot,
-            slotVal,
-            0,
-            scoreboard->header.partition_count,
-            1
-    );
-
+    int64_t index = binary_search(scoreboard, timestamp, txn);
     // check if partition exists
     if (scoreboard->slot[index].timestamp == timestamp && scoreboard->slot[index].txn == txn) {
+        cas_loop(scoreboard, dec, positive);
         return index;
     } else {
+        cas_loop(scoreboard, dec, positive);
         return -2;
     }
-
-    cas_loop(scoreboard, dec, positive);
 }
 
 inline void prepare(void *pTxn, uint32_t pTxnCount, scoreboard_t *scoreboard) {
@@ -191,23 +190,15 @@ inline int64_t get_scoreboard_size(int32_t partitionCount) {
 }
 
 inline bool add_partition_unsafe(scoreboard_t *scoreboard, int64_t timestamp, int64_t txn) {
-    const slot_val_t slot_val(timestamp, txn);
+    const int64_t index = binary_search(scoreboard, timestamp, txn);
     const int64_t partition_count = scoreboard->header.partition_count;
-    int64_t index;
-    if (partition_count > 0) {
-        index = binary_search(
-                scoreboard->slot,
-                slot_val,
-                0,
-                partition_count,
-                1
-        );
-    } else {
-        index = 0;
+    if (index < 0) {
+        printf("bummer %d, partition_count=%d, ts=%llu\n", index, partition_count, timestamp);
+        return true;
     }
 
-    bool ok;
     if (scoreboard->slot[index].timestamp != timestamp || scoreboard->slot[index].txn != txn) {
+        printf("added %d, partition_count=%d, ts=%llu\n", index, partition_count, timestamp);
         // extend the scoreboard
         const int64_t len = (partition_count - index);
         if (len > 0) {
@@ -221,24 +212,13 @@ inline bool add_partition_unsafe(scoreboard_t *scoreboard, int64_t timestamp, in
         scoreboard->slot[index].txn = txn;
         scoreboard->slot[index].access_counter = 0;
         scoreboard->header.partition_count++;
-        ok = true;
-    } else {
-        ok = false;
+        return true;
     }
-    return ok;
+    return false;
 }
 
 inline bool remove_partition_unsafe(scoreboard_t *scoreboard, int64_t timestamp, int64_t txn) {
-    const slot_val_t slot_val(timestamp, txn);
-    int64_t index = binary_search(
-            scoreboard->slot,
-            slot_val,
-            0,
-            scoreboard->header.partition_count,
-            1
-    );
-
-    bool ok;
+    int64_t index = binary_search(scoreboard, timestamp, txn  );
     if (scoreboard->slot[index].timestamp == timestamp && scoreboard->slot[index].txn == txn) {
         // extend the scoreboard
         int64_t len = (scoreboard->header.partition_count - index - 1);
@@ -248,23 +228,13 @@ inline bool remove_partition_unsafe(scoreboard_t *scoreboard, int64_t timestamp,
                 len * sizeof(scoreboard_slot_t)
         );
         scoreboard->header.partition_count--;
-        ok = true;
-    } else {
-        ok = false;
+        return true;
     }
-    return ok;
+    return false;
 }
 
 inline int64_t get_access_counter(scoreboard_t *scoreboard, int64_t timestamp, int64_t txn) {
-    const slot_val_t slot_val(timestamp, txn);
-    int64_t index = binary_search(
-            scoreboard->slot,
-            slot_val,
-            0,
-            scoreboard->header.partition_count,
-            1
-    );
-
+    const int64_t index = binary_search(scoreboard, timestamp, txn);
     if (scoreboard->slot[index].timestamp == timestamp && scoreboard->slot[index].txn == txn) {
         return __atomic_load_n(&(scoreboard->slot[index].access_counter), __ATOMIC_RELAXED);
     } else {
@@ -276,14 +246,7 @@ inline int64_t get_access_counter(scoreboard_t *scoreboard, int64_t timestamp, i
 inline bool lock_partition_for_write(scoreboard_t *scoreboard, int64_t timestamp, int64_t txn) {
     // single write mode, process/thread that owns the writer would not
     // be resizing scoreboard at the same time as locking partition slot
-    const slot_val_t slot_val(timestamp, txn);
-    int64_t index = binary_search(
-            scoreboard->slot,
-            slot_val,
-            0,
-            scoreboard->header.partition_count,
-            1
-    );
+    const int64_t index = binary_search(scoreboard, timestamp, txn);
     if (scoreboard->slot[index].timestamp == timestamp && scoreboard->slot[index].txn == txn) {
         int64_t current = *&(scoreboard->slot[index].access_counter);
         int64_t prev = current > 0 ? 0 : current;
@@ -294,14 +257,7 @@ inline bool lock_partition_for_write(scoreboard_t *scoreboard, int64_t timestamp
 }
 
 inline void unlock_partition_for_write(scoreboard_t *scoreboard, int64_t timestamp, int64_t txn) {
-    const slot_val_t slot_val(timestamp, txn);
-    int64_t index = binary_search(
-            scoreboard->slot,
-            slot_val,
-            0,
-            scoreboard->header.partition_count,
-            1
-    );
+    const int64_t index = binary_search(scoreboard, timestamp, txn);
     if (scoreboard->slot[index].timestamp == timestamp && scoreboard->slot[index].txn == txn) {
         // single-writer mode, this does not require CAS
         scoreboard->slot[index].access_counter = 0;

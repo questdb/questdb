@@ -154,7 +154,6 @@ public class TableWriter implements Closeable {
     private long oooRowCount;
     private final LongConsumer mergeTimestampMethodRef = this::mergeTimestampSetter;
     private long transientRowCountBeforeOutOfOrder;
-    private final Scoreboard scoreboard;
 
     public TableWriter(CairoConfiguration configuration, CharSequence name) {
         this(configuration, name, new MessageBusImpl(configuration));
@@ -265,7 +264,6 @@ public class TableWriter implements Closeable {
             configureColumnMemory();
             timestampSetter = configureTimestampSetter();
             this.txFile.readRowCounts();
-            this.scoreboard = new Scoreboard(ff, path, txFile.getPartitionsCount());
             configureAppendPosition();
             purgeUnusedPartitions();
             clearTodoLog();
@@ -592,10 +590,6 @@ public class TableWriter implements Closeable {
                     txFile.updatePartitionSizeByTimestamp(timestamp, partitionSize);
                     txFile.finishPartitionSizeUpdate(nextMinTimestamp, nextMaxTimestamp);
                     txFile.commit(defaultCommitMode, denseSymbolMapWriters);
-
-                    // todo: optimise rounding
-                    scoreboard.addPartition(txFile.getPartitionTimestampLo(timestamp), txFile.getPartitionNameTxnByPartitionTimestamp(timestamp));
-
                     if (appendPartitionAttached) {
                         freeColumns(true);
                         configureAppendPosition();
@@ -901,9 +895,6 @@ public class TableWriter implements Closeable {
             txFile.setMinTimestamp(nextMinTimestamp);
             txFile.finishPartitionSizeUpdate(nextMinTimestamp, txFile.getMaxTimestamp());
             txFile.commit(defaultCommitMode, denseSymbolMapWriters);
-
-            // todo: oiptimise timestamp rounding
-            scoreboard.removePartition(timestamp, txFile.getPartitionNameTxnByPartitionTimestamp(timestamp));
 
             if (ff.exists(path.$())) {
                 if (!ff.rmdir(path.chopZ().put(Files.SEPARATOR).$())) {
@@ -1835,7 +1826,6 @@ public class TableWriter implements Closeable {
         Misc.free(ddlMem);
         Misc.free(other);
         Misc.free(todoMem);
-        Misc.free(scoreboard);
         try {
             releaseLock(!truncate | tx | performRecovery | distressed);
         } finally {
@@ -2674,9 +2664,6 @@ public class TableWriter implements Closeable {
                     indexer.configureFollowerAndWriter(configuration, path, name, getPrimaryColumn(i), columnTop);
                 }
             }
-
-            // todo: optimise timestamp rounding
-            scoreboard.addPartition(txFile.getPartitionTimestampLo(timestamp), txFile.getPartitionNameTxnByPartitionTimestamp(timestamp));
             LOG.info().$("switched partition to '").$(path).$('\'').$();
         } finally {
             path.trimTo(rootLen);

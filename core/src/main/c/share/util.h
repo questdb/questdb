@@ -64,12 +64,12 @@ inline int64_t scan_search(T data, V value, int64_t low, int64_t high, int32_t s
         if (data[p] == value) {
             if (scan_dir > 0) {
                 while (data[++p] == value);
-                return p - 1 > -1 ? p -1 : 0;
+                return p > -1 ? p : 0;
             }
             return p;
         }
         if (data[p] > value) {
-            return p - 1 > -1 ? p -1 : 0;
+            return p > -1 ? p : 0;
         }
     }
     return high;
@@ -77,6 +77,7 @@ inline int64_t scan_search(T data, V value, int64_t low, int64_t high, int32_t s
 
 template<class T, class V>
 inline int64_t binary_search(T *data, V value, int64_t low, int64_t high, int32_t scan_dir) {
+    printf("here: low=%d, high=%d\n", low, high);
     while (low < high) {
         if (high - low < 65) {
             return scan_search(data, value, low, high, scan_dir);

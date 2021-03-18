@@ -1250,8 +1250,11 @@ public class SqlCompiler implements Closeable {
             throw CairoException.instance(ff.errno()).put("Could not create [dir=").put(path).put(']');
         }
 
-        TableReaderMetadata sourceMetaData = reader.getMetadata();
         int rootLen = path.length();
+
+        Scoreboard.createScoreboard(ff, path.chopZ(), reader.getPartitionedBy());
+
+        TableReaderMetadata sourceMetaData = reader.getMetadata();
         try {
             mem.of(ff, path.trimTo(rootLen).concat(TableUtils.META_FILE_NAME).$(), ff.getPageSize());
             sourceMetaData.cloneTo(mem);

@@ -27,7 +27,6 @@ package io.questdb.cairo;
 import io.questdb.cairo.vm.Mappable;
 import io.questdb.cairo.vm.PagedMappedReadWriteMemory;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
@@ -134,8 +133,7 @@ public final class TxWriter extends TxReader implements Closeable {
                 txMem.jumpTo(getTxEofOffset());
             }
         } finally {
-            txMem = Misc.free(txMem);
-            path = Misc.free(path);
+            super.close();
         }
     }
 
@@ -229,15 +227,18 @@ public final class TxWriter extends TxReader implements Closeable {
     }
 
     public void removeAttachedPartitions(long timestamp) {
-        int index = findAttachedPartitionIndex(timestamp);
+        final long partitionTimestampLo = getPartitionTimestampLo(timestamp);
+        int index = findAttachedPartitionIndexByLoTimestamp(partitionTimestampLo);
         if (index > -1) {
             int size = attachedPartitions.size();
+            final long partitionNameTxn = attachedPartitions.getQuick(index + PARTITION_NAME_TX_OFFSET);
             if (index + LONGS_PER_TX_ATTACHED_PARTITION < size) {
                 attachedPartitions.arrayCopy(index + LONGS_PER_TX_ATTACHED_PARTITION, index, size - index - LONGS_PER_TX_ATTACHED_PARTITION);
                 attachedPositionDirtyIndex = Math.min(attachedPositionDirtyIndex, index);
             }
             attachedPartitions.setPos(size - LONGS_PER_TX_ATTACHED_PARTITION);
             partitionTableVersion++;
+            scoreboard.removePartition(partitionTimestampLo, partitionNameTxn);
         }
     }
 
@@ -297,10 +298,9 @@ public final class TxWriter extends TxReader implements Closeable {
 
         attachedPartitions.setPos(index + LONGS_PER_TX_ATTACHED_PARTITION);
         initPartitionAt(index, getPartitionTimestampLo(timestamp), 0);
-
-//        updatePartitionSizeByTimestamp(timestamp, 0);
         transientRowCount = 0;
         txPartitionCount++;
+        scoreboard.addPartition(partitionTimestampLo, -1);
     }
 
     public void truncate() {
@@ -342,6 +342,7 @@ public final class TxWriter extends TxReader implements Closeable {
             partitionTableVersion++;
         }
         initPartitionAt(index, partitionTimestamp, partitionSize);
+        scoreboard.addPartition(partitionTimestamp, -1);
         return index;
     }
 
@@ -382,6 +383,7 @@ public final class TxWriter extends TxReader implements Closeable {
         int index = findAttachedPartitionIndexByLoTimestamp(partitionTimestampLo);
         updatePartitionSizeByIndexAndTxn(index, partitionSize);
         bumpPartitionTableVersion();
+        scoreboard.addPartition(partitionTimestampLo, txn);
     }
 
     private void updatePartitionSizeByIndex(int index, long partitionSize) {

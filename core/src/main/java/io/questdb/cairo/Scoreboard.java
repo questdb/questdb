@@ -36,9 +36,8 @@ public class Scoreboard implements Closeable {
     private long fd;
     private long pScoreboard;
     private long size;
-    private int partitionCount;
 
-    public Scoreboard(FilesFacade ff, @Transient Path path, int initialPartitionCount) {
+    public Scoreboard(FilesFacade ff, @Transient Path path) {
         this.ff = ff;
         int plen = path.length();
         try {
@@ -46,13 +45,8 @@ public class Scoreboard implements Closeable {
             if (fd == -1) {
                 throw CairoException.instance(ff.errno()).put("Could not open scoreboard file [name=").put(path).put(']');
             }
-            long memSize = getScoreboardSize(initialPartitionCount);
-            if (!ff.allocate(fd, memSize)) {
-                throw CairoException.instance(ff.errno()).put("No space left on device [name=").put(path).put(", size=").put(memSize).put(']');
-            }
-            this.size = memSize;
-            pScoreboard = ff.mmap(fd, memSize, 0, Files.MAP_RW);
-            this.partitionCount = initialPartitionCount;
+            this.size = ff.length(fd);
+            pScoreboard = ff.mmap(fd, size, 0, Files.MAP_RW);
         } catch (Throwable e) {
             close();
             throw e;
@@ -76,16 +70,12 @@ public class Scoreboard implements Closeable {
     public boolean addPartition(long timestamp, long txn) {
         acquireHeaderLock(pScoreboard);
         try {
-            long newSize = getScoreboardSize(partitionCount + 1);
+            long newSize = getScoreboardSize(getPartitionCount() + 1);
             if (newSize > size) {
                 pScoreboard = ff.mremap(fd, pScoreboard, size, newSize, 0, Files.MAP_RW);
                 size = newSize;
             }
-            if (addPartitionUnsafe(pScoreboard, timestamp, txn)) {
-                partitionCount++;
-                return true;
-            }
-            return false;
+            return addPartitionUnsafe(pScoreboard, timestamp, txn);
         } finally {
             releaseHeaderLock(pScoreboard);
         }
@@ -138,11 +128,7 @@ public class Scoreboard implements Closeable {
     public boolean removePartition(long timestamp, long txn) {
         acquireHeaderLock(pScoreboard);
         try {
-            if (removePartitionUnsafe(pScoreboard, timestamp, txn)) {
-                partitionCount--;
-                return true;
-            }
-            return false;
+            return removePartitionUnsafe(pScoreboard, timestamp, txn);
         } finally {
             releaseHeaderLock(pScoreboard);
         }
@@ -176,7 +162,7 @@ public class Scoreboard implements Closeable {
 
     public static native int getPartitionIndex(long pScoreboard, long timestamp, long txn);
 
-    static void createScoreboard(FilesFacade ff, Path path, int partitionBy) {
+    public static void createScoreboard(FilesFacade ff, Path path, int partitionBy) {
         // create scoreboard
         long scoreboardFd = -1;
         long memSize = 0;
