@@ -57,6 +57,39 @@ public class Scoreboard implements Closeable {
 
     public static native boolean addPartitionUnsafe(long pScoreboard, long timestamp, long txn);
 
+    public static void createScoreboard(FilesFacade ff, Path path, int partitionBy) {
+        // create scoreboard
+        long scoreboardFd = -1;
+        long memSize = 0;
+        long pScoreboard = 0;
+        try {
+            scoreboardFd = ff.openRW(path.concat("scoreboard.d").$());
+            if (scoreboardFd == -1) {
+                throw CairoException.instance(ff.errno()).put("Could not open scoreboard file [name=").put(path).put(']');
+            }
+            memSize = getScoreboardSize(partitionBy == PartitionBy.NONE ? 1 : 0);
+            if (!ff.allocate(scoreboardFd, memSize)) {
+                throw CairoException.instance(ff.errno()).put("no space left on device [name=").put(path).put(", size=").put(memSize).put(']');
+            }
+            pScoreboard = ff.mmap(scoreboardFd, memSize, 0, Files.MAP_RW);
+            if (partitionBy == PartitionBy.NONE) {
+                addPartitionUnsafe(pScoreboard, 0, 0);
+            }
+        } finally {
+            if (pScoreboard != 0) {
+                ff.munmap(pScoreboard, memSize);
+            }
+
+            if (scoreboardFd != -1) {
+                ff.close(scoreboardFd);
+            }
+        }
+    }
+
+    public static native long getHeaderAccessCounter(long pScoreboard);
+
+    public static native int getPartitionIndex(long pScoreboard, long timestamp, long txn);
+
     public static native long getScoreboardSize(int partitionCount);
 
     public void acquireReadLock(long timestamp, long txn) {
@@ -70,9 +103,13 @@ public class Scoreboard implements Closeable {
     public boolean addPartition(long timestamp, long txn) {
         acquireHeaderLock(pScoreboard);
         try {
-            long newSize = getScoreboardSize(getPartitionCount() + 1);
+            long newSize = getScoreboardSize(2 * (getPartitionCount() + 1));
             if (newSize > size) {
-                pScoreboard = ff.mremap(fd, pScoreboard, size, newSize, 0, Files.MAP_RW);
+                if (ff.allocate(fd, newSize)) {
+                    pScoreboard = ff.mremap(fd, pScoreboard, size, newSize, 0, Files.MAP_RW);
+                } else {
+                    throw CairoException.instance(ff.errno()).put("could not resize scoreboard, no space left on device [fd=").put(fd).put(']');
+                }
                 size = newSize;
             }
             return addPartitionUnsafe(pScoreboard, timestamp, txn);
@@ -157,37 +194,4 @@ public class Scoreboard implements Closeable {
     private static native void readerInactive(long pScoreboard);
 
     private static native long getActiveReaderCounter(long pScoreboard);
-
-    public static native long getHeaderAccessCounter(long pScoreboard);
-
-    public static native int getPartitionIndex(long pScoreboard, long timestamp, long txn);
-
-    public static void createScoreboard(FilesFacade ff, Path path, int partitionBy) {
-        // create scoreboard
-        long scoreboardFd = -1;
-        long memSize = 0;
-        long pScoreboard = 0;
-        try {
-            scoreboardFd = ff.openRW(path.concat("scoreboard.d").$());
-            if (scoreboardFd == -1) {
-                throw CairoException.instance(ff.errno()).put("Could not open scoreboard file [name=").put(path).put(']');
-            }
-            memSize = getScoreboardSize(partitionBy == PartitionBy.NONE ? 1 : 0);
-            if (!ff.allocate(scoreboardFd, memSize)) {
-                throw CairoException.instance(ff.errno()).put("No space left on device [name=").put(path).put(", size=").put(memSize).put(']');
-            }
-            pScoreboard = ff.mmap(scoreboardFd, memSize, 0, Files.MAP_RW);
-            if (partitionBy == PartitionBy.NONE) {
-                addPartitionUnsafe(pScoreboard, 0, 0);
-            }
-        } finally {
-            if (pScoreboard != 0) {
-                ff.munmap(pScoreboard, memSize);
-            }
-
-            if (scoreboardFd != -1) {
-                ff.close(scoreboardFd);
-            }
-        }
-    }
 }

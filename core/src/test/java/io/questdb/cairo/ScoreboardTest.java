@@ -38,6 +38,21 @@ public class ScoreboardTest extends AbstractCairoTest {
     private final static FilesFacade ff = FilesFacadeImpl.INSTANCE;
 
     @Test
+    public void testAddPartitionRandom() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (Path path = new Path().of(root)) {
+                Scoreboard.createScoreboard(ff, path, PartitionBy.DAY);
+                try (Scoreboard w = new Scoreboard(ff, path)) {
+                    Rnd rnd = new Rnd();
+                    for (int i = 0; i < 10_000; i++) {
+                        w.addPartition(rnd.nextLong(), rnd.nextLong());
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testAddPartitionSequence1() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (Path path = new Path().of(root)) {
@@ -47,6 +62,7 @@ public class ScoreboardTest extends AbstractCairoTest {
                     Assert.assertTrue(w.addPartition(1578528000000000L, -1));
                     Assert.assertEquals(1, w.getPartitionIndex(1578614400000000L, -1));
                     Assert.assertEquals(0, w.getPartitionIndex(1578528000000000L, -1));
+                    Assert.assertEquals(2, w.getPartitionCount());
                 }
             }
         });
@@ -61,6 +77,9 @@ public class ScoreboardTest extends AbstractCairoTest {
                     Assert.assertTrue(w.addPartition(432000000000L, -1));
                     Assert.assertTrue(w.addPartition(518400000000L, -1));
                     Assert.assertFalse(w.addPartition(432000000000L, -1));
+                    Assert.assertEquals(2, w.getPartitionCount());
+                    Assert.assertEquals(0, w.getPartitionIndex(432000000000L, -1));
+                    Assert.assertEquals(1, w.getPartitionIndex(518400000000L, -1));
                 }
             }
         });
@@ -74,6 +93,9 @@ public class ScoreboardTest extends AbstractCairoTest {
                 try (Scoreboard w = new Scoreboard(ff, path)) {
                     Assert.assertTrue(w.addPartition(0, -1));
                     Assert.assertTrue(w.addPartition(0, 0));
+                    Assert.assertEquals(2, w.getPartitionCount());
+                    Assert.assertEquals(0, w.getPartitionIndex(0, -1));
+                    Assert.assertEquals(1, w.getPartitionIndex(0, 0));
                 }
             }
         });
@@ -94,9 +116,12 @@ public class ScoreboardTest extends AbstractCairoTest {
                     w.addPartition(1000000, 10);
                     w.addPartition(1000000, 12);
                     w.addPartition(1000000, 13);
+                    Assert.assertEquals(3, w.getPartitionCount());
+                    System.out.println(w.getPartitionIndex(1000000, 12));
 
                     // lock #12
                     w.acquireWriteLock(1000000, 12);
+
 
                     // start off with "bad" value, reader should be waiting from the get go
                     Unsafe.getUnsafe().putLong(memory, -3);

@@ -58,26 +58,31 @@ inline uint32_t ceil_pow_2(uint32_t v) {
     return v + 1;
 }
 
+// the "high" boundary is inclusive
 template<class T, class V>
 inline int64_t scan_search(T data, V value, int64_t low, int64_t high, int32_t scan_dir) {
+    printf("here: low=%d, high=%d\n", low, high);
     for (int64_t p = low; p <= high; p++) {
         if (data[p] == value) {
-            if (scan_dir > 0) {
-                while (data[++p] == value);
-                return p > -1 ? p : 0;
+            printf("boom\n");
+            p += scan_dir;
+            while (p > 0 && p <= high && data[p] == value) {
+                p += scan_dir;
             }
-            return p;
+            return p - scan_dir;
         }
         if (data[p] > value) {
-            return p > -1 ? p : 0;
+            printf("insertion point\n");
+            return -p - 1;
         }
     }
-    return high;
+    printf("exits here?\n");
+    return -(high + 1) - 1;
 }
 
+// the "high" boundary is inclusive
 template<class T, class V>
 inline int64_t binary_search(T *data, V value, int64_t low, int64_t high, int32_t scan_dir) {
-    printf("here: low=%d, high=%d\n", low, high);
     while (low < high) {
         if (high - low < 65) {
             return scan_search(data, value, low, high, scan_dir);
@@ -90,9 +95,9 @@ inline int64_t binary_search(T *data, V value, int64_t low, int64_t high, int32_
                 low = mid;
             } else {
                 if (data[high] > value) {
-                    return low;
+                    return -low - 1;
                 }
-                return high;
+                return -high - 1;
             }
         } else if (midVal > value)
             high = mid;
@@ -107,9 +112,14 @@ inline int64_t binary_search(T *data, V value, int64_t low, int64_t high, int32_
     }
 
     if (data[low] > value) {
-        return low - 1;
+        return -low - 1;
     }
-    return low;
+
+    if (data[low] == value) {
+        return low;
+    }
+
+    return -(low + 1) - 1;
 }
 
 #endif //UTIL_H

@@ -300,7 +300,7 @@ public final class TxWriter extends TxReader implements Closeable {
         initPartitionAt(index, getPartitionTimestampLo(timestamp), 0);
         transientRowCount = 0;
         txPartitionCount++;
-        scoreboard.addPartition(partitionTimestampLo, -1);
+//        scoreboard.addPartition(partitionTimestampLo, -1);
     }
 
     public void truncate() {
@@ -342,7 +342,7 @@ public final class TxWriter extends TxReader implements Closeable {
             partitionTableVersion++;
         }
         initPartitionAt(index, partitionTimestamp, partitionSize);
-        scoreboard.addPartition(partitionTimestamp, -1);
+//        scoreboard.addPartition(partitionTimestamp, -1);
         return index;
     }
 
@@ -383,7 +383,7 @@ public final class TxWriter extends TxReader implements Closeable {
         int index = findAttachedPartitionIndexByLoTimestamp(partitionTimestampLo);
         updatePartitionSizeByIndexAndTxn(index, partitionSize);
         bumpPartitionTableVersion();
-        scoreboard.addPartition(partitionTimestampLo, txn);
+//        scoreboard.addPartition(partitionTimestampLo, txn);
     }
 
     private void updatePartitionSizeByIndex(int index, long partitionSize) {

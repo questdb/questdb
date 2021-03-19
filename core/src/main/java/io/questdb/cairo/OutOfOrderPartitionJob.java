@@ -283,7 +283,7 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
 
                         prefixType = OO_BLOCK_DATA;
                         prefixLo = 0;
-                        prefixHi = Vect.binarySearch64Bit(srcTimestampAddr, oooTimestampLo, 0, srcDataMax - 1, BinarySearch.SCAN_DOWN);
+                        prefixHi = Vect.boundedBinarySearch64Bit(srcTimestampAddr, oooTimestampLo, 0, srcDataMax - 1, BinarySearch.SCAN_DOWN);
                         mergeDataLo = prefixHi + 1;
                         mergeOOOLo = srcOooLo;
 
@@ -296,7 +296,7 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                             // +------+
 
                             mergeOOOHi = srcOooHi;
-                            mergeDataHi = Vect.binarySearch64Bit(srcTimestampAddr, oooTimestampMax - 1, mergeDataLo, srcDataMax - 1, BinarySearch.SCAN_DOWN) + 1;
+                            mergeDataHi = Vect.boundedBinarySearch64Bit(srcTimestampAddr, oooTimestampMax - 1, mergeDataLo, srcDataMax - 1, BinarySearch.SCAN_DOWN) + 1;
 
                             if (mergeDataLo < mergeDataHi) {
                                 mergeType = OO_BLOCK_MERGE;
@@ -322,7 +322,7 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                             //          |     |
                             //          +-----+
 
-                            mergeOOOHi = Vect.binarySearchIndexT(sortedTimestampsAddr, dataTimestampHi, srcOooLo, srcOooHi, BinarySearch.SCAN_UP);
+                            mergeOOOHi = Vect.boundedBinarySearchIndexT(sortedTimestampsAddr, dataTimestampHi, srcOooLo, srcOooHi, BinarySearch.SCAN_UP);
                             mergeDataHi = srcDataMax - 1;
 
                             mergeType = OO_BLOCK_MERGE;
@@ -362,7 +362,7 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                         //  |      |
 
                         mergeDataLo = 0;
-                        prefixHi = Vect.binarySearchIndexT(sortedTimestampsAddr, dataTimestampLo, srcOooLo, srcOooHi, BinarySearch.SCAN_DOWN);
+                        prefixHi = Vect.boundedBinarySearchIndexT(sortedTimestampsAddr, dataTimestampLo, srcOooLo, srcOooHi, BinarySearch.SCAN_DOWN);
                         mergeOOOLo = prefixHi + 1;
 
                         if (oooTimestampMax < dataTimestampHi) {
@@ -375,7 +375,7 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
 
                             mergeType = OO_BLOCK_MERGE;
                             mergeOOOHi = srcOooHi;
-                            mergeDataHi = Vect.binarySearch64Bit(srcTimestampAddr, oooTimestampMax, 0, srcDataMax - 1, BinarySearch.SCAN_DOWN);
+                            mergeDataHi = Vect.boundedBinarySearch64Bit(srcTimestampAddr, oooTimestampMax, 0, srcDataMax - 1, BinarySearch.SCAN_DOWN);
 
                             suffixLo = mergeDataHi + 1;
                             suffixType = OO_BLOCK_DATA;
@@ -390,7 +390,7 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                             //          +-----+
 
                             mergeDataHi = srcDataMax - 1;
-                            mergeOOOHi = Vect.binarySearchIndexT(sortedTimestampsAddr, dataTimestampHi - 1, mergeOOOLo, srcOooHi, BinarySearch.SCAN_DOWN) + 1;
+                            mergeOOOHi = Vect.boundedBinarySearchIndexT(sortedTimestampsAddr, dataTimestampHi - 1, mergeOOOLo, srcOooHi, BinarySearch.SCAN_DOWN) + 1;
 
                             if (mergeOOOLo < mergeOOOHi) {
                                 mergeType = OO_BLOCK_MERGE;
