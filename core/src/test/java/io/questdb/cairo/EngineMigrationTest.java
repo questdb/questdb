@@ -432,7 +432,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
             try (var txFile = new TxReader(ff, path.$(), src.getPartitionBy())) {
                 txFile.readUnchecked();
 
-                for (int i = 0; i < txFile.getPartitionsCount() - 1; i++) {
+                for (int i = 0; i < txFile.getPartitionCount() - 1; i++) {
                     attachedPartitions.add(txFile.getPartitionTimestamp(i));
                     attachedPartitions.add(txFile.getPartitionSize(i));
                 }

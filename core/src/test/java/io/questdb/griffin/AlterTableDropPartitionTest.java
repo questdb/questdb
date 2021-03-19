@@ -622,9 +622,7 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
                 deleteDir(f);
             }
         }
-        if (file.delete()) {
-            System.out.println("Deleted: " + file.getAbsolutePath());
-        } else {
+        if (!file.delete()) {
             Assert.fail("Failed to delete dir: " + file.getAbsolutePath());
         }
     }

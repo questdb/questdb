@@ -89,6 +89,7 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
                         e.readers[i] = r;
                         notifyListener(thread, name, PoolListener.EV_CREATE, e.index, i);
                     } else {
+                        r.goActive();
                         r.reload();
                         notifyListener(thread, name, PoolListener.EV_GET, e.index, i);
                     }
@@ -355,10 +356,13 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
 
         @Override
         public void close() {
-            if (pool != null && entry != null && pool.returnToPool(this)) {
-                return;
+            if (isOpen()) {
+                goPassive();
+                if (pool != null && entry != null && pool.returnToPool(this)) {
+                    return;
+                }
+                super.close();
             }
-            super.close();
         }
 
         private void goodby() {

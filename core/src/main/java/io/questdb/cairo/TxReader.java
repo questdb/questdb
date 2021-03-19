@@ -57,8 +57,8 @@ public class TxReader implements Closeable {
     protected int partitionBy;
     protected long partitionTableVersion;
     protected int attachedPartitionsSize = 0;
-    private MappedReadOnlyMemory roTxMem;
     protected Scoreboard scoreboard;
+    private MappedReadOnlyMemory roTxMem;
 
     public TxReader(FilesFacade ff, Path path, int partitionBy) {
         this.ff = ff;
@@ -151,7 +151,7 @@ public class TxReader implements Closeable {
         return attachedPartitions.getQuick(i * LONGS_PER_TX_ATTACHED_PARTITION + PARTITION_TS_OFFSET);
     }
 
-    public int getPartitionsCount() {
+    public int getPartitionCount() {
         return attachedPartitions.size() / LONGS_PER_TX_ATTACHED_PARTITION;
     }
 
@@ -305,5 +305,9 @@ public class TxReader implements Closeable {
     void readRowCounts() {
         this.transientRowCount = roTxMem.getLong(TX_OFFSET_TRANSIENT_ROW_COUNT);
         this.fixedRowCount = roTxMem.getLong(TX_OFFSET_FIXED_ROW_COUNT);
+    }
+
+    Scoreboard getScoreboard() {
+        return scoreboard;
     }
 }

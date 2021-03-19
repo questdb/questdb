@@ -83,6 +83,7 @@ public class FullBwdDataFrameCursorTest extends AbstractCairoTest {
                     timestamp += increment;
                 }
                 w.commit();
+                w.reconcileAttachedPartitionsWithScoreboard();
 
                 try (CairoEngine engine = new CairoEngine(configuration)) {
                     FullBwdDataFrameCursorFactory factory = new FullBwdDataFrameCursorFactory(engine, "x", 0);
@@ -104,6 +105,7 @@ public class FullBwdDataFrameCursorTest extends AbstractCairoTest {
                             timestamp += increment;
                         }
                         w.commit();
+                        w.reconcileAttachedPartitionsWithScoreboard();
 
                         Assert.assertTrue(cursor.reload());
                         printCursor(record, cursor);

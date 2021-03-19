@@ -102,6 +102,26 @@ public class ScoreboardTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAddPartitionSequence4() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (Path path = new Path().of(root)) {
+                Scoreboard.createScoreboard(ff, path, PartitionBy.DAY);
+                try (Scoreboard w = new Scoreboard(ff, path)) {
+                    Assert.assertTrue(w.addPartition(432000000000L, -1));
+                    Assert.assertTrue(w.addPartition(518400000000L, -1));
+                    Assert.assertEquals(2, w.getPartitionCount());
+                    w.acquireReadLock(432000000000L, -1);
+                    w.acquireReadLock(518400000000L, -1);
+                    w.releaseReadLock(432000000000L, -1);
+                    w.releaseReadLock(518400000000L, -1);
+                    w.addPartition(432000000000L, 14);
+                    System.out.println(w.getAccessCounter(518400000000L, -1));
+                }
+            }
+        });
+    }
+
+    @Test
     public void testReaderCutoff() throws Exception {
         // Main thread locks "writer" to mutate memory area.
         // During the mutation writer will writer a series of negative values to memory area.
@@ -117,7 +137,6 @@ public class ScoreboardTest extends AbstractCairoTest {
                     w.addPartition(1000000, 12);
                     w.addPartition(1000000, 13);
                     Assert.assertEquals(3, w.getPartitionCount());
-                    System.out.println(w.getPartitionIndex(1000000, 12));
 
                     // lock #12
                     w.acquireWriteLock(1000000, 12);

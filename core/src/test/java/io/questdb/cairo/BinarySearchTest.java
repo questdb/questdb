@@ -224,7 +224,7 @@ public class BinarySearchTest extends AbstractCairoTest {
             }
 
             long max = distinctValueCount * repeatCount - 1;
-            long index = Vect.binarySearchIndexT(mem, searchValue, 0, max, scanDirection);
+            long index = Vect.boundedBinarySearchIndexT(mem, searchValue, 0, max, scanDirection);
             if (searchValue > distinctValueCount - 1) {
                 Assert.assertEquals(max, index);
             } else {

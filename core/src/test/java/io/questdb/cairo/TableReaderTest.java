@@ -3605,7 +3605,6 @@ public class TableReaderTest extends AbstractCairoTest {
                     Assert.assertFalse(reader.reload());
                     // reader can see all the rows ? Meaning none?
                     assertCursor(reader.getCursor(), ts, increment, blob, 0, null);
-
                 }
 
                 try (TableReader reader = new TableReader(configuration, "all")) {

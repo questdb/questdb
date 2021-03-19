@@ -61,10 +61,8 @@ inline uint32_t ceil_pow_2(uint32_t v) {
 // the "high" boundary is inclusive
 template<class T, class V>
 inline int64_t scan_search(T data, V value, int64_t low, int64_t high, int32_t scan_dir) {
-    printf("here: low=%d, high=%d\n", low, high);
     for (int64_t p = low; p <= high; p++) {
         if (data[p] == value) {
-            printf("boom\n");
             p += scan_dir;
             while (p > 0 && p <= high && data[p] == value) {
                 p += scan_dir;
@@ -72,11 +70,9 @@ inline int64_t scan_search(T data, V value, int64_t low, int64_t high, int32_t s
             return p - scan_dir;
         }
         if (data[p] > value) {
-            printf("insertion point\n");
             return -p - 1;
         }
     }
-    printf("exits here?\n");
     return -(high + 1) - 1;
 }
 

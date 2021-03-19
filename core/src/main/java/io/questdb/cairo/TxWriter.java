@@ -192,10 +192,10 @@ public final class TxWriter extends TxReader implements Closeable {
     public void finishPartitionSizeUpdate(long minTimestamp, long maxTimestamp) {
         this.minTimestamp = minTimestamp;
         this.maxTimestamp = maxTimestamp;
-        assert getPartitionsCount() > 0;
-        this.transientRowCount = getPartitionSize(getPartitionsCount() - 1);
+        assert getPartitionCount() > 0;
+        this.transientRowCount = getPartitionSize(getPartitionCount() - 1);
         this.fixedRowCount = 0;
-        for (int i = 0, hi = getPartitionsCount() - 1; i < hi; i++) {
+        for (int i = 0, hi = getPartitionCount() - 1; i < hi; i++) {
             this.fixedRowCount += getPartitionSize(i);
         }
         txPartitionCount++;
@@ -297,10 +297,11 @@ public final class TxWriter extends TxReader implements Closeable {
         index += LONGS_PER_TX_ATTACHED_PARTITION;
 
         attachedPartitions.setPos(index + LONGS_PER_TX_ATTACHED_PARTITION);
-        initPartitionAt(index, getPartitionTimestampLo(timestamp), 0);
+        long newTimestampLo = getPartitionTimestampLo(timestamp);
+        initPartitionAt(index, newTimestampLo, 0);
+        scoreboard.addPartition(newTimestampLo, -1);
         transientRowCount = 0;
         txPartitionCount++;
-//        scoreboard.addPartition(partitionTimestampLo, -1);
     }
 
     public void truncate() {
@@ -329,6 +330,14 @@ public final class TxWriter extends TxReader implements Closeable {
         txMem.putInt(getSymbolWriterTransientIndexOffset(symbolIndex), symCount);
     }
 
+    boolean acquireWriterLock(long timestamp, long txn) {
+        return scoreboard.acquireWriteLock(getPartitionTimestampLo(timestamp), txn);
+    }
+
+    void releaseWriterLock(long timestamp, long txn) {
+        scoreboard.releaseWriteLock(getPartitionTimestampLo(timestamp), txn);
+    }
+
     void bumpPartitionTableVersion() {
         partitionTableVersion++;
     }
@@ -342,8 +351,23 @@ public final class TxWriter extends TxReader implements Closeable {
             partitionTableVersion++;
         }
         initPartitionAt(index, partitionTimestamp, partitionSize);
-//        scoreboard.addPartition(partitionTimestamp, -1);
+        scoreboard.addPartition(partitionTimestamp, -1);
         return index;
+    }
+
+    boolean reconcileAttachedPartitionsWithScoreboard() {
+        int partitionCount = getPartitionCount();
+        if (partitionCount != scoreboard.getPartitionCount()) {
+            return false;
+        }
+        for (int i = 0; i < partitionCount; i++) {
+            long timestamp = attachedPartitions.getQuick(i * LONGS_PER_TX_ATTACHED_PARTITION + PARTITION_TS_OFFSET);
+            long nameTx = attachedPartitions.getQuick(i * LONGS_PER_TX_ATTACHED_PARTITION + PARTITION_NAME_TX_OFFSET);
+            if (scoreboard.getPartitionIndex(timestamp, nameTx) < 0) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private void saveAttachedPartitionsToTx(int symCount) {
@@ -383,7 +407,7 @@ public final class TxWriter extends TxReader implements Closeable {
         int index = findAttachedPartitionIndexByLoTimestamp(partitionTimestampLo);
         updatePartitionSizeByIndexAndTxn(index, partitionSize);
         bumpPartitionTableVersion();
-//        scoreboard.addPartition(partitionTimestampLo, txn);
+        scoreboard.addPartition(partitionTimestampLo, txn);
     }
 
     private void updatePartitionSizeByIndex(int index, long partitionSize) {

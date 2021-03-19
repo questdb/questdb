@@ -5344,7 +5344,6 @@ public class IODispatcherTest {
             if (n > 0) {
                 if (headerCheckRemaining > 0) {
                     for (int i = 0; i < n && headerCheckRemaining > 0; i++) {
-//                        System.out.print(expectedResponseHeader.charAt(expectedHeaderLen - headerCheckRemaining));
                         if (expectedResponseHeader.charAt(expectedHeaderLen - headerCheckRemaining) != (char) Unsafe.getUnsafe().getByte(buffer + i)) {
                             Assert.fail("at " + (expectedHeaderLen - headerCheckRemaining));
                         }

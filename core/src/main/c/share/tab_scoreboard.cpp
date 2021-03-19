@@ -196,10 +196,8 @@ inline bool add_partition_unsafe(scoreboard_t *scoreboard, int64_t timestamp, in
     scoreboard_slot_t *slots = scoreboard->slot;
     int64_t index = binary_search(slots, partition_count, timestamp, txn);
 
-    printf("index=%ld\n", index);
     if (index < 0) {
         index = -index - 1;
-        printf("added %ld, partition_count=%ld, ts=%ld, txn=%ld\n", index, partition_count, timestamp, txn);
         // extend the scoreboard
         const int64_t len = (partition_count - index);
         if (len > 0) {
@@ -260,15 +258,6 @@ inline void unlock_partition_for_write(scoreboard_t *scoreboard, int64_t timesta
         // single-writer mode, this does not require CAS
         slot->access_counter = 0;
     }
-}
-
-inline void reader_active(scoreboard_t *scoreboard) {
-    cas_loop(&(scoreboard->header.active_reader_counter), inc, entity);
-}
-
-
-inline void reader_inactive(scoreboard_t *scoreboard) {
-    cas_loop(&(scoreboard->header.active_reader_counter), dec, entity);
 }
 
 inline int64_t get_active_reader_counter(scoreboard_t *scoreboard) {
@@ -372,4 +361,5 @@ JNIEXPORT jint JNICALL Java_io_questdb_cairo_Scoreboard_getHeaderAccessCounter
         (JNIEnv *e, jclass cl, jlong pScoreboard) {
     return __atomic_load_n(&(reinterpret_cast<scoreboard_t *>(pScoreboard)->header.access_counter), __ATOMIC_RELAXED);
 }
+
 }

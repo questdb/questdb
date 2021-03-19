@@ -2027,6 +2027,10 @@ public class OutOfOrderTest extends AbstractCairoTest {
         engine.releaseAllReaders();
         TestUtils.printSql(compiler, sqlExecutionContext, assertSQL, sink2);
         TestUtils.assertEquals(sink1, sink2);
+        // writer is always "x"
+        try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x")) {
+            Assert.assertTrue(w.reconcileAttachedPartitionsWithScoreboard());
+        }
     }
 
     private static void testPartitionedDataAppendOODataIndexed0(

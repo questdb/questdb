@@ -24,6 +24,8 @@
 
 package io.questdb.cairo;
 
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Transient;
@@ -32,6 +34,8 @@ import io.questdb.std.str.Path;
 import java.io.Closeable;
 
 public class Scoreboard implements Closeable {
+    private static final Log LOG = LogFactory.getLog(Scoreboard.class);
+
     private final FilesFacade ff;
     private long fd;
     private long pScoreboard;
@@ -47,6 +51,13 @@ public class Scoreboard implements Closeable {
             }
             this.size = ff.length(fd);
             pScoreboard = ff.mmap(fd, size, 0, Files.MAP_RW);
+
+            LOG.debug()
+                    .$("open [path=").$(path)
+                    .$(", fd=").$(fd)
+                    .$(", size=").$(size)
+                    .$(']').$();
+
         } catch (Throwable e) {
             close();
             throw e;
@@ -93,10 +104,20 @@ public class Scoreboard implements Closeable {
     public static native long getScoreboardSize(int partitionCount);
 
     public void acquireReadLock(long timestamp, long txn) {
+        LOG.debug()
+                .$("acquire read lock [ts=").$(timestamp)
+                .$(", txn=").$(txn)
+                .$(", fd=").$(fd)
+                .$(']').$();
         acquireReadLock(pScoreboard, timestamp, txn);
     }
 
     public boolean acquireWriteLock(long timestamp, long txn) {
+        LOG.debug()
+                .$("acquire write lock [ts=").$(timestamp)
+                .$(", txn=").$(txn)
+                .$(", fd=").$(fd)
+                .$(']').$();
         return acquireWriteLock(pScoreboard, timestamp, txn);
     }
 
@@ -112,6 +133,11 @@ public class Scoreboard implements Closeable {
                 }
                 size = newSize;
             }
+            LOG.debug()
+                    .$("add partition [ts=").$(timestamp)
+                    .$(", txn=").$(txn)
+                    .$(", fd=").$(fd)
+                    .$(']').$();
             return addPartitionUnsafe(pScoreboard, timestamp, txn);
         } finally {
             releaseHeaderLock(pScoreboard);
@@ -126,6 +152,7 @@ public class Scoreboard implements Closeable {
         }
         if (fd != -1) {
             ff.close(fd);
+            LOG.debug().$("closed [fd=").$(fd).$(']').$();
             fd = -1;
         }
     }
@@ -146,25 +173,32 @@ public class Scoreboard implements Closeable {
         return getPartitionIndex(pScoreboard, timestamp, txn);
     }
 
-    public void readerActive() {
-        readerActive(pScoreboard);
-    }
-
-    public void readerInactive() {
-        readerInactive(pScoreboard);
-    }
-
     public void releaseReadLock(long timestamp, long txn) {
+        LOG.debug()
+                .$("release read lock [ts=").$(timestamp)
+                .$(", txn=").$(txn)
+                .$(", fd=").$(fd)
+                .$(']').$();
         releaseReadLock(pScoreboard, timestamp, txn);
     }
 
     public void releaseWriteLock(long timestamp, long txn) {
+        LOG.debug()
+                .$("release write lock [ts=").$(timestamp)
+                .$(", txn=").$(txn)
+                .$(", fd=").$(fd)
+                .$(']').$();
         releaseWriteLock(pScoreboard, timestamp, txn);
     }
 
     public boolean removePartition(long timestamp, long txn) {
         acquireHeaderLock(pScoreboard);
         try {
+            LOG.debug()
+                    .$("remove partition [ts=").$(timestamp)
+                    .$(", txn=").$(txn)
+                    .$(", fd=").$(fd)
+                    .$(']').$();
             return removePartitionUnsafe(pScoreboard, timestamp, txn);
         } finally {
             releaseHeaderLock(pScoreboard);
@@ -188,10 +222,6 @@ public class Scoreboard implements Closeable {
     private static native int getPartitionCount(long pScoreboard);
 
     private static native long getAccessCounter(long pScoreboard, long timestamp, long txn);
-
-    private static native void readerActive(long pScoreboard);
-
-    private static native void readerInactive(long pScoreboard);
 
     private static native long getActiveReaderCounter(long pScoreboard);
 }

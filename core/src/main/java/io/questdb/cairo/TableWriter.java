@@ -303,6 +303,14 @@ public class TableWriter implements Closeable {
         }
     }
 
+    public boolean acquireWriterLock(long timestamp, long txn) {
+        return txFile.acquireWriterLock(timestamp, txn);
+    }
+
+    public void releaseWriterLock(long timestamp, long txn) {
+        txFile.releaseWriterLock(timestamp, txn);
+    }
+
     public void addColumn(CharSequence name, int type) {
         addColumn(name, type, configuration.getDefaultSymbolCapacity(), configuration.getDefaultSymbolCacheFlag(), false, 0, false);
     }
@@ -712,6 +720,10 @@ public class TableWriter implements Closeable {
         return partitionBy;
     }
 
+    public int getPartitionCount() {
+        return txFile.getPartitionCount();
+    }
+
     public long getStructureVersion() {
         return txFile.getStructureVersion();
     }
@@ -769,6 +781,11 @@ public class TableWriter implements Closeable {
             ee.put(" expected");
             throw ee;
         }
+    }
+
+    // this method is used by tests
+    public boolean reconcileAttachedPartitionsWithScoreboard() {
+        return txFile.reconcileAttachedPartitionsWithScoreboard();
     }
 
     public void removeColumn(CharSequence name) {
@@ -916,12 +933,12 @@ public class TableWriter implements Closeable {
             throw SqlException.$(posForError, "table is not partitioned");
         }
 
-        if (txFile.getPartitionsCount() == 0) {
+        if (txFile.getPartitionCount() == 0) {
             throw SqlException.$(posForError, "table is empty");
         } else {
             // Drop partitions in descending order so if folders are missing on disk
             // removePartition does not fail to determine next minTimestamp
-            for (int i = txFile.getPartitionsCount() - 1; i > -1; i--) {
+            for (int i = txFile.getPartitionCount() - 1; i > -1; i--) {
                 long partitionTimestamp = txFile.getPartitionTimestamp(i);
                 dropPartitionFunctionRec.setTimestamp(partitionTimestamp);
                 if (function.getBool(dropPartitionFunctionRec)) {
@@ -2041,9 +2058,10 @@ public class TableWriter implements Closeable {
         long lo = 0;
         long x1 = ooTimestampMin;
         while (lo < indexMax) {
+            x1 = timestampCeilMethod.ceil(x1);
             final long hi = Vect.boundedBinarySearchIndexT(
                     mergedTimestamps,
-                    timestampCeilMethod.ceil(x1),
+                    x1,
                     lo,
                     indexMax - 1,
                     BinarySearch.SCAN_DOWN
@@ -3756,7 +3774,6 @@ public class TableWriter implements Closeable {
             runFragile(RECOVER_FROM_TODO_WRITE_FAILURE, columnName, e);
         }
     }
-
 
     @FunctionalInterface
     public interface OutOfOrderNativeSortMethod {
