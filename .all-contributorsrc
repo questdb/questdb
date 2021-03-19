@@ -239,6 +239,17 @@
         "code",
         "maintenance"
       ]
+    },
+    {
+      "login": "TheTanc",
+      "name": "TheTanc",
+      "avatar_url": "https://avatars.githubusercontent.com/u/52114895?v=4",
+      "profile": "http://www.questdb.io",
+      "contributions": [
+        "projectManagement",
+        "content",
+        "ideas"
+      ]
     }
   ],
   "badgeTemplate": "[![All Contributors](https://img.shields.io/badge/all_contributors-<%= contributors.length %>-orange.svg)](#contributors)",
