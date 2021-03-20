@@ -357,9 +357,6 @@ public final class TxWriter extends TxReader implements Closeable {
 
     boolean reconcileAttachedPartitionsWithScoreboard() {
         int partitionCount = getPartitionCount();
-        if (partitionCount != scoreboard.getPartitionCount()) {
-            return false;
-        }
         for (int i = 0; i < partitionCount; i++) {
             long timestamp = attachedPartitions.getQuick(i * LONGS_PER_TX_ATTACHED_PARTITION + PARTITION_TS_OFFSET);
             long nameTx = attachedPartitions.getQuick(i * LONGS_PER_TX_ATTACHED_PARTITION + PARTITION_NAME_TX_OFFSET);
