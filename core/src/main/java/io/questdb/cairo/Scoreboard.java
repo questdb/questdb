@@ -103,13 +103,25 @@ public class Scoreboard implements Closeable {
 
     public static native long getScoreboardSize(int partitionCount);
 
+    private int readOnlyPartitionCount = 0;
+
     public void acquireReadLock(long timestamp, long txn) {
         LOG.debug()
                 .$("acquire read lock [ts=").$(timestamp)
                 .$(", txn=").$(txn)
                 .$(", fd=").$(fd)
                 .$(']').$();
+        checkAndExtend();
         acquireReadLock(pScoreboard, timestamp, txn);
+    }
+
+    private void checkAndExtend() {
+        int actualPartitionCount = getPartitionCount();
+        if (readOnlyPartitionCount != actualPartitionCount) {
+            long newSize = Math.max(getScoreboardSize(actualPartitionCount), ff.length(fd));
+            resize(newSize);
+            readOnlyPartitionCount = actualPartitionCount;
+        }
     }
 
     public boolean acquireWriteLock(long timestamp, long txn) {
@@ -125,14 +137,7 @@ public class Scoreboard implements Closeable {
         acquireHeaderLock(pScoreboard);
         try {
             long newSize = getScoreboardSize(2 * (getPartitionCount() + 1));
-            if (newSize > size) {
-                if (ff.allocate(fd, newSize)) {
-                    pScoreboard = ff.mremap(fd, pScoreboard, size, newSize, 0, Files.MAP_RW);
-                } else {
-                    throw CairoException.instance(ff.errno()).put("could not resize scoreboard, no space left on device [fd=").put(fd).put(']');
-                }
-                size = newSize;
-            }
+            resize(newSize);
             LOG.debug()
                     .$("add partition [ts=").$(timestamp)
                     .$(", txn=").$(txn)
@@ -141,6 +146,17 @@ public class Scoreboard implements Closeable {
             return addPartitionUnsafe(pScoreboard, timestamp, txn);
         } finally {
             releaseHeaderLock(pScoreboard);
+        }
+    }
+
+    private void resize(long newSize) {
+        if (newSize > size) {
+            if (ff.allocate(fd, newSize)) {
+                pScoreboard = ff.mremap(fd, pScoreboard, size, newSize, 0, Files.MAP_RW);
+            } else {
+                throw CairoException.instance(ff.errno()).put("could not resize scoreboard, no space left on device [fd=").put(fd).put(']');
+            }
+            size = newSize;
         }
     }
 
