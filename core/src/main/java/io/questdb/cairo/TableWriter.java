@@ -121,7 +121,6 @@ public class TableWriter implements Closeable {
     private final OutOfOrderSortMethod oooSortVarColumnRef = this::oooSortVarColumn;
     private final OutOfOrderSortMethod oooSortFixColumnRef = this::oooSortFixColumn;
     private final SOUnboundedCountDownLatch oooLatch = new SOUnboundedCountDownLatch();
-    private final LongList oooPartitions = new LongList();
     private final AtomicLong oooUpdRemaining = new AtomicLong();
     private final FindVisitor removePartitionDirsCreatedByOOOVisitor = this::removePartitionDirsCreatedByOOO0;
     private final AtomicInteger oooErrorCount = new AtomicInteger();
@@ -2030,38 +2029,6 @@ public class TableWriter implements Closeable {
         timestampMergeMem.putLong(oooRowCount++);
     }
 
-    private LongList oooComputePartitions(long mergedTimestamps, long indexMax, long oooTimestampMin, long oooTimestampHi) {
-        // split out of order data into blocks for each partition
-        final long lastPartitionTimestamp = timestampFloorMethod.floor(oooTimestampHi);
-
-        // indexLo and indexHi formula is as follows:
-        // indexLo = indexHigh[k-1] + 1;
-        // indexHi = indexHigh[k]
-        oooPartitions.clear();
-        oooPartitions.add(-1);  // indexLo for first block
-        oooPartitions.add(0);  // unused
-
-        long lo = 0;
-        long x1 = oooTimestampMin;
-        while (lo < indexMax) {
-            final long hi = Vect.boundedBinarySearchIndexT(
-                    mergedTimestamps,
-                    timestampCeilMethod.ceil(x1),
-                    lo,
-                    indexMax - 1,
-                    BinarySearch.SCAN_DOWN
-            );
-            oooPartitions.add(hi);
-            oooPartitions.add(timestampFloorMethod.floor(x1));
-            lo = hi + 1;
-            x1 = getTimestampIndexValue(mergedTimestamps, hi + 1);
-        }
-        oooPartitions.add(indexMax - 1);  // indexHi for last block
-        oooPartitions.add(lastPartitionTimestamp);  // partitionTimestampHi for last block
-
-        return oooPartitions;
-    }
-
     private void oooConsumeUpdPartitionSizeTasks(
             int workerId,
             long srcOooMax,
@@ -2292,21 +2259,33 @@ public class TableWriter implements Closeable {
             this.lastPartitionTimestamp = timestampFloorMethod.floor(txFile.getMaxTimestamp());
             final RingQueue<OutOfOrderPartitionTask> oooPartitionQueue = messageBus.getOutOfOrderPartitionQueue();
             final Sequence oooPartitionPubSeq = messageBus.getOutOfOrderPartitionPubSeq();
-            final LongList oooPartitions = oooComputePartitions(sortedTimestampsAddr, srcOooMax, oooTimestampMin, oooTimestampMax);
-            final int affectedPartitionCount = oooPartitions.size() / 2 - 1;
-            final int latchCount = affectedPartitionCount - 1;
-
             this.oooLatch.reset();
-            this.oooUpdRemaining.set(affectedPartitionCount - 1);
+            // set "updRemaining" to 1 to avoid anything triggering on this counter reaching 0
+            // before we complete the partition loop
+            this.oooUpdRemaining.set(1);
             boolean success = true;
-            int partitionsInFlight = affectedPartitionCount;
+            int latchCount = 0;
+
+            long srcOoo = 0;
+            long srcOooTimestamp = oooTimestampMin;
             try {
-                for (int i = 1; i < affectedPartitionCount; i++) {
+                while (srcOoo < srcOooMax) {
                     try {
-                        final long srcOooLo = oooPartitions.getQuick(i * 2 - 2) + 1;
-                        final long srcOooHi = oooPartitions.getQuick(i * 2);
-                        final long partitionTimestamp = oooPartitions.getQuick(i * 2 + 1);
-                        final long lastPartitionSize = transientRowCountBeforeOutOfOrder;
+                        final long srcOooLo = srcOoo;
+                        final long srcOooHi = Vect.boundedBinarySearchIndexT(
+                                sortedTimestampsAddr,
+                                timestampCeilMethod.ceil(srcOooTimestamp),
+                                srcOoo,
+                                srcOooMax - 1,
+                                BinarySearch.SCAN_DOWN
+                        );
+
+                        final long partitionTimestamp = timestampFloorMethod.floor(srcOooTimestamp);
+
+                        srcOoo = srcOooHi + 1;
+                        srcOooTimestamp = getTimestampIndexValue(sortedTimestampsAddr, srcOoo);
+
+                        oooUpdRemaining.incrementAndGet();
                         long cursor = oooPartitionPubSeq.next();
                         if (cursor > -1) {
                             OutOfOrderPartitionTask task = oooPartitionQueue.get(cursor);
@@ -2324,7 +2303,7 @@ public class TableWriter implements Closeable {
                                     partitionTimestamp,
                                     getTxn(),
                                     sortedTimestampsAddr,
-                                    lastPartitionSize,
+                                    transientRowCountBeforeOutOfOrder,
                                     lastPartitionTimestamp,
                                     this,
                                     this.oooLatch
@@ -2353,26 +2332,23 @@ public class TableWriter implements Closeable {
                                     partitionTimestamp,
                                     getTxn(),
                                     sortedTimestampsAddr,
-                                    lastPartitionSize,
+                                    transientRowCountBeforeOutOfOrder,
                                     lastPartitionTimestamp,
                                     this,
                                     oooLatch
                             );
                         }
+                        latchCount++;
                     } catch (CairoException | CairoError e) {
                         LOG.error().$((Sinkable) e).$();
                         success = false;
-                        partitionsInFlight = i + 1;
                         throw e;
-                    } finally {
-                        for (; partitionsInFlight < affectedPartitionCount; partitionsInFlight++) {
-                            if (oooUpdRemaining.decrementAndGet() == 0) {
-                                oooLatch.countDown();
-                            }
-                        }
                     }
                 }
             } finally {
+                // our counter was set to 1 as initial value
+                // now we have to drop it down by 1 because partition loop is finished
+                oooUpdRemaining.decrementAndGet();
                 // we are stealing work here it is possible we get exception from this method
                 oooConsumeUpdPartitionSizeTasks(
                         workerId,
@@ -2388,10 +2364,6 @@ public class TableWriter implements Closeable {
                     throw CairoException.instance(0).put("bulk update failed and will be rolled back");
                 }
             }
-            if (columns.getQuick(0).isClosed()) {
-                openPartition(txFile.getMaxTimestamp());
-            }
-            setAppendPosition(txFile.getTransientRowCount(), true);
         } finally {
             if (denseIndexers.size() == 0) {
                 populateDenseIndexerList();
@@ -2410,6 +2382,10 @@ public class TableWriter implements Closeable {
             timestampSetter = prevTimestampSetter;
             transientRowCountBeforeOutOfOrder = 0;
         }
+        if (columns.getQuick(0).isClosed()) {
+            openPartition(txFile.getMaxTimestamp());
+        }
+        setAppendPosition(txFile.getTransientRowCount(), true);
     }
 
     private void oooProcessPartitionSafe(
