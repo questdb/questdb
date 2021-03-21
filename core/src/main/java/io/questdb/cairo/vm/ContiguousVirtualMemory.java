@@ -51,6 +51,7 @@ public class ContiguousVirtualMemory implements ReadWriteVirtualMemory, Mutable,
     private final int maxPages;
     private final InPageLong256FromCharSequenceDecoder inPageLong256Decoder = new InPageLong256FromCharSequenceDecoder();
     private long pageSize;
+    private long pageSizeMsb;
     private long baseAddress = 0;
     private long baseAddressHi = 0;
     private long appendAddress = 0;
@@ -173,8 +174,8 @@ public class ContiguousVirtualMemory implements ReadWriteVirtualMemory, Mutable,
 
     @Override
     public void grow(long size) {
-        long nPages = (size / pageSize) + 1;
-        size = nPages * pageSize;
+        long nPages = (size >>> pageSizeMsb) + 1;
+        size = nPages << pageSizeMsb;
         final long oldSize = getMemorySize();
         if (nPages > maxPages) {
             throw LimitOverflowException.instance().put("Maximum number of pages (").put(maxPages).put(") breached in VirtualMemory");
@@ -560,6 +561,7 @@ public class ContiguousVirtualMemory implements ReadWriteVirtualMemory, Mutable,
 
     protected final void setPageSize(long pageSize) {
         this.pageSize = Numbers.ceilPow2(pageSize);
+        this.pageSizeMsb = Numbers.msb(this.pageSize);
     }
 
     public class CharSequenceView extends AbstractCharSequence {

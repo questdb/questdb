@@ -25,19 +25,14 @@
 package io.questdb.tasks;
 
 public class OutOfOrderUpdPartitionSizeTask {
-    private long oooTimestampHi;
+    private long partitionTimestamp;
     private long srcOooPartitionLo;
     private long srcOooPartitionHi;
     private long srcDataMax;
-    private long dataTimestampHi;
     private boolean partitionMutates;
 
-    public long getDataTimestampHi() {
-        return dataTimestampHi;
-    }
-
-    public long getOooTimestampHi() {
-        return oooTimestampHi;
+    public long getPartitionTimestamp() {
+        return partitionTimestamp;
     }
 
     public long getSrcDataMax() {
@@ -61,14 +56,12 @@ public class OutOfOrderUpdPartitionSizeTask {
             long srcOooPartitionLo,
             long srcOooPartitionHi,
             long srcDataMax,
-            long dataTimestampHi,
             boolean partitionMutates
     ) {
-        this.oooTimestampHi = oooTimestampHi;
+        this.partitionTimestamp = oooTimestampHi;
         this.srcOooPartitionLo = srcOooPartitionLo;
         this.srcOooPartitionHi = srcOooPartitionHi;
         this.srcDataMax = srcDataMax;
-        this.dataTimestampHi = dataTimestampHi;
         this.partitionMutates = partitionMutates;
     }
 }

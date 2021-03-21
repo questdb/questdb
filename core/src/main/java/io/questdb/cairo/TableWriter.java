@@ -154,6 +154,7 @@ public class TableWriter implements Closeable {
     private long oooRowCount;
     private final LongConsumer mergeTimestampMethodRef = this::mergeTimestampSetter;
     private long transientRowCountBeforeOutOfOrder;
+    private long lastPartitionTimestamp;
 
     public TableWriter(CairoConfiguration configuration, CharSequence name) {
         this(configuration, name, new MessageBusImpl(configuration));
@@ -307,10 +308,6 @@ public class TableWriter implements Closeable {
         return txFile.acquireWriterLock(timestamp, txn);
     }
 
-    public void releaseWriterLock(long timestamp, long txn) {
-        txFile.releaseWriterLock(timestamp, txn);
-    }
-
     public void addColumn(CharSequence name, int type) {
         addColumn(name, type, configuration.getDefaultSymbolCapacity(), configuration.getDefaultSymbolCacheFlag(), false, 0, false);
     }
@@ -343,7 +340,7 @@ public class TableWriter implements Closeable {
      * @param type                    {@link ColumnType}
      * @param isIndexed               configures column to be indexed or not
      * @param indexValueBlockCapacity approximation of number of rows for single index key, must be power of 2
-     * @param isSequential            for columns that contain sequential values query optimiser can make assuptions on range searches (future feature)
+     * @param isSequential            for columns that contain sequential values query optimiser can make assumptions on range searches (future feature)
      */
     public void addColumn(
             CharSequence name,
@@ -786,6 +783,10 @@ public class TableWriter implements Closeable {
     // this method is used by tests
     public boolean reconcileAttachedPartitionsWithScoreboard() {
         return txFile.reconcileAttachedPartitionsWithScoreboard();
+    }
+
+    public void releaseWriterLock(long timestamp, long txn) {
+        txFile.releaseWriterLock(timestamp, txn);
     }
 
     public void removeColumn(CharSequence name) {
@@ -1551,21 +1552,6 @@ public class TableWriter implements Closeable {
         masterRef++;
     }
 
-    private long ceilMaxTimestamp() {
-        long maxTimestamp = this.txFile.getMaxTimestamp();
-        switch (partitionBy) {
-            case PartitionBy.DAY:
-                return Timestamps.ceilDD(maxTimestamp);
-            case PartitionBy.MONTH:
-                return Timestamps.ceilMM(maxTimestamp);
-            case PartitionBy.YEAR:
-                return Timestamps.ceilYYYY(maxTimestamp);
-            default:
-                assert false;
-                return -1;
-        }
-    }
-
     private void checkDistressed() {
         if (!distressed) {
             return;
@@ -2044,9 +2030,9 @@ public class TableWriter implements Closeable {
         timestampMergeMem.putLong(oooRowCount++);
     }
 
-    private LongList oooComputePartitions(long mergedTimestamps, long indexMax, long ooTimestampMin, long ooTimestampHi) {
+    private LongList oooComputePartitions(long mergedTimestamps, long indexMax, long oooTimestampMin, long oooTimestampHi) {
         // split out of order data into blocks for each partition
-        final long hh = timestampCeilMethod.ceil(ooTimestampHi);
+        final long lastPartitionTimestamp = timestampFloorMethod.floor(oooTimestampHi);
 
         // indexLo and indexHi formula is as follows:
         // indexLo = indexHigh[k-1] + 1;
@@ -2056,24 +2042,22 @@ public class TableWriter implements Closeable {
         oooPartitions.add(0);  // unused
 
         long lo = 0;
-        long x1 = ooTimestampMin;
+        long x1 = oooTimestampMin;
         while (lo < indexMax) {
-            x1 = timestampCeilMethod.ceil(x1);
             final long hi = Vect.boundedBinarySearchIndexT(
                     mergedTimestamps,
-                    x1,
+                    timestampCeilMethod.ceil(x1),
                     lo,
                     indexMax - 1,
                     BinarySearch.SCAN_DOWN
             );
             oooPartitions.add(hi);
-            oooPartitions.add(x1);
+            oooPartitions.add(timestampFloorMethod.floor(x1));
             lo = hi + 1;
             x1 = getTimestampIndexValue(mergedTimestamps, hi + 1);
         }
-
         oooPartitions.add(indexMax - 1);  // indexHi for last block
-        oooPartitions.add(hh);  // partitionTimestampHi for last block
+        oooPartitions.add(lastPartitionTimestamp);  // partitionTimestampHi for last block
 
         return oooPartitions;
     }
@@ -2081,9 +2065,8 @@ public class TableWriter implements Closeable {
     private void oooConsumeUpdPartitionSizeTasks(
             int workerId,
             long srcOooMax,
-            long oooTimestampMin,
-            long oooTimestampMax,
-            long tableFloorOfMaxTimestamp
+            long timestampMin,
+            long timestampMax
     ) {
         final MPSequence updSizePubSeq = messageBus.getOutOfOrderUpdPartitionSizePubSequence();
         final Sequence updSizeSubSeq = messageBus.getOutOfOrderUpdPartitionSizeSubSequence();
@@ -2100,11 +2083,10 @@ public class TableWriter implements Closeable {
             long cursor = updSizeSubSeq.next();
             if (cursor > -1) {
                 final OutOfOrderUpdPartitionSizeTask task = updSizeQueue.get(cursor);
-                final long oooTimestampHi = task.getOooTimestampHi();
+                final long partitionTimestamp = task.getPartitionTimestamp();
                 final long srcOooPartitionLo = task.getSrcOooPartitionLo();
                 final long srcOooPartitionHi = task.getSrcOooPartitionHi();
                 final long srcDataMax = task.getSrcDataMax();
-                final long dataTimestampHi = task.getDataTimestampHi();
                 final boolean partitionMutates = task.isPartitionMutates();
 
                 this.oooUpdRemaining.decrementAndGet();
@@ -2113,16 +2095,14 @@ public class TableWriter implements Closeable {
 
                 if (oooErrorCount.get() == 0) {
                     oooUpdatePartitionSize(
-                            oooTimestampMin,
-                            oooTimestampMax,
-                            oooTimestampHi,
+                            timestampMin,
+                            timestampMax,
+                            partitionTimestamp,
                             srcOooPartitionLo,
                             srcOooPartitionHi,
-                            tableFloorOfMaxTimestamp,
-                            dataTimestampHi,
-                            partitionMutates,
                             srcOooMax,
-                            srcDataMax
+                            srcDataMax,
+                            partitionMutates
                     );
                 }
             } else {
@@ -2309,9 +2289,7 @@ public class TableWriter implements Closeable {
             final long srcOooMax = oooRowCount;
             final long oooTimestampMin = getTimestampIndexValue(sortedTimestampsAddr, 0);
             final long oooTimestampMax = getTimestampIndexValue(sortedTimestampsAddr, srcOooMax - 1);
-            final long tableFloorOfMaxTimestamp = timestampFloorMethod.floor(txFile.getMaxTimestamp());
-            final long tableCeilOfMaxTimestamp = ceilMaxTimestamp();
-            final long tableMaxTimestamp = txFile.getMaxTimestamp();
+            this.lastPartitionTimestamp = timestampFloorMethod.floor(txFile.getMaxTimestamp());
             final RingQueue<OutOfOrderPartitionTask> oooPartitionQueue = messageBus.getOutOfOrderPartitionQueue();
             final Sequence oooPartitionPubSeq = messageBus.getOutOfOrderPartitionPubSeq();
             final LongList oooPartitions = oooComputePartitions(sortedTimestampsAddr, srcOooMax, oooTimestampMin, oooTimestampMax);
@@ -2327,7 +2305,7 @@ public class TableWriter implements Closeable {
                     try {
                         final long srcOooLo = oooPartitions.getQuick(i * 2 - 2) + 1;
                         final long srcOooHi = oooPartitions.getQuick(i * 2);
-                        final long oooTimestampHi = oooPartitions.getQuick(i * 2 + 1);
+                        final long partitionTimestamp = oooPartitions.getQuick(i * 2 + 1);
                         final long lastPartitionSize = transientRowCountBeforeOutOfOrder;
                         long cursor = oooPartitionPubSeq.next();
                         if (cursor > -1) {
@@ -2343,13 +2321,11 @@ public class TableWriter implements Closeable {
                                     srcOooMax,
                                     oooTimestampMin,
                                     oooTimestampMax,
-                                    oooTimestampHi,
+                                    partitionTimestamp,
                                     getTxn(),
                                     sortedTimestampsAddr,
                                     lastPartitionSize,
-                                    tableCeilOfMaxTimestamp,
-                                    tableFloorOfMaxTimestamp,
-                                    tableMaxTimestamp,
+                                    lastPartitionTimestamp,
                                     this,
                                     this.oooLatch
                             );
@@ -2374,13 +2350,11 @@ public class TableWriter implements Closeable {
                                     srcOooMax,
                                     oooTimestampMin,
                                     oooTimestampMax,
-                                    oooTimestampHi,
+                                    partitionTimestamp,
                                     getTxn(),
                                     sortedTimestampsAddr,
                                     lastPartitionSize,
-                                    tableCeilOfMaxTimestamp,
-                                    tableFloorOfMaxTimestamp,
-                                    tableMaxTimestamp,
+                                    lastPartitionTimestamp,
                                     this,
                                     oooLatch
                             );
@@ -2404,8 +2378,7 @@ public class TableWriter implements Closeable {
                         workerId,
                         srcOooMax,
                         oooTimestampMin,
-                        oooTimestampMax,
-                        tableFloorOfMaxTimestamp
+                        oooTimestampMax
                 );
 
                 oooLatch.await(latchCount);
@@ -2665,23 +2638,21 @@ public class TableWriter implements Closeable {
     }
 
     private void oooUpdatePartitionSize(
-            long oooTimestampMin,
-            long oooTimestampMax,
-            long oooTimestampHi,
+            long timestampMin,
+            long timestampMax,
+            long partitionTimestamp,
             long srcOooPartitionLo,
             long srcOooPartitionHi,
-            long tableFloorOfMaxTimestamp,
-            long dataTimestampHi,
-            boolean partitionMutates,
             long srcOooMax,
-            long srcDataMax
+            long srcDataMax,
+            boolean partitionMutates
     ) {
-        this.txFile.minTimestamp = Math.min(oooTimestampMin, this.txFile.minTimestamp);
+        this.txFile.minTimestamp = Math.min(timestampMin, this.txFile.minTimestamp);
 
         final long partitionSize = srcDataMax + srcOooPartitionHi - srcOooPartitionLo + 1;
         final long rowDelta = srcOooPartitionHi - srcOooMax;
-        if (rowDelta < -1 || oooTimestampHi < tableFloorOfMaxTimestamp) {
-            if (oooTimestampHi < tableFloorOfMaxTimestamp) {
+        if (rowDelta < -1 || partitionTimestamp < lastPartitionTimestamp) {
+            if (partitionTimestamp < lastPartitionTimestamp) {
                 this.txFile.fixedRowCount += partitionSize - srcDataMax;
                 if (rowDelta >= -1) {
                     // when we exit here we need to rollback transientRowCount we've been incrementing
@@ -2699,34 +2670,29 @@ public class TableWriter implements Closeable {
             // we use partition size from "txPendingPartitionSizes" to subtract from "txPartitionCount"
 
             if (partitionMutates) {
-                txFile.updatePartitionSizeAndNameTxnByTimestamp(oooTimestampHi, partitionSize);
+                txFile.updatePartitionSizeAndNameTxnByTimestamp(partitionTimestamp, partitionSize);
             } else {
-                txFile.updatePartitionSizeByTimestamp(oooTimestampHi, partitionSize);
+                txFile.updatePartitionSizeByLoTimestamp(partitionTimestamp, partitionSize);
                 txFile.bumpPartitionTableVersion();
             }
         } else {
             // this is last partition
             this.txFile.transientRowCount = partitionSize;
-            // Compute max timestamp as maximum of out of order data and
-            // data in existing partition.
-            // When partition is new, the data timestamp is MIN_LONG
-            this.txFile.maxTimestamp = Math.max(dataTimestampHi, oooTimestampMax);
+            this.txFile.maxTimestamp = timestampMax;
             if (partitionMutates) {
-                txFile.updatePartitionSizeAndNameTxnByTimestamp(oooTimestampHi, partitionSize);
+                txFile.updatePartitionSizeAndNameTxnByTimestamp(partitionTimestamp, partitionSize);
             } else {
-                txFile.updatePartitionSizeByTimestamp(oooTimestampHi, partitionSize);
+                txFile.updatePartitionSizeByLoTimestamp(partitionTimestamp, partitionSize);
             }
         }
     }
 
     synchronized void oooUpdatePartitionSizeSynchronized(
-            long oooTimestampMin,
-            long oooTimestampMax,
-            long oooTimestampHi,
+            long timestampMin,
+            long timestampMax,
+            long partitionTimestamp,
             long srcOooPartitionLo,
             long srcOooPartitionHi,
-            long tableFloorOfMaxTimestamp,
-            long dataTimestampHi,
             boolean partitionMutates,
             long srcOooMax,
             long srcDataMax
@@ -2734,16 +2700,12 @@ public class TableWriter implements Closeable {
         bumpPartitionUpdateCount();
 
         oooUpdatePartitionSize(
-                oooTimestampMin,
-                oooTimestampMax,
-                oooTimestampHi,
+                timestampMin,
+                timestampMax,
+                partitionTimestamp,
                 srcOooPartitionLo,
                 srcOooPartitionHi,
-                tableFloorOfMaxTimestamp,
-                dataTimestampHi,
-                partitionMutates,
-                srcOooMax,
-                srcDataMax
+                srcOooMax, srcDataMax, partitionMutates
         );
     }
 
@@ -4066,7 +4028,6 @@ public class TableWriter implements Closeable {
             Unsafe.getUnsafe().storeFence();
             txFile.writeTransientSymbolCount(symColIndex, symbolCount);
         }
-
     }
 
     static {

@@ -283,7 +283,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public long getSqlSortLightValuePageSize() {
-        return Numbers.SIZE_1MB;
+        return 8 * Numbers.SIZE_1MB;
     }
 
     @Override

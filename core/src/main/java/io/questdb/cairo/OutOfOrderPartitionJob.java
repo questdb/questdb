@@ -83,15 +83,13 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
             long srcOooLo,
             long srcOooHi,
             long srcOooMax,
-            long oooTimestampMin,
+            long timestampMin,
             long oooTimestampMax,
-            long oooTimestampHi,
+            long partitionTimestamp,
             long txn,
             long sortedTimestampsAddr,
             long lastPartitionSize,
-            long tableCeilOfMaxTimestamp,
-            long tableFloorOfMaxTimestamp,
-            long tableMaxTimestamp,
+            long lastPartitionTimestamp,
             TableWriter tableWriter,
             SOUnboundedCountDownLatch doneLatch
     ) {
@@ -157,10 +155,10 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                     srcOooLo,
                     srcOooHi,
                     srcOooMax,
-                    oooTimestampMin,
+                    timestampMin,
                     oooTimestampMax,
                     oooTimestampLo,
-                    oooTimestampHi,
+                    partitionTimestamp,
                     // below parameters are unused by this type of append
                     0,
                     0,
@@ -175,8 +173,6 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                     0,
                     0,
                     srcDataTxn,
-                    tableFloorOfMaxTimestamp,
-                    0,
                     OPEN_NEW_PARTITION_FOR_APPEND,
                     -1,  // timestamp fd
                     0,
@@ -202,12 +198,13 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
             long suffixHi;
             final int openColumnMode;
 
+            final boolean lastPartition = partitionTimestamp == lastPartitionTimestamp;
             try {
                 // out of order is hitting existing partition
-                // oooTimestampHi is in fact a ceil of ooo timestamp value for the given partition
+                // partitionTimestamp is in fact a ceil of ooo timestamp value for the given partition
                 // so this check is for matching ceilings
-                if (oooTimestampHi == tableCeilOfMaxTimestamp) {
-                    dataTimestampHi = tableMaxTimestamp;
+                if (lastPartition) {
+                    dataTimestampHi = tableWriter.getMaxTimestamp();
                     srcDataMax = lastPartitionSize;
                     srcTimestampSize = srcDataMax * 8L;
                     // negative fd indicates descriptor reuse
@@ -436,18 +433,18 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                 if (prefixType == OO_BLOCK_NONE) {
                     // We do not need to create a copy of partition when we simply need to append
                     // existing the one.
-                    if (oooTimestampHi < tableFloorOfMaxTimestamp) {
-                        openColumnMode = OPEN_MID_PARTITION_FOR_APPEND;
-                    } else {
+                    if (lastPartition) {
                         openColumnMode = OPEN_LAST_PARTITION_FOR_APPEND;
+                    } else {
+                        openColumnMode = OPEN_MID_PARTITION_FOR_APPEND;
                     }
                 } else {
                     txnPartition(path.trimTo(pplen), txn);
                     createDirsOrFail(ff, path.put(Files.SEPARATOR).$(), configuration.getMkDirMode());
-                    if (srcTimestampFd > -1) {
-                        openColumnMode = OPEN_MID_PARTITION_FOR_MERGE;
-                    } else {
+                    if (lastPartition) {
                         openColumnMode = OPEN_LAST_PARTITION_FOR_MERGE;
+                    } else {
+                        openColumnMode = OPEN_MID_PARTITION_FOR_MERGE;
                     }
                 }
             } catch (Throwable e) {
@@ -459,6 +456,11 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                 doneLatch.countDown();
                 throw e;
             }
+
+            // Compute max timestamp as maximum of out of order data and
+            // data in existing partition.
+            // When partition is new, the data timestamp is MIN_LONG
+            final long timestampMax = Math.max(oooTimestampMax, dataTimestampHi);
 
             publishOpenColumnTasks(
                     workerId,
@@ -477,10 +479,10 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                     srcOooLo,
                     srcOooHi,
                     srcOooMax,
-                    oooTimestampMin,
-                    oooTimestampMax,
+                    timestampMin,
+                    timestampMax, // <-- this is max of OOO and data chunk
                     oooTimestampLo,
-                    oooTimestampHi,
+                    partitionTimestamp,
                     prefixType,
                     prefixLo,
                     prefixHi,
@@ -494,8 +496,6 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                     suffixHi,
                     srcDataMax,
                     srcDataTxn,
-                    tableFloorOfMaxTimestamp,
-                    dataTimestampHi,
                     openColumnMode,
                     srcTimestampFd,
                     srcTimestampAddr,
@@ -534,13 +534,11 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
         final long srcOooMax = task.getSrcOooMax();
         final long oooTimestampMin = task.getOooTimestampMin();
         final long oooTimestampMax = task.getOooTimestampMax();
-        final long oooTimestampHi = task.getOooTimestampHi();
+        final long partitionTimestamp = task.getPartitionTimestamp();
         final long txn = task.getTxn();
         final long sortedTimestampsAddr = task.getSortedTimestampsAddr();
         final long lastPartitionSize = task.getLastPartitionSize();
-        final long tableCeilOfMaxTimestamp = task.getTableCeilOfMaxTimestamp();
         final long tableFloorOfMaxTimestamp = task.getTableFloorOfMaxTimestamp();
-        final long tableMaxTimestamp = task.getTableMaxTimestamp();
         final TableWriter tableWriter = task.getTableWriter();
         final SOUnboundedCountDownLatch doneLatch = task.getDoneLatch();
 
@@ -565,13 +563,11 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                 srcOooMax,
                 oooTimestampMin,
                 oooTimestampMax,
-                oooTimestampHi,
+                partitionTimestamp,
                 txn,
                 sortedTimestampsAddr,
                 lastPartitionSize,
-                tableCeilOfMaxTimestamp,
                 tableFloorOfMaxTimestamp,
-                tableMaxTimestamp,
                 tableWriter,
                 doneLatch
         );
@@ -623,12 +619,10 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
             long oooTimestampMin,
             long oooTimestampMax,
             long oooTimestampLo,
-            long oooTimestampHi,
+            long partitionTimestamp,
             long srcDataTop,
             long srcDataMax,
             long srcDataTxn,
-            long tableFloorOfMaxTimestamp,
-            long dataTimestampHi,
             long txn,
             int prefixType,
             long prefixLo,
@@ -669,12 +663,10 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                 oooTimestampMin,
                 oooTimestampMax,
                 oooTimestampLo,
-                oooTimestampHi,
+                partitionTimestamp,
                 srcDataTop,
                 srcDataMax,
                 srcDataTxn,
-                tableFloorOfMaxTimestamp,
-                dataTimestampHi,
                 txn,
                 prefixType,
                 prefixLo,
@@ -719,7 +711,7 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
             long oooTimestampMin,
             long oooTimestampMax,
             long oooTimestampLo,
-            long oooTimestampHi,
+            long partitionTimestamp,
             int prefixType,
             long prefixLo,
             long prefixHi,
@@ -733,8 +725,6 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
             long suffixHi,
             long srcDataMax,
             long srcDataTxn,
-            long tableFloorOfMaxTimestamp,
-            long dataTimestampHi,
             int openColumnMode,
             long srcTimestampFd,
             long srcTimestampAddr,
@@ -829,12 +819,10 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                                 oooTimestampMin,
                                 oooTimestampMax,
                                 oooTimestampLo,
-                                oooTimestampHi,
+                                partitionTimestamp,
                                 srcDataTop,
                                 srcDataMax,
                                 srcDataTxn,
-                                tableFloorOfMaxTimestamp,
-                                dataTimestampHi,
                                 txn,
                                 prefixType,
                                 prefixLo,
@@ -884,12 +872,10 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                                 oooTimestampMin,
                                 oooTimestampMax,
                                 oooTimestampLo,
-                                oooTimestampHi,
+                                partitionTimestamp,
                                 srcDataTop,
                                 srcDataMax,
                                 srcDataTxn,
-                                tableFloorOfMaxTimestamp,
-                                dataTimestampHi,
                                 txn,
                                 prefixType,
                                 prefixLo,
@@ -961,12 +947,10 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
             long oooTimestampMin,
             long oooTimestampMax,
             long oooTimestampLo,
-            long oooTimestampHi,
+            long partitionTimestamp,
             long srcDataTop,
             long srcDataMax,
             long srcDataTxn,
-            long tableFloorOfMaxTimestamp,
-            long dataTimestampHi,
             long txn,
             int prefixType,
             long prefixLo,
@@ -1014,12 +998,10 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                     oooTimestampMin,
                     oooTimestampMax,
                     oooTimestampLo,
-                    oooTimestampHi,
+                    partitionTimestamp,
                     srcDataTop,
                     srcDataMax,
                     srcDataTxn,
-                    tableFloorOfMaxTimestamp,
-                    dataTimestampHi,
                     txn,
                     prefixType,
                     prefixLo,
@@ -1066,12 +1048,10 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                     oooTimestampMin,
                     oooTimestampMax,
                     oooTimestampLo,
-                    oooTimestampHi,
+                    partitionTimestamp,
                     srcDataTop,
                     srcDataMax,
                     srcDataTxn,
-                    tableFloorOfMaxTimestamp,
-                    dataTimestampHi,
                     txn,
                     prefixType,
                     prefixLo,

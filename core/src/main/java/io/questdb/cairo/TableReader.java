@@ -867,7 +867,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_NAME_TXN, -1L); // name txn
         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_DATA_TXN, -1L); // data txn
         partitionCount++;
-        LOG.info().$("inserted partition [path=").$(path).$(",timestamp=").$ts(timestamp).I$();
+        LOG.debug().$("inserted partition [path=").$(path).$(",timestamp=").$ts(timestamp).I$();
     }
 
     boolean isColumnCached(int columnIndex) {

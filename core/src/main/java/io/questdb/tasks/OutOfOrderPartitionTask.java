@@ -24,9 +24,9 @@
 
 package io.questdb.tasks;
 
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.vm.AppendOnlyVirtualMemory;
 import io.questdb.cairo.vm.ContiguousVirtualMemory;
-import io.questdb.cairo.TableWriter;
 import io.questdb.mp.SOUnboundedCountDownLatch;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.ObjList;
@@ -42,13 +42,11 @@ public class OutOfOrderPartitionTask {
     private long srcOooMax;
     private long oooTimestampMin;
     private long oooTimestampMax;
-    private long oooTimestampHi;
+    private long partitionTimestamp;
     private long txn;
     private long sortedTimestampsAddr;
     private long lastPartitionSize;
-    private long tableCeilOfMaxTimestamp;
     private long tableFloorOfMaxTimestamp;
-    private long tableMaxTimestamp;
     private TableWriter tableWriter;
     private SOUnboundedCountDownLatch doneLatch;
 
@@ -72,8 +70,8 @@ public class OutOfOrderPartitionTask {
         return oooColumns;
     }
 
-    public long getOooTimestampHi() {
-        return oooTimestampHi;
+    public long getPartitionTimestamp() {
+        return partitionTimestamp;
     }
 
     public long getOooTimestampMax() {
@@ -108,16 +106,8 @@ public class OutOfOrderPartitionTask {
         return srcOooMax;
     }
 
-    public long getTableCeilOfMaxTimestamp() {
-        return tableCeilOfMaxTimestamp;
-    }
-
     public long getTableFloorOfMaxTimestamp() {
         return tableFloorOfMaxTimestamp;
-    }
-
-    public long getTableMaxTimestamp() {
-        return tableMaxTimestamp;
     }
 
     public TableWriter getTableWriter() {
@@ -143,9 +133,7 @@ public class OutOfOrderPartitionTask {
             long txn,
             long sortedTimestampsAddr,
             long lastPartitionSize,
-            long tableCeilOfMaxTimestamp,
             long tableFloorOfMaxTimestamp,
-            long tableMaxTimestamp,
             TableWriter tableWriter,
             SOUnboundedCountDownLatch doneLatch
     ) {
@@ -156,11 +144,9 @@ public class OutOfOrderPartitionTask {
         this.srcOooMax = srcOooMax;
         this.oooTimestampMin = oooTimestampMin;
         this.oooTimestampMax = oooTimestampMax;
-        this.oooTimestampHi = oooTimestampHi;
+        this.partitionTimestamp = oooTimestampHi;
         this.lastPartitionSize = lastPartitionSize;
         this.sortedTimestampsAddr = sortedTimestampsAddr;
-        this.tableMaxTimestamp = tableMaxTimestamp;
-        this.tableCeilOfMaxTimestamp = tableCeilOfMaxTimestamp;
         this.tableFloorOfMaxTimestamp = tableFloorOfMaxTimestamp;
         this.ff = ff;
         this.partitionBy = partitionBy;

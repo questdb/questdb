@@ -326,6 +326,10 @@ public final class TxWriter extends TxReader implements Closeable {
         attachedPositionDirtyIndex = Math.min(attachedPositionDirtyIndex, updateAttachedPartitionSizeByTimestamp(timestamp, rowCount));
     }
 
+    public void updatePartitionSizeByLoTimestamp(long timestamp, long rowCount) {
+        attachedPositionDirtyIndex = Math.min(attachedPositionDirtyIndex, updateAttachedPartitionSizeByLoTimestamp(timestamp, rowCount));
+    }
+
     public void writeTransientSymbolCount(int symbolIndex, int symCount) {
         txMem.putInt(getSymbolWriterTransientIndexOffset(symbolIndex), symCount);
     }
@@ -399,10 +403,17 @@ public final class TxWriter extends TxReader implements Closeable {
         return insertPartitionSizeByTimestamp(-(index + 1), partitionTimestampLo, partitionSize);
     }
 
-    void updatePartitionSizeAndNameTxnByTimestamp(long oooTimestampHi, long partitionSize) {
-        long partitionTimestampLo = getPartitionTimestampLo(oooTimestampHi);
+    private int updateAttachedPartitionSizeByLoTimestamp(long partitionTimestampLo, long partitionSize) {
         int index = findAttachedPartitionIndexByLoTimestamp(partitionTimestampLo);
-        updatePartitionSizeByIndexAndTxn(index, partitionSize);
+        if (index > -1) {
+            updatePartitionSizeByIndex(index, partitionSize);
+            return index;
+        }
+        return insertPartitionSizeByTimestamp(-(index + 1), partitionTimestampLo, partitionSize);
+    }
+
+    void updatePartitionSizeAndNameTxnByTimestamp(long partitionTimestampLo, long partitionSize) {
+        updatePartitionSizeByIndexAndTxn(findAttachedPartitionIndexByLoTimestamp(partitionTimestampLo), partitionSize);
         bumpPartitionTableVersion();
         scoreboard.addPartition(partitionTimestampLo, txn);
     }

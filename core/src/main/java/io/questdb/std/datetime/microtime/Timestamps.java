@@ -50,9 +50,6 @@ final public class Timestamps {
     public static final TimestampFloorMethod FLOOR_DD = Timestamps::floorDD;
     public static final TimestampCeilMethod CEIL_DD = Timestamps::ceilDD;
     public static final TimestampAddMethod ADD_DD = Timestamps::addDays;
-    public static final TimestampIntervalCountMethod COUNT_DD = Timestamps::getDaysBetween;
-    public static final TimestampIntervalCountMethod COUNT_MM = Timestamps::getMonthsBetween;
-    public static final TimestampIntervalCountMethod COUNT_YYYY = Timestamps::getYearsBetween;
     private static final long AVG_YEAR_MICROS = (long) (365.2425 * DAY_MICROS);
     private static final long YEAR_MICROS = 365 * DAY_MICROS;
     private static final long LEAP_YEAR_MICROS = 366 * DAY_MICROS;
@@ -624,12 +621,6 @@ final public class Timestamps {
         return sink.toString();
     }
 
-    public static String toUsecString(long micros) {
-        CharSink sink = Misc.getThreadLocalBuilder();
-        TimestampFormatUtils.appendDateTimeUSec(sink, micros);
-        return sink.toString();
-    }
-
     /**
      * Calculated start of year in millis. For example of year 2008 this is
      * equivalent to parsing "2008-01-01T00:00:00.000Z", except this method is faster.
@@ -678,10 +669,6 @@ final public class Timestamps {
     @FunctionalInterface
     public interface TimestampAddMethod {
         long calculate(long minTimestamp, int partitionIndex);
-    }
-
-    public interface TimestampIntervalCountMethod {
-        long getIntervalCount(long timestampA, long timestampB);
     }
 
     static {

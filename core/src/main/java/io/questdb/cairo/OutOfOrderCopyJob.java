@@ -75,8 +75,6 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
             long srcDataLo,
             long srcDataHi,
             long srcDataMax,
-            long tableFloorOfMaxTimestamp,
-            long dataTimestampHi,
             long srcOooFixAddr,
             long srcOooFixSize,
             long srcOooVarAddr,
@@ -86,9 +84,9 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
             long srcOooMax,
             long srcOooPartitionLo,
             long srcOooPartitionHi,
-            long oooTimestampMin,
-            long oooTimestampMax,
-            long oooTimestampHi,
+            long timestampMin,
+            long timestampMax,
+            long partitionTimestamp, // <-- this is used to determine if partition is last or not as well as partition dir
             long dstFixFd,
             long dstFixAddr,
             long dstFixOffset,
@@ -236,13 +234,11 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
                             pathToTable,
                             srcOooPartitionLo,
                             srcOooPartitionHi,
-                            oooTimestampMin,
-                            oooTimestampMax,
-                            oooTimestampHi,
+                            timestampMin,
+                            timestampMax,
+                            partitionTimestamp,
                             srcOooMax,
                             srcDataMax,
-                            tableFloorOfMaxTimestamp,
-                            dataTimestampHi,
                             srcTimestampFd,
                             partitionMutates,
                             tableWriter
@@ -284,8 +280,6 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
         final long srcDataLo = task.getSrcDataLo();
         final long srcDataMax = task.getSrcDataMax();
         final long srcDataHi = task.getSrcDataHi();
-        final long tableFloorOfMaxTimestamp = task.getTableFloorOfMaxTimestamp();
-        final long dataTimestampHi = task.getDataTimestampHi();
         final long srcOooFixAddr = task.getSrcOooFixAddr();
         final long srcOooFixSize = task.getSrcOooFixSize();
         final long srcOooVarAddr = task.getSrcOooVarAddr();
@@ -295,9 +289,9 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
         final long srcOooMax = task.getSrcOooMax();
         final long srcOooPartitionLo = task.getSrcOooPartitionLo();
         final long srcOooPartitionHi = task.getSrcOooPartitionHi();
-        final long oooTimestampMin = task.getOooTimestampMin();
-        final long oooTimestampMax = task.getOooTimestampMax();
-        final long oooTimestampHi = task.getOooTimestampHi();
+        final long timestampMin = task.getTimestampMin();
+        final long timestampMax = task.getTimestampMax();
+        final long partitionTimestamp = task.getPartitionTimestamp();
         final long dstFixFd = task.getDstFixFd();
         final long dstFixAddr = task.getDstFixAddr();
         final long dstFixOffset = task.getDstFixOffset();
@@ -342,8 +336,6 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
                 srcDataLo,
                 srcDataHi,
                 srcDataMax,
-                tableFloorOfMaxTimestamp,
-                dataTimestampHi,
                 srcOooFixAddr,
                 srcOooFixSize,
                 srcOooVarAddr,
@@ -353,9 +345,9 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
                 srcOooMax,
                 srcOooPartitionLo,
                 srcOooPartitionHi,
-                oooTimestampMin,
-                oooTimestampMax,
-                oooTimestampHi,
+                timestampMin,
+                timestampMax,
+                partitionTimestamp,
                 dstFixFd,
                 dstFixAddr,
                 dstFixOffset,
@@ -524,13 +516,11 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
             CharSequence pathToTable,
             long srcOooPartitionLo,
             long srcOooPartitionHi,
-            long oooTimestampMin,
-            long oooTimestampMax,
-            long oooTimestampHi, // local (partition bound) maximum of OOO timestamp
+            long timestampMin,
+            long timestampMax,
+            long partitionTimestamp, // lowest timestamp of partition where data is headed
             long srcOooMax,
             long srcDataMax,
-            long tableFloorOfMaxTimestamp,
-            long dataTimestampHi,
             long srcTimestampFd,
             boolean partitionMutates,
             TableWriter tableWriter
@@ -553,7 +543,7 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
                     renamePartition(
                             ff,
                             pathToTable,
-                            oooTimestampHi,
+                            partitionTimestamp,
                             tableWriter
                     );
                 }
@@ -570,13 +560,11 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
                     updPartitionPubSeq,
                     srcOooPartitionLo,
                     srcOooPartitionHi,
-                    oooTimestampMin,
-                    oooTimestampMax,
-                    oooTimestampHi,
+                    timestampMin,
+                    timestampMax,
+                    partitionTimestamp,
                     srcOooMax,
                     srcDataMax,
-                    tableFloorOfMaxTimestamp,
-                    dataTimestampHi,
                     partitionMutates,
                     tableWriter
             );
@@ -588,13 +576,11 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
             MPSequence updPartitionPubSeq,
             long srcOooPartitionLo,
             long srcOooPartitionHi,
-            long oooTimestampMin,
-            long oooTimestampMax,
-            long oooTimestampHi,
+            long timestampMin,
+            long timestampMax,
+            long partitionTimestamp,
             long srcOooMax,
             long srcDataMax,
-            long tableFloorOfMaxTimestamp,
-            long dataTimestampHi,
             boolean partitionMutates,
             TableWriter tableWriter
     ) {
@@ -606,9 +592,8 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
                     cursor,
                     srcOooPartitionLo,
                     srcOooPartitionHi,
-                    oooTimestampHi,
+                    partitionTimestamp,
                     srcDataMax,
-                    dataTimestampHi,
                     partitionMutates
             );
         } else {
@@ -618,13 +603,11 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
                     cursor,
                     srcOooPartitionLo,
                     srcOooPartitionHi,
-                    oooTimestampMin,
-                    oooTimestampMax,
-                    oooTimestampHi,
+                    timestampMin,
+                    timestampMax,
+                    partitionTimestamp,
                     srcOooMax,
                     srcDataMax,
-                    tableFloorOfMaxTimestamp,
-                    dataTimestampHi,
                     partitionMutates,
                     tableWriter
             );
@@ -637,13 +620,11 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
             long cursor,
             long srcOooPartitionLo,
             long srcOooPartitionHi,
-            long oooTimestampMin,
-            long oooTimestampMax,
-            long oooTimestampHi,
+            long timestampMin,
+            long timestampMax,
+            long partitionTimestamp,
             long srcOooMax,
             long srcDataMax,
-            long tableFloorOfMaxTimestamp,
-            long dataTimestampHi,
             boolean partitionMutates,
             TableWriter tableWriter
     ) {
@@ -658,20 +639,17 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
                     cursor,
                     srcOooPartitionLo,
                     srcOooPartitionHi,
-                    oooTimestampHi,
+                    partitionTimestamp,
                     srcDataMax,
-                    dataTimestampHi,
                     partitionMutates
             );
         } else {
             tableWriter.oooUpdatePartitionSizeSynchronized(
-                    oooTimestampMin,
-                    oooTimestampMax,
-                    oooTimestampHi,
+                    timestampMin,
+                    timestampMax,
+                    partitionTimestamp,
                     srcOooPartitionLo,
                     srcOooPartitionHi,
-                    tableFloorOfMaxTimestamp,
-                    dataTimestampHi,
                     partitionMutates,
                     srcOooMax,
                     srcDataMax
@@ -684,27 +662,30 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
             MPSequence updPartitionPubSeq, long cursor,
             long srcOooPartitionLo,
             long srcOooPartitionHi,
-            long oooTimestampHi,
+            long partitionTimestamp,
             long srcDataMax,
-            long dataTimestampHi,
             boolean partitionMutates
     ) {
         final OutOfOrderUpdPartitionSizeTask task = updPartitionSizeQueue.get(cursor);
         task.of(
-                oooTimestampHi,
+                partitionTimestamp,
                 srcOooPartitionLo,
                 srcOooPartitionHi,
                 srcDataMax,
-                dataTimestampHi,
                 partitionMutates
         );
         updPartitionPubSeq.done(cursor);
     }
 
-    private static void renamePartition(FilesFacade ff, CharSequence pathToTable, long oooTimestampHi, TableWriter tableWriter) {
+    private static void renamePartition(
+            FilesFacade ff,
+            CharSequence pathToTable,
+            long partitionTimestamp,
+            TableWriter tableWriter
+    ) {
         final long txn = tableWriter.getTxn();
         final Path path = Path.getThreadLocal(pathToTable);
-        TableUtils.setPathForPartition(path, tableWriter.getPartitionBy(), oooTimestampHi);
+        TableUtils.setPathForPartition(path, tableWriter.getPartitionBy(), partitionTimestamp);
         final int plen = path.length();
         path.$();
         final Path other = Path.getThreadLocal2(path);

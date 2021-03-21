@@ -50,15 +50,13 @@ public class OutOfOrderOpenColumnTask {
     private long srcDataTop;
     private long srcDataMax;
     private long srcDataTxn;
-    private long tableFloorOfMaxTimestamp;
-    private long dataTimestampHi;
     private long srcOooLo;
     private long srcOooHi;
     private long srcOooMax;
-    private long oooTimestampMin;
-    private long oooTimestampMax;
+    private long timestampMin;
+    private long timestampMax;
     private long oooTimestampLo;
-    private long oooTimestampHi;
+    private long partitionTimestamp;
     private int prefixType;
     private long prefixLo;
     private long prefixHi;
@@ -99,10 +97,6 @@ public class OutOfOrderOpenColumnTask {
         return columnType;
     }
 
-    public long getDataTimestampHi() {
-        return dataTimestampHi;
-    }
-
     public SOUnboundedCountDownLatch getDoneLatch() {
         return doneLatch;
     }
@@ -131,20 +125,20 @@ public class OutOfOrderOpenColumnTask {
         return mergeType;
     }
 
-    public long getOooTimestampHi() {
-        return oooTimestampHi;
+    public long getPartitionTimestamp() {
+        return partitionTimestamp;
     }
 
     public long getOooTimestampLo() {
         return oooTimestampLo;
     }
 
-    public long getOooTimestampMax() {
-        return oooTimestampMax;
+    public long getTimestampMax() {
+        return timestampMax;
     }
 
-    public long getOooTimestampMin() {
-        return oooTimestampMin;
+    public long getTimestampMin() {
+        return timestampMin;
     }
 
     public int getOpenColumnMode() {
@@ -227,10 +221,6 @@ public class OutOfOrderOpenColumnTask {
         return suffixType;
     }
 
-    public long getTableFloorOfMaxTimestamp() {
-        return tableFloorOfMaxTimestamp;
-    }
-
     public TableWriter getTableWriter() {
         return tableWriter;
     }
@@ -262,15 +252,13 @@ public class OutOfOrderOpenColumnTask {
             long srcOooLo,
             long srcOooHi,
             long srcOooMax,
-            long oooTimestampMin,
-            long oooTimestampMax,
+            long timestampMin,
+            long timestampMax,
             long oooTimestampLo,
             long oooTimestampHi,
             long srcDataTop,
             long srcDataMax,
             long srcDataTxn,
-            long tableFloorOfMaxTimestamp,
-            long dataTimestampHi,
             long txn,
             int prefixType,
             long prefixLo,
@@ -306,15 +294,13 @@ public class OutOfOrderOpenColumnTask {
         this.srcOooLo = srcOooLo;
         this.srcOooHi = srcOooHi;
         this.srcOooMax = srcOooMax;
-        this.oooTimestampMin = oooTimestampMin;
-        this.oooTimestampMax = oooTimestampMax;
+        this.timestampMin = timestampMin;
+        this.timestampMax = timestampMax;
         this.oooTimestampLo = oooTimestampLo;
-        this.oooTimestampHi = oooTimestampHi;
+        this.partitionTimestamp = oooTimestampHi;
         this.srcDataTop = srcDataTop;
         this.srcDataMax = srcDataMax;
         this.srcDataTxn = srcDataTxn;
-        this.tableFloorOfMaxTimestamp = tableFloorOfMaxTimestamp;
-        this.dataTimestampHi = dataTimestampHi;
         this.txn = txn;
         this.prefixType = prefixType;
         this.prefixLo = prefixLo;

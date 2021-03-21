@@ -42,10 +42,6 @@ public class MemoryPages implements Closeable, Mutable {
     private long cachePageLo;
     private final int maxPages;
 
-    public MemoryPages(long pageSize) {
-        this(pageSize, Integer.MAX_VALUE);
-    }
-
     public MemoryPages(long pageSize, int maxPages) {
         this.pageSize = Numbers.ceilPow2(pageSize);
         this.bits = Numbers.msb(this.pageSize);
