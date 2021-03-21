@@ -229,6 +229,17 @@ public class TableReaderSelectedColumnRecord implements Record {
         return reader.getSymbolMapReader(col).valueOf(reader.getColumn(absoluteColumnIndex).getInt(offset));
     }
 
+    @Override
+    public CharSequence getSymB(int columnIndex) {
+        final int col = deferenceColumn(columnIndex);
+        final long offset = getAdjustedRecordIndex(col) * Integer.BYTES;
+        final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(
+                offset,
+                TableReader.getPrimaryColumnIndex(columnBase, col)
+        );
+        return reader.getSymbolMapReader(col).valueBOf(reader.getColumn(absoluteColumnIndex).getInt(offset));
+    }
+
     public void setRecordIndex(long recordIndex) {
         this.recordIndex = recordIndex;
     }

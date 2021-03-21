@@ -62,7 +62,7 @@ public class AlterTableAlterSymbolColumnCacheFlagTest extends AbstractGriffinTes
     @Test
     public void testAlterSymbolCacheFlagToFalseAndCheckOpenReaderWithCursor() throws Exception {
 
-        String expectedOrderedWhenCached = "sym\n" +
+        String expectedOrdered = "sym\n" +
                 "googl\n" +
                 "googl\n" +
                 "googl\n" +
@@ -86,26 +86,13 @@ public class AlterTableAlterSymbolColumnCacheFlagTest extends AbstractGriffinTes
                 "googl\n" +
                 "msft\n";
 
-
-        String expectedUnordered = "sym\n" +
-                "msft\n" +
-                "googl\n" +
-                "googl\n" +
-                "googl\n" +
-                "ibm\n" +
-                "googl\n" +
-                "ibm\n" +
-                "googl\n" +
-                "googl\n" +
-                "msft\n";
-
         final RecordCursorPrinter printer = new SingleColumnRecordCursorPrinter(sink, 1);
 
         assertMemoryLeak(() -> {
 
             assertMemoryLeak(this::createX);
 
-            assertQueryPlain(expectedOrderedWhenCached,
+            assertQueryPlain(expectedOrdered,
                     "select sym from x order by sym"
             );
 
@@ -133,7 +120,7 @@ public class AlterTableAlterSymbolColumnCacheFlagTest extends AbstractGriffinTes
             }
         });
 
-        assertQueryPlain(expectedUnordered,
+        assertQueryPlain(expectedOrdered,
                 "select sym from x order by 1 asc"
         );
     }
@@ -155,18 +142,18 @@ public class AlterTableAlterSymbolColumnCacheFlagTest extends AbstractGriffinTes
             executeInsert("insert into x values (9, 'GBP')\"");
         });
 
-        String expectUnordered = "sym\n" +
-                "GBP\n" +
-                "GBP\n" +
-                "GBP\n" +
-                "GBP\n" +
-                "USD\n" +
-                "JPY\n" +
-                "GBP\n" +
+        String expectedOrdered = "sym\n" +
                 "CHF\n" +
-                "GBP\n";
+                "GBP\n" +
+                "GBP\n" +
+                "GBP\n" +
+                "GBP\n" +
+                "GBP\n" +
+                "GBP\n" +
+                "JPY\n" +
+                "USD\n";
 
-        String expected = "sym\n" +
+        String expectedChronological = "sym\n" +
                 "GBP\n" +
                 "CHF\n" +
                 "GBP\n" +
@@ -179,7 +166,7 @@ public class AlterTableAlterSymbolColumnCacheFlagTest extends AbstractGriffinTes
 
         assertMemoryLeak(() -> {
 
-            assertQueryPlain(expectUnordered,
+            assertQueryPlain(expectedOrdered,
                     "select sym from x order by sym"
             );
 
@@ -187,7 +174,7 @@ public class AlterTableAlterSymbolColumnCacheFlagTest extends AbstractGriffinTes
                 //check cursor before altering symbol column
                 sink.clear();
                 printer.print(reader.getCursor(), reader.getMetadata(), true);
-                Assert.assertEquals(expected, sink.toString());
+                Assert.assertEquals(expectedChronological, sink.toString());
 
                 try (TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x")) {
                     writer.changeCacheFlag(1, true);
@@ -197,27 +184,16 @@ public class AlterTableAlterSymbolColumnCacheFlagTest extends AbstractGriffinTes
                 //check cursor after reload
                 sink.clear();
                 printer.print(reader.getCursor(), reader.getMetadata(), true);
-                Assert.assertEquals(expected, sink.toString());
+                Assert.assertEquals(expectedChronological, sink.toString());
 
                 try (TableReader reader2 = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "x")) {
                     sink.clear();
                     printer.print(reader2.getCursor(), reader2.getMetadata(), true);
-                    Assert.assertEquals(expected, sink.toString());
+                    Assert.assertEquals(expectedChronological, sink.toString());
                 }
 
             }
         });
-
-        String expectedOrdered = "sym\n" +
-                "CHF\n" +
-                "GBP\n" +
-                "GBP\n" +
-                "GBP\n" +
-                "GBP\n" +
-                "GBP\n" +
-                "GBP\n" +
-                "JPY\n" +
-                "USD\n";
 
         assertQueryPlain(expectedOrdered,
                 "select sym from x order by 1 asc"

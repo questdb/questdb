@@ -184,6 +184,17 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
         return null;
     }
 
+    @Override
+    public CharSequence valueBOf(int key) {
+        if (key > -1 && key < symbolCount) {
+            if (cached) {
+                return cachedValue(key);
+            }
+            return uncachedValue2(key);
+        }
+        return null;
+    }
+
     private CharSequence cachedValue(int key) {
         String symbol = cache.getQuiet(key);
         return symbol != null ? symbol : fetchAndCache(key);
@@ -211,6 +222,10 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
 
     private CharSequence uncachedValue(int key) {
         return charMem.getStr(offsetMem.getLong(SymbolMapWriter.keyToOffset(key)));
+    }
+
+    private CharSequence uncachedValue2(int key) {
+        return charMem.getStr2(offsetMem.getLong(SymbolMapWriter.keyToOffset(key)));
     }
 
     @Override

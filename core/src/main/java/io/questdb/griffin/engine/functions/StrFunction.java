@@ -138,6 +138,11 @@ public abstract class StrFunction implements ScalarFunction {
     }
 
     @Override
+    public final CharSequence getSymbolB(Record rec) {
+        return getStrB(rec);
+    }
+
+    @Override
     public final long getTimestamp(Record rec) {
         throw new UnsupportedOperationException();
     }

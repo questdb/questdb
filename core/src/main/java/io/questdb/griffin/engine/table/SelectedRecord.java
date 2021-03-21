@@ -144,6 +144,11 @@ class SelectedRecord implements Record {
     }
 
     @Override
+    public CharSequence getSymB(int col) {
+        return base.getSymB(getColumnIndex(col));
+    }
+
+    @Override
     public long getTimestamp(int col) {
         return base.getTimestamp(getColumnIndex(col));
     }

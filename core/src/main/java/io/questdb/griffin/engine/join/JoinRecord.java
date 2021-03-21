@@ -206,6 +206,14 @@ public class JoinRecord implements Record {
     }
 
     @Override
+    public CharSequence getSymB(int col) {
+        if (col < split) {
+            return master.getSymB(col);
+        }
+        return slave.getSymB(col - split);
+    }
+
+    @Override
     public long getTimestamp(int col) {
         if (col < split) {
             return master.getTimestamp(col);

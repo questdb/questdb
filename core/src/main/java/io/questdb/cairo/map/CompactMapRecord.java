@@ -143,6 +143,11 @@ public class CompactMapRecord implements MapRecord {
     }
 
     @Override
+    public CharSequence getSymB(int col) {
+        return symbolTableResolver.getSymbolTable(symbolTableIndex.getQuick(col)).valueBOf(getInt(col));
+    }
+
+    @Override
     public MapValue getValue() {
         value.of(offset, false);
         return value;
