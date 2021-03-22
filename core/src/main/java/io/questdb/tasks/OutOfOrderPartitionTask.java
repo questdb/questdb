@@ -43,10 +43,12 @@ public class OutOfOrderPartitionTask {
     private long oooTimestampMin;
     private long oooTimestampMax;
     private long partitionTimestamp;
+    private long maxTimestamp; // table's max timestamp
+    private long srcDataMax;
+    private long srcDataTxn;
+    private boolean last;
     private long txn;
     private long sortedTimestampsAddr;
-    private long lastPartitionSize;
-    private long tableFloorOfMaxTimestamp;
     private TableWriter tableWriter;
     private SOUnboundedCountDownLatch doneLatch;
 
@@ -62,16 +64,12 @@ public class OutOfOrderPartitionTask {
         return ff;
     }
 
-    public long getLastPartitionSize() {
-        return lastPartitionSize;
+    public long getMaxTimestamp() {
+        return maxTimestamp;
     }
 
     public ObjList<ContiguousVirtualMemory> getOooColumns() {
         return oooColumns;
-    }
-
-    public long getPartitionTimestamp() {
-        return partitionTimestamp;
     }
 
     public long getOooTimestampMax() {
@@ -86,12 +84,24 @@ public class OutOfOrderPartitionTask {
         return partitionBy;
     }
 
+    public long getPartitionTimestamp() {
+        return partitionTimestamp;
+    }
+
     public CharSequence getPathToTable() {
         return pathToTable;
     }
 
     public long getSortedTimestampsAddr() {
         return sortedTimestampsAddr;
+    }
+
+    public long getSrcDataMax() {
+        return srcDataMax;
+    }
+
+    public long getSrcDataTxn() {
+        return srcDataTxn;
     }
 
     public long getSrcOooHi() {
@@ -106,16 +116,16 @@ public class OutOfOrderPartitionTask {
         return srcOooMax;
     }
 
-    public long getTableFloorOfMaxTimestamp() {
-        return tableFloorOfMaxTimestamp;
-    }
-
     public TableWriter getTableWriter() {
         return tableWriter;
     }
 
     public long getTxn() {
         return txn;
+    }
+
+    public boolean isLast() {
+        return last;
     }
 
     public void of(
@@ -129,11 +139,13 @@ public class OutOfOrderPartitionTask {
             long srcOooMax,
             long oooTimestampMin,
             long oooTimestampMax,
-            long oooTimestampHi,
+            long partitionTimestamp,
+            long maxTimestamp,
+            long srcDataMax,
+            long srcDataTxn,
+            boolean last,
             long txn,
             long sortedTimestampsAddr,
-            long lastPartitionSize,
-            long tableFloorOfMaxTimestamp,
             TableWriter tableWriter,
             SOUnboundedCountDownLatch doneLatch
     ) {
@@ -144,10 +156,12 @@ public class OutOfOrderPartitionTask {
         this.srcOooMax = srcOooMax;
         this.oooTimestampMin = oooTimestampMin;
         this.oooTimestampMax = oooTimestampMax;
-        this.partitionTimestamp = oooTimestampHi;
-        this.lastPartitionSize = lastPartitionSize;
+        this.partitionTimestamp = partitionTimestamp;
+        this.maxTimestamp = maxTimestamp;
+        this.srcDataMax = srcDataMax;
+        this.srcDataTxn = srcDataTxn;
+        this.last = last;
         this.sortedTimestampsAddr = sortedTimestampsAddr;
-        this.tableFloorOfMaxTimestamp = tableFloorOfMaxTimestamp;
         this.ff = ff;
         this.partitionBy = partitionBy;
         this.columns = columns;

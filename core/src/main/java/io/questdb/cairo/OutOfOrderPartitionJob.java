@@ -83,29 +83,20 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
             long srcOooLo,
             long srcOooHi,
             long srcOooMax,
-            long timestampMin,
+            long oooTimestampMin,
             long oooTimestampMax,
             long partitionTimestamp,
+            long maxTimestamp,
+            long srcDataMax,
+            long srcDataTxn,
+            boolean last,
             long txn,
             long sortedTimestampsAddr,
-            long lastPartitionSize,
-            long lastPartitionTimestamp,
             TableWriter tableWriter,
             SOUnboundedCountDownLatch doneLatch
     ) {
         final Path path = Path.getThreadLocal(pathToTable);
         final long oooTimestampLo = getTimestampIndexValue(sortedTimestampsAddr, srcOooLo);
-        final int partitionIndex = tableWriter.getPartitionInfoOffset(oooTimestampLo);
-        final long partitionSize;
-        final long srcDataTxn;
-        if (partitionIndex > -1) {
-            partitionSize = tableWriter.getPartitionSizeByIndex(partitionIndex);
-            srcDataTxn = tableWriter.getPartitionTxnByIndex(partitionIndex);
-        } else {
-            partitionSize = -1;
-            srcDataTxn = -1;
-        }
-
         TableUtils.setPathForPartition(path, partitionBy, oooTimestampLo);
         final int pplen = path.length();
         TableUtils.txnPartitionConditionally(path, srcDataTxn);
@@ -115,12 +106,11 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
         long srcTimestampFd = 0;
         long dataTimestampLo;
         long dataTimestampHi;
-        long srcDataMax;
 
         // is out of order data hitting the last partition?
         // if so we do not need to re-open files and and write to existing file descriptors
 
-        if (partitionSize == -1) {
+        if (srcDataMax == -1) {
 
             // this has to be a brand new partition for either of two cases:
             // - this partition is above min partition of the table
@@ -155,7 +145,7 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                     srcOooLo,
                     srcOooHi,
                     srcOooMax,
-                    timestampMin,
+                    oooTimestampMin,
                     oooTimestampMax,
                     oooTimestampLo,
                     partitionTimestamp,
@@ -198,20 +188,17 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
             long suffixHi;
             final int openColumnMode;
 
-            final boolean lastPartition = partitionTimestamp == lastPartitionTimestamp;
             try {
                 // out of order is hitting existing partition
                 // partitionTimestamp is in fact a ceil of ooo timestamp value for the given partition
                 // so this check is for matching ceilings
-                if (lastPartition) {
-                    dataTimestampHi = tableWriter.getMaxTimestamp();
-                    srcDataMax = lastPartitionSize;
+                if (last) {
+                    dataTimestampHi = maxTimestamp;
                     srcTimestampSize = srcDataMax * 8L;
                     // negative fd indicates descriptor reuse
                     srcTimestampFd = -columns.getQuick(getPrimaryColumnIndex(timestampIndex)).getFd();
                     srcTimestampAddr = OutOfOrderUtils.mapRO(ff, -srcTimestampFd, srcTimestampSize);
                 } else {
-                    srcDataMax = partitionSize;
                     srcTimestampSize = srcDataMax * 8L;
                     // out of order data is going into archive partition
                     // we need to read "low" and "high" boundaries of the partition. "low" being oldest timestamp
@@ -433,7 +420,7 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                 if (prefixType == OO_BLOCK_NONE) {
                     // We do not need to create a copy of partition when we simply need to append
                     // existing the one.
-                    if (lastPartition) {
+                    if (last) {
                         openColumnMode = OPEN_LAST_PARTITION_FOR_APPEND;
                     } else {
                         openColumnMode = OPEN_MID_PARTITION_FOR_APPEND;
@@ -441,7 +428,7 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                 } else {
                     txnPartition(path.trimTo(pplen), txn);
                     createDirsOrFail(ff, path.put(Files.SEPARATOR).$(), configuration.getMkDirMode());
-                    if (lastPartition) {
+                    if (last) {
                         openColumnMode = OPEN_LAST_PARTITION_FOR_MERGE;
                     } else {
                         openColumnMode = OPEN_MID_PARTITION_FOR_MERGE;
@@ -479,7 +466,7 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                     srcOooLo,
                     srcOooHi,
                     srcOooMax,
-                    timestampMin,
+                    oooTimestampMin,
                     timestampMax, // <-- this is max of OOO and data chunk
                     oooTimestampLo,
                     partitionTimestamp,
@@ -535,10 +522,12 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
         final long oooTimestampMin = task.getOooTimestampMin();
         final long oooTimestampMax = task.getOooTimestampMax();
         final long partitionTimestamp = task.getPartitionTimestamp();
+        final long maxTimestamp = task.getMaxTimestamp();
+        final long srcDataMax = task.getSrcDataMax();
+        final long srcDataTxn = task.getSrcDataTxn();
+        final boolean last = task.isLast();
         final long txn = task.getTxn();
         final long sortedTimestampsAddr = task.getSortedTimestampsAddr();
-        final long lastPartitionSize = task.getLastPartitionSize();
-        final long tableFloorOfMaxTimestamp = task.getTableFloorOfMaxTimestamp();
         final TableWriter tableWriter = task.getTableWriter();
         final SOUnboundedCountDownLatch doneLatch = task.getDoneLatch();
 
@@ -564,10 +553,12 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                 oooTimestampMin,
                 oooTimestampMax,
                 partitionTimestamp,
+                maxTimestamp,
+                srcDataMax,
+                srcDataTxn,
+                last,
                 txn,
                 sortedTimestampsAddr,
-                lastPartitionSize,
-                tableFloorOfMaxTimestamp,
                 tableWriter,
                 doneLatch
         );

@@ -47,10 +47,11 @@ public class OutOfOrderCopyTask extends AbstractLockable {
     private long srcDataVarAddr;
     private long srcDataVarOffset;
     private long srcDataVarSize;
-    private long srcDataTopOffset;
     private long srcDataLo;
     private long srcDataHi;
+    private long srcDataTop;
     private long srcDataMax;
+    private long srcDataTxn;
     private long srcOooFixAddr;
     private long srcOooFixSize;
     private long srcOooVarAddr;
@@ -146,20 +147,12 @@ public class OutOfOrderCopyTask extends AbstractLockable {
         return ff;
     }
 
-    public long getPartitionTimestamp() {
-        return partitionTimestamp;
-    }
-
-    public long getTimestampMax() {
-        return timestampMax;
-    }
-
-    public long getTimestampMin() {
-        return timestampMin;
-    }
-
     public AtomicInteger getPartCounter() {
         return partCounter;
+    }
+
+    public long getPartitionTimestamp() {
+        return partitionTimestamp;
     }
 
     public CharSequence getPathToTable() {
@@ -194,8 +187,12 @@ public class OutOfOrderCopyTask extends AbstractLockable {
         return srcDataMax;
     }
 
-    public long getSrcDataTopOffset() {
-        return srcDataTopOffset;
+    public long getSrcDataTop() {
+        return srcDataTop;
+    }
+
+    public long getSrcDataTxn() {
+        return srcDataTxn;
     }
 
     public long getSrcDataVarAddr() {
@@ -266,8 +263,16 @@ public class OutOfOrderCopyTask extends AbstractLockable {
         return tableWriter;
     }
 
+    public long getTimestampMax() {
+        return timestampMax;
+    }
+
     public long getTimestampMergeIndexAddr() {
         return timestampMergeIndexAddr;
+    }
+
+    public long getTimestampMin() {
+        return timestampMin;
     }
 
     public boolean isIndexed() {
@@ -294,10 +299,11 @@ public class OutOfOrderCopyTask extends AbstractLockable {
             long srcDataVarAddr,
             long srcDataVarOffset,
             long srcDataVarSize,
-            long srcDataTopOffset,
             long srcDataLo,
             long srcDataHi,
+            long srcDataTop,
             long srcDataMax,
+            long srcDataTxn,
             long srcOooFixAddr,
             long srcOooFixSize,
             long srcOooVarAddr,
@@ -344,10 +350,11 @@ public class OutOfOrderCopyTask extends AbstractLockable {
         this.srcDataVarAddr = srcDataVarAddr;
         this.srcDataVarOffset = srcDataVarOffset;
         this.srcDataVarSize = srcDataVarSize;
-        this.srcDataTopOffset = srcDataTopOffset;
+        this.srcDataTop = srcDataTop;
         this.srcDataLo = srcDataLo;
         this.srcDataHi = srcDataHi;
         this.srcDataMax = srcDataMax;
+        this.srcDataTxn = srcDataTxn;
         this.srcOooFixAddr = srcOooFixAddr;
         this.srcOooFixSize = srcOooFixSize;
         this.srcOooVarAddr = srcOooVarAddr;

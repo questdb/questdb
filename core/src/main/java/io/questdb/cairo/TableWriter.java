@@ -1889,10 +1889,6 @@ public class TableWriter implements Closeable {
         return oooErrorCount.get();
     }
 
-    int getPartitionInfoOffset(long ts) {
-        return txFile.findAttachedPartitionIndex(ts);
-    }
-
     private long getPartitionLo(long timestamp) {
         return timestampFloorMethod.floor(timestamp);
     }
@@ -2256,13 +2252,12 @@ public class TableWriter implements Closeable {
             final long srcOooMax = oooRowCount;
             final long oooTimestampMin = getTimestampIndexValue(sortedTimestampsAddr, 0);
             final long oooTimestampMax = getTimestampIndexValue(sortedTimestampsAddr, srcOooMax - 1);
-            this.lastPartitionTimestamp = timestampFloorMethod.floor(txFile.getMaxTimestamp());
+            final long maxTimestamp = txFile.getMaxTimestamp();
+            this.lastPartitionTimestamp = timestampFloorMethod.floor(maxTimestamp);
             final RingQueue<OutOfOrderPartitionTask> oooPartitionQueue = messageBus.getOutOfOrderPartitionQueue();
             final Sequence oooPartitionPubSeq = messageBus.getOutOfOrderPartitionPubSeq();
             this.oooLatch.reset();
-            // set "updRemaining" to 1 to avoid anything triggering on this counter reaching 0
-            // before we complete the partition loop
-            this.oooUpdRemaining.set(1);
+            this.oooUpdRemaining.set(0);
             boolean success = true;
             int latchCount = 0;
 
@@ -2281,9 +2276,25 @@ public class TableWriter implements Closeable {
                         );
 
                         final long partitionTimestamp = timestampFloorMethod.floor(srcOooTimestamp);
+                        final boolean last = partitionTimestamp == lastPartitionTimestamp;
 
                         srcOoo = srcOooHi + 1;
                         srcOooTimestamp = getTimestampIndexValue(sortedTimestampsAddr, srcOoo);
+
+                        final long srcDataSize;
+                        final long srcDataTxn;
+                        final int partitionIndex = txFile.findAttachedPartitionIndexByLoTimestamp(partitionTimestamp);
+                        if (partitionIndex > -1) {
+                            if (last) {
+                                srcDataSize = transientRowCountBeforeOutOfOrder;
+                            } else {
+                                srcDataSize = getPartitionSizeByIndex(partitionIndex);
+                            }
+                            srcDataTxn = getPartitionTxnByIndex(partitionIndex);
+                        } else {
+                            srcDataSize = -1;
+                            srcDataTxn = -1;
+                        }
 
                         oooUpdRemaining.incrementAndGet();
                         long cursor = oooPartitionPubSeq.next();
@@ -2301,10 +2312,12 @@ public class TableWriter implements Closeable {
                                     oooTimestampMin,
                                     oooTimestampMax,
                                     partitionTimestamp,
+                                    maxTimestamp,
+                                    srcDataSize,
+                                    srcDataTxn,
+                                    last,
                                     getTxn(),
                                     sortedTimestampsAddr,
-                                    transientRowCountBeforeOutOfOrder,
-                                    lastPartitionTimestamp,
                                     this,
                                     this.oooLatch
                             );
@@ -2330,10 +2343,12 @@ public class TableWriter implements Closeable {
                                     oooTimestampMin,
                                     oooTimestampMax,
                                     partitionTimestamp,
+                                    maxTimestamp,
+                                    srcDataSize,
+                                    srcDataTxn,
+                                    last,
                                     getTxn(),
                                     sortedTimestampsAddr,
-                                    transientRowCountBeforeOutOfOrder,
-                                    lastPartitionTimestamp,
                                     this,
                                     oooLatch
                             );
@@ -2346,9 +2361,6 @@ public class TableWriter implements Closeable {
                     }
                 }
             } finally {
-                // our counter was set to 1 as initial value
-                // now we have to drop it down by 1 because partition loop is finished
-                oooUpdRemaining.decrementAndGet();
                 // we are stealing work here it is possible we get exception from this method
                 oooConsumeUpdPartitionSizeTasks(
                         workerId,

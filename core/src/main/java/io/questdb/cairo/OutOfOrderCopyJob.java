@@ -71,10 +71,11 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
             long srcDataVarAddr,
             long srcDataVarOffset,
             long srcDataVarSize,
-            long srcDataTopOffset,
             long srcDataLo,
             long srcDataHi,
+            long srcDataTop,
             long srcDataMax,
+            long srcDataTxn,
             long srcOooFixAddr,
             long srcOooFixSize,
             long srcOooVarAddr,
@@ -108,7 +109,7 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
     ) {
         switch (blockType) {
             case OO_BLOCK_MERGE:
-                if (srcDataFixOffset == 0 && srcDataTopOffset == 0) {
+                if (srcDataFixOffset == 0 && srcDataTop == 0) {
                     oooMergeCopy(
                             columnType,
                             timestampMergeIndexAddr,
@@ -133,7 +134,7 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
                             // srcDataFixOffset, when we had to shift data to back fill nulls or
                             // srcDataTopOffset - if we kept the column top
                             // when one value is present the other will be 0
-                            srcDataFixOffset - srcDataTopOffset,
+                            srcDataFixOffset - srcDataTop,
                             srcDataVarAddr,
                             srcDataVarOffset,
                             srcDataLo,
@@ -239,6 +240,7 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
                             partitionTimestamp,
                             srcOooMax,
                             srcDataMax,
+                            srcDataTxn,
                             srcTimestampFd,
                             partitionMutates,
                             tableWriter
@@ -276,9 +278,10 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
         final long srcDataVarAddr = task.getSrcDataVarAddr();
         final long srcDataVarOffset = task.getSrcDataVarOffset();
         final long srcDataVarSize = task.getSrcDataVarSize();
-        final long srcDataTopOffset = task.getSrcDataTopOffset();
+        final long srcDataTop = task.getSrcDataTop();
         final long srcDataLo = task.getSrcDataLo();
         final long srcDataMax = task.getSrcDataMax();
+        final long srcDataTxn = task.getSrcDataTxn();
         final long srcDataHi = task.getSrcDataHi();
         final long srcOooFixAddr = task.getSrcOooFixAddr();
         final long srcOooFixSize = task.getSrcOooFixSize();
@@ -332,10 +335,11 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
                 srcDataVarAddr,
                 srcDataVarOffset,
                 srcDataVarSize,
-                srcDataTopOffset,
                 srcDataLo,
                 srcDataHi,
+                srcDataTop,
                 srcDataMax,
+                srcDataTxn,
                 srcOooFixAddr,
                 srcOooFixSize,
                 srcOooVarAddr,
@@ -521,6 +525,7 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
             long partitionTimestamp, // lowest timestamp of partition where data is headed
             long srcOooMax,
             long srcDataMax,
+            long srcDataTxn,
             long srcTimestampFd,
             boolean partitionMutates,
             TableWriter tableWriter
@@ -539,15 +544,32 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
                     ff.close(srcTimestampFd);
                 }
 
-                if (false && tableWriter.getOooErrorCount() == 0) {
-                    renamePartition(
-                            ff,
-                            pathToTable,
-                            partitionTimestamp,
-                            tableWriter
-                    );
-                }
+                if (false &&
+                        tableWriter.getOooErrorCount() == 0
+                        && tableWriter.acquireWriterLock(partitionTimestamp, srcDataTxn)
+                ) {
+                    LOG.info()
+                            .$("lock successful [table=`").utf8(pathToTable)
+                            .$("`, ts=").$ts(partitionTimestamp)
+                            .$(", txn=").$(srcDataTxn).$(']').$();
 
+                    try {
+                        renamePartition(
+                                ff,
+                                pathToTable,
+                                partitionTimestamp,
+                                tableWriter
+                        );
+                        partitionMutates = false;
+                    } finally {
+                        tableWriter.releaseWriterLock(partitionTimestamp, srcDataTxn);
+                    }
+                } else {
+                    LOG.info()
+                            .$("partition busy [table=`").utf8(pathToTable)
+                            .$("`, ts=").$ts(partitionTimestamp)
+                            .$(", txn=").$(srcDataTxn).$(']').$();
+                }
             } else if (srcTimestampFd > 0) {
                 ff.close(srcTimestampFd);
             }
@@ -993,7 +1015,7 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
             for (; row < count; row++) {
                 w.add(TableUtils.toIndexKey(Unsafe.getUnsafe().getInt(dstFixAddr + row * Integer.BYTES)), row);
             }
-            w.setMaxValue(count- 1);
+            w.setMaxValue(count - 1);
         }
     }
 
