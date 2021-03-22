@@ -335,11 +335,11 @@ public final class TxWriter extends TxReader implements Closeable {
     }
 
     boolean acquireWriterLock(long timestamp, long txn) {
-        return scoreboard.acquireWriteLock(getPartitionTimestampLo(timestamp), txn);
+        return scoreboard.acquireWriteLock(timestamp, txn);
     }
 
     void releaseWriterLock(long timestamp, long txn) {
-        scoreboard.releaseWriteLock(getPartitionTimestampLo(timestamp), txn);
+        scoreboard.releaseWriteLock(timestamp, txn);
     }
 
     void bumpPartitionTableVersion() {
@@ -414,7 +414,6 @@ public final class TxWriter extends TxReader implements Closeable {
 
     void updatePartitionSizeAndNameTxnByTimestamp(long partitionTimestampLo, long partitionSize) {
         updatePartitionSizeByIndexAndTxn(findAttachedPartitionIndexByLoTimestamp(partitionTimestampLo), partitionSize);
-        bumpPartitionTableVersion();
         scoreboard.addPartition(partitionTimestampLo, txn);
     }
 

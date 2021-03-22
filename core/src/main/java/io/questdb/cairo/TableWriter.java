@@ -2656,23 +2656,17 @@ public class TableWriter implements Closeable {
             // contains timestamp of this partition. If it does - we don't increment "txPartitionCount"
             // (it has been incremented before out-of-order logic kicked in) and
             // we use partition size from "txPendingPartitionSizes" to subtract from "txPartitionCount"
-
-            if (partitionMutates) {
-                txFile.updatePartitionSizeAndNameTxnByTimestamp(partitionTimestamp, partitionSize);
-            } else {
-                txFile.updatePartitionSizeByLoTimestamp(partitionTimestamp, partitionSize);
-                txFile.bumpPartitionTableVersion();
-            }
         } else {
             // this is last partition
             this.txFile.transientRowCount = partitionSize;
             this.txFile.maxTimestamp = timestampMax;
-            if (partitionMutates) {
-                txFile.updatePartitionSizeAndNameTxnByTimestamp(partitionTimestamp, partitionSize);
-            } else {
-                txFile.updatePartitionSizeByLoTimestamp(partitionTimestamp, partitionSize);
-            }
         }
+        if (partitionMutates) {
+            txFile.updatePartitionSizeAndNameTxnByTimestamp(partitionTimestamp, partitionSize);
+        } else {
+            txFile.updatePartitionSizeByLoTimestamp(partitionTimestamp, partitionSize);
+        }
+        txFile.bumpPartitionTableVersion();
     }
 
     synchronized void oooUpdatePartitionSizeSynchronized(

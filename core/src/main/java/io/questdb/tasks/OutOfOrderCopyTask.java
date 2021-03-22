@@ -52,6 +52,7 @@ public class OutOfOrderCopyTask extends AbstractLockable {
     private long srcDataTop;
     private long srcDataMax;
     private long srcDataTxn;
+    private long txn;
     private long srcOooFixAddr;
     private long srcOooFixSize;
     private long srcOooVarAddr;
@@ -275,6 +276,10 @@ public class OutOfOrderCopyTask extends AbstractLockable {
         return timestampMin;
     }
 
+    public long getTxn() {
+        return txn;
+    }
+
     public boolean isIndexed() {
         return isIndexed;
     }
@@ -304,6 +309,7 @@ public class OutOfOrderCopyTask extends AbstractLockable {
             long srcDataTop,
             long srcDataMax,
             long srcDataTxn,
+            long txn,
             long srcOooFixAddr,
             long srcOooFixSize,
             long srcOooVarAddr,
@@ -355,6 +361,7 @@ public class OutOfOrderCopyTask extends AbstractLockable {
         this.srcDataHi = srcDataHi;
         this.srcDataMax = srcDataMax;
         this.srcDataTxn = srcDataTxn;
+        this.txn = txn;
         this.srcOooFixAddr = srcOooFixAddr;
         this.srcOooFixSize = srcOooFixSize;
         this.srcOooVarAddr = srcOooVarAddr;

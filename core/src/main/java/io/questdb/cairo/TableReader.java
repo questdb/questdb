@@ -376,6 +376,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             final int offset = partitionIndex * PARTITIONS_SLOT_SIZE;
             final long openPartitionTimestamp = openPartitionInfo.getQuick(offset);
             final long openPartitionSize = openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE);
+            final long openPartitionDataTxn = openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_DATA_TXN);
             final long openPartitionNameTxn = openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_NAME_TXN);
 
             long txPartTs = txFile.getPartitionTimestamp(txPartitionIndex);
@@ -393,8 +394,9 @@ public class TableReader implements Closeable, SymbolTableSource {
             } else {
                 // Refresh partition
                 long newPartitionSize = txFile.getPartitionSize(txPartitionIndex);
+                final long txPartitionDataTxn = txFile.getPartitionDataTxn(partitionIndex);
                 final long txPartitionNameTxn = txFile.getPartitionNameTxn(partitionIndex);
-                if (openPartitionNameTxn == txPartitionNameTxn) {
+                if (openPartitionNameTxn == txPartitionNameTxn && openPartitionDataTxn == txPartitionDataTxn) {
                     if (openPartitionSize != newPartitionSize) {
                         if (openPartitionSize > -1L) {
                             reloadPartition(partitionIndex, newPartitionSize, txPartitionNameTxn, partitionIndex == txPartitionCount - 1);
@@ -1062,8 +1064,8 @@ public class TableReader implements Closeable, SymbolTableSource {
                         final long txPartitionNameTxn = txFile.getPartitionNameTxn(partitionIndex);
                         final long txPartitionDataTxn = txFile.getPartitionDataTxn(partitionIndex);
 
-                        if (openPartitionNameTxn == txPartitionNameTxn) {
-                            if (openPartitionSize != txPartitionSize || openPartitionDataTxn != txPartitionDataTxn) {
+                        if (openPartitionNameTxn == txPartitionNameTxn && openPartitionDataTxn == txPartitionDataTxn) {
+                            if (openPartitionSize != txPartitionSize) {
                                 reloadPartition(partitionIndex, txPartitionSize, txPartitionNameTxn, partitionIndex == txPartitionCount - 1);
                                 this.openPartitionInfo.setQuick(partitionIndex * PARTITIONS_SLOT_SIZE + PARTITIONS_SLOT_OFFSET_SIZE, txPartitionSize);
                                 LOG.debug().$("updated partition size [partition=").$(openPartitionInfo.getQuick(offset)).I$();

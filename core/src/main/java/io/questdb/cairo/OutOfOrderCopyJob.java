@@ -28,9 +28,7 @@ import io.questdb.MessageBus;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.*;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.Unsafe;
-import io.questdb.std.Vect;
+import io.questdb.std.*;
 import io.questdb.std.str.Path;
 import io.questdb.tasks.OutOfOrderCopyTask;
 import io.questdb.tasks.OutOfOrderUpdPartitionSizeTask;
@@ -76,6 +74,7 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
             long srcDataTop,
             long srcDataMax,
             long srcDataTxn,
+            long txn,
             long srcOooFixAddr,
             long srcOooFixSize,
             long srcOooVarAddr,
@@ -241,6 +240,7 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
                             srcOooMax,
                             srcDataMax,
                             srcDataTxn,
+                            txn,
                             srcTimestampFd,
                             partitionMutates,
                             tableWriter
@@ -282,6 +282,7 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
         final long srcDataLo = task.getSrcDataLo();
         final long srcDataMax = task.getSrcDataMax();
         final long srcDataTxn = task.getSrcDataTxn();
+        final long txn = task.getTxn();
         final long srcDataHi = task.getSrcDataHi();
         final long srcOooFixAddr = task.getSrcOooFixAddr();
         final long srcOooFixSize = task.getSrcOooFixSize();
@@ -340,6 +341,7 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
                 srcDataTop,
                 srcDataMax,
                 srcDataTxn,
+                txn,
                 srcOooFixAddr,
                 srcOooFixSize,
                 srcOooVarAddr,
@@ -526,6 +528,7 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
             long srcOooMax,
             long srcDataMax,
             long srcDataTxn,
+            long txn,
             long srcTimestampFd,
             boolean partitionMutates,
             TableWriter tableWriter
@@ -544,8 +547,7 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
                     ff.close(srcTimestampFd);
                 }
 
-                if (false &&
-                        tableWriter.getOooErrorCount() == 0
+                if (false && tableWriter.getOooErrorCount() == 0
                         && tableWriter.acquireWriterLock(partitionTimestamp, srcDataTxn)
                 ) {
                     LOG.info()
@@ -554,10 +556,12 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
                             .$(", txn=").$(srcDataTxn).$(']').$();
 
                     try {
-                        renamePartition(
+                        swapPartition(
                                 ff,
                                 pathToTable,
                                 partitionTimestamp,
+                                srcDataTxn,
+                                txn,
                                 tableWriter
                         );
                         partitionMutates = false;
@@ -699,12 +703,22 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
         updPartitionPubSeq.done(cursor);
     }
 
-    private static void renamePartition(
+    private static void swapPartition(
             FilesFacade ff,
             CharSequence pathToTable,
             long partitionTimestamp,
+            long srcDataTxn,
+            long txn,
             TableWriter tableWriter
     ) {
+        if (Os.type == Os.WINDOWS) {
+            swapPartitionFiles(ff, pathToTable, partitionTimestamp, srcDataTxn, txn, tableWriter);
+        } else {
+            swapPartitionDirectories(ff, pathToTable, partitionTimestamp, tableWriter);
+        }
+    }
+
+    private static void swapPartitionDirectories(FilesFacade ff, CharSequence pathToTable, long partitionTimestamp, TableWriter tableWriter) {
         final long txn = tableWriter.getTxn();
         final Path path = Path.getThreadLocal(pathToTable);
         TableUtils.setPathForPartition(path, tableWriter.getPartitionBy(), partitionTimestamp);
@@ -725,6 +739,76 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
             throw CairoException.instance(ff.errno())
                     .put("could not rename [from=").put(path)
                     .put(", to=").put(other).put(']');
+        }
+    }
+
+    private static void swapPartitionFiles(
+            FilesFacade ff,
+            CharSequence pathToTable,
+            long partitionTimestamp,
+            long srcDataTxn,
+            long txn,
+            TableWriter tableWriter
+    ) {
+        // source path - original data partition
+        // this partition may already be on non-initial txn
+        // todo: test that this code handles data txn > -1
+        final Path srcPath = Path.getThreadLocal(pathToTable);
+        TableUtils.setPathForPartition(srcPath, tableWriter.getPartitionBy(), partitionTimestamp);
+        int coreLen = srcPath.length();
+
+        TableUtils.txnPartitionConditionally(srcPath, srcDataTxn);
+        int srcLen = srcPath.length();
+
+        final Path dstPath = Path.getThreadLocal2(srcPath).concat("backup");
+        TableUtils.txnPartitionConditionally(dstPath, txn);
+        int dstLen = dstPath.length();
+
+        srcPath.put(Files.SEPARATOR);
+        srcPath.$();
+
+        dstPath.put(Files.SEPARATOR);
+        dstPath.$();
+
+        if (ff.mkdir(dstPath, 502) != 0) {
+            throw CairoException.instance(ff.errno()).put("could not create directory [path").put(dstPath).put(']');
+        }
+
+        // move all files to "backup-txn"
+        moveFiles(ff, srcPath, srcLen, dstPath, dstLen);
+
+        // not move files from "XXX-n-txn" to original partition
+        srcPath.trimTo(coreLen);
+        TableUtils.txnPartition(srcPath, txn);
+        srcLen = srcPath.length();
+
+        dstPath.trimTo(coreLen);
+        TableUtils.txnPartitionConditionally(dstPath, srcDataTxn);
+        dstLen = dstPath.length();
+
+        moveFiles(ff, srcPath.put(Files.SEPARATOR).$(), srcLen, dstPath.$(), dstLen);
+    }
+
+    private static void moveFiles(FilesFacade ff, Path srcPath, int srcLen, Path dstPath, int dstLen) {
+        long p = ff.findFirst(srcPath);
+        if (p > 0) {
+            try {
+                do {
+                    int type  = ff.findType(p);
+                    if (type == Files.DT_REG) {
+                        long lpszName = ff.findName(p);
+                        srcPath.trimTo(srcLen).concat(lpszName).$();
+                        dstPath.trimTo(dstLen).concat(lpszName).$();
+                        if (ff.rename(srcPath, dstPath)) {
+                            LOG.debug().$("renamed [from=").$(srcPath).$(", to=").$(dstPath, dstLen, dstPath.length()).$(']').$();
+                        } else {
+                            throw CairoException.instance(ff.errno()).put("could not rename file [from=").put(srcPath).put(", to=").put(dstPath).put(']');
+                        }
+                    }
+                } while (ff.findNext(p) > 0);
+            } finally {
+                ff.findClose(p);
+            }
         }
     }
 
