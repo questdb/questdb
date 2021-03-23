@@ -2405,7 +2405,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testWriteToExistingCannotConvertTimestamp() throws Exception {
+    public void testWriteIntToTimestamp() throws Exception {
         assertNoLeak(textLoader -> {
             String csv = "abcd,10\n" +
                     "efg,45\n" +
@@ -2413,9 +2413,9 @@ public class TextLoaderTest extends AbstractGriffinTest {
 
             // we would mis-detect type and have no date parser to try loading data with
             String expected = "a\tb\n" +
-                    "abcd\t\n" +
-                    "efg\t\n" +
-                    "werop\t\n";
+                    "abcd\t1970-01-01T00:00:00.000010Z\n" +
+                    "efg\t1970-01-01T00:00:00.000045Z\n" +
+                    "werop\t1970-01-01T00:00:00.000090Z\n";
 
             compiler.compile("create table test(a string, b timestamp)", sqlExecutionContext);
             configureLoaderDefaults(textLoader);

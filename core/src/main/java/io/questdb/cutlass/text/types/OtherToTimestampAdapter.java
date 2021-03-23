@@ -27,15 +27,18 @@ package io.questdb.cutlass.text.types;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableWriter;
 import io.questdb.std.Mutable;
-import io.questdb.std.NumericException;
 import io.questdb.std.str.DirectByteCharSequence;
 
-public class DateToTimestampAdapter extends TimestampAdapter implements Mutable {
-    private DateAdapter dateAdapter;
+public class OtherToTimestampAdapter extends TimestampAdapter implements Mutable {
+    private TimestampCompatibleAdapter compatibleAdapter;
 
     @Override
     public void clear() {
-        this.dateAdapter = null;
+        this.compatibleAdapter = null;
+    }
+
+    public long getTimestamp(DirectByteCharSequence value) throws Exception {
+        return compatibleAdapter.getTimestamp(value);
     }
 
     @Override
@@ -45,20 +48,16 @@ public class DateToTimestampAdapter extends TimestampAdapter implements Mutable 
 
     @Override
     public boolean probe(CharSequence text) {
-        return dateAdapter.probe(text);
+        return compatibleAdapter.probe(text);
     }
 
     @Override
     public void write(TableWriter.Row row, int column, DirectByteCharSequence value) throws Exception {
-        row.putDate(column, getTimestamp(value));
+        row.putTimestamp(column, getTimestamp(value));
     }
 
-    public long getTimestamp(DirectByteCharSequence value) throws NumericException {
-        return dateAdapter.getDate(value) * 1000 ;
-    }
-
-    public DateToTimestampAdapter of(DateAdapter dateAdapter) {
-        this.dateAdapter = dateAdapter;
+    public OtherToTimestampAdapter of(TimestampCompatibleAdapter compatibleAdapter) {
+        this.compatibleAdapter = compatibleAdapter;
         return this;
     }
 }

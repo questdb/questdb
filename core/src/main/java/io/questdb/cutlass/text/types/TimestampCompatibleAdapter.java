@@ -24,40 +24,8 @@
 
 package io.questdb.cutlass.text.types;
 
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.TableWriter;
-import io.questdb.std.Mutable;
 import io.questdb.std.str.DirectByteCharSequence;
 
-public class LongToTimestampAdapter extends TimestampAdapter implements Mutable {
-    private LongAdapter longAdapter;
-
-    @Override
-    public void clear() {
-        this.longAdapter = null;
-    }
-
-    public long getTimestamp(DirectByteCharSequence value) throws Exception {
-        return longAdapter.getLong(value);
-    }
-
-    @Override
-    public int getType() {
-        return ColumnType.TIMESTAMP;
-    }
-
-    @Override
-    public boolean probe(CharSequence text) {
-        return longAdapter.probe(text);
-    }
-
-    @Override
-    public void write(TableWriter.Row row, int column, DirectByteCharSequence value) throws Exception {
-        row.putDate(column, getTimestamp(value));
-    }
-
-    public LongToTimestampAdapter of(LongAdapter longAdapter) {
-        this.longAdapter = longAdapter;
-        return this;
-    }
+public interface TimestampCompatibleAdapter extends TypeAdapter{
+    long getTimestamp(DirectByteCharSequence value) throws Exception;
 }

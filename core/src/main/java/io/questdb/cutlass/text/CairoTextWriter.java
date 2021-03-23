@@ -45,8 +45,7 @@ public class CairoTextWriter implements Closeable, Mutable {
     private final Path path;
     private final TableStructureAdapter tableStructureAdapter = new TableStructureAdapter();
     private final TypeManager typeManager;
-    private final ObjectPool<DateToTimestampAdapter> dateToTimestampAdapterPool = new ObjectPool<>(DateToTimestampAdapter::new, 4);
-    private final ObjectPool<LongToTimestampAdapter> longToTimestampAdapterPool = new ObjectPool<>(LongToTimestampAdapter::new, 4);
+    private final ObjectPool<OtherToTimestampAdapter> otherToTimestampAdapterPool = new ObjectPool<>(OtherToTimestampAdapter::new, 4);
     private CharSequence tableName;
     private TableWriter writer;
     private long _size;
@@ -54,8 +53,10 @@ public class CairoTextWriter implements Closeable, Mutable {
     private boolean durable;
     private int atomicity;
     private int partitionBy;
-    private int timestampIndex;
-    private CharSequence timestampIndexCol;
+    private int timestampIndex = -1;
+    private CharSequence importedTimestampColumnName;
+    private CharSequence designatedTimestampColumnName;
+    private int designatedTimestampIndex;
     private ObjList<TypeAdapter> types;
     private final TextLexer.Listener nonPartitionedListener = this::onFieldsNonPartitioned;
     private TimestampAdapter timestampAdapter;
@@ -75,13 +76,15 @@ public class CairoTextWriter implements Closeable, Mutable {
 
     @Override
     public void clear() {
-        dateToTimestampAdapterPool.clear();
-        longToTimestampAdapterPool.clear();
+        otherToTimestampAdapterPool.clear();
         writer = Misc.free(writer);
         columnErrorCounts.clear();
         timestampAdapter = null;
         _size = 0;
         warnings = TextLoadWarning.NONE;
+        designatedTimestampColumnName = null;
+        designatedTimestampIndex = -1;
+        importedTimestampColumnName = null;
     }
 
     @Override
@@ -125,7 +128,7 @@ public class CairoTextWriter implements Closeable, Mutable {
     }
 
     public CharSequence getTimestampCol() {
-        return timestampIndexCol;
+        return designatedTimestampColumnName;
     }
 
     public int getWarnings() {
@@ -142,7 +145,7 @@ public class CairoTextWriter implements Closeable, Mutable {
         this.durable = durable;
         this.atomicity = atomicity;
         this.partitionBy = partitionBy;
-        this.timestampIndexCol = timestampIndexCol;
+        this.importedTimestampColumnName = timestampIndexCol;
     }
 
     public void onFieldsNonPartitioned(long line, ObjList<DirectByteCharSequence> values, int valuesLength) {
@@ -248,7 +251,8 @@ public class CairoTextWriter implements Closeable, Mutable {
         // now overwrite detected types with actual table column types
         for (int i = 0, n = this.types.size(); i < n; i++) {
             final int columnType = metadata.getColumnType(i);
-            int detectedType = this.types.getQuick(i).getType();
+            final TypeAdapter detectedAdapter = this.types.getQuick(i);
+            final int detectedType = detectedAdapter.getType();
             if (detectedType != columnType) {
                 // when DATE type is mis-detected as STRING we
                 // wouldn't have neither date format nor locale to
@@ -259,17 +263,11 @@ public class CairoTextWriter implements Closeable, Mutable {
                         this.types.setQuick(i, BadDateAdapter.INSTANCE);
                         break;
                     case ColumnType.TIMESTAMP:
-                        switch (detectedType) {
-                            case ColumnType.DATE:
-                                this.types.setQuick(i, dateToTimestampAdapterPool.next().of((DateAdapter) this.types.getQuick(i)));
-                                break;
-                            case ColumnType.LONG:
-                                this.types.setQuick(i, longToTimestampAdapterPool.next().of((LongAdapter) this.types.getQuick(i)));
-                                break;
-                            default:
-                                logTypeError(i);
-                                this.types.setQuick(i, BadTimestampAdapter.INSTANCE);
-                                break;
+                        if (detectedAdapter instanceof TimestampCompatibleAdapter) {
+                            this.types.setQuick(i, otherToTimestampAdapterPool.next().of((TimestampCompatibleAdapter) detectedAdapter));
+                        } else {
+                            logTypeError(i);
+                            this.types.setQuick(i, BadTimestampAdapter.INSTANCE);
                         }
                         break;
                     case ColumnType.BINARY:
@@ -307,11 +305,12 @@ public class CairoTextWriter implements Closeable, Mutable {
                     writer = engine.getWriter(cairoSecurityContext, tableName);
                 } else {
                     writer = openWriterAndOverrideImportTypes(cairoSecurityContext, detectedTypes);
-                    if (timestampIndexCol != null &&
-                            !Chars.equalsNc(timestampIndexCol, writer.getDesignatedTimestampColumnName())) {
+                    designatedTimestampColumnName = writer.getDesignatedTimestampColumnName();
+                    designatedTimestampIndex = writer.getMetadata().getTimestampIndex();
+                    if (importedTimestampColumnName != null &&
+                            !Chars.equalsNc(importedTimestampColumnName, designatedTimestampColumnName)) {
                         warnings |= TextLoadWarning.TIMESTAMP_MISMATCH;
                     }
-                    timestampIndexCol = writer.getDesignatedTimestampColumnName();
                     if (partitionBy != PartitionBy.NONE && partitionBy != writer.getPartitionBy()) {
                         warnings |= TextLoadWarning.PARTITION_TYPE_MISMATCH;
                     }
@@ -393,16 +392,26 @@ public class CairoTextWriter implements Closeable, Mutable {
         TableStructureAdapter of(ObjList<CharSequence> names, ObjList<TypeAdapter> types) throws TextException {
             this.names = names;
             this.types = types;
-            if (timestampIndexCol == null) {
+
+            if (importedTimestampColumnName == null && designatedTimestampColumnName == null) {
                 timestampIndex = -1;
-            } else {
-                timestampIndex = names.indexOf(timestampIndexCol);
+            } else if (importedTimestampColumnName != null) {
+                timestampIndex = names.indexOf(importedTimestampColumnName);
                 if (timestampIndex == -1) {
-                    throw TextException.$("invalid timestamp column '").put(timestampIndexCol).put('\'');
+                    throw TextException.$("invalid timestamp column '").put(importedTimestampColumnName).put('\'');
                 }
+            } else {
+                timestampIndex = names.indexOf(designatedTimestampColumnName);
+                if (timestampIndex == -1) {
+                    // columns in the imported file may not have headers, then use writer timestamp index
+                    timestampIndex = designatedTimestampIndex;
+                }
+            }
+
+            if (timestampIndex > -1) {
                 final TypeAdapter timestampAdapter = types.getQuick(timestampIndex);
                 if ((timestampAdapter.getType() != ColumnType.LONG && timestampAdapter.getType() != ColumnType.TIMESTAMP) || timestampAdapter == BadTimestampAdapter.INSTANCE) {
-                    throw TextException.$("not a timestamp '").put(timestampIndexCol).put('\'');
+                    throw TextException.$("not a timestamp '").put(importedTimestampColumnName).put('\'');
                 }
             }
             return this;
