@@ -30,6 +30,7 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.BrokenBarrierException;
+import java.util.concurrent.locks.LockSupport;
 
 import org.junit.Assert;
 
@@ -242,11 +243,10 @@ public class SendAndReceiveRequestBuilder {
             Thread.sleep(pauseBetweenSendAndReceive);
         }
 
-        boolean disconnected = false;
         boolean timeoutExpired = false;
         int received = 0;
         IntList receivedByteList = new IntList();
-        while (!disconnected) {
+        while (true) {
             int n = nf.recv(fd, ptr + received, len - received);
             if (n > 0) {
                 for (int i = 0; i < n; i++) {
@@ -258,7 +258,7 @@ public class SendAndReceiveRequestBuilder {
                 }
             } else if (n < 0) {
                 LOG.error().$("server disconnected").$();
-                disconnected = true;
+                assert listener != null;
                 listener.onClosed();
                 break;
             } else {
@@ -266,7 +266,7 @@ public class SendAndReceiveRequestBuilder {
                     timeoutExpired = true;
                     break;
                 } else {
-                    Thread.sleep(10);
+                    LockSupport.parkNanos(1);
                 }
             }
         }

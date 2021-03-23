@@ -27,53 +27,37 @@ package io.questdb.cutlass.text.types;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableWriter;
 import io.questdb.std.Mutable;
-import io.questdb.std.NumericException;
-import io.questdb.std.datetime.DateFormat;
-import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.str.DirectByteCharSequence;
 
-public class DateAdapter extends AbstractTypeAdapter implements Mutable, TimestampCompatibleAdapter {
-    private DateLocale locale;
-    private DateFormat format;
+public class OtherToTimestampAdapter extends TimestampAdapter implements Mutable {
+    private TimestampCompatibleAdapter compatibleAdapter;
 
     @Override
     public void clear() {
-        this.format = null;
-        this.locale = null;
+        this.compatibleAdapter = null;
+    }
+
+    public long getTimestamp(DirectByteCharSequence value) throws Exception {
+        return compatibleAdapter.getTimestamp(value);
     }
 
     @Override
     public int getType() {
-        return ColumnType.DATE;
+        return ColumnType.TIMESTAMP;
     }
 
     @Override
     public boolean probe(CharSequence text) {
-        try {
-            format.parse(text, locale);
-            return true;
-        } catch (NumericException e) {
-            return false;
-        }
+        return compatibleAdapter.probe(text);
     }
 
     @Override
     public void write(TableWriter.Row row, int column, DirectByteCharSequence value) throws Exception {
-        row.putDate(column, parseLong(value));
+        row.putTimestamp(column, getTimestamp(value));
     }
 
-    private long parseLong(DirectByteCharSequence value) throws NumericException {
-        return format.parse(value, locale);
-    }
-
-    @Override
-    public long getTimestamp(DirectByteCharSequence value) throws Exception {
-        return parseLong(value) * 1000;
-    }
-
-    public DateAdapter of(DateFormat format, DateLocale locale) {
-        this.format = format;
-        this.locale = locale;
+    public OtherToTimestampAdapter of(TimestampCompatibleAdapter compatibleAdapter) {
+        this.compatibleAdapter = compatibleAdapter;
         return this;
     }
 }

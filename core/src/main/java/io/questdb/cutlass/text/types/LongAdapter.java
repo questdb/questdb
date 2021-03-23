@@ -30,11 +30,20 @@ import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.str.DirectByteCharSequence;
 
-public final class LongAdapter extends AbstractTypeAdapter {
+public final class LongAdapter extends AbstractTypeAdapter implements TimestampCompatibleAdapter {
 
     public static final LongAdapter INSTANCE = new LongAdapter();
 
     private LongAdapter() {
+    }
+
+    public long getLong(DirectByteCharSequence value) throws Exception {
+        return Numbers.parseLong(value);
+    }
+
+    @Override
+    public long getTimestamp(DirectByteCharSequence value) throws Exception {
+        return getLong(value);
     }
 
     @Override
@@ -57,6 +66,6 @@ public final class LongAdapter extends AbstractTypeAdapter {
 
     @Override
     public void write(TableWriter.Row row, int column, DirectByteCharSequence value) throws Exception {
-        row.putLong(column, Numbers.parseLong(value));
+        row.putLong(column, getLong(value));
     }
 }
