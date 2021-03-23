@@ -45,6 +45,8 @@ public class CairoTextWriter implements Closeable, Mutable {
     private final Path path;
     private final TableStructureAdapter tableStructureAdapter = new TableStructureAdapter();
     private final TypeManager typeManager;
+    private final ObjectPool<DateToTimestampAdapter> dateToTimestampAdapterPool = new ObjectPool<>(DateToTimestampAdapter::new, 4);
+    private final ObjectPool<LongToTimestampAdapter> longToTimestampAdapterPool = new ObjectPool<>(LongToTimestampAdapter::new, 4);
     private CharSequence tableName;
     private TableWriter writer;
     private long _size;
@@ -58,7 +60,6 @@ public class CairoTextWriter implements Closeable, Mutable {
     private final TextLexer.Listener nonPartitionedListener = this::onFieldsNonPartitioned;
     private TimestampAdapter timestampAdapter;
     private final TextLexer.Listener partitionedListener = this::onFieldsPartitioned;
-    private final ObjectPool<DateToTimestampAdapter> dateToTimestampAdapterPool = new ObjectPool<>(DateToTimestampAdapter::new, 4);
     private int warnings;
 
     public CairoTextWriter(
@@ -75,6 +76,7 @@ public class CairoTextWriter implements Closeable, Mutable {
     @Override
     public void clear() {
         dateToTimestampAdapterPool.clear();
+        longToTimestampAdapterPool.clear();
         writer = Misc.free(writer);
         columnErrorCounts.clear();
         timestampAdapter = null;
@@ -150,22 +152,7 @@ public class CairoTextWriter implements Closeable, Mutable {
             if (dbcs.length() == 0) {
                 continue;
             }
-            try {
-                types.getQuick(i).write(w, i, dbcs);
-            } catch (Exception ignore) {
-                logError(line, i, dbcs);
-                switch (atomicity) {
-                    case Atomicity.SKIP_ALL:
-                        writer.rollback();
-                        throw CairoException.instance(0).put("bad syntax [line=").put(line).put(", col=").put(i).put(']');
-                    case Atomicity.SKIP_ROW:
-                        w.cancel();
-                        return;
-                    default:
-                        // SKIP column
-                        break;
-                }
-            }
+            if (onField(line, dbcs, w, i)) return;
         }
         w.append();
     }
@@ -180,25 +167,10 @@ public class CairoTextWriter implements Closeable, Mutable {
                 if (i == timestampIndex || dbcs.length() == 0) {
                     continue;
                 }
-                try {
-                    types.getQuick(i).write(w, i, dbcs);
-                } catch (Exception ignore) {
-                    logError(line, i, dbcs);
-                    switch (atomicity) {
-                        case Atomicity.SKIP_ALL:
-                            writer.rollback();
-                            throw CairoException.instance(0).put("bad syntax [line=").put(line).put(", col=").put(i).put(']');
-                        case Atomicity.SKIP_ROW:
-                            w.cancel();
-                            return;
-                        default:
-                            // SKIP column
-                            break;
-                    }
-                }
+                if (onField(line, dbcs, w, i)) return;
             }
             w.append();
-        } catch (NumericException e) {
+        } catch (Exception e) {
             logError(line, timestampIndex, dbcs);
         }
     }
@@ -229,6 +201,26 @@ public class CairoTextWriter implements Closeable, Mutable {
                 .$(", column=").$(i)
                 .$(", type=").$(ColumnType.nameOf(this.types.getQuick(i).getType()))
                 .$(']').$();
+    }
+
+    private boolean onField(long line, DirectByteCharSequence dbcs, TableWriter.Row w, int i) {
+        try {
+            types.getQuick(i).write(w, i, dbcs);
+        } catch (Exception ignore) {
+            logError(line, i, dbcs);
+            switch (atomicity) {
+                case Atomicity.SKIP_ALL:
+                    writer.rollback();
+                    throw CairoException.instance(0).put("bad syntax [line=").put(line).put(", col=").put(i).put(']');
+                case Atomicity.SKIP_ROW:
+                    w.cancel();
+                    return true;
+                default:
+                    // SKIP column
+                    break;
+            }
+        }
+        return false;
     }
 
     private TableWriter openWriterAndOverrideImportTypes(
@@ -267,11 +259,17 @@ public class CairoTextWriter implements Closeable, Mutable {
                         this.types.setQuick(i, BadDateAdapter.INSTANCE);
                         break;
                     case ColumnType.TIMESTAMP:
-                        if (detectedType == ColumnType.DATE) {
-                            this.types.setQuick(i, dateToTimestampAdapterPool.next().of((DateAdapter) this.types.getQuick(i)));
-                        } else {
-                            logTypeError(i);
-                            this.types.setQuick(i, BadTimestampAdapter.INSTANCE);
+                        switch (detectedType) {
+                            case ColumnType.DATE:
+                                this.types.setQuick(i, dateToTimestampAdapterPool.next().of((DateAdapter) this.types.getQuick(i)));
+                                break;
+                            case ColumnType.LONG:
+                                this.types.setQuick(i, longToTimestampAdapterPool.next().of((LongAdapter) this.types.getQuick(i)));
+                                break;
+                            default:
+                                logTypeError(i);
+                                this.types.setQuick(i, BadTimestampAdapter.INSTANCE);
+                                break;
                         }
                         break;
                     case ColumnType.BINARY:
@@ -283,7 +281,6 @@ public class CairoTextWriter implements Closeable, Mutable {
                 }
             }
         }
-
         return writer;
     }
 
@@ -404,7 +401,7 @@ public class CairoTextWriter implements Closeable, Mutable {
                     throw TextException.$("invalid timestamp column '").put(timestampIndexCol).put('\'');
                 }
                 final TypeAdapter timestampAdapter = types.getQuick(timestampIndex);
-                if (timestampAdapter.getType() != ColumnType.TIMESTAMP || timestampAdapter == BadTimestampAdapter.INSTANCE) {
+                if ((timestampAdapter.getType() != ColumnType.LONG && timestampAdapter.getType() != ColumnType.TIMESTAMP) || timestampAdapter == BadTimestampAdapter.INSTANCE) {
                     throw TextException.$("not a timestamp '").put(timestampIndexCol).put('\'');
                 }
             }

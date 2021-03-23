@@ -37,6 +37,10 @@ public final class LongAdapter extends AbstractTypeAdapter {
     private LongAdapter() {
     }
 
+    public long getLong(DirectByteCharSequence value) throws Exception {
+        return Numbers.parseLong(value);
+    }
+
     @Override
     public int getType() {
         return ColumnType.LONG;
@@ -57,6 +61,6 @@ public final class LongAdapter extends AbstractTypeAdapter {
 
     @Override
     public void write(TableWriter.Row row, int column, DirectByteCharSequence value) throws Exception {
-        row.putLong(column, Numbers.parseLong(value));
+        row.putLong(column, getLong(value));
     }
 }

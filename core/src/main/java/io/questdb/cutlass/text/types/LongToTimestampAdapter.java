@@ -27,19 +27,18 @@ package io.questdb.cutlass.text.types;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableWriter;
 import io.questdb.std.Mutable;
-import io.questdb.std.NumericException;
-import io.questdb.std.datetime.DateFormat;
-import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.str.DirectByteCharSequence;
 
-public class TimestampAdapter extends AbstractTypeAdapter implements Mutable {
-    private DateLocale locale;
-    private DateFormat format;
+public class LongToTimestampAdapter extends TimestampAdapter implements Mutable {
+    private LongAdapter longAdapter;
 
     @Override
     public void clear() {
-        this.format = null;
-        this.locale = null;
+        this.longAdapter = null;
+    }
+
+    public long getTimestamp(DirectByteCharSequence value) throws Exception {
+        return longAdapter.getLong(value);
     }
 
     @Override
@@ -49,26 +48,16 @@ public class TimestampAdapter extends AbstractTypeAdapter implements Mutable {
 
     @Override
     public boolean probe(CharSequence text) {
-        try {
-            format.parse(text, locale);
-            return true;
-        } catch (NumericException e) {
-            return false;
-        }
+        return longAdapter.probe(text);
     }
 
     @Override
     public void write(TableWriter.Row row, int column, DirectByteCharSequence value) throws Exception {
-        row.putDate(column, format.parse(value, locale));
+        row.putDate(column, getTimestamp(value));
     }
 
-    public long getTimestamp(DirectByteCharSequence value) throws Exception {
-        return format.parse(value, locale);
-    }
-
-    public TimestampAdapter of(DateFormat format, DateLocale locale) {
-        this.format = format;
-        this.locale = locale;
+    public LongToTimestampAdapter of(LongAdapter longAdapter) {
+        this.longAdapter = longAdapter;
         return this;
     }
 }

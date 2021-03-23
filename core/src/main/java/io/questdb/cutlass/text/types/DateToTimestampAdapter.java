@@ -30,7 +30,7 @@ import io.questdb.std.Mutable;
 import io.questdb.std.NumericException;
 import io.questdb.std.str.DirectByteCharSequence;
 
-public class DateToTimestampAdapter extends AbstractTypeAdapter implements Mutable {
+public class DateToTimestampAdapter extends TimestampAdapter implements Mutable {
     private DateAdapter dateAdapter;
 
     @Override
