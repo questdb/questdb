@@ -28,7 +28,9 @@ import io.questdb.MessageBus;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.*;
-import io.questdb.std.*;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 import io.questdb.tasks.OutOfOrderCopyTask;
 import io.questdb.tasks.OutOfOrderUpdPartitionSizeTask;
 
@@ -519,7 +521,7 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
     ) {
         if (srcTimestampFd < 0) {
             tableWriter.closeActivePartition();
-        } else {
+        } else if (srcTimestampFd > 0) {
             ff.close(srcTimestampFd);
         }
         notifyWriter(
