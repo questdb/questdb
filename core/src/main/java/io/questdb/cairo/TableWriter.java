@@ -2665,7 +2665,11 @@ public class TableWriter implements Closeable {
         final int partitionIndex = txFile.findAttachedPartitionIndexByLoTimestamp(partitionTimestamp);
         if (partitionMutates) {
             final long srcDataTxn = txFile.getPartitionNameTxnByIndex(partitionIndex);
-            if (getOooErrorCount() == 0 && acquireWriterLock(partitionTimestamp, srcDataTxn)) {
+            if (
+                    configuration.isOutOfOrderRenameEnabled()
+                            && getOooErrorCount() == 0
+                            && acquireWriterLock(partitionTimestamp, srcDataTxn)
+            ) {
                 LOG.info()
                         .$("lock successful [table=`").utf8(path)
                         .$("`, ts=").$ts(partitionTimestamp)

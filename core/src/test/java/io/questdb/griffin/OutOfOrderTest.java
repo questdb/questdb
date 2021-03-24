@@ -26,24 +26,21 @@ package io.questdb.griffin;
 
 import io.questdb.WorkerPoolAwareConfiguration;
 import io.questdb.cairo.*;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
-import io.questdb.cairo.sql.BindVariableService;
-import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.NumericException;
+import io.questdb.std.Os;
+import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.DirectCharSink;
 import io.questdb.std.str.MutableCharSink;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
-import org.junit.After;
-import org.junit.Assert;
-import org.junit.Before;
-import org.junit.Test;
+import org.junit.*;
 
 import java.io.File;
 import java.net.URISyntaxException;
@@ -54,10 +51,6 @@ public class OutOfOrderTest extends AbstractCairoTest {
     protected static final StringSink sink2 = new StringSink();
     private final static Log LOG = LogFactory.getLog(OutOfOrderTest.class);
 
-    private CairoEngine engine;
-    private SqlCompiler compiler;
-    private SqlExecutionContext sqlExecutionContext;
-
     @Before
     public void setUp3() {
         configuration = new DefaultCairoConfiguration(root) {
@@ -67,19 +60,6 @@ public class OutOfOrderTest extends AbstractCairoTest {
             }
         };
 
-        engine = new CairoEngine(configuration);
-        BindVariableService bindVariableService = new BindVariableServiceImpl(configuration);
-        compiler = new SqlCompiler(engine);
-        sqlExecutionContext = new SqlExecutionContextImpl(
-                engine, 1)
-                .with(
-                        AllowAllCairoSecurityContext.INSTANCE,
-                        bindVariableService,
-                        null,
-                        -1,
-                        null);
-        bindVariableService.clear();
-
         SharedRandom.RANDOM.set(new Rnd());
 
         // instantiate these paths so that they are not included in memory leak test
@@ -87,21 +67,11 @@ public class OutOfOrderTest extends AbstractCairoTest {
         Path.PATH2.get();
     }
 
-    @After
-    public void tearDown3() {
-        Misc.free(compiler);
-        Misc.free(engine);
-    }
-
     @Test
     public void testBench() throws Exception {
         // On OSX it's not trivial to increase open file limit per process
         if (Os.type != Os.OSX) {
-            executeVanilla(() -> testBench0(
-                    engine,
-                    compiler,
-                    sqlExecutionContext
-            ));
+            executeVanilla(OutOfOrderTest::testBench0);
         }
     }
 
@@ -116,10 +86,15 @@ public class OutOfOrderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testBench2ParallelNR() throws Exception {
+        executeWithPool(8, false, this::bench20);
+    }
+
+    @Test
     public void testBenchContended() throws Exception {
         // On OSX it's not trivial to increase open file limit per process
         if (Os.type != Os.OSX) {
-            executeWithPool(0, this::testBench0);
+            executeWithPool(0, OutOfOrderTest::testBench0);
         }
     }
 
@@ -127,17 +102,13 @@ public class OutOfOrderTest extends AbstractCairoTest {
     public void testBenchParallel() throws Exception {
         // On OSX it's not trivial to increase open file limit per process
         if (Os.type != Os.OSX) {
-            executeWithPool(4, this::testBench0);
+            executeWithPool(4, OutOfOrderTest::testBench0);
         }
     }
 
     @Test
     public void testColumnTopLastAppend() throws Exception {
-        executeVanilla(() -> testColumnTopLastAppendColumn0(
-                engine,
-                compiler,
-                sqlExecutionContext
-        ));
+        executeVanilla(OutOfOrderTest::testColumnTopLastAppendColumn0);
     }
 
     @Test
@@ -152,20 +123,12 @@ public class OutOfOrderTest extends AbstractCairoTest {
 
     @Test
     public void testColumnTopLastDataMerge() throws Exception {
-        executeVanilla(() -> testColumnTopLastDataMergeData0(
-                engine,
-                compiler,
-                sqlExecutionContext
-        ));
+        executeVanilla(OutOfOrderTest::testColumnTopLastDataMergeData0);
     }
 
     @Test
     public void testColumnTopLastDataMerge2Data() throws Exception {
-        executeVanilla(() -> testColumnTopLastDataMerge2Data0(
-                engine,
-                compiler,
-                sqlExecutionContext
-        ));
+        executeVanilla(OutOfOrderTest::testColumnTopLastDataMerge2Data0);
     }
 
     @Test
@@ -179,6 +142,11 @@ public class OutOfOrderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testColumnTopLastDataMerge2DataParallelNR() throws Exception {
+        executeWithPool(4, false, OutOfOrderTest::testColumnTopLastDataMerge2Data0);
+    }
+
+    @Test
     public void testColumnTopLastDataMergeDataContended() throws Exception {
         executeWithPool(0, OutOfOrderTest::testColumnTopLastDataMergeData0);
     }
@@ -189,12 +157,13 @@ public class OutOfOrderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testColumnTopLastDataMergeDataParallelNR() throws Exception {
+        executeWithPool(4, false, OutOfOrderTest::testColumnTopLastDataMergeData0);
+    }
+
+    @Test
     public void testColumnTopLastDataOOOData() throws Exception {
-        executeVanilla(() -> testColumnTopLastDataOOOData0(
-                engine,
-                compiler,
-                sqlExecutionContext
-        ));
+        executeVanilla(OutOfOrderTest::testColumnTopLastDataOOOData0);
     }
 
     @Test
@@ -208,12 +177,13 @@ public class OutOfOrderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testColumnTopLastDataOOODataParallelNR() throws Exception {
+        executeWithPool(4, false, OutOfOrderTest::testColumnTopLastDataOOOData0);
+    }
+
+    @Test
     public void testColumnTopLastOOOData() throws Exception {
-        executeVanilla(() -> testColumnTopLastOOOData0(
-                engine,
-                compiler,
-                sqlExecutionContext
-        ));
+        executeVanilla(OutOfOrderTest::testColumnTopLastOOOData0);
     }
 
     @Test
@@ -227,12 +197,13 @@ public class OutOfOrderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testColumnTopLastOOODataParallelNR() throws Exception {
+        executeWithPool(4, false, OutOfOrderTest::testColumnTopLastOOOData0);
+    }
+
+    @Test
     public void testColumnTopLastOOOPrefix() throws Exception {
-        executeVanilla(() -> testColumnTopLastOOOPrefix0(
-                engine,
-                compiler,
-                sqlExecutionContext
-        ));
+        executeVanilla(OutOfOrderTest::testColumnTopLastOOOPrefix0);
     }
 
     @Test
@@ -246,26 +217,28 @@ public class OutOfOrderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testColumnTopLastOOOPrefixParallelNR() throws Exception {
+        executeWithPool(4, false, OutOfOrderTest::testColumnTopLastOOOPrefix0);
+    }
+
+    @Test
     public void testColumnTopLastParallel() throws Exception {
         executeWithPool(4, OutOfOrderTest::testColumnTopLastAppendColumn0);
     }
 
     @Test
+    public void testColumnTopLastParallelNR() throws Exception {
+        executeWithPool(4, false, OutOfOrderTest::testColumnTopLastAppendColumn0);
+    }
+
+    @Test
     public void testColumnTopMidAppend() throws Exception {
-        executeVanilla(() -> testColumnTopMidAppendColumn0(
-                engine,
-                compiler,
-                sqlExecutionContext
-        ));
+        executeVanilla(OutOfOrderTest::testColumnTopMidAppendColumn0);
     }
 
     @Test
     public void testColumnTopMidAppendBlank() throws Exception {
-        executeVanilla(() -> testColumnTopMidAppendBlankColumn0(
-                engine,
-                compiler,
-                sqlExecutionContext
-        ));
+        executeVanilla(OutOfOrderTest::testColumnTopMidAppendBlankColumn0);
     }
 
     @Test
@@ -279,6 +252,11 @@ public class OutOfOrderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testColumnTopMidAppendBlankParallelNR() throws Exception {
+        executeWithPool(4, false, OutOfOrderTest::testColumnTopMidAppendBlankColumn0);
+    }
+
+    @Test
     public void testColumnTopMidAppendContended() throws Exception {
         executeWithPool(0, OutOfOrderTest::testColumnTopMidAppendColumn0);
     }
@@ -289,12 +267,13 @@ public class OutOfOrderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testColumnTopMidAppendParallelNR() throws Exception {
+        executeWithPool(4, false, OutOfOrderTest::testColumnTopMidAppendColumn0);
+    }
+
+    @Test
     public void testColumnTopMidDataMergeData() throws Exception {
-        executeVanilla(() -> testColumnTopMidDataMergeData0(
-                engine,
-                compiler,
-                sqlExecutionContext
-        ));
+        executeVanilla(OutOfOrderTest::testColumnTopMidDataMergeData0);
     }
 
     @Test
@@ -308,12 +287,13 @@ public class OutOfOrderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testColumnTopMidDataMergeDataParallelNR() throws Exception {
+        executeWithPool(4, false, OutOfOrderTest::testColumnTopMidDataMergeData0);
+    }
+
+    @Test
     public void testColumnTopMidMergeBlank() throws Exception {
-        executeVanilla(() -> testColumnTopMidMergeBlankColumn0(
-                engine,
-                compiler,
-                sqlExecutionContext
-        ));
+        executeVanilla(OutOfOrderTest::testColumnTopMidMergeBlankColumn0);
     }
 
     @Test
@@ -327,12 +307,13 @@ public class OutOfOrderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testColumnTopMidMergeBlankParallelNR() throws Exception {
+        executeWithPool(4, false, OutOfOrderTest::testColumnTopMidMergeBlankColumn0);
+    }
+
+    @Test
     public void testColumnTopMidOOOData() throws Exception {
-        executeVanilla(() -> testColumnTopMidOOOData0(
-                engine,
-                compiler,
-                sqlExecutionContext
-        ));
+        executeVanilla(OutOfOrderTest::testColumnTopMidOOOData0);
     }
 
     @Test
@@ -346,6 +327,11 @@ public class OutOfOrderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testColumnTopMidOOODataParallelNR() throws Exception {
+        executeWithPool(4, false, OutOfOrderTest::testColumnTopMidOOOData0);
+    }
+
+    @Test
     public void testColumnTopNewPartitionMiddleOfTableContended() throws Exception {
         executeWithPool(0, OutOfOrderTest::testColumnTopNewPartitionMiddleOfTable0);
     }
@@ -356,14 +342,18 @@ public class OutOfOrderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testColumnTopNewPartitionMiddleOfTableParallelNR() throws Exception {
+        executeWithPool(4, false, OutOfOrderTest::testColumnTopNewPartitionMiddleOfTable0);
+    }
+
+    @Test
+    public void testOOOFollowedByAnotherOOONR() throws Exception {
+        executeWithPool(4, false, OutOfOrderTest::testOooFollowedByAnotherOOO0);
+    }
+
+    @Test
     public void testPartitionedDataAppendOOData() throws Exception {
-        executeVanilla(
-                () -> testPartitionedDataAppendOOData0(
-                        engine,
-                        compiler,
-                        sqlExecutionContext
-                )
-        );
+        executeVanilla(OutOfOrderTest::testPartitionedDataAppendOOData0);
     }
 
     @Test
@@ -373,12 +363,7 @@ public class OutOfOrderTest extends AbstractCairoTest {
 
     @Test
     public void testPartitionedDataAppendOODataIndexed() throws Exception {
-        executeVanilla(() -> testPartitionedDataAppendOODataIndexed0(
-                engine,
-                compiler,
-                sqlExecutionContext
-                )
-        );
+        executeVanilla(OutOfOrderTest::testPartitionedDataAppendOODataIndexed0);
     }
 
     @Test
@@ -392,8 +377,13 @@ public class OutOfOrderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPartitionedDataAppendOODataIndexedParallelNR() throws Exception {
+        executeWithPool(4, false, OutOfOrderTest::testPartitionedDataAppendOODataIndexed0);
+    }
+
+    @Test
     public void testPartitionedDataAppendOODataNotNullStrTail() throws Exception {
-        executeVanilla(() -> testPartitionedDataAppendOODataNotNullStrTail0(engine, compiler, sqlExecutionContext));
+        executeVanilla(OutOfOrderTest::testPartitionedDataAppendOODataNotNullStrTail0);
     }
 
     @Test
@@ -407,18 +397,23 @@ public class OutOfOrderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPartitionedDataAppendOODataNotNullStrTailParallelNR() throws Exception {
+        executeWithPool(4, false, OutOfOrderTest::testPartitionedDataAppendOODataNotNullStrTail0);
+    }
+
+    @Test
     public void testPartitionedDataAppendOODataParallel() throws Exception {
         executeWithPool(4, OutOfOrderTest::testPartitionedDataAppendOOData0);
     }
 
     @Test
+    public void testPartitionedDataAppendOODataParallelNR() throws Exception {
+        executeWithPool(4, false, OutOfOrderTest::testPartitionedDataAppendOOData0);
+    }
+
+    @Test
     public void testPartitionedDataAppendOOPrependOOData() throws Exception {
-        executeVanilla(() -> testPartitionedDataAppendOOPrependOOData0(
-                engine,
-                compiler,
-                sqlExecutionContext
-                )
-        );
+        executeVanilla(OutOfOrderTest::testPartitionedDataAppendOOPrependOOData0);
     }
 
     @Test
@@ -432,8 +427,13 @@ public class OutOfOrderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPartitionedDataAppendOOPrependOODataParallelNR() throws Exception {
+        executeWithPool(4, false, OutOfOrderTest::testPartitionedDataAppendOOPrependOOData0);
+    }
+
+    @Test
     public void testPartitionedDataMergeData() throws Exception {
-        executeVanilla(() -> testPartitionedDataMergeData0(engine, compiler, sqlExecutionContext));
+        executeVanilla(OutOfOrderTest::testPartitionedDataMergeData0);
     }
 
     @Test
@@ -447,8 +447,13 @@ public class OutOfOrderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPartitionedDataMergeDataParallelNR() throws Exception {
+        executeWithPool(4, false, OutOfOrderTest::testPartitionedDataMergeData0);
+    }
+
+    @Test
     public void testPartitionedDataMergeEnd() throws Exception {
-        executeVanilla(() -> testPartitionedDataMergeEnd0(engine, compiler, sqlExecutionContext));
+        executeVanilla(OutOfOrderTest::testPartitionedDataMergeEnd0);
     }
 
     @Test
@@ -462,8 +467,13 @@ public class OutOfOrderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPartitionedDataMergeEndParallelNR() throws Exception {
+        executeWithPool(4, false, OutOfOrderTest::testPartitionedDataMergeEnd0);
+    }
+
+    @Test
     public void testPartitionedDataOOData() throws Exception {
-        executeVanilla(() -> testPartitionedDataOOData0(engine, compiler, sqlExecutionContext));
+        executeVanilla(OutOfOrderTest::testPartitionedDataOOData0);
     }
 
     @Test
@@ -477,12 +487,13 @@ public class OutOfOrderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPartitionedDataOODataParallelNR() throws Exception {
+        executeWithPool(4, false, OutOfOrderTest::testPartitionedDataOOData0);
+    }
+
+    @Test
     public void testPartitionedDataOODataPbOOData() throws Exception {
-        executeVanilla(() -> testPartitionedDataOODataPbOOData0(
-                engine,
-                compiler,
-                sqlExecutionContext
-        ));
+        executeVanilla(OutOfOrderTest::testPartitionedDataOODataPbOOData0);
     }
 
     @Test
@@ -501,8 +512,13 @@ public class OutOfOrderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPartitionedDataOODataPbOODataParallelNR() throws Exception {
+        executeWithPool(4, false, OutOfOrderTest::testPartitionedDataOODataPbOOData0);
+    }
+
+    @Test
     public void testPartitionedDataOOIntoLastIndexSearchBug() throws Exception {
-        executeVanilla(() -> testPartitionedDataOOIntoLastIndexSearchBug0(engine, compiler, sqlExecutionContext));
+        executeVanilla(OutOfOrderTest::testPartitionedDataOOIntoLastIndexSearchBug0);
     }
 
     @Test
@@ -516,8 +532,13 @@ public class OutOfOrderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPartitionedDataOOIntoLastIndexSearchBugParallelNR() throws Exception {
+        executeWithPool(4, false, OutOfOrderTest::testPartitionedDataOOIntoLastIndexSearchBug0);
+    }
+
+    @Test
     public void testPartitionedDataOOIntoLastOverflowIntoNewPartition() throws Exception {
-        executeVanilla(() -> testPartitionedDataOOIntoLastOverflowIntoNewPartition0(engine, compiler, sqlExecutionContext));
+        executeVanilla(OutOfOrderTest::testPartitionedDataOOIntoLastOverflowIntoNewPartition0);
     }
 
     @Test
@@ -531,8 +552,13 @@ public class OutOfOrderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPartitionedDataOOIntoLastOverflowIntoNewPartitionParallelNR() throws Exception {
+        executeWithPool(4, false, OutOfOrderTest::testPartitionedDataOOIntoLastOverflowIntoNewPartition0);
+    }
+
+    @Test
     public void testPartitionedOOData() throws Exception {
-        executeVanilla(() -> testPartitionedOOData0(engine, compiler, sqlExecutionContext));
+        executeVanilla(OutOfOrderTest::testPartitionedOOData0);
     }
 
     @Test
@@ -542,7 +568,7 @@ public class OutOfOrderTest extends AbstractCairoTest {
 
     @Test
     public void testPartitionedOODataOOCollapsed() throws Exception {
-        executeVanilla(() -> testPartitionedOODataOOCollapsed0(engine, compiler, sqlExecutionContext));
+        executeVanilla(OutOfOrderTest::testPartitionedOODataOOCollapsed0);
     }
 
     @Test
@@ -556,13 +582,23 @@ public class OutOfOrderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPartitionedOODataOOCollapsedParallelNR() throws Exception {
+        executeWithPool(4, false, OutOfOrderTest::testPartitionedOODataOOCollapsed0);
+    }
+
+    @Test
     public void testPartitionedOODataParallel() throws Exception {
         executeWithPool(4, OutOfOrderTest::testPartitionedOOData0);
     }
 
     @Test
+    public void testPartitionedOODataParallelNR() throws Exception {
+        executeWithPool(4, false, OutOfOrderTest::testPartitionedOOData0);
+    }
+
+    @Test
     public void testPartitionedOODataUpdateMinTimestamp() throws Exception {
-        executeVanilla(() -> testPartitionedOODataUpdateMinTimestamp0(engine, compiler, sqlExecutionContext));
+        executeVanilla(OutOfOrderTest::testPartitionedOODataUpdateMinTimestamp0);
     }
 
     @Test
@@ -576,8 +612,13 @@ public class OutOfOrderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPartitionedOODataUpdateMinTimestampParallelNR() throws Exception {
+        executeWithPool(4, false, OutOfOrderTest::testPartitionedOODataUpdateMinTimestamp0);
+    }
+
+    @Test
     public void testPartitionedOOMerge() throws Exception {
-        executeVanilla(() -> testPartitionedOOMerge0(engine, compiler, sqlExecutionContext));
+        executeVanilla(OutOfOrderTest::testPartitionedOOMerge0);
     }
 
     @Test
@@ -587,7 +628,7 @@ public class OutOfOrderTest extends AbstractCairoTest {
 
     @Test
     public void testPartitionedOOMergeData() throws Exception {
-        executeVanilla(() -> testPartitionedOOMergeData0(engine, compiler, sqlExecutionContext));
+        executeVanilla(OutOfOrderTest::testPartitionedOOMergeData0);
     }
 
     @Test
@@ -601,8 +642,13 @@ public class OutOfOrderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPartitionedOOMergeDataParallelNR() throws Exception {
+        executeWithPool(4, false, OutOfOrderTest::testPartitionedOOMergeData0);
+    }
+
+    @Test
     public void testPartitionedOOMergeOO() throws Exception {
-        executeVanilla(() -> testPartitionedOOMergeOO0(engine, compiler, sqlExecutionContext));
+        executeVanilla(OutOfOrderTest::testPartitionedOOMergeOO0);
     }
 
     @Test
@@ -616,13 +662,23 @@ public class OutOfOrderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPartitionedOOMergeOOParallelNR() throws Exception {
+        executeWithPool(4, false, OutOfOrderTest::testPartitionedOOMergeOO0);
+    }
+
+    @Test
     public void testPartitionedOOMergeParallel() throws Exception {
         executeWithPool(4, OutOfOrderTest::testPartitionedOOMerge0);
     }
 
     @Test
+    public void testPartitionedOOMergeParallelNR() throws Exception {
+        executeWithPool(4, false, OutOfOrderTest::testPartitionedOOMerge0);
+    }
+
+    @Test
     public void testPartitionedOOONullSetters() throws Exception {
-        executeVanilla(() -> testPartitionedOOONullSetters0(engine, compiler, sqlExecutionContext));
+        executeVanilla(OutOfOrderTest::testPartitionedOOONullSetters0);
     }
 
     @Test
@@ -633,6 +689,51 @@ public class OutOfOrderTest extends AbstractCairoTest {
     @Test
     public void testPartitionedOOONullSettersParallel() throws Exception {
         executeWithPool(4, OutOfOrderTest::testPartitionedOOONullSetters0);
+    }
+
+    @Test
+    public void testPartitionedOOONullSettersParallelNR() throws Exception {
+        executeWithPool(4, false, OutOfOrderTest::testPartitionedOOONullSetters0);
+    }
+
+    @Test
+    public void testPartitionedOOPrefixesExistingPartitions() throws Exception {
+        executeVanilla(OutOfOrderTest::testPartitionedOOPrefixesExistingPartitions0);
+    }
+
+    @Test
+    public void testPartitionedOOPrefixesExistingPartitionsContended() throws Exception {
+        executeWithPool(0, OutOfOrderTest::testPartitionedOOPrefixesExistingPartitions0);
+    }
+
+    @Test
+    public void testPartitionedOOPrefixesExistingPartitionsParallel() throws Exception {
+        executeWithPool(4, OutOfOrderTest::testPartitionedOOPrefixesExistingPartitions0);
+    }
+
+    @Test
+    public void testPartitionedOOPrefixesExistingPartitionsParallelNR() throws Exception {
+        executeWithPool(4, false, OutOfOrderTest::testPartitionedOOPrefixesExistingPartitions0);
+    }
+
+    @Test
+    public void testPartitionedOOTopAndBottom() throws Exception {
+        executeVanilla(OutOfOrderTest::testPartitionedOOTopAndBottom0);
+    }
+
+    @Test
+    public void testPartitionedOOTopAndBottomContended() throws Exception {
+        executeWithPool(0, OutOfOrderTest::testPartitionedOOTopAndBottom0);
+    }
+
+    @Test
+    public void testPartitionedOOTopAndBottomParallel() throws Exception {
+        executeWithPool(4, OutOfOrderTest::testPartitionedOOTopAndBottom0);
+    }
+
+    @Test
+    public void testPartitionedOOTopAndBottomParallelNR() throws Exception {
+        executeWithPool(4, false, OutOfOrderTest::testPartitionedOOTopAndBottom0);
     }
 
     private static void testPartitionedOOONullSetters0(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext)
@@ -671,36 +772,6 @@ public class OutOfOrderTest extends AbstractCairoTest {
                 "NaN\tNaN\t40\t2013-02-10T00:11:00.000000Z\n";
 
         TestUtils.assertEquals(expected, sink);
-    }
-
-    @Test
-    public void testPartitionedOOPrefixesExistingPartitions() throws Exception {
-        executeVanilla(() -> testPartitionedOOPrefixesExistingPartitions0(engine, compiler, sqlExecutionContext));
-    }
-
-    @Test
-    public void testPartitionedOOPrefixesExistingPartitionsContended() throws Exception {
-        executeWithPool(0, OutOfOrderTest::testPartitionedOOPrefixesExistingPartitions0);
-    }
-
-    @Test
-    public void testPartitionedOOPrefixesExistingPartitionsParallel() throws Exception {
-        executeWithPool(4, OutOfOrderTest::testPartitionedOOPrefixesExistingPartitions0);
-    }
-
-    @Test
-    public void testPartitionedOOTopAndBottom() throws Exception {
-        executeVanilla(() -> testPartitionedOOTopAndBottom0(engine, compiler, sqlExecutionContext));
-    }
-
-    @Test
-    public void testPartitionedOOTopAndBottomContended() throws Exception {
-        executeWithPool(0, OutOfOrderTest::testPartitionedOOTopAndBottom0);
-    }
-
-    @Test
-    public void testPartitionedOOTopAndBottomParallel() throws Exception {
-        executeWithPool(4, OutOfOrderTest::testPartitionedOOTopAndBottom0);
     }
 
     private static void testPartitionedDataAppendOOPrependOOData0(
@@ -1277,6 +1348,108 @@ public class OutOfOrderTest extends AbstractCairoTest {
                         " rnd_symbol(4,4,4,2) ik," +
                         " rnd_long() j," +
                         " timestamp_sequence(20000000000,1000000L) ts," +
+                        " rnd_byte(2,50) l," +
+                        " rnd_bin(10, 20, 2) m," +
+                        " rnd_str(5,16,2) n," +
+                        " rnd_char() t" +
+                        " from long_sequence(100)" +
+                        ") timestamp (ts) partition by DAY",
+                sqlExecutionContext
+        );
+
+        // create third table, which will contain both X and 1AM
+        compiler.compile("create table y as (x union all 1am union all tail)", sqlExecutionContext);
+
+        // expected outcome
+        printSqlResult(compiler, sqlExecutionContext, "y order by ts");
+
+        String expected = Chars.toString(sink);
+
+        // insert 1AM data into X
+        compiler.compile("insert into x select * from 1am", sqlExecutionContext);
+        compiler.compile("insert into x select * from tail", sqlExecutionContext);
+
+        printSqlResult(compiler, sqlExecutionContext, "x");
+
+        TestUtils.assertEquals(expected, sink);
+
+        testXAndIndex(engine, compiler, sqlExecutionContext, expected);
+
+    }
+
+    private static void testOooFollowedByAnotherOOO0(
+            CairoEngine engine,
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
+        compiler.compile(
+                "create table x as (" +
+                        "select" +
+                        " cast(x as int) i," +
+                        " rnd_symbol('msft','ibm', 'googl') sym," +
+                        " round(rnd_double(0)*100, 3) amt," +
+                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                        " rnd_boolean() b," +
+                        " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                        " rnd_double(2) d," +
+                        " rnd_float(2) e," +
+                        " rnd_short(10,1024) f," +
+                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                        " rnd_symbol(4,4,4,2) ik," +
+                        " rnd_long() j," +
+                        " timestamp_sequence(10000000000,1000000L) ts," +
+                        " rnd_byte(2,50) l," +
+                        " rnd_bin(10, 20, 2) m," +
+                        " rnd_str(5,16,2) n," +
+                        " rnd_char() t" +
+                        " from long_sequence(500)" +
+                        "), index(sym) timestamp (ts) partition by DAY",
+                sqlExecutionContext
+        );
+
+        // create table with 1AM data
+
+        compiler.compile(
+                "create table 1am as (" +
+                        "select" +
+                        " cast(x as int) i," +
+                        " rnd_symbol('msft','ibm', 'googl') sym," +
+                        " round(rnd_double(0)*100, 3) amt," +
+                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                        " rnd_boolean() b," +
+                        " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                        " rnd_double(2) d," +
+                        " rnd_float(2) e," +
+                        " rnd_short(10,1024) f," +
+                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                        " rnd_symbol(4,4,4,2) ik," +
+                        " rnd_long() j," +
+                        " timestamp_sequence(9993000000,1000000L) ts," +
+                        " rnd_byte(2,50) l," +
+                        " rnd_bin(10, 20, 2) m," +
+                        " rnd_str(5,16,2) n," +
+                        " rnd_char() t" +
+                        " from long_sequence(507)" +
+                        ")",
+                sqlExecutionContext
+        );
+
+        compiler.compile(
+                "create table tail as (" +
+                        "select" +
+                        " cast(x as int) i," +
+                        " rnd_symbol('msft','ibm', 'googl') sym," +
+                        " round(rnd_double(0)*100, 3) amt," +
+                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                        " rnd_boolean() b," +
+                        " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                        " rnd_double(2) d," +
+                        " rnd_float(2) e," +
+                        " rnd_short(10,1024) f," +
+                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                        " rnd_symbol(4,4,4,2) ik," +
+                        " rnd_long() j," +
+                        " timestamp_sequence(9997000010L,1000000L) ts," +
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
@@ -4184,192 +4357,7 @@ public class OutOfOrderTest extends AbstractCairoTest {
         );
     }
 
-    protected void assertMemoryLeak(TestUtils.LeakProneCode code) throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try {
-                code.run();
-                engine.releaseInactive();
-                Assert.assertEquals(0, engine.getBusyWriterCount());
-                Assert.assertEquals(0, engine.getBusyReaderCount());
-            } finally {
-                engine.releaseAllReaders();
-                engine.releaseAllWriters();
-            }
-        });
-    }
-
-    private void bench20(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext executionContext) throws SqlException {
-        // create table with roughly 2AM data
-        compiler.compile(
-                "create table x as (" +
-                        "select" +
-                        " cast(x as int) i," +
-                        " rnd_symbol('msft','ibm', 'googl') sym," +
-                        " round(rnd_double(0)*100, 3) amt," +
-                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
-                        " rnd_boolean() b," +
-                        " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
-                        " rnd_double(2) d," +
-                        " rnd_float(2) e," +
-                        " rnd_short(10,1024) f," +
-                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                        " rnd_symbol(4,4,4,2) ik," +
-                        " rnd_long() j," +
-                        " timestamp_sequence(10000000000,100000L) ts," +
-                        " rnd_byte(2,50) l," +
-                        " rnd_bin(10, 20, 2) m," +
-                        " rnd_str(5,16,2) n," +
-                        " rnd_char() t" +
-                        " from long_sequence(1000000)" +
-                        "), index(sym) timestamp (ts) partition by DAY",
-                sqlExecutionContext
-        );
-
-        // create table with 1AM data
-
-        compiler.compile(
-                "create table append as (" +
-                        "select" +
-                        " cast(x as int) i," +
-                        " rnd_symbol('msft','ibm', 'googl') sym," +
-                        " round(rnd_double(0)*100, 3) amt," +
-                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
-                        " rnd_boolean() b," +
-                        " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
-                        " rnd_double(2) d," +
-                        " rnd_float(2) e," +
-                        " rnd_short(10,1024) f," +
-                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                        " rnd_symbol(4,4,4,2) ik," +
-                        " rnd_long() j," +
-                        " timestamp_sequence(3000000000l,100000L) ts," + // mid partition for "x"
-                        " rnd_byte(2,50) l," +
-                        " rnd_bin(10, 20, 2) m," +
-                        " rnd_str(5,16,2) n," +
-                        " rnd_char() t" +
-                        " from long_sequence(1000000)" +
-                        ")",
-                sqlExecutionContext
-        );
-
-        try (
-                DirectCharSink sink1 = new DirectCharSink(16 * 1024 * 1024);
-                DirectCharSink sink2 = new DirectCharSink(16 * 1024 * 1024)
-        ) {
-            assertOutOfOrderDataConsistency(
-                    engine,
-                    compiler,
-                    sqlExecutionContext,
-                    "create table y as (x union all append)",
-                    "y order by ts",
-                    "insert into x select * from append",
-                    "x",
-                    sink1,
-                    sink2
-            );
-        }
-    }
-
-    private void executeVanilla(TestUtils.LeakProneCode code) throws Exception {
-        OutOfOrderUtils.initBuf();
-        try {
-            assertMemoryLeak(code);
-        } finally {
-            OutOfOrderUtils.freeBuf();
-        }
-    }
-
-    private void executeWithPool(int workerCount, OutOfOrderCode runnable) throws Exception {
-        executeVanilla(() -> {
-            if (workerCount > 0) {
-                int[] affinity = new int[workerCount];
-                for (int i = 0; i < workerCount; i++) {
-                    affinity[i] = -1;
-                }
-
-                WorkerPool pool = new WorkerPool(
-                        new WorkerPoolAwareConfiguration() {
-                            @Override
-                            public int[] getWorkerAffinity() {
-                                return affinity;
-                            }
-
-                            @Override
-                            public int getWorkerCount() {
-                                return workerCount;
-                            }
-
-                            @Override
-                            public boolean haltOnError() {
-                                return false;
-                            }
-
-                            @Override
-                            public boolean isEnabled() {
-                                return true;
-                            }
-                        }
-                );
-
-                pool.assignCleaner(Path.CLEANER);
-                pool.assign(new OutOfOrderSortJob(engine.getMessageBus()));
-                pool.assign(new OutOfOrderPartitionJob(engine.getMessageBus()));
-                pool.assign(new OutOfOrderOpenColumnJob(engine.getMessageBus()));
-                pool.assign(new OutOfOrderCopyJob(engine.getMessageBus()));
-
-                OutOfOrderUtils.initBuf(pool.getWorkerCount() + 1);
-                pool.start(LOG);
-
-                try {
-                    runnable.run(engine, compiler, sqlExecutionContext);
-                } finally {
-                    pool.halt();
-                    OutOfOrderUtils.freeBuf();
-                }
-            } else {
-                // we need to create entire engine
-                final CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
-                    @Override
-                    public int getOutOfOrderSortQueueCapacity() {
-                        return 0;
-                    }
-
-                    @Override
-                    public int getOutOfOrderPartitionQueueCapacity() {
-                        return 0;
-                    }
-
-                    @Override
-                    public int getOutOfOrderOpenColumnQueueCapacity() {
-                        return 0;
-                    }
-
-                    @Override
-                    public int getOutOfOrderCopyQueueCapacity() {
-                        return 0;
-                    }
-
-                    @Override
-                    public boolean isOutOfOrderEnabled() {
-                        return true;
-                    }
-                };
-
-                OutOfOrderUtils.initBuf();
-                try (
-                        final CairoEngine engine = new CairoEngine(configuration);
-                        final SqlCompiler compiler = new SqlCompiler(engine);
-                        final SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
-                ) {
-                    runnable.run(engine, compiler, sqlExecutionContext);
-                } finally {
-                    OutOfOrderUtils.freeBuf();
-                }
-            }
-        });
-    }
-
-    private void testBench0(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    private static void testBench0(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
         // create table with roughly 2AM data
         compiler.compile(
                 "create table x as (" +
@@ -4439,5 +4427,214 @@ public class OutOfOrderTest extends AbstractCairoTest {
                     sink2
             );
         }
+    }
+
+    protected void assertMemoryLeak(TestUtils.LeakProneCode code) throws Exception {
+        TestUtils.assertMemoryLeak(code);
+    }
+
+    private void bench20(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext executionContext) throws SqlException {
+        // create table with roughly 2AM data
+        compiler.compile(
+                "create table x as (" +
+                        "select" +
+                        " cast(x as int) i," +
+                        " rnd_symbol('msft','ibm', 'googl') sym," +
+                        " round(rnd_double(0)*100, 3) amt," +
+                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                        " rnd_boolean() b," +
+                        " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                        " rnd_double(2) d," +
+                        " rnd_float(2) e," +
+                        " rnd_short(10,1024) f," +
+                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                        " rnd_symbol(4,4,4,2) ik," +
+                        " rnd_long() j," +
+                        " timestamp_sequence(10000000000,100000L) ts," +
+                        " rnd_byte(2,50) l," +
+                        " rnd_bin(10, 20, 2) m," +
+                        " rnd_str(5,16,2) n," +
+                        " rnd_char() t" +
+                        " from long_sequence(1000000)" +
+                        "), index(sym) timestamp (ts) partition by DAY",
+                executionContext
+        );
+
+        // create table with 1AM data
+
+        compiler.compile(
+                "create table append as (" +
+                        "select" +
+                        " cast(x as int) i," +
+                        " rnd_symbol('msft','ibm', 'googl') sym," +
+                        " round(rnd_double(0)*100, 3) amt," +
+                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                        " rnd_boolean() b," +
+                        " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                        " rnd_double(2) d," +
+                        " rnd_float(2) e," +
+                        " rnd_short(10,1024) f," +
+                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                        " rnd_symbol(4,4,4,2) ik," +
+                        " rnd_long() j," +
+                        " timestamp_sequence(3000000000l,100000L) ts," + // mid partition for "x"
+                        " rnd_byte(2,50) l," +
+                        " rnd_bin(10, 20, 2) m," +
+                        " rnd_str(5,16,2) n," +
+                        " rnd_char() t" +
+                        " from long_sequence(1000000)" +
+                        ")",
+                executionContext
+        );
+
+        try (
+                DirectCharSink sink1 = new DirectCharSink(16 * 1024 * 1024);
+                DirectCharSink sink2 = new DirectCharSink(16 * 1024 * 1024)
+        ) {
+            assertOutOfOrderDataConsistency(
+                    engine,
+                    compiler,
+                    executionContext,
+                    "create table y as (x union all append)",
+                    "y order by ts",
+                    "insert into x select * from append",
+                    "x",
+                    sink1,
+                    sink2
+            );
+        }
+    }
+
+    private void execute0(OutOfOrderCode runnable, CairoConfiguration configuration) throws Exception {
+        try (
+                final CairoEngine engine = new CairoEngine(configuration);
+                final SqlCompiler compiler = new SqlCompiler(engine);
+                final SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
+        ) {
+            runnable.run(engine, compiler, sqlExecutionContext);
+            Assert.assertEquals(0, engine.getBusyWriterCount());
+            Assert.assertEquals(0, engine.getBusyReaderCount());
+        } finally {
+            OutOfOrderUtils.freeBuf();
+        }
+    }
+
+    private void executeVanilla(TestUtils.LeakProneCode code) throws Exception {
+        OutOfOrderUtils.initBuf();
+        try {
+            assertMemoryLeak(code);
+        } finally {
+            OutOfOrderUtils.freeBuf();
+        }
+    }
+
+    private void executeVanilla(OutOfOrderCode code) throws Exception {
+        executeVanilla(() -> {
+            OutOfOrderUtils.initBuf();
+            execute0(code, configuration);
+        });
+    }
+
+    private void executeWithPool(int workerCount, boolean enableRename, OutOfOrderCode runnable) throws Exception {
+        executeVanilla(() -> {
+            if (workerCount > 0) {
+                int[] affinity = new int[workerCount];
+                for (int i = 0; i < workerCount; i++) {
+                    affinity[i] = -1;
+                }
+
+                WorkerPool pool = new WorkerPool(
+                        new WorkerPoolAwareConfiguration() {
+                            @Override
+                            public int[] getWorkerAffinity() {
+                                return affinity;
+                            }
+
+                            @Override
+                            public int getWorkerCount() {
+                                return workerCount;
+                            }
+
+                            @Override
+                            public boolean haltOnError() {
+                                return false;
+                            }
+
+                            @Override
+                            public boolean isEnabled() {
+                                return true;
+                            }
+                        }
+                );
+
+                final CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+                    @Override
+                    public boolean isOutOfOrderEnabled() {
+                        return true;
+                    }
+
+                    @Override
+                    public boolean isOutOfOrderRenameEnabled() {
+                        return enableRename;
+                    }
+                };
+
+                try {
+                    execute0((engine, compiler, sqlExecutionContext) -> {
+                        pool.assignCleaner(Path.CLEANER);
+                        pool.assign(new OutOfOrderSortJob(engine.getMessageBus()));
+                        pool.assign(new OutOfOrderPartitionJob(engine.getMessageBus()));
+                        pool.assign(new OutOfOrderOpenColumnJob(engine.getMessageBus()));
+                        pool.assign(new OutOfOrderCopyJob(engine.getMessageBus()));
+
+                        OutOfOrderUtils.initBuf(pool.getWorkerCount() + 1);
+                        pool.start(LOG);
+                        runnable.run(engine, compiler, sqlExecutionContext);
+                    }, configuration);
+                } finally {
+                    pool.halt();
+                }
+            } else {
+                // we need to create entire engine
+                final CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+                    @Override
+                    public int getOutOfOrderSortQueueCapacity() {
+                        return 0;
+                    }
+
+                    @Override
+                    public int getOutOfOrderPartitionQueueCapacity() {
+                        return 0;
+                    }
+
+                    @Override
+                    public int getOutOfOrderOpenColumnQueueCapacity() {
+                        return 0;
+                    }
+
+                    @Override
+                    public int getOutOfOrderCopyQueueCapacity() {
+                        return 0;
+                    }
+
+                    @Override
+                    public boolean isOutOfOrderEnabled() {
+                        return true;
+                    }
+
+                    @Override
+                    public boolean isOutOfOrderRenameEnabled() {
+                        return enableRename;
+                    }
+                };
+
+                OutOfOrderUtils.initBuf();
+                execute0(runnable, configuration);
+            }
+        });
+    }
+
+    private void executeWithPool(int workerCount, OutOfOrderCode runnable) throws Exception {
+        executeWithPool(workerCount, true, runnable);
     }
 }
