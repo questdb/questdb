@@ -125,14 +125,16 @@ if (AARCH64)
 
     set(
             AARCH64_FILES
+	    src/main/c/share/rosti.cpp
             src/main/c/aarch64/vect.cpp
+            src/main/c/share/vec_int_key_agg.cpp
             src/main/c/share/vec_agg_vanilla.cpp
     )
 
     add_library(questdb-aarch64 OBJECT ${AARCH64_FILES})
     set_target_properties(
             questdb-aarch64 PROPERTIES
-            COMPILE_FLAGS "-O3 -std=c++17"
+	    COMPILE_FLAGS "-O3 -fPIC -std=c++17"
     )
 
     target_link_libraries(
@@ -142,7 +144,7 @@ if (AARCH64)
 
     set_target_properties(
             questdb PROPERTIES
-            COMPILE_FLAGS "-O3"
+	    COMPILE_FLAGS "-O3"
     )
 
 else ()
@@ -199,7 +201,7 @@ else ()
 
     set_target_properties(
             questdb PROPERTIES
-            COMPILE_FLAGS "-m64 -O3 "
+	    COMPILE_FLAGS "-m64 -O3 "
     )
 
     include_directories(src/main/c/share/abseil-cpp)
