@@ -29,7 +29,6 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.*;
 import io.questdb.std.*;
-import io.questdb.std.str.Path;
 import io.questdb.tasks.OutOfOrderCopyTask;
 import io.questdb.tasks.OutOfOrderUpdPartitionSizeTask;
 
@@ -57,7 +56,6 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
             AtomicInteger columnCounter,
             AtomicInteger partCounter,
             FilesFacade ff,
-            CharSequence pathToTable,
             int columnType,
             int blockType,
             long timestampMergeIndexAddr,
@@ -73,8 +71,6 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
             long srcDataHi,
             long srcDataTop,
             long srcDataMax,
-            long srcDataTxn,
-            long txn,
             long srcOooFixAddr,
             long srcOooFixSize,
             long srcOooVarAddr,
@@ -231,7 +227,6 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
                             ff,
                             updPartitionSizeTaskQueue,
                             updPartitionSizePubSeq,
-                            pathToTable,
                             srcOooPartitionLo,
                             srcOooPartitionHi,
                             timestampMin,
@@ -239,8 +234,6 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
                             partitionTimestamp,
                             srcOooMax,
                             srcDataMax,
-                            srcDataTxn,
-                            txn,
                             srcTimestampFd,
                             partitionMutates,
                             tableWriter
@@ -266,7 +259,6 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
         final AtomicInteger columnCounter = task.getColumnCounter();
         final AtomicInteger partCounter = task.getPartCounter();
         final FilesFacade ff = task.getFf();
-        final CharSequence pathToTable = task.getPathToTable();
         final int columnType = task.getColumnType();
         final int blockType = task.getBlockType();
         final long timestampMergeIndexAddr = task.getTimestampMergeIndexAddr();
@@ -281,8 +273,6 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
         final long srcDataTop = task.getSrcDataTop();
         final long srcDataLo = task.getSrcDataLo();
         final long srcDataMax = task.getSrcDataMax();
-        final long srcDataTxn = task.getSrcDataTxn();
-        final long txn = task.getTxn();
         final long srcDataHi = task.getSrcDataHi();
         final long srcOooFixAddr = task.getSrcOooFixAddr();
         final long srcOooFixSize = task.getSrcOooFixSize();
@@ -324,7 +314,6 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
                 columnCounter,
                 partCounter,
                 ff,
-                pathToTable,
                 columnType,
                 blockType,
                 timestampMergeIndexAddr,
@@ -340,8 +329,6 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
                 srcDataHi,
                 srcDataTop,
                 srcDataMax,
-                srcDataTxn,
-                txn,
                 srcOooFixAddr,
                 srcOooFixSize,
                 srcOooVarAddr,
@@ -519,7 +506,6 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
             FilesFacade ff,
             RingQueue<OutOfOrderUpdPartitionSizeTask> updPartitionSizeQueue,
             MPSequence updPartitionPubSeq,
-            CharSequence pathToTable,
             long srcOooPartitionLo,
             long srcOooPartitionHi,
             long timestampMin,
@@ -527,74 +513,28 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
             long partitionTimestamp, // lowest timestamp of partition where data is headed
             long srcOooMax,
             long srcDataMax,
-            long srcDataTxn,
-            long txn,
             long srcTimestampFd,
             boolean partitionMutates,
             TableWriter tableWriter
     ) {
-        try {
-            if (partitionMutates) {
-                if (srcTimestampFd < 0) {
-                    // srcTimestampFd negative indicates that we are reusing existing file descriptor
-                    // as opposed to opening file by name. This also indicated that "this" partition
-                    // is, or used to be, active for the writer. So we have to close existing files so thatT
-                    // rename on Windows does not fall flat.
-                    tableWriter.closeActivePartition();
-                } else {
-                    // this timestamp column was opened by file name
-                    // so we can close it as not needed (and to enable table rename on Windows)
-                    ff.close(srcTimestampFd);
-                }
-
-                if (false && tableWriter.getOooErrorCount() == 0
-                        && tableWriter.acquireWriterLock(partitionTimestamp, srcDataTxn)
-                ) {
-                    LOG.info()
-                            .$("lock successful [table=`").utf8(pathToTable)
-                            .$("`, ts=").$ts(partitionTimestamp)
-                            .$(", txn=").$(srcDataTxn).$(']').$();
-
-                    try {
-                        swapPartition(
-                                ff,
-                                pathToTable,
-                                partitionTimestamp,
-                                srcDataTxn,
-                                txn,
-                                tableWriter
-                        );
-                        partitionMutates = false;
-                    } finally {
-                        tableWriter.releaseWriterLock(partitionTimestamp, srcDataTxn);
-                    }
-                } else {
-                    LOG.info()
-                            .$("partition busy [table=`").utf8(pathToTable)
-                            .$("`, ts=").$ts(partitionTimestamp)
-                            .$(", txn=").$(srcDataTxn).$(']').$();
-                }
-            } else if (srcTimestampFd > 0) {
-                ff.close(srcTimestampFd);
-            }
-        } catch (Throwable e) {
-            tableWriter.bumpOooErrorCount();
-            throw e;
-        } finally {
-            notifyWriter(
-                    updPartitionSizeQueue,
-                    updPartitionPubSeq,
-                    srcOooPartitionLo,
-                    srcOooPartitionHi,
-                    timestampMin,
-                    timestampMax,
-                    partitionTimestamp,
-                    srcOooMax,
-                    srcDataMax,
-                    partitionMutates,
-                    tableWriter
-            );
+        if (srcTimestampFd < 0) {
+            tableWriter.closeActivePartition();
+        } else {
+            ff.close(srcTimestampFd);
         }
+        notifyWriter(
+                updPartitionSizeQueue,
+                updPartitionPubSeq,
+                srcOooPartitionLo,
+                srcOooPartitionHi,
+                timestampMin,
+                timestampMax,
+                partitionTimestamp,
+                srcOooMax,
+                srcDataMax,
+                partitionMutates,
+                tableWriter
+        );
     }
 
     static void notifyWriter(
@@ -701,115 +641,6 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
                 partitionMutates
         );
         updPartitionPubSeq.done(cursor);
-    }
-
-    private static void swapPartition(
-            FilesFacade ff,
-            CharSequence pathToTable,
-            long partitionTimestamp,
-            long srcDataTxn,
-            long txn,
-            TableWriter tableWriter
-    ) {
-        if (Os.type == Os.WINDOWS) {
-            swapPartitionFiles(ff, pathToTable, partitionTimestamp, srcDataTxn, txn, tableWriter);
-        } else {
-            swapPartitionDirectories(ff, pathToTable, partitionTimestamp, tableWriter);
-        }
-    }
-
-    private static void swapPartitionDirectories(FilesFacade ff, CharSequence pathToTable, long partitionTimestamp, TableWriter tableWriter) {
-        final long txn = tableWriter.getTxn();
-        final Path path = Path.getThreadLocal(pathToTable);
-        TableUtils.setPathForPartition(path, tableWriter.getPartitionBy(), partitionTimestamp);
-        final int plen = path.length();
-        path.$();
-        final Path other = Path.getThreadLocal2(path);
-        TableUtils.oldPartitionName(other, txn);
-        if (ff.rename(path, other.$())) {
-            TableUtils.txnPartition(other.trimTo(plen), txn);
-            if (ff.rename(other.$(), path)) {
-                LOG.info().$("renamed").$();
-                return;
-            }
-            throw CairoException.instance(ff.errno())
-                    .put("could not rename [from=").put(other)
-                    .put(", to=").put(path).put(']');
-        } else {
-            throw CairoException.instance(ff.errno())
-                    .put("could not rename [from=").put(path)
-                    .put(", to=").put(other).put(']');
-        }
-    }
-
-    private static void swapPartitionFiles(
-            FilesFacade ff,
-            CharSequence pathToTable,
-            long partitionTimestamp,
-            long srcDataTxn,
-            long txn,
-            TableWriter tableWriter
-    ) {
-        // source path - original data partition
-        // this partition may already be on non-initial txn
-        // todo: test that this code handles data txn > -1
-        final Path srcPath = Path.getThreadLocal(pathToTable);
-        TableUtils.setPathForPartition(srcPath, tableWriter.getPartitionBy(), partitionTimestamp);
-        int coreLen = srcPath.length();
-
-        TableUtils.txnPartitionConditionally(srcPath, srcDataTxn);
-        int srcLen = srcPath.length();
-
-        final Path dstPath = Path.getThreadLocal2(srcPath).concat("backup");
-        TableUtils.txnPartitionConditionally(dstPath, txn);
-        int dstLen = dstPath.length();
-
-        srcPath.put(Files.SEPARATOR);
-        srcPath.$();
-
-        dstPath.put(Files.SEPARATOR);
-        dstPath.$();
-
-        if (ff.mkdir(dstPath, 502) != 0) {
-            throw CairoException.instance(ff.errno()).put("could not create directory [path").put(dstPath).put(']');
-        }
-
-        // move all files to "backup-txn"
-        moveFiles(ff, srcPath, srcLen, dstPath, dstLen);
-
-        // not move files from "XXX-n-txn" to original partition
-        srcPath.trimTo(coreLen);
-        TableUtils.txnPartition(srcPath, txn);
-        srcLen = srcPath.length();
-
-        dstPath.trimTo(coreLen);
-        TableUtils.txnPartitionConditionally(dstPath, srcDataTxn);
-        dstLen = dstPath.length();
-
-        moveFiles(ff, srcPath.put(Files.SEPARATOR).$(), srcLen, dstPath.$(), dstLen);
-    }
-
-    private static void moveFiles(FilesFacade ff, Path srcPath, int srcLen, Path dstPath, int dstLen) {
-        long p = ff.findFirst(srcPath);
-        if (p > 0) {
-            try {
-                do {
-                    int type  = ff.findType(p);
-                    if (type == Files.DT_REG) {
-                        long lpszName = ff.findName(p);
-                        srcPath.trimTo(srcLen).concat(lpszName).$();
-                        dstPath.trimTo(dstLen).concat(lpszName).$();
-                        if (ff.rename(srcPath, dstPath)) {
-                            LOG.debug().$("renamed [from=").$(srcPath).$(", to=").$(dstPath, dstLen, dstPath.length()).$(']').$();
-                        } else {
-                            throw CairoException.instance(ff.errno()).put("could not rename file [from=").put(srcPath).put(", to=").put(dstPath).put(']');
-                        }
-                    }
-                } while (ff.findNext(p) > 0);
-            } finally {
-                ff.findClose(p);
-            }
-        }
     }
 
     private static void oooCopyData(

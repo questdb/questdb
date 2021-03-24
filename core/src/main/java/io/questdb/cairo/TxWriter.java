@@ -322,12 +322,12 @@ public final class TxWriter extends TxReader implements Closeable {
         maxTimestamp = timestamp;
     }
 
-    public void updatePartitionSizeByTimestamp(long timestamp, long rowCount) {
-        attachedPositionDirtyIndex = Math.min(attachedPositionDirtyIndex, updateAttachedPartitionSizeByTimestamp(timestamp, rowCount));
+    public void updatePartitionSizeByIndex(int partitionIndex, long partitionTimestampLo, long rowCount) {
+        attachedPositionDirtyIndex = Math.min(attachedPositionDirtyIndex, updateAttachedPartitionSizeByIndex(partitionIndex, partitionTimestampLo, rowCount));
     }
 
-    public void updatePartitionSizeByLoTimestamp(long timestamp, long rowCount) {
-        attachedPositionDirtyIndex = Math.min(attachedPositionDirtyIndex, updateAttachedPartitionSizeByLoTimestamp(timestamp, rowCount));
+    public void updatePartitionSizeByTimestamp(long timestamp, long rowCount) {
+        attachedPositionDirtyIndex = Math.min(attachedPositionDirtyIndex, updateAttachedPartitionSizeByTimestamp(timestamp, rowCount));
     }
 
     public void writeTransientSymbolCount(int symbolIndex, int symCount) {
@@ -336,10 +336,6 @@ public final class TxWriter extends TxReader implements Closeable {
 
     boolean acquireWriterLock(long timestamp, long txn) {
         return scoreboard.acquireWriteLock(timestamp, txn);
-    }
-
-    void releaseWriterLock(long timestamp, long txn) {
-        scoreboard.releaseWriteLock(timestamp, txn);
     }
 
     void bumpPartitionTableVersion() {
@@ -371,6 +367,10 @@ public final class TxWriter extends TxReader implements Closeable {
         return true;
     }
 
+    void releaseWriterLock(long timestamp, long txn) {
+        scoreboard.releaseWriteLock(timestamp, txn);
+    }
+
     private void saveAttachedPartitionsToTx(int symCount) {
         final int size = attachedPartitions.size();
         final long partitionTableOffset = getPartitionTableSizeOffset(symCount);
@@ -393,28 +393,21 @@ public final class TxWriter extends TxReader implements Closeable {
         }
     }
 
-    private int updateAttachedPartitionSizeByTimestamp(long timestamp, long partitionSize) {
-        long partitionTimestampLo = getPartitionTimestampLo(timestamp);
-        int index = findAttachedPartitionIndexByLoTimestamp(partitionTimestampLo);
-        if (index > -1) {
-            updatePartitionSizeByIndex(index, partitionSize);
-            return index;
+    private int updateAttachedPartitionSizeByIndex(int partitionIndex, long partitionTimestampLo, long partitionSize) {
+        if (partitionIndex > -1) {
+            updatePartitionSizeByIndex(partitionIndex, partitionSize);
+            return partitionIndex;
         }
-        return insertPartitionSizeByTimestamp(-(index + 1), partitionTimestampLo, partitionSize);
+        return insertPartitionSizeByTimestamp(-(partitionIndex + 1), partitionTimestampLo, partitionSize);
     }
 
     private int updateAttachedPartitionSizeByLoTimestamp(long partitionTimestampLo, long partitionSize) {
-        int index = findAttachedPartitionIndexByLoTimestamp(partitionTimestampLo);
-        if (index > -1) {
-            updatePartitionSizeByIndex(index, partitionSize);
-            return index;
-        }
-        return insertPartitionSizeByTimestamp(-(index + 1), partitionTimestampLo, partitionSize);
+        return updateAttachedPartitionSizeByIndex(findAttachedPartitionIndexByLoTimestamp(partitionTimestampLo), partitionTimestampLo, partitionSize);
     }
 
-    void updatePartitionSizeAndNameTxnByTimestamp(long partitionTimestampLo, long partitionSize) {
-        updatePartitionSizeByIndexAndTxn(findAttachedPartitionIndexByLoTimestamp(partitionTimestampLo), partitionSize);
-        scoreboard.addPartition(partitionTimestampLo, txn);
+    private int updateAttachedPartitionSizeByTimestamp(long timestamp, long partitionSize) {
+        final long partitionTimestampLo = getPartitionTimestampLo(timestamp);
+        return updateAttachedPartitionSizeByIndex(findAttachedPartitionIndexByLoTimestamp(partitionTimestampLo), partitionTimestampLo, partitionSize);
     }
 
     private void updatePartitionSizeByIndex(int index, long partitionSize) {

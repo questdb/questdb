@@ -2661,10 +2661,39 @@ public class TableWriter implements Closeable {
             this.txFile.transientRowCount = partitionSize;
             this.txFile.maxTimestamp = timestampMax;
         }
+
+        final int partitionIndex = txFile.findAttachedPartitionIndexByLoTimestamp(partitionTimestamp);
         if (partitionMutates) {
-            txFile.updatePartitionSizeAndNameTxnByTimestamp(partitionTimestamp, partitionSize);
+            final long srcDataTxn = txFile.getPartitionNameTxnByIndex(partitionIndex);
+            if (getOooErrorCount() == 0 && acquireWriterLock(partitionTimestamp, srcDataTxn)) {
+                LOG.info()
+                        .$("lock successful [table=`").utf8(path)
+                        .$("`, ts=").$ts(partitionTimestamp)
+                        .$(", txn=").$(srcDataTxn).$(']').$();
+
+                try {
+                    OutOfOrderUtils.swapPartition(
+                            ff,
+                            path,
+                            partitionTimestamp,
+                            srcDataTxn,
+                            txFile.getTxn(),
+                            partitionBy
+                    );
+                    txFile.updatePartitionSizeByIndex(partitionIndex, partitionTimestamp, partitionSize);
+                } finally {
+                    releaseWriterLock(partitionTimestamp, srcDataTxn);
+                }
+            } else {
+                LOG.info()
+                        .$("partition busy [table=`").utf8(path)
+                        .$("`, ts=").$ts(partitionTimestamp)
+                        .$(", txn=").$(srcDataTxn).$(']').$();
+                txFile.updatePartitionSizeByIndexAndTxn(partitionIndex, partitionSize);
+                txFile.scoreboard.addPartition(partitionTimestamp, txFile.txn);
+            }
         } else {
-            txFile.updatePartitionSizeByLoTimestamp(partitionTimestamp, partitionSize);
+            txFile.updatePartitionSizeByIndex(partitionIndex, partitionTimestamp, partitionSize);
         }
         txFile.bumpPartitionTableVersion();
     }

@@ -28,6 +28,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 
@@ -53,6 +54,21 @@ public class OutOfOrderUtils {
         temp8ByteBuf = new long[workerCount];
         for (int i = 0; i < workerCount; i++) {
             temp8ByteBuf[i] = Unsafe.malloc(Long.BYTES);
+        }
+    }
+
+    public static void swapPartition(
+            FilesFacade ff,
+            CharSequence pathToTable,
+            long partitionTimestamp,
+            long srcDataTxn,
+            long txn,
+            int partitionBy
+    ) {
+        if (Os.type == Os.WINDOWS) {
+            swapPartitionFiles(ff, pathToTable, partitionTimestamp, srcDataTxn, txn, partitionBy);
+        } else {
+            swapPartitionDirectories(ff, pathToTable, partitionTimestamp, txn, partitionBy);
         }
     }
 
@@ -178,6 +194,105 @@ public class OutOfOrderUtils {
     static void allocateDiskSpace(FilesFacade ff, long fd, long size) {
         if (!ff.allocate(fd, size)) {
             throw CairoException.instance(ff.errno()).put("No space left [size=").put(size).put(", fd=").put(fd).put(']');
+        }
+    }
+
+    private static void swapPartitionDirectories(
+            FilesFacade ff,
+            CharSequence pathToTable,
+            long partitionTimestamp,
+            long txn,
+            int partitionBy
+    ) {
+        final Path path = Path.getThreadLocal(pathToTable);
+        TableUtils.setPathForPartition(path, partitionBy, partitionTimestamp);
+        final int plen = path.length();
+        path.$();
+        final Path other = Path.getThreadLocal2(path);
+        TableUtils.oldPartitionName(other, txn);
+        if (ff.rename(path, other.$())) {
+            TableUtils.txnPartition(other.trimTo(plen), txn);
+            if (ff.rename(other.$(), path)) {
+                LOG.info().$("renamed").$();
+                return;
+            }
+            throw CairoException.instance(ff.errno())
+                    .put("could not rename [from=").put(other)
+                    .put(", to=").put(path).put(']');
+        } else {
+            throw CairoException.instance(ff.errno())
+                    .put("could not rename [from=").put(path)
+                    .put(", to=").put(other).put(']');
+        }
+    }
+
+    private static void swapPartitionFiles(
+            FilesFacade ff,
+            CharSequence pathToTable,
+            long partitionTimestamp,
+            long srcDataTxn,
+            long txn,
+            int partitionBy
+    ) {
+        // source path - original data partition
+        // this partition may already be on non-initial txn
+        // todo: test that this code handles data txn > -1
+        final Path srcPath = Path.getThreadLocal(pathToTable);
+        TableUtils.setPathForPartition(srcPath, partitionBy, partitionTimestamp);
+        int coreLen = srcPath.length();
+
+        TableUtils.txnPartitionConditionally(srcPath, srcDataTxn);
+        int srcLen = srcPath.length();
+
+        final Path dstPath = Path.getThreadLocal2(srcPath).concat("backup");
+        TableUtils.txnPartitionConditionally(dstPath, txn);
+        int dstLen = dstPath.length();
+
+        srcPath.put(Files.SEPARATOR);
+        srcPath.$();
+
+        dstPath.put(Files.SEPARATOR);
+        dstPath.$();
+
+        if (ff.mkdir(dstPath, 502) != 0) {
+            throw CairoException.instance(ff.errno()).put("could not create directory [path").put(dstPath).put(']');
+        }
+
+        // move all files to "backup-txn"
+        moveFiles(ff, srcPath, srcLen, dstPath, dstLen);
+
+        // not move files from "XXX-n-txn" to original partition
+        srcPath.trimTo(coreLen);
+        TableUtils.txnPartition(srcPath, txn);
+        srcLen = srcPath.length();
+
+        dstPath.trimTo(coreLen);
+        TableUtils.txnPartitionConditionally(dstPath, srcDataTxn);
+        dstLen = dstPath.length();
+
+        moveFiles(ff, srcPath.put(Files.SEPARATOR).$(), srcLen, dstPath.$(), dstLen);
+    }
+
+    private static void moveFiles(FilesFacade ff, Path srcPath, int srcLen, Path dstPath, int dstLen) {
+        long p = ff.findFirst(srcPath);
+        if (p > 0) {
+            try {
+                do {
+                    int type  = ff.findType(p);
+                    if (type == Files.DT_REG) {
+                        long lpszName = ff.findName(p);
+                        srcPath.trimTo(srcLen).concat(lpszName).$();
+                        dstPath.trimTo(dstLen).concat(lpszName).$();
+                        if (ff.rename(srcPath, dstPath)) {
+                            LOG.debug().$("renamed [from=").$(srcPath).$(", to=").$(dstPath, dstLen, dstPath.length()).$(']').$();
+                        } else {
+                            throw CairoException.instance(ff.errno()).put("could not rename file [from=").put(srcPath).put(", to=").put(dstPath).put(']');
+                        }
+                    }
+                } while (ff.findNext(p) > 0);
+            } finally {
+                ff.findClose(p);
+            }
         }
     }
 }

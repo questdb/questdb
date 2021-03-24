@@ -40,6 +40,7 @@ public class Scoreboard implements Closeable {
     private long fd;
     private long pScoreboard;
     private long size;
+    private int readOnlyPartitionCount = 0;
 
     public Scoreboard(FilesFacade ff, @Transient Path path) {
         this.ff = ff;
@@ -103,8 +104,6 @@ public class Scoreboard implements Closeable {
 
     public static native long getScoreboardSize(int partitionCount);
 
-    private int readOnlyPartitionCount = 0;
-
     public void acquireReadLock(long timestamp, long txn) {
         LOG.debug()
                 .$("acquire read lock [ts=").$(timestamp)
@@ -113,15 +112,6 @@ public class Scoreboard implements Closeable {
                 .$(']').$();
         checkAndExtend();
         acquireReadLock(pScoreboard, timestamp, txn);
-    }
-
-    private void checkAndExtend() {
-        int actualPartitionCount = getPartitionCount();
-        if (readOnlyPartitionCount != actualPartitionCount) {
-            long newSize = Math.max(getScoreboardSize(actualPartitionCount), ff.length(fd));
-            resize(newSize);
-            readOnlyPartitionCount = actualPartitionCount;
-        }
     }
 
     public boolean acquireWriteLock(long timestamp, long txn) {
@@ -136,7 +126,7 @@ public class Scoreboard implements Closeable {
     public boolean addPartition(long timestamp, long txn) {
         acquireHeaderLock(pScoreboard);
         try {
-            long newSize = getScoreboardSize(2 * (getPartitionCount() + 1));
+            long newSize = getScoreboardSize(getPartitionCount() + 1);
             resize(newSize);
             LOG.debug()
                     .$("add partition [ts=").$(timestamp)
@@ -146,17 +136,6 @@ public class Scoreboard implements Closeable {
             return addPartitionUnsafe(pScoreboard, timestamp, txn);
         } finally {
             releaseHeaderLock(pScoreboard);
-        }
-    }
-
-    private void resize(long newSize) {
-        if (newSize > size) {
-            if (ff.allocate(fd, newSize)) {
-                pScoreboard = ff.mremap(fd, pScoreboard, size, newSize, 0, Files.MAP_RW);
-            } else {
-                throw CairoException.instance(ff.errno()).put("could not resize scoreboard, no space left on device [fd=").put(fd).put(']');
-            }
-            size = newSize;
         }
     }
 
@@ -240,4 +219,28 @@ public class Scoreboard implements Closeable {
     private static native long getAccessCounter(long pScoreboard, long timestamp, long txn);
 
     private static native long getActiveReaderCounter(long pScoreboard);
+
+    private void checkAndExtend() {
+        int actualPartitionCount = getPartitionCount();
+        if (readOnlyPartitionCount != actualPartitionCount) {
+            long newSize = Math.max(getScoreboardSize(actualPartitionCount), ff.length(fd));
+            resize(newSize);
+            readOnlyPartitionCount = actualPartitionCount;
+        }
+    }
+
+    private void resize(long newSize) {
+        if (newSize > size) {
+            resize0(2 * newSize);
+        }
+    }
+
+    private void resize0(long newSize) {
+        if (ff.allocate(fd, newSize)) {
+            pScoreboard = ff.mremap(fd, pScoreboard, size, newSize, 0, Files.MAP_RW);
+        } else {
+            throw CairoException.instance(ff.errno()).put("could not resize scoreboard, no space left on device [fd=").put(fd).put(']');
+        }
+        size = newSize;
+    }
 }
