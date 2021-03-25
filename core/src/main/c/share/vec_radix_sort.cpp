@@ -24,7 +24,6 @@
 
 #include "jni.h"
 #include <cstring>
-#include <xmmintrin.h>
 #include "util.h"
 
 typedef struct {
@@ -49,12 +48,12 @@ typedef struct {
 
 template<uint16_t sh>
 inline void radix_shuffle(uint64_t *counts, index_t *src, index_t *dest, uint64_t size) {
-    _mm_prefetch(counts, _MM_HINT_NTA);
+    MM_PREFETCH_NTA(counts);
     for (uint64_t x = 0; x < size; x++) {
         const auto digit = (src[x].ts >> sh) & 0xffu;
         dest[counts[digit]] = src[x];
         counts[digit]++;
-        _mm_prefetch(src + x + 64, _MM_HINT_T2);
+        MM_PREFETCH_T2(src + x + 64);
     }
 }
 
@@ -62,13 +61,13 @@ inline void radix_shuffle(uint64_t *counts, index_t *src, index_t *dest, uint64_
 
 template<uint16_t sh>
 inline void radix_shuffle(uint64_t *counts, index_t *src, index_t *dest, uint64_t size) {
-    _mm_prefetch(counts, _MM_HINT_NTA);
+    MM_PREFETCH_NTA(counts);
     Vec4q vec;
     Vec4q digitVec;
     int64_t values[4];
     int64_t digits[4];
     for (uint64_t x = 0; x < size; x += 4) {
-        _mm_prefetch(src + x + 64, _MM_HINT_T0);
+        MM_PREFETCH_T0(src + x + 64);
         vec.load(src + x);
         digitVec = (vec >> sh) & 0xff;
 
@@ -92,13 +91,13 @@ inline void radix_shuffle(uint64_t *counts, index_t *src, index_t *dest, uint64_
 #elif RADIX_SHUFFLE == 2
 template<uint16_t sh>
 inline void radix_shuffle(uint64_t* counts, int64_t* src, int64_t* dest, uint64_t size) {
-    _mm_prefetch(counts, _MM_HINT_NTA);
+    MM_PREFETCH_NTA(counts);
     Vec8q vec;
     Vec8q digitVec;
     int64_t values[8];
     int64_t digits[8];
     for (uint64_t x = 0; x < size; x += 8) {
-        _mm_prefetch(src + x + 64, _MM_HINT_T0);
+        MM_PREFETCH_T0(src + x + 64);
         vec.load(src + x);
         digitVec = (vec >> sh) & 0xff;
 
@@ -141,7 +140,7 @@ void radix_sort_long_index_asc_in_place(index_t *array, uint64_t size) {
     int64_t x;
 
     // calculate counts
-    _mm_prefetch(counts.c8, _MM_HINT_NTA);
+    MM_PREFETCH_NTA(counts.c8);
     for (x = 0; x < size; x++) {
         t8 = array[x].ts & 0xffu;
         t7 = (array[x].ts >> 8u) & 0xffu;
@@ -159,11 +158,11 @@ void radix_sort_long_index_asc_in_place(index_t *array, uint64_t size) {
         counts.c3[t3]++;
         counts.c2[t2]++;
         counts.c1[t1]++;
-        _mm_prefetch(array + x + 64, _MM_HINT_T2);
+        MM_PREFETCH_T2(array + x + 64);
     }
 
     // convert counts to offsets
-    _mm_prefetch(&counts, _MM_HINT_NTA);
+    MM_PREFETCH_NTA(&counts);
     for (x = 0; x < 256; x++) {
         t8 = o8 + counts.c8[x];
         t7 = o7 + counts.c7[x];
@@ -376,7 +375,7 @@ void k_way_merge_long_index(
             break;
         }
 
-        _mm_prefetch(tree, _MM_HINT_NTA);
+        MM_PREFETCH_NTA(tree);
         while (PREDICT_TRUE(winner_index > 1)) {
             const auto right_child = winner_index % 2 == 1 ? winner_index - 1 : winner_index + 1;
             const auto target = winner_index / 2;
@@ -389,7 +388,7 @@ void k_way_merge_long_index(
         }
         winner_index = tree[1].index_index;
         winner = indexes + winner_index - entries_count;
-        _mm_prefetch(winner, _MM_HINT_NTA);
+        MM_PREFETCH_NTA(winner);
         dest[merged_index_pos++] = winner->index[winner->pos];
     }
 }

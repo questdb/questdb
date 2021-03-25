@@ -125,10 +125,11 @@ if (AARCH64)
 
     set(
             AARCH64_FILES
-	    src/main/c/share/rosti.cpp
+            src/main/c/share/rosti.cpp
             src/main/c/aarch64/vect.cpp
             src/main/c/share/vec_int_key_agg.cpp
             src/main/c/share/vec_agg_vanilla.cpp
+            src/main/c/share/vec_radix_sort.cpp
     )
 
     add_library(questdb-aarch64 OBJECT ${AARCH64_FILES})
