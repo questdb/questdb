@@ -24,17 +24,12 @@
 
 package io.questdb.griffin;
 
-import io.questdb.WorkerPoolAwareConfiguration;
 import io.questdb.cairo.*;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
-import io.questdb.griffin.engine.functions.rnd.SharedRandom;
-import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
-import io.questdb.mp.WorkerPool;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.str.LPSZ;
-import io.questdb.std.str.Path;
-import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
@@ -44,13 +39,12 @@ import org.junit.Test;
 import java.io.File;
 import java.net.URISyntaxException;
 import java.net.URL;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
-public class OutOfOrderFailureTest extends AbstractGriffinTest {
+public class OutOfOrderFailureTest extends AbstractOutOfOrderTest {
 
-    private final static Log LOG = LogFactory.getLog(OutOfOrderFailureTest.class);
     private final static AtomicInteger counter = new AtomicInteger(0);
-    private final static StringSink sink2 = new StringSink();
 
     private static final FilesFacade ff19700107Backup = new FilesFacadeImpl() {
         @Override
@@ -235,30 +229,7 @@ public class OutOfOrderFailureTest extends AbstractGriffinTest {
 
     @Before
     public void setUp3() {
-        configuration = new DefaultCairoConfiguration(root) {
-            @Override
-            public boolean isOutOfOrderEnabled() {
-                return true;
-            }
-        };
-
-        engine = new CairoEngine(configuration);
-        compiler = new SqlCompiler(engine);
-        sqlExecutionContext = new SqlExecutionContextImpl(
-                engine, 1)
-                .with(
-                        AllowAllCairoSecurityContext.INSTANCE,
-                        bindVariableService,
-                        null,
-                        -1,
-                        null);
-        bindVariableService.clear();
-
-        SharedRandom.RANDOM.set(new Rnd());
-
-        // instantiate these paths so that they are not included in memory leak test
-        Path.PATH.get();
-        Path.PATH2.get();
+        super.setUp3();
     }
 
     @Test
@@ -779,6 +750,54 @@ public class OutOfOrderFailureTest extends AbstractGriffinTest {
     }
 
     @Test
+    @Ignore
+    public void testOOOFollowedByAnotherOOONR() throws Exception {
+        counter.set(2);
+        final AtomicBoolean restoreDiskSpace = new AtomicBoolean(false);
+        executeWithPool(0,
+                (engine, compiler, sqlExecutionContext) -> testOooFollowedByAnotherOOO0(engine, compiler, sqlExecutionContext, restoreDiskSpace),
+                new FilesFacadeImpl() {
+
+                    long theFd = 0;
+                    boolean armageddon = false;
+
+                    @Override
+                    public boolean close(long fd) {
+                        if (fd == theFd) {
+                            theFd = 0;
+                        }
+                        return super.close(fd);
+                    }
+
+                    @Override
+                    public long openRW(LPSZ name) {
+                        long fd = super.openRW(name);
+                        if (Chars.endsWith(name, "x" + Files.SEPARATOR + "1970-01-01" + Files.SEPARATOR + "m.d") && counter.decrementAndGet() == 0) {
+                            theFd = fd;
+                        }
+                        return fd;
+                    }
+
+                    @Override
+                    public boolean allocate(long fd, long size) {
+                        if (restoreDiskSpace.get()) {
+                            return super.allocate(fd, size);
+                        }
+
+                        if (armageddon) {
+                            return false;
+                        }
+                        if (fd == theFd) {
+                            theFd = 0;
+                            armageddon = true;
+                            return false;
+                        }
+                        return super.allocate(fd, size);
+                    }
+                });
+    }
+
+    @Test
     public void testPartitionedAllocateLastPartitionFail() throws Exception {
         counter.set(2);
         executeWithoutPool(OutOfOrderFailureTest::testPartitionedDataAppendOOPrependOODataFailRetry0, new FilesFacadeImpl() {
@@ -930,6 +949,12 @@ public class OutOfOrderFailureTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testPartitionedDataAppendOOPrependOODatThenRegularAppend() throws Exception {
+        counter.set(150);
+        executeWithPool(0, OutOfOrderFailureTest::testPartitionedDataAppendOOPrependOODatThenRegularAppend0, ffAllocateFailure);
+    }
+
+    @Test
     public void testPartitionedDataAppendOOPrependOOData() throws Exception {
         counter.set(150);
         executeWithoutPool(OutOfOrderFailureTest::testPartitionedDataAppendOOPrependOODataFailRetry0, ffAllocateFailure);
@@ -939,12 +964,6 @@ public class OutOfOrderFailureTest extends AbstractGriffinTest {
     public void testPartitionedDataAppendOOPrependOODataContended() throws Exception {
         counter.set(150);
         executeWithPool(0, OutOfOrderFailureTest::testPartitionedDataAppendOOPrependOODataFailRetry0, ffAllocateFailure);
-    }
-
-    @Test
-    public void testPartitionedDataAppendOOPrependOODatThenRegularAppend() throws Exception {
-        counter.set(150);
-        executeWithPool(0, OutOfOrderFailureTest::testPartitionedDataAppendOOPrependOODatThenRegularAppend0, ffAllocateFailure);
     }
 
     @Test
@@ -1057,15 +1076,6 @@ public class OutOfOrderFailureTest extends AbstractGriffinTest {
     public void testPartitionedOpenTimestampFailContended() throws Exception {
         counter.set(3);
         executeWithPool(0, OutOfOrderFailureTest::testPartitionedDataAppendOOPrependOODataFailRetry0, ffOpenFailure);
-    }
-
-    private static void executeVanilla(TestUtils.LeakProneCode code) throws Exception {
-        OutOfOrderUtils.initBuf();
-        try {
-            assertMemoryLeak(code);
-        } finally {
-            OutOfOrderUtils.freeBuf();
-        }
     }
 
     private static void testPartitionedOOPrefixesExistingPartitionsFailRetry0(
@@ -1225,12 +1235,7 @@ public class OutOfOrderFailureTest extends AbstractGriffinTest {
         compiler.compile(referenceTableDDL, sqlExecutionContext);
 
         // expected outcome
-        TestUtils.printSql(
-                compiler,
-                sqlExecutionContext,
-                "y order by ts",
-                sink
-        );
+        printSqlResult(compiler, sqlExecutionContext, "y order by ts");
 
         compiler.compile(outOfOrderInsertSQL, sqlExecutionContext);
 
@@ -1750,28 +1755,6 @@ public class OutOfOrderFailureTest extends AbstractGriffinTest {
         );
     }
 
-    private static void assertIndexConsistency(
-            SqlCompiler compiler,
-            SqlExecutionContext sqlExecutionContext
-    ) throws SqlException {
-        // index test
-        // expected outcome
-        TestUtils.printSql(
-                compiler,
-                sqlExecutionContext,
-                "y where sym = 'googl' order by ts",
-                sink
-        );
-
-        TestUtils.assertSql(
-                compiler,
-                sqlExecutionContext,
-                "x where sym = 'googl'",
-                sink2,
-                sink
-        );
-    }
-
     private static void assertOutOfOrderDataConsistency(
             CairoEngine engine,
             SqlCompiler compiler,
@@ -1791,12 +1774,7 @@ public class OutOfOrderFailureTest extends AbstractGriffinTest {
             SqlExecutionContext sqlExecutionContext,
             String resourceName
     ) throws URISyntaxException, SqlException {
-        TestUtils.printSql(
-                compiler,
-                sqlExecutionContext,
-                "x",
-                sink
-        );
+        printSqlResult(compiler, sqlExecutionContext, "x");
 
         URL url = OutOfOrderFailureTest.class.getResource(resourceName);
         Assert.assertNotNull(url);
@@ -1831,7 +1809,7 @@ public class OutOfOrderFailureTest extends AbstractGriffinTest {
                         " rnd_char() t" +
                         " from long_sequence(500)" +
                         "), index(sym) timestamp (ts) partition by DAY",
-                sqlExecutionContext
+                executionContext
         );
 
         compiler.compile(
@@ -1856,11 +1834,11 @@ public class OutOfOrderFailureTest extends AbstractGriffinTest {
                         " rnd_char() t" +
                         " from long_sequence(100)" +
                         ") timestamp (ts) partition by DAY",
-                sqlExecutionContext
+                executionContext
         );
 
         try {
-            compiler.compile("insert into x select * from append", sqlExecutionContext);
+            compiler.compile("insert into x select * from append", executionContext);
             Assert.fail();
         } catch (CairoException ignored) {
         }
@@ -1873,7 +1851,7 @@ public class OutOfOrderFailureTest extends AbstractGriffinTest {
                 "insert into x select * from append"
         );
 
-        assertIndexConsistency(compiler, sqlExecutionContext);
+        assertIndexConsistency(compiler, executionContext);
     }
 
     private static void testColumnTopMidAppendBlankColumnFailRetry0(
@@ -1904,22 +1882,22 @@ public class OutOfOrderFailureTest extends AbstractGriffinTest {
                         " rnd_char() t" +
                         " from long_sequence(500)" +
                         "), index(sym) timestamp (ts) partition by DAY",
-                sqlExecutionContext
+                executionContext
         );
 
-        compiler.compile("alter table x add column v double", sqlExecutionContext);
-        compiler.compile("alter table x add column v1 float", sqlExecutionContext);
-        compiler.compile("alter table x add column v2 int", sqlExecutionContext);
-        compiler.compile("alter table x add column v3 byte", sqlExecutionContext);
-        compiler.compile("alter table x add column v4 short", sqlExecutionContext);
-        compiler.compile("alter table x add column v5 boolean", sqlExecutionContext);
-        compiler.compile("alter table x add column v6 date", sqlExecutionContext);
-        compiler.compile("alter table x add column v7 timestamp", sqlExecutionContext);
-        compiler.compile("alter table x add column v8 symbol", sqlExecutionContext);
-        compiler.compile("alter table x add column v10 char", sqlExecutionContext);
-        compiler.compile("alter table x add column v11 string", sqlExecutionContext);
-        compiler.compile("alter table x add column v12 binary", sqlExecutionContext);
-        compiler.compile("alter table x add column v9 long", sqlExecutionContext);
+        compiler.compile("alter table x add column v double", executionContext);
+        compiler.compile("alter table x add column v1 float", executionContext);
+        compiler.compile("alter table x add column v2 int", executionContext);
+        compiler.compile("alter table x add column v3 byte", executionContext);
+        compiler.compile("alter table x add column v4 short", executionContext);
+        compiler.compile("alter table x add column v5 boolean", executionContext);
+        compiler.compile("alter table x add column v6 date", executionContext);
+        compiler.compile("alter table x add column v7 timestamp", executionContext);
+        compiler.compile("alter table x add column v8 symbol", executionContext);
+        compiler.compile("alter table x add column v10 char", executionContext);
+        compiler.compile("alter table x add column v11 string", executionContext);
+        compiler.compile("alter table x add column v12 binary", executionContext);
+        compiler.compile("alter table x add column v9 long", executionContext);
 
         compiler.compile(
                 "create table append as (" +
@@ -1957,11 +1935,11 @@ public class OutOfOrderFailureTest extends AbstractGriffinTest {
                         " rnd_long() v9" +
                         " from long_sequence(100)" +
                         ") timestamp (ts) partition by DAY",
-                sqlExecutionContext
+                executionContext
         );
 
         try {
-            compiler.compile("insert into x select * from append", sqlExecutionContext);
+            compiler.compile("insert into x select * from append", executionContext);
             Assert.fail();
         } catch (CairoException ignored) {
         }
@@ -1975,13 +1953,13 @@ public class OutOfOrderFailureTest extends AbstractGriffinTest {
                 "insert into x select * from append"
         );
 
-        assertIndexConsistency(compiler, sqlExecutionContext);
+        assertIndexConsistency(compiler, executionContext);
     }
 
     private static void testColumnTopMidMergeBlankColumnFailRetry0(
             CairoEngine engine,
             SqlCompiler compiler,
-            SqlExecutionContext executionContext
+            SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
         // create table with roughly 2AM data
         compiler.compile(
@@ -2072,7 +2050,7 @@ public class OutOfOrderFailureTest extends AbstractGriffinTest {
         assertOutOfOrderDataConsistency(
                 engine,
                 compiler,
-                executionContext,
+                sqlExecutionContext,
                 "create table y as (x union all append)",
                 "insert into x select * from append"
         );
@@ -2083,7 +2061,7 @@ public class OutOfOrderFailureTest extends AbstractGriffinTest {
     private static void testColumnTopMidAppendColumnFailRetry0(
             CairoEngine engine,
             SqlCompiler compiler,
-            SqlExecutionContext executionContext
+            SqlExecutionContext sqlExecutionContext
     ) throws SqlException, URISyntaxException {
         compiler.compile(
                 "create table x as (" +
@@ -2403,116 +2381,132 @@ public class OutOfOrderFailureTest extends AbstractGriffinTest {
         );
     }
 
-    private void executeWithPool(int workerCount, OutOfOrderCode runnable, FilesFacade ff) throws Exception {
-        executeVanilla(() -> {
-            if (workerCount > 0) {
-                final CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
-                    @Override
-                    public FilesFacade getFilesFacade() {
-                        return ff;
-                    }
+    private static void testOooFollowedByAnotherOOO0(
+            CairoEngine engine,
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext,
+            AtomicBoolean restoreDiskSpace
+    ) throws SqlException {
+        compiler.compile(
+                "create table x as (" +
+                        "select" +
+                        " cast(x as int) i," +
+                        " rnd_symbol('msft','ibm', 'googl') sym," +
+                        " round(rnd_double(0)*100, 3) amt," +
+                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                        " rnd_boolean() b," +
+                        " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                        " rnd_double(2) d," +
+                        " rnd_float(2) e," +
+                        " rnd_short(10,1024) f," +
+                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                        " rnd_symbol(4,4,4,2) ik," +
+                        " rnd_long() j," +
+                        " timestamp_sequence(10000000000,1000000L) ts," +
+                        " rnd_byte(2,50) l," +
+                        " rnd_bin(10, 20, 2) m," +
+                        " rnd_str(5,16,2) n," +
+                        " rnd_char() t" +
+                        " from long_sequence(500)" +
+                        "), index(sym) timestamp (ts) partition by DAY",
+                sqlExecutionContext
+        );
 
-                    @Override
-                    public boolean isOutOfOrderEnabled() {
-                        return true;
-                    }
-                };
+        printSqlResult(
+                compiler,
+                sqlExecutionContext,
+                "x"
+        );
 
-                try (
-                        final CairoEngine engine = new CairoEngine(configuration);
-                        final SqlCompiler compiler = new SqlCompiler(engine);
-                        final SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, workerCount)
-                ) {
-                    final int[] affinity = new int[workerCount];
-                    for (int i = 0; i < workerCount; i++) {
-                        affinity[i] = -1;
-                    }
-                    WorkerPool pool = new WorkerPool(
-                            new WorkerPoolAwareConfiguration() {
-                                @Override
-                                public int[] getWorkerAffinity() {
-                                    return affinity;
-                                }
+        // create table with 1AM data
 
-                                @Override
-                                public int getWorkerCount() {
-                                    return workerCount;
-                                }
+        compiler.compile(
+                "create table 1am as (" +
+                        "select" +
+                        " cast(x as int) i," +
+                        " rnd_symbol('msft','ibm', 'googl') sym," +
+                        " round(rnd_double(0)*100, 3) amt," +
+                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                        " rnd_boolean() b," +
+                        " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                        " rnd_double(2) d," +
+                        " rnd_float(2) e," +
+                        " rnd_short(10,1024) f," +
+                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                        " rnd_symbol(4,4,4,2) ik," +
+                        " rnd_long() j," +
+                        " timestamp_sequence(9993000000,1000000L) ts," +
+                        " rnd_byte(2,50) l," +
+                        " rnd_bin(10, 20, 2) m," +
+                        " rnd_str(5,16,2) n," +
+                        " rnd_char() t" +
+                        " from long_sequence(507)" +
+                        ")",
+                sqlExecutionContext
+        );
 
-                                @Override
-                                public boolean haltOnError() {
-                                    return false;
-                                }
+        compiler.compile(
+                "create table tail as (" +
+                        "select" +
+                        " cast(x as int) i," +
+                        " rnd_symbol('msft','ibm', 'googl') sym," +
+                        " round(rnd_double(0)*100, 3) amt," +
+                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                        " rnd_boolean() b," +
+                        " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                        " rnd_double(2) d," +
+                        " rnd_float(2) e," +
+                        " rnd_short(10,1024) f," +
+                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                        " rnd_symbol(4,4,4,2) ik," +
+                        " rnd_long() j," +
+                        " timestamp_sequence(9997000010L,1000000L) ts," +
+                        " rnd_byte(2,50) l," +
+                        " rnd_bin(10, 20, 2) m," +
+                        " rnd_str(5,16,2) n," +
+                        " rnd_char() t" +
+                        " from long_sequence(100)" +
+                        ") timestamp (ts) partition by DAY",
+                sqlExecutionContext
+        );
 
-                                @Override
-                                public boolean isEnabled() {
-                                    return true;
-                                }
-                            }
-                    );
+        // create third table, which will contain both X and 1AM
+        compiler.compile("create table y as (x union all 1am union all tail)", sqlExecutionContext);
 
-                    pool.assignCleaner(Path.CLEANER);
-                    pool.assign(new OutOfOrderSortJob(engine.getMessageBus()));
-                    pool.assign(new OutOfOrderPartitionJob(engine.getMessageBus()));
-                    pool.assign(new OutOfOrderOpenColumnJob(engine.getMessageBus()));
-                    pool.assign(new OutOfOrderCopyJob(engine.getMessageBus()));
+        try {
+            compiler.compile("insert into x select * from 1am", sqlExecutionContext);
+            Assert.fail();
+        } catch (CairoException ignore) {
+            // ignore "no disk space left" error and keep going
+        }
 
-                    OutOfOrderUtils.initBuf(pool.getWorkerCount() + 1);
-                    pool.start(LOG);
+        try {
+            compiler.compile("insert into x select * from tail", sqlExecutionContext);
+            Assert.fail();
+        } catch (CairoException ignore) {
+        }
 
-                    try {
-                        runnable.run(engine, compiler, sqlExecutionContext);
-                    } finally {
-                        pool.halt();
-                        OutOfOrderUtils.freeBuf();
-                    }
-                }
-            } else {
-                // we need to create entire engine
-                final CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
-                    @Override
-                    public FilesFacade getFilesFacade() {
-                        return ff;
-                    }
+        restoreDiskSpace.set(true);
+        System.out.println("passed");
 
-                    @Override
-                    public int getOutOfOrderSortQueueCapacity() {
-                        return 0;
-                    }
+        // check that table data is intact using "cached" table reader
+        // e.g. one that had files already open
+        TestUtils.printSql(compiler, sqlExecutionContext, "x", sink2);
+        TestUtils.assertEquals(sink, sink2);
 
-                    @Override
-                    public int getOutOfOrderPartitionQueueCapacity() {
-                        return 0;
-                    }
+        engine.releaseAllReaders();
 
-                    @Override
-                    public int getOutOfOrderOpenColumnQueueCapacity() {
-                        return 0;
-                    }
+        // now check that "fresh" table reader can also see consistent data
+        TestUtils.printSql(compiler, sqlExecutionContext, "x", sink2);
+        TestUtils.assertEquals(sink, sink2);
 
-                    @Override
-                    public int getOutOfOrderCopyQueueCapacity() {
-                        return 0;
-                    }
+        // now perform two OOO inserts
+        compiler.compile("insert into x select * from 1am", sqlExecutionContext);
+        compiler.compile("insert into x select * from 1am", sqlExecutionContext);
 
-                    @Override
-                    public boolean isOutOfOrderEnabled() {
-                        return true;
-                    }
-                };
-
-                OutOfOrderUtils.initBuf();
-                try (
-                        final CairoEngine engine = new CairoEngine(configuration);
-                        final SqlCompiler compiler = new SqlCompiler(engine);
-                        final SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
-                ) {
-                    runnable.run(engine, compiler, sqlExecutionContext);
-                } finally {
-                    OutOfOrderUtils.freeBuf();
-                }
-            }
-        });
+        printSqlResult(compiler, sqlExecutionContext, "y");
+        TestUtils.printSql(compiler, sqlExecutionContext, "x", sink2);
+        TestUtils.assertEquals(sink, sink2);
     }
 
     private void executeWithoutPool(OutOfOrderCode runnable, FilesFacade ff) throws Exception {
@@ -2529,18 +2523,8 @@ public class OutOfOrderFailureTest extends AbstractGriffinTest {
                 }
             };
 
-            try (
-                    final CairoEngine engine = new CairoEngine(configuration);
-                    final SqlCompiler compiler = new SqlCompiler(engine);
-                    final SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
-            ) {
-                OutOfOrderUtils.initBuf(1);
-                try {
-                    runnable.run(engine, compiler, sqlExecutionContext);
-                } finally {
-                    OutOfOrderUtils.freeBuf();
-                }
-            }
+            OutOfOrderUtils.initBuf(1);
+            execute0(runnable, configuration);
         });
     }
 }

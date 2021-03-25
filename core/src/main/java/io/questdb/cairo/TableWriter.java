@@ -1001,13 +1001,18 @@ public class TableWriter implements Closeable {
     public void rollback() {
         checkDistressed();
         if (inTransaction()) {
-            LOG.info().$("tx rollback [name=").$(name).$(']').$();
-            freeColumns(false);
-            this.txFile.readUnchecked();
-            configureAppendPosition();
-            rollbackIndexes();
-            purgeUnusedPartitions();
-            LOG.info().$("tx rollback complete [name=").$(name).$(']').$();
+            try {
+                LOG.info().$("tx rollback [name=").$(name).$(']').$();
+                freeColumns(false);
+                this.txFile.readUnchecked();
+                rollbackIndexes();
+                purgeUnusedPartitions();
+                configureAppendPosition();
+                LOG.info().$("tx rollback complete [name=").$(name).$(']').$();
+            } catch (Throwable e) {
+                LOG.error().$("could not perform rollback [name=").$(name).$(", msg=").$(e.getMessage()).$(']').$();
+                distressed = true;
+            }
         }
     }
 
@@ -3434,8 +3439,11 @@ public class TableWriter implements Closeable {
         final long maxRow = txFile.getTransientRowCount() - 1;
         for (int i = 0, n = denseIndexers.size(); i < n; i++) {
             ColumnIndexer indexer = denseIndexers.getQuick(i);
-            LOG.info().$("recovering index [fd=").$(indexer.getFd()).$(']').$();
-            indexer.rollback(maxRow);
+            long fd = indexer.getFd();
+            LOG.info().$("recovering index [fd=").$(fd).$(']').$();
+            if (fd > -1) {
+                indexer.rollback(maxRow);
+            }
         }
     }
 

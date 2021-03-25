@@ -3455,11 +3455,11 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                 } catch (CairoException ignore) {
                 }
 
+                inError.set(false);
+
                 try (TableWriter w = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "x")) {
                     Assert.assertEquals(0, w.size());
                 }
-
-                inError.set(false);
 
                 compiler.compile("insert into x select rnd_int() int1, rnd_int() int2 from long_sequence(1000000)", sqlExecutionContext);
                 try (TableWriter w = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "x")) {

@@ -98,10 +98,10 @@ public class PagedMappedReadWriteMemory extends PagedVirtualMemory implements Ma
         close();
         this.ff = ff;
         fd = TableUtils.openFileRWOrFail(ff, name);
+        setPageSize(pageSize);
         if (!ff.allocate(fd, size)) {
             throw CairoException.instance(ff.errno()).put("Not enough space left on device");
         }
-        setPageSize(pageSize);
         ensurePagesListCapacity(size);
         LOG.debug().$("open ").$(name).$(" [fd=").$(fd).$(']').$();
         try {

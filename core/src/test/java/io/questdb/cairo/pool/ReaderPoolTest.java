@@ -528,7 +528,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
     public void testLockBusyReader() throws Exception {
         final int readerCount = 5;
         int threadCount = 2;
-        final int iterations = 10000;
+        final int iterations = 1000;
         Rnd dataRnd = new Rnd();
         StringSink sink = new StringSink();
 
@@ -577,7 +577,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
                         while (true) {
                             if (pool.lock(name)) {
                                 lockTimes.add(System.currentTimeMillis());
-                                LockSupport.parkNanos(10L);
+                                LockSupport.parkNanos(1L);
                                 pool.unlock(name);
                                 break;
                             }
