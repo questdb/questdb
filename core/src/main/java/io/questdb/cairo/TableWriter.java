@@ -3419,9 +3419,7 @@ public class TableWriter implements Closeable {
             }
             path.$();
 
-            if (!ff.rename(path, other.concat(META_FILE_NAME).$())) {
-                throw CairoException.instance(ff.errno()).put("Cannot rename ").put(path).put(" -> ").put(other);
-            }
+            TableUtils.renameOrFail(ff, path, other.concat(META_FILE_NAME).$());
         } finally {
             path.trimTo(rootLen);
             other.trimTo(rootLen);

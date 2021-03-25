@@ -68,7 +68,7 @@ public class OutOfOrderUtils {
         if (Os.type == Os.WINDOWS) {
             swapPartitionFiles(ff, pathToTable, partitionTimestamp, srcDataTxn, txn, partitionBy);
         } else {
-            swapPartitionDirectories(ff, pathToTable, partitionTimestamp, txn, partitionBy);
+            swapPartitionDirectories(ff, pathToTable, partitionTimestamp, srcDataTxn, txn, partitionBy);
         }
     }
 
@@ -201,29 +201,32 @@ public class OutOfOrderUtils {
             FilesFacade ff,
             CharSequence pathToTable,
             long partitionTimestamp,
+            long srcDataTxn,
             long txn,
             int partitionBy
     ) {
-        final Path path = Path.getThreadLocal(pathToTable);
-        TableUtils.setPathForPartition(path, partitionBy, partitionTimestamp);
-        final int plen = path.length();
-        path.$();
-        final Path other = Path.getThreadLocal2(path);
-        TableUtils.oldPartitionName(other, txn);
-        if (ff.rename(path, other.$())) {
-            TableUtils.txnPartition(other.trimTo(plen), txn);
-            if (ff.rename(other.$(), path)) {
-                LOG.info().$("renamed").$();
-                return;
-            }
-            throw CairoException.instance(ff.errno())
-                    .put("could not rename [from=").put(other)
-                    .put(", to=").put(path).put(']');
-        } else {
-            throw CairoException.instance(ff.errno())
-                    .put("could not rename [from=").put(path)
-                    .put(", to=").put(other).put(']');
-        }
+        final Path srcPath = Path.getThreadLocal(pathToTable);
+        TableUtils.setPathForPartition(srcPath, partitionBy, partitionTimestamp);
+        final int coreLen = srcPath.length();
+        TableUtils.txnPartitionConditionally(srcPath, srcDataTxn);
+
+        final Path dstPath = Path.getThreadLocal2(srcPath).trimTo(coreLen);
+        TableUtils.txnPartitionConditionally(dstPath, txn);
+        dstPath.concat("backup");
+        TableUtils.txnPartitionConditionally(dstPath, txn);
+
+        // rename "2018-01-10-n-2" to "2018-01-10-n-3/backup-n-3"
+        // e.g. all files from src dir will end up in the backup directory of the new partition
+        TableUtils.renameOrFail(ff, srcPath.$(), dstPath.$());
+
+        // now rename "2018-01-10-n-3" to "2018-01-10-n-2"
+        srcPath.trimTo(coreLen);
+        TableUtils.txnPartitionConditionally(srcPath, txn);
+
+        dstPath.trimTo(coreLen);
+        TableUtils.txnPartitionConditionally(dstPath, srcDataTxn);
+
+        TableUtils.renameOrFail(ff, srcPath.$(), dstPath.$());
     }
 
     private static void swapPartitionFiles(
