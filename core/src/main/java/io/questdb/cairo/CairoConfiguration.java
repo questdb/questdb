@@ -223,6 +223,10 @@ public interface CairoConfiguration {
         return false;
     }
 
+    default boolean isOutOfOrderRenameEnabled() {
+        return true;
+    }
+
     long getInstanceHashLo();
 
     long getInstanceHashHi();
