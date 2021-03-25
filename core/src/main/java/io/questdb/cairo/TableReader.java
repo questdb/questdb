@@ -165,28 +165,6 @@ public class TableReader implements Closeable, SymbolTableSource {
         }
     }
 
-    private void acquirePartitionLocks() {
-        for (int i = 0; i < partitionCount; i++) {
-            final int offset = i * PARTITIONS_SLOT_SIZE;
-            final long partitionTimestamp = openPartitionInfo.getQuick(offset);
-            final long partitionSize = openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE);
-            if (partitionSize > -1) {
-                txFile.scoreboard.acquireReadLock(partitionTimestamp, openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_NAME_TXN));
-            }
-        }
-    }
-
-    private void releasePartitionLocks() {
-        for (int i = 0; i < partitionCount; i++) {
-            final int offset = i * PARTITIONS_SLOT_SIZE;
-            final long partitionTimestamp = openPartitionInfo.getQuick(offset);
-            final long partitionSize = openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE);
-            if (partitionSize > -1) {
-                txFile.scoreboard.releaseReadLock(partitionTimestamp, openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_NAME_TXN));
-            }
-        }
-    }
-
     /**
      * Closed column files. Similarly to {@link #closeColumnForRemove(CharSequence)} closed reader column files before
      * column can be removed. This method takes column index usually resolved from column name by #TableReaderMetadata.
@@ -406,6 +384,8 @@ public class TableReader implements Closeable, SymbolTableSource {
                         changed = true;
                     }
                 } else {
+                    // clear the partition size in case we truncated it
+                    this.openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE, -1);
                     openPartition0(partitionIndex);
                     this.openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_NAME_TXN, txPartitionNameTxn);
                     changed = true;
@@ -583,6 +563,17 @@ public class TableReader implements Closeable, SymbolTableSource {
         final long len = mem1.getLong(offset);
         if (len > 0) {
             mem1.grow(offset + len + 8);
+        }
+    }
+
+    private void acquirePartitionLocks() {
+        for (int i = 0; i < partitionCount; i++) {
+            final int offset = i * PARTITIONS_SLOT_SIZE;
+            final long partitionTimestamp = openPartitionInfo.getQuick(offset);
+            final long partitionSize = openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE);
+            if (partitionSize > -1) {
+                txFile.scoreboard.acquireReadLock(partitionTimestamp, openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_NAME_TXN));
+            }
         }
     }
 
@@ -1085,6 +1076,17 @@ public class TableReader implements Closeable, SymbolTableSource {
             return;
         }
         reconcileOpenPartitionsFrom(0);
+    }
+
+    private void releasePartitionLocks() {
+        for (int i = 0; i < partitionCount; i++) {
+            final int offset = i * PARTITIONS_SLOT_SIZE;
+            final long partitionTimestamp = openPartitionInfo.getQuick(offset);
+            final long partitionSize = openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE);
+            if (partitionSize > -1) {
+                txFile.scoreboard.releaseReadLock(partitionTimestamp, openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_NAME_TXN));
+            }
+        }
     }
 
     private void reloadColumnAt(

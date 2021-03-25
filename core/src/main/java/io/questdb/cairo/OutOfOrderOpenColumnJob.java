@@ -2851,7 +2851,9 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                 0,
                 0,
                 0,
-                0, 0, 0,
+                0,
+                0,
+                0,
                 srcDataMax,
                 // this is new partition
                 srcOooFixAddr,

@@ -1209,9 +1209,7 @@ public class SqlCompiler implements Closeable {
             path.of(configuration.getBackupRoot()).concat(configuration.getBackupTempDirName()).put(Files.SEPARATOR).concat(tableName).$();
             try {
                 renamePath.trimTo(renameRootLen).concat(tableName).$();
-                if (!ff.rename(path, renamePath)) {
-                    throw CairoException.instance(ff.errno()).put("could not rename [from=").put(path).put(", to=").put(renamePath).put(']');
-                }
+                TableUtils.renameOrFail(ff, path, renamePath);
                 LOG.info().$("backup complete [table=").$(tableName).$(", to=").$(renamePath).$(']').$();
             } finally {
                 renamePath.trimTo(renameRootLen).$();

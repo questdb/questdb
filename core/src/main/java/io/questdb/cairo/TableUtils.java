@@ -386,6 +386,12 @@ public final class TableUtils {
         throw CairoException.instance(ff.errno()).put("Could not open file [path=").put(path).put(']');
     }
 
+    public static void renameOrFail(FilesFacade ff, Path src, Path dst) {
+        if (!ff.rename(src, dst)) {
+            throw CairoException.instance(ff.errno()).put("could not rename ").put(src).put(" -> ").put(dst);
+        }
+    }
+
     public static void resetTxn(PagedVirtualMemory txMem, int symbolMapCount, long txn, long dataVersion, long partitionTableVersion) {
         // txn to let readers know table is being reset
         txMem.putLong(TX_OFFSET_TXN, txn);
