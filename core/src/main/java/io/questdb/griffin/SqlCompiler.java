@@ -259,7 +259,7 @@ public class SqlCompiler implements Closeable {
 
     // Creates data type converter.
     // INT and LONG NaN values are cast to their representation rather than Double or Float NaN.
-    private static RecordToRowCopier assembleRecordToRowCopier(BytecodeAssembler asm, ColumnTypes from, RecordMetadata to, ColumnFilter toColumnFilter) {
+    public static RecordToRowCopier assembleRecordToRowCopier(BytecodeAssembler asm, ColumnTypes from, RecordMetadata to, ColumnFilter toColumnFilter) {
         int timestampIndex = to.getTimestampIndex();
         asm.init(RecordToRowCopier.class);
         asm.setupPool();

@@ -51,6 +51,7 @@ public class Scoreboard implements Closeable {
                 throw CairoException.instance(ff.errno()).put("Could not open scoreboard file [name=").put(path).put(']');
             }
             this.size = ff.length(fd);
+            // TODO: Check mmap return and ensure migration path for tables created prior to the scoreboard
             pScoreboard = ff.mmap(fd, size, 0, Files.MAP_RW);
 
             LOG.debug()

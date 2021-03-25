@@ -189,6 +189,37 @@ public final class TxWriter extends TxReader implements Closeable {
         prevTransientRowCount = transientRowCount;
     }
 
+    void commitPartial(int commitMode, ObjList<SymbolMapWriter> denseSymbolMapWriters, long partialTransientRowCount, int partialTxPartitionCount, long partialFixedRowCount, long partialMaxTimestamp) {
+        txMem.putLong(TX_OFFSET_TXN, ++txn);
+        Unsafe.getUnsafe().storeFence();
+
+        txMem.putLong(TX_OFFSET_TRANSIENT_ROW_COUNT, partialTransientRowCount);
+        txMem.putLong(TX_OFFSET_PARTITION_TABLE_VERSION, this.partitionTableVersion);
+
+        saveCommittedPartitionsToTx(symbolsCount, txPartitionCount - partialTxPartitionCount);
+        if (partialTxPartitionCount > 1) {
+            txMem.putLong(TX_OFFSET_FIXED_ROW_COUNT, partialFixedRowCount);
+            txPartitionCount -= partialTxPartitionCount;
+        }
+
+        txMem.putLong(TX_OFFSET_MIN_TIMESTAMP, minTimestamp);
+        txMem.putLong(TX_OFFSET_MAX_TIMESTAMP, partialMaxTimestamp);
+
+        // store symbol counts
+        storeSymbolCounts(denseSymbolMapWriters);
+
+        // store attached partitions
+        symbolsCount = denseSymbolMapWriters.size();
+
+        Unsafe.getUnsafe().storeFence();
+        txMem.putLong(TX_OFFSET_TXN_CHECK, txn);
+        if (commitMode != CommitMode.NOSYNC) {
+            txMem.sync(0, commitMode == CommitMode.ASYNC);
+        }
+
+        prevTransientRowCount = partialTransientRowCount;
+    }
+
     public void finishPartitionSizeUpdate(long minTimestamp, long maxTimestamp) {
         this.minTimestamp = minTimestamp;
         this.maxTimestamp = maxTimestamp;
@@ -373,6 +404,20 @@ public final class TxWriter extends TxReader implements Closeable {
 
     private void saveAttachedPartitionsToTx(int symCount) {
         final int size = attachedPartitions.size();
+        final long partitionTableOffset = getPartitionTableSizeOffset(symCount);
+        txMem.putInt(partitionTableOffset, size * Long.BYTES);
+        if (maxTimestamp != Long.MIN_VALUE) {
+            for (int i = attachedPositionDirtyIndex; i < size; i++) {
+                txMem.putLong(getPartitionTableIndexOffset(partitionTableOffset, i), attachedPartitions.getQuick(i));
+            }
+            attachedPositionDirtyIndex = size;
+        }
+    }
+
+    private void saveCommittedPartitionsToTx(int symCount, int nUncommittedPartitions) {
+        int size = attachedPartitions.size();
+        assert size % 4 == 0;
+        size -= nUncommittedPartitions * 4;
         final long partitionTableOffset = getPartitionTableSizeOffset(symCount);
         txMem.putInt(partitionTableOffset, size * Long.BYTES);
         if (maxTimestamp != Long.MIN_VALUE) {

@@ -154,6 +154,7 @@ public class TableWriter implements Closeable {
     private final LongConsumer mergeTimestampMethodRef = this::mergeTimestampSetter;
     private long transientRowCountBeforeOutOfOrder;
     private long lastPartitionTimestamp;
+    private final AppendOnlyVirtualMemory outOfBandColumn = new AppendOnlyVirtualMemory();
 
     public TableWriter(CairoConfiguration configuration, CharSequence name) {
         this(configuration, name, new MessageBusImpl(configuration));
@@ -656,6 +657,14 @@ public class TableWriter implements Closeable {
         commit(defaultCommitMode);
     }
 
+    public void commitWithHysteresis(long lastTimestampHysteresisInMicros) {
+        commit(defaultCommitMode, lastTimestampHysteresisInMicros);
+    }
+
+    public void commit(int commitMode) {
+        commit(commitMode, 0);
+    }
+
     /**
      * Commits newly added rows of data. This method updates transaction file with pointers to end of appended data.
      * <p>
@@ -663,8 +672,9 @@ public class TableWriter implements Closeable {
      * <p>This method will cancel pending rows by calling {@link #cancelRow()}. Data in partially appended row will be lost.</p>
      *
      * @param commitMode commit durability mode.
+     * @param lastTimestampHysteresisInMicros if > 0 then do a partial commit, leaving the rows within the hysteresis in a new uncommitted transaction
      */
-    public void commit(int commitMode) {
+    private void commit(int commitMode, long lastTimestampHysteresisInMicros) {
 
         checkDistressed();
 
@@ -683,8 +693,50 @@ public class TableWriter implements Closeable {
             }
 
             updateIndexes();
-
-            txFile.commit(commitMode, this.denseSymbolMapWriters);
+            if (lastTimestampHysteresisInMicros <= 0) {
+                txFile.commit(commitMode, this.denseSymbolMapWriters);
+            } else {
+                int timestampColumnIndex = metadata.getTimestampIndex();
+                PagedVirtualMemory tsColumn = getPrimaryColumn(timestampColumnIndex);
+                long tsAppendPointer = tsColumn.getAppendOffset();
+                try {
+                    long maxTimestamp = txFile.getMaxTimestamp();
+                    long previousMaxTimestamp = txFile.cancelToMaxTimestamp();
+                    long newCommittedMaxTimestamp = maxTimestamp - lastTimestampHysteresisInMicros;
+                    int appendedPartitionCount = txFile.getAppendedPartitionCount();
+                    long fixedRowCount = txFile.getFixedRowCount();
+                    long row = txFile.getTransientRowCount() - 1;
+                    long lastTimestamp;
+                    do {
+                        if (row > 0) {
+                            row--;
+                        } else {
+                            int partitionIndex = txFile.getPartitionCount() - appendedPartitionCount - 1;
+                            row = txFile.getPartitionSize(partitionIndex);
+                            fixedRowCount -= row;
+                            appendedPartitionCount--;
+                            int plen = path.length();
+                            try {
+                                setStateForTimestamp(path.trimTo(plen), txFile.getPartitionTimestamp(partitionIndex), false);
+                                outOfBandColumn.of(ff, dFile(path, metadata.getColumnName(timestampColumnIndex)), row << ColumnType.pow2SizeOf(ColumnType.TIMESTAMP));
+                            } finally {
+                                path.trimTo(plen);
+                            }
+                            tsColumn = outOfBandColumn;
+                            row--;
+                        }
+                        long offset = row << ColumnType.pow2SizeOf(ColumnType.TIMESTAMP);
+                        tsColumn.jumpTo(offset);
+                        lastTimestamp = tsColumn.getLong(offset);
+                    } while (appendedPartitionCount >= 0 && lastTimestamp > newCommittedMaxTimestamp);
+                    if (newCommittedMaxTimestamp > previousMaxTimestamp) {
+                        txFile.commitPartial(commitMode, this.denseSymbolMapWriters, row + 1, appendedPartitionCount, fixedRowCount, lastTimestamp);
+                    }
+                } finally {
+                    getPrimaryColumn(timestampColumnIndex).jumpTo(tsAppendPointer);
+                    outOfBandColumn.close(false);
+                }
+            }
         }
     }
 
@@ -1828,6 +1880,7 @@ public class TableWriter implements Closeable {
         Misc.free(ddlMem);
         Misc.free(other);
         Misc.free(todoMem);
+        Misc.free(outOfBandColumn);
         try {
             releaseLock(!truncate | tx | performRecovery | distressed);
         } finally {
