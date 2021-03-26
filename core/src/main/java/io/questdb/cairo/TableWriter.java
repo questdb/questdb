@@ -67,6 +67,7 @@ import static io.questdb.cairo.TableUtils.readPartitionSizeMinMax;
 import static io.questdb.cairo.TableUtils.setPathForPartition;
 import static io.questdb.cairo.TableUtils.topFile;
 import static io.questdb.cairo.TableUtils.validate;
+import static io.questdb.cairo.TableWriter.getPrimaryColumnIndex;
 import static io.questdb.std.Files.isDots;
 
 import java.io.Closeable;
@@ -782,10 +783,13 @@ public class TableWriter implements Closeable {
                     PagedVirtualMemory tsColumn;
                     long fixedRowCount = txFile.getFixedRowCount();
                     long row;
+                    final boolean inLastPartition;
                     if (newCommittedLastPartitionIndex == uncommittedLastPartitionIndex) {
                         // Hysteresis is in the last partition
                         row = txFile.getTransientRowCount();
+                        inLastPartition = true;
                     } else {
+                        inLastPartition = false;
                         row = txFile.getPartitionSize(newCommittedLastPartitionIndex);
                         int partitionIndex = newCommittedLastPartitionIndex;
                         while (partitionIndex < uncommittedLastPartitionIndex) {
@@ -802,12 +806,15 @@ public class TableWriter implements Closeable {
                     try {
                         setStateForTimestamp(path.trimTo(plen), txFile.getPartitionTimestamp(newCommittedLastPartitionIndex), false);
                         dFile(path, metadata.getColumnName(timestampColumnIndex));
-                        timestampFd = OutOfOrderUtils.openRW(ff, path);
+                        timestampFd = inLastPartition ? columns.getQuick(getPrimaryColumnIndex(timestampColumnIndex)).getFd() : OutOfOrderUtils.openRW(ff, path);
                         timestampAddr = OutOfOrderUtils.mapRW(ff, timestampFd, timestampSize);
                         row = Vect.boundedBinarySearch64Bit(timestampAddr, newCommittedMaxTimestamp, 0, row - 1, BinarySearch.SCAN_DOWN);
                         lastTimestamp = Unsafe.getUnsafe().getLong(timestampAddr + (row << ColumnType.pow2SizeOf(ColumnType.TIMESTAMP)));
                     } finally {
-                        OutOfOrderUtils.unmapAndClose(ff, timestampFd, timestampAddr, timestampSize);
+                        OutOfOrderUtils.unmap(ff, timestampAddr, timestampSize);
+                        if (!inLastPartition) {
+                            OutOfOrderUtils.close(ff, timestampFd);
+                        }
                         path.trimTo(plen);
                     }
                     txFile.commitPartial(commitMode, this.denseSymbolMapWriters, row + 1, fixedRowCount, lastTimestamp, committedLastPartitionIndex, newCommittedLastPartitionIndex,
