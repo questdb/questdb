@@ -94,6 +94,15 @@ public:
         _mm_storeu_si128((__m128i*)p,     y0);
         _mm_storeu_si128((__m128i*)p + 1, y1);
     }
+    // Member function to store into array (unaligned) with non-temporal memory hint
+    void store_nt(void * p) const {
+        _mm_stream_si128((__m128i*)p,     y0);
+        _mm_stream_si128((__m128i*)p + 1, y1);
+    }
+    // Required alignment for store_nt call in bytes
+    static constexpr int store_nt_alignment() {
+        return 16;
+    }
     // Member function to store into array, aligned by 32
     // You may use store_a instead of store if you are certain that p points to an address
     // divisible by 32, but there is hardly any speed advantage of load_a on modern processors
