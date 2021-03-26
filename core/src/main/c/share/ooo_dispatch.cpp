@@ -31,6 +31,7 @@
 #include "vcl/vectorclass.h"
 #include <x86intrin.h>
 #include "ooo_dispatch.h"
+#include <algorithm>
 
 template<typename T, int alignment, typename l_iteration>
 inline int64_t align_to_store_nt(T *address, const int64_t max_count, const l_iteration iteration) {

@@ -789,10 +789,10 @@ Java_io_questdb_std_Vect_shiftCopyFixedSizeColumnData(JNIEnv *env, jclass cl, jl
                                                       jlong srcHi, jlong dst) {
     measure_time(27, [=]() {
         shift_copy(
-                reinterpret_cast<int64_t>(shift),
+                __JLONG_REINTERPRET_CAST__(int64_t, shift),
                 reinterpret_cast<int64_t *>(src),
-                reinterpret_cast<int64_t>(srcLo),
-                reinterpret_cast<int64_t>(srcHi),
+                __JLONG_REINTERPRET_CAST__(int64_t, srcLo),
+                __JLONG_REINTERPRET_CAST__(int64_t, srcHi),
                 reinterpret_cast<int64_t *>(dst)
         );
     });
@@ -805,8 +805,8 @@ Java_io_questdb_std_Vect_copyFromTimestampIndex(JNIEnv *env, jclass cl, jlong pI
     measure_time(28, [=]() {
         copy_index_timestamp(
                 reinterpret_cast<index_t *>(pIndex),
-                reinterpret_cast<int64_t>(indexLo),
-                reinterpret_cast<int64_t>(indexHi),
+                __JLONG_REINTERPRET_CAST__(int64_t, indexLo),
+                __JLONG_REINTERPRET_CAST__(int64_t, indexHi),
                 reinterpret_cast<int64_t *>(pTs)
         );
     });
