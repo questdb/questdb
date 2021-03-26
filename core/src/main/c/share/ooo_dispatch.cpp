@@ -218,7 +218,7 @@ inline void merge_copy_var_column(
     char *src_var[] = {src_ooo_var, src_data_var};
 
     for (int64_t l = 0; l < merge_index_size; l++) {
-        _mm_prefetch(merge_index + 64, _MM_HINT_T0);
+        _mm_prefetch(merge_index + l + 64, _MM_HINT_T0);
         dst_fix[l] = dst_var_offset;
         const uint64_t row = merge_index[l].i;
         const uint32_t bit = (row >> 63);
