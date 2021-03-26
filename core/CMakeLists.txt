@@ -71,7 +71,6 @@ elseif (UNIX)
         )
     else (CMAKE_SYSTEM_NAME MATCHES "FreeBSD")
         MESSAGE("Building for GNU/Linux")
-        add_compile_definitions(ENABLE_MULTIVERSION)
 
         include_directories($ENV{JAVA_HOME}/include/linux/)
         message(${CMAKE_SYSTEM_PROCESSOR})
@@ -217,10 +216,6 @@ else ()
             questdb PROPERTIES
             COMPILE_FLAGS "-m64 -O3 "
     )
-
-    ## TODO: SSE2 and SSE4 are redundant on 64 bit CPUs
-    ## gcc  -O3 -dM -E - < /dev/null | egrep "SSE|AVX" | sort
-    ## SEE2 and 4.1 are already defined with -O3 flag
 
     ## Uncomment to measure time of ooo.cpp methods
     ## add_compile_definitions(OOO_CPP_PROFILE_TIMING)

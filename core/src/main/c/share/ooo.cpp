@@ -140,7 +140,6 @@ inline void radix_shuffle(uint64_t* counts, int64_t* src, int64_t* dest, uint64_
 }
 #endif
 
-__SIMD_MULTIVERSION__
 void radix_sort_long_index_asc_in_place(index_t *array, uint64_t size) {
     rscounts_t counts;
     memset(&counts, 0, 256 * 8 * sizeof(uint64_t));
@@ -226,7 +225,6 @@ inline void swap(index_t *a, index_t *b) {
  *  of pivot
  *
  **/
-__SIMD_MULTIVERSION__
 uint64_t partition(index_t *index, uint64_t low, uint64_t high) {
     const auto pivot = index[high].ts;    // pivot
     auto i = (low - 1);  // Index of smaller element
@@ -249,7 +247,6 @@ uint64_t partition(index_t *index, uint64_t low, uint64_t high) {
  * low  --> Starting index,
  * high  --> Ending index
  **/
-__SIMD_MULTIVERSION__
 void quick_sort_long_index_asc_in_place(index_t *arr, int64_t low, int64_t high) {
     if (low < high) {
         /* pi is partitioning index, arr[p] is now
@@ -287,7 +284,6 @@ typedef struct {
     int64_t size;
 } java_index_entry_t;
 
-__SIMD_MULTIVERSION__
 void k_way_merge_long_index(
         index_entry_t *indexes,
         uint32_t entries_count,
@@ -468,7 +464,6 @@ Java_io_questdb_std_Vect_oooMergeCopyBinColumn(JNIEnv *env, jclass cl,
     });
 }
 
-__SIMD_MULTIVERSION__
 JNIEXPORT void JNICALL
 Java_io_questdb_std_Vect_sortLongIndexAscInPlace(JNIEnv *env, jclass cl, jlong pLong, jlong len) {
     measure_time(4, [=]() {
@@ -476,7 +471,6 @@ Java_io_questdb_std_Vect_sortLongIndexAscInPlace(JNIEnv *env, jclass cl, jlong p
     });
 }
 
-__SIMD_MULTIVERSION__
 JNIEXPORT jlong JNICALL
 Java_io_questdb_std_Vect_mergeLongIndexesAsc(JNIEnv *env, jclass cl, jlong pIndexStructArray, jint count) {
     // prepare merge entries
@@ -547,7 +541,6 @@ Java_io_questdb_std_Vect_indexReshuffle64Bit(JNIEnv *env, jclass cl, jlong pSrc,
     });
 }
 
-__SIMD_MULTIVERSION__
 JNIEXPORT void JNICALL
 // Leave vanilla
 Java_io_questdb_std_Vect_indexReshuffle16Bit(JNIEnv *env, jclass cl, jlong pSrc, jlong pDest, jlong pIndex,
@@ -562,7 +555,6 @@ Java_io_questdb_std_Vect_indexReshuffle16Bit(JNIEnv *env, jclass cl, jlong pSrc,
     });
 }
 
-__SIMD_MULTIVERSION__
 JNIEXPORT void JNICALL
 Java_io_questdb_std_Vect_indexReshuffle8Bit(JNIEnv *env, jclass cl, jlong pSrc, jlong pDest, jlong pIndex,
                                             jlong count) {
@@ -576,7 +568,6 @@ Java_io_questdb_std_Vect_indexReshuffle8Bit(JNIEnv *env, jclass cl, jlong pSrc, 
     });
 }
 
-__SIMD_MULTIVERSION__
 JNIEXPORT void JNICALL
 Java_io_questdb_std_Vect_mergeShuffle8Bit(JNIEnv *env, jclass cl, jlong src1, jlong src2, jlong dest, jlong index,
                                           jlong count) {
@@ -591,7 +582,6 @@ Java_io_questdb_std_Vect_mergeShuffle8Bit(JNIEnv *env, jclass cl, jlong src1, jl
     });
 }
 
-__SIMD_MULTIVERSION__
 JNIEXPORT void JNICALL
 Java_io_questdb_std_Vect_mergeShuffle16Bit(JNIEnv *env, jclass cl, jlong src1, jlong src2, jlong dest, jlong index,
                                            jlong count) {
@@ -606,7 +596,6 @@ Java_io_questdb_std_Vect_mergeShuffle16Bit(JNIEnv *env, jclass cl, jlong src1, j
     });
 }
 
-__SIMD_MULTIVERSION__
 JNIEXPORT void JNICALL
 Java_io_questdb_std_Vect_mergeShuffle32Bit(JNIEnv *env, jclass cl, jlong src1, jlong src2, jlong dest, jlong index,
                                            jlong count) {
@@ -650,14 +639,12 @@ Java_io_questdb_std_Vect_flattenIndex(JNIEnv *env, jclass cl, jlong pIndex,
     });
 }
 
-__SIMD_MULTIVERSION__
 JNIEXPORT jlong JNICALL
 Java_io_questdb_std_Vect_binarySearch64Bit(JNIEnv *env, jclass cl, jlong pData, jlong value, jlong low,
                                            jlong high, jint scan_dir) {
     return binary_search<int64_t>(reinterpret_cast<int64_t *>(pData), value, low, high, scan_dir);
 }
 
-__SIMD_MULTIVERSION__
 JNIEXPORT jlong JNICALL
 Java_io_questdb_std_Vect_binarySearchIndexT(JNIEnv *env, jclass cl, jlong pData, jlong value, jlong low,
                                             jlong high, jint scan_dir) {

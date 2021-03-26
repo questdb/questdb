@@ -25,12 +25,6 @@
 #ifndef QDB_SIMD_H
 #define QDB_SIMD_H
 
-#ifdef ENABLE_MULTIVERSION
-#define __SIMD_MULTIVERSION__ __attribute__((target_clones("avx2","avx","avx512f","default")))
-#else
-#define __SIMD_MULTIVERSION__
-#endif
-
 #ifdef ENABLE_ASMLIB
 #include "asmlib/asmlib.h"
 #define __MEMCPY A_memcpy

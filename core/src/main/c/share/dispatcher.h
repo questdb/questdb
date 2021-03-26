@@ -28,17 +28,18 @@
 #include "vec_dispatch.h"
 #include "vcl/vectorclass.h"
 
-#define DECLARE_DISPATCHER(FUNCNAME) TF_##FUNCNAME *FUNCNAME = dispatch_to_ptr(&F_AVX512(FUNCNAME), &F_AVX2(FUNCNAME), &F_VANILLA(FUNCNAME))
+#define DECLARE_DISPATCHER(FUNCNAME) TF_##FUNCNAME *FUNCNAME = dispatch_to_ptr(&F_AVX512(FUNCNAME), &F_AVX2(FUNCNAME), &F_SSE41(FUNCNAME), &F_VANILLA(FUNCNAME))
 
 #define DECLARE_DISPATCHER_TYPE(FUNCNAME, ...) \
 typedef void TF_ ## FUNCNAME(__VA_ARGS__);\
-TF_ ## FUNCNAME F_AVX512(FUNCNAME), F_AVX2(FUNCNAME), F_VANILLA(FUNCNAME)
+TF_ ## FUNCNAME F_AVX512(FUNCNAME), F_AVX2(FUNCNAME), F_SSE41(FUNCNAME), F_VANILLA(FUNCNAME)
 
 template<typename T>
-T *dispatch_to_ptr(T *avx512, T *avx2, T *vanilla) {
+T *dispatch_to_ptr(T *avx512, T *avx2, T *sse4, T *vanilla) {
     const int iset = instrset_detect();
     if (iset == 10) return avx512;
     if (iset >= 8) return avx2;
+    if (iset >= 5) return sse4;
     return vanilla;
 }
 
