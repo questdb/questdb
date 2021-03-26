@@ -1,33 +1,30 @@
 cmake_minimum_required(VERSION 3.16)
+#Set to verbose to see NASM command line
+#set(CMAKE_VERBOSE_MAKEFILE ON)
 
 set(
         ASM_SOURCES
         ${ASMLIB_SOURCE_DIR}instrset64.asm
         ${ASMLIB_SOURCE_DIR}procname64.asm
-        #    ${ASMLIB_SOURCE_DIR}rdtsc64.asm
-        #    ${ASMLIB_SOURCE_DIR}round64.asm
-        #    ${ASMLIB_SOURCE_DIR}libad64.asm
-        #    ${ASMLIB_SOURCE_DIR}libad64.def
         ${ASMLIB_SOURCE_DIR}memcpy64.asm
         ${ASMLIB_SOURCE_DIR}memset64.asm
         ${ASMLIB_SOURCE_DIR}cputype64.asm
-        #    ${ASMLIB_SOURCE_DIR}mother64.asm
-        #    ${ASMLIB_SOURCE_DIR}mersenne64.asm
-        #    ${ASMLIB_SOURCE_DIR}debugbreak64.asm
         ${ASMLIB_SOURCE_DIR}unalignedisfaster64.asm
         ${ASMLIB_SOURCE_DIR}cachesize64.asm
-        )
+)
 
 enable_language(ASM_NASM)
 if (WIN32)
     set(CMAKE_ASM_NASM_FLAGS "-dWINDOWS")
     set(CMAKE_ASM_NASM_OBJECT_FORMAT win64)
 elseif (APPLE)
-    set(CMAKE_ASM_NASM_FLAGS "-dWINDOWS")
+    # prefix global symbols with _, Mach-O liker needs the leading underscore
+    set(CMAKE_ASM_NASM_FLAGS "-dUNIX --prefix _")
     set(CMAKE_ASM_NASM_OBJECT_FORMAT macho64)
 else ()
     set(CMAKE_SHARED_LINKER_FLAGS "-z noexecstack")
-    set(CMAKE_ASM_NASM_FLAGS "-dUNIX")
+    # call instructions to be re-written as call %1 WRT ..plt for ELF
+    set(CMAKE_ASM_NASM_FLAGS "-dUNIX -dELF")
     set(CMAKE_ASM_NASM_OBJECT_FORMAT elf64)
 endif ()
 

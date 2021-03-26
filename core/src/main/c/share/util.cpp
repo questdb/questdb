@@ -12,7 +12,7 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Os_compareAndSwap
             (int64_t) (oldVal),
             (int64_t) (newVal)
     );
-
+}
 #else
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Os_compareAndSwap
         (JNIEnv *e, jclass cl, jlong volatile ptr, jlong oldVal, jlong newVal) {

@@ -32,16 +32,17 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.Chars;
+import io.questdb.std.Os;
 import io.questdb.std.Rnd;
+import io.questdb.std.Vect;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.DirectCharSink;
 import io.questdb.std.str.MutableCharSink;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
-import org.junit.Assert;
-import org.junit.Before;
-import org.junit.Test;
+import org.junit.*;
+import org.junit.rules.TestName;
 
 import java.io.File;
 import java.net.URISyntaxException;
@@ -51,9 +52,13 @@ public class OutOfOrderTest extends AbstractGriffinTest {
 
     protected static final StringSink sink2 = new StringSink();
     private final static Log LOG = LogFactory.getLog(OutOfOrderTest.class);
+    @Rule
+    public TestName name = new TestName();
+    private StringBuilder tstData = new StringBuilder();
 
     @Before
     public void setUp3() {
+        Os.init();
         configuration = new DefaultCairoConfiguration(root) {
             @Override
             public boolean isOutOfOrderEnabled() {
@@ -79,6 +84,33 @@ public class OutOfOrderTest extends AbstractGriffinTest {
         Path.PATH.get();
         Path.PATH2.get();
     }
+
+    @Before
+    public void setUp4() {
+        Vect.resetPerformanceCounters();
+    }
+
+    @After
+    public void tearDown4() throws InterruptedException {
+        int count = Vect.getPerformanceCountersCount();
+        if (count > 0) {
+            tstData.setLength(0);
+            tstData.append(name.getMethodName()).append("\t");
+            long total = 0;
+            for (int i = 0; i < count; i++) {
+                long val = Vect.getPerformanceCounter(i);
+                tstData.append(val).append("\t");
+                total += val;
+            }
+            tstData.append(total);
+
+            Thread.sleep(10);
+            System.err.flush();
+            System.err.println(tstData.toString());
+            System.err.flush();
+        }
+    }
+
 
     @Test
     public void testBench() throws Exception {

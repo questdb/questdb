@@ -29,6 +29,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 import io.questdb.std.str.Path;
 
 public class OutOfOrderUtils {
@@ -101,13 +102,7 @@ public class OutOfOrderUtils {
             long srcHi,
             long dstAddr
     ) {
-        final long lo = srcLo * Long.BYTES;
-        final long hi = (srcHi + 1) * Long.BYTES;
-        final long slo = src + lo;
-        final long len = hi - lo;
-        for (long o = 0; o < len; o += Long.BYTES) {
-            Unsafe.getUnsafe().putLong(dstAddr + o, Unsafe.getUnsafe().getLong(slo + o) - shift);
-        }
+        Vect.shiftCopyFixedSizeColumnData(shift, src, srcLo, srcHi, dstAddr);
     }
 
     static void copyFromTimestampIndex(
@@ -116,14 +111,7 @@ public class OutOfOrderUtils {
             long srcHi,
             long dstAddr
     ) {
-        final int shl = 4;
-        final long lo = srcLo << shl;
-        final long hi = (srcHi + 1) << shl;
-        final long start = src + lo;
-        final long len = hi - lo;
-        for (long l = 0; l < len; l += 16) {
-            Unsafe.getUnsafe().putLong(dstAddr + l / 2, Unsafe.getUnsafe().getLong(start + l));
-        }
+        Vect.copyFromTimestampIndex(src, srcLo, srcHi, dstAddr);
     }
 
     static void unmapAndClose(FilesFacade ff, long dstFixFd, long dstFixAddr, long dstFixSize) {
