@@ -697,9 +697,9 @@ Java_io_questdb_std_Vect_setMemoryInt(JNIEnv *env, jclass cl, jlong pData, jint 
                                       jlong count) {
     measure_time(20, [=]() {
         set_memory_vanilla_int32(
-                reinterpret_cast<jint *>(pData),
+                reinterpret_cast<int32_t *>(pData),
                 value,
-                (int64_t) (count)
+                __JLONG_REINTERPRET_CAST__(int64_t, count)
         );
     });
 }
