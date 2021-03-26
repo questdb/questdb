@@ -379,6 +379,7 @@ public class WriterPool extends AbstractPool implements ResourcePool<TableWriter
                     .$(", errno=").$(ex.getErrno())
                     .$(']').$();
             e.ex = ex;
+            e.owner = -1;
             notifyListener(e.owner, name, PoolListener.EV_CREATE_EX);
             throw ex;
         }
@@ -404,14 +405,22 @@ public class WriterPool extends AbstractPool implements ResourcePool<TableWriter
     }
 
     private boolean returnToPool(Entry e) {
-        e.writer.rollback();
-        CharSequence name = e.writer.getName();
-        long thread = Thread.currentThread().getId();
+        final long thread = Thread.currentThread().getId();
+        final CharSequence name = e.writer.getName();
+        try {
+            e.writer.rollback();
+        } catch (CairoException | CairoError ex) {
+            // We are here because of a systemic issues of some kind
+            // one of the known issues is "disk is full" so we could not rollback properly.
+            // In this case we just close TableWriter
+            closeWriter(thread, e, PoolListener.EV_LOCK_CLOSE, PoolConstants.CR_DISTRESSED);
+            entries.remove(name);
+            return true;
+        }
         if (e.owner != UNALLOCATED) {
             LOG.info().$("<< [table=`").utf8(name).$("`, thread=").$(thread).$(']').$();
             if (isClosed()) {
                 LOG.info().$("allowing '").utf8(name).$("' to close [thread=").$(e.owner).$(']').$();
-                entries.remove(name);
                 notifyListener(thread, name, PoolListener.EV_OUT_OF_POOL_CLOSE);
                 return false;
             }

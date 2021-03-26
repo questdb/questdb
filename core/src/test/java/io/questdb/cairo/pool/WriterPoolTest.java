@@ -743,15 +743,7 @@ public class WriterPoolTest extends AbstractCairoTest {
             } catch (CairoException ignore) {
             }
 
-            // writer has to fail again if called before
-            // release() invocation
-            try {
-                pool.get("z");
-                Assert.fail();
-            } catch (CairoException ignore) {
-            }
-
-            Assert.assertEquals(0, pool.size());
+            Assert.assertEquals(1, pool.size());
             Assert.assertEquals(0, pool.getBusyCount());
 
             pool.releaseInactive();

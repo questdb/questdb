@@ -24,48 +24,20 @@
 
 package io.questdb.griffin;
 
-import io.questdb.WorkerPoolAwareConfiguration;
 import io.questdb.cairo.*;
-import io.questdb.griffin.engine.functions.rnd.SharedRandom;
-import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
-import io.questdb.mp.WorkerPool;
 import io.questdb.std.Chars;
 import io.questdb.std.NumericException;
 import io.questdb.std.Os;
-import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.DirectCharSink;
 import io.questdb.std.str.MutableCharSink;
-import io.questdb.std.str.Path;
-import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.*;
 
-import java.io.File;
 import java.net.URISyntaxException;
-import java.net.URL;
+import java.util.concurrent.atomic.AtomicBoolean;
 
-public class OutOfOrderTest extends AbstractCairoTest {
-
-    protected static final StringSink sink2 = new StringSink();
-    private final static Log LOG = LogFactory.getLog(OutOfOrderTest.class);
-
-    @Before
-    public void setUp3() {
-        configuration = new DefaultCairoConfiguration(root) {
-            @Override
-            public boolean isOutOfOrderEnabled() {
-                return true;
-            }
-        };
-
-        SharedRandom.RANDOM.set(new Rnd());
-
-        // instantiate these paths so that they are not included in memory leak test
-        Path.PATH.get();
-        Path.PATH2.get();
-    }
+public class OutOfOrderTest extends AbstractOutOfOrderTest {
 
     @Test
     public void testBench() throws Exception {
@@ -348,7 +320,20 @@ public class OutOfOrderTest extends AbstractCairoTest {
 
     @Test
     public void testOOOFollowedByAnotherOOONR() throws Exception {
-        executeWithPool(4, false, OutOfOrderTest::testOooFollowedByAnotherOOO0);
+        executeWithPool(4, false, new OutOfOrderCodeWithFlag() {
+
+            private AtomicBoolean atomicEnableRename;
+
+            @Override
+            public void delegateFlag(AtomicBoolean flag) {
+                this.atomicEnableRename = flag;
+            }
+
+            @Override
+            public void run(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws Exception {
+                testOooFollowedByAnotherOOO0(engine, compiler, sqlExecutionContext, atomicEnableRename);
+            }
+        });
     }
 
     @Test
@@ -1380,7 +1365,8 @@ public class OutOfOrderTest extends AbstractCairoTest {
     private static void testOooFollowedByAnotherOOO0(
             CairoEngine engine,
             SqlCompiler compiler,
-            SqlExecutionContext sqlExecutionContext
+            SqlExecutionContext sqlExecutionContext,
+            AtomicBoolean atomicEnableRename
     ) throws SqlException {
         compiler.compile(
                 "create table x as (" +
@@ -1469,6 +1455,10 @@ public class OutOfOrderTest extends AbstractCairoTest {
 
         // insert 1AM data into X
         compiler.compile("insert into x select * from 1am", sqlExecutionContext);
+
+        // here we need to "switch on" partition rename
+        atomicEnableRename.set(true);
+
         compiler.compile("insert into x select * from tail", sqlExecutionContext);
 
         printSqlResult(compiler, sqlExecutionContext, "x");
@@ -3275,81 +3265,6 @@ public class OutOfOrderTest extends AbstractCairoTest {
         );
     }
 
-    private static void assertIndexConsistency(
-            SqlCompiler compiler,
-            SqlExecutionContext sqlExecutionContext,
-            String table
-    ) throws SqlException {
-        // index test
-        // expected outcome
-        printSqlResult(compiler, sqlExecutionContext, table + " where sym = 'googl' order by ts");
-
-        String expected = Chars.toString(sink);
-
-        printSqlResult(compiler, sqlExecutionContext, "x where sym = 'googl'");
-
-        TestUtils.assertEquals(expected, sink);
-    }
-
-    private static void assertIndexConsistency(
-            SqlCompiler compiler,
-            SqlExecutionContext sqlExecutionContext
-    ) throws SqlException {
-        assertIndexConsistency(
-                compiler,
-                sqlExecutionContext,
-                "y"
-        );
-    }
-
-    private static void printSqlResult(
-            SqlCompiler compiler,
-            SqlExecutionContext sqlExecutionContext,
-            String sql
-    ) throws SqlException {
-        TestUtils.printSql(compiler, sqlExecutionContext, sql, AbstractCairoTest.sink);
-    }
-
-    private static void assertIndexResultAgainstFile(
-            SqlCompiler compiler,
-            SqlExecutionContext sqlExecutionContext,
-            String resourceName
-    ) throws SqlException, URISyntaxException {
-        assertSqlResultAgainstFile(compiler, sqlExecutionContext, "x where sym = 'googl'", resourceName);
-    }
-
-    private static void assertOutOfOrderDataConsistency(
-            CairoEngine engine,
-            SqlCompiler compiler,
-            SqlExecutionContext sqlExecutionContext,
-            final String referenceTableDDL,
-            final String outOfOrderSQL,
-            final String resourceName
-    ) throws SqlException, URISyntaxException {
-        // create third table, which will contain both X and 1AM
-        compiler.compile(referenceTableDDL, sqlExecutionContext);
-        // expected outcome - output ignored, but useful for debug
-        printSqlResult(compiler, sqlExecutionContext, "y order by ts");
-        compiler.compile(outOfOrderSQL, sqlExecutionContext);
-        assertSqlResultAgainstFile(compiler, sqlExecutionContext, "x", resourceName);
-
-        // check that reader can process out of order partition layout after fresh open
-        engine.releaseAllReaders();
-        assertSqlResultAgainstFile(compiler, sqlExecutionContext, "x", resourceName);
-    }
-
-    private static void assertSqlResultAgainstFile(
-            SqlCompiler compiler,
-            SqlExecutionContext sqlExecutionContext,
-            String sql,
-            String resourceName
-    ) throws URISyntaxException, SqlException {
-        printSqlResult(compiler, sqlExecutionContext, sql);
-        URL url = OutOfOrderTest.class.getResource(resourceName);
-        Assert.assertNotNull(url);
-        TestUtils.assertEquals(new File(url.toURI()), sink);
-    }
-
     private static void testPartitionedDataAppendOOData0(
             CairoEngine engine,
             SqlCompiler compiler,
@@ -4429,10 +4344,6 @@ public class OutOfOrderTest extends AbstractCairoTest {
         }
     }
 
-    protected void assertMemoryLeak(TestUtils.LeakProneCode code) throws Exception {
-        TestUtils.assertMemoryLeak(code);
-    }
-
     private void bench20(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext executionContext) throws SqlException {
         // create table with roughly 2AM data
         compiler.compile(
@@ -4505,136 +4416,4 @@ public class OutOfOrderTest extends AbstractCairoTest {
         }
     }
 
-    private void execute0(OutOfOrderCode runnable, CairoConfiguration configuration) throws Exception {
-        try (
-                final CairoEngine engine = new CairoEngine(configuration);
-                final SqlCompiler compiler = new SqlCompiler(engine);
-                final SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
-        ) {
-            runnable.run(engine, compiler, sqlExecutionContext);
-            Assert.assertEquals(0, engine.getBusyWriterCount());
-            Assert.assertEquals(0, engine.getBusyReaderCount());
-        } finally {
-            OutOfOrderUtils.freeBuf();
-        }
-    }
-
-    private void executeVanilla(TestUtils.LeakProneCode code) throws Exception {
-        OutOfOrderUtils.initBuf();
-        try {
-            assertMemoryLeak(code);
-        } finally {
-            OutOfOrderUtils.freeBuf();
-        }
-    }
-
-    private void executeVanilla(OutOfOrderCode code) throws Exception {
-        executeVanilla(() -> {
-            OutOfOrderUtils.initBuf();
-            execute0(code, configuration);
-        });
-    }
-
-    private void executeWithPool(int workerCount, boolean enableRename, OutOfOrderCode runnable) throws Exception {
-        executeVanilla(() -> {
-            if (workerCount > 0) {
-                int[] affinity = new int[workerCount];
-                for (int i = 0; i < workerCount; i++) {
-                    affinity[i] = -1;
-                }
-
-                WorkerPool pool = new WorkerPool(
-                        new WorkerPoolAwareConfiguration() {
-                            @Override
-                            public int[] getWorkerAffinity() {
-                                return affinity;
-                            }
-
-                            @Override
-                            public int getWorkerCount() {
-                                return workerCount;
-                            }
-
-                            @Override
-                            public boolean haltOnError() {
-                                return false;
-                            }
-
-                            @Override
-                            public boolean isEnabled() {
-                                return true;
-                            }
-                        }
-                );
-
-                final CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
-                    @Override
-                    public boolean isOutOfOrderEnabled() {
-                        return true;
-                    }
-
-                    @Override
-                    public boolean isOutOfOrderRenameEnabled() {
-                        return enableRename;
-                    }
-                };
-
-                try {
-                    execute0((engine, compiler, sqlExecutionContext) -> {
-                        pool.assignCleaner(Path.CLEANER);
-                        pool.assign(new OutOfOrderSortJob(engine.getMessageBus()));
-                        pool.assign(new OutOfOrderPartitionJob(engine.getMessageBus()));
-                        pool.assign(new OutOfOrderOpenColumnJob(engine.getMessageBus()));
-                        pool.assign(new OutOfOrderCopyJob(engine.getMessageBus()));
-
-                        OutOfOrderUtils.initBuf(pool.getWorkerCount() + 1);
-                        pool.start(LOG);
-                        runnable.run(engine, compiler, sqlExecutionContext);
-                    }, configuration);
-                } finally {
-                    pool.halt();
-                }
-            } else {
-                // we need to create entire engine
-                final CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
-                    @Override
-                    public int getOutOfOrderSortQueueCapacity() {
-                        return 0;
-                    }
-
-                    @Override
-                    public int getOutOfOrderPartitionQueueCapacity() {
-                        return 0;
-                    }
-
-                    @Override
-                    public int getOutOfOrderOpenColumnQueueCapacity() {
-                        return 0;
-                    }
-
-                    @Override
-                    public int getOutOfOrderCopyQueueCapacity() {
-                        return 0;
-                    }
-
-                    @Override
-                    public boolean isOutOfOrderEnabled() {
-                        return true;
-                    }
-
-                    @Override
-                    public boolean isOutOfOrderRenameEnabled() {
-                        return enableRename;
-                    }
-                };
-
-                OutOfOrderUtils.initBuf();
-                execute0(runnable, configuration);
-            }
-        });
-    }
-
-    private void executeWithPool(int workerCount, OutOfOrderCode runnable) throws Exception {
-        executeWithPool(workerCount, true, runnable);
-    }
 }

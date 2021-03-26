@@ -239,7 +239,6 @@ public class OutOfOrderUtils {
     ) {
         // source path - original data partition
         // this partition may already be on non-initial txn
-        // todo: test that this code handles data txn > -1
         final Path srcPath = Path.getThreadLocal(pathToTable);
         TableUtils.setPathForPartition(srcPath, partitionBy, partitionTimestamp);
         int coreLen = srcPath.length();
@@ -274,6 +273,11 @@ public class OutOfOrderUtils {
         dstLen = dstPath.length();
 
         moveFiles(ff, srcPath.put(Files.SEPARATOR).$(), srcLen, dstPath.$(), dstLen);
+
+        // remove empty directory that is left behind
+        if (!ff.rmdir(srcPath.trimTo(srcLen).$())) {
+            LOG.error().$("could not remove empty dir [name=").$(srcPath).$(']').$();
+        }
     }
 
     private static void moveFiles(FilesFacade ff, Path srcPath, int srcLen, Path dstPath, int dstLen) {

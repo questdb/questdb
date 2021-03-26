@@ -22,29 +22,10 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.pool;
+package io.questdb.griffin;
 
-public final class PoolConstants {
-    public static final int CR_POOL_CLOSE = 1;
-    public static final int CR_NAME_LOCK = 2;
-    public static final int CR_IDLE = 3;
-    public static final int CR_REOPEN = 4;
-    public static final int CR_DISTRESSED = 5;
+import java.util.concurrent.atomic.AtomicBoolean;
 
-    public static String closeReasonText(int reason) {
-        switch (reason) {
-            case CR_POOL_CLOSE:
-                return "POOL_CLOSED";
-            case CR_NAME_LOCK:
-                return "LOCKED";
-            case CR_IDLE:
-                return "IDLE";
-            case CR_REOPEN:
-                return "REOPEN";
-            case CR_DISTRESSED:
-                return "DISTRESSED";
-            default:
-                return "UNKNOWN";
-        }
-    }
+interface OutOfOrderCodeWithFlag extends OutOfOrderCode {
+    void delegateFlag(AtomicBoolean flag);
 }
