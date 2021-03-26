@@ -1,5 +1,7 @@
 package io.questdb.griffin;
 
+import java.util.Random;
+
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
@@ -24,6 +26,7 @@ import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.BytecodeAssembler;
+import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
@@ -32,7 +35,7 @@ import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 
 public class CommitHysteresisTest extends AbstractCairoTest {
-    private final static Log LOG = LogFactory.getLog(OutOfOrderTest.class);
+    private final static Log LOG = LogFactory.getLog(CommitHysteresisTest.class);
 
     private CairoEngine engine;
     private SqlCompiler compiler;
@@ -40,6 +43,7 @@ public class CommitHysteresisTest extends AbstractCairoTest {
     private static final StringSink sink2 = new StringSink();
     private long minTimestamp;
     private long maxTimestamp;
+    private RecordToRowCopier copier;
 
     @Test
     public void testNoHysteresis() throws Exception {
@@ -947,6 +951,99 @@ public class CommitHysteresisTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testContinousBatchedCommit() throws Exception {
+        executeVanilla(() -> {
+            int nTotalRows = 20000;
+            int nInitialStateRows = 150;
+            long microsBetweenRows = 100000000;
+            int maxBatchedRows = 10;
+            int maxConcurrentBatches = 4;
+            int nRowsPerCommit = 100;
+            long lastTimestampHysteresisInMicros = microsBetweenRows * (nRowsPerCommit / 2);
+
+            String sql = "create table x as (" +
+                    "select" +
+                    " cast(x as int) i," +
+                    " rnd_symbol('msft','ibm', 'googl') sym," +
+                    " round(rnd_double(0)*100, 3) amt," +
+                    " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                    " rnd_boolean() b," +
+                    " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                    " rnd_double(2) d," +
+                    " rnd_float(2) e," +
+                    " rnd_short(10,1024) f," +
+                    " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                    " rnd_symbol(4,4,4,2) ik," +
+                    " rnd_long() j," +
+                    " timestamp_sequence(0L," + microsBetweenRows + "L) ts," +
+                    " rnd_byte(2,50) l," +
+                    " rnd_bin(10, 20, 2) m," +
+                    " rnd_str(5,16,2) n," +
+                    " rnd_char() t" +
+                    " from long_sequence(" + nTotalRows + ")" +
+                    "), index(sym) timestamp (ts) partition by DAY";
+            compiler.compile(sql, sqlExecutionContext);
+
+            sql = "create table y as (select * from x where  i<=" + nInitialStateRows + ") partition by DAY";
+            compiler.compile(sql, sqlExecutionContext);
+            LOG.info().$("committed initial state").$();
+
+            TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where i<=" + nInitialStateRows, sink);
+            TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
+            TestUtils.assertEquals(sink, sink2);
+
+            Random rand = new Random(0);
+            IntList batchRowEnd = new IntList((int) ((nTotalRows - nInitialStateRows) * 0.6 * maxBatchedRows));
+            int atRow = nInitialStateRows;
+            batchRowEnd.add(-atRow); // negative row means this has been commited
+            while (atRow < nTotalRows) {
+                int nRows = rand.nextInt(maxBatchedRows) + 1;
+                atRow += nRows;
+                batchRowEnd.add(atRow);
+            }
+
+            int nCommitsWithHysteresis = 0;
+            try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "y")) {
+                int nHeadBatch = 1;
+                int nRowsAppended = 0;
+                while (nHeadBatch < batchRowEnd.size()) {
+                    int nBatch = nHeadBatch + rand.nextInt(maxConcurrentBatches);
+                    while (nBatch >= batchRowEnd.size() || batchRowEnd.get(nBatch) < 0) {
+                        nBatch--;
+                    }
+                    assert nBatch >= nHeadBatch;
+                    if (nBatch == nHeadBatch) {
+                        do {
+                            nHeadBatch++;
+                        } while (nHeadBatch < batchRowEnd.size() && batchRowEnd.get(nHeadBatch) < 0);
+                    }
+                    int fromRow = Math.abs(batchRowEnd.get(nBatch - 1));
+                    int toRow = batchRowEnd.get(nBatch);
+                    batchRowEnd.set(nBatch, -toRow);
+
+                    LOG.info().$("inserting rows from ").$(fromRow).$(" to ").$(toRow).$();
+                    sql = "select * from x where ts>=cast(" + fromRow * microsBetweenRows + " as timestamp) and ts<cast(" + toRow * microsBetweenRows + " as timestamp)";
+                    insertUncommitted(sql, writer);
+
+                    nRowsAppended += toRow - fromRow;
+                    if (nRowsAppended >= nRowsPerCommit) {
+                        LOG.info().$("committing with hysteresis").$();
+                        nRowsAppended = 0;
+                        writer.commitWithHysteresis(lastTimestampHysteresisInMicros);
+                        nCommitsWithHysteresis++;
+                    }
+                }
+                writer.commit();
+            }
+            LOG.info().$("committed final state with ").$(nCommitsWithHysteresis).$(" commits with hysteresis").$();
+
+            TestUtils.printSql(compiler, sqlExecutionContext, "select * from x", sink);
+            TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
+            TestUtils.assertEquals(sink, sink2);
+        });
+    }
+
     protected void insertUncommitted(String sql, TableWriter writer) throws SqlException {
         minTimestamp = Long.MAX_VALUE;
         maxTimestamp = Long.MIN_VALUE;
@@ -955,7 +1052,9 @@ public class CommitHysteresisTest extends AbstractCairoTest {
             int timestampIndex = writer.getMetadata().getTimestampIndex();
             EntityColumnFilter toColumnFilter = new EntityColumnFilter();
             toColumnFilter.of(metadata.getColumnCount());
-            RecordToRowCopier copier = SqlCompiler.assembleRecordToRowCopier(new BytecodeAssembler(), metadata, writer.getMetadata(), toColumnFilter);
+            if (null == copier) {
+                copier = SqlCompiler.assembleRecordToRowCopier(new BytecodeAssembler(), metadata, writer.getMetadata(), toColumnFilter);
+            }
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 final Record record = cursor.getRecord();
                 while (cursor.hasNext()) {
@@ -972,6 +1071,11 @@ public class CommitHysteresisTest extends AbstractCairoTest {
                 }
             }
         }
+    }
+
+    @Before
+    public void clearRecordToRowCopier() {
+        copier = null;
     }
 
     @Before
