@@ -230,7 +230,6 @@ public class TableWriter implements Closeable {
     private final LongConsumer mergeTimestampMethodRef = this::mergeTimestampSetter;
     private long transientRowCountBeforeOutOfOrder;
     private long lastPartitionTimestamp;
-    private final AppendOnlyVirtualMemory outOfBandColumn = new AppendOnlyVirtualMemory();
 
     public TableWriter(CairoConfiguration configuration, CharSequence name) {
         this(configuration, name, new MessageBusImpl(configuration));
@@ -773,51 +772,46 @@ public class TableWriter implements Closeable {
                 txFile.commit(commitMode, this.denseSymbolMapWriters);
             } else {
                 int timestampColumnIndex = metadata.getTimestampIndex();
-                long tsAppendPointer = getPrimaryColumn(timestampColumnIndex).getAppendOffset();
                 long maxTimestamp = txFile.getMaxTimestamp();
                 long previousMaxTimestamp = txFile.getCommittedMaxTimestamp();
                 long newCommittedMaxTimestamp = maxTimestamp - lastTimestampHysteresisInMicros;
-                try {
-                    if (newCommittedMaxTimestamp > previousMaxTimestamp) {
-                        int committedLastPartitionIndex = txFile.findAttachedPartitionIndexByLoTimestamp(txFile.getPartitionTimestampLo(previousMaxTimestamp)) >> 2;
-                        int newCommittedLastPartitionIndex = txFile.findAttachedPartitionIndexByLoTimestamp(txFile.getPartitionTimestampLo(newCommittedMaxTimestamp)) >> 2;
-                        int uncommittedLastPartitionIndex = txFile.getPartitionCount() - 1;
-                        PagedVirtualMemory tsColumn;
-                        long fixedRowCount = txFile.getFixedRowCount();
-                        long row;
-                        if (newCommittedLastPartitionIndex == uncommittedLastPartitionIndex) {
-                            // Hysteresis is in the last partition
-                            row = txFile.getTransientRowCount() - 1;
-                            tsColumn = getPrimaryColumn(timestampColumnIndex);
-                        } else {
-                            row = txFile.getPartitionSize(newCommittedLastPartitionIndex);
-                            int plen = path.length();
-                            try {
-                                setStateForTimestamp(path.trimTo(plen), txFile.getPartitionTimestamp(newCommittedLastPartitionIndex), false);
-                                outOfBandColumn.of(ff, dFile(path, metadata.getColumnName(timestampColumnIndex)), row << ColumnType.pow2SizeOf(ColumnType.TIMESTAMP));
-                            } finally {
-                                path.trimTo(plen);
-                            }
-                            tsColumn = outOfBandColumn;
-                            int partitionIndex = newCommittedLastPartitionIndex;
-                            while (partitionIndex < uncommittedLastPartitionIndex) {
-                                fixedRowCount -= txFile.getPartitionSize(partitionIndex);
-                                partitionIndex++;
-                            }
+                if (newCommittedMaxTimestamp > previousMaxTimestamp) {
+                    int committedLastPartitionIndex = txFile.findAttachedPartitionIndexByLoTimestamp(txFile.getPartitionTimestampLo(previousMaxTimestamp)) >> 2;
+                    int newCommittedLastPartitionIndex = txFile.findAttachedPartitionIndexByLoTimestamp(txFile.getPartitionTimestampLo(newCommittedMaxTimestamp)) >> 2;
+                    int uncommittedLastPartitionIndex = txFile.getPartitionCount() - 1;
+                    PagedVirtualMemory tsColumn;
+                    long fixedRowCount = txFile.getFixedRowCount();
+                    long row;
+                    if (newCommittedLastPartitionIndex == uncommittedLastPartitionIndex) {
+                        // Hysteresis is in the last partition
+                        row = txFile.getTransientRowCount();
+                    } else {
+                        row = txFile.getPartitionSize(newCommittedLastPartitionIndex);
+                        int partitionIndex = newCommittedLastPartitionIndex;
+                        while (partitionIndex < uncommittedLastPartitionIndex) {
+                            fixedRowCount -= txFile.getPartitionSize(partitionIndex);
+                            partitionIndex++;
                         }
-                        long lastTimestamp = Long.MAX_VALUE;
-                        while (row > 0 && lastTimestamp > newCommittedMaxTimestamp) {
-                            row--;
-                            long offset = row << ColumnType.pow2SizeOf(ColumnType.TIMESTAMP);
-                            tsColumn.jumpTo(offset);
-                            lastTimestamp = tsColumn.getLong(offset);
-                        }
-                        txFile.commitPartial(commitMode, this.denseSymbolMapWriters, row + 1, fixedRowCount, lastTimestamp, committedLastPartitionIndex, newCommittedLastPartitionIndex,
-                                newCommittedLastPartitionIndex);
                     }
-                } finally {
-                    getPrimaryColumn(timestampColumnIndex).jumpTo(tsAppendPointer);
-                    outOfBandColumn.close(false);
+
+                    int plen = path.length();
+                    long timestampFd = -1;
+                    long timestampAddr = 0;
+                    long timestampSize = row << ColumnType.pow2SizeOf(ColumnType.TIMESTAMP);
+                    long lastTimestamp;
+                    try {
+                        setStateForTimestamp(path.trimTo(plen), txFile.getPartitionTimestamp(newCommittedLastPartitionIndex), false);
+                        dFile(path, metadata.getColumnName(timestampColumnIndex));
+                        timestampFd = OutOfOrderUtils.openRW(ff, path);
+                        timestampAddr = OutOfOrderUtils.mapRW(ff, timestampFd, timestampSize);
+                        row = Vect.boundedBinarySearch64Bit(timestampAddr, newCommittedMaxTimestamp, 0, row - 1, BinarySearch.SCAN_DOWN);
+                        lastTimestamp = Unsafe.getUnsafe().getLong(timestampAddr + (row << ColumnType.pow2SizeOf(ColumnType.TIMESTAMP)));
+                    } finally {
+                        OutOfOrderUtils.unmapAndClose(ff, timestampFd, timestampAddr, timestampSize);
+                        path.trimTo(plen);
+                    }
+                    txFile.commitPartial(commitMode, this.denseSymbolMapWriters, row + 1, fixedRowCount, lastTimestamp, committedLastPartitionIndex, newCommittedLastPartitionIndex,
+                            newCommittedLastPartitionIndex);
                 }
             }
         }
@@ -1968,7 +1962,6 @@ public class TableWriter implements Closeable {
         Misc.free(ddlMem);
         Misc.free(other);
         Misc.free(todoMem);
-        Misc.free(outOfBandColumn);
         try {
             releaseLock(!truncate | tx | performRecovery | distressed);
         } finally {
