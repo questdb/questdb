@@ -780,7 +780,6 @@ public class TableWriter implements Closeable {
                     int committedLastPartitionIndex = txFile.findAttachedPartitionIndexByLoTimestamp(txFile.getPartitionTimestampLo(previousMaxTimestamp)) >> 2;
                     int newCommittedLastPartitionIndex = txFile.findAttachedPartitionIndexByLoTimestamp(txFile.getPartitionTimestampLo(newCommittedMaxTimestamp)) >> 2;
                     int uncommittedLastPartitionIndex = txFile.getPartitionCount() - 1;
-                    PagedVirtualMemory tsColumn;
                     long fixedRowCount = txFile.getFixedRowCount();
                     long row;
                     final boolean inLastPartition;
