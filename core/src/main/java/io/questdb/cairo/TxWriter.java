@@ -189,18 +189,21 @@ public final class TxWriter extends TxReader implements Closeable {
         prevTransientRowCount = transientRowCount;
     }
 
-    void commitPartial(int commitMode, ObjList<SymbolMapWriter> denseSymbolMapWriters, long partialTransientRowCount, int partialTxPartitionCount, long partialFixedRowCount, long partialMaxTimestamp) {
+    void commitPartial(
+            int commitMode, ObjList<SymbolMapWriter> denseSymbolMapWriters, long partialTransientRowCount, long partialFixedRowCount, long partialMaxTimestamp,
+            int committedLastPartitionIndex, int newCommittedLastPartitionIndex, int uncommittedLastPartitionIndex
+    ) {
         txMem.putLong(TX_OFFSET_TXN, ++txn);
         Unsafe.getUnsafe().storeFence();
 
         txMem.putLong(TX_OFFSET_TRANSIENT_ROW_COUNT, partialTransientRowCount);
         txMem.putLong(TX_OFFSET_PARTITION_TABLE_VERSION, this.partitionTableVersion);
 
-        saveCommittedPartitionsToTx(symbolsCount, txPartitionCount - partialTxPartitionCount);
-        if (partialTxPartitionCount > 1) {
+        saveCommittedPartitionsToTx(symbolsCount, newCommittedLastPartitionIndex);
+        if (newCommittedLastPartitionIndex > committedLastPartitionIndex) {
             txMem.putLong(TX_OFFSET_FIXED_ROW_COUNT, partialFixedRowCount);
-            txPartitionCount -= partialTxPartitionCount;
         }
+        txPartitionCount = uncommittedLastPartitionIndex - newCommittedLastPartitionIndex + 1;
 
         txMem.putLong(TX_OFFSET_MIN_TIMESTAMP, minTimestamp);
         txMem.putLong(TX_OFFSET_MAX_TIMESTAMP, partialMaxTimestamp);
@@ -414,10 +417,8 @@ public final class TxWriter extends TxReader implements Closeable {
         }
     }
 
-    private void saveCommittedPartitionsToTx(int symCount, int nUncommittedPartitions) {
-        int size = attachedPartitions.size();
-        assert size % 4 == 0;
-        size -= nUncommittedPartitions * 4;
+    private void saveCommittedPartitionsToTx(int symCount, int committedLastPartitionIndex) {
+        int size = (committedLastPartitionIndex + 1) << 2;
         final long partitionTableOffset = getPartitionTableSizeOffset(symCount);
         txMem.putInt(partitionTableOffset, size * Long.BYTES);
         if (maxTimestamp != Long.MIN_VALUE) {

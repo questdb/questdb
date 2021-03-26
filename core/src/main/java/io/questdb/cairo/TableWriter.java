@@ -24,6 +24,58 @@
 
 package io.questdb.cairo;
 
+import static io.questdb.cairo.StatusCode.CANNOT_ATTACH_MISSING_PARTITION;
+import static io.questdb.cairo.StatusCode.PARTITION_ALREADY_ATTACHED;
+import static io.questdb.cairo.StatusCode.PARTITION_EMPTY;
+import static io.questdb.cairo.StatusCode.TABLE_HAS_SYMBOLS;
+import static io.questdb.cairo.TableUtils.DETACHED_DIR_MARKER;
+import static io.questdb.cairo.TableUtils.FILE_SUFFIX_D;
+import static io.questdb.cairo.TableUtils.FILE_SUFFIX_I;
+import static io.questdb.cairo.TableUtils.META_COLUMN_DATA_RESERVED;
+import static io.questdb.cairo.TableUtils.META_FILE_NAME;
+import static io.questdb.cairo.TableUtils.META_FLAG_BIT_INDEXED;
+import static io.questdb.cairo.TableUtils.META_FLAG_BIT_SEQUENTIAL;
+import static io.questdb.cairo.TableUtils.META_OFFSET_COLUMN_TYPES;
+import static io.questdb.cairo.TableUtils.META_OFFSET_COUNT;
+import static io.questdb.cairo.TableUtils.META_OFFSET_PARTITION_BY;
+import static io.questdb.cairo.TableUtils.META_OFFSET_TABLE_ID;
+import static io.questdb.cairo.TableUtils.META_OFFSET_TIMESTAMP_INDEX;
+import static io.questdb.cairo.TableUtils.META_PREV_FILE_NAME;
+import static io.questdb.cairo.TableUtils.META_SWAP_FILE_NAME;
+import static io.questdb.cairo.TableUtils.TODO_FILE_NAME;
+import static io.questdb.cairo.TableUtils.TODO_RESTORE_META;
+import static io.questdb.cairo.TableUtils.TODO_TRUNCATE;
+import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
+import static io.questdb.cairo.TableUtils.dFile;
+import static io.questdb.cairo.TableUtils.fmtDay;
+import static io.questdb.cairo.TableUtils.fmtMonth;
+import static io.questdb.cairo.TableUtils.fmtYear;
+import static io.questdb.cairo.TableUtils.getColumnNameOffset;
+import static io.questdb.cairo.TableUtils.getColumnType;
+import static io.questdb.cairo.TableUtils.getIndexBlockCapacity;
+import static io.questdb.cairo.TableUtils.getPartitionAdd;
+import static io.questdb.cairo.TableUtils.getPartitionCeil;
+import static io.questdb.cairo.TableUtils.getPartitionDateFmt;
+import static io.questdb.cairo.TableUtils.getPartitionFloor;
+import static io.questdb.cairo.TableUtils.iFile;
+import static io.questdb.cairo.TableUtils.isColumnIndexed;
+import static io.questdb.cairo.TableUtils.isSequential;
+import static io.questdb.cairo.TableUtils.lockName;
+import static io.questdb.cairo.TableUtils.openMetaSwapFile;
+import static io.questdb.cairo.TableUtils.readColumnTop;
+import static io.questdb.cairo.TableUtils.readPartitionSizeMinMax;
+import static io.questdb.cairo.TableUtils.setPathForPartition;
+import static io.questdb.cairo.TableUtils.topFile;
+import static io.questdb.cairo.TableUtils.validate;
+import static io.questdb.std.Files.isDots;
+
+import java.io.Closeable;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.LongConsumer;
+
+import org.jetbrains.annotations.NotNull;
+
 import io.questdb.MessageBus;
 import io.questdb.MessageBusImpl;
 import io.questdb.cairo.SymbolMapWriter.TransientSymbolCountChangeHandler;
@@ -31,29 +83,53 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SymbolTable;
-import io.questdb.cairo.vm.*;
+import io.questdb.cairo.vm.AppendOnlyVirtualMemory;
+import io.questdb.cairo.vm.ContiguousVirtualMemory;
+import io.questdb.cairo.vm.MappedReadOnlyMemory;
+import io.questdb.cairo.vm.MappedReadWriteMemory;
+import io.questdb.cairo.vm.PagedMappedReadWriteMemory;
+import io.questdb.cairo.vm.PagedVirtualMemory;
+import io.questdb.cairo.vm.SinglePageMappedReadOnlyPageMemory;
+import io.questdb.cairo.vm.VmUtils;
+import io.questdb.cairo.vm.WriteOnlyVirtualMemory;
 import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.mp.*;
-import io.questdb.std.*;
+import io.questdb.mp.MPSequence;
+import io.questdb.mp.RingQueue;
+import io.questdb.mp.SOCountDownLatch;
+import io.questdb.mp.SOUnboundedCountDownLatch;
+import io.questdb.mp.Sequence;
+import io.questdb.mp.Worker;
+import io.questdb.std.BinarySequence;
+import io.questdb.std.CharSequenceHashSet;
+import io.questdb.std.CharSequenceIntHashMap;
+import io.questdb.std.Chars;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.FindVisitor;
+import io.questdb.std.Long256;
+import io.questdb.std.LongList;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.ObjList;
+import io.questdb.std.Os;
+import io.questdb.std.Sinkable;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.NativeLPSZ;
 import io.questdb.std.str.Path;
-import io.questdb.tasks.*;
-import org.jetbrains.annotations.NotNull;
-
-import java.io.Closeable;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicLong;
-import java.util.function.LongConsumer;
-
-import static io.questdb.cairo.StatusCode.*;
-import static io.questdb.cairo.TableUtils.*;
-import static io.questdb.std.Files.isDots;
+import io.questdb.tasks.ColumnIndexerTask;
+import io.questdb.tasks.OutOfOrderCopyTask;
+import io.questdb.tasks.OutOfOrderOpenColumnTask;
+import io.questdb.tasks.OutOfOrderPartitionTask;
+import io.questdb.tasks.OutOfOrderSortTask;
+import io.questdb.tasks.OutOfOrderUpdPartitionSizeTask;
 
 public class TableWriter implements Closeable {
     public static final int TIMESTAMP_MERGE_ENTRY_BYTES = Long.BYTES * 2;
@@ -697,40 +773,47 @@ public class TableWriter implements Closeable {
                 txFile.commit(commitMode, this.denseSymbolMapWriters);
             } else {
                 int timestampColumnIndex = metadata.getTimestampIndex();
-                PagedVirtualMemory tsColumn = getPrimaryColumn(timestampColumnIndex);
-                long tsAppendPointer = tsColumn.getAppendOffset();
+                long tsAppendPointer = getPrimaryColumn(timestampColumnIndex).getAppendOffset();
+                long maxTimestamp = txFile.getMaxTimestamp();
+                long previousMaxTimestamp = txFile.cancelToMaxTimestamp();
+                long newCommittedMaxTimestamp = maxTimestamp - lastTimestampHysteresisInMicros;
                 try {
-                    long maxTimestamp = txFile.getMaxTimestamp();
-                    long previousMaxTimestamp = txFile.cancelToMaxTimestamp();
-                    long newCommittedMaxTimestamp = maxTimestamp - lastTimestampHysteresisInMicros;
-                    int appendedPartitionCount = txFile.getAppendedPartitionCount();
-                    long fixedRowCount = txFile.getFixedRowCount();
-                    long row = txFile.getTransientRowCount() - 1;
-                    long lastTimestamp;
-                    do {
-                        if (row > 0) {
-                            row--;
+                    if (newCommittedMaxTimestamp > previousMaxTimestamp) {
+                        int committedLastPartitionIndex = txFile.findAttachedPartitionIndexByLoTimestamp(txFile.getPartitionTimestampLo(previousMaxTimestamp)) >> 2;
+                        int newCommittedLastPartitionIndex = txFile.findAttachedPartitionIndexByLoTimestamp(txFile.getPartitionTimestampLo(newCommittedMaxTimestamp)) >> 2;
+                        int uncommittedLastPartitionIndex = txFile.getPartitionCount() - 1;
+                        PagedVirtualMemory tsColumn;
+                        long fixedRowCount = txFile.getFixedRowCount();
+                        long row;
+                        if (newCommittedLastPartitionIndex == uncommittedLastPartitionIndex) {
+                            // Hysteresis is in the last partition
+                            row = txFile.getTransientRowCount() - 1;
+                            tsColumn = getPrimaryColumn(timestampColumnIndex);
                         } else {
-                            int partitionIndex = txFile.getPartitionCount() - appendedPartitionCount - 1;
-                            row = txFile.getPartitionSize(partitionIndex);
-                            fixedRowCount -= row;
-                            appendedPartitionCount--;
+                            row = txFile.getPartitionSize(newCommittedLastPartitionIndex);
                             int plen = path.length();
                             try {
-                                setStateForTimestamp(path.trimTo(plen), txFile.getPartitionTimestamp(partitionIndex), false);
+                                setStateForTimestamp(path.trimTo(plen), txFile.getPartitionTimestamp(newCommittedLastPartitionIndex), false);
                                 outOfBandColumn.of(ff, dFile(path, metadata.getColumnName(timestampColumnIndex)), row << ColumnType.pow2SizeOf(ColumnType.TIMESTAMP));
                             } finally {
                                 path.trimTo(plen);
                             }
                             tsColumn = outOfBandColumn;
-                            row--;
+                            int partitionIndex = newCommittedLastPartitionIndex;
+                            while (partitionIndex < uncommittedLastPartitionIndex) {
+                                fixedRowCount -= txFile.getPartitionSize(partitionIndex);
+                                partitionIndex++;
+                            }
                         }
-                        long offset = row << ColumnType.pow2SizeOf(ColumnType.TIMESTAMP);
-                        tsColumn.jumpTo(offset);
-                        lastTimestamp = tsColumn.getLong(offset);
-                    } while (appendedPartitionCount >= 0 && lastTimestamp > newCommittedMaxTimestamp);
-                    if (newCommittedMaxTimestamp > previousMaxTimestamp) {
-                        txFile.commitPartial(commitMode, this.denseSymbolMapWriters, row + 1, appendedPartitionCount, fixedRowCount, lastTimestamp);
+                        long lastTimestamp = Long.MAX_VALUE;
+                        while (row > 0 && lastTimestamp > newCommittedMaxTimestamp) {
+                            row--;
+                            long offset = row << ColumnType.pow2SizeOf(ColumnType.TIMESTAMP);
+                            tsColumn.jumpTo(offset);
+                            lastTimestamp = tsColumn.getLong(offset);
+                        }
+                        txFile.commitPartial(commitMode, this.denseSymbolMapWriters, row + 1, fixedRowCount, lastTimestamp, committedLastPartitionIndex, newCommittedLastPartitionIndex,
+                                newCommittedLastPartitionIndex);
                     }
                 } finally {
                     getPrimaryColumn(timestampColumnIndex).jumpTo(tsAppendPointer);
