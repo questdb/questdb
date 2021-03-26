@@ -775,7 +775,7 @@ public class TableWriter implements Closeable {
                 int timestampColumnIndex = metadata.getTimestampIndex();
                 long tsAppendPointer = getPrimaryColumn(timestampColumnIndex).getAppendOffset();
                 long maxTimestamp = txFile.getMaxTimestamp();
-                long previousMaxTimestamp = txFile.cancelToMaxTimestamp();
+                long previousMaxTimestamp = txFile.getCommittedMaxTimestamp();
                 long newCommittedMaxTimestamp = maxTimestamp - lastTimestampHysteresisInMicros;
                 try {
                     if (newCommittedMaxTimestamp > previousMaxTimestamp) {

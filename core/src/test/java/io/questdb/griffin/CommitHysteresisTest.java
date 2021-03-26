@@ -651,6 +651,197 @@ public class CommitHysteresisTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testHysteresisStaggeringMultiplePartitionsWithRollback() throws Exception {
+        executeVanilla(() -> {
+            String sql = "create table x as (" +
+                    "select" +
+                    " cast(x as int) i," +
+                    " rnd_symbol('msft','ibm', 'googl') sym," +
+                    " round(rnd_double(0)*100, 3) amt," +
+                    " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                    " rnd_boolean() b," +
+                    " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                    " rnd_double(2) d," +
+                    " rnd_float(2) e," +
+                    " rnd_short(10,1024) f," +
+                    " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                    " rnd_symbol(4,4,4,2) ik," +
+                    " rnd_long() j," +
+                    " timestamp_sequence(500000000000L,100000000L) ts," +
+                    " rnd_byte(2,50) l," +
+                    " rnd_bin(10, 20, 2) m," +
+                    " rnd_str(5,16,2) n," +
+                    " rnd_char() t" +
+                    " from long_sequence(8000)" +
+                    "), index(sym) timestamp (ts) partition by DAY";
+            compiler.compile(sql, sqlExecutionContext);
+
+            sql = "create table y as (select * from x where i<=1200) partition by DAY";
+            compiler.compile(sql, sqlExecutionContext);
+
+            TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where i<=1200", sink);
+            TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
+            TestUtils.assertEquals(sink, sink2);
+
+            try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "y")) {
+                sql = "select * from x where i>1200 and i<6800 order by f";
+                insertUncommitted(sql, writer);
+                long lastTimestampHysteresisInMicros = (maxTimestamp - minTimestamp) / 2;
+                minTimestamp += lastTimestampHysteresisInMicros;
+                writer.commitWithHysteresis(lastTimestampHysteresisInMicros);
+                TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where ts<=cast(" + minTimestamp + " as timestamp)", sink);
+                TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
+                TestUtils.assertEquals(sink, sink2);
+
+                writer.rollback();
+                TestUtils.printSql(compiler, sqlExecutionContext, "select count(*) from y", sink);
+                TestUtils.assertEquals(sink, "count\n4000\n");
+
+                sql = "select * from x where i>=6800 order by f";
+                insertUncommitted(sql, writer);
+                lastTimestampHysteresisInMicros = (maxTimestamp - minTimestamp) / 2;
+                minTimestamp += lastTimestampHysteresisInMicros;
+                writer.commitWithHysteresis(lastTimestampHysteresisInMicros);
+                TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where ts<=cast(" + minTimestamp + " as timestamp) and (i<=4000 or i>=6800)", sink);
+                TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
+                TestUtils.assertEquals(sink, sink2);
+
+                writer.commit();
+            }
+
+            TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where i<=4000 or i>=6800", sink);
+            TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
+            TestUtils.assertEquals(sink, sink2);
+        });
+    }
+
+    @Test
+    public void testHysteresisOnInOrderCommit() throws Exception {
+        executeVanilla(() -> {
+            String sql = "create table x as (" +
+                    "select" +
+                    " cast(x as int) i," +
+                    " rnd_symbol('msft','ibm', 'googl') sym," +
+                    " round(rnd_double(0)*100, 3) amt," +
+                    " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                    " rnd_boolean() b," +
+                    " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                    " rnd_double(2) d," +
+                    " rnd_float(2) e," +
+                    " rnd_short(10,1024) f," +
+                    " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                    " rnd_symbol(4,4,4,2) ik," +
+                    " rnd_long() j," +
+                    " timestamp_sequence(500000000000L,100000000L) ts," +
+                    " rnd_byte(2,50) l," +
+                    " rnd_bin(10, 20, 2) m," +
+                    " rnd_str(5,16,2) n," +
+                    " rnd_char() t" +
+                    " from long_sequence(8000)" +
+                    "), index(sym) timestamp (ts) partition by DAY";
+            compiler.compile(sql, sqlExecutionContext);
+
+            sql = "create table y as (select * from x where i<=1200) partition by DAY";
+            compiler.compile(sql, sqlExecutionContext);
+
+            TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where i<=1200", sink);
+            TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
+            TestUtils.assertEquals(sink, sink2);
+
+            try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "y")) {
+                sql = "select * from x where i>1200 and i<6800";
+                insertUncommitted(sql, writer);
+                long lastTimestampHysteresisInMicros = (maxTimestamp - minTimestamp) / 2;
+                minTimestamp += lastTimestampHysteresisInMicros;
+                writer.commitWithHysteresis(lastTimestampHysteresisInMicros);
+                TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where ts<=cast(" + minTimestamp + " as timestamp)", sink);
+                TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
+                TestUtils.assertEquals(sink, sink2);
+
+                sql = "select * from x where i>=6800";
+                insertUncommitted(sql, writer);
+                lastTimestampHysteresisInMicros = (maxTimestamp - minTimestamp) / 2;
+                minTimestamp += lastTimestampHysteresisInMicros;
+                writer.commitWithHysteresis(lastTimestampHysteresisInMicros);
+                TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where ts<=cast(" + minTimestamp + " as timestamp)", sink);
+                TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
+                TestUtils.assertEquals(sink, sink2);
+
+                writer.commit();
+            }
+
+            TestUtils.printSql(compiler, sqlExecutionContext, "select * from x", sink);
+            TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
+            TestUtils.assertEquals(sink, sink2);
+        });
+    }
+
+    @Test
+    public void testHysteresisOnInOrderCommitWithRollback() throws Exception {
+        executeVanilla(() -> {
+            String sql = "create table x as (" +
+                    "select" +
+                    " cast(x as int) i," +
+                    " rnd_symbol('msft','ibm', 'googl') sym," +
+                    " round(rnd_double(0)*100, 3) amt," +
+                    " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                    " rnd_boolean() b," +
+                    " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                    " rnd_double(2) d," +
+                    " rnd_float(2) e," +
+                    " rnd_short(10,1024) f," +
+                    " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                    " rnd_symbol(4,4,4,2) ik," +
+                    " rnd_long() j," +
+                    " timestamp_sequence(500000000000L,100000000L) ts," +
+                    " rnd_byte(2,50) l," +
+                    " rnd_bin(10, 20, 2) m," +
+                    " rnd_str(5,16,2) n," +
+                    " rnd_char() t" +
+                    " from long_sequence(8000)" +
+                    "), index(sym) timestamp (ts) partition by DAY";
+            compiler.compile(sql, sqlExecutionContext);
+
+            sql = "create table y as (select * from x where i<=1200) partition by DAY";
+            compiler.compile(sql, sqlExecutionContext);
+
+            TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where i<=1200", sink);
+            TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
+            TestUtils.assertEquals(sink, sink2);
+
+            try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "y")) {
+                sql = "select * from x where i>1200 and i<6800";
+                insertUncommitted(sql, writer);
+                long lastTimestampHysteresisInMicros = (maxTimestamp - minTimestamp) / 2;
+                minTimestamp += lastTimestampHysteresisInMicros;
+                writer.commitWithHysteresis(lastTimestampHysteresisInMicros);
+                TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where ts<=cast(" + minTimestamp + " as timestamp)", sink);
+                TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
+                TestUtils.assertEquals(sink, sink2);
+
+                writer.rollback();
+                TestUtils.printSql(compiler, sqlExecutionContext, "select count(*) from y", sink);
+                TestUtils.assertEquals(sink, "count\n4000\n");
+
+                sql = "select * from x where i>=6800";
+                insertUncommitted(sql, writer);
+                lastTimestampHysteresisInMicros = (maxTimestamp - minTimestamp) / 2;
+                minTimestamp += lastTimestampHysteresisInMicros;
+                writer.commitWithHysteresis(lastTimestampHysteresisInMicros);
+                TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where ts<=cast(" + minTimestamp + " as timestamp) and (i<=4000 or i>=6800)", sink);
+                TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
+                TestUtils.assertEquals(sink, sink2);
+
+                writer.commit();
+            }
+
+            TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where i<=4000 or i>=6800", sink);
+            TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
+            TestUtils.assertEquals(sink, sink2);
+        });
+    }
+
     protected void insertUncommitted(String sql, TableWriter writer) throws SqlException {
         minTimestamp = Long.MAX_VALUE;
         maxTimestamp = Long.MIN_VALUE;

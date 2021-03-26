@@ -468,4 +468,8 @@ public final class TxWriter extends TxReader implements Closeable {
         attachedPartitions.set(index + PARTITION_NAME_TX_OFFSET, txn);
         attachedPositionDirtyIndex = Math.min(attachedPositionDirtyIndex, index);
     }
+
+    long getCommittedMaxTimestamp() {
+        return txMem.getLong(TX_OFFSET_MAX_TIMESTAMP);
+    }
 }
