@@ -380,6 +380,11 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
             return symbolTableResolver.getSymbolTable(col).valueOf(getInt(col));
         }
 
+        @Override
+        public CharSequence getSymB(int col) {
+            return symbolTableResolver.getSymbolTable(col).valueBOf(getInt(col));
+        }
+
         private long fixedWithColumnOffset(int index) {
             return fixedOffset + columnOffsets[index];
         }

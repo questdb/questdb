@@ -147,6 +147,11 @@ public class CursorFunction implements ScalarFunction {
     }
 
     @Override
+    public CharSequence getSymbolB(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public final long getTimestamp(Record rec) {
         throw new UnsupportedOperationException();
     }
