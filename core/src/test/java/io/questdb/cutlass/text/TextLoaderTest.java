@@ -2653,14 +2653,13 @@ public class TextLoaderTest extends AbstractGriffinTest {
     }
 
     private void assertTable(String expected) throws SqlException {
-        try (
-                RecordCursorFactory factory = compiler.compile("test", sqlExecutionContext).getRecordCursorFactory();
-                RecordCursor cursor = factory.getCursor(sqlExecutionContext)
-        ) {
-            sink.clear();
-            printer.print(cursor, factory.getMetadata(), true);
-            TestUtils.assertEquals(expected, sink);
-        }
+        TestUtils.assertSql(
+                compiler,
+                sqlExecutionContext,
+                "test",
+                sink,
+                expected
+        );
     }
 
     private void assertTimestampAsLong(String nominatedTimestamp, String expectedMeta) throws Exception {
@@ -2715,35 +2714,6 @@ public class TextLoaderTest extends AbstractGriffinTest {
                         );
                     });
         }
-    }
-
-    private void assertNoLeak(TestCode code) throws Exception {
-        assertNoLeak(engine, code);
-    }
-
-    private void assertNoLeak(CairoEngine engine, TestCode code) throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try (TextLoader loader = new TextLoader(engine)) {
-                code.run(loader);
-            }
-            Assert.assertEquals(0, engine.getBusyWriterCount());
-            Assert.assertEquals(0, engine.getBusyReaderCount());
-            engine.releaseAllWriters();
-            engine.releaseAllReaders();
-
-            AbstractGriffinTest.engine.releaseAllReaders();
-            AbstractGriffinTest.engine.releaseAllWriters();
-        });
-    }
-
-    private void assertTable(String expected) throws SqlException {
-        TestUtils.assertSql(
-                compiler,
-                sqlExecutionContext,
-                "test",
-                sink,
-                expected
-        );
     }
 
     private void configureLoaderDefaults(TextLoader textLoader) {
