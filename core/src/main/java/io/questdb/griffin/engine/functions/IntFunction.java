@@ -142,6 +142,11 @@ public abstract class IntFunction implements ScalarFunction {
     }
 
     @Override
+    public final CharSequence getSymbolB(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public long getTimestamp(Record rec) {
         return getInt(rec);
     }

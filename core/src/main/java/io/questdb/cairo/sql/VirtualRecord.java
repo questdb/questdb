@@ -150,6 +150,11 @@ public class VirtualRecord implements ColumnTypes, DelegatingRecord {
     }
 
     @Override
+    public CharSequence getSymB(int col) {
+        return getFunction(col).getSymbolB(base);
+    }
+
+    @Override
     public long getTimestamp(int col) {
         return getFunction(col).getTimestamp(base);
     }

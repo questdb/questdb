@@ -64,7 +64,17 @@ public class SymbolConstant extends SymbolFunction implements ConstantFunction {
     }
 
     @Override
+    public CharSequence getSymbolB(Record rec) {
+        return value;
+    }
+
+    @Override
     public CharSequence valueOf(int symbolKey) {
+        return value;
+    }
+
+    @Override
+    public CharSequence valueBOf(int key) {
         return value;
     }
 }
