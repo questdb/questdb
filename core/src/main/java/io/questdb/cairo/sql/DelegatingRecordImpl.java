@@ -131,6 +131,11 @@ public class DelegatingRecordImpl implements DelegatingRecord {
     }
 
     @Override
+    public CharSequence getSymB(int col) {
+        return base.getSymB(col);
+    }
+
+    @Override
     public long getTimestamp(int col) {
         return base.getTimestamp(col);
     }

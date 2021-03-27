@@ -120,6 +120,11 @@ public class CastDoubleToSymbolFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public CharSequence getSymbolB(Record rec) {
+            return getSymbol(rec);
+        }
+
+        @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
             arg.init(symbolTableSource, executionContext);
             symbolTableShortcut.clear();
@@ -136,6 +141,11 @@ public class CastDoubleToSymbolFunctionFactory implements FunctionFactory {
         @Override
         public CharSequence valueOf(int symbolKey) {
             return symbols.getQuick(TableUtils.toIndexKey(symbolKey));
+        }
+
+        @Override
+        public CharSequence valueBOf(int key) {
+            return valueOf(key);
         }
     }
 }

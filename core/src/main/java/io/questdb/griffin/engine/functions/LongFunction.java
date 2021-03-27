@@ -127,6 +127,11 @@ public abstract class LongFunction implements ScalarFunction {
     }
 
     @Override
+    public final CharSequence getSymbolB(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public final long getTimestamp(Record rec) {
         return getLong(rec);
     }

@@ -101,8 +101,18 @@ public class CastCharToSymbolFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public CharSequence getSymbolB(Record rec) {
+            return getSymbol(rec);
+        }
+
+        @Override
         public CharSequence valueOf(int symbolKey) {
             return symbols.getQuick(TableUtils.toIndexKey(symbolKey));
+        }
+
+        @Override
+        public CharSequence valueBOf(int key) {
+            return valueOf(key);
         }
 
         @Override

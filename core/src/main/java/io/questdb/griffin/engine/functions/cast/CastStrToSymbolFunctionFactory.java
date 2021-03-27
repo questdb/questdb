@@ -74,6 +74,16 @@ public class CastStrToSymbolFunctionFactory implements FunctionFactory {
         @Override
         public CharSequence getSymbol(Record rec) {
             final CharSequence value = arg.getStr(rec);
+            return getSymbol(value);
+        }
+
+        @Override
+        public CharSequence getSymbolB(Record rec) {
+            final CharSequence value = arg.getStrB(rec);
+            return getSymbol(value);
+        }
+
+        private CharSequence getSymbol(CharSequence value) {
             final int keyIndex;
             if (value != null && (keyIndex = lookupMap.keyIndex(value)) > -1) {
                 final String str = Chars.toString(value);
@@ -86,6 +96,11 @@ public class CastStrToSymbolFunctionFactory implements FunctionFactory {
         @Override
         public CharSequence valueOf(int symbolKey) {
             return symbols.getQuick(TableUtils.toIndexKey(symbolKey));
+        }
+
+        @Override
+        public CharSequence valueBOf(int key) {
+            return valueOf(key);
         }
 
         @Override

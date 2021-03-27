@@ -137,6 +137,11 @@ public abstract class DateFunction implements ScalarFunction {
     }
 
     @Override
+    public final CharSequence getSymbolB(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public final long getTimestamp(Record rec) {
         final long value = getDate(rec);
         return value == Numbers.LONG_NaN ? value : value * 1000L;

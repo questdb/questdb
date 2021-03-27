@@ -53,7 +53,17 @@ public class SymbolTypeConstant extends SymbolFunction implements TypeConstant {
     }
 
     @Override
+    public CharSequence getSymbolB(Record rec) {
+        return null;
+    }
+
+    @Override
     public CharSequence valueOf(int symbolKey) {
+        return null;
+    }
+
+    @Override
+    public CharSequence valueBOf(int key) {
         return null;
     }
 }

@@ -111,6 +111,8 @@ public interface Function extends Closeable {
 
     CharSequence getSymbol(Record rec);
 
+    CharSequence getSymbolB(Record rec);
+
     long getTimestamp(Record rec);
 
     int getType();
