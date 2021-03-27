@@ -30,6 +30,7 @@ import io.questdb.TelemetryJob;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cutlass.http.processors.*;
+import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
@@ -60,7 +61,7 @@ public class HttpQueryTestBuilder {
 
     @FunctionalInterface
     public interface HttpClientCode {
-        void run(CairoEngine engine) throws InterruptedException;
+        void run(CairoEngine engine) throws InterruptedException, SqlException;
     }
 
     private int workerCount = 1;

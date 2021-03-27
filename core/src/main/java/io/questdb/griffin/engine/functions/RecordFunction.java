@@ -170,6 +170,11 @@ public abstract class RecordFunction implements ScalarFunction {
     }
 
     @Override
+    public CharSequence getSymbolB(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public long getTimestamp(Record rec) {
         throw new UnsupportedOperationException();
     }

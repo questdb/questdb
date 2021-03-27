@@ -477,6 +477,11 @@ public class GroupByRecordCursorFactory implements RecordCursorFactory {
             }
 
             @Override
+            public CharSequence getSymB(int col) {
+                return parent.getSymbolMapReader(symbolTableSkewIndex.getQuick(col)).valueBOf(getInt(col));
+            }
+
+            @Override
             public long getTimestamp(int col) {
                 return getLong(col);
             }

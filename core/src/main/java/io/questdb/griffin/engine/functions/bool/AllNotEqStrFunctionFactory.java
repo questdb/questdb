@@ -22,39 +22,57 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.cast;
+package io.questdb.griffin.engine.functions.bool;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.SymbolFunction;
+import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.griffin.engine.functions.constants.SymbolConstant;
+import io.questdb.griffin.engine.functions.constants.BooleanConstant;
+import io.questdb.std.CharSequenceHashSet;
 import io.questdb.std.ObjList;
 
-public class CastBooleanToSymbolFunctionFactory implements FunctionFactory {
+public class AllNotEqStrFunctionFactory implements FunctionFactory {
+
     @Override
     public String getSignature() {
-        return "cast(Tk)";
+        return "<>all(Ss[])";
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        final Function arg = args.getQuick(0);
-        if (arg.isConstant()) {
-            return new SymbolConstant(position, arg.getSymbol(null), 0);
+    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        Function arrayFunction = args.getQuick(1);
+        int arraySize = arrayFunction.getArrayLength();
+        if (arraySize == 0) {
+            return new BooleanConstant(position, true);
         }
-        return new Func(position, arg);
+
+        CharSequenceHashSet set = new CharSequenceHashSet();
+        for (int i = 0; i < arraySize; i++) {
+            set.add(arrayFunction.getStr(null, i));
+        }
+
+        Function var = args.getQuick(0);
+        if (var.isConstant()) {
+            CharSequence str = var.getStr(null);
+            return new BooleanConstant(position, str != null && set.excludes(str));
+        }
+
+        return new AllNotEqualStrFunction(position, var, set);
     }
 
-    private static class Func extends SymbolFunction implements UnaryFunction {
+    private static class AllNotEqualStrFunction extends BooleanFunction implements UnaryFunction {
         private final Function arg;
+        private final CharSequenceHashSet set;
 
-        public Func(int position, Function arg) {
+        private AllNotEqualStrFunction(int position, Function arg, CharSequenceHashSet set) {
             super(position);
             this.arg = arg;
+            this.set = set;
         }
 
         @Override
@@ -63,33 +81,9 @@ public class CastBooleanToSymbolFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public CharSequence getSymbol(Record rec) {
-            return arg.getSymbol(rec);
-        }
-
-        @Override
-        public CharSequence getSymbolB(Record rec) {
-            return arg.getSymbolB(rec);
-        }
-
-        @Override
-        public CharSequence valueOf(int symbolKey) {
-            return symbolKey == 0 ? "true" : "false";
-        }
-
-        @Override
-        public CharSequence valueBOf(int key) {
-            return valueOf(key);
-        }
-
-        @Override
-        public int getInt(Record rec) {
-            return arg.getInt(rec);
-        }
-
-        @Override
-        public boolean isSymbolTableStatic() {
-            return false;
+        public boolean getBool(Record rec) {
+            CharSequence str = arg.getStr(rec);
+            return str != null && set.excludes(str);
         }
     }
 }

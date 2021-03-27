@@ -68,6 +68,10 @@ public class ClassResolveFunctionFactory implements FunctionFactory {
             return new ToPgDateFunctionFactory.ToPgDateFunction(nameFunction.getPosition(), nameFunction);
         }
 
+        if (SqlKeywords.isTextArrayKeyword(type)) {
+            return new StringToStringArrayFunction(nameFunction.getPosition(), nameFunction.getStr(null));
+        }
+
         throw SqlException.$(args.getQuick(1).getPosition(), "unsupported type");
     }
 

@@ -64,6 +64,11 @@ public class ListFunctionFactory implements FunctionFactory {
             return symbols.getQuick(next());
         }
 
+        @Override
+        public CharSequence getSymbolB(Record rec) {
+            return getSymbol(rec);
+        }
+
         private int next() {
             return position++ % count;
         }
@@ -71,6 +76,11 @@ public class ListFunctionFactory implements FunctionFactory {
         @Override
         public CharSequence valueOf(int symbolKey) {
             return symbols.getQuick(TableUtils.toIndexKey(symbolKey));
+        }
+
+        @Override
+        public CharSequence valueBOf(int key) {
+            return valueOf(key);
         }
 
         @Override

@@ -22,60 +22,42 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo;
+package io.questdb.cutlass.text.types;
 
-import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TableWriter;
+import io.questdb.std.Mutable;
+import io.questdb.std.str.DirectByteCharSequence;
 
-public class EmptySymbolMapReader implements SymbolMapReader {
-
-    public static final EmptySymbolMapReader INSTANCE = new EmptySymbolMapReader();
+public class OtherToTimestampAdapter extends TimestampAdapter implements Mutable {
+    private TimestampCompatibleAdapter compatibleAdapter;
 
     @Override
-    public int keyOf(CharSequence value) {
-        return SymbolTable.VALUE_NOT_FOUND;
+    public void clear() {
+        this.compatibleAdapter = null;
+    }
+
+    public long getTimestamp(DirectByteCharSequence value) throws Exception {
+        return compatibleAdapter.getTimestamp(value);
     }
 
     @Override
-    public int size() {
-        return 0;
+    public int getType() {
+        return ColumnType.TIMESTAMP;
     }
 
     @Override
-    public CharSequence valueOf(int key) {
-        return null;
+    public boolean probe(CharSequence text) {
+        return compatibleAdapter.probe(text);
     }
 
     @Override
-    public CharSequence valueBOf(int key) {
-        return null;
+    public void write(TableWriter.Row row, int column, DirectByteCharSequence value) throws Exception {
+        row.putTimestamp(column, getTimestamp(value));
     }
 
-    @Override
-    public int getSymbolCapacity() {
-        return 0;
-    }
-
-    @Override
-    public boolean isCached() {
-        return false;
-    }
-
-    @Override
-    public boolean isDeleted() {
-        return true;
-    }
-
-    @Override
-    public void updateSymbolCount(int count) {
-    }
-
-    @Override
-    public boolean containsNullValue() {
-        return false;
-    }
-
-    @Override
-    public long symbolCharsAddressOf(int symbolIndex) {
-        return -1;
+    public OtherToTimestampAdapter of(TimestampCompatibleAdapter compatibleAdapter) {
+        this.compatibleAdapter = compatibleAdapter;
+        return this;
     }
 }

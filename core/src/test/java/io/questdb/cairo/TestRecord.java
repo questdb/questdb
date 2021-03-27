@@ -108,6 +108,11 @@ public class TestRecord implements Record {
         return rnd.nextChars(10);
     }
 
+    @Override
+    public CharSequence getSymB(int col) {
+        return rnd.nextChars(10);
+    }
+
     public static class ArrayBinarySequence implements BinarySequence {
         private byte[] array;
 

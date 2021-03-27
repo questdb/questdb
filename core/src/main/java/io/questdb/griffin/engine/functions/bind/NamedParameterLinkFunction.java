@@ -150,6 +150,11 @@ public class NamedParameterLinkFunction implements ScalarFunction {
     }
 
     @Override
+    public CharSequence getSymbolB(Record rec) {
+        return getBase().getSymbolB(rec);
+    }
+
+    @Override
     public long getTimestamp(Record rec) {
         return getBase().getTimestamp(rec);
     }

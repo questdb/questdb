@@ -22,60 +22,19 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo;
+package io.questdb.griffin.engine.functions.catalogue;
 
-import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.griffin.AbstractGriffinTest;
+import org.junit.Test;
 
-public class EmptySymbolMapReader implements SymbolMapReader {
+public class PrefixedPgGetKeywordsFunctionFactoryTest extends AbstractGriffinTest {
 
-    public static final EmptySymbolMapReader INSTANCE = new EmptySymbolMapReader();
-
-    @Override
-    public int keyOf(CharSequence value) {
-        return SymbolTable.VALUE_NOT_FOUND;
-    }
-
-    @Override
-    public int size() {
-        return 0;
-    }
-
-    @Override
-    public CharSequence valueOf(int key) {
-        return null;
-    }
-
-    @Override
-    public CharSequence valueBOf(int key) {
-        return null;
-    }
-
-    @Override
-    public int getSymbolCapacity() {
-        return 0;
-    }
-
-    @Override
-    public boolean isCached() {
-        return false;
-    }
-
-    @Override
-    public boolean isDeleted() {
-        return true;
-    }
-
-    @Override
-    public void updateSymbolCount(int count) {
-    }
-
-    @Override
-    public boolean containsNullValue() {
-        return false;
-    }
-
-    @Override
-    public long symbolCharsAddressOf(int symbolIndex) {
-        return -1;
+    @Test
+    public void testPrefixedPgGetKeywordsFunc() throws Exception {
+        String expected = "word\tcatcode\tcatdesc\n";
+        for (CharSequence keyword : Constants.KEYWORDS) {
+            expected += (keyword + "\t\t\n");
+        }
+        assertQuery(expected, "pg_catalog.pg_get_keywords;", null, false, sqlExecutionContext, false, true);
     }
 }

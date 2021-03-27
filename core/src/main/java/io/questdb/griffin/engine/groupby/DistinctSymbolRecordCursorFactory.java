@@ -151,6 +151,11 @@ public class DistinctSymbolRecordCursorFactory implements RecordCursorFactory {
             }
 
             @Override
+            public CharSequence getSymB(int col) {
+                return symbolMapReader.valueBOf(recordIndex);
+            }
+
+            @Override
             public int getInt(int col) {
                 return recordIndex;
             }

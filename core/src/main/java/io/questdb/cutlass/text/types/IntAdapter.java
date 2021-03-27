@@ -30,11 +30,16 @@ import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.str.DirectByteCharSequence;
 
-public final class IntAdapter extends AbstractTypeAdapter {
+public final class IntAdapter extends AbstractTypeAdapter implements TimestampCompatibleAdapter {
 
     public static final IntAdapter INSTANCE = new IntAdapter();
 
     private IntAdapter() {
+    }
+
+    @Override
+    public long getTimestamp(DirectByteCharSequence value) throws Exception {
+        return parseInt(value);
     }
 
     @Override
@@ -57,6 +62,10 @@ public final class IntAdapter extends AbstractTypeAdapter {
 
     @Override
     public void write(TableWriter.Row row, int column, DirectByteCharSequence value) throws Exception {
-        row.putInt(column, Numbers.parseInt(value));
+        row.putInt(column, parseInt(value));
+    }
+
+    private int parseInt(DirectByteCharSequence value) throws NumericException {
+        return Numbers.parseInt(value);
     }
 }

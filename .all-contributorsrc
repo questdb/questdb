@@ -229,6 +229,37 @@
       "contributions": [
         "code"
       ]
+    },
+    {
+      "login": "jaugsburger",
+      "name": "Joan Augsburger",
+      "avatar_url": "https://avatars.githubusercontent.com/u/10787042?v=4",
+      "profile": "https://github.com/jaugsburger",
+      "contributions": [
+        "code",
+        "maintenance"
+      ]
+    },
+    {
+      "login": "TheTanc",
+      "name": "TheTanc",
+      "avatar_url": "https://avatars.githubusercontent.com/u/52114895?v=4",
+      "profile": "http://www.questdb.io",
+      "contributions": [
+        "projectManagement",
+        "content",
+        "ideas"
+      ]
+    },
+    {
+      "login": "davidgs",
+      "name": "David G. Simmons",
+      "avatar_url": "https://avatars.githubusercontent.com/u/2071898?v=4",
+      "profile": "http://davidgs.com",
+      "contributions": [
+        "bug",
+        "content"
+      ]
     }
   ],
   "badgeTemplate": "[![All Contributors](https://img.shields.io/badge/all_contributors-<%= contributors.length %>-orange.svg)](#contributors)",
