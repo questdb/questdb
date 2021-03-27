@@ -57,7 +57,6 @@ inline uint32_t ceil_pow_2(uint32_t v) {
     v |= v >> 16u;
     return v + 1;
 }
-
 // the "high" boundary is inclusive
 template<class T, class V>
 inline int64_t scan_search(T data, V value, int64_t low, int64_t high, int32_t scan_dir) {

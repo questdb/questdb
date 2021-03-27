@@ -26,6 +26,9 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.*;
 import io.questdb.std.Chars;
+import io.questdb.std.Os;
+import io.questdb.std.Rnd;
+import io.questdb.std.Vect;
 import io.questdb.std.NumericException;
 import io.questdb.std.Os;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
@@ -33,11 +36,42 @@ import io.questdb.std.str.DirectCharSink;
 import io.questdb.std.str.MutableCharSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.*;
+import org.junit.rules.TestName;
 
 import java.net.URISyntaxException;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class OutOfOrderTest extends AbstractOutOfOrderTest {
+    @Rule
+    public TestName name = new TestName();
+    private StringBuilder tstData = new StringBuilder();
+
+    @Before
+    public void setUp4() {
+        Vect.resetPerformanceCounters();
+    }
+
+    @After
+    public void tearDown4() throws InterruptedException {
+        int count = Vect.getPerformanceCountersCount();
+        if (count > 0) {
+            tstData.setLength(0);
+            tstData.append(name.getMethodName()).append("\t");
+            long total = 0;
+            for (int i = 0; i < count; i++) {
+                long val = Vect.getPerformanceCounter(i);
+                tstData.append(val).append("\t");
+                total += val;
+            }
+            tstData.append(total);
+
+            Thread.sleep(10);
+            System.err.flush();
+            System.err.println(tstData.toString());
+            System.err.flush();
+        }
+    }
+
 
     @Test
     public void testBench() throws Exception {

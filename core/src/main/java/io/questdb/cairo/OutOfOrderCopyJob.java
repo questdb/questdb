@@ -106,45 +106,25 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
     ) {
         switch (blockType) {
             case OO_BLOCK_MERGE:
-                if (srcDataFixOffset == 0 && srcDataTop == 0) {
-                    oooMergeCopy(
-                            columnType,
-                            timestampMergeIndexAddr,
-                            srcDataFixAddr,
-                            srcDataVarAddr,
-                            srcDataLo,
-                            srcDataHi,
-                            srcOooFixAddr,
-                            srcOooVarAddr,
-                            srcOooLo,
-                            srcOooHi,
-                            dstFixAddr + dstFixOffset,
-                            dstVarAddr,
-                            dstVarOffset
-                    );
-                } else {
-                    oooMergeCopyWithOffset(
-                            columnType,
-                            timestampMergeIndexAddr,
-                            srcDataFixAddr,
-                            // this is a hack, when we have column top we can have only of of the two:
-                            // srcDataFixOffset, when we had to shift data to back fill nulls or
-                            // srcDataTopOffset - if we kept the column top
-                            // when one value is present the other will be 0
-                            srcDataFixOffset - srcDataTop,
-                            srcDataVarAddr,
-                            srcDataVarOffset,
-                            srcDataLo,
-                            srcDataHi,
-                            srcOooFixAddr,
-                            srcOooVarAddr,
-                            srcOooLo,
-                            srcOooHi,
-                            dstFixAddr + dstFixOffset,
-                            dstVarAddr,
-                            dstVarOffset
-                    );
-                }
+                oooMergeCopy(
+                        columnType,
+                        timestampMergeIndexAddr,
+                        // this is a hack, when we have column top we can have only of of the two:
+                        // srcDataFixOffset, when we had to shift data to back fill nulls or
+                        // srcDataTopOffset - if we kept the column top
+                        // when one value is present the other will be 0
+                        srcDataFixAddr + srcDataFixOffset - srcDataTop,
+                        srcDataVarAddr + srcDataVarOffset,
+                        srcDataLo,
+                        srcDataHi,
+                        srcOooFixAddr,
+                        srcOooVarAddr,
+                        srcOooLo,
+                        srcOooHi,
+                        dstFixAddr + dstFixOffset,
+                        dstVarAddr,
+                        dstVarOffset
+                );
                 break;
             case OO_BLOCK_OO:
                 oooCopyOOO(
@@ -839,77 +819,6 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
                 break;
             case -ColumnType.TIMESTAMP:
                 Vect.oooCopyIndex(mergeIndexAddr, rowCount, dstFixAddr);
-                break;
-            default:
-                break;
-        }
-    }
-
-    private static void oooMergeCopyWithOffset(
-            int columnType,
-            long timestampMergeIndexAddr,
-            long srcDataFixAddr,
-            long srcDataFixOffset,
-            long srcDataVarAddr,
-            long srcDataVarOffset,
-            long srcDataLo,
-            long srcDataHi,
-            long srcOooFixAddr,
-            long srcOooVarAddr,
-            long srcOooLo,
-            long srcOooHi,
-            long dstFixAddr,
-            long dstVarAddr,
-            long dstVarOffset
-    ) {
-        final long rowCount = srcOooHi - srcOooLo + 1 + srcDataHi - srcDataLo + 1;
-        switch (columnType) {
-            case ColumnType.BOOLEAN:
-            case ColumnType.BYTE:
-                Vect.mergeShuffleWithTop8Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, timestampMergeIndexAddr, rowCount, srcDataFixOffset);
-                break;
-            case ColumnType.SHORT:
-            case ColumnType.CHAR:
-                Vect.mergeShuffleWithTop16Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, timestampMergeIndexAddr, rowCount, srcDataFixOffset);
-                break;
-            case ColumnType.STRING:
-                Vect.oooMergeCopyStrColumnWithTop(
-                        timestampMergeIndexAddr,
-                        rowCount,
-                        srcDataFixAddr,
-                        srcDataFixOffset,
-                        srcDataVarAddr + srcDataVarOffset,
-                        srcOooFixAddr,
-                        srcOooVarAddr,
-                        dstFixAddr,
-                        dstVarAddr,
-                        dstVarOffset
-                );
-                break;
-            case ColumnType.BINARY:
-                Vect.oooMergeCopyBinColumnWithTop(
-                        timestampMergeIndexAddr,
-                        rowCount,
-                        srcDataFixAddr,
-                        srcDataFixOffset,
-                        srcDataVarAddr + srcDataVarOffset,
-                        srcOooFixAddr,
-                        srcOooVarAddr,
-                        dstFixAddr,
-                        dstVarAddr,
-                        dstVarOffset
-                );
-                break;
-            case ColumnType.INT:
-            case ColumnType.FLOAT:
-            case ColumnType.SYMBOL:
-                Vect.mergeShuffleWithTop32Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, timestampMergeIndexAddr, rowCount, srcDataFixOffset);
-                break;
-            case ColumnType.DOUBLE:
-            case ColumnType.LONG:
-            case ColumnType.DATE:
-            case ColumnType.TIMESTAMP:
-                Vect.mergeShuffleWithTop64Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, timestampMergeIndexAddr, rowCount, srcDataFixOffset);
                 break;
             default:
                 break;

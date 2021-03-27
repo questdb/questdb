@@ -52,6 +52,8 @@ public final class Vect {
         return index;
     }
 
+    public static native void copyFromTimestampIndex(long pIndex, long indexLo, long indexHi, long pTs);
+
     public static native void flattenIndex(long pIndex, long count);
 
     public static native void freeMergedIndex(long pIndex);
@@ -117,14 +119,6 @@ public final class Vect {
 
     public static native void mergeShuffle8Bit(long pSrc1, long pSrc2, long pDest, long pIndex, long count);
 
-    public static native void mergeShuffleWithTop16Bit(long pSrc1, long pSrc2, long pDest, long pIndex, long count, long columnTop);
-
-    public static native void mergeShuffleWithTop32Bit(long pSrc1, long pSrc2, long pDest, long pIndex, long count, long columnTop);
-
-    public static native void mergeShuffleWithTop64Bit(long pSrc1, long pSrc2, long pDest, long pIndex, long count, long columnTop);
-
-    public static native void mergeShuffleWithTop8Bit(long pSrc1, long pSrc2, long pDest, long pIndex, long count, long columnTop);
-
     public static native double minDouble(long pDouble, long count);
 
     public static native int minInt(long pInt, long count);
@@ -145,36 +139,10 @@ public final class Vect {
             long dstVarOffset
     );
 
-    public static native void oooMergeCopyBinColumnWithTop(
-            long mergeIndexAddr,
-            long mergeIndexSize,
-            long srcDataFixAddr,
-            long srcDataFixOffset,
-            long srcDataVarAddr,
-            long srcOooFixAddr,
-            long srcOooVarAddr,
-            long dstFixAddr,
-            long dstVarAddr,
-            long dstVarOffset
-    );
-
     public static native void oooMergeCopyStrColumn(
             long mergeIndexAddr,
             long mergeIndexSize,
             long srcDataFixAddr,
-            long srcDataVarAddr,
-            long srcOooFixAddr,
-            long srcOooVarAddr,
-            long dstFixAddr,
-            long dstVarAddr,
-            long dstVarOffset
-    );
-
-    public static native void oooMergeCopyStrColumnWithTop(
-            long mergeIndexAddr,
-            long mergeIndexSize,
-            long srcDataFixAddr,
-            long srcDataFixOffset,
             long srcDataVarAddr,
             long srcOooFixAddr,
             long srcOooVarAddr,
@@ -197,6 +165,8 @@ public final class Vect {
 
     public static native void setVarColumnRefs64Bit(long address, long initialOffset, long count);
 
+    public static native void shiftCopyFixedSizeColumnData(long shift, long src, long srcLo, long srcHi, long dstAddr);
+
     public static native void sortLongIndexAscInPlace(long pLongData, long count);
 
     public static native double sumDouble(long pDouble, long count);
@@ -210,4 +180,10 @@ public final class Vect {
     public static native long sumLong(long pLong, long count);
 
     private static native void memcpy0(long src, long dst, long len);
+
+    public static native int getPerformanceCountersCount();
+
+    public static native long getPerformanceCounter(int index);
+
+    public static native void resetPerformanceCounters();
 }
