@@ -40,6 +40,7 @@ set(
         src/main/c/share/util.cpp
         src/main/c/share/ooo.cpp
         src/main/c/share/tab_scoreboard.cpp
+        src/main/c/share/txn_board.cpp
 )
 
 # JNI includes
