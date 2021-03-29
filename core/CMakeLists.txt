@@ -40,7 +40,6 @@ set(
         src/main/c/share/util.cpp
         src/main/c/share/ooo.cpp
         src/main/c/share/tab_scoreboard.cpp
-        src/main/c/share/txn_board.cpp
 )
 
 # JNI includes
@@ -108,6 +107,8 @@ if (WIN32)
             src/main/c/windows/timer.c
             src/main/c/windows/timer.h
             src/main/c/windows/accept.c
+            src/main/c/share/fs.h
+            src/main/c/share/txn_board.cpp
     )
 else ()
     set(

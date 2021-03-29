@@ -30,13 +30,14 @@
 
 #include <winbase.h>
 #include <direct.h>
+#include <stdint.h>
 #include "../share/files.h"
 #include "errno.h"
 
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_copy
         (JNIEnv *e, jclass cls, jlong lpszFrom, jlong lpszTo) {
-    const char* from = (const char *) lpszFrom;
-    const char* to = (const char *) lpszTo;
+    const char *from = (const char *) lpszFrom;
+    const char *to = (const char *) lpszTo;
     if (CopyFile(from, to, TRUE) == FALSE) {
         SaveLastError();
         return -1;
@@ -383,7 +384,7 @@ inline jlong _io_questdb_std_Files_mremap0
     Java_io_questdb_std_Files_munmap0((JNIEnv *) NULL, (jclass) NULL, address, previousLen);
     return newAddress;
 }
-    
+
 JNIEXPORT jlong JNICALL JavaCritical_io_questdb_std_Files_mremap0
         (jlong fd, jlong address, jlong previousLen, jlong newLen, jlong offset, jint flags) {
     return _io_questdb_std_Files_mremap0(fd, address, previousLen, newLen, offset, flags);
@@ -392,7 +393,7 @@ JNIEXPORT jlong JNICALL JavaCritical_io_questdb_std_Files_mremap0
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_mremap0
         (JNIEnv *e, jclass cl, jlong fd, jlong address, jlong previousLen, jlong newLen, jlong offset, jint flags) {
     return _io_questdb_std_Files_mremap0(fd, address, previousLen, newLen, offset, flags);
-}       
+}
 
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getPageSize
         (JNIEnv *e, jclass cl) {
@@ -536,3 +537,49 @@ JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_rename(JNIEnv *e, jclass cl
     SaveLastError();
     return FALSE;
 }
+
+void* openShm0(void* lpsz, size_t len, long long * pMapping) {
+    LPCVOID address;
+
+    HANDLE hMapping = CreateFileMapping(
+            INVALID_HANDLE_VALUE,
+            NULL,
+            PAGE_READWRITE,
+            (DWORD) (len >> 32),
+            (DWORD) len,
+            (LPCSTR) lpsz
+    );
+
+    if (hMapping == NULL) {
+        SaveLastError();
+        return (void *) -1;
+    }
+
+    address = MapViewOfFile(
+            hMapping,
+            FILE_MAP_ALL_ACCESS,
+            0,
+            0,
+            (SIZE_T) len
+    );
+
+    SaveLastError();
+
+    if (address == NULL) {
+        CloseHandle(hMapping);
+        return (void *) -1;
+    }
+
+    *pMapping = (jlong) hMapping;
+    return (void *) address;
+}
+
+jint closeShm0(void *lpsz, size_t len, long long hMapping) {
+    CloseHandle((HANDLE) hMapping);
+    if (UnmapViewOfFile(lpsz)) {
+        return 0;
+    }
+    SaveLastError();
+    return -1;
+}
+

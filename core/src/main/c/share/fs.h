@@ -22,31 +22,13 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo;
+#ifndef FS_H
+#define FS_H
 
-import io.questdb.std.str.LPSZ;
-
-public class TxnScoreboard {
-
-    public static long create(LPSZ name) {
-        return create0(name.address());
-    }
-
-    static native boolean acquire(long pTxnScoreboard, long txn);
-
-    static native long release(long pTxnScoreboard, long txn);
-
-    private static native long create0(long lpszName);
-
-    static native long getMax(long pTxnScoreboard);
-
-    static native long getMin(long pTxnScoreboard);
-
-    static native long getCount(long pTxnScoreboard, long txn);
-
-    static native int getScoreboardSize();
-
-    static native void init(long pTxnScoreboard);
-
-    public static native void close(long pTxnScoreboard);
+extern "C" {
+void *openShm0(void *lpsz, size_t len, long long *hMapping);
+jint closeShm0(void *lpsz, size_t len, long long hMapping);
 }
+
+
+#endif //FS_H

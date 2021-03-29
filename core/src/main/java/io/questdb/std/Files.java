@@ -246,8 +246,6 @@ public final class Files {
         return false;
     }
 
-    public native static long sequentialRead(long fd, long address, int len);
-
     public static boolean setLastModified(LPSZ lpsz, long millis) {
         return setLastModified(lpsz.address(), millis);
     }
@@ -279,6 +277,16 @@ public final class Files {
         }
         return Unsafe.getUnsafe().getByte(lpsz + len) == 0;
     }
+
+    public static long openShm(LPSZ name, long len) {
+        long addr = openShm0(name.address(), len);
+        if (addr > 0) {
+            Unsafe.recordMemAlloc(len);
+        }
+        return addr;
+    }
+
+    private static native long openShm0(long lpsz, long len);
 
     private static native int munmap0(long address, long len);
 
