@@ -71,6 +71,7 @@ public class TableWriter implements Closeable {
     private final static OutOfOrderNativeSortMethod SHUFFLE_16 = Vect::indexReshuffle16Bit;
     private final static OutOfOrderNativeSortMethod SHUFFLE_32 = Vect::indexReshuffle32Bit;
     private final static OutOfOrderNativeSortMethod SHUFFLE_64 = Vect::indexReshuffle64Bit;
+    private final static OutOfOrderNativeSortMethod SHUFFLE_256 = Vect::indexReshuffle256Bit;
     final ObjList<AppendOnlyVirtualMemory> columns;
     private final ObjList<SymbolMapWriter> symbolMapWriters;
     private final ObjList<SymbolMapWriter> denseSymbolMapWriters;
@@ -2457,6 +2458,9 @@ public class TableWriter implements Closeable {
             case ColumnType.SHORT:
             case ColumnType.CHAR:
                 oooSortFixColumn(i, mergedTimestamps, oooRowCount, 1, SHUFFLE_16);
+                break;
+            case ColumnType.LONG256:
+                oooSortFixColumn(i, mergedTimestamps, oooRowCount, 5, SHUFFLE_256);
                 break;
             default:
                 oooSortFixColumn(i, mergedTimestamps, oooRowCount, 0, SHUFFLE_8);

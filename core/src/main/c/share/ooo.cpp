@@ -363,7 +363,7 @@ void k_way_merge_long_index(
 }
 
 #ifdef OOO_CPP_PROFILE_TIMING
-const int perf_counter_length = 29;
+const int perf_counter_length = 30;
 std::atomic_ulong perf_counters[perf_counter_length];
 
 uint64_t currentTimeNanos() {
@@ -541,6 +541,21 @@ Java_io_questdb_std_Vect_indexReshuffle64Bit(JNIEnv *env, jclass cl, jlong pSrc,
     });
 }
 
+
+DECLARE_DISPATCHER(re_shuffle_256bit);
+JNIEXPORT void JNICALL
+Java_io_questdb_std_Vect_indexReshuffle256Bit(JNIEnv *env, jclass cl, jlong pSrc, jlong pDest, jlong pIndex,
+                                             jlong count) {
+    measure_time(6, [=]() {
+        re_shuffle_256bit(
+                reinterpret_cast<long_256bit *>(pSrc),
+                reinterpret_cast<long_256bit *>(pDest),
+                reinterpret_cast<index_t *>(pIndex),
+                __JLONG_REINTERPRET_CAST__(int64_t, count)
+        );
+    });
+}
+
 JNIEXPORT void JNICALL
 // Leave vanilla
 Java_io_questdb_std_Vect_indexReshuffle16Bit(JNIEnv *env, jclass cl, jlong pSrc, jlong pDest, jlong pIndex,
@@ -619,6 +634,20 @@ Java_io_questdb_std_Vect_mergeShuffle64Bit(JNIEnv *env, jclass cl, jlong src1, j
                 reinterpret_cast<int64_t *>(src1),
                 reinterpret_cast<int64_t *>(src2),
                 reinterpret_cast<int64_t *>(dest),
+                reinterpret_cast<index_t *>(index),
+                __JLONG_REINTERPRET_CAST__(int64_t, count)
+        );
+    });
+}
+
+JNIEXPORT void JNICALL
+Java_io_questdb_std_Vect_mergeShuffle256Bit(JNIEnv *env, jclass cl, jlong src1, jlong src2, jlong dest, jlong index,
+                                           jlong count) {
+    measure_time(29, [=]() {
+        merge_shuffle_vanilla<long_256bit>(
+                reinterpret_cast<long_256bit *>(src1),
+                reinterpret_cast<long_256bit *>(src2),
+                reinterpret_cast<long_256bit *>(dest),
                 reinterpret_cast<index_t *>(index),
                 __JLONG_REINTERPRET_CAST__(int64_t, count)
         );

@@ -26,6 +26,8 @@ package io.questdb.griffin;
 
 import io.questdb.WorkerPoolAwareConfiguration;
 import io.questdb.cairo.*;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -64,20 +66,24 @@ public class AbstractOutOfOrderTest extends AbstractCairoTest {
         Path.PATH2.get();
     }
 
+    protected static void assertSqlCursors(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, String expected, String actual) throws SqlException {
+        try (RecordCursorFactory factory = compiler.compile(expected, sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursor cursor1 = factory.getCursor(sqlExecutionContext)) {
+                try (RecordCursorFactory factory2 = compiler.compile(actual, sqlExecutionContext).getRecordCursorFactory()) {
+                    try (RecordCursor cursor2 = factory2.getCursor(sqlExecutionContext)) {
+                        TestUtils.assertEquals(cursor1, factory.getMetadata(), cursor2, factory2.getMetadata());
+                    }
+                }
+            }
+        }
+    }
+
     protected static void assertIndexConsistency(
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext,
             String table
     ) throws SqlException {
-        printSqlResult(compiler, sqlExecutionContext, table + " where sym = 'googl' order by ts");
-
-        TestUtils.assertSql(
-                compiler,
-                sqlExecutionContext,
-                "x where sym = 'googl'",
-                sink2,
-                sink
-        );
+        assertSqlCursors(compiler, sqlExecutionContext, table + " where sym = 'googl' order by ts", "x where sym = 'googl'");
     }
 
     protected static void assertIndexConsistency(

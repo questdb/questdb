@@ -25,6 +25,8 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.*;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
@@ -2216,14 +2218,12 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
         // create third table, which will contain both X and 1AM
         compiler.compile(referenceTableDDL, sqlExecutionContext);
         // expected outcome
-        TestUtils.printSql(compiler, sqlExecutionContext, referenceSQL, sink1);
         compiler.compile(outOfOrderInsertSQL, sqlExecutionContext);
+        assertSqlCursors(compiler, sqlExecutionContext, referenceSQL, assertSQL);
 
-        TestUtils.printSql(compiler, sqlExecutionContext, assertSQL, sink2);
-        TestUtils.assertEquals(sink1, sink2);
         engine.releaseAllReaders();
-        TestUtils.printSql(compiler, sqlExecutionContext, assertSQL, sink2);
-        TestUtils.assertEquals(sink1, sink2);
+        assertSqlCursors(compiler, sqlExecutionContext, referenceSQL, assertSQL);
+
         // writer is always "x"
         try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x")) {
             Assert.assertTrue(w.reconcileAttachedPartitionsWithScoreboard());
@@ -4399,7 +4399,8 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
-                        " rnd_char() t" +
+                        " rnd_char() t," +
+                        " rnd_long256() l256" +
                         " from long_sequence(1000000)" +
                         "), index(sym) timestamp (ts) partition by DAY",
                 executionContext
@@ -4426,7 +4427,8 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
-                        " rnd_char() t" +
+                        " rnd_char() t," +
+                        " rnd_long256() l256" +
                         " from long_sequence(1000000)" +
                         ")",
                 executionContext

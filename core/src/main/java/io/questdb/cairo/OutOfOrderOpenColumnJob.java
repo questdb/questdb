@@ -642,6 +642,10 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                 );
                 break;
             default:
+
+                if (columnType == ColumnType.LONG256) {
+                    throw new IllegalArgumentException("Long256");
+                }
                 try {
                     dFile(path.trimTo(plen), columnName);
                     dstFixFd = OutOfOrderUtils.openRW(ff, path);
@@ -1667,6 +1671,9 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                 );
                 break;
             default:
+                if (columnType == ColumnType.LONG256) {
+                    throw new IllegalArgumentException("Long256");
+                }
                 appendFixColumn(
                         configuration,
                         outboundQueue,
@@ -2039,6 +2046,9 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                 );
                 break;
             default:
+                if (columnType == ColumnType.LONG256) {
+                    throw new IllegalArgumentException("Long256");
+                }
                 try {
                     if (columnType < 0 && srcTimestampFd > 0) {
                         // ensure timestamp srcDataFixFd is always negative, we will close it externally
@@ -2722,6 +2732,8 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
             case ColumnType.DOUBLE:
                 Vect.setMemoryDouble(addr, Double.NaN, count);
                 break;
+            case ColumnType.LONG256:
+                throw new IllegalArgumentException("Long256");
             default:
                 break;
         }
@@ -2790,6 +2802,9 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                     dstVarAddr = OutOfOrderUtils.mapRW(ff, dstVarFd, dstVarSize);
                     break;
                 default:
+                    if (columnType == ColumnType.LONG256) {
+                        throw new IllegalArgumentException("Long256");
+                    }
                     oooSetPath(path.trimTo(plen), columnName, FILE_SUFFIX_D);
                     dstFixFd = OutOfOrderUtils.openRW(ff, path);
                     dstFixSize = (srcOooHi - srcOooLo + 1) << ColumnType.pow2SizeOf(Math.abs(columnType));

@@ -721,6 +721,7 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
                 OutOfOrderUtils.copyFromTimestampIndex(srcOooFixAddr, srcOooLo, srcOooHi, dstFixAddr);
                 break;
             default:
+                oooCopyFixedSizeCol(srcOooFixAddr, srcOooLo, srcOooHi, dstFixAddr, ColumnType.pow2SizeOf(Math.abs(columnType)));
                 break;
         }
     }
@@ -820,8 +821,11 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
             case -ColumnType.TIMESTAMP:
                 Vect.oooCopyIndex(mergeIndexAddr, rowCount, dstFixAddr);
                 break;
-            default:
+            case ColumnType.LONG256:
+                Vect.mergeShuffle256Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, mergeIndexAddr, rowCount);
                 break;
+            default:
+                throw new IllegalArgumentException("Column type " + columnType);
         }
     }
 

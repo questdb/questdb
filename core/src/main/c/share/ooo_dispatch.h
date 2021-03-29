@@ -48,6 +48,13 @@ typedef struct index_t {
     }
 } index_t;
 
+typedef struct __attribute__ ((packed)) long_256bit {
+    uint64_t long0;
+//    uint64_t long1;
+//    uint64_t long2;
+//    uint64_t long3;
+} long_256bit;
+
 DECLARE_DISPATCHER_TYPE(copy_index_timestamp, index_t *index, int64_t index_lo, int64_t index_hi, int64_t *dest);
 
 DECLARE_DISPATCHER_TYPE(shift_copy, int64_t shift, int64_t *src, int64_t src_lo, int64_t src_hi, int64_t *dest);
@@ -74,6 +81,8 @@ DECLARE_DISPATCHER_TYPE(flatten_index, index_t *index, int64_t count);
 
 DECLARE_DISPATCHER_TYPE(merge_shuffle_int64, const int64_t *src1, const int64_t *src2, int64_t *dest,
                         const index_t *index, const int64_t count);
+
+DECLARE_DISPATCHER_TYPE(re_shuffle_256bit, const long_256bit *src, long_256bit *dest, const index_t *index, const int64_t count);
 
 DECLARE_DISPATCHER_TYPE(re_shuffle_int64, const int64_t *src, int64_t *dest, const index_t *index, const int64_t count);
 
