@@ -28,6 +28,10 @@ import io.questdb.std.str.LPSZ;
 
 public class TxnScoreboard {
 
+    public static int close(LPSZ name, long pTxnScoreboard) {
+        return close0(name.address(), pTxnScoreboard);
+    }
+
     public static long create(LPSZ name) {
         return create0(name.address());
     }
@@ -48,5 +52,5 @@ public class TxnScoreboard {
 
     static native void init(long pTxnScoreboard);
 
-    public static native void close(long pTxnScoreboard);
+    private static native int close0(long lpszName, long pTxnScoreboard);
 }

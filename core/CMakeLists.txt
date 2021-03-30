@@ -40,6 +40,7 @@ set(
         src/main/c/share/util.cpp
         src/main/c/share/ooo.cpp
         src/main/c/share/tab_scoreboard.cpp
+        src/main/c/share/txn_board.cpp
 )
 
 # JNI includes
@@ -108,7 +109,6 @@ if (WIN32)
             src/main/c/windows/timer.h
             src/main/c/windows/accept.c
             src/main/c/share/fs.h
-            src/main/c/share/txn_board.cpp
     )
 else ()
     set(
@@ -216,7 +216,7 @@ else ()
 
     set_target_properties(
             questdb PROPERTIES
-            COMPILE_FLAGS "-m64 -O3 "
+            COMPILE_FLAGS "-lrt -m64 -O3"
     )
 
     ## Uncomment to measure time of ooo.cpp methods
@@ -234,4 +234,6 @@ endif (AARCH64)
 
 if (WIN32)
     target_link_libraries(questdb wsock32 ws2_32 secur32 shlwapi)
+else ()
+    target_link_libraries(questdb rt)
 endif (WIN32)

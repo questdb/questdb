@@ -182,21 +182,26 @@ JNIEXPORT jlong JNICALL Java_io_questdb_cairo_TxnScoreboard_getMin
 }
 
 JNIEXPORT jlong JNICALL Java_io_questdb_cairo_TxnScoreboard_create0
-        (JNIEnv *e, jclass cl, jlong p_name) {
+        (JNIEnv *e, jclass cl, jlong lpszName) {
 
     uint64_t size = sizeof(txn_board_t);
     int64_t hMapping;
 
-    auto *p = reinterpret_cast<txn_board_t *>(openShm0((char*)p_name, size, &hMapping));
+    auto *p = reinterpret_cast<txn_board_t *>(openShm0(reinterpret_cast<char*>(lpszName), size, &hMapping));
     p->h_mapping = hMapping;
     p->init();
     return reinterpret_cast<jlong>(p);
 }
 
-JNIEXPORT jint JNICALL Java_io_questdb_cairo_TxnScoreboard_close
-        (JNIEnv *e, jclass cl, jlong p_board) {
+JNIEXPORT jint JNICALL Java_io_questdb_cairo_TxnScoreboard_close0
+        (JNIEnv *e, jclass cl, jlong lpszName, jlong p_board) {
     auto *p = reinterpret_cast<txn_board_t *>(p_board);
-    return closeShm0(p, sizeof(txn_board_t), p->h_mapping);
+    return closeShm0(
+            reinterpret_cast<char *>(lpszName),
+            p,
+            sizeof(txn_board_t),
+            p->h_mapping
+    );
 }
 
 }

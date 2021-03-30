@@ -24,7 +24,7 @@
 
 #include <unistd.h>
 #include <sys/stat.h>
-#include <sys/fcntl.h>
+#include <fcntl.h>
 #include <sys/file.h>
 #include <sys/mman.h>
 
@@ -334,4 +334,25 @@ JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_rename
 JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_exists0
         (JNIEnv *e, jclass cls, jlong lpsz) {
     return access((const char *) lpsz, F_OK) == 0;
+}
+
+void *openShm0(void *lpsz, size_t len, int64_t *hMapping) {
+    int shm_fd = shm_open(lpsz, O_CREAT | O_RDWR, 0666);
+    if (shm_fd == -1) {
+        return NULL;
+    }
+
+    if (ftruncate(shm_fd, len) != 0) {
+        return NULL;
+    }
+    void *p = mmap(0, len, PROT_WRITE | PROT_READ, MAP_SHARED, shm_fd, 0);
+    if (p != NULL) {
+        *hMapping = shm_fd;
+    }
+
+    return p;
+}
+
+jint closeShm0(const char* name, void *mem, size_t len, int64_t hMapping) {
+    return shm_unlink(name);
 }

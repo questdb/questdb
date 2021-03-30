@@ -25,9 +25,11 @@
 #ifndef FS_H
 #define FS_H
 
+
+
 extern "C" {
-void *openShm0(void *lpsz, size_t len, long long *hMapping);
-jint closeShm0(void *lpsz, size_t len, long long hMapping);
+void *openShm0(const char *name, size_t len, int64_t *hMapping);
+jint closeShm0(const char *name, void *mem, size_t len, int64_t hMapping);
 }
 
 

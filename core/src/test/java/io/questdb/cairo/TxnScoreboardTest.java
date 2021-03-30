@@ -42,60 +42,86 @@ public class TxnScoreboardTest {
 
     @Test
     public void testLimits() {
-        long p = TxnScoreboard.create(new CharSequenceZ("hello"));
-        try {
+
+        try (final CharSequenceZ name = new CharSequenceZ("hello")) {
             int expect = 4096;
-            // we should successfully acquire expected number of entries
-            for (int i = 0; i < expect; i++) {
-                Assert.assertTrue(TxnScoreboard.acquire(p, i + 134));
-            }
-            // scoreboard capacity should be exhausted
-            // and we should be refused to acquire any more slots
-            Assert.assertFalse(TxnScoreboard.acquire(p, expect + 134));
+            long p2 = TxnScoreboard.create(name);
+            try {
+                long p1 = TxnScoreboard.create(name);
+                try {
+                    // we should successfully acquire expected number of entries
+                    for (int i = 0; i < expect; i++) {
+                        Assert.assertTrue(TxnScoreboard.acquire(p1, i + 134));
+                    }
+                    // scoreboard capacity should be exhausted
+                    // and we should be refused to acquire any more slots
+                    Assert.assertFalse(TxnScoreboard.acquire(p1, expect + 134));
 
-            // now we release middle slot, this does not free any more slots
-            Assert.assertEquals(133, TxnScoreboard.release(p, 11 + 134));
-            // we should NOT be able to allocate more slots
-            Assert.assertFalse(TxnScoreboard.acquire(p, expect + 134));
+                    // now we release middle slot, this does not free any more slots
+                    Assert.assertEquals(133, TxnScoreboard.release(p1, 11 + 134));
+                    // we should NOT be able to allocate more slots
+                    Assert.assertFalse(TxnScoreboard.acquire(p1, expect + 134));
 
-            // now that we release "head" slot we should be able to acquire more
-            Assert.assertEquals(134, TxnScoreboard.release(p, 134));
-            // and we should be able to allocate another one
-            Assert.assertTrue(TxnScoreboard.acquire(p, expect + 134));
+                    // now that we release "head" slot we should be able to acquire more
+                    Assert.assertEquals(134, TxnScoreboard.release(p1, 134));
+                    // and we should be able to allocate another one
+                    Assert.assertTrue(TxnScoreboard.acquire(p1, expect + 134));
 
-            // now check that all counts are intact
-            for (int i = 1; i <= expect; i++) {
-                if (i != 11) {
-                    Assert.assertEquals(1, TxnScoreboard.getCount(p, i + 134));
-                } else {
-                    Assert.assertEquals(0, TxnScoreboard.getCount(p, i + 134));
+                    // now check that all counts are intact
+                    for (int i = 1; i <= expect; i++) {
+                        if (i != 11) {
+                            Assert.assertEquals(1, TxnScoreboard.getCount(p1, i + 134));
+                        } else {
+                            Assert.assertEquals(0, TxnScoreboard.getCount(p1, i + 134));
+                        }
+                    }
+                } finally {
+                    TxnScoreboard.close(name, p1);
+                }
+            } finally {
+                // now check that all counts are availble via another memory space
+                for (int i = 1; i <= expect; i++) {
+                    if (i != 11) {
+                        Assert.assertEquals(1, TxnScoreboard.getCount(p2, i + 134));
+                    } else {
+                        Assert.assertEquals(0, TxnScoreboard.getCount(p2, i + 134));
+                    }
                 }
             }
-        } finally {
-            TxnScoreboard.close(p);
         }
     }
 
     @Test
     public void testVanilla() {
-        long p = TxnScoreboard.create(new CharSequenceZ("ok"));
-        try {
-            Assert.assertTrue(acquire(p, 67));
-            Assert.assertTrue(acquire(p, 68));
-            Assert.assertTrue(acquire(p, 68));
-            Assert.assertTrue(acquire(p, 69));
-            Assert.assertTrue(acquire(p, 70));
-            Assert.assertTrue(acquire(p, 71));
+        try (final CharSequenceZ name = new CharSequenceZ("ok")) {
+            long p2 = TxnScoreboard.create(name);
+            try {
+                long p1 = TxnScoreboard.create(name);
+                try {
+                    Assert.assertTrue(acquire(p1, 67));
+                    Assert.assertTrue(acquire(p1, 68));
+                    Assert.assertTrue(acquire(p1, 68));
+                    Assert.assertTrue(acquire(p1, 69));
+                    Assert.assertTrue(acquire(p1, 70));
+                    Assert.assertTrue(acquire(p1, 71));
 
-            Assert.assertEquals(66, release(p, 68));
-            Assert.assertEquals(66, release(p, 68));
-            Assert.assertEquals(68, release(p, 67));
+                    Assert.assertEquals(66, release(p1, 68));
+                    Assert.assertEquals(66, release(p1, 68));
+                    Assert.assertEquals(68, release(p1, 67));
 
-            Assert.assertEquals(69, release(p, 69));
-            Assert.assertEquals(69, release(p, 71));
-            Assert.assertEquals(71, release(p, 70));
-        } finally {
-            TxnScoreboard.close(p);
+                    Assert.assertEquals(69, release(p1, 69));
+                    Assert.assertEquals(69, release(p1, 71));
+                    Assert.assertEquals(71, release(p1, 70));
+
+                    Assert.assertTrue(acquire(p1, 72));
+                } finally {
+                    TxnScoreboard.close(name, p1);
+                }
+                Assert.assertTrue(acquire(p2, 72));
+                Assert.assertEquals(2, TxnScoreboard.getCount(p2, 72));
+            } finally {
+                TxnScoreboard.close(name, p2);
+            }
         }
     }
 }
