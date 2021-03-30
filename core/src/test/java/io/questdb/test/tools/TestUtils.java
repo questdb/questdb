@@ -109,7 +109,7 @@ public final class TestUtils {
                             Assert.assertTrue(areEqual(r.getBin(i), l.getBin(i)));
                             break;
                         case ColumnType.LONG256:
-                            Assert.assertTrue(areEqual(r.getLong256A(i), l.getLong256A(i)));
+                            assertEquals(r.getLong256A(i), l.getLong256A(i));
                             break;
                         default:
                             // Unknown record type.
@@ -125,23 +125,30 @@ public final class TestUtils {
         Assert.assertFalse("Expected cursor misses record " + rowIndex, cursorActual.hasNext());
     }
 
-    private static boolean areEqual(Long256 a, Long256 b) {
-        if (a == b) return true;
-        if (a == null || b == null) return false;
-
-        if (a.getLong0() == b.getLong0()
-                && a.getLong1() == b.getLong1()
-                && a.getLong2() == b.getLong2()
-                && a.getLong3() == b.getLong3()) {
-
-        } else {
-            int i = 0;
+    private static void assertEquals(Long256 expected, Long256 actual) {
+        if (expected == actual) return;
+        if (expected == null)  {
+            Assert.assertNull(actual);
+        }
+        if (actual == null) {
+            Assert.fail("Expected " + toHexString(expected) +", but was: null");
         }
 
-        return a.getLong0() == b.getLong0()
-                && a.getLong1() == b.getLong1()
-                && a.getLong2() == b.getLong2()
-                && a.getLong3() == b.getLong3();
+        if (expected.getLong0() == actual.getLong0()
+                && expected.getLong1() == actual.getLong1()
+                && expected.getLong2() == actual.getLong2()
+                && expected.getLong3() == actual.getLong3()) {
+            // good
+        } else {
+            Assert.assertEquals(toHexString(expected), toHexString(actual));
+        }
+    }
+
+    private static String toHexString(Long256 expected) {
+        return Long.toHexString(expected.getLong0()) + " " +
+                Long.toHexString(expected.getLong1()) + " " +
+                Long.toHexString(expected.getLong2()) + " " +
+                Long.toHexString(expected.getLong3());
     }
 
     public static boolean areEqual(BinarySequence a, BinarySequence b) {
@@ -419,5 +426,4 @@ public final class TestUtils {
     public interface LeakProneCode {
         void run() throws Exception;
     }
-
 }

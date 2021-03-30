@@ -50,9 +50,9 @@ typedef struct index_t {
 
 typedef struct __attribute__ ((packed)) long_256bit {
     uint64_t long0;
-//    uint64_t long1;
-//    uint64_t long2;
-//    uint64_t long3;
+    uint64_t long1;
+    uint64_t long2;
+    uint64_t long3;
 } long_256bit;
 
 DECLARE_DISPATCHER_TYPE(copy_index_timestamp, index_t *index, int64_t index_lo, int64_t index_hi, int64_t *dest);

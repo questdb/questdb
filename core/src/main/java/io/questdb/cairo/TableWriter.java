@@ -2554,6 +2554,17 @@ public class TableWriter implements Closeable {
                                         oooSortFixColumnRef
                                 );
                                 break;
+                            case ColumnType.LONG256:
+                                task.of(
+                                        oooLatch,
+                                        i,
+                                        5,
+                                        mergedTimestamps,
+                                        oooRowCount,
+                                        SHUFFLE_256,
+                                        oooSortFixColumnRef
+                                );
+                                break;
                             default:
                                 task.of(
                                         oooLatch,
