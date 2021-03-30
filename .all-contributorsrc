@@ -281,6 +281,17 @@
         "maintenance",
         "test"
       ]
+    },
+    {
+      "login": "patrickSpaceSurfer",
+      "name": "Patrick Mackinlay",
+      "avatar_url": "https://avatars.githubusercontent.com/u/29952889?v=4",
+      "profile": "http://patrick.spacesurfer.com/",
+      "contributions": [
+        "code",
+        "maintenance",
+        "test"
+      ]
     }
   ],
   "badgeTemplate": "[![All Contributors](https://img.shields.io/badge/all_contributors-<%= contributors.length %>-orange.svg)](#contributors)",
