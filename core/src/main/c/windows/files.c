@@ -27,7 +27,6 @@
 #include <shlwapi.h>
 #include <minwindef.h>
 #include <fileapi.h>
-
 #include <winbase.h>
 #include <direct.h>
 #include <stdint.h>
@@ -538,7 +537,7 @@ JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_rename(JNIEnv *e, jclass cl
     return FALSE;
 }
 
-void* openShm0(void* lpsz, size_t len, long long * pMapping) {
+void* openShm0(const char* name, size_t len, int64_t * pMapping) {
     LPCVOID address;
 
     HANDLE hMapping = CreateFileMapping(
@@ -547,7 +546,7 @@ void* openShm0(void* lpsz, size_t len, long long * pMapping) {
             PAGE_READWRITE,
             (DWORD) (len >> 32),
             (DWORD) len,
-            (LPCSTR) lpsz
+            (LPCSTR) name
     );
 
     if (hMapping == NULL) {
@@ -574,9 +573,9 @@ void* openShm0(void* lpsz, size_t len, long long * pMapping) {
     return (void *) address;
 }
 
-jint closeShm0(void *lpsz, size_t len, long long hMapping) {
+jint closeShm0(const char* name, void *mem, size_t len, int64_t hMapping) {
     CloseHandle((HANDLE) hMapping);
-    if (UnmapViewOfFile(lpsz)) {
+    if (UnmapViewOfFile(mem)) {
         return 0;
     }
     SaveLastError();

@@ -24,17 +24,18 @@
 
 package io.questdb.cairo.pool;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.CairoException;
-import io.questdb.cairo.EntryUnavailableException;
-import io.questdb.cairo.TableReader;
+import io.questdb.cairo.*;
 import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cairo.pool.ex.PoolClosedException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.ConcurrentHashMap;
+import io.questdb.std.Misc;
+import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
+import io.questdb.std.str.Path;
 
+import java.io.Closeable;
 import java.util.Arrays;
 import java.util.Map;
 
@@ -95,6 +96,7 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
                     }
 
                     if (isClosed()) {
+                        Misc.free(e);
                         e.readers[i] = null;
                         r.goodby();
                         LOG.info().$('\'').utf8(name).$("' born free").$();
@@ -111,7 +113,7 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
             // all allocated, create next entry if possible
             if (Unsafe.getUnsafe().compareAndSwapInt(e, NEXT_STATUS, NEXT_OPEN, NEXT_ALLOCATED)) {
                 LOG.debug().$("Thread ").$(thread).$(" allocated entry ").$(e.index + 1).$();
-                e.next = new Entry(e.index + 1, clock.getTicks());
+                e.next = new Entry(e.index + 1, clock.getTicks(), name);
             }
             e = e.next;
         } while (e != null && e.index < maxSegments);
@@ -195,6 +197,10 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
 
         if (e.lockOwner == thread) {
             entries.remove(name);
+            while (e != null) {
+                Misc.free(e);
+                e = e.next;
+            }
         } else {
             notifyListener(thread, name, PoolListener.EV_NOT_LOCK_OWNER);
             throw CairoException.instance(0).put("Not the lock owner of ").put(name);
@@ -260,6 +266,8 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
                         }
                     }
                 }
+                // this does not release the next
+                Misc.free(e);
                 e = e.next;
             } while (e != null);
         }
@@ -278,9 +286,10 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
 
         Entry e = entries.get(name);
         if (e == null) {
-            e = new Entry(0, clock.getTicks());
+            e = new Entry(0, clock.getTicks(), name);
             Entry other = entries.putIfAbsent(name, e);
             if (other != null) {
+                Misc.free(e);
                 e = other;
             }
         }
@@ -325,20 +334,37 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
 
     }
 
-    public static class Entry {
+    public static class Entry implements Closeable {
         final long[] allocations = new long[ENTRY_SIZE];
         final long[] releaseTimes = new long[ENTRY_SIZE];
         final R[] readers = new R[ENTRY_SIZE];
+        private Path name = new Path();
+        private long txnScoreboard;
         final int index;
         volatile long lockOwner = -1L;
         @SuppressWarnings("unused")
         long nextStatus = 0;
         volatile Entry next;
 
-        public Entry(int index, long currentMicros) {
+        public Entry(int index, long currentMicros, CharSequence name) {
             this.index = index;
             Arrays.fill(allocations, UNALLOCATED);
             Arrays.fill(releaseTimes, currentMicros);
+            if (Os.type == Os.WINDOWS) {
+                this.name.of("Local\\").put(name).$();
+            } else {
+                this.name.of("/").put(name).$();
+            }
+            this.txnScoreboard = TxnScoreboard.create(this.name);
+        }
+
+        @Override
+        public void close() {
+            if(txnScoreboard != 0) {
+                TxnScoreboard.close(this.name, txnScoreboard);
+                this.txnScoreboard = 0;
+            }
+            name = Misc.free(name);
         }
     }
 

@@ -74,13 +74,28 @@ public class TableReader implements Closeable, SymbolTableSource {
     private long txn = TableUtils.INITIAL_TXN;
     private long tempMem8b = Unsafe.malloc(8);
     private boolean active = false;
+    private final long txnScoreboard;
+    private final boolean ownTxnScoreboard;
 
     public TableReader(CairoConfiguration configuration, CharSequence tableName) {
+        this(configuration, tableName, 0);
+    }
+
+    public TableReader(CairoConfiguration configuration, CharSequence tableName, long txnScoreboard) {
         LOG.debug().$("open '").utf8(tableName).$('\'').$();
         this.configuration = configuration;
         this.ff = configuration.getFilesFacade();
         this.tableName = Chars.toString(tableName);
-        this.path = new Path().of(configuration.getRoot()).concat(tableName);
+        this.path = new Path();
+        if (txnScoreboard == 0) {
+            path.put("Local\\").put(tableName).$();
+            this.txnScoreboard = TxnScoreboard.create(path);
+            ownTxnScoreboard = true;
+        } else {
+            this.txnScoreboard = txnScoreboard;
+            ownTxnScoreboard = false;
+        }
+        this.path.of(configuration.getRoot()).concat(tableName);
         this.rootLen = path.length();
         try {
             failOnPendingTodo();
@@ -154,13 +169,17 @@ public class TableReader implements Closeable, SymbolTableSource {
         if (isOpen()) {
             freeSymbolMapReaders();
             freeBitmapIndexCache();
-            Misc.free(path);
             Misc.free(metadata);
             goPassive();
             Misc.free(txFile);
             Misc.free(todoMem);
             freeColumns();
             freeTempMem();
+            if (ownTxnScoreboard) {
+                path.put("Local\\").put(tableName).$();
+                TxnScoreboard.close(path, txnScoreboard);
+            }
+            Misc.free(path);
             LOG.debug().$("closed '").utf8(tableName).$('\'').$();
         }
     }

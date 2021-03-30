@@ -42,15 +42,7 @@ public class TxnScoreboard {
 
     private static native long create0(long lpszName);
 
-    static native long getMax(long pTxnScoreboard);
-
-    static native long getMin(long pTxnScoreboard);
-
     static native long getCount(long pTxnScoreboard, long txn);
-
-    static native int getScoreboardSize();
-
-    static native void init(long pTxnScoreboard);
 
     private static native int close0(long lpszName, long pTxnScoreboard);
 }

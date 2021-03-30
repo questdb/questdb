@@ -79,7 +79,7 @@ public class TxnScoreboardTest {
                     TxnScoreboard.close(name, p1);
                 }
             } finally {
-                // now check that all counts are availble via another memory space
+                // now check that all counts are available via another memory space
                 for (int i = 1; i <= expect; i++) {
                     if (i != 11) {
                         Assert.assertEquals(1, TxnScoreboard.getCount(p2, i + 134));
