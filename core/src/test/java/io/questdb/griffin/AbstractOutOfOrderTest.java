@@ -35,6 +35,7 @@ import io.questdb.mp.WorkerPool;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Rnd;
+import io.questdb.std.str.MutableCharSink;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
@@ -117,16 +118,42 @@ public class AbstractOutOfOrderTest extends AbstractCairoTest {
             CairoEngine engine,
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext,
+            String referenceTableDDL,
+            String referenceSQL,
+            String outOfOrderInsertSQL,
+            String assertSQL
+    ) throws SqlException {
+        // create third table, which will contain both X and 1AM
+        compiler.compile(referenceTableDDL, sqlExecutionContext);
+        compiler.compile(outOfOrderInsertSQL, sqlExecutionContext);
+        assertSqlCursors(compiler, sqlExecutionContext, referenceSQL, assertSQL);
+
+        engine.releaseAllReaders();
+        assertSqlCursors(compiler, sqlExecutionContext, referenceSQL, assertSQL);
+
+        // writer is always "x"
+        try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x")) {
+            Assert.assertTrue(w.reconcileAttachedPartitionsWithScoreboard());
+        }
+    }
+
+    protected static void assertOutOfOrderDataConsistency(
+            CairoEngine engine,
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext,
             final String referenceTableDDL,
             final String outOfOrderSQL,
             final String resourceName
     ) throws SqlException, URISyntaxException {
-        // create third table, which will contain both X and 1AM
-        compiler.compile(referenceTableDDL, sqlExecutionContext);
-        // expected outcome - output ignored, but useful for debug
-        AbstractOutOfOrderTest.printSqlResult(compiler, sqlExecutionContext, "y order by ts");
-        compiler.compile(outOfOrderSQL, sqlExecutionContext);
-        AbstractOutOfOrderTest.assertSqlResultAgainstFile(compiler, sqlExecutionContext, "x", resourceName);
+        assertOutOfOrderDataConsistency(
+                engine,
+                compiler,
+                sqlExecutionContext,
+                referenceTableDDL,
+                "y order by ts",
+                outOfOrderSQL,
+                "x"
+        );
 
         // check that reader can process out of order partition layout after fresh open
         engine.releaseAllReaders();

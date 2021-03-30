@@ -242,7 +242,7 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                     //   |      |  | OOO |
                     //   |      |  |     |
 
-                    if (oooTimestampLo > dataTimestampHi) {
+                    if (oooTimestampLo >= dataTimestampHi) {
 
                         // +------+
                         // | data |
@@ -576,6 +576,8 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
         // Create "index" for existing timestamp column. When we reshuffle timestamps during merge we will
         // have to go back and find data rows we need to move accordingly
         final long indexSize = (mergeDataHi - mergeDataLo + 1) * TIMESTAMP_MERGE_ENTRY_BYTES;
+        assert indexSize > 0; // avoid SIGSEGV
+
         final long indexStruct = Unsafe.malloc(TIMESTAMP_MERGE_ENTRY_BYTES * 2);
         final long index = Unsafe.malloc(indexSize);
         Vect.makeTimestampIndex(srcDataTimestampAddr, mergeDataLo, mergeDataHi, index);
