@@ -29,7 +29,7 @@
 
 inline int32_t int64_to_hour(jlong ptr, int i) {
     const auto p = reinterpret_cast<int64_t *>(ptr);
-    _mm_prefetch(p + 64, _MM_HINT_T0);
+    MM_PREFETCH_T0(p + i + 64);
     const auto micro = p[i];
     if (PREDICT_TRUE(micro > -1)) {
         return ((micro / HOUR_MICROS) % DAY_HOURS);
@@ -40,7 +40,7 @@ inline int32_t int64_to_hour(jlong ptr, int i) {
 
 inline int32_t to_int(jlong ptr, int i) {
     const auto p = reinterpret_cast<int32_t *>(ptr);
-    _mm_prefetch(p + 64, _MM_HINT_T0);
+    MM_PREFETCH_T0(p + i + 64);
     return p[i];
 }
 
@@ -1146,7 +1146,7 @@ void kIntMaxInt(TO_INT *to_int, jlong pRosti, jlong pKeys, jlong pInt, jlong cou
     const auto shift = map->slot_size_shift_;
     const auto value_offset = map->value_offsets_[valueOffset];
     for (int i = 0; i < count; i++) {
-        _mm_prefetch(pi + 16, _MM_HINT_T0);
+        MM_PREFETCH_T0(pi + i + 16);
         const int32_t key = to_int(pKeys, i);
         const jint val = pi[i];
         auto res = find(map, key);
@@ -1168,7 +1168,7 @@ void kIntMaxLong(TO_INT *to_int, jlong pRosti, jlong pKeys, jlong pLong, jlong c
     const auto *pl = reinterpret_cast<jlong *>(pLong);
     const auto value_offset = map->value_offsets_[valueOffset];
     for (int i = 0; i < count; i++) {
-        _mm_prefetch(pl + 8, _MM_HINT_T0);
+        MM_PREFETCH_T0(pl + i + 8);
         const int32_t key = to_int(pKeys, i);
         const jlong val = pl[i];
         auto res = find(map, key);
@@ -1190,7 +1190,7 @@ void kIntMaxDouble(TO_INT *to_int, jlong pRosti, jlong pKeys, jlong pDouble, jlo
     const auto *pd = reinterpret_cast<jdouble *>(pDouble);
     const auto value_offset = map->value_offsets_[valueOffset];
     for (int i = 0; i < count; i++) {
-        _mm_prefetch(pd + 8, _MM_HINT_T0);
+        MM_PREFETCH_T0(pd + i + 8);
         const int32_t key = to_int(pKeys, i);
         const jdouble d = pd[i];
         auto res = find(map, key);
@@ -1212,7 +1212,7 @@ void kIntMinInt(TO_INT *to_int, jlong pRosti, jlong pKeys, jlong pInt, jlong cou
     const auto *pi = reinterpret_cast<jint *>(pInt);
     const auto value_offset = map->value_offsets_[valueOffset];
     for (int i = 0; i < count; i++) {
-        _mm_prefetch(pi + 16, _MM_HINT_T0);
+        MM_PREFETCH_T0(pi + i + 16);
         const int32_t key = to_int(pKeys, i);
         const jint val = pi[i];
         auto res = find(map, key);
@@ -1236,7 +1236,7 @@ void kIntMinLong(TO_INT *to_int, jlong pRosti, jlong pKeys, jlong pLong, jlong c
     const auto *pi = reinterpret_cast<jlong *>(pLong);
     const auto value_offset = map->value_offsets_[valueOffset];
     for (int i = 0; i < count; i++) {
-        _mm_prefetch(pi + 16, _MM_HINT_T0);
+        MM_PREFETCH_T0(pi + i + 16);
         const int32_t key = to_int(pKeys, i);
         const jlong val = pi[i];
         auto res = find(map, key);
@@ -1260,7 +1260,7 @@ void kIntMinDouble(TO_INT *to_int, jlong pRosti, jlong pKeys, jlong pDouble, jlo
     const auto *pd = reinterpret_cast<jdouble *>(pDouble);
     const auto value_offset = map->value_offsets_[valueOffset];
     for (int i = 0; i < count; i++) {
-        _mm_prefetch(pd + 8, _MM_HINT_T0);
+        MM_PREFETCH_T0(pd + i + 8);
         const int32_t key = to_int(pKeys, i);
         const jdouble d = pd[i];
         auto res = find(map, key);
@@ -1283,7 +1283,7 @@ void kIntSumLong(TO_INT *to_int, jlong pRosti, jlong pKeys, jlong pLong, jlong c
     const auto value_offset = map->value_offsets_[valueOffset];
     const auto count_offset = map->value_offsets_[valueOffset + 1];
     for (int i = 0; i < count; i++) {
-        _mm_prefetch(pl + 8, _MM_HINT_T0);
+        MM_PREFETCH_T0(pl + i + 8);
         const int32_t key = to_int(pKeys, i);
         const jlong val = pl[i];
         auto res = find(map, key);
@@ -1315,7 +1315,7 @@ void kIntNSumDouble(TO_INT *to_int, jlong pRosti, jlong pKeys, jlong pDouble, jl
     const auto count_offset = map->value_offsets_[valueOffset + 2];
 
     for (int i = 0; i < count; i++) {
-        _mm_prefetch(pd + 8, _MM_HINT_T0);
+        MM_PREFETCH_T0(pd + i + 8);
         const int32_t key = to_int(pKeys, i);
         const jdouble d = pd[i];
         auto res = find(map, key);
@@ -1347,7 +1347,7 @@ void kIntSumInt(TO_INT *to_int, jlong pRosti, jlong pKeys, jlong pInt, jlong cou
     const auto value_offset = map->value_offsets_[valueOffset];
     const auto count_offset = map->value_offsets_[valueOffset + 1];
     for (int i = 0; i < count; i++) {
-        _mm_prefetch(pi + 16, _MM_HINT_T0);
+        MM_PREFETCH_T0(pi + i + 16);
         const int32_t key = to_int(pKeys, i);
         const jint val = pi[i];
         auto res = find(map, key);
@@ -1388,7 +1388,7 @@ void kIntSumDouble(TO_INT *to_int, jlong pRosti, jlong pKeys, jlong pDouble, jlo
     const auto value_offset = map->value_offsets_[valueOffset];
     const auto count_offset = map->value_offsets_[valueOffset + 1];
     for (int i = 0; i < count; i++) {
-        _mm_prefetch(pd + 8, _MM_HINT_T0);
+        MM_PREFETCH_T0(pd + i + 8);
         const int32_t key = to_int(pKeys, i);
         const jdouble d = pd[i];
         auto res = find(map, key);
@@ -1413,7 +1413,7 @@ void kIntKSumDouble(TO_INT *to_int, jlong pRosti, jlong pKeys, jlong pDouble, jl
     const auto count_offset = map->value_offsets_[valueOffset + 2];
 
     for (int i = 0; i < count; i++) {
-        _mm_prefetch(pd + 8, _MM_HINT_T0);
+        MM_PREFETCH_T0(pd + i + 8);
         const int32_t key = to_int(pKeys, i);
         const jdouble d = pd[i];
         auto res = find(map, key);
@@ -1443,7 +1443,6 @@ void kIntCount(TO_INT *to_int, jlong pRosti, jlong pKeys, jlong count, jint valu
     for (int i = 0; i < count; i++) {
         auto const key = to_int(pKeys, i);
         auto res = find(map, key);
-//        _mm_prefetch(map->slots_, _MM_HINT_NTA);
         auto dest = map->slots_ + res.first;
         if (PREDICT_FALSE(res.second)) {
             *reinterpret_cast<int32_t *>(dest) = key;

@@ -24,6 +24,7 @@
 
 package io.questdb.griffin;
 
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
@@ -139,18 +140,50 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
 
             try (
                     RecordCursorFactory factory = compiler.compile("select s2, sum(val) from tab order by s2", sqlExecutionContext).getRecordCursorFactory();
-                    RecordCursor cursor = factory.getCursor(sqlExecutionContext)
             ) {
-
-                String expected = "s2\tsum\n" +
-                        "\t520447.6629968713\n" +
-                        "a1\t104308.65839619507\n" +
-                        "a2\t104559.2867475151\n" +
-                        "a3\t104044.11326997809\n";
-
-                sink.clear();
-                printer.print(cursor, factory.getMetadata(), true);
-                TestUtils.assertEquals(expected, sink);
+                Record[] expected = new Record[] {
+                        new Record() {
+                            @Override
+                            public CharSequence getSym(int col) {
+                                return null;
+                            }
+                            @Override
+                            public double getDouble(int col) {
+                                return 520447.6629968713;
+                            }
+                        },
+                        new Record() {
+                            @Override
+                            public CharSequence getSym(int col) {
+                                return "a1";
+                            }
+                            @Override
+                            public double getDouble(int col) {
+                                return 104308.65839619507;
+                            }
+                        },
+                        new Record() {
+                            @Override
+                            public CharSequence getSym(int col) {
+                                return "a2";
+                            }
+                            @Override
+                            public double getDouble(int col) {
+                                return 104559.2867475151;
+                            }
+                        },
+                        new Record() {
+                            @Override
+                            public CharSequence getSym(int col) {
+                                return "a3";
+                            }
+                            @Override
+                            public double getDouble(int col) {
+                                return 104044.11326997809;
+                            }
+                        },
+                };
+                assertCursorRawRecords(expected, factory, false, true);
             }
         });
     }
@@ -772,30 +805,69 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
             // test with key falling within null columns
             try (
                     RecordCursorFactory factory = compiler.compile("select s2, sum(val) from tab where t > '1970-01-04T12:00' and t < '1970-01-07T11:00' order by s2", sqlExecutionContext).getRecordCursorFactory();
-                    RecordCursor cursor = factory.getCursor(sqlExecutionContext)
             ) {
-                String expected = "s2\tsum\n" +
-                        "\t106413.99769604905\n";
-
-                sink.clear();
-                printer.print(cursor, factory.getMetadata(), true);
-                TestUtils.assertEquals(expected, sink);
+                Record[] expected = new Record[] {
+                        new Record() {
+                            @Override
+                            public CharSequence getSym(int col) {
+                                return null;
+                            }
+                            @Override
+                            public double getDouble(int col) {
+                                return 106413.99769604905;
+                            }
+                        },
+                };
+                assertCursorRawRecords(expected, factory, false, true);
             }
 
             /// test key on overlap
             try (
                     RecordCursorFactory factory = compiler.compile("select s2, sum(val) from tab where t > '1970-01-12T12:00' and t < '1970-01-14T11:00' order by s2", sqlExecutionContext).getRecordCursorFactory();
-                    RecordCursor cursor = factory.getCursor(sqlExecutionContext)
             ) {
-                String expected = "s2\tsum\n" +
-                        "\t15636.977658744854\n" +
-                        "a1\t13073.816187889399\n" +
-                        "a2\t13240.269899560482\n" +
-                        "a3\t13223.021189180576\n";
-
-                sink.clear();
-                printer.print(cursor, factory.getMetadata(), true);
-                TestUtils.assertEquals(expected, sink);
+                Record[] expected = new Record[] {
+                        new Record() {
+                            @Override
+                            public CharSequence getSym(int col) {
+                                return null;
+                            }
+                            @Override
+                            public double getDouble(int col) {
+                                return 15636.977658744854;
+                            }
+                        },
+                        new Record() {
+                            @Override
+                            public CharSequence getSym(int col) {
+                                return "a1";
+                            }
+                            @Override
+                            public double getDouble(int col) {
+                                return 13073.816187889399;
+                            }
+                        },
+                        new Record() {
+                            @Override
+                            public CharSequence getSym(int col) {
+                                return "a2";
+                            }
+                            @Override
+                            public double getDouble(int col) {
+                                return 13240.269899560482;
+                            }
+                        },
+                        new Record() {
+                            @Override
+                            public CharSequence getSym(int col) {
+                                return "a3";
+                            }
+                            @Override
+                            public double getDouble(int col) {
+                                return 13223.021189180576;
+                            }
+                        },
+                };
+                assertCursorRawRecords(expected, factory, false, true);
             }
         });
     }
@@ -851,17 +923,50 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
             // test with key falling within null columns
             try (
                     RecordCursorFactory factory = compiler.compile("select s2, sum(val) from tab order by s2", sqlExecutionContext).getRecordCursorFactory();
-                    RecordCursor cursor = factory.getCursor(sqlExecutionContext)
             ) {
-                String expected = "s2\tsum\n" +
-                        "\t520447.6629968692\n" +
-                        "a1\t104308.65839619662\n" +
-                        "a2\t104559.28674751727\n" +
-                        "a3\t104044.11326997768\n";
-
-                sink.clear();
-                printer.print(cursor, factory.getMetadata(), true);
-                TestUtils.assertEquals(expected, sink);
+                Record[] expected = new Record[] {
+                        new Record() {
+                            @Override
+                            public CharSequence getSym(int col) {
+                                return null;
+                            }
+                            @Override
+                            public double getDouble(int col) {
+                                return 520447.6629968692;
+                            }
+                        },
+                        new Record() {
+                            @Override
+                            public CharSequence getSym(int col) {
+                                return "a1";
+                            }
+                            @Override
+                            public double getDouble(int col) {
+                                return 104308.65839619662;
+                            }
+                        },
+                        new Record() {
+                            @Override
+                            public CharSequence getSym(int col) {
+                                return "a2";
+                            }
+                            @Override
+                            public double getDouble(int col) {
+                                return 104559.28674751727;
+                            }
+                        },
+                        new Record() {
+                            @Override
+                            public CharSequence getSym(int col) {
+                                return "a3";
+                            }
+                            @Override
+                            public double getDouble(int col) {
+                                return 104044.11326997768;
+                            }
+                        },
+                };
+                assertCursorRawRecords(expected, factory, false, true);
             }
         });
     }

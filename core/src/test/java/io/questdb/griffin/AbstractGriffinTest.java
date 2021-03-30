@@ -46,6 +46,162 @@ public class AbstractGriffinTest extends AbstractCairoTest {
     protected static CairoEngine engine;
     protected static SqlCompiler compiler;
 
+    private final static double EPSILON = 0.000001;
+
+    public static boolean doubleEquals(double a, double b){
+        return a == b || Math.abs(a - b) < EPSILON;
+    }
+
+    public static boolean doubleEquals(double a, double b, double epsilon){
+        return a == b || Math.abs(a - b) < epsilon;
+    }
+
+    protected static void assertQuery(
+            Record[] expected,
+            CharSequence query,
+            CharSequence ddl,
+            @Nullable CharSequence expectedTimestamp,
+            boolean checkSameStr,
+            boolean expectSize
+    ) throws Exception {
+        assertQuery(expected, query, ddl, expectedTimestamp, null, null, checkSameStr, expectSize);
+    }
+
+    protected static void assertQuery(
+            Record[] expected,
+            CharSequence query,
+            CharSequence ddl,
+            @Nullable CharSequence expectedTimestamp,
+            @Nullable CharSequence ddl2,
+            @Nullable Record[] expected2,
+            boolean checkSameStr,
+            boolean expectSize
+    ) throws Exception {
+        assertMemoryLeak(() -> {
+            if (ddl != null) {
+                compiler.compile(ddl, sqlExecutionContext);
+            }
+            CompiledQuery cc = compiler.compile(query, sqlExecutionContext);
+            RecordCursorFactory factory = cc.getRecordCursorFactory();
+            try {
+                assertTimestamp(expectedTimestamp, factory);
+                assertCursorRawRecords(expected, factory, checkSameStr, expectSize);
+                // make sure we get the same outcome when we get factory to create new cursor
+                assertCursorRawRecords(expected, factory, checkSameStr, expectSize);
+                // make sure strings, binary fields and symbols are compliant with expected record behaviour
+                assertVariableColumns(factory, checkSameStr);
+
+                if (ddl2 != null) {
+                    compiler.compile(ddl2, sqlExecutionContext);
+
+                    int count = 3;
+                    while (count > 0) {
+                        try {
+                            assertCursorRawRecords(expected2, factory, checkSameStr, expectSize);
+                            // and again
+                            assertCursorRawRecords(expected2, factory, checkSameStr, expectSize);
+                            return;
+                        } catch (ReaderOutOfDateException e) {
+                            Misc.free(factory);
+                            factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory();
+                            count--;
+                        }
+                    }
+                }
+            } finally {
+                Misc.free(factory);
+            }
+        });
+    }
+
+    protected static void assertCursorRawRecords(
+            Record[] expected,
+            RecordCursorFactory factory,
+            boolean checkSameStr,
+            boolean expectSize
+    ) {
+        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+            if (expected == null) {
+                Assert.assertFalse(cursor.hasNext());
+                cursor.toTop();
+                Assert.assertFalse(cursor.hasNext());
+                return;
+            }
+
+            final long rowsCount = cursor.size();
+            Assert.assertEquals(rowsCount, expected.length);
+
+            RecordMetadata metadata = factory.getMetadata();
+
+            testSymbolAPI(metadata, cursor);
+            cursor.toTop();
+            testStringsLong256AndBinary(metadata, cursor, checkSameStr);
+
+            cursor.toTop();
+            final Record record = cursor.getRecord();
+            Assert.assertNotNull(record);
+            int expectedRow = 0;
+            while (cursor.hasNext()) {
+                for (int col = 0, n = metadata.getColumnCount(); col < n; col++) {
+                    switch (metadata.getColumnType(col)) {
+                        case ColumnType.BOOLEAN:
+                            Assert.assertEquals(expected[expectedRow].getBool(col), record.getBool(col));
+                            break;
+                        case ColumnType.BYTE:
+                            Assert.assertEquals(expected[expectedRow].getByte(col), record.getByte(col));
+                            break;
+                        case ColumnType.SHORT:
+                            Assert.assertEquals(expected[expectedRow].getShort(col), record.getShort(col));
+                            break;
+                        case ColumnType.CHAR:
+                            Assert.assertEquals(expected[expectedRow].getChar(col), record.getChar(col));
+                            break;
+                        case ColumnType.INT:
+                            Assert.assertEquals(expected[expectedRow].getInt(col), record.getInt(col));
+                            break;
+                        case ColumnType.LONG:
+                            Assert.assertEquals(expected[expectedRow].getLong(col), record.getLong(col));
+                            break;
+                        case ColumnType.DATE:
+                            Assert.assertEquals(expected[expectedRow].getDate(col), record.getDate(col));
+                            break;
+                        case ColumnType.TIMESTAMP:
+                            Assert.assertEquals(expected[expectedRow].getTimestamp(col), record.getTimestamp(col));
+                            break;
+                        case ColumnType.FLOAT:
+                            Assert.assertTrue(doubleEquals(expected[expectedRow].getFloat(col), record.getFloat(col)));
+                            break;
+                        case ColumnType.DOUBLE:
+                            Assert.assertTrue(doubleEquals(expected[expectedRow].getDouble(col), record.getDouble(col)));
+                            break;
+                        case ColumnType.STRING:
+                            TestUtils.assertEquals(expected[expectedRow].getStr(col), record.getStr(col));
+                            break;
+                        case ColumnType.SYMBOL:
+                            TestUtils.assertEquals(expected[expectedRow].getSym(col), record.getSym(col));
+                            break;
+                        case ColumnType.LONG256:
+                            Long256 l1 = expected[expectedRow].getLong256A(col);
+                            Long256 l2 = record.getLong256A(col);
+                            Assert.assertEquals(l1.getLong0(), l2.getLong0());
+                            Assert.assertEquals(l1.getLong1(), l2.getLong1());
+                            Assert.assertEquals(l1.getLong2(), l2.getLong2());
+                            Assert.assertEquals(l1.getLong3(), l2.getLong3());
+                            break;
+                        case ColumnType.BINARY:
+                            TestUtils.assertEquals(expected[expectedRow].getBin(col), record.getBin(col), record.getBin(col).length());
+                        default:
+                            Assert.fail("Unknown column type");
+                            break;
+                    }
+                }
+                expectedRow++;
+            }
+            Assert.assertTrue((expectSize && rowsCount != -1) || (!expectSize && rowsCount == -1));
+            Assert.assertTrue(rowsCount == -1 || expectedRow == rowsCount);
+        }
+    }
+
     public static void assertVariableColumns(RecordCursorFactory factory, boolean checkSameStr) {
         try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
             RecordMetadata metadata = factory.getMetadata();
