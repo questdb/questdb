@@ -260,6 +260,16 @@
         "bug",
         "content"
       ]
+    },
+    {
+      "login": "kaishin",
+      "name": "Reda Lemeden",
+      "avatar_url": "https://avatars.githubusercontent.com/u/519433?v=4",
+      "profile": "https://redalemeden.com",
+      "contributions": [
+        "code",
+        "example"
+      ]
     }
   ],
   "badgeTemplate": "[![All Contributors](https://img.shields.io/badge/all_contributors-<%= contributors.length %>-orange.svg)](#contributors)",
