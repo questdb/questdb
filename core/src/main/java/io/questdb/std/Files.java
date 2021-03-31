@@ -65,6 +65,7 @@ public final class Files {
     public static int close(long fd) {
         int res = close0(fd);
         if (res == 0) {
+            auditClose(fd);
             OPEN_FILE_COUNT.decrementAndGet();
         }
         return res;
@@ -172,6 +173,7 @@ public final class Files {
     public static long openAppend(LPSZ lpsz) {
         long fd = openAppend(lpsz.address());
         if (fd != -1) {
+            auditOpen(fd, lpsz);
             bumpFileCount();
         }
         return fd;
@@ -180,6 +182,7 @@ public final class Files {
     public static long openRO(LPSZ lpsz) {
         long fd = openRO(lpsz.address());
         if (fd != -1) {
+            auditOpen(fd, lpsz);
             bumpFileCount();
         }
         return fd;
@@ -188,6 +191,7 @@ public final class Files {
     public static long openRW(LPSZ lpsz) {
         long fd = openRW(lpsz.address());
         if (fd != -1) {
+            auditOpen(fd, lpsz);
             bumpFileCount();
         }
         return fd;
@@ -308,4 +312,28 @@ public final class Files {
     private native static boolean setLastModified(long lpszName, long millis);
 
     private static native boolean rename(long lpszOld, long lpszNew);
+
+    private static String[] openFiles = new String[65536];
+
+    public static synchronized void auditOpen(long fd, CharSequence path) {
+        if (fd < 0 || fd >= openFiles.length) {
+            throw new IllegalStateException("Invalid fd " + fd + " for " + path);
+        }
+        if (null != openFiles[(int) fd]) {
+            throw new IllegalStateException("fd " + fd + " is already open for " + openFiles[(int) fd] + ", cannot be opened for " + path);
+        }
+        openFiles[(int) fd] = path.toString();
+        System.err.println(fd + " opened " + openFiles[(int) fd]);
+    }
+
+    public static synchronized void auditClose(long fd) {
+        if (fd < 0 || fd >= openFiles.length) {
+            throw new IllegalStateException("Invalid fd " + fd);
+        }
+        if (null == openFiles[(int) fd]) {
+            throw new IllegalStateException("fd " + fd + " is already closed!");
+        }
+        System.err.println(fd + " closed " + openFiles[(int) fd]);
+        openFiles[(int) fd] = null;
+    }
 }
