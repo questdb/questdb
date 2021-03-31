@@ -47,6 +47,7 @@ public final class Epoll implements Closeable {
         // todo: this can be unsuccessful
         this.epollFd = epf.epollCreate();
         if (this.epollFd != -1) {
+            assert Files.auditOpen(epollFd);
             Files.bumpFileCount();
         }
     }
@@ -89,6 +90,6 @@ public final class Epoll implements Closeable {
     }
 
     public void setOffset(int offset) {
-        this._rPtr = this.events + (long) offset;
+        this._rPtr = this.events + offset;
     }
 }

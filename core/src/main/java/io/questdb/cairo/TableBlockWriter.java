@@ -24,6 +24,14 @@
 
 package io.questdb.cairo;
 
+import static io.questdb.cairo.TableUtils.iFile;
+
+import java.io.Closeable;
+import java.util.Arrays;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.locks.LockSupport;
+
 import io.questdb.MessageBus;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.log.Log;
@@ -31,16 +39,16 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.Job;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.Sequence;
-import io.questdb.std.*;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.LongList;
+import io.questdb.std.LongObjHashMap;
+import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
-
-import java.io.Closeable;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.locks.LockSupport;
-
-import static io.questdb.cairo.TableUtils.iFile;
 
 public class TableBlockWriter implements Closeable {
     private static final Log LOG = LogFactory.getLog(TableBlockWriter.class);
@@ -295,7 +303,7 @@ public class TableBlockWriter implements Closeable {
         }
 
         private void clear() {
-            // No need
+            Arrays.fill(mappingData, 0);
         }
 
         private long getAdditionalMappingSize(int nMapping) {
@@ -490,9 +498,11 @@ public class TableBlockWriter implements Closeable {
                 int i;
                 for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
                     long fd = partitionStruct.getColumnDataFd(columnIndex);
-                    ff.close(fd);
+                    if (fd > 0) {
+                        ff.close(fd);
+                    }
                     fd = partitionStruct.getColumnIndexFd(columnIndex);
-                    if (fd != -1) {
+                    if (fd > 0) {
                         ff.close(fd);
                     }
                     long address = partitionStruct.getColumnMappingStart(columnIndex);
