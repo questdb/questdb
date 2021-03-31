@@ -720,7 +720,11 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
             case -ColumnType.TIMESTAMP:
                 OutOfOrderUtils.copyFromTimestampIndex(srcOooFixAddr, srcOooLo, srcOooHi, dstFixAddr);
                 break;
+            case ColumnType.LONG256:
+                oooCopyFixedSizeCol(srcOooFixAddr, srcOooLo, srcOooHi, dstFixAddr, 5);
+                break;
             default:
+                oooCopyFixedSizeCol(srcOooFixAddr, srcOooLo, srcOooHi, dstFixAddr, ColumnType.pow2SizeOf(Math.abs(columnType)));
                 break;
         }
     }
@@ -819,6 +823,9 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
                 break;
             case -ColumnType.TIMESTAMP:
                 Vect.oooCopyIndex(mergeIndexAddr, rowCount, dstFixAddr);
+                break;
+            case ColumnType.LONG256:
+                Vect.mergeShuffle256Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, mergeIndexAddr, rowCount);
                 break;
             default:
                 break;

@@ -24,18 +24,19 @@
 
 package io.questdb.griffin;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.TableWriter;
 import io.questdb.std.Chars;
-import io.questdb.std.Os;
-import io.questdb.std.Rnd;
-import io.questdb.std.Vect;
 import io.questdb.std.NumericException;
 import io.questdb.std.Os;
+import io.questdb.std.Vect;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
-import io.questdb.std.str.DirectCharSink;
-import io.questdb.std.str.MutableCharSink;
+import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.test.tools.TestUtils;
-import org.junit.*;
+import org.junit.After;
+import org.junit.Before;
+import org.junit.Rule;
+import org.junit.Test;
 import org.junit.rules.TestName;
 
 import java.net.URISyntaxException;
@@ -56,7 +57,7 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
         int count = Vect.getPerformanceCountersCount();
         if (count > 0) {
             tstData.setLength(0);
-            tstData.append(name.getMethodName()).append("\t");
+            tstData.append(name.getMethodName()).append(",");
             long total = 0;
             for (int i = 0; i < count; i++) {
                 long val = Vect.getPerformanceCounter(i);
@@ -275,6 +276,16 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
     @Test
     public void testColumnTopMidAppendParallelNR() throws Exception {
         executeWithPool(4, false, OutOfOrderTest::testColumnTopMidAppendColumn0);
+    }
+
+    @Test
+    public void testInsertTouchesNotLastPartition() throws Exception {
+        executeVanilla(OutOfOrderTest::testOOOTouchesNotLastPartition0);
+    }
+
+    @Test
+    public void testInsertTouchesNotLastPartitionParallel() throws Exception {
+        executeWithPool(4, OutOfOrderTest::testOOOTouchesNotLastPartition0);
     }
 
     @Test
@@ -818,7 +829,8 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
                         " rnd_byte(2,50) l," +
                         " cast(null as binary) m," +
                         " rnd_str(5,16,2) n," +
-                        " rnd_char() t" +
+                        " rnd_char() t," +
+                        " rnd_long256() l256" +
                         " from long_sequence(510)" +
                         "), index(sym) timestamp (ts) partition by DAY",
                 sqlExecutionContext
@@ -845,7 +857,8 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
-                        " rnd_char() t" +
+                        " rnd_char() t," +
+                        " rnd_long256() l256" +
                         " from long_sequence(101)" +
                         ") timestamp (ts) partition by DAY",
                 sqlExecutionContext
@@ -892,7 +905,8 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
-                        " rnd_char() t" +
+                        " rnd_char() t," +
+                        " rnd_long256() l256" +
                         " from long_sequence(500)" +
                         "), index(sym) timestamp (ts) partition by DAY",
                 sqlExecutionContext
@@ -919,7 +933,8 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
-                        " rnd_char() t" +
+                        " rnd_char() t," +
+                        " rnd_long256() l256" +
                         " from long_sequence(1000)" +
                         ") timestamp (ts) partition by DAY",
                 sqlExecutionContext
@@ -963,7 +978,8 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
-                        " rnd_char() t" +
+                        " rnd_char() t," +
+                        " rnd_long256() l256" +
                         " from long_sequence(500)" +
                         "), index(sym) timestamp (ts) partition by DAY",
                 sqlExecutionContext
@@ -990,7 +1006,8 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
-                        " rnd_char() t" +
+                        " rnd_char() t," +
+                        " rnd_long256() l256" +
                         " from long_sequence(500)" +
                         ") timestamp (ts) partition by DAY",
                 sqlExecutionContext
@@ -1015,7 +1032,8 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
-                        " rnd_char() t" +
+                        " rnd_char() t," +
+                        " rnd_long256() l256" +
                         " from long_sequence(500)" +
                         ") timestamp (ts) partition by DAY",
                 sqlExecutionContext
@@ -1059,7 +1077,8 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
-                        " rnd_char() t" +
+                        " rnd_char() t," +
+                        " rnd_long256() l256" +
                         " from long_sequence(1000)" +
                         ")",
                 sqlExecutionContext
@@ -1111,7 +1130,8 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
-                        " rnd_char() t" +
+                        " rnd_char() t," +
+                        " rnd_long256() l256" +
                         " from long_sequence(1500)" +
                         "), index(sym) timestamp (ts) partition by DAY",
                 sqlExecutionContext
@@ -1140,7 +1160,8 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
-                        " rnd_char() t" +
+                        " rnd_char() t," +
+                        " rnd_long256() l256" +
                         " from long_sequence(100)" +
                         ")",
                 sqlExecutionContext
@@ -1165,7 +1186,8 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
-                        " rnd_char() t" +
+                        " rnd_char() t," +
+                        " rnd_long256() l256" +
                         " from long_sequence(100)" +
                         ") timestamp (ts) partition by DAY",
                 sqlExecutionContext
@@ -1222,7 +1244,8 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
-                        " rnd_char() t" +
+                        " rnd_char() t," +
+                        " rnd_long256() l256" +
                         " from long_sequence(500)" +
                         "), index(sym) timestamp (ts) partition by DAY",
                 sqlExecutionContext
@@ -1249,7 +1272,8 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
-                        " rnd_char() t" +
+                        " rnd_char() t," +
+                        " rnd_long256() l256" +
                         " from long_sequence(500)" +
                         ") timestamp (ts) partition by DAY",
                 sqlExecutionContext
@@ -1274,7 +1298,8 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
-                        " rnd_char() t" +
+                        " rnd_char() t," +
+                        " rnd_long256() l256" +
                         " from long_sequence(3000)" +
                         ") timestamp (ts) partition by DAY",
                 sqlExecutionContext
@@ -1318,7 +1343,8 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
-                        " rnd_char() t" +
+                        " rnd_char() t," +
+                        " rnd_long256() l256" +
                         " from long_sequence(500)" +
                         "), index(sym) timestamp (ts) partition by DAY",
                 sqlExecutionContext
@@ -1345,7 +1371,8 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
-                        " rnd_char() t" +
+                        " rnd_char() t," +
+                        " rnd_long256() l256" +
                         " from long_sequence(507)" +
                         ")",
                 sqlExecutionContext
@@ -1370,7 +1397,8 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
-                        " rnd_char() t" +
+                        " rnd_char() t," +
+                        " rnd_long256() l256" +
                         " from long_sequence(100)" +
                         ") timestamp (ts) partition by DAY",
                 sqlExecutionContext
@@ -1421,7 +1449,8 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
-                        " rnd_char() t" +
+                        " rnd_char() t," +
+                        " rnd_long256() l256" +
                         " from long_sequence(500)" +
                         "), index(sym) timestamp (ts) partition by DAY",
                 sqlExecutionContext
@@ -1448,7 +1477,8 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
-                        " rnd_char() t" +
+                        " rnd_char() t," +
+                        " rnd_long256() l256" +
                         " from long_sequence(507)" +
                         ")",
                 sqlExecutionContext
@@ -1473,7 +1503,8 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
-                        " rnd_char() t" +
+                        " rnd_char() t," +
+                        " rnd_long256() l256" +
                         " from long_sequence(100)" +
                         ") timestamp (ts) partition by DAY",
                 sqlExecutionContext
@@ -1528,7 +1559,8 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
-                        " rnd_char() t" +
+                        " rnd_char() t," +
+                        " rnd_long256() l256" +
                         " from long_sequence(500)" +
                         "), index(sym) timestamp (ts) partition by DAY",
                 sqlExecutionContext
@@ -1555,7 +1587,8 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
-                        " rnd_char() t" +
+                        " rnd_char() t," +
+                        " rnd_long256() l256" +
                         " from long_sequence(500)" +
                         ") timestamp (ts) partition by DAY",
                 sqlExecutionContext
@@ -1599,7 +1632,8 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
-                        " rnd_char() t" +
+                        " rnd_char() t," +
+                        " rnd_long256() l256" +
                         " from long_sequence(500)" +
                         "), index(sym) timestamp (ts) partition by DAY",
                 sqlExecutionContext
@@ -1626,7 +1660,8 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
-                        " rnd_char() t" +
+                        " rnd_char() t," +
+                        " rnd_long256() l256" +
                         " from long_sequence(500)" +
                         ")",
                 sqlExecutionContext
@@ -1651,7 +1686,8 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
-                        " rnd_char() t" +
+                        " rnd_char() t," +
+                        " rnd_long256() l256" +
                         " from long_sequence(100)" +
                         ") timestamp (ts) partition by DAY",
                 sqlExecutionContext
@@ -1811,7 +1847,8 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
-                        " rnd_char() t" +
+                        " rnd_char() t," +
+                        " rnd_long256() l256" +
                         " from long_sequence(1000)" +
                         "), index(sym) timestamp (ts) partition by DAY",
                 sqlExecutionContext
@@ -1838,7 +1875,8 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
-                        " rnd_char() t" +
+                        " rnd_char() t," +
+                        " rnd_long256() l256" +
                         " from long_sequence(1000)" +
                         ")",
                 sqlExecutionContext
@@ -1863,7 +1901,8 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
-                        " rnd_char() t" +
+                        " rnd_char() t," +
+                        " rnd_long256() l256" +
                         " from long_sequence(100)" +
                         ") timestamp (ts) partition by DAY",
                 sqlExecutionContext
@@ -1921,7 +1960,8 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
-                        " rnd_char() t" +
+                        " rnd_char() t," +
+                        " cast(now() as long256) l256" +
                         " from long_sequence(500)" +
                         "), index(sym) timestamp (ts) partition by DAY",
                 sqlExecutionContext
@@ -1946,27 +1986,34 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
-                        " rnd_char() t" +
+                        " rnd_char() t," +
+                        " cast(now() as long256) l256" +
                         " from long_sequence(100)" +
                         ") timestamp (ts) partition by DAY",
                 sqlExecutionContext
         );
 
-        // create third table, which will contain both X and 1AM
         assertOutOfOrderDataConsistency(
                 engine,
                 compiler,
                 sqlExecutionContext,
                 "create table y as (x union all middle)",
+                "y order by ts, i desc",
                 "insert into x select * from middle",
-                "/oo/testPartitionedDataMergeData.txt"
+                "x"
         );
 
-        assertIndexResultAgainstFile(
-                compiler,
+        // check that reader can process out of order partition layout after fresh open
+        String filteredColumnSelect = "select i,sym,amt,timestamp,b,c,d,e,f,g,ik,j,ts,l,m,n,t from x";
+        engine.releaseAllReaders();
+        AbstractOutOfOrderTest.assertSqlResultAgainstFile(compiler,
                 sqlExecutionContext,
-                "/oo/testPartitionedDataMergeData_Index.txt"
-        );
+                filteredColumnSelect,
+                "/oo/testPartitionedDataMergeData.txt");
+
+        AbstractOutOfOrderTest.assertSqlResultAgainstFile(compiler, sqlExecutionContext,
+                filteredColumnSelect + " where sym = 'googl'",
+                "/oo/testPartitionedDataMergeData_Index.txt");
     }
 
     private static void testPartitionedDataMergeEnd0(
@@ -2134,7 +2181,8 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
                         " rnd_byte(2,50) l," +
                         " cast(null as binary) m," +
                         " rnd_str(5,16,2) n," +
-                        " rnd_char() t" +
+                        " rnd_char() t," +
+                        " rnd_long256() l256" +
                         " from long_sequence(510)" +
                         "), index(sym) timestamp (ts) partition by DAY",
                 sqlExecutionContext
@@ -2159,7 +2207,8 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
-                        " rnd_char() t" +
+                        " rnd_char() t," +
+                        " rnd_long256() l256" +
                         " from long_sequence(100)" +
                         ") timestamp (ts) partition by DAY",
                 sqlExecutionContext
@@ -2176,58 +2225,6 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
         );
 
         assertIndexConsistency(compiler, sqlExecutionContext);
-    }
-
-    private static void assertOutOfOrderDataConsistency(
-            final CairoEngine engine,
-            final SqlCompiler compiler,
-            final SqlExecutionContext sqlExecutionContext,
-            final String referenceTableDDL,
-            final String referenceSQL,
-            final String outOfOrderInsertSQL,
-            final String assertSQL
-    ) throws SqlException {
-        sink.clear();
-        sink2.clear();
-        assertOutOfOrderDataConsistency(
-                engine,
-                compiler,
-                sqlExecutionContext,
-                referenceTableDDL,
-                referenceSQL,
-                outOfOrderInsertSQL,
-                assertSQL,
-                sink,
-                sink2
-        );
-    }
-
-    private static void assertOutOfOrderDataConsistency(
-            CairoEngine engine,
-            SqlCompiler compiler,
-            SqlExecutionContext sqlExecutionContext,
-            String referenceTableDDL,
-            String referenceSQL,
-            String outOfOrderInsertSQL,
-            String assertSQL,
-            MutableCharSink sink1,
-            MutableCharSink sink2
-    ) throws SqlException {
-        // create third table, which will contain both X and 1AM
-        compiler.compile(referenceTableDDL, sqlExecutionContext);
-        // expected outcome
-        TestUtils.printSql(compiler, sqlExecutionContext, referenceSQL, sink1);
-        compiler.compile(outOfOrderInsertSQL, sqlExecutionContext);
-
-        TestUtils.printSql(compiler, sqlExecutionContext, assertSQL, sink2);
-        TestUtils.assertEquals(sink1, sink2);
-        engine.releaseAllReaders();
-        TestUtils.printSql(compiler, sqlExecutionContext, assertSQL, sink2);
-        TestUtils.assertEquals(sink1, sink2);
-        // writer is always "x"
-        try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x")) {
-            Assert.assertTrue(w.reconcileAttachedPartitionsWithScoreboard());
-        }
     }
 
     private static void testPartitionedDataAppendOODataIndexed0(
@@ -2254,7 +2251,8 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
-                        " rnd_char() t" +
+                        " rnd_char() t," +
+                        " rnd_long256() l256" +
                         " from long_sequence(500)" +
                         "), index(sym) timestamp (ts) partition by DAY",
                 sqlExecutionContext
@@ -2279,7 +2277,8 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
-                        " rnd_char() t" +
+                        " rnd_char() t," +
+                        " rnd_long256() l256" +
                         " from long_sequence(100)" +
                         ") timestamp (ts) partition by DAY",
                 sqlExecutionContext
@@ -2930,7 +2929,8 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
-                        " rnd_char() t" +
+                        " rnd_char() t," +
+                        " CAST(now() as LONG256) l256" + // Semi-random to not change saved txt file result
                         " from long_sequence(500)" +
                         "), index(sym) timestamp (ts) partition by DAY",
                 sqlExecutionContext
@@ -2948,6 +2948,7 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
         compiler.compile("alter table x add column v10 char", sqlExecutionContext);
         compiler.compile("alter table x add column v11 string", sqlExecutionContext);
         compiler.compile("alter table x add column v12 binary", sqlExecutionContext);
+        compiler.compile("alter table x add column v13 long256", sqlExecutionContext);
         compiler.compile("alter table x add column v9 long", sqlExecutionContext);
 
         compiler.compile(
@@ -2970,6 +2971,7 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
                         " rnd_char() t," +
+                        " CAST(now() as LONG256) l256," +
 //        --------     new columns here ---------------
                         " rnd_double() v," +
                         " rnd_float() v1," +
@@ -2983,6 +2985,7 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
                         " rnd_char() v10," +
                         " rnd_str() v11," +
                         " rnd_bin() v12," +
+                        " CAST(now() as LONG256) v13," +
                         " rnd_long() v9" +
                         " from long_sequence(500)",
                 sqlExecutionContext
@@ -3008,6 +3011,7 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
                         " rnd_char() t," +
+                        " CAST(now() as LONG256) l256," +
 //        --------     new columns here ---------------
                         " rnd_double() v," +
                         " rnd_float() v1," +
@@ -3021,6 +3025,7 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
                         " rnd_char() v10," +
                         " rnd_str() v11," +
                         " rnd_bin() v12," +
+                        " CAST(now() as LONG256) v13," +
                         " rnd_long() v9" +
                         " from long_sequence(400)" +
                         ") timestamp (ts) partition by DAY",
@@ -3032,7 +3037,7 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
         assertSqlResultAgainstFile(
                 compiler,
                 sqlExecutionContext,
-                "x",
+                "select i,sym,amt,timestamp,b,c,d,e,f,g,ik,j,ts,l,m,n,t,v,v1,v2,v3,v4,v5,v6,v7,v8,v10,v11,v12,v9 from x",
                 "/oo/testColumnTopLastOOOPrefix.txt"
         );
     }
@@ -3324,7 +3329,8 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
-                        " rnd_char() t" +
+                        " rnd_char() t," +
+                        " rnd_long256() l256" +
                         " from long_sequence(500)" +
                         "), index(sym) timestamp (ts) partition by DAY",
                 executionContext
@@ -3349,7 +3355,8 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
-                        " rnd_char() t" +
+                        " rnd_char() t," +
+                        " rnd_long256() l256" +
                         " from long_sequence(100)" +
                         ") timestamp (ts) partition by DAY",
                 executionContext
@@ -3389,7 +3396,8 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
-                        " rnd_char() t" +
+                        " rnd_char() t," +
+                        " rnd_long256() l256" +
                         " from long_sequence(100)" +
                         ") timestamp (ts) partition by DAY",
                 executionContext
@@ -3432,7 +3440,8 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
-                        " rnd_char() t" +
+                        " rnd_char() t," +
+                        " rnd_long256() l256" +
                         " from long_sequence(500)" +
                         "), index(sym) timestamp (ts) partition by DAY",
                 executionContext
@@ -3450,6 +3459,7 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
         compiler.compile("alter table x add column v10 char", executionContext);
         compiler.compile("alter table x add column v11 string", executionContext);
         compiler.compile("alter table x add column v12 binary", executionContext);
+        compiler.compile("alter table x add column v13 long256", executionContext);
         compiler.compile("alter table x add column v9 long", executionContext);
 
         compiler.compile(
@@ -3472,6 +3482,7 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
                         " rnd_char() t," +
+                        " rnd_long256() l256," +
                         //  ------------------- new columns ------------------
                         " rnd_double() v," +
                         " rnd_float() v1," +
@@ -3485,6 +3496,7 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
                         " rnd_char() v10," +
                         " rnd_str() v11," +
                         " rnd_bin() v12," +
+                        " rnd_long256() v13," +
                         " rnd_long() v9" +
                         " from long_sequence(100)" +
                         ") timestamp (ts) partition by DAY",
@@ -3627,7 +3639,8 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
-                        " rnd_char() t" +
+                        " rnd_char() t," +
+                        " rnd_long256() l256" +
                         " from long_sequence(500)" +
                         "), index(sym) timestamp (ts) partition by DAY",
                 executionContext
@@ -3645,6 +3658,7 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
         compiler.compile("alter table x add column v10 char", executionContext);
         compiler.compile("alter table x add column v11 string", executionContext);
         compiler.compile("alter table x add column v12 binary", executionContext);
+        compiler.compile("alter table x add column v13 long256", executionContext);
         compiler.compile("alter table x add column v9 long", executionContext);
 
         compiler.compile(
@@ -3667,6 +3681,7 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
                         " rnd_char() t," +
+                        " rnd_long256() l256," +
                         //  ------------------- new columns ------------------
                         " rnd_double() v," +
                         " rnd_float() v1," +
@@ -3680,6 +3695,7 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
                         " rnd_char() v10," +
                         " rnd_str() v11," +
                         " rnd_bin() v12," +
+                        " rnd_long256() v13," +
                         " rnd_long() v9" +
                         " from long_sequence(100)" +
                         ") timestamp (ts) partition by DAY",
@@ -3958,6 +3974,82 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
         assertIndexConsistency(compiler, sqlExecutionContext);
     }
 
+    private static void testOOOTouchesNotLastPartition0(
+            CairoEngine engine,
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
+        long day = Timestamps.DAY_MICROS;
+        long hour = Timestamps.HOUR_MICROS;
+        long min = hour / 60;
+        long sec = min / 60;
+        long minsPerDay = day / min;
+
+        compiler.compile(
+                "create table x as ( " +
+                        "select" +
+                        " cast(x as int) i," +
+                        " rnd_symbol('msft','ibm', 'googl') sym," +
+                        " round(rnd_double(0)*100, 3) amt," +
+                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                        " rnd_boolean() b," +
+                        " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                        " rnd_double(2) d," +
+                        " rnd_float(2) e," +
+                        " rnd_short(10,1024) f," +
+                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                        " rnd_symbol(4,4,4,2) ik," +
+                        " rnd_long() j," +
+                        " timestamp_sequence(0L, " + min + "L) ts," +
+                        " rnd_byte(2,50) l," +
+                        " rnd_bin(10, 20, 2) m," +
+                        " rnd_str(5,16,2) n," +
+                        " rnd_char() t," +
+                        " rnd_long256() l256" +
+                        " from long_sequence(" + 2 * minsPerDay + ")" +
+                        ") timestamp (ts) partition by DAY",
+                sqlExecutionContext
+        );
+
+        compiler.compile(
+                "create table append as (" +
+                        "select" +
+                        " cast(x as int) i," +
+                        " rnd_symbol('msft','ibm', 'googl') sym," +
+                        " round(rnd_double(0)*100, 3) amt," +
+                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                        " rnd_boolean() b," +
+                        " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                        " rnd_double(2) d," +
+                        " rnd_float(2) e," +
+                        " rnd_short(10,1024) f," +
+                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                        " rnd_symbol(4,4,4,2) ik," +
+                        " rnd_long() j," +
+                        " timestamp_sequence(" + (day - min) + "L, " + sec + "L) ts," +
+                        " rnd_byte(2,50) l," +
+                        " rnd_bin(10, 20, 2) m," +
+                        " rnd_str(5,16,2) n," +
+                        " rnd_char() t," +
+                        " rnd_long256() l256" +
+                        " from long_sequence(60)" +
+                        ") timestamp (ts) partition by DAY",
+                sqlExecutionContext
+        );
+
+        assertOutOfOrderDataConsistency(
+                engine,
+                compiler,
+                sqlExecutionContext,
+                "create table y as (x union all append)",
+                "y order by ts, i desc",
+                "insert into x select * from append",
+                "x"
+        );
+
+        assertIndexConsistency(compiler, sqlExecutionContext);
+    }
+
     private static void testColumnTopLastAppendColumn0(
             CairoEngine engine,
             SqlCompiler compiler,
@@ -4215,7 +4307,8 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
-                        " rnd_char() t" +
+                        " rnd_char() t," +
+                        " rnd_long256() l256" +
                         " from long_sequence(1000)" +
                         "), index(sym) timestamp (ts) partition by DAY",
                 sqlExecutionContext
@@ -4242,7 +4335,8 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
-                        " rnd_char() t" +
+                        " rnd_char() t," +
+                        " rnd_long256() l256" +
                         " from long_sequence(100)" +
                         ")",
                 sqlExecutionContext
@@ -4266,7 +4360,8 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
-                        " rnd_char() t" +
+                        " rnd_char() t," +
+                        " rnd_long256() l256" +
                         " from long_sequence(100)" +
                         ")",
                 sqlExecutionContext
@@ -4327,7 +4422,8 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
-                        " rnd_char() t" +
+                        " rnd_char() t," +
+                        " rnd_long256() l256" +
                         " from long_sequence(1000000)" +
                         "), index(sym) timestamp (ts) partition by DAY",
                 sqlExecutionContext
@@ -4354,28 +4450,23 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
-                        " rnd_char() t" +
+                        " rnd_char() t," +
+                        " rnd_long256() l256" +
                         " from long_sequence(1000000)" +
                         ")",
                 sqlExecutionContext
         );
 
-        try (
-                DirectCharSink sink1 = new DirectCharSink(16 * 1024 * 1024);
-                DirectCharSink sink2 = new DirectCharSink(16 * 1024 * 1024)
-        ) {
-            assertOutOfOrderDataConsistency(
-                    engine,
-                    compiler,
-                    sqlExecutionContext,
-                    "create table y as (x union all append)",
-                    "y order by ts",
-                    "insert into x select * from append",
-                    "x",
-                    sink1,
-                    sink2
-            );
-        }
+
+        assertOutOfOrderDataConsistency(
+                engine,
+                compiler,
+                sqlExecutionContext,
+                "create table y as (x union all append)",
+                "y order by ts",
+                "insert into x select * from append",
+                "x"
+        );
     }
 
     private void bench20(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext executionContext) throws SqlException {
@@ -4399,7 +4490,8 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
-                        " rnd_char() t" +
+                        " rnd_char() t," +
+                        " rnd_long256() l256" +
                         " from long_sequence(1000000)" +
                         "), index(sym) timestamp (ts) partition by DAY",
                 executionContext
@@ -4426,28 +4518,21 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
-                        " rnd_char() t" +
+                        " rnd_char() t," +
+                        " rnd_long256() l256" +
                         " from long_sequence(1000000)" +
                         ")",
                 executionContext
         );
 
-        try (
-                DirectCharSink sink1 = new DirectCharSink(16 * 1024 * 1024);
-                DirectCharSink sink2 = new DirectCharSink(16 * 1024 * 1024)
-        ) {
-            assertOutOfOrderDataConsistency(
-                    engine,
-                    compiler,
-                    executionContext,
-                    "create table y as (x union all append)",
-                    "y order by ts",
-                    "insert into x select * from append",
-                    "x",
-                    sink1,
-                    sink2
-            );
-        }
+        assertOutOfOrderDataConsistency(
+                engine,
+                compiler,
+                executionContext,
+                "create table y as (x union all append)",
+                "y order by ts",
+                "insert into x select * from append",
+                "x"
+        );
     }
-
 }

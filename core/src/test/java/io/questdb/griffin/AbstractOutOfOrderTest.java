@@ -26,6 +26,8 @@ package io.questdb.griffin;
 
 import io.questdb.WorkerPoolAwareConfiguration;
 import io.questdb.cairo.*;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -64,20 +66,24 @@ public class AbstractOutOfOrderTest extends AbstractCairoTest {
         Path.PATH2.get();
     }
 
+    protected static void assertSqlCursors(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, String expected, String actual) throws SqlException {
+        try (RecordCursorFactory factory = compiler.compile(expected, sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursor cursor1 = factory.getCursor(sqlExecutionContext)) {
+                try (RecordCursorFactory factory2 = compiler.compile(actual, sqlExecutionContext).getRecordCursorFactory()) {
+                    try (RecordCursor cursor2 = factory2.getCursor(sqlExecutionContext)) {
+                        TestUtils.assertEquals(cursor1, factory.getMetadata(), cursor2, factory2.getMetadata());
+                    }
+                }
+            }
+        }
+    }
+
     protected static void assertIndexConsistency(
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext,
             String table
     ) throws SqlException {
-        printSqlResult(compiler, sqlExecutionContext, table + " where sym = 'googl' order by ts");
-
-        TestUtils.assertSql(
-                compiler,
-                sqlExecutionContext,
-                "x where sym = 'googl'",
-                sink2,
-                sink
-        );
+        assertSqlCursors(compiler, sqlExecutionContext, table + " where sym = 'googl' order by ts", "x where sym = 'googl'");
     }
 
     protected static void assertIndexConsistency(
@@ -111,6 +117,29 @@ public class AbstractOutOfOrderTest extends AbstractCairoTest {
             CairoEngine engine,
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext,
+            String referenceTableDDL,
+            String referenceSQL,
+            String outOfOrderInsertSQL,
+            String assertSQL
+    ) throws SqlException {
+        // create third table, which will contain both X and 1AM
+        compiler.compile(referenceTableDDL, sqlExecutionContext);
+        compiler.compile(outOfOrderInsertSQL, sqlExecutionContext);
+        assertSqlCursors(compiler, sqlExecutionContext, referenceSQL, assertSQL);
+
+        engine.releaseAllReaders();
+        assertSqlCursors(compiler, sqlExecutionContext, referenceSQL, assertSQL);
+
+        // writer is always "x"
+        try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x")) {
+            Assert.assertTrue(w.reconcileAttachedPartitionsWithScoreboard());
+        }
+    }
+
+    protected static void assertOutOfOrderDataConsistency(
+            CairoEngine engine,
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext,
             final String referenceTableDDL,
             final String outOfOrderSQL,
             final String resourceName
@@ -118,6 +147,11 @@ public class AbstractOutOfOrderTest extends AbstractCairoTest {
         // create third table, which will contain both X and 1AM
         compiler.compile(referenceTableDDL, sqlExecutionContext);
         // expected outcome - output ignored, but useful for debug
+        // TODO: below output of y is not used anywhere
+        // TODO: Use above method assertOutOfOrderDataConsistency to compare x against y
+        // TODO: but unstable records sorting have to be solved first
+        // TODO: e.g. y ordered with order by ts is not the same order as OOO merge when there are several records
+        // TODO: with same ts value
         AbstractOutOfOrderTest.printSqlResult(compiler, sqlExecutionContext, "y order by ts");
         compiler.compile(outOfOrderSQL, sqlExecutionContext);
         AbstractOutOfOrderTest.assertSqlResultAgainstFile(compiler, sqlExecutionContext, "x", resourceName);
