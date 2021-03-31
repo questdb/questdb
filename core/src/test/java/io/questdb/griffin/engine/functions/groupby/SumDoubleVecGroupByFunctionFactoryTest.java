@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.functions.groupby;
 
+import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.AbstractGriffinTest;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.std.Rnd;
@@ -39,30 +40,37 @@ public class SumDoubleVecGroupByFunctionFactoryTest extends AbstractGriffinTest 
 
     @Test
     public void testAddColumn() throws Exception {
-        assertQuery(
-                "avg\n" +
-                        "0.511848387\n",
+        Record[] expected = new Record[] {
+                new Record() {
+                    @Override
+                    public double getDouble(int col) {
+                        return 0.511848387;
+                    }
+                },
+        };
+        assertQuery(expected,
                 "select round(avg(f),9) avg from tab",
                 "create table tab as (select rnd_double(2) f from long_sequence(131))",
                 null,
                 "alter table tab add column b double",
-                "avg\n" +
-                        "0.511848387\n",
+                expected,
                 false,
-                true,
-                true
-        );
+                true);
 
-        assertQuery(
-                "avg\tsum\n" +
-                        "0.504722\t188.82913096423943\n",
+        Record[] expected2 = new Record[] {
+                new Record() {
+                    @Override
+                    public double getDouble(int col) {
+                        return col == 0 ? 0.504722 : 188.82913096423943;
+                    }
+                },
+        };
+        assertQuery(expected2,
                 "select round(avg(f),6) avg, sum(b) sum from tab",
                 "insert into tab select rnd_double(2), rnd_double(2) from long_sequence(469)",
                 null,
                 false,
-                true,
-                true
-        );
+                true);
     }
 
     @Test

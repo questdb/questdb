@@ -176,14 +176,14 @@ public class NetTest {
         Assert.assertEquals(0, Net.setSndBuf(clientFd, 256));
         // Linux kernel doubles the value we set, so we handle this case separately
         // http://man7.org/linux/man-pages/man7/socket.7.html
-        if (Os.type == Os.LINUX_AMD64) {
+        if (Os.type == Os.LINUX_AMD64 || Os.type == Os.LINUX_ARM64) {
             Assert.assertEquals(4608, Net.getSndBuf(clientFd));
         } else {
             Assert.assertEquals(256, Net.getSndBuf(clientFd));
         }
 
         Assert.assertEquals(0, Net.setRcvBuf(clientFd, 512));
-        if (Os.type == Os.LINUX_AMD64) {
+        if (Os.type == Os.LINUX_AMD64 || Os.type == Os.LINUX_ARM64) {
             Assert.assertEquals(2304, Net.getRcvBuf(clientFd));
         } else {
             Assert.assertEquals(512, Net.getRcvBuf(clientFd));

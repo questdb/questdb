@@ -140,14 +140,17 @@ if (AARCH64)
 
     set(
             AARCH64_FILES
+            src/main/c/share/rosti.cpp
             src/main/c/aarch64/vect.cpp
+            src/main/c/share/vec_int_key_agg.cpp
             src/main/c/share/vec_agg_vanilla.cpp
+            src/main/c/share/vec_radix_sort.cpp
     )
 
     add_library(questdb-aarch64 OBJECT ${AARCH64_FILES})
     set_target_properties(
             questdb-aarch64 PROPERTIES
-            COMPILE_FLAGS "-O3"
+	    COMPILE_FLAGS "-O3 -fPIC -std=c++17"
     )
 
     target_link_libraries(
@@ -157,7 +160,7 @@ if (AARCH64)
 
     set_target_properties(
             questdb PROPERTIES
-            COMPILE_FLAGS "-O3"
+	    COMPILE_FLAGS "-O3"
     )
 
 else ()
@@ -216,7 +219,7 @@ else ()
 
     set_target_properties(
             questdb PROPERTIES
-            COMPILE_FLAGS "-lrt -m64 -O3"
+	    COMPILE_FLAGS "-lrt -m64 -O3"
     )
 
     ## Uncomment to measure time of ooo.cpp methods

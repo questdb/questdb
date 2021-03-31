@@ -260,6 +260,78 @@
         "bug",
         "content"
       ]
+    },
+    {
+      "login": "kaishin",
+      "name": "Reda Lemeden",
+      "avatar_url": "https://avatars.githubusercontent.com/u/519433?v=4",
+      "profile": "https://redalemeden.com",
+      "contributions": [
+        "code",
+        "example"
+      ]
+    },
+    {
+      "login": "bluestreak01",
+      "name": "Vlad Ilyushchenko",
+      "avatar_url": "https://avatars.githubusercontent.com/u/7276403?v=4",
+      "profile": "https://questdb.io",
+      "contributions": [
+        "code",
+        "maintenance",
+        "test"
+      ]
+    },
+    {
+      "login": "patrickSpaceSurfer",
+      "name": "Patrick Mackinlay",
+      "avatar_url": "https://avatars.githubusercontent.com/u/29952889?v=4",
+      "profile": "http://patrick.spacesurfer.com/",
+      "contributions": [
+        "code",
+        "maintenance",
+        "test"
+      ]
+    },
+    {
+      "login": "chenrui333",
+      "name": "rui",
+      "avatar_url": "https://avatars.githubusercontent.com/u/1580956?v=4",
+      "profile": "http://chenrui.dev",
+      "contributions": [
+        "infra"
+      ]
+    },
+    {
+      "login": "bsmth",
+      "name": "Brian Thomas Smith",
+      "avatar_url": "https://avatars.githubusercontent.com/u/43580235?v=4",
+      "profile": "http://bsmth.de",
+      "contributions": [
+        "doc",
+        "content"
+      ]
+    },
+    {
+      "login": "Ugbot",
+      "name": "Ben Gamble",
+      "avatar_url": "https://avatars.githubusercontent.com/u/2143631?v=4",
+      "profile": "https://github.com/Ugbot",
+      "contributions": [
+        "question",
+        "userTesting",
+        "talk"
+      ]
+    },
+    {
+      "login": "lepolac",
+      "name": "jonathanskrzypek",
+      "avatar_url": "https://avatars.githubusercontent.com/u/6312424?v=4",
+      "profile": "https://github.com/lepolac",
+      "contributions": [
+        "code",
+        "tool"
+      ]
     }
   ],
   "badgeTemplate": "[![All Contributors](https://img.shields.io/badge/all_contributors-<%= contributors.length %>-orange.svg)](#contributors)",
