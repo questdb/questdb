@@ -129,11 +129,6 @@ public class AbstractOutOfOrderTest extends AbstractCairoTest {
 
         engine.releaseAllReaders();
         assertSqlCursors(compiler, sqlExecutionContext, referenceSQL, assertSQL);
-
-        // writer is always "x"
-        try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x")) {
-            Assert.assertTrue(w.reconcileAttachedPartitionsWithScoreboard());
-        }
     }
 
     protected static void assertOutOfOrderDataConsistency(

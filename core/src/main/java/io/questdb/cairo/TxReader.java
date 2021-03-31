@@ -57,7 +57,6 @@ public class TxReader implements Closeable {
     protected int partitionBy;
     protected long partitionTableVersion;
     protected int attachedPartitionsSize = 0;
-    protected Scoreboard scoreboard;
     private MappedReadOnlyMemory roTxMem;
 
     public TxReader(FilesFacade ff, Path path, int partitionBy) {
@@ -69,7 +68,6 @@ public class TxReader implements Closeable {
             roTxMem = (MappedReadOnlyMemory) openTxnFile(this.ff, this.path, rootLen);
             this.timestampFloorMethod = partitionBy != PartitionBy.NONE ? getPartitionFloor(partitionBy) : null;
             this.partitionBy = partitionBy;
-            this.scoreboard = new Scoreboard(ff, path.chopZ());
         } catch (Throwable e) {
             close();
             throw e;
@@ -84,7 +82,6 @@ public class TxReader implements Closeable {
     public void close() {
         roTxMem = Misc.free(roTxMem);
         path = Misc.free(path);
-        scoreboard = Misc.free(scoreboard);
     }
 
     public long getDataVersion() {
@@ -305,9 +302,5 @@ public class TxReader implements Closeable {
     void readRowCounts() {
         this.transientRowCount = roTxMem.getLong(TX_OFFSET_TRANSIENT_ROW_COUNT);
         this.fixedRowCount = roTxMem.getLong(TX_OFFSET_FIXED_ROW_COUNT);
-    }
-
-    Scoreboard getScoreboard() {
-        return scoreboard;
     }
 }

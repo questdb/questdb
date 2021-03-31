@@ -107,7 +107,7 @@ merge_shuffle_vanilla(const T *src1, const T *src2, T *dest, const index_t *inde
 
     const T *sources[] = {src2, src1};
     for (int64_t i = 0; i < count; i++) {
-        _mm_prefetch(index + i + 64, _MM_HINT_T0);
+        MM_PREFETCH_T0(index + i + 64);
         const auto r = reinterpret_cast<uint64_t>(index[i].i);
         const uint64_t pick = r >> 63u;
         const auto row = r & ~(1LLu << 63u);
@@ -120,7 +120,7 @@ template<class T>
 inline void re_shuffle_vanilla(const T *src, T *dest, const index_t *index, const int64_t count) {
 
     for (int64_t i = 0; i < count; i++) {
-        _mm_prefetch(index + i + 64, _MM_HINT_T0);
+        MM_PREFETCH_T0(index + i + 64);
         dest[i] = src[index[i].i];
     };
 }

@@ -187,7 +187,7 @@ inline void re_shuffle(const T *src, T *dest, const index_t *index, const int64_
     };
 
     const auto bulk_reshuffle = [src, dest, index](const int64_t i) {
-        _mm_prefetch(index + i + 64, _MM_HINT_T0);
+        MM_PREFETCH_T0(index + i + 64);
         auto values = lookup_index<TVec, T>(i, index, src);
         values.store_a(dest + i);
     };
@@ -218,7 +218,7 @@ inline void merge_copy_var_column(
     char *src_var[] = {src_ooo_var, src_data_var};
 
     for (int64_t l = 0; l < merge_index_size; l++) {
-        _mm_prefetch(merge_index + l + 64, _MM_HINT_T0);
+        MM_PREFETCH_T0(merge_index + l + 64);
         dst_fix[l] = dst_var_offset;
         const uint64_t row = merge_index[l].i;
         const uint32_t bit = (row >> 63);
@@ -314,7 +314,7 @@ MULTI_VERSION_NAME (merge_shuffle_int64)(const int64_t *src1, const int64_t *src
     };
 
     const auto bulk_merge = [dest, index, src1, src2](const int64_t i) {
-        _mm_prefetch(index + i + 64, _MM_HINT_T0);
+        MM_PREFETCH_T0(index + i + 64);
         const Vec8uq index_i1 = gather8q<1, 3, 5, 7, 9, 11, 13, 15>(index + i);
         const Vec8uq index1 = index_i1 & ~(1LLu << 63u);
         auto mask = (index_i1 >> 63) > 0;
@@ -371,7 +371,7 @@ void MULTI_VERSION_NAME (make_timestamp_index)(const int64_t *data, int64_t low,
     Vec8q vec_ts;
 
     for (; l <= high - 7; l += 8) {
-        _mm_prefetch(data + l + 64, _MM_HINT_T0);
+        MM_PREFETCH_T0(data + l + 64);
         vec_ts.load(data + l);
 
         // save vec_ts into even 8b positions as index ts
@@ -430,7 +430,7 @@ void MULTI_VERSION_NAME (copy_index)(const index_t *index, const int64_t count, 
         dest[i] = index[i].ts;
     };
     auto l_bulk = [dest, index](int64_t i) {
-        _mm_prefetch(index + i + 64, _MM_HINT_ET0);
+        MM_PREFETCH_T0(index + i + 64);
         gather8q<0, 2, 4, 6, 8, 10, 12, 14>(index + i).store_a(dest + i);
     };
     run_vec_bulk<int64_t, Vec8q>(dest, count, l_iteration, l_bulk);
@@ -448,7 +448,7 @@ void MULTI_VERSION_NAME (shift_copy)(int64_t shift, int64_t *src, int64_t src_lo
     };
     auto src_loo = src + src_lo;
     auto l_bulk = [&vec, &vec_shift, dest, src_loo](int64_t i) {
-        _mm_prefetch(src_loo + i + 64, _MM_HINT_ET0);
+        MM_PREFETCH_T0(src_loo + i + 64);
         vec.load(src_loo + i);
         vec -= vec_shift;
         vec.store_a(dest + i);
@@ -463,7 +463,7 @@ void MULTI_VERSION_NAME (copy_index_timestamp)(index_t *index, int64_t index_lo,
         dest[i] = index[index_lo + i].ts;
     };
     auto l_bulk = [dest, index, index_lo](int64_t i) {
-        _mm_prefetch(index + index_lo + i + 64, _MM_HINT_ET0);
+        MM_PREFETCH_T0(index + index_lo + i + 64);
         gather8q<0, 2, 4, 6, 8, 10, 12, 14>(index + index_lo + i).store_a(dest + i);
     };
     run_vec_bulk<int64_t, Vec8q>(dest, count, l_iteration, l_bulk);

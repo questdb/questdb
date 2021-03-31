@@ -304,10 +304,6 @@ public class TableWriter implements Closeable {
         }
     }
 
-    public boolean acquireWriterLock(long timestamp, long txn) {
-        return txFile.acquireWriterLock(timestamp, txn);
-    }
-
     public void addColumn(CharSequence name, int type) {
         addColumn(name, type, configuration.getDefaultSymbolCapacity(), configuration.getDefaultSymbolCacheFlag(), false, 0, false);
     }
@@ -778,15 +774,6 @@ public class TableWriter implements Closeable {
             ee.put(" expected");
             throw ee;
         }
-    }
-
-    // this method is used by tests
-    public boolean reconcileAttachedPartitionsWithScoreboard() {
-        return txFile.reconcileAttachedPartitionsWithScoreboard();
-    }
-
-    public void releaseWriterLock(long timestamp, long txn) {
-        txFile.releaseWriterLock(timestamp, txn);
     }
 
     public void removeColumn(CharSequence name) {
@@ -2685,17 +2672,15 @@ public class TableWriter implements Closeable {
         final int partitionIndex = txFile.findAttachedPartitionIndexByLoTimestamp(partitionTimestamp);
         if (partitionMutates) {
             final long srcDataTxn = txFile.getPartitionNameTxnByIndex(partitionIndex);
-            if (
+            if (false &&
                     configuration.isOutOfOrderRenameEnabled()
                             && getOooErrorCount() == 0
-                            && acquireWriterLock(partitionTimestamp, srcDataTxn)
             ) {
                 LOG.info()
                         .$("lock successful [table=`").utf8(path)
                         .$("`, ts=").$ts(partitionTimestamp)
                         .$(", txn=").$(srcDataTxn).$(']').$();
 
-                try {
                     OutOfOrderUtils.swapPartition(
                             ff,
                             path,
@@ -2705,16 +2690,12 @@ public class TableWriter implements Closeable {
                             partitionBy
                     );
                     txFile.updatePartitionSizeByIndex(partitionIndex, partitionTimestamp, partitionSize);
-                } finally {
-                    releaseWriterLock(partitionTimestamp, srcDataTxn);
-                }
             } else {
                 LOG.info()
                         .$("partition busy [table=`").utf8(path)
                         .$("`, ts=").$ts(partitionTimestamp)
                         .$(", txn=").$(srcDataTxn).$(']').$();
                 txFile.updatePartitionSizeByIndexAndTxn(partitionIndex, partitionSize);
-                txFile.scoreboard.addPartition(partitionTimestamp, txFile.txn);
             }
         } else {
             txFile.updatePartitionSizeByIndex(partitionIndex, partitionTimestamp, partitionSize);

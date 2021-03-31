@@ -297,14 +297,12 @@ public class TableReader implements Closeable, SymbolTableSource {
             return;
         }
         active = true;
-        acquirePartitionLocks();
     }
 
     public void goPassive() {
         // check for double-close
         if (active) {
             active = false;
-            releasePartitionLocks();
         }
     }
 
@@ -583,17 +581,6 @@ public class TableReader implements Closeable, SymbolTableSource {
         }
     }
 
-    private void acquirePartitionLocks() {
-        for (int i = 0; i < partitionCount; i++) {
-            final int offset = i * PARTITIONS_SLOT_SIZE;
-            final long partitionTimestamp = openPartitionInfo.getQuick(offset);
-            final long partitionSize = openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE);
-            if (partitionSize > -1) {
-                txFile.scoreboard.acquireReadLock(partitionTimestamp, openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_NAME_TXN));
-            }
-        }
-    }
-
     private void closeColumn(int columnBase, int columnIndex) {
         final int index = getPrimaryColumnIndex(columnBase, columnIndex);
         Misc.free(columns.getAndSetQuick(index, NullColumn.INSTANCE));
@@ -739,7 +726,6 @@ public class TableReader implements Closeable, SymbolTableSource {
             for (int k = 0; k < columnCount; k++) {
                 closeColumn(columnBase, k);
             }
-            txFile.getScoreboard().releaseReadLock(partitionTimestamp, openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_NAME_TXN));
         }
         int baseIndex = getPrimaryColumnIndex(columnBase, 0);
         int newBaseIndex = getPrimaryColumnIndex(getColumnBase(partitionIndex + 1), 0);
@@ -936,10 +922,6 @@ public class TableReader implements Closeable, SymbolTableSource {
                     openPartitionColumns(path, getColumnBase(partitionIndex), partitionSize, lastPartition);
                     final int offset = partitionIndex * PARTITIONS_SLOT_SIZE;
                     this.openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE, partitionSize);
-                    txFile.getScoreboard().acquireReadLock(
-                            openPartitionInfo.getQuick(offset),
-                            partitionNameTxn
-                    );
                 }
 
                 return partitionSize;
@@ -1093,17 +1075,6 @@ public class TableReader implements Closeable, SymbolTableSource {
             return;
         }
         reconcileOpenPartitionsFrom(0);
-    }
-
-    private void releasePartitionLocks() {
-        for (int i = 0; i < partitionCount; i++) {
-            final int offset = i * PARTITIONS_SLOT_SIZE;
-            final long partitionTimestamp = openPartitionInfo.getQuick(offset);
-            final long partitionSize = openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE);
-            if (partitionSize > -1) {
-                txFile.scoreboard.releaseReadLock(partitionTimestamp, openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_NAME_TXN));
-            }
-        }
     }
 
     private void reloadColumnAt(
