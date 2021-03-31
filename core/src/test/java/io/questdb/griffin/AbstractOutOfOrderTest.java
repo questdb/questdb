@@ -35,7 +35,6 @@ import io.questdb.mp.WorkerPool;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Rnd;
-import io.questdb.std.str.MutableCharSink;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
@@ -145,15 +144,17 @@ public class AbstractOutOfOrderTest extends AbstractCairoTest {
             final String outOfOrderSQL,
             final String resourceName
     ) throws SqlException, URISyntaxException {
-        assertOutOfOrderDataConsistency(
-                engine,
-                compiler,
-                sqlExecutionContext,
-                referenceTableDDL,
-                "y order by ts",
-                outOfOrderSQL,
-                "x"
-        );
+        // create third table, which will contain both X and 1AM
+        compiler.compile(referenceTableDDL, sqlExecutionContext);
+        // expected outcome - output ignored, but useful for debug
+        // TODO: below output of y is not used anywhere
+        // TODO: Use above method assertOutOfOrderDataConsistency to compare x against y
+        // TODO: but unstable records sorting have to be solved first
+        // TODO: e.g. y ordered with order by ts is not the same order as OOO merge when there are several records
+        // TODO: with same ts value
+        AbstractOutOfOrderTest.printSqlResult(compiler, sqlExecutionContext, "y order by ts");
+        compiler.compile(outOfOrderSQL, sqlExecutionContext);
+        AbstractOutOfOrderTest.assertSqlResultAgainstFile(compiler, sqlExecutionContext, "x", resourceName);
 
         // check that reader can process out of order partition layout after fresh open
         engine.releaseAllReaders();
