@@ -47,7 +47,7 @@ public final class Epoll implements Closeable {
         // todo: this can be unsuccessful
         this.epollFd = epf.epollCreate();
         if (this.epollFd != -1) {
-            Files.auditOpen(epollFd, "\\\\EPOLL");
+            assert Files.auditOpen(epollFd, "\\\\EPOLL");
             Files.bumpFileCount();
         }
     }

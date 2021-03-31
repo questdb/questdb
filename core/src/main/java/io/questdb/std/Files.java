@@ -63,7 +63,7 @@ public final class Files {
     public native static long append(long fd, long address, long len);
 
     public static int close(long fd) {
-        auditClose(fd);
+        assert auditClose(fd);
         int res = close0(fd);
         if (res == 0) {
             OPEN_FILE_COUNT.decrementAndGet();
@@ -173,7 +173,7 @@ public final class Files {
     public static long openAppend(LPSZ lpsz) {
         long fd = openAppend(lpsz.address());
         if (fd != -1) {
-            auditOpen(fd, lpsz);
+            assert auditOpen(fd, lpsz);
             bumpFileCount();
         }
         return fd;
@@ -182,7 +182,7 @@ public final class Files {
     public static long openRO(LPSZ lpsz) {
         long fd = openRO(lpsz.address());
         if (fd != -1) {
-            auditOpen(fd, lpsz);
+            assert auditOpen(fd, lpsz);
             bumpFileCount();
         }
         return fd;
@@ -191,7 +191,7 @@ public final class Files {
     public static long openRW(LPSZ lpsz) {
         long fd = openRW(lpsz.address());
         if (fd != -1) {
-            auditOpen(fd, lpsz);
+            assert auditOpen(fd, lpsz);
             bumpFileCount();
         }
         return fd;
@@ -313,9 +313,12 @@ public final class Files {
 
     private static native boolean rename(long lpszOld, long lpszNew);
 
-    private static String[] openFiles = new String[65536];
+    private static String[] openFiles = null;
 
-    public static synchronized void auditOpen(long fd, CharSequence path) {
+    public static synchronized boolean auditOpen(long fd, CharSequence path) {
+        if (null == openFiles) {
+            openFiles = new String[65536];
+        }
         if (fd < 0 || fd >= openFiles.length) {
             throw new IllegalStateException("Invalid fd " + fd + " for " + path);
         }
@@ -323,17 +326,17 @@ public final class Files {
             throw new IllegalStateException("fd " + fd + " is already open for " + openFiles[(int) fd] + ", cannot be opened for " + path);
         }
         openFiles[(int) fd] = path.toString();
-        // System.err.println(fd + " opened " + openFiles[(int) fd]);
+        return true;
     }
 
-    public static synchronized void auditClose(long fd) {
+    public static synchronized boolean auditClose(long fd) {
         if (fd < 0 || fd >= openFiles.length) {
             throw new IllegalStateException("Invalid fd " + fd);
         }
         if (null == openFiles[(int) fd]) {
             throw new IllegalStateException("fd " + fd + " is already closed!");
         }
-        // System.err.println(fd + " closed " + openFiles[(int) fd]);
         openFiles[(int) fd] = null;
+        return true;
     }
 }
