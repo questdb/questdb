@@ -24,13 +24,13 @@
 
 package io.questdb.std;
 
-import io.questdb.std.str.LPSZ;
-import io.questdb.std.str.Path;
-
 import java.io.File;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.atomic.AtomicLong;
+
+import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Path;
 
 public final class Files {
 
@@ -173,7 +173,7 @@ public final class Files {
     public static long openAppend(LPSZ lpsz) {
         long fd = openAppend(lpsz.address());
         if (fd != -1) {
-            assert auditOpen(fd, lpsz);
+            assert auditOpen(fd);
             bumpFileCount();
         }
         return fd;
@@ -182,7 +182,7 @@ public final class Files {
     public static long openRO(LPSZ lpsz) {
         long fd = openRO(lpsz.address());
         if (fd != -1) {
-            assert auditOpen(fd, lpsz);
+            assert auditOpen(fd);
             bumpFileCount();
         }
         return fd;
@@ -191,7 +191,7 @@ public final class Files {
     public static long openRW(LPSZ lpsz) {
         long fd = openRW(lpsz.address());
         if (fd != -1) {
-            assert auditOpen(fd, lpsz);
+            assert auditOpen(fd);
             bumpFileCount();
         }
         return fd;
@@ -313,30 +313,29 @@ public final class Files {
 
     private static native boolean rename(long lpszOld, long lpszNew);
 
-    private static String[] openFiles = null;
+    private static LongHashSet openFds;
 
-    public static synchronized boolean auditOpen(long fd, CharSequence path) {
-        if (null == openFiles) {
-            openFiles = new String[65536];
+    public static synchronized boolean auditOpen(long fd) {
+        if (null == openFds) {
+            openFds = new LongHashSet();
         }
-        if (fd < 0 || fd >= openFiles.length) {
-            throw new IllegalStateException("Invalid fd " + fd + " for " + path);
+        if (fd < 0) {
+            throw new IllegalStateException("Invalid fd " + fd);
         }
-        if (null != openFiles[(int) fd]) {
-            throw new IllegalStateException("fd " + fd + " is already open for " + openFiles[(int) fd] + ", cannot be opened for " + path);
+        if (openFds.contains(fd)) {
+            throw new IllegalStateException("fd " + fd + " is already open");
         }
-        openFiles[(int) fd] = path.toString();
+        openFds.add(fd);
         return true;
     }
 
     public static synchronized boolean auditClose(long fd) {
-        if (fd < 0 || fd >= openFiles.length) {
+        if (fd < 0) {
             throw new IllegalStateException("Invalid fd " + fd);
         }
-        if (null == openFiles[(int) fd]) {
+        if (openFds.remove(fd) == -1) {
             throw new IllegalStateException("fd " + fd + " is already closed!");
         }
-        openFiles[(int) fd] = null;
         return true;
     }
 }
