@@ -336,8 +336,8 @@ JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_exists0
     return access((const char *) lpsz, F_OK) == 0;
 }
 
-void *openShm0(void *lpsz, size_t len, int64_t *hMapping) {
-    int shm_fd = shm_open(lpsz, O_CREAT | O_RDWR, 0666);
+void *openShm0(const char *name, size_t len, int64_t *hMapping) {
+    int shm_fd = shm_open(name, O_CREAT | O_RDWR, 0666);
     if (shm_fd == -1) {
         return NULL;
     }
@@ -354,5 +354,6 @@ void *openShm0(void *lpsz, size_t len, int64_t *hMapping) {
 }
 
 jint closeShm0(const char* name, void *mem, size_t len, int64_t hMapping) {
+    munmap(mem, len);
     return shm_unlink(name);
 }

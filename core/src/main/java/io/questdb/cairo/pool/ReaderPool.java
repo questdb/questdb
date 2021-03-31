@@ -45,6 +45,7 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
     private static final long NEXT_STATUS = Unsafe.getFieldOffset(Entry.class, "nextStatus");
     private static final int ENTRY_SIZE = 32;
     private static final long LOCK_OWNER = Unsafe.getFieldOffset(Entry.class, "lockOwner");
+    private static final long TXN_SCOREBOARD = Unsafe.getFieldOffset(Entry.class, "txnScoreboard");
     private static final int NEXT_OPEN = 0;
     private static final int NEXT_ALLOCATED = 1;
     private static final int NEXT_LOCKED = 2;
@@ -340,13 +341,15 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
         final long[] releaseTimes = new long[ENTRY_SIZE];
         final R[] readers = new R[ENTRY_SIZE];
         final int index;
+        private final boolean ownTxnScoreboard;
         volatile long lockOwner = -1L;
         @SuppressWarnings("unused")
         int nextStatus = 0;
         volatile Entry next;
-        private Path shmName = new Path();
+        private Path shmName;
+        @SuppressWarnings("FieldMayBeFinal")
+        // not a final, this field gets assigned value via CAS
         private long txnScoreboard;
-        private final boolean ownTxnScoreboard;
 
         public Entry(int index, long currentMicros, CharSequence tableName, long txnScoreboard) {
             this.index = index;
@@ -354,6 +357,7 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
             Arrays.fill(releaseTimes, currentMicros);
             if (txnScoreboard == 0) {
                 ownTxnScoreboard = true;
+                this.shmName = new Path();
                 this.txnScoreboard = TxnScoreboard.create(this.shmName, tableName);
             } else {
                 ownTxnScoreboard = false;
@@ -363,11 +367,13 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
 
         @Override
         public void close() {
-            if (txnScoreboard != 0 && ownTxnScoreboard) {
-                TxnScoreboard.close(this.shmName, txnScoreboard);
-                this.txnScoreboard = 0;
+            if (ownTxnScoreboard) {
+                long txnScoreboard = this.txnScoreboard;
+                if (txnScoreboard != 0 && Unsafe.cas(this, TXN_SCOREBOARD, txnScoreboard, 0)) {
+                    TxnScoreboard.close(this.shmName, txnScoreboard);
+                    shmName = Misc.free(shmName);
+                }
             }
-            shmName = Misc.free(shmName);
         }
     }
 
