@@ -292,6 +292,15 @@
         "maintenance",
         "test"
       ]
+    },
+    {
+      "login": "chenrui333",
+      "name": "rui",
+      "avatar_url": "https://avatars.githubusercontent.com/u/1580956?v=4",
+      "profile": "http://chenrui.dev",
+      "contributions": [
+        "infra"
+      ]
     }
   ],
   "badgeTemplate": "[![All Contributors](https://img.shields.io/badge/all_contributors-<%= contributors.length %>-orange.svg)](#contributors)",
