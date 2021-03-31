@@ -58,8 +58,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
     @After
     public void tearDown2() {
         sink.clear();
-        engine.releaseAllWriters();
-        engine.releaseAllReaders();
+        engine.clear();
     }
 
     @Test
@@ -2644,11 +2643,8 @@ public class TextLoaderTest extends AbstractGriffinTest {
             }
             Assert.assertEquals(0, engine.getBusyWriterCount());
             Assert.assertEquals(0, engine.getBusyReaderCount());
-            engine.releaseAllWriters();
-            engine.releaseAllReaders();
-
-            AbstractGriffinTest.engine.releaseAllReaders();
-            AbstractGriffinTest.engine.releaseAllWriters();
+            engine.clear();
+            AbstractGriffinTest.engine.clear();
         });
     }
 

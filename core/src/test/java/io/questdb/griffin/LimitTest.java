@@ -269,8 +269,7 @@ public class LimitTest extends AbstractGriffinTest {
 
                 assertQueryAndCache(expected2, query, "timestamp", true, true);
             } finally {
-                engine.releaseAllWriters();
-                engine.releaseAllReaders();
+                engine.clear();
             }
         });
     }
@@ -453,8 +452,7 @@ public class LimitTest extends AbstractGriffinTest {
                 bindVariableService.setLong(0, 6);
                 assertQueryAndCache(expected2, query, "timestamp", true, true);
             } finally {
-                engine.releaseAllWriters();
-                engine.releaseAllReaders();
+                engine.clear();
             }
         });
     }
@@ -509,8 +507,7 @@ public class LimitTest extends AbstractGriffinTest {
                 bindVariableService.setLong("lim", 6);
                 assertQueryAndCache(expected2, query, "timestamp", true, true);
             } finally {
-                engine.releaseAllWriters();
-                engine.releaseAllReaders();
+                engine.clear();
             }
         });
     }

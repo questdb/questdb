@@ -299,8 +299,7 @@ public class CairoEngineTest extends AbstractCairoTest {
                 assertWriter(engine, "y");
                 assertReader(engine, "y");
 
-                Assert.assertTrue(engine.releaseAllReaders());
-                Assert.assertTrue(engine.releaseAllWriters());
+                Assert.assertTrue(engine.clear());
             }
         });
     }
@@ -432,8 +431,7 @@ public class CairoEngineTest extends AbstractCairoTest {
                     Assert.fail();
                 } catch (ReaderOutOfDateException ignored) {
                 }
-                Assert.assertTrue(engine.releaseAllReaders());
-                Assert.assertTrue(engine.releaseAllWriters());
+                Assert.assertTrue(engine.clear());
             }
         });
     }

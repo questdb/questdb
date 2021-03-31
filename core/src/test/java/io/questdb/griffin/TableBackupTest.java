@@ -465,8 +465,7 @@ public class TableBackupTest {
                 Assert.assertEquals(0, mainEngine.getBusyWriterCount());
                 Assert.assertEquals(0, mainEngine.getBusyReaderCount());
             } finally {
-                mainEngine.releaseAllReaders();
-                mainEngine.releaseAllWriters();
+                mainEngine.clear();
             }
         });
     }

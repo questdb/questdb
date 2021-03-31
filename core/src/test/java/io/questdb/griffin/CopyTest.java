@@ -425,8 +425,7 @@ public class CopyTest extends AbstractCairoTest {
                 Assert.assertEquals(0, engine.getBusyWriterCount());
                 Assert.assertEquals(0, engine.getBusyReaderCount());
             } finally {
-                engine.releaseAllReaders();
-                engine.releaseAllWriters();
+                engine.clear();
             }
         });
     }
@@ -650,8 +649,7 @@ public class CopyTest extends AbstractCairoTest {
 
     @After
     public void tearDownAfterTest() {
-        engine.releaseAllReaders();
-        engine.releaseAllWriters();
+        engine.clear();
     }
 
     void assertFactoryCursor(String expected, String expectedTimestamp, RecordCursorFactory factory, boolean supportsRandomAccess) {
@@ -684,8 +682,7 @@ public class CopyTest extends AbstractCairoTest {
                 Assert.assertEquals(0, engine.getBusyReaderCount());
                 Assert.assertEquals(0, engine.getBusyWriterCount());
             } finally {
-                engine.releaseAllWriters();
-                engine.releaseAllReaders();
+                engine.clear();
             }
         });
     }

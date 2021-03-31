@@ -127,21 +127,16 @@ public final class TestUtils {
 
     private static void assertEquals(Long256 expected, Long256 actual) {
         if (expected == actual) return;
-        if (expected == null)  {
-            Assert.assertNull(actual);
-        }
         if (actual == null) {
             Assert.fail("Expected " + toHexString(expected) +", but was: null");
         }
 
-        if (expected.getLong0() == actual.getLong0()
-                && expected.getLong1() == actual.getLong1()
-                && expected.getLong2() == actual.getLong2()
-                && expected.getLong3() == actual.getLong3()) {
-            // good
-        } else {
-            Assert.assertEquals(toHexString(expected), toHexString(actual));
-        }
+        if (expected.getLong0() != actual.getLong0()
+                || expected.getLong1() != actual.getLong1()
+                || expected.getLong2() != actual.getLong2()
+                || expected.getLong3() != actual.getLong3()) {
+                    Assert.assertEquals(toHexString(expected), toHexString(actual));
+                }
     }
 
     private static String toHexString(Long256 expected) {

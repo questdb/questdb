@@ -86,7 +86,7 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
 //                                    .$(", lockOwner=").$(e.lockOwner)
 //                                    .$(", e=").$(e)
                                     .$(']').$();
-                            r = new R(this, e, i, name, e.txnScoreboard);
+                            r = new R(this, e, i, name, TxnScoreboard.newRef(e.txnScoreboard));
                         } catch (CairoException ex) {
                             Unsafe.arrayPutOrdered(e.allocations, i, UNALLOCATED);
                             throw ex;
@@ -96,7 +96,6 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
                         notifyListener(thread, name, PoolListener.EV_CREATE, e.index, i);
                     } else {
                         r.goActive();
-                        r.reload();
                         notifyListener(thread, name, PoolListener.EV_GET, e.index, i);
                     }
 
@@ -118,7 +117,7 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
             // all allocated, create next entry if possible
             if (Unsafe.getUnsafe().compareAndSwapInt(e, NEXT_STATUS, NEXT_OPEN, NEXT_ALLOCATED)) {
                 LOG.debug().$("Thread ").$(thread).$(" allocated entry ").$(e.index + 1).$();
-                e.next = new Entry(e.index + 1, clock.getTicks(), name, e.txnScoreboard);
+                e.next = new Entry(e.index + 1, clock.getTicks(), name, TxnScoreboard.newRef(e.txnScoreboard));
             }
             e = e.next;
         } while (e != null && e.index < maxSegments);
@@ -222,7 +221,20 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
     @Override
     protected void closePool() {
         super.closePool();
+        freeEntries();
         LOG.info().$("closed").$();
+    }
+
+    public void freeEntries() {
+        for (Map.Entry<CharSequence, Entry> me : entries.entrySet()) {
+            Entry e = me.getValue();
+            do {
+                // this does not release the next
+                Misc.free(e);
+                e = e.next;
+            } while (e != null);
+        }
+        entries.clear();
     }
 
     @Override
@@ -258,7 +270,6 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
                     }
                 }
                 // this does not release the next
-                Misc.free(e);
                 e = e.next;
             } while (e != null);
         }
@@ -341,12 +352,11 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
         final long[] releaseTimes = new long[ENTRY_SIZE];
         final R[] readers = new R[ENTRY_SIZE];
         final int index;
-        private final boolean ownTxnScoreboard;
         volatile long lockOwner = -1L;
         @SuppressWarnings("unused")
         int nextStatus = 0;
         volatile Entry next;
-        private Path shmName;
+        private Path shmName = new Path();
         @SuppressWarnings("FieldMayBeFinal")
         // not a final, this field gets assigned value via CAS
         private long txnScoreboard;
@@ -356,23 +366,18 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
             Arrays.fill(allocations, UNALLOCATED);
             Arrays.fill(releaseTimes, currentMicros);
             if (txnScoreboard == 0) {
-                ownTxnScoreboard = true;
-                this.shmName = new Path();
                 this.txnScoreboard = TxnScoreboard.create(this.shmName, tableName);
             } else {
-                ownTxnScoreboard = false;
                 this.txnScoreboard = txnScoreboard;
             }
         }
 
         @Override
         public void close() {
-            if (ownTxnScoreboard) {
-                long txnScoreboard = this.txnScoreboard;
-                if (txnScoreboard != 0 && Unsafe.cas(this, TXN_SCOREBOARD, txnScoreboard, 0)) {
-                    TxnScoreboard.close(this.shmName, txnScoreboard);
-                    shmName = Misc.free(shmName);
-                }
+            long txnScoreboard = this.txnScoreboard;
+            if (txnScoreboard != 0 && Unsafe.cas(this, TXN_SCOREBOARD, txnScoreboard, 0)) {
+                TxnScoreboard.close(this.shmName, txnScoreboard);
+                shmName = Misc.free(shmName);
             }
         }
     }

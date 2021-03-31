@@ -530,8 +530,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             Assert.assertEquals(CREATE_TABLE, compiler.compile("create table x (col string)", sqlExecutionContext).getType());
 
-            engine.releaseAllReaders();
-            engine.releaseAllWriters();
+            engine.clear();
 
             CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
                 @Override
@@ -563,10 +562,9 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
             } catch (SqlException e) {
                 Assert.assertEquals(51, e.getPosition());
                 TestUtils.assertContains(e.getMessage(), "max cached symbol capacity");
+            } finally {
+                engine.clear();
             }
-
-            engine.releaseAllWriters();
-            engine.releaseAllReaders();
         });
     }
 
@@ -2015,8 +2013,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                     Assert.assertEquals(0, engine.getBusyReaderCount());
                     Assert.assertEquals(0, engine.getBusyWriterCount());
                 } finally {
-                    engine.releaseAllWriters();
-                    engine.releaseAllReaders();
+                    engine.clear();
                 }
             }
         });
@@ -4785,9 +4782,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
         compiler.compile("insert into y select timestamp_sequence(cast('2018-01-31T23:00:00.000000Z' as timestamp), 100), rnd_double() from long_sequence(1000)", sqlExecutionContext);
 
         // to shut up memory leak check
-        engine.releaseAllReaders();
-        engine.releaseAllWriters();
-
+        engine.clear();
         assertQuery(
                 "time\tvisMiles\n" +
                         "2018-01-31T23:00:00.000000Z\t0.26625499503275796\n" +

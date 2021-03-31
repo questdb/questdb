@@ -24,44 +24,33 @@
 
 package io.questdb.cairo;
 
-import io.questdb.std.LongHashSet;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.std.Os;
 import io.questdb.std.str.Path;
 
 public class TxnScoreboard {
 
-    private static final LongHashSet open = new LongHashSet();
-    private static final LongHashSet closed = new LongHashSet();
+    private static final Log LOG = LogFactory.getLog(TxnScoreboard.class);
 
-    public static int close(Path shmPath, long pTxnScoreboard) {
-        assert assertClose(pTxnScoreboard);
+    public static long close(Path shmPath, long pTxnScoreboard) {
+        LOG.info().$("close [p=").$(pTxnScoreboard).$(']').$();
         return close0(shmPath.address(), pTxnScoreboard);
     }
 
-    public static int close(Path shmPath, CharSequence tableName, long pTxnScoreboard) {
+    public static long close(Path shmPath, CharSequence tableName, long pTxnScoreboard) {
         setShmName(shmPath, tableName);
         return close(shmPath, pTxnScoreboard);
     }
 
     public static long create(Path shmPath, CharSequence tableName) {
         setShmName(shmPath, tableName);
-        long pTxnScoreboard = create0(shmPath.address());
-        assert assertOpen(pTxnScoreboard);
-        return pTxnScoreboard;
+        return create0(shmPath.address());
     }
 
-    private static synchronized boolean assertClose(long pTxnScoreboard) {
-        boolean result = open.contains(pTxnScoreboard) && closed.excludes(pTxnScoreboard);
-        closed.add(pTxnScoreboard);
-        open.remove(pTxnScoreboard);
-        return result;
-    }
-
-    private static synchronized boolean assertOpen(long pTxnScoreboard) {
-        int keyIndex = open.keyIndex(pTxnScoreboard);
-        open.addAt(keyIndex, pTxnScoreboard);
-        closed.remove(pTxnScoreboard);
-        return keyIndex > -1;
+    public static long newRef(long pTxnScoreboard) {
+        assert pTxnScoreboard > 0;
+        return newRef0(pTxnScoreboard);
     }
 
     private static void setShmName(Path shmPath, CharSequence name) {
@@ -72,13 +61,27 @@ public class TxnScoreboard {
         }
     }
 
-    static native boolean acquire(long pTxnScoreboard, long txn);
+    static boolean acquire(long pTxnScoreboard, long txn) {
+        assert pTxnScoreboard > 0;
+        LOG.info().$("acquire [p=").$(pTxnScoreboard).$(", txn=").$(txn).$(']').$();
+        return acquire0(pTxnScoreboard, txn);
+    }
 
-    static native long release(long pTxnScoreboard, long txn);
+    private native static boolean acquire0(long pTxnScoreboard, long txn);
+
+    static long release(long pTxnScoreboard, long txn) {
+        assert pTxnScoreboard > 0;
+        LOG.info().$("release  [p=").$(pTxnScoreboard).$(", txn=").$(txn).$(']').$();
+        return release0(pTxnScoreboard, txn);
+    }
+
+    private native static long release0(long pTxnScoreboard, long txn);
+
+    private native static long newRef0(long pTxnScoreboard);
 
     private static native long create0(long lpszName);
 
     static native long getCount(long pTxnScoreboard, long txn);
 
-    private static native int close0(long lpszName, long pTxnScoreboard);
+    private static native long close0(long lpszName, long pTxnScoreboard);
 }

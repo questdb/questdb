@@ -413,8 +413,7 @@ public class SampleByTest extends AbstractGriffinTest {
                     sqlExecutionContext
             );
 
-            engine.releaseAllWriters();
-            engine.releaseAllReaders();
+            engine.clear();
 
             final FilesFacade ff = new FilesFacadeImpl() {
                 int count = 10;
@@ -448,8 +447,7 @@ public class SampleByTest extends AbstractGriffinTest {
                     Assert.assertEquals(0, engine.getBusyReaderCount());
                     Assert.assertEquals(0, engine.getBusyWriterCount());
                 }
-                engine.releaseAllReaders();
-                engine.releaseAllWriters();
+                engine.clear();
             }
         });
     }

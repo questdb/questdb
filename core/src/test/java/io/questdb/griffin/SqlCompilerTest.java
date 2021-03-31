@@ -1656,8 +1656,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                 final RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory();
                 factory.close();
             } finally {
-                engine.releaseAllWriters();
-                engine.releaseAllReaders();
+                engine.clear();
             }
         });
     }
@@ -1675,14 +1674,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     @Test
     public void testCompileSet() throws Exception {
         String query = "SET x = y";
-        TestUtils.assertMemoryLeak(() -> {
-            try {
-                Assert.assertEquals(SET, compiler.compile(query, sqlExecutionContext).getType());
-            } finally {
-                engine.releaseAllWriters();
-                engine.releaseAllReaders();
-            }
-        });
+        assertMemoryLeak(() -> Assert.assertEquals(SET, compiler.compile(query, sqlExecutionContext).getType()));
     }
 
     @Test
@@ -1852,11 +1844,10 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                         TestUtils.assertContains(e.getMessage(), "Could not create table. See log for details");
                     }
 
-                    engine.releaseAllReaders();
-                    engine.releaseAllWriters();
-
                     Assert.assertEquals(0, engine.getBusyReaderCount());
                     Assert.assertEquals(0, engine.getBusyWriterCount());
+
+                    engine.clear();
                 }
             }
         });
@@ -1910,11 +1901,10 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                         TestUtils.assertContains(e.getMessage(), "Could not create table. See log for details");
                     }
 
-                    engine.releaseAllReaders();
-                    engine.releaseAllWriters();
-
                     Assert.assertEquals(0, engine.getBusyReaderCount());
                     Assert.assertEquals(0, engine.getBusyWriterCount());
+
+                    engine.clear();
                 }
             }
         });
@@ -2414,71 +2404,6 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testInsertAsSelectReplaceColumn() throws Exception {
-        final String expected = "a\tb\n" +
-                "315515118\tNaN\n" +
-                "-727724771\tNaN\n" +
-                "-948263339\tNaN\n" +
-                "592859671\tNaN\n" +
-                "-847531048\tNaN\n" +
-                "-2041844972\tNaN\n" +
-                "-1575378703\tNaN\n" +
-                "1545253512\tNaN\n" +
-                "1573662097\tNaN\n" +
-                "339631474\tNaN\n";
-
-        Fiddler fiddler = new Fiddler() {
-            int state = 0;
-
-            @Override
-            public boolean isHappy() {
-                return state > 1;
-            }
-
-            @Override
-            public void run(CairoEngine engine) {
-                if (state++ == 1) {
-                    // remove column from table X
-                    try (TableWriter writer = engine.getWriter(
-                            AllowAllCairoSecurityContext.INSTANCE,
-                            "y"
-                    )) {
-                        writer.removeColumn("int1");
-                        writer.addColumn("c", ColumnType.INT);
-                    }
-                }
-            }
-        };
-
-        TestUtils.assertMemoryLeak(() -> {
-            try (CairoEngine engine = new CairoEngine(configuration) {
-                @Override
-                public TableReader getReader(CairoSecurityContext cairoSecurityContext, CharSequence tableName, long version) {
-                    fiddler.run(this);
-                    return super.getReader(cairoSecurityContext, tableName, version);
-                }
-            }) {
-                try (SqlCompiler compiler = new SqlCompiler(engine)) {
-
-                    compiler.compile("create table x (a INT, b INT)", sqlExecutionContext);
-                    compiler.compile("create table y as (select rnd_int() int1, rnd_int() int2 from long_sequence(10))", sqlExecutionContext);
-                    compiler.compile("insert into x select * from y", sqlExecutionContext);
-
-                    TestUtils.assertSql(
-                            compiler,
-                            sqlExecutionContext,
-                            "select * from x",
-                            sink,
-                            expected
-                    );
-                    Assert.assertEquals(0, engine.getBusyReaderCount());
-                    Assert.assertEquals(0, engine.getBusyWriterCount());
-                }
-            }
-        });
-    }
-
-    @Test
     public void testInsertAsSelectColumnList() throws Exception {
         String expectedData = "a\tb\tc\td\te\tf\tg\th\ti\tj\tk\tl\tm\tn\to\tp\n" +
                 "1569490116\tNaN\tfalse\t\tNaN\t0.7611\t428\t-1593\t2015-04-04T16:34:47.226Z\t\t\t185\t7039584373105579285\t1970-01-01T00:00:00.000000Z\t4\t00000000 af 19 c4 95 94 36 53 49 b4 59 7e\n" +
@@ -2842,38 +2767,23 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     public void testInsertAsSelectError(CharSequence ddl, CharSequence insert, int errorPosition, CharSequence errorMessage) throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try {
-                if (ddl != null) {
-                    compiler.compile(ddl, sqlExecutionContext);
-                }
-                assertFailure0(errorPosition, errorMessage, insert);
-
-                Assert.assertEquals(0, engine.getBusyReaderCount());
-                Assert.assertEquals(0, engine.getBusyWriterCount());
-            } finally {
-                engine.releaseAllWriters();
-                engine.releaseAllReaders();
+        assertMemoryLeak(() -> {
+            if (ddl != null) {
+                compiler.compile(ddl, sqlExecutionContext);
             }
+            assertFailure0(errorPosition, errorMessage, insert);
         });
     }
 
     @Test
     public void testInsertAsSelectFewerSelectColumns() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table y as (select x, cast(2*((x-1)/2) as int)+2 m, abs(rnd_int() % 100) b from long_sequence(10))", sqlExecutionContext);
             try {
-                compiler.compile("create table y as (select x, cast(2*((x-1)/2) as int)+2 m, abs(rnd_int() % 100) b from long_sequence(10))", sqlExecutionContext);
-                try {
-                    compiler.compile("insert into y select cast(2*((x-1+10)/2) as int)+2 m, abs(rnd_int() % 100) b from long_sequence(6)", sqlExecutionContext);
-                } catch (SqlException e) {
-                    Assert.assertEquals(14, e.getPosition());
-                    Assert.assertTrue(Chars.contains(e.getFlyweightMessage(), "not enough"));
-                }
-                Assert.assertEquals(0, engine.getBusyReaderCount());
-                Assert.assertEquals(0, engine.getBusyWriterCount());
-            } finally {
-                engine.releaseAllWriters();
-                engine.releaseAllReaders();
+                compiler.compile("insert into y select cast(2*((x-1+10)/2) as int)+2 m, abs(rnd_int() % 100) b from long_sequence(6)", sqlExecutionContext);
+            } catch (SqlException e) {
+                Assert.assertEquals(14, e.getPosition());
+                Assert.assertTrue(Chars.contains(e.getFlyweightMessage(), "not enough"));
             }
         });
     }
@@ -2986,31 +2896,67 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testInsertTimestampAsStr() throws Exception {
-        final String expected = "ts\n" +
-                "2020-01-10T15:00:01.000143Z\n" +
-                "2020-01-10T18:00:01.800000Z\n";
+    public void testInsertAsSelectReplaceColumn() throws Exception {
+        final String expected = "a\tb\n" +
+                "315515118\tNaN\n" +
+                "-727724771\tNaN\n" +
+                "-948263339\tNaN\n" +
+                "592859671\tNaN\n" +
+                "-847531048\tNaN\n" +
+                "-2041844972\tNaN\n" +
+                "-1575378703\tNaN\n" +
+                "1545253512\tNaN\n" +
+                "1573662097\tNaN\n" +
+                "339631474\tNaN\n";
 
-        assertMemoryLeak(() -> {
-            compiler.compile("create table xy (ts timestamp)", sqlExecutionContext);
-            // execute insert with micros
-            executeInsert("insert into xy(ts) values ('2020-01-10T15:00:01.000143Z')");
+        Fiddler fiddler = new Fiddler() {
+            int state = 0;
 
-            // execute insert with millis
-            executeInsert("insert into xy(ts) values ('2020-01-10T18:00:01.800Z')");
-
-            // test bad format
-            try {
-                executeInsert("insert into xy(ts) values ('2020-01-10T18:00:01.800Zz')");
-                Assert.fail();
-            } catch (CairoException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "could not convert to timestamp");
+            @Override
+            public boolean isHappy() {
+                return state > 1;
             }
 
-            assertSql(
-                    "xy",
-                    expected
-            );
+            @Override
+            public void run(CairoEngine engine) {
+                if (state++ == 1) {
+                    // remove column from table X
+                    try (TableWriter writer = engine.getWriter(
+                            AllowAllCairoSecurityContext.INSTANCE,
+                            "y"
+                    )) {
+                        writer.removeColumn("int1");
+                        writer.addColumn("c", ColumnType.INT);
+                    }
+                }
+            }
+        };
+
+        TestUtils.assertMemoryLeak(() -> {
+            try (CairoEngine engine = new CairoEngine(configuration) {
+                @Override
+                public TableReader getReader(CairoSecurityContext cairoSecurityContext, CharSequence tableName, long version) {
+                    fiddler.run(this);
+                    return super.getReader(cairoSecurityContext, tableName, version);
+                }
+            }) {
+                try (SqlCompiler compiler = new SqlCompiler(engine)) {
+
+                    compiler.compile("create table x (a INT, b INT)", sqlExecutionContext);
+                    compiler.compile("create table y as (select rnd_int() int1, rnd_int() int2 from long_sequence(10))", sqlExecutionContext);
+                    compiler.compile("insert into x select * from y", sqlExecutionContext);
+
+                    TestUtils.assertSql(
+                            compiler,
+                            sqlExecutionContext,
+                            "select * from x",
+                            sink,
+                            expected
+                    );
+                    Assert.assertEquals(0, engine.getBusyReaderCount());
+                    Assert.assertEquals(0, engine.getBusyWriterCount());
+                }
+            }
         });
     }
 
@@ -3058,6 +3004,35 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                         " rnd_int()," +
                         " rnd_int()" +
                         " from long_sequence(30)", 12, "select clause must provide timestamp column");
+    }
+
+    @Test
+    public void testInsertTimestampAsStr() throws Exception {
+        final String expected = "ts\n" +
+                "2020-01-10T15:00:01.000143Z\n" +
+                "2020-01-10T18:00:01.800000Z\n";
+
+        assertMemoryLeak(() -> {
+            compiler.compile("create table xy (ts timestamp)", sqlExecutionContext);
+            // execute insert with micros
+            executeInsert("insert into xy(ts) values ('2020-01-10T15:00:01.000143Z')");
+
+            // execute insert with millis
+            executeInsert("insert into xy(ts) values ('2020-01-10T18:00:01.800Z')");
+
+            // test bad format
+            try {
+                executeInsert("insert into xy(ts) values ('2020-01-10T18:00:01.800Zz')");
+                Assert.fail();
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "could not convert to timestamp");
+            }
+
+            assertSql(
+                    "xy",
+                    expected
+            );
+        });
     }
 
     @Test
@@ -3477,20 +3452,13 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     private void testInsertAsSelect(CharSequence expectedData, CharSequence ddl, CharSequence insert, CharSequence select) throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try {
-                compiler.compile(ddl, sqlExecutionContext);
-                compiler.compile(insert, sqlExecutionContext);
-                assertSql(
-                        select,
-                        expectedData
-                );
-                Assert.assertEquals(0, engine.getBusyReaderCount());
-                Assert.assertEquals(0, engine.getBusyWriterCount());
-            } finally {
-                engine.releaseAllWriters();
-                engine.releaseAllReaders();
-            }
+        assertMemoryLeak(() -> {
+            compiler.compile(ddl, sqlExecutionContext);
+            compiler.compile(insert, sqlExecutionContext);
+            assertSql(
+                    select,
+                    expectedData
+            );
         });
     }
 

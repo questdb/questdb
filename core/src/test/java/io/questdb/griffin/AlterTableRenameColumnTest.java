@@ -97,8 +97,7 @@ public class AlterTableRenameColumnTest extends AbstractGriffinTest {
                         Assert.assertEquals(0, engine.getBusyWriterCount());
                         Assert.assertEquals(0, engine.getBusyReaderCount());
                     } finally {
-                        engine.releaseAllReaders();
-                        engine.releaseAllWriters();
+                        engine.clear();
                     }
                 }
         );
@@ -197,8 +196,7 @@ public class AlterTableRenameColumnTest extends AbstractGriffinTest {
                         Assert.assertEquals(0, engine.getBusyWriterCount());
                         Assert.assertEquals(0, engine.getBusyReaderCount());
                     } finally {
-                        engine.releaseAllReaders();
-                        engine.releaseAllWriters();
+                        engine.clear();
                     }
                 }
         );
@@ -322,8 +320,7 @@ public class AlterTableRenameColumnTest extends AbstractGriffinTest {
                 TestUtils.assertContains(e.getFlyweightMessage(), message);
             }
 
-            engine.releaseAllReaders();
-            engine.releaseAllWriters();
+            engine.clear();
         });
     }
 

@@ -64,6 +64,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     private final IntList symbolCountSnapshot = new IntList();
     private final TxReader txFile;
     private final MappedReadOnlyMemory todoMem = new SinglePageMappedReadOnlyPageMemory();
+    private final long txnScoreboard;
     private int partitionCount;
     private LongList columnTops;
     private ObjList<MappedReadOnlyMemory> columns;
@@ -74,8 +75,6 @@ public class TableReader implements Closeable, SymbolTableSource {
     private long txn = TableUtils.INITIAL_TXN;
     private long tempMem8b = Unsafe.malloc(8);
     private boolean active = false;
-    private final long txnScoreboard;
-    private final boolean ownTxnScoreboard;
 
     public TableReader(CairoConfiguration configuration, CharSequence tableName) {
         this(configuration, tableName, 0);
@@ -89,10 +88,8 @@ public class TableReader implements Closeable, SymbolTableSource {
         this.path = new Path();
         if (txnScoreboard == 0) {
             this.txnScoreboard = TxnScoreboard.create(path, tableName);
-            ownTxnScoreboard = true;
         } else {
             this.txnScoreboard = txnScoreboard;
-            ownTxnScoreboard = false;
         }
         this.path.of(configuration.getRoot()).concat(tableName);
         this.rootLen = path.length();
@@ -174,9 +171,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             Misc.free(todoMem);
             freeColumns();
             freeTempMem();
-            if (ownTxnScoreboard) {
-                TxnScoreboard.close(path, tableName, txnScoreboard);
-            }
+            TxnScoreboard.close(path, tableName, txnScoreboard);
             Misc.free(path);
             LOG.debug().$("closed '").utf8(tableName).$('\'').$();
         }
@@ -296,6 +291,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         if (active) {
             return;
         }
+        reload();
         active = true;
     }
 
@@ -303,6 +299,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         // check for double-close
         if (active) {
             active = false;
+            TxnScoreboard.release(txnScoreboard, txn);
         }
     }
 
@@ -1011,7 +1008,11 @@ public class TableReader implements Closeable, SymbolTableSource {
                 // ok, we have snapshot, check if our snapshot is stable
                 if (txn == txFile.getTxn()) {
                     // good, very stable, congrats
+                    if (active) {
+                        TxnScoreboard.release(txnScoreboard, this.txn);
+                    }
                     this.txn = txn;
+                    TxnScoreboard.acquire(txnScoreboard, txn);
                     this.rowCount = txFile.getFixedRowCount() + txFile.getTransientRowCount();
                     LOG.debug()
                             .$("new transaction [txn=").$(txn)

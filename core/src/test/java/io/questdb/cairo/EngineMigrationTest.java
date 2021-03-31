@@ -413,8 +413,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
     }
 
     private void downgradeTxFile(TableModel src, LongList removedPartitions) {
-        engine.releaseAllReaders();
-        engine.releaseAllWriters();
+        engine.clear();
 
         try (var path = new Path()) {
             path.concat(root).concat(src.getName()).concat(TableUtils.META_FILE_NAME);

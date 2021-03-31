@@ -526,8 +526,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                             TestUtils.assertContains(e.getMessage(), error);
                         }
                     } finally {
-                        engine2.releaseAllWriters();
-                        engine2.releaseAllReaders();
+                        engine2.clear();
                         engine = tempEngine;
                         compiler = tempCompiler;
                     }

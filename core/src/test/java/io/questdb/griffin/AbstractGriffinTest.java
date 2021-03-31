@@ -42,18 +42,97 @@ import org.junit.BeforeClass;
 public class AbstractGriffinTest extends AbstractCairoTest {
     protected static final BindVariableService bindVariableService = new BindVariableServiceImpl(configuration);
     private static final LongList rows = new LongList();
+    private final static double EPSILON = 0.000001;
     protected static SqlExecutionContext sqlExecutionContext;
     protected static CairoEngine engine;
     protected static SqlCompiler compiler;
 
-    private final static double EPSILON = 0.000001;
+    public static void assertReader(String expected, CharSequence tableName) {
+        try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+            TestUtils.assertReader(expected, reader, sink);
+        }
+    }
 
-    public static boolean doubleEquals(double a, double b){
+    public static void assertVariableColumns(RecordCursorFactory factory, boolean checkSameStr) {
+        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+            RecordMetadata metadata = factory.getMetadata();
+            final int columnCount = metadata.getColumnCount();
+            final Record record = cursor.getRecord();
+            while (cursor.hasNext()) {
+                for (int i = 0; i < columnCount; i++) {
+                    switch (metadata.getColumnType(i)) {
+                        case ColumnType.STRING:
+                            CharSequence a = record.getStr(i);
+                            CharSequence b = record.getStrB(i);
+                            if (a == null) {
+                                Assert.assertNull(b);
+                                Assert.assertEquals(TableUtils.NULL_LEN, record.getStrLen(i));
+                            } else {
+                                if (checkSameStr) {
+                                    Assert.assertNotSame(a, b);
+                                }
+                                TestUtils.assertEquals(a, b);
+                                Assert.assertEquals(a.length(), record.getStrLen(i));
+                            }
+                            break;
+                        case ColumnType.BINARY:
+                            BinarySequence s = record.getBin(i);
+                            if (s == null) {
+                                Assert.assertEquals(TableUtils.NULL_LEN, record.getBinLen(i));
+                            } else {
+                                Assert.assertEquals(s.length(), record.getBinLen(i));
+                            }
+                            break;
+                        default:
+                            break;
+                    }
+                }
+            }
+        }
+    }
+
+    public static boolean doubleEquals(double a, double b) {
         return a == b || Math.abs(a - b) < EPSILON;
     }
 
-    public static boolean doubleEquals(double a, double b, double epsilon){
+    public static boolean doubleEquals(double a, double b, double epsilon) {
         return a == b || Math.abs(a - b) < epsilon;
+    }
+
+    public static void executeInsert(String ddl) throws SqlException {
+        CompiledQuery compiledQuery = compiler.compile(ddl, sqlExecutionContext);
+        final InsertStatement insertStatement = compiledQuery.getInsertStatement();
+        try (InsertMethod insertMethod = insertStatement.createMethod(sqlExecutionContext)) {
+            insertMethod.execute();
+            insertMethod.commit();
+        }
+    }
+
+    @BeforeClass
+    public static void setUp2() {
+        engine = new CairoEngine(configuration);
+        compiler = new SqlCompiler(engine);
+        sqlExecutionContext = new SqlExecutionContextImpl(
+                engine, 1, engine.getMessageBus())
+                .with(
+                        AllowAllCairoSecurityContext.INSTANCE,
+                        bindVariableService,
+                        null,
+                        -1,
+                        null);
+        bindVariableService.clear();
+    }
+
+    @AfterClass
+    public static void tearDown() {
+        engine.close();
+        compiler.close();
+    }
+
+    @After
+    public void tearDownAfterTest() {
+        engine.resetTableId();
+        engine.clear();
     }
 
     protected static void assertQuery(
@@ -200,166 +279,6 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             Assert.assertTrue((expectSize && rowsCount != -1) || (!expectSize && rowsCount == -1));
             Assert.assertTrue(rowsCount == -1 || expectedRow == rowsCount);
         }
-    }
-
-    public static void assertReader(String expected, CharSequence tableName) {
-        try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
-            TestUtils.assertReader(expected, reader, sink);
-        }
-    }
-
-    public static void assertVariableColumns(RecordCursorFactory factory, boolean checkSameStr) {
-        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-            RecordMetadata metadata = factory.getMetadata();
-            final int columnCount = metadata.getColumnCount();
-            final Record record = cursor.getRecord();
-            while (cursor.hasNext()) {
-                for (int i = 0; i < columnCount; i++) {
-                    switch (metadata.getColumnType(i)) {
-                        case ColumnType.STRING:
-                            CharSequence a = record.getStr(i);
-                            CharSequence b = record.getStrB(i);
-                            if (a == null) {
-                                Assert.assertNull(b);
-                                Assert.assertEquals(TableUtils.NULL_LEN, record.getStrLen(i));
-                            } else {
-                                if (checkSameStr) {
-                                    Assert.assertNotSame(a, b);
-                                }
-                                TestUtils.assertEquals(a, b);
-                                Assert.assertEquals(a.length(), record.getStrLen(i));
-                            }
-                            break;
-                        case ColumnType.BINARY:
-                            BinarySequence s = record.getBin(i);
-                            if (s == null) {
-                                Assert.assertEquals(TableUtils.NULL_LEN, record.getBinLen(i));
-                            } else {
-                                Assert.assertEquals(s.length(), record.getBinLen(i));
-                            }
-                            break;
-                        default:
-                            break;
-                    }
-                }
-            }
-        }
-    }
-
-    public static void executeInsert(String ddl) throws SqlException {
-        CompiledQuery compiledQuery = compiler.compile(ddl, sqlExecutionContext);
-        final InsertStatement insertStatement = compiledQuery.getInsertStatement();
-        try (InsertMethod insertMethod = insertStatement.createMethod(sqlExecutionContext)) {
-            insertMethod.execute();
-            insertMethod.commit();
-        }
-    }
-
-    @BeforeClass
-    public static void setUp2() {
-        engine = new CairoEngine(configuration);
-        compiler = new SqlCompiler(engine);
-        sqlExecutionContext = new SqlExecutionContextImpl(
-                engine, 1, engine.getMessageBus())
-                .with(
-                        AllowAllCairoSecurityContext.INSTANCE,
-                        bindVariableService,
-                        null,
-                        -1,
-                        null);
-        bindVariableService.clear();
-    }
-
-    @AfterClass
-    public static void tearDown() {
-        engine.close();
-        compiler.close();
-    }
-
-    @After
-    public void tearDownAfterTest() {
-        engine.resetTableId();
-        engine.releaseAllReaders();
-        engine.releaseAllWriters();
-    }
-
-    protected void createPopulateTable(
-            TableModel tableModel,
-            int totalRows,
-            String startDate,
-            int partitionCount) throws NumericException, SqlException {
-        long fromTimestamp = TimestampFormatUtils.parseTimestamp(startDate + "T00:00:00.000Z");
-
-        long increment = 0;
-        if (tableModel.getPartitionBy() != PartitionBy.NONE) {
-            Timestamps.TimestampAddMethod partitionAdd = TableUtils.getPartitionAdd(tableModel.getPartitionBy());
-            long toTs = partitionAdd.calculate(fromTimestamp, partitionCount) - fromTimestamp - Timestamps.SECOND_MICROS;
-            increment = totalRows > 0 ? Math.max(toTs / totalRows, 1) : 0;
-        }
-
-        StringBuilder sql = new StringBuilder();
-        sql.append("create table ").append(tableModel.getName()).append(" as (").append(Misc.EOL).append("select").append(Misc.EOL);
-        for (int i = 0; i < tableModel.getColumnCount(); i++) {
-            int colType = tableModel.getColumnType(i);
-            CharSequence colName = tableModel.getColumnName(i);
-            switch (colType) {
-                case ColumnType.INT:
-                    sql.append("cast(x as int) ").append(colName);
-                    break;
-                case ColumnType.STRING:
-                    sql.append("CAST(x as STRING) ").append(colName);
-                    break;
-                case ColumnType.LONG:
-                    sql.append("x ").append(colName);
-                    break;
-                case ColumnType.DOUBLE:
-                    sql.append("x / 1000.0 ").append(colName);
-                    break;
-                case ColumnType.TIMESTAMP:
-                    sql.append("CAST(").append(fromTimestamp).append("L AS TIMESTAMP) + x * ").append(increment).append("  ").append(colName);
-                    break;
-                case ColumnType.SYMBOL:
-                    sql.append("rnd_symbol(4,4,4,2) ").append(colName);
-                    break;
-                case ColumnType.BOOLEAN:
-                    sql.append("rnd_boolean() ").append(colName);
-                    break;
-                case ColumnType.FLOAT:
-                    sql.append("CAST(x / 1000.0 AS FLOAT) ").append(colName);
-                    break;
-                case ColumnType.DATE:
-                    sql.append("CAST(").append(fromTimestamp).append("L AS DATE) ").append(colName);
-                    break;
-                case ColumnType.LONG256:
-                    sql.append("CAST(x AS LONG256) ").append(colName);
-                    break;
-                case ColumnType.BYTE:
-                    sql.append("CAST(x AS BYTE) ").append(colName);
-                    break;
-                case ColumnType.CHAR:
-                    sql.append("CAST(x AS CHAR) ").append(colName);
-                    break;
-                case ColumnType.SHORT:
-                    sql.append("CAST(x AS SHORT) ").append(colName);
-                    break;
-                default:
-                    throw new UnsupportedOperationException();
-            }
-            if (i < tableModel.getColumnCount() - 1) {
-                sql.append("," + Misc.EOL);
-            }
-        }
-
-        sql.append(Misc.EOL + "from long_sequence(").append(totalRows).append(")");
-        sql.append(")" + Misc.EOL);
-        if (tableModel.getTimestampIndex() != -1) {
-            CharSequence timestampCol = tableModel.getColumnName(tableModel.getTimestampIndex());
-            sql.append(" timestamp(").append(timestampCol).append(")");
-        }
-        if (tableModel.getPartitionBy() != PartitionBy.NONE) {
-            sql.append(" Partition By ").append(PartitionBy.toString(tableModel.getPartitionBy()));
-        }
-        compiler.compile(sql.toString(), sqlExecutionContext);
     }
 
     protected static void assertCursor(
@@ -824,8 +743,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                 Assert.assertEquals(0, engine.getBusyWriterCount());
                 Assert.assertEquals(0, engine.getBusyReaderCount());
             } finally {
-                engine.releaseAllReaders();
-                engine.releaseAllWriters();
+                engine.clear();
             }
         });
     }
@@ -881,8 +799,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                 Assert.assertEquals(0, engine.getBusyReaderCount());
                 Assert.assertEquals(0, engine.getBusyWriterCount());
             } finally {
-                engine.releaseAllWriters();
-                engine.releaseAllReaders();
+                engine.clear();
             }
         });
     }
@@ -991,5 +908,84 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                 sink,
                 expected
         );
+    }
+
+    protected void createPopulateTable(
+            TableModel tableModel,
+            int totalRows,
+            String startDate,
+            int partitionCount) throws NumericException, SqlException {
+        long fromTimestamp = TimestampFormatUtils.parseTimestamp(startDate + "T00:00:00.000Z");
+
+        long increment = 0;
+        if (tableModel.getPartitionBy() != PartitionBy.NONE) {
+            Timestamps.TimestampAddMethod partitionAdd = TableUtils.getPartitionAdd(tableModel.getPartitionBy());
+            long toTs = partitionAdd.calculate(fromTimestamp, partitionCount) - fromTimestamp - Timestamps.SECOND_MICROS;
+            increment = totalRows > 0 ? Math.max(toTs / totalRows, 1) : 0;
+        }
+
+        StringBuilder sql = new StringBuilder();
+        sql.append("create table ").append(tableModel.getName()).append(" as (").append(Misc.EOL).append("select").append(Misc.EOL);
+        for (int i = 0; i < tableModel.getColumnCount(); i++) {
+            int colType = tableModel.getColumnType(i);
+            CharSequence colName = tableModel.getColumnName(i);
+            switch (colType) {
+                case ColumnType.INT:
+                    sql.append("cast(x as int) ").append(colName);
+                    break;
+                case ColumnType.STRING:
+                    sql.append("CAST(x as STRING) ").append(colName);
+                    break;
+                case ColumnType.LONG:
+                    sql.append("x ").append(colName);
+                    break;
+                case ColumnType.DOUBLE:
+                    sql.append("x / 1000.0 ").append(colName);
+                    break;
+                case ColumnType.TIMESTAMP:
+                    sql.append("CAST(").append(fromTimestamp).append("L AS TIMESTAMP) + x * ").append(increment).append("  ").append(colName);
+                    break;
+                case ColumnType.SYMBOL:
+                    sql.append("rnd_symbol(4,4,4,2) ").append(colName);
+                    break;
+                case ColumnType.BOOLEAN:
+                    sql.append("rnd_boolean() ").append(colName);
+                    break;
+                case ColumnType.FLOAT:
+                    sql.append("CAST(x / 1000.0 AS FLOAT) ").append(colName);
+                    break;
+                case ColumnType.DATE:
+                    sql.append("CAST(").append(fromTimestamp).append("L AS DATE) ").append(colName);
+                    break;
+                case ColumnType.LONG256:
+                    sql.append("CAST(x AS LONG256) ").append(colName);
+                    break;
+                case ColumnType.BYTE:
+                    sql.append("CAST(x AS BYTE) ").append(colName);
+                    break;
+                case ColumnType.CHAR:
+                    sql.append("CAST(x AS CHAR) ").append(colName);
+                    break;
+                case ColumnType.SHORT:
+                    sql.append("CAST(x AS SHORT) ").append(colName);
+                    break;
+                default:
+                    throw new UnsupportedOperationException();
+            }
+            if (i < tableModel.getColumnCount() - 1) {
+                sql.append("," + Misc.EOL);
+            }
+        }
+
+        sql.append(Misc.EOL + "from long_sequence(").append(totalRows).append(")");
+        sql.append(")" + Misc.EOL);
+        if (tableModel.getTimestampIndex() != -1) {
+            CharSequence timestampCol = tableModel.getColumnName(tableModel.getTimestampIndex());
+            sql.append(" timestamp(").append(timestampCol).append(")");
+        }
+        if (tableModel.getPartitionBy() != PartitionBy.NONE) {
+            sql.append(" Partition By ").append(PartitionBy.toString(tableModel.getPartitionBy()));
+        }
+        compiler.compile(sql.toString(), sqlExecutionContext);
     }
 }
