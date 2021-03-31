@@ -363,7 +363,7 @@ void k_way_merge_long_index(
 }
 
 #ifdef OOO_CPP_PROFILE_TIMING
-const int perf_counter_length = 30;
+const int perf_counter_length = 31;
 std::atomic_ulong perf_counters[perf_counter_length];
 
 uint64_t currentTimeNanos() {
@@ -546,7 +546,7 @@ DECLARE_DISPATCHER(re_shuffle_256bit);
 JNIEXPORT void JNICALL
 Java_io_questdb_std_Vect_indexReshuffle256Bit(JNIEnv *env, jclass cl, jlong pSrc, jlong pDest, jlong pIndex,
                                              jlong count) {
-    measure_time(6, [=]() {
+    measure_time(30, [=]() {
         re_shuffle_256bit(
                 reinterpret_cast<long_256bit *>(pSrc),
                 reinterpret_cast<long_256bit *>(pDest),
