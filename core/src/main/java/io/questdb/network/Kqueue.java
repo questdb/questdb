@@ -54,6 +54,7 @@ public final class Kqueue implements Closeable {
         this.eventList = this.readAddress = Unsafe.calloc(bufferSize);
         this.kq = kqf.kqueue();
         if (this.kq != -1) {
+            assert Files.auditOpen(this.kq);
             Files.bumpFileCount();
         }
     }
