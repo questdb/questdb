@@ -289,6 +289,16 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
     }
 
     @Test
+    public void testInsertTouchesNotLastTopPartition() throws Exception {
+        executeVanilla(OutOfOrderTest::testOOOTouchesNotLastPartitionTop0);
+    }
+
+    @Test
+    public void testInsertTouchesNotLastPartitionTopParallel() throws Exception {
+        executeWithPool(4, OutOfOrderTest::testOOOTouchesNotLastPartitionTop0);
+    }
+
+    @Test
     public void testColumnTopMidDataMergeData() throws Exception {
         executeVanilla(OutOfOrderTest::testColumnTopMidDataMergeData0);
     }
@@ -4027,6 +4037,84 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
                         " rnd_symbol(4,4,4,2) ik," +
                         " rnd_long() j," +
                         " timestamp_sequence(" + (day - min) + "L, " + sec + "L) ts," +
+                        " rnd_byte(2,50) l," +
+                        " rnd_bin(10, 20, 2) m," +
+                        " rnd_str(5,16,2) n," +
+                        " rnd_char() t," +
+                        " rnd_long256() l256" +
+                        " from long_sequence(60)" +
+                        ") timestamp (ts) partition by DAY",
+                sqlExecutionContext
+        );
+
+        assertOutOfOrderDataConsistency(
+                engine,
+                compiler,
+                sqlExecutionContext,
+                "create table y as (x union all append)",
+                "y order by ts, i desc",
+                "insert into x select * from append",
+                "x"
+        );
+
+        assertIndexConsistency(compiler, sqlExecutionContext);
+    }
+
+    private static void testOOOTouchesNotLastPartitionTop0(
+            CairoEngine engine,
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
+        long day = Timestamps.DAY_MICROS;
+        long hour = Timestamps.HOUR_MICROS;
+        long min = hour / 60;
+        long minsPerDay = day / min;
+
+        // crate records from Jan 1 01:00:00 to Jan 2 01:00:00 with 1 min interval
+        compiler.compile(
+                "create table x as ( " +
+                        "select" +
+                        " cast(x as int) i," +
+                        " rnd_symbol('msft','ibm', 'googl') sym," +
+                        " round(rnd_double(0)*100, 3) amt," +
+                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                        " rnd_boolean() b," +
+                        " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                        " rnd_double(2) d," +
+                        " rnd_float(2) e," +
+                        " rnd_short(10,1024) f," +
+                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                        " rnd_symbol(4,4,4,2) ik," +
+                        " rnd_long() j," +
+                        " timestamp_sequence(" + hour + "L, " + min + "L) ts," +
+                        " rnd_byte(2,50) l," +
+                        " rnd_bin(10, 20, 2) m," +
+                        " rnd_str(5,16,2) n," +
+                        " rnd_char() t," +
+                        " rnd_long256() l256" +
+                        " from long_sequence(" + minsPerDay + ")" +
+                        ") timestamp (ts) partition by DAY",
+                sqlExecutionContext
+        );
+
+        // crate 60 records from Jan 1 00:01:00 to Jan 1 01:00:00 with 1 min interval
+        // so that Jan 1 01:00:00 present in both record sets
+        compiler.compile(
+                "create table append as (" +
+                        "select" +
+                        " cast(x as int) i," +
+                        " rnd_symbol('msft','ibm', 'googl') sym," +
+                        " round(rnd_double(0)*100, 3) amt," +
+                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                        " rnd_boolean() b," +
+                        " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                        " rnd_double(2) d," +
+                        " rnd_float(2) e," +
+                        " rnd_short(10,1024) f," +
+                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                        " rnd_symbol(4,4,4,2) ik," +
+                        " rnd_long() j," +
+                        " timestamp_sequence(" + min + "L, " + min + "L) ts," +
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +

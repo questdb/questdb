@@ -146,12 +146,10 @@ public class AbstractOutOfOrderTest extends AbstractCairoTest {
     ) throws SqlException, URISyntaxException {
         // create third table, which will contain both X and 1AM
         compiler.compile(referenceTableDDL, sqlExecutionContext);
+
         // expected outcome - output ignored, but useful for debug
-        // TODO: below output of y is not used anywhere
-        // TODO: Use above method assertOutOfOrderDataConsistency to compare x against y
-        // TODO: but unstable records sorting have to be solved first
-        // TODO: e.g. y ordered with order by ts is not the same order as OOO merge when there are several records
-        // TODO: with same ts value
+        // y ordered with 'order by ts' is not the same order as OOO insert into x when there are several records
+        // with the same ts value
         AbstractOutOfOrderTest.printSqlResult(compiler, sqlExecutionContext, "y order by ts");
         compiler.compile(outOfOrderSQL, sqlExecutionContext);
         AbstractOutOfOrderTest.assertSqlResultAgainstFile(compiler, sqlExecutionContext, "x", resourceName);
