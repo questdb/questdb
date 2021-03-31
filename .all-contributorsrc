@@ -301,6 +301,17 @@
       "contributions": [
         "infra"
       ]
+    },
+    {
+      "login": "Ugbot",
+      "name": "Ben Gamble",
+      "avatar_url": "https://avatars.githubusercontent.com/u/2143631?v=4",
+      "profile": "https://github.com/Ugbot",
+      "contributions": [
+        "question",
+        "userTesting",
+        "talk"
+      ]
     }
   ],
   "badgeTemplate": "[![All Contributors](https://img.shields.io/badge/all_contributors-<%= contributors.length %>-orange.svg)](#contributors)",
