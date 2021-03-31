@@ -88,8 +88,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         this.tableName = Chars.toString(tableName);
         this.path = new Path();
         if (txnScoreboard == 0) {
-            path.put("Local\\").put(tableName).$();
-            this.txnScoreboard = TxnScoreboard.create(path);
+            this.txnScoreboard = TxnScoreboard.create(path, tableName);
             ownTxnScoreboard = true;
         } else {
             this.txnScoreboard = txnScoreboard;
@@ -176,8 +175,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             freeColumns();
             freeTempMem();
             if (ownTxnScoreboard) {
-                path.put("Local\\").put(tableName).$();
-                TxnScoreboard.close(path, txnScoreboard);
+                TxnScoreboard.close(path, tableName, txnScoreboard);
             }
             Misc.free(path);
             LOG.debug().$("closed '").utf8(tableName).$('\'').$();

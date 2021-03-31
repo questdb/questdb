@@ -167,7 +167,6 @@ JNIEXPORT jlong JNICALL Java_io_questdb_cairo_TxnScoreboard_getCount
 
 JNIEXPORT jlong JNICALL Java_io_questdb_cairo_TxnScoreboard_create0
         (JNIEnv *e, jclass cl, jlong lpszName) {
-
     uint64_t size = sizeof(txn_board_t);
     int64_t hMapping;
     auto *pBoard = reinterpret_cast<txn_board_t *>(openShm0(reinterpret_cast<char*>(lpszName), size, &hMapping));

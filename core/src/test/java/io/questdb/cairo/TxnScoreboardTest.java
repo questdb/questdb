@@ -25,7 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.std.Os;
-import io.questdb.std.str.CharSequenceZ;
+import io.questdb.std.str.Path;
 import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Test;
@@ -43,11 +43,11 @@ public class TxnScoreboardTest {
     @Test
     public void testLimits() {
 
-        try (final CharSequenceZ name = new CharSequenceZ("hello")) {
+        try (final Path shmPath = new Path()) {
             int expect = 4096;
-            long p2 = TxnScoreboard.create(name);
+            long p2 = TxnScoreboard.create(shmPath, "hello");
             try {
-                long p1 = TxnScoreboard.create(name);
+                long p1 = TxnScoreboard.create(shmPath, "hello");
                 try {
                     // we should successfully acquire expected number of entries
                     for (int i = 0; i < expect; i++) {
@@ -76,7 +76,7 @@ public class TxnScoreboardTest {
                         }
                     }
                 } finally {
-                    TxnScoreboard.close(name, p1);
+                    TxnScoreboard.close(shmPath, "hello", p1);
                 }
             } finally {
                 // now check that all counts are available via another memory space
@@ -93,10 +93,10 @@ public class TxnScoreboardTest {
 
     @Test
     public void testVanilla() {
-        try (final CharSequenceZ name = new CharSequenceZ("ok")) {
-            long p2 = TxnScoreboard.create(name);
+        try (final Path shmPath = new Path()) {
+            long p2 = TxnScoreboard.create(shmPath, "tab1");
             try {
-                long p1 = TxnScoreboard.create(name);
+                long p1 = TxnScoreboard.create(shmPath, "tab1");
                 try {
                     Assert.assertTrue(acquire(p1, 67));
                     Assert.assertTrue(acquire(p1, 68));
@@ -115,12 +115,12 @@ public class TxnScoreboardTest {
 
                     Assert.assertTrue(acquire(p1, 72));
                 } finally {
-                    TxnScoreboard.close(name, p1);
+                    TxnScoreboard.close(shmPath, "tab1", p1);
                 }
                 Assert.assertTrue(acquire(p2, 72));
                 Assert.assertEquals(2, TxnScoreboard.getCount(p2, 72));
             } finally {
-                TxnScoreboard.close(name, p2);
+                TxnScoreboard.close(shmPath, "tab1", p2);
             }
         }
     }

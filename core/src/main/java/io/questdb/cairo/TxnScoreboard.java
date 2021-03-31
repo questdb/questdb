@@ -24,16 +24,52 @@
 
 package io.questdb.cairo;
 
-import io.questdb.std.str.LPSZ;
+import io.questdb.std.LongHashSet;
+import io.questdb.std.Os;
+import io.questdb.std.str.Path;
 
 public class TxnScoreboard {
 
-    public static int close(LPSZ name, long pTxnScoreboard) {
-        return close0(name.address(), pTxnScoreboard);
+    private static final LongHashSet open = new LongHashSet();
+    private static final LongHashSet closed = new LongHashSet();
+
+    public static int close(Path shmPath, long pTxnScoreboard) {
+        assert assertClose(pTxnScoreboard);
+        return close0(shmPath.address(), pTxnScoreboard);
     }
 
-    public static long create(LPSZ name) {
-        return create0(name.address());
+    public static int close(Path shmPath, CharSequence tableName, long pTxnScoreboard) {
+        setShmName(shmPath, tableName);
+        return close(shmPath, pTxnScoreboard);
+    }
+
+    public static long create(Path shmPath, CharSequence tableName) {
+        setShmName(shmPath, tableName);
+        long pTxnScoreboard = create0(shmPath.address());
+        assert assertOpen(pTxnScoreboard);
+        return pTxnScoreboard;
+    }
+
+    private static synchronized boolean assertClose(long pTxnScoreboard) {
+        boolean result = open.contains(pTxnScoreboard) && closed.excludes(pTxnScoreboard);
+        closed.add(pTxnScoreboard);
+        open.remove(pTxnScoreboard);
+        return result;
+    }
+
+    private static synchronized boolean assertOpen(long pTxnScoreboard) {
+        int keyIndex = open.keyIndex(pTxnScoreboard);
+        open.addAt(keyIndex, pTxnScoreboard);
+        closed.remove(pTxnScoreboard);
+        return keyIndex > -1;
+    }
+
+    private static void setShmName(Path shmPath, CharSequence name) {
+        if (Os.type == Os.WINDOWS) {
+            shmPath.of("Local\\").put(name).$();
+        } else {
+            shmPath.of("/").put(name).$();
+        }
     }
 
     static native boolean acquire(long pTxnScoreboard, long txn);
