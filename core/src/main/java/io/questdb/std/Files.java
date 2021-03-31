@@ -65,8 +65,11 @@ public final class Files {
 
     public native static long append(long fd, long address, long len);
 
-    public static void bumpFileCount() {
-        OPEN_FILE_COUNT.incrementAndGet();
+    public static long bumpFileCount(long fd) {
+        if (fd != -1) {
+            OPEN_FILE_COUNT.incrementAndGet();
+        }
+        return fd;
     }
 
     public static int close(long fd) {
@@ -175,27 +178,15 @@ public final class Files {
     }
 
     public static long openAppend(LPSZ lpsz) {
-        long fd = openAppend(lpsz.address());
-        if (fd != -1) {
-            bumpFileCount();
-        }
-        return fd;
+        return bumpFileCount(openAppend(lpsz.address()));
     }
 
     public static long openRO(LPSZ lpsz) {
-        long fd = openRO(lpsz.address());
-        if (fd != -1) {
-            bumpFileCount();
-        }
-        return fd;
+        return bumpFileCount(openRO(lpsz.address()));
     }
 
     public static long openRW(LPSZ lpsz) {
-        long fd = openRW(lpsz.address());
-        if (fd != -1) {
-            bumpFileCount();
-        }
-        return fd;
+        return bumpFileCount(openRW(lpsz.address()));
     }
 
     public native static long read(long fd, long address, long len, long offset);
@@ -245,8 +236,6 @@ public final class Files {
 
         return false;
     }
-
-    public native static long sequentialRead(long fd, long address, int len);
 
     public static boolean setLastModified(LPSZ lpsz, long millis) {
         return setLastModified(lpsz.address(), millis);
