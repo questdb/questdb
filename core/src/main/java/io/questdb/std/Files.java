@@ -63,9 +63,9 @@ public final class Files {
     public native static long append(long fd, long address, long len);
 
     public static int close(long fd) {
+        auditClose(fd);
         int res = close0(fd);
         if (res == 0) {
-            auditClose(fd);
             OPEN_FILE_COUNT.decrementAndGet();
         }
         return res;
@@ -270,7 +270,7 @@ public final class Files {
 
     public native static long write(long fd, long address, long len, long offset);
 
-    native static int close0(long fd);
+    private native static int close0(long fd);
 
     private static boolean strcmp(long lpsz, CharSequence s) {
         int len = s.length();
@@ -323,7 +323,7 @@ public final class Files {
             throw new IllegalStateException("fd " + fd + " is already open for " + openFiles[(int) fd] + ", cannot be opened for " + path);
         }
         openFiles[(int) fd] = path.toString();
-        System.err.println(fd + " opened " + openFiles[(int) fd]);
+        // System.err.println(fd + " opened " + openFiles[(int) fd]);
     }
 
     public static synchronized void auditClose(long fd) {
@@ -333,7 +333,7 @@ public final class Files {
         if (null == openFiles[(int) fd]) {
             throw new IllegalStateException("fd " + fd + " is already closed!");
         }
-        System.err.println(fd + " closed " + openFiles[(int) fd]);
+        // System.err.println(fd + " closed " + openFiles[(int) fd]);
         openFiles[(int) fd] = null;
     }
 }
