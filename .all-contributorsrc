@@ -301,6 +301,16 @@
       "contributions": [
         "infra"
       ]
+    },
+    {
+      "login": "lepolac",
+      "name": "jonathanskrzypek",
+      "avatar_url": "https://avatars.githubusercontent.com/u/6312424?v=4",
+      "profile": "https://github.com/lepolac",
+      "contributions": [
+        "code",
+        "tool"
+      ]
     }
   ],
   "badgeTemplate": "[![All Contributors](https://img.shields.io/badge/all_contributors-<%= contributors.length %>-orange.svg)](#contributors)",
