@@ -522,9 +522,6 @@ public class TableBlockWriter implements Closeable {
                     destAddress = columnStartAddress;
                 } else {
                     long initialOffset = partitionStruct.getColumnStartOffset(columnIndex);
-                    if (initialOffset >= appendOffset) {
-                        System.out.println("okj");
-                    }
                     assert initialOffset < appendOffset;
                     final long minMapSz = nextAppendOffset - initialOffset;
                     if (minMapSz > partitionStruct.getColumnMappingSize(columnIndex)) {
