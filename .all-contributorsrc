@@ -301,6 +301,16 @@
       "contributions": [
         "infra"
       ]
+    },
+    {
+      "login": "bsmth",
+      "name": "Brian Thomas Smith",
+      "avatar_url": "https://avatars.githubusercontent.com/u/43580235?v=4",
+      "profile": "http://bsmth.de",
+      "contributions": [
+        "doc",
+        "content"
+      ]
     }
   ],
   "badgeTemplate": "[![All Contributors](https://img.shields.io/badge/all_contributors-<%= contributors.length %>-orange.svg)](#contributors)",
