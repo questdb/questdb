@@ -67,6 +67,8 @@ public final class Files {
 
     public static long bumpFileCount(long fd) {
         if (fd != -1) {
+            //noinspection AssertWithSideEffects
+            assert auditOpen(fd);
             OPEN_FILE_COUNT.incrementAndGet();
         }
         return fd;
@@ -219,15 +221,13 @@ public final class Files {
                             continue;
                         }
 
-                        clean = false;
                     } else {
                         if (remove(path.address())) {
                             continue;
                         }
 
-                        clean = false;
-
                     }
+                    clean = false;
                 } while (findNext(p) > 0);
             } finally {
                 findClose(p);
