@@ -360,11 +360,7 @@ $.fn.grid = function (msgBus) {
         }
       }
     }
-  }
-
-  function headerClick(e) {
-    bus.trigger("editor.insert.column", e.toElement.innerHTML)
-  }
+  } 
 
   function computeColumnWidths() {
     colMax = []
@@ -373,7 +369,9 @@ $.fn.grid = function (msgBus) {
     for (i = 0; i < columns.length; i++) {
       var c = columns[i]
       var col = $('<div class="qg-header qg-w' + i + '">' + c.name + "</div>")
-        .click(headerClick)
+        .on('click', function (e) {
+          bus.trigger("editor.insert.column", e.target.innerHTML)
+        })
         .appendTo(header)
       switch (c.type) {
         case "STRING":
