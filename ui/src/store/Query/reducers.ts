@@ -24,11 +24,26 @@
 
 import { differenceInMilliseconds } from "date-fns"
 
-import { QueryAction, QueryAT, QueryStateShape } from "types"
+import { NotificationShape, NotificationType, QueryAction, QueryAT, QueryStateShape } from "types"
 
 export const initialState: QueryStateShape = {
   notifications: [],
   running: false,
+  maxNotificationHeight: 500
+}
+
+function calculateHeight(notifications: NotificationShape[]): number {
+  if (!notifications) return 0;
+  let height = 0;
+  notifications.forEach(element => {
+    // Estimate element height
+    if (element.type === NotificationType.SUCCESS ) {
+      height += 145
+    } else {
+      height += 70;
+    }
+  });
+  return height;
 }
 
 const query = (state = initialState, action: QueryAction): QueryStateShape => {
@@ -36,7 +51,7 @@ const query = (state = initialState, action: QueryAction): QueryStateShape => {
     case QueryAT.ADD_NOTIFICATION: {
       const notifications = [action.payload, ...state.notifications]
 
-      if (notifications.length > 8) {
+      while (notifications.length > 1 && calculateHeight(notifications) > state.maxNotificationHeight) {
         notifications.pop()
       }
 
@@ -47,18 +62,9 @@ const query = (state = initialState, action: QueryAction): QueryStateShape => {
     }
 
     case QueryAT.CLEANUP_NOTIFICATIONS: {
-      const notifications = state.notifications.filter(
-        ({ createdAt }) =>
-          differenceInMilliseconds(new Date(), createdAt) < 15e3,
-      )
-
-      if (notifications.length === state.notifications.length) {
-        return state
-      }
-
       return {
         ...state,
-        notifications,
+        notifications: [],
       }
     }
 
@@ -89,6 +95,24 @@ const query = (state = initialState, action: QueryAction): QueryStateShape => {
       return {
         ...state,
         running: !state.running,
+      }
+    }
+
+    case QueryAT.CHANGE_MAX_NOTIFICATION_HEIGHTS: {
+      let notifications = state.notifications
+
+      while (calculateHeight(notifications) > action.payload) {
+        if (notifications == state.notifications) {
+          // copy
+          notifications = [...state.notifications]
+        }
+        notifications.pop()
+      }
+
+      return {
+        ...state, 
+        notifications,
+        maxNotificationHeight: action.payload,
       }
     }
 
