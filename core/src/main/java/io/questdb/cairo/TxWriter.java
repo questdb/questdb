@@ -58,6 +58,10 @@ public final class TxWriter extends TxReader implements Closeable {
         transientRowCount++;
     }
 
+    void append(long nRows) {
+        transientRowCount += nRows;
+    }
+
     public void appendBlock(long timestampLo, long timestampHi, long nRowsAdded) {
         if (timestampLo < maxTimestamp) {
             throw CairoException.instance(ff.errno()).put("Cannot insert rows out of order. Table=").put(path);
@@ -311,6 +315,11 @@ public final class TxWriter extends TxReader implements Closeable {
         minTimestamp = prevMinTimestamp;
     }
 
+    void resetToLastPartition(long committedTransientRowCount) {
+        maxTimestamp = prevMaxTimestamp;
+        transientRowCount = committedTransientRowCount;
+    }
+
     public void setMinTimestamp(long timestamp) {
         minTimestamp = timestamp;
         if (prevMinTimestamp == Long.MAX_VALUE) {
@@ -444,5 +453,9 @@ public final class TxWriter extends TxReader implements Closeable {
 
     long getCommittedMaxTimestamp() {
         return txMem.getLong(TX_OFFSET_MAX_TIMESTAMP);
+    }
+    
+    long getCommittedTransientRowCount() {
+        return txMem.getLong(TX_OFFSET_TRANSIENT_ROW_COUNT);
     }
 }

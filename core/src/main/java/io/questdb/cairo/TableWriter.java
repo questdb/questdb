@@ -67,7 +67,6 @@ import static io.questdb.cairo.TableUtils.readPartitionSizeMinMax;
 import static io.questdb.cairo.TableUtils.setPathForPartition;
 import static io.questdb.cairo.TableUtils.topFile;
 import static io.questdb.cairo.TableUtils.validate;
-import static io.questdb.cairo.TableWriter.getPrimaryColumnIndex;
 import static io.questdb.std.Files.isDots;
 
 import java.io.Closeable;
@@ -89,7 +88,6 @@ import io.questdb.cairo.vm.ContiguousVirtualMemory;
 import io.questdb.cairo.vm.MappedReadOnlyMemory;
 import io.questdb.cairo.vm.MappedReadWriteMemory;
 import io.questdb.cairo.vm.PagedMappedReadWriteMemory;
-import io.questdb.cairo.vm.PagedVirtualMemory;
 import io.questdb.cairo.vm.SinglePageMappedReadOnlyPageMemory;
 import io.questdb.cairo.vm.VmUtils;
 import io.questdb.cairo.vm.WriteOnlyVirtualMemory;
@@ -232,6 +230,7 @@ public class TableWriter implements Closeable {
     private final LongConsumer mergeTimestampMethodRef = this::mergeTimestampSetter;
     private long transientRowCountBeforeOutOfOrder;
     private long lastPartitionTimestamp;
+    private long oooBeyondHysteresisRowCount;
 
     public TableWriter(CairoConfiguration configuration, CharSequence name) {
         this(configuration, name, new MessageBusImpl(configuration));
@@ -758,7 +757,7 @@ public class TableWriter implements Closeable {
         if (inTransaction()) {
 
             if (oooRowCount > 0) {
-                oooProcess();
+                oooProcess(lastTimestampHysteresisInMicros);
             }
 
             if (commitMode != CommitMode.NOSYNC) {
@@ -766,56 +765,11 @@ public class TableWriter implements Closeable {
             }
 
             updateIndexes();
-            if (lastTimestampHysteresisInMicros <= 0) {
-                txFile.commit(commitMode, this.denseSymbolMapWriters);
-            } else {
-                int timestampColumnIndex = metadata.getTimestampIndex();
-                long maxTimestamp = txFile.getMaxTimestamp();
-                long previousMaxTimestamp = txFile.getCommittedMaxTimestamp();
-                long newCommittedMaxTimestamp = maxTimestamp - lastTimestampHysteresisInMicros;
-                if (newCommittedMaxTimestamp > previousMaxTimestamp) {
-                    int committedLastPartitionIndex = txFile.findAttachedPartitionIndexByLoTimestamp(txFile.getPartitionTimestampLo(previousMaxTimestamp)) >> 2;
-                    int newCommittedLastPartitionIndex = txFile.findAttachedPartitionIndexByLoTimestamp(txFile.getPartitionTimestampLo(newCommittedMaxTimestamp)) >> 2;
-                    int uncommittedLastPartitionIndex = txFile.getPartitionCount() - 1;
-                    long fixedRowCount = txFile.getFixedRowCount();
-                    long row;
-                    final boolean inLastPartition;
-                    if (newCommittedLastPartitionIndex == uncommittedLastPartitionIndex) {
-                        // Hysteresis is in the last partition
-                        row = txFile.getTransientRowCount();
-                        inLastPartition = true;
-                    } else {
-                        inLastPartition = false;
-                        row = txFile.getPartitionSize(newCommittedLastPartitionIndex);
-                        int partitionIndex = newCommittedLastPartitionIndex;
-                        while (partitionIndex < uncommittedLastPartitionIndex) {
-                            fixedRowCount -= txFile.getPartitionSize(partitionIndex);
-                            partitionIndex++;
-                        }
-                    }
-
-                    int plen = path.length();
-                    long timestampFd = -1;
-                    long timestampAddr = 0;
-                    long timestampSize = row << ColumnType.pow2SizeOf(ColumnType.TIMESTAMP);
-                    long lastTimestamp;
-                    try {
-                        setStateForTimestamp(path.trimTo(plen), txFile.getPartitionTimestamp(newCommittedLastPartitionIndex), false);
-                        dFile(path, metadata.getColumnName(timestampColumnIndex));
-                        timestampFd = inLastPartition ? columns.getQuick(getPrimaryColumnIndex(timestampColumnIndex)).getFd() : OutOfOrderUtils.openRW(ff, path);
-                        timestampAddr = OutOfOrderUtils.mapRW(ff, timestampFd, timestampSize);
-                        row = Vect.boundedBinarySearch64Bit(timestampAddr, newCommittedMaxTimestamp, 0, row - 1, BinarySearch.SCAN_DOWN);
-                        lastTimestamp = Unsafe.getUnsafe().getLong(timestampAddr + (row << ColumnType.pow2SizeOf(ColumnType.TIMESTAMP)));
-                    } finally {
-                        OutOfOrderUtils.unmap(ff, timestampAddr, timestampSize);
-                        if (!inLastPartition) {
-                            OutOfOrderUtils.close(ff, timestampFd);
-                        }
-                        path.trimTo(plen);
-                    }
-                    txFile.commitPartial(commitMode, this.denseSymbolMapWriters, row + 1, fixedRowCount, lastTimestamp, committedLastPartitionIndex, newCommittedLastPartitionIndex,
-                            newCommittedLastPartitionIndex);
-                }
+            txFile.commit(commitMode, this.denseSymbolMapWriters);
+            if (oooRowCount > 0) {
+                // OOO rows remain due to hysteresis
+                transientRowCountBeforeOutOfOrder = txFile.getTransientRowCount();
+                txFile.append(oooRowCount);
             }
         }
     }
@@ -2346,7 +2300,7 @@ public class TableWriter implements Closeable {
         }
     }
 
-    private void oooProcess() {
+    private void oooProcess(long lastTimestampHysteresisInMicros) {
         oooErrorCount.set(0);
         final int workerId;
         final Thread thread = Thread.currentThread();
@@ -2358,6 +2312,9 @@ public class TableWriter implements Closeable {
 
         final int timestampIndex = metadata.getTimestampIndex();
         try {
+            if (lastTimestampHysteresisInMicros > 0 && txFile.getAppendedPartitionCount() == 1) {
+                oooMoveUncommittedInOrderRowsToMergeSpace(timestampIndex);
+            }
 
             // we may need to re-use file descriptors when this partition is the "current" one
             // we cannot open file again due to sharing violation
@@ -2377,6 +2334,14 @@ public class TableWriter implements Closeable {
             // partition actual data "lo" and "hi" (dataLo, dataHi)
             // out of order "lo" and "hi" (indexLo, indexHi)
 
+            if (lastTimestampHysteresisInMicros > 0) {
+                long hysteresisThresholdTimestamp = getTimestampIndexValue(sortedTimestampsAddr, oooRowCount - 1) - lastTimestampHysteresisInMicros;
+                long hysteresisThresholdRow = Vect.boundedBinarySearchIndexT(sortedTimestampsAddr, hysteresisThresholdTimestamp, 0, oooRowCount - 1, BinarySearch.SCAN_DOWN);
+                oooBeyondHysteresisRowCount = oooRowCount - hysteresisThresholdRow - 1;
+                oooRowCount = hysteresisThresholdRow + 1;
+            } else {
+                oooBeyondHysteresisRowCount = 0;
+            }
             final long srcOooMax = oooRowCount;
             final long oooTimestampMin = getTimestampIndexValue(sortedTimestampsAddr, 0);
             final long oooTimestampMax = getTimestampIndexValue(sortedTimestampsAddr, srcOooMax - 1);
@@ -2504,28 +2469,135 @@ public class TableWriter implements Closeable {
                     throw CairoException.instance(0).put("bulk update failed and will be rolled back");
                 }
             }
+
+            if (oooBeyondHysteresisRowCount > 0) {
+                oooCleanupBeyondHysteresisRows(timestampIndex);
+            }
         } finally {
             if (denseIndexers.size() == 0) {
                 populateDenseIndexerList();
             }
             path.trimTo(rootLen);
-            this.oooRowCount = 0;
             // Alright, we finished updating partitions. Now we need to get this writer instance into
             // a consistent state.
             //
             // We start with ensuring append memory is in ready-to-use state. When max timestamp changes we need to
             // move append memory to new set of files. Otherwise we stay on the same set but advance the append position.
             avoidIndexOnCommit = oooErrorCount.get() == 0;
-            rowFunction = switchPartitionFunction;
-            row.activeColumns = columns;
-            row.activeNullSetters = nullSetters;
-            timestampSetter = prevTimestampSetter;
+            if (oooBeyondHysteresisRowCount == 0) {
+                this.oooRowCount = 0;
+                rowFunction = switchPartitionFunction;
+                row.activeColumns = columns;
+                row.activeNullSetters = nullSetters;
+                timestampSetter = prevTimestampSetter;
+            } else {
+                this.oooRowCount = oooBeyondHysteresisRowCount;
+                oooBeyondHysteresisRowCount = 0;
+            }
             transientRowCountBeforeOutOfOrder = 0;
         }
         if (columns.getQuick(0).isClosed()) {
             openPartition(txFile.getMaxTimestamp());
         }
         setAppendPosition(txFile.getTransientRowCount(), true);
+    }
+
+    private void oooMoveUncommittedInOrderRowsToMergeSpace(final int timestampIndex) {
+        // Move uncommitted (in order) rows from the end of the last committed column files into the reorder memory
+        // TODO use memcpy and make parallel
+        long committedTransientRowCount = txFile.getCommittedTransientRowCount();
+        long uncommittedRowCount = txFile.getTransientRowCount() - txFile.getCommittedTransientRowCount() - oooRowCount;
+        if (uncommittedRowCount > 0) {
+            int pow2ColSize = ColumnType.pow2SizeOf(ColumnType.TIMESTAMP);
+            AppendOnlyVirtualMemory sourceMem = getPrimaryColumn(timestampIndex);
+            long sourceOffset = committedTransientRowCount << pow2ColSize;
+            for (long n = 0; n < uncommittedRowCount; n++) {
+                long ts = sourceMem.getLong(sourceOffset + (n << pow2ColSize));
+                timestampMergeMem.putLong(ts);
+                timestampMergeMem.putLong(oooRowCount + n);
+            }
+            sourceMem.jumpTo(sourceOffset);
+            long totalNewRowCount = uncommittedRowCount + oooRowCount;
+            for (int colIndex = 0; colIndex < columnCount; colIndex++) {
+                if (colIndex != timestampIndex) {
+                    pow2ColSize = ColumnType.pow2SizeOf(metadata.getColumnType(colIndex));
+                    ContiguousVirtualMemory targetDataMem = oooColumns.get(getPrimaryColumnIndex(colIndex));
+                    ContiguousVirtualMemory targetIndexMem = oooColumns.get(getSecondaryColumnIndex(colIndex));
+                    sourceMem = getPrimaryColumn(colIndex);
+                    long extendedSize;
+                    long newSize;
+                    long sourceAddress;
+                    long appendOffset;
+                    long appendAddress;
+
+                    if (null == targetIndexMem) {
+                        newSize = totalNewRowCount << pow2ColSize;
+                        appendOffset = targetDataMem.getAppendOffset();
+                        extendedSize = uncommittedRowCount << pow2ColSize;
+                        sourceOffset = committedTransientRowCount << pow2ColSize;
+                    } else {
+                        // TODO use Vect#shiftCopyFixedSizeColumnData
+                        AppendOnlyVirtualMemory sourceIndexMem = getSecondaryColumn(colIndex);
+                        appendOffset = targetDataMem.getAppendOffset();
+                        long sourceEndOffset = sourceMem.getAppendOffset();
+                        long sourceStartOffset = sourceIndexMem.getLong(committedTransientRowCount << 3);
+                        extendedSize = sourceEndOffset - sourceStartOffset;
+                        sourceOffset = sourceStartOffset;
+                        for (long n = 1; n < uncommittedRowCount; n++) {
+                            targetIndexMem.putLong(sourceOffset - sourceStartOffset + appendOffset);
+                            sourceOffset = sourceIndexMem.getLong((committedTransientRowCount + n) << 3);
+                        }
+                        targetIndexMem.putLong(sourceOffset - sourceStartOffset + appendOffset);
+                        sourceOffset = sourceStartOffset;
+                        sourceIndexMem.jumpTo(committedTransientRowCount << 3);
+                    }
+
+                    newSize = appendOffset + extendedSize;
+                    targetDataMem.jumpTo(newSize);
+                    appendAddress = targetDataMem.addressOf(appendOffset);
+                    sourceMem.jumpTo(sourceOffset);
+                    sourceAddress = sourceMem.addressOf(sourceOffset);
+                    Vect.memcpy(sourceAddress, appendAddress, extendedSize);
+                }
+            }
+            txFile.resetToLastPartition(committedTransientRowCount);
+            oooRowCount += uncommittedRowCount;
+            transientRowCountBeforeOutOfOrder = committedTransientRowCount;
+        }
+    }
+
+    private void oooCleanupBeyondHysteresisRows(int timestampIndex) {
+        long sourceOffset = oooRowCount << 4;
+        timestampMergeMem.jumpTo(0);
+        for (int n = 0; n < oooBeyondHysteresisRowCount; n++) {
+            long ts = timestampMergeMem.getLong(sourceOffset);
+            timestampMergeMem.putLong(ts);
+            timestampMergeMem.putLong(n);
+            sourceOffset += Long.BYTES + Long.BYTES;
+        }
+
+        for (int colIndex = 0; colIndex < columnCount; colIndex++) {
+            if (colIndex != timestampIndex) {
+                int pow2ColSize = ColumnType.pow2SizeOf(metadata.getColumnType(colIndex));
+                ContiguousVirtualMemory dataMem = oooColumns.get(getPrimaryColumnIndex(colIndex));
+                ContiguousVirtualMemory indexMem = oooColumns.get(getSecondaryColumnIndex(colIndex));
+                long targetOffset = 0;
+                long size;
+                if (null == indexMem) {
+                    sourceOffset = oooRowCount << pow2ColSize;
+                    size = oooBeyondHysteresisRowCount << pow2ColSize;
+                } else {
+                    sourceOffset = indexMem.getLong(oooRowCount << 3);
+                    size = dataMem.getAppendOffset() - sourceOffset;
+                    OutOfOrderUtils.shiftCopyFixedSizeColumnData(sourceOffset, indexMem.addressOf(oooRowCount << 3), 0, oooBeyondHysteresisRowCount << 3, indexMem.addressOf(0));
+                    indexMem.jumpTo(oooBeyondHysteresisRowCount << 3);
+                }
+
+                dataMem.jumpTo(targetOffset + size);
+                // TODO use memmove
+                Vect.memcpy(dataMem.addressOf(sourceOffset), dataMem.addressOf(targetOffset), size);
+            }
+        }
     }
 
     private void oooProcessPartitionSafe(
