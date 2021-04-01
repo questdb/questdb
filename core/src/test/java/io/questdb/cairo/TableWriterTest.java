@@ -1523,6 +1523,14 @@ public class TableWriterTest extends AbstractCairoTest {
     @Test
     public void testConstructorTruncatedTodo() throws Exception {
         FilesFacade ff = new FilesFacadeImpl() {
+            private static final long TODO_FD = 7686876823L;
+            private long fd = TODO_FD;
+
+            @Override
+            public boolean exists(LPSZ path) {
+                return Chars.endsWith(path, TableUtils.TODO_FILE_NAME) || super.exists(path);
+            }
+
             @Override
             public long length(LPSZ name) {
                 if (Chars.endsWith(name, TableUtils.TODO_FILE_NAME)) {
@@ -1530,18 +1538,27 @@ public class TableWriterTest extends AbstractCairoTest {
                 }
                 return super.length(name);
             }
+
+            @Override
+            public long read(long fd, long buf, long len, long offset) {
+                if (fd == TODO_FD) {
+                    Assert.assertEquals(TODO_FD, this.fd);
+                    this.fd = -1;
+                    return -1;
+                }
+                return super.read(fd, buf, len, offset);
+            }
+
+            @Override
+            public boolean close(long fd) {
+                if (fd == TODO_FD) {
+                    return true;
+                }
+                return super.close(fd);
+            }
         };
 
-        TestUtils.assertMemoryLeak(() -> {
-                    create(ff, PartitionBy.DAY, 10000);
-                    try {
-                        populateTable0(ff, 10000);
-                        Assert.fail();
-                    } catch (CairoException e) {
-                        TestUtils.assertContains(e.getFlyweightMessage(), "corrupt");
-                    }
-                }
-        );
+        populateTable(ff);
     }
 
     @Test

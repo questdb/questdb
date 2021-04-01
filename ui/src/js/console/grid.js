@@ -308,12 +308,18 @@ $.fn.grid = function (msgBus) {
   }
 
   function generatePctWidth(rules) {
+    var maxWidhtPct = 100
+    var viewportWidth = viewport.offsetWidth
+    if (totalWidth * 2 < viewportWidth) {
+      // Single column which is not supposed to be very wide
+      maxWidhtPct = 50
+    }
     for (var i = 0; i < colMax.length; i++) {
       rules.push(
         ".qg-w" +
           i +
           "{width:" +
-          (colMax[i] * 100) / totalWidth +
+          Math.min((colMax[i] * 100) / totalWidth, maxWidhtPct) +
           "%;" +
           getColumnAlignment(i) +
           "}",
@@ -354,11 +360,7 @@ $.fn.grid = function (msgBus) {
         }
       }
     }
-  }
-
-  function headerClick(e) {
-    bus.trigger("editor.insert.column", e.toElement.innerHTML)
-  }
+  } 
 
   function computeColumnWidths() {
     colMax = []
@@ -367,7 +369,9 @@ $.fn.grid = function (msgBus) {
     for (i = 0; i < columns.length; i++) {
       var c = columns[i]
       var col = $('<div class="qg-header qg-w' + i + '">' + c.name + "</div>")
-        .click(headerClick)
+        .on('click', function (e) {
+          bus.trigger("editor.insert.column", e.target.innerHTML)
+        })
         .appendTo(header)
       switch (c.type) {
         case "STRING":
