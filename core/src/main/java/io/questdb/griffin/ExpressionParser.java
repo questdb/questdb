@@ -52,6 +52,7 @@ class ExpressionParser {
     private static final int BRANCH_DOT_DEREFERENCE = 17;
 
     private static final LowerCaseAsciiCharSequenceIntHashMap caseKeywords = new LowerCaseAsciiCharSequenceIntHashMap();
+    private static final LowerCaseAsciiCharSequenceObjHashMap<CharSequence> allFunctions = new LowerCaseAsciiCharSequenceObjHashMap<>();
     private final ObjStack<ExpressionNode> opStack = new ObjStack<>();
     private final IntStack paramCountStack = new IntStack();
     private final IntStack argStackDepthStack = new IntStack();
@@ -87,6 +88,10 @@ class ExpressionParser {
 
     private boolean isCount() {
         return opStack.size() == 2 && Chars.equals(opStack.peek().token, '(') && SqlKeywords.isCountKeyword(opStack.peek(1).token);
+    }
+
+    private boolean isTypeQualifier() {
+        return opStack.size() >= 2 && SqlKeywords.isColonColonKeyword(opStack.peek(1).token);
     }
 
     private int onNode(ExpressionParserListener listener, ExpressionNode node, int argStackDepth) throws SqlException {
@@ -184,75 +189,86 @@ class ExpressionParser {
                         break;
 
                     case '[':
-                        thisBranch = BRANCH_LEFT_BRACKET;
-                        // If the token is a left parenthesis, then push it onto the stack.
-                        paramCountStack.push(paramCount);
-                        paramCount = 0;
+                        if (isTypeQualifier()) {
+                            ExpressionNode en = opStack.peek();
+                            ((GenericLexer.FloatingSequence) en.token).setHi(position + 1);
+                        } else {
+                            thisBranch = BRANCH_LEFT_BRACKET;
 
-                        argStackDepthStack.push(argStackDepth);
-                        argStackDepth = 0;
+                            // If the token is a left parenthesis, then push it onto the stack.
+                            paramCountStack.push(paramCount);
+                            paramCount = 0;
 
-                        // pop left literal or . expression, e.g. "a.b[i]"
-                        // the precedence of [ is fixed to 2
-                        ExpressionNode other;
-                        while ((other = opStack.peek()) != null) {
-                            if ((2 > other.precedence)) {
-                                argStackDepth = onNode(listener, other, argStackDepth);
-                                opStack.pop();
-                            } else {
-                                break;
+                            argStackDepthStack.push(argStackDepth);
+                            argStackDepth = 0;
+
+                            // pop left literal or . expression, e.g. "a.b[i]"
+                            // the precedence of [ is fixed to 2
+                            ExpressionNode other;
+                            while ((other = opStack.peek()) != null) {
+                                if ((2 > other.precedence)) {
+                                    argStackDepth = onNode(listener, other, argStackDepth);
+                                    opStack.pop();
+                                } else {
+                                    break;
+                                }
                             }
+
+                            // precedence must be max value to make sure control node isn't
+                            // consumed as parameter to a greedy function
+                            opStack.push(expressionNodePool.next().of(ExpressionNode.CONTROL, "[", Integer.MAX_VALUE, position));
+                            bracketCount++;
+
+                            braceCountStack.push(braceCount);
+                            braceCount = 0;
                         }
-
-                        // precedence must be max value to make sure control node isn't
-                        // consumed as parameter to a greedy function
-                        opStack.push(expressionNodePool.next().of(ExpressionNode.CONTROL, "[", Integer.MAX_VALUE, position));
-                        bracketCount++;
-
-                        braceCountStack.push(braceCount);
-                        braceCount = 0;
 
                         break;
 
                     case ']':
+                        if (isTypeQualifier()) {
+                            ExpressionNode en = opStack.peek();
+                            ((GenericLexer.FloatingSequence) en.token).setHi(position + 1);
+                        } else {
+                            if (bracketCount == 0) {
+                                lexer.unparse();
+                                break OUT;
+                            }
 
-                        if (bracketCount == 0) {
-                            lexer.unparse();
-                            break OUT;
+                            thisBranch = BRANCH_RIGHT_BRACKET;
+                            if (prevBranch == BRANCH_LEFT_BRACKET) {
+                                throw SqlException.$(position, "missing array index");
+                            }
+
+                            bracketCount--;
+
+                            // pop the array index from the stack, it could be an operator
+                            while ((node = opStack.pop()) != null && (node.type != ExpressionNode.CONTROL || node.token.charAt(0) != '[')) {
+                                argStackDepth = onNode(listener, node, argStackDepth);
+                            }
+
+                            if (argStackDepthStack.notEmpty()) {
+                                argStackDepth += argStackDepthStack.pop();
+                            }
+
+                            if (paramCountStack.notEmpty()) {
+                                paramCount = paramCountStack.pop();
+                            }
+
+                            if (braceCountStack.notEmpty()) {
+                                braceCount = braceCountStack.pop();
+                            }
+
+                            node = expressionNodePool.next().of(
+                                    ExpressionNode.ARRAY_ACCESS,
+                                    "[]",
+                                    2,
+                                    position
+                            );
+                            node.paramCount = 2;
+                            opStack.push(node);
                         }
 
-                        thisBranch = BRANCH_RIGHT_BRACKET;
-                        if (prevBranch == BRANCH_LEFT_BRACKET) {
-                            throw SqlException.$(position, "missing array index");
-                        }
-
-                        bracketCount--;
-
-                        // pop the array index from the stack, it could be an operator
-                        while ((node = opStack.pop()) != null && (node.type != ExpressionNode.CONTROL || node.token.charAt(0) != '[')) {
-                            argStackDepth = onNode(listener, node, argStackDepth);
-                        }
-
-                        if (argStackDepthStack.notEmpty()) {
-                            argStackDepth += argStackDepthStack.pop();
-                        }
-
-                        if (paramCountStack.notEmpty()) {
-                            paramCount = paramCountStack.pop();
-                        }
-
-                        if (braceCountStack.notEmpty()) {
-                            braceCount = braceCountStack.pop();
-                        }
-
-                        node = expressionNodePool.next().of(
-                                ExpressionNode.ARRAY_ACCESS,
-                                "[]",
-                                2,
-                                position
-                        );
-                        node.paramCount = 2;
-                        opStack.push(node);
                         break;
 
                     case '(':
@@ -419,6 +435,18 @@ class ExpressionParser {
                                 paramCount++;
                             } else {
                                 processDefaultBranch = true;
+                            }
+                        } else if (SqlKeywords.isAllKeyword(tok)) {
+                            ExpressionNode operator = opStack.peek();
+                            if (operator == null || operator.type != ExpressionNode.OPERATION) {
+                                throw SqlException.$(position, "missing operator");
+                            }
+                            CharSequence funcName = allFunctions.get(operator.token);
+                            if (funcName != null && operator.paramCount == 2) {
+                                operator.type = ExpressionNode.FUNCTION;
+                                operator.token = funcName;
+                            } else {
+                                throw SqlException.$(operator.position, "unexpected operator");
                             }
                         } else {
                             processDefaultBranch = true;
@@ -918,5 +946,8 @@ class ExpressionParser {
         caseKeywords.put("when", 0);
         caseKeywords.put("then", 1);
         caseKeywords.put("else", 2);
+
+        allFunctions.put("<>", "<>all");
+        allFunctions.put("!=", "<>all");
     }
 }

@@ -2722,6 +2722,10 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
             case ColumnType.DOUBLE:
                 Vect.setMemoryDouble(addr, Double.NaN, count);
                 break;
+            case ColumnType.LONG256:
+                // Long256 is null when all 4 longs are NaNs
+                Vect.setMemoryLong(addr, Numbers.LONG_NaN, count * 4);
+                break;
             default:
                 break;
         }

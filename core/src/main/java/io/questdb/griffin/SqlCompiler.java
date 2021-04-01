@@ -1250,8 +1250,6 @@ public class SqlCompiler implements Closeable {
 
         int rootLen = path.length();
 
-        Scoreboard.createScoreboard(ff, path.chopZ(), reader.getPartitionedBy());
-
         TableReaderMetadata sourceMetaData = reader.getMetadata();
         try {
             mem.of(ff, path.trimTo(rootLen).concat(TableUtils.META_FILE_NAME).$(), ff.getPageSize());

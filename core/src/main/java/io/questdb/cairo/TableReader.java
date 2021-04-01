@@ -64,6 +64,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     private final IntList symbolCountSnapshot = new IntList();
     private final TxReader txFile;
     private final MappedReadOnlyMemory todoMem = new SinglePageMappedReadOnlyPageMemory();
+    private final long txnScoreboard;
     private int partitionCount;
     private LongList columnTops;
     private ObjList<MappedReadOnlyMemory> columns;
@@ -76,11 +77,21 @@ public class TableReader implements Closeable, SymbolTableSource {
     private boolean active = false;
 
     public TableReader(CairoConfiguration configuration, CharSequence tableName) {
+        this(configuration, tableName, 0);
+    }
+
+    public TableReader(CairoConfiguration configuration, CharSequence tableName, long txnScoreboard) {
         LOG.debug().$("open '").utf8(tableName).$('\'').$();
         this.configuration = configuration;
         this.ff = configuration.getFilesFacade();
         this.tableName = Chars.toString(tableName);
-        this.path = new Path().of(configuration.getRoot()).concat(tableName);
+        this.path = new Path();
+        if (txnScoreboard == 0) {
+            this.txnScoreboard = TxnScoreboard.create(path, tableName);
+        } else {
+            this.txnScoreboard = txnScoreboard;
+        }
+        this.path.of(configuration.getRoot()).concat(tableName);
         this.rootLen = path.length();
         try {
             failOnPendingTodo();
@@ -154,13 +165,14 @@ public class TableReader implements Closeable, SymbolTableSource {
         if (isOpen()) {
             freeSymbolMapReaders();
             freeBitmapIndexCache();
-            Misc.free(path);
             Misc.free(metadata);
             goPassive();
             Misc.free(txFile);
             Misc.free(todoMem);
             freeColumns();
             freeTempMem();
+            TxnScoreboard.close(path, tableName, txnScoreboard);
+            Misc.free(path);
             LOG.debug().$("closed '").utf8(tableName).$('\'').$();
         }
     }
@@ -279,15 +291,15 @@ public class TableReader implements Closeable, SymbolTableSource {
         if (active) {
             return;
         }
+        reload();
         active = true;
-        acquirePartitionLocks();
     }
 
     public void goPassive() {
         // check for double-close
         if (active) {
             active = false;
-            releasePartitionLocks();
+            TxnScoreboard.release(txnScoreboard, txn);
         }
     }
 
@@ -566,17 +578,6 @@ public class TableReader implements Closeable, SymbolTableSource {
         }
     }
 
-    private void acquirePartitionLocks() {
-        for (int i = 0; i < partitionCount; i++) {
-            final int offset = i * PARTITIONS_SLOT_SIZE;
-            final long partitionTimestamp = openPartitionInfo.getQuick(offset);
-            final long partitionSize = openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE);
-            if (partitionSize > -1) {
-                txFile.scoreboard.acquireReadLock(partitionTimestamp, openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_NAME_TXN));
-            }
-        }
-    }
-
     private void closeColumn(int columnBase, int columnIndex) {
         final int index = getPrimaryColumnIndex(columnBase, columnIndex);
         Misc.free(columns.getAndSetQuick(index, NullColumn.INSTANCE));
@@ -722,7 +723,6 @@ public class TableReader implements Closeable, SymbolTableSource {
             for (int k = 0; k < columnCount; k++) {
                 closeColumn(columnBase, k);
             }
-            txFile.getScoreboard().releaseReadLock(partitionTimestamp, openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_NAME_TXN));
         }
         int baseIndex = getPrimaryColumnIndex(columnBase, 0);
         int newBaseIndex = getPrimaryColumnIndex(getColumnBase(partitionIndex + 1), 0);
@@ -919,10 +919,6 @@ public class TableReader implements Closeable, SymbolTableSource {
                     openPartitionColumns(path, getColumnBase(partitionIndex), partitionSize, lastPartition);
                     final int offset = partitionIndex * PARTITIONS_SLOT_SIZE;
                     this.openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE, partitionSize);
-                    txFile.getScoreboard().acquireReadLock(
-                            openPartitionInfo.getQuick(offset),
-                            partitionNameTxn
-                    );
                 }
 
                 return partitionSize;
@@ -1012,7 +1008,11 @@ public class TableReader implements Closeable, SymbolTableSource {
                 // ok, we have snapshot, check if our snapshot is stable
                 if (txn == txFile.getTxn()) {
                     // good, very stable, congrats
+                    if (active) {
+                        TxnScoreboard.release(txnScoreboard, this.txn);
+                    }
                     this.txn = txn;
+                    TxnScoreboard.acquire(txnScoreboard, txn);
                     this.rowCount = txFile.getFixedRowCount() + txFile.getTransientRowCount();
                     LOG.debug()
                             .$("new transaction [txn=").$(txn)
@@ -1076,17 +1076,6 @@ public class TableReader implements Closeable, SymbolTableSource {
             return;
         }
         reconcileOpenPartitionsFrom(0);
-    }
-
-    private void releasePartitionLocks() {
-        for (int i = 0; i < partitionCount; i++) {
-            final int offset = i * PARTITIONS_SLOT_SIZE;
-            final long partitionTimestamp = openPartitionInfo.getQuick(offset);
-            final long partitionSize = openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE);
-            if (partitionSize > -1) {
-                txFile.scoreboard.releaseReadLock(partitionTimestamp, openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_NAME_TXN));
-            }
-        }
     }
 
     private void reloadColumnAt(

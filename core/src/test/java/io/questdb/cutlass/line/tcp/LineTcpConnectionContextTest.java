@@ -1164,8 +1164,7 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
                     r.run();
                 } finally {
                     closeContext();
-                    engine.releaseAllWriters();
-                    engine.releaseAllReaders();
+                    engine.clear();
                 }
             } finally {
                 LineTcpConnectionContextTest.this.engine = null;
@@ -1412,7 +1411,7 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
 
     private final NetworkIOJob netIoJob = new NetworkIOJob() {
         private final CharSequenceObjHashMap<TableUpdateDetails> localTableUpdateDetailsByTableName = new CharSequenceObjHashMap<>();
-        private final ObjList<SymbolCache> unusedSymbolCaches = new ObjList<SymbolCache>();
+        private final ObjList<SymbolCache> unusedSymbolCaches = new ObjList<>();
 
         @Override
         public int getWorkerId() {
@@ -1422,7 +1421,7 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
         @Override
         public TableUpdateDetails getTableUpdateDetails(CharSequence tableName) {
             return localTableUpdateDetailsByTableName.get(tableName);
-        };
+        }
 
         @Override
         public void addTableUpdateDetails(TableUpdateDetails tableUpdateDetails) {
@@ -1442,6 +1441,6 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
 
         @Override
         public void close() {
-        };
+        }
     };
 }

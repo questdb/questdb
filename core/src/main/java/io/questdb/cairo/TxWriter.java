@@ -265,14 +265,12 @@ public final class TxWriter extends TxReader implements Closeable {
         int index = findAttachedPartitionIndexByLoTimestamp(partitionTimestampLo);
         if (index > -1) {
             int size = attachedPartitions.size();
-            final long partitionNameTxn = attachedPartitions.getQuick(index + PARTITION_NAME_TX_OFFSET);
             if (index + LONGS_PER_TX_ATTACHED_PARTITION < size) {
                 attachedPartitions.arrayCopy(index + LONGS_PER_TX_ATTACHED_PARTITION, index, size - index - LONGS_PER_TX_ATTACHED_PARTITION);
                 attachedPositionDirtyIndex = Math.min(attachedPositionDirtyIndex, index);
             }
             attachedPartitions.setPos(size - LONGS_PER_TX_ATTACHED_PARTITION);
             partitionTableVersion++;
-            scoreboard.removePartition(partitionTimestampLo, partitionNameTxn);
         }
     }
 
@@ -333,7 +331,6 @@ public final class TxWriter extends TxReader implements Closeable {
         attachedPartitions.setPos(index + LONGS_PER_TX_ATTACHED_PARTITION);
         long newTimestampLo = getPartitionTimestampLo(timestamp);
         initPartitionAt(index, newTimestampLo, 0);
-        scoreboard.addPartition(newTimestampLo, -1);
         transientRowCount = 0;
         txPartitionCount++;
     }
@@ -368,9 +365,6 @@ public final class TxWriter extends TxReader implements Closeable {
         txMem.putInt(getSymbolWriterTransientIndexOffset(symbolIndex), symCount);
     }
 
-    boolean acquireWriterLock(long timestamp, long txn) {
-        return scoreboard.acquireWriteLock(timestamp, txn);
-    }
 
     void bumpPartitionTableVersion() {
         partitionTableVersion++;
@@ -385,24 +379,7 @@ public final class TxWriter extends TxReader implements Closeable {
             partitionTableVersion++;
         }
         initPartitionAt(index, partitionTimestamp, partitionSize);
-        scoreboard.addPartition(partitionTimestamp, -1);
         return index;
-    }
-
-    boolean reconcileAttachedPartitionsWithScoreboard() {
-        int partitionCount = getPartitionCount();
-        for (int i = 0; i < partitionCount; i++) {
-            long timestamp = attachedPartitions.getQuick(i * LONGS_PER_TX_ATTACHED_PARTITION + PARTITION_TS_OFFSET);
-            long nameTx = attachedPartitions.getQuick(i * LONGS_PER_TX_ATTACHED_PARTITION + PARTITION_NAME_TX_OFFSET);
-            if (scoreboard.getPartitionIndex(timestamp, nameTx) < 0) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    void releaseWriterLock(long timestamp, long txn) {
-        scoreboard.releaseWriteLock(timestamp, txn);
     }
 
     private void saveAttachedPartitionsToTx(int symCount) {
@@ -445,10 +422,6 @@ public final class TxWriter extends TxReader implements Closeable {
             return partitionIndex;
         }
         return insertPartitionSizeByTimestamp(-(partitionIndex + 1), partitionTimestampLo, partitionSize);
-    }
-
-    private int updateAttachedPartitionSizeByLoTimestamp(long partitionTimestampLo, long partitionSize) {
-        return updateAttachedPartitionSizeByIndex(findAttachedPartitionIndexByLoTimestamp(partitionTimestampLo), partitionTimestampLo, partitionSize);
     }
 
     private int updateAttachedPartitionSizeByTimestamp(long timestamp, long partitionSize) {

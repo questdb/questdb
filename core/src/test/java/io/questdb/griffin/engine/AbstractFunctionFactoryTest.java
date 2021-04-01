@@ -605,5 +605,10 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
         public CharSequence getSym(int col) {
             return (CharSequence) args[col];
         }
+
+        @Override
+        public CharSequence getSymB(int col) {
+            return (CharSequence) args[col];
+        }
     }
 }

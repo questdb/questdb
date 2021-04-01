@@ -156,12 +156,12 @@ public class LineTcpServerTest extends AbstractCairoTest {
         @Override
         public long getMaintenanceJobHysteresisInMs() {
             return 25;
-        };
+        }
 
         @Override
         public long getMinIdleMsBeforeWriterRelease() {
             return minIdleMsBeforeWriterRelease;
-        };
+        }
 
     };
     private CairoEngine engine;
@@ -340,8 +340,7 @@ public class LineTcpServerTest extends AbstractCairoTest {
                 r.run();
 
                 sharedWorkerPool.halt();
-                engine.releaseAllReaders();
-                engine.releaseAllWriters();
+                engine.clear();
                 Misc.free(tcpServer);
             } finally {
                 LineTcpServerTest.this.engine = null;

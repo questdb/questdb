@@ -148,6 +148,7 @@ public class TableWriter implements Closeable {
     private final static OutOfOrderNativeSortMethod SHUFFLE_16 = Vect::indexReshuffle16Bit;
     private final static OutOfOrderNativeSortMethod SHUFFLE_32 = Vect::indexReshuffle32Bit;
     private final static OutOfOrderNativeSortMethod SHUFFLE_64 = Vect::indexReshuffle64Bit;
+    private final static OutOfOrderNativeSortMethod SHUFFLE_256 = Vect::indexReshuffle256Bit;
     final ObjList<AppendOnlyVirtualMemory> columns;
     private final ObjList<SymbolMapWriter> symbolMapWriters;
     private final ObjList<SymbolMapWriter> denseSymbolMapWriters;
@@ -378,10 +379,6 @@ public class TableWriter implements Closeable {
             default:
                 return null;
         }
-    }
-
-    public boolean acquireWriterLock(long timestamp, long txn) {
-        return txFile.acquireWriterLock(timestamp, txn);
     }
 
     public void addColumn(CharSequence name, int type) {
@@ -912,15 +909,6 @@ public class TableWriter implements Closeable {
             ee.put(" expected");
             throw ee;
         }
-    }
-
-    // this method is used by tests
-    public boolean reconcileAttachedPartitionsWithScoreboard() {
-        return txFile.reconcileAttachedPartitionsWithScoreboard();
-    }
-
-    public void releaseWriterLock(long timestamp, long txn) {
-        txFile.releaseWriterLock(timestamp, txn);
     }
 
     public void removeColumn(CharSequence name) {
@@ -2593,6 +2581,9 @@ public class TableWriter implements Closeable {
             case ColumnType.CHAR:
                 oooSortFixColumn(i, mergedTimestamps, oooRowCount, 1, SHUFFLE_16);
                 break;
+            case ColumnType.LONG256:
+                oooSortFixColumn(i, mergedTimestamps, oooRowCount, 5, SHUFFLE_256);
+                break;
             default:
                 oooSortFixColumn(i, mergedTimestamps, oooRowCount, 0, SHUFFLE_8);
                 break;
@@ -2682,6 +2673,17 @@ public class TableWriter implements Closeable {
                                         mergedTimestamps,
                                         oooRowCount,
                                         SHUFFLE_16,
+                                        oooSortFixColumnRef
+                                );
+                                break;
+                            case ColumnType.LONG256:
+                                task.of(
+                                        oooLatch,
+                                        i,
+                                        5,
+                                        mergedTimestamps,
+                                        oooRowCount,
+                                        SHUFFLE_256,
                                         oooSortFixColumnRef
                                 );
                                 break;
@@ -2805,17 +2807,15 @@ public class TableWriter implements Closeable {
         final int partitionIndex = txFile.findAttachedPartitionIndexByLoTimestamp(partitionTimestamp);
         if (partitionMutates) {
             final long srcDataTxn = txFile.getPartitionNameTxnByIndex(partitionIndex);
-            if (
+            if (false &&
                     configuration.isOutOfOrderRenameEnabled()
                             && getOooErrorCount() == 0
-                            && acquireWriterLock(partitionTimestamp, srcDataTxn)
             ) {
                 LOG.info()
                         .$("lock successful [table=`").utf8(path)
                         .$("`, ts=").$ts(partitionTimestamp)
                         .$(", txn=").$(srcDataTxn).$(']').$();
 
-                try {
                     OutOfOrderUtils.swapPartition(
                             ff,
                             path,
@@ -2825,16 +2825,12 @@ public class TableWriter implements Closeable {
                             partitionBy
                     );
                     txFile.updatePartitionSizeByIndex(partitionIndex, partitionTimestamp, partitionSize);
-                } finally {
-                    releaseWriterLock(partitionTimestamp, srcDataTxn);
-                }
             } else {
                 LOG.info()
                         .$("partition busy [table=`").utf8(path)
                         .$("`, ts=").$ts(partitionTimestamp)
                         .$(", txn=").$(srcDataTxn).$(']').$();
                 txFile.updatePartitionSizeByIndexAndTxn(partitionIndex, partitionSize);
-                txFile.scoreboard.addPartition(partitionTimestamp, txFile.txn);
             }
         } else {
             txFile.updatePartitionSizeByIndex(partitionIndex, partitionTimestamp, partitionSize);

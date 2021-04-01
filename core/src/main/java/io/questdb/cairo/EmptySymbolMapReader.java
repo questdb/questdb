@@ -46,6 +46,11 @@ public class EmptySymbolMapReader implements SymbolMapReader {
     }
 
     @Override
+    public CharSequence valueBOf(int key) {
+        return null;
+    }
+
+    @Override
     public int getSymbolCapacity() {
         return 0;
     }

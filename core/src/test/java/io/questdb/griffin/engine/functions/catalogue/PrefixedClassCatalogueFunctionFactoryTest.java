@@ -144,8 +144,7 @@ public class PrefixedClassCatalogueFunctionFactoryTest extends AbstractGriffinTe
                             "pg_class\t11\tr\t0\t1259\t\n", sink);
 
                     compiler.compile("create table xyz (a int)", sqlExecutionContext);
-                    engine.releaseAllReaders();
-                    engine.releaseAllWriters();
+                    engine.clear();
 
                     cursor.toTop();
                     Assert.assertTrue(cursor.hasNext());

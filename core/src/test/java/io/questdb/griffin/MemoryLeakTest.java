@@ -67,8 +67,7 @@ public class MemoryLeakTest extends AbstractGriffinTest {
                     }
                 }
             } finally {
-                engine.releaseAllReaders();
-                engine.releaseAllWriters();
+                engine.clear();
             }
         });
     }

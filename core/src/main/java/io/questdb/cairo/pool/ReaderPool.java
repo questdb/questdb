@@ -24,17 +24,17 @@
 
 package io.questdb.cairo.pool;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.CairoException;
-import io.questdb.cairo.EntryUnavailableException;
-import io.questdb.cairo.TableReader;
+import io.questdb.cairo.*;
 import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cairo.pool.ex.PoolClosedException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.ConcurrentHashMap;
+import io.questdb.std.Misc;
 import io.questdb.std.Unsafe;
+import io.questdb.std.str.Path;
 
+import java.io.Closeable;
 import java.util.Arrays;
 import java.util.Map;
 
@@ -45,6 +45,7 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
     private static final long NEXT_STATUS = Unsafe.getFieldOffset(Entry.class, "nextStatus");
     private static final int ENTRY_SIZE = 32;
     private static final long LOCK_OWNER = Unsafe.getFieldOffset(Entry.class, "lockOwner");
+    private static final long TXN_SCOREBOARD = Unsafe.getFieldOffset(Entry.class, "txnScoreboard");
     private static final int NEXT_OPEN = 0;
     private static final int NEXT_ALLOCATED = 1;
     private static final int NEXT_LOCKED = 2;
@@ -77,10 +78,15 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
                     // got lock, allocate if needed
                     R r = e.readers[i];
                     if (r == null) {
-
                         try {
-                            LOG.info().$("open '").utf8(name).$("' [at=").$(e.index).$(':').$(i).$(']').$();
-                            r = new R(this, e, i, name);
+                            LOG.info()
+                                    .$("open '").utf8(name)
+                                    .$("' [at=").$(e.index).$(':').$(i)
+//                                    .$(", allocations=").$(e.allocations[i])
+//                                    .$(", lockOwner=").$(e.lockOwner)
+//                                    .$(", e=").$(e)
+                                    .$(']').$();
+                            r = new R(this, e, i, name, TxnScoreboard.newRef(e.txnScoreboard));
                         } catch (CairoException ex) {
                             Unsafe.arrayPutOrdered(e.allocations, i, UNALLOCATED);
                             throw ex;
@@ -90,11 +96,11 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
                         notifyListener(thread, name, PoolListener.EV_CREATE, e.index, i);
                     } else {
                         r.goActive();
-                        r.reload();
                         notifyListener(thread, name, PoolListener.EV_GET, e.index, i);
                     }
 
                     if (isClosed()) {
+                        Misc.free(e);
                         e.readers[i] = null;
                         r.goodby();
                         LOG.info().$('\'').utf8(name).$("' born free").$();
@@ -111,7 +117,7 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
             // all allocated, create next entry if possible
             if (Unsafe.getUnsafe().compareAndSwapInt(e, NEXT_STATUS, NEXT_OPEN, NEXT_ALLOCATED)) {
                 LOG.debug().$("Thread ").$(thread).$(" allocated entry ").$(e.index + 1).$();
-                e.next = new Entry(e.index + 1, clock.getTicks());
+                e.next = new Entry(e.index + 1, clock.getTicks(), name, TxnScoreboard.newRef(e.txnScoreboard));
             }
             e = e.next;
         } while (e != null && e.index < maxSegments);
@@ -143,11 +149,8 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
     }
 
     public boolean lock(CharSequence name) {
-
         Entry e = getEntry(name);
-
-        long thread = Thread.currentThread().getId();
-
+        final long thread = Thread.currentThread().getId();
         if (Unsafe.cas(e, LOCK_OWNER, UNLOCKED, thread) || Unsafe.cas(e, LOCK_OWNER, thread, thread)) {
             do {
                 for (int i = 0; i < ENTRY_SIZE; i++) {
@@ -195,6 +198,10 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
 
         if (e.lockOwner == thread) {
             entries.remove(name);
+            while (e != null) {
+                Misc.free(e);
+                e = e.next;
+            }
         } else {
             notifyListener(thread, name, PoolListener.EV_NOT_LOCK_OWNER);
             throw CairoException.instance(0).put("Not the lock owner of ").put(name);
@@ -214,18 +221,20 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
     @Override
     protected void closePool() {
         super.closePool();
+        freeEntries();
         LOG.info().$("closed").$();
     }
 
-    private void closeReader(long thread, Entry entry, int index, short ev, int reason) {
-        R r = entry.readers[index];
-        if (r != null) {
-            r.goodby();
-            r.close();
-            LOG.info().$("closed '").$(r.getTableName()).$("' [at=").$(entry.index).$(':').$(index).$(", reason=").$(PoolConstants.closeReasonText(reason)).$(']').$();
-            notifyListener(thread, r.getTableName(), ev, entry.index, index);
-            entry.readers[index] = null;
+    public void freeEntries() {
+        for (Map.Entry<CharSequence, Entry> me : entries.entrySet()) {
+            Entry e = me.getValue();
+            do {
+                // this does not release the next
+                Misc.free(e);
+                e = e.next;
+            } while (e != null);
         }
+        entries.clear();
     }
 
     @Override
@@ -260,6 +269,7 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
                         }
                     }
                 }
+                // this does not release the next
                 e = e.next;
             } while (e != null);
         }
@@ -273,14 +283,26 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
         }
     }
 
+    private void closeReader(long thread, Entry entry, int index, short ev, int reason) {
+        R r = entry.readers[index];
+        if (r != null) {
+            r.goodby();
+            r.close();
+            LOG.info().$("closed '").$(r.getTableName()).$("' [at=").$(entry.index).$(':').$(index).$(", reason=").$(PoolConstants.closeReasonText(reason)).$(']').$();
+            notifyListener(thread, r.getTableName(), ev, entry.index, index);
+            entry.readers[index] = null;
+        }
+    }
+
     private Entry getEntry(CharSequence name) {
         checkClosed();
 
         Entry e = entries.get(name);
         if (e == null) {
-            e = new Entry(0, clock.getTicks());
+            e = new Entry(0, clock.getTicks(), name, 0);
             Entry other = entries.putIfAbsent(name, e);
             if (other != null) {
+                Misc.free(e);
                 e = other;
             }
         }
@@ -325,20 +347,38 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
 
     }
 
-    public static class Entry {
+    public static class Entry implements Closeable {
         final long[] allocations = new long[ENTRY_SIZE];
         final long[] releaseTimes = new long[ENTRY_SIZE];
         final R[] readers = new R[ENTRY_SIZE];
         final int index;
         volatile long lockOwner = -1L;
         @SuppressWarnings("unused")
-        long nextStatus = 0;
+        int nextStatus = 0;
         volatile Entry next;
+        private Path shmName = new Path();
+        @SuppressWarnings("FieldMayBeFinal")
+        // not a final, this field gets assigned value via CAS
+        private long txnScoreboard;
 
-        public Entry(int index, long currentMicros) {
+        public Entry(int index, long currentMicros, CharSequence tableName, long txnScoreboard) {
             this.index = index;
             Arrays.fill(allocations, UNALLOCATED);
             Arrays.fill(releaseTimes, currentMicros);
+            if (txnScoreboard == 0) {
+                this.txnScoreboard = TxnScoreboard.create(this.shmName, tableName);
+            } else {
+                this.txnScoreboard = txnScoreboard;
+            }
+        }
+
+        @Override
+        public void close() {
+            long txnScoreboard = this.txnScoreboard;
+            if (txnScoreboard != 0 && Unsafe.cas(this, TXN_SCOREBOARD, txnScoreboard, 0)) {
+                TxnScoreboard.close(this.shmName, txnScoreboard);
+                shmName = Misc.free(shmName);
+            }
         }
     }
 
@@ -347,8 +387,8 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
         private ReaderPool pool;
         private Entry entry;
 
-        public R(ReaderPool pool, Entry entry, int index, CharSequence name) {
-            super(pool.getConfiguration(), name);
+        public R(ReaderPool pool, Entry entry, int index, CharSequence name, long txnScoreboard) {
+            super(pool.getConfiguration(), name, txnScoreboard);
             this.pool = pool;
             this.entry = entry;
             this.index = index;

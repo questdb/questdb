@@ -59,11 +59,12 @@ public final class TestUtils {
         assertEquals(metadataExpected, metadataActual);
         Record r = cursorExpected.getRecord();
         Record l = cursorActual.getRecord();
-        long rowNum = 0;
+        long rowIndex = 0;
         while (cursorExpected.hasNext()) {
-            if (! cursorActual.hasNext()) {
-                Assert.fail("Actual cursor does not have record at " + rowNum++);
+            if (!cursorActual.hasNext()) {
+                Assert.fail("Actual cursor does not have record at " + rowIndex);
             }
+            rowIndex++;
             for (int i = 0; i < metadataExpected.getColumnCount(); i++) {
                 String columnName = metadataExpected.getColumnName(i);
                 try {
@@ -105,10 +106,10 @@ public final class TestUtils {
                             Assert.assertEquals(r.getBool(i), l.getBool(i));
                             break;
                         case ColumnType.BINARY:
-                            Assert.assertTrue(columnName, areEqual(r.getBin(i), l.getBin(i)));
+                            Assert.assertTrue(areEqual(r.getBin(i), l.getBin(i)));
                             break;
                         case ColumnType.LONG256:
-                            Assert.assertTrue(columnName, areEqual(r.getLong256A(i), l.getLong256A(i)));
+                            assertEquals(r.getLong256A(i), l.getLong256A(i));
                             break;
                         default:
                             // Unknown record type.
@@ -116,20 +117,39 @@ public final class TestUtils {
                             break;
                     }
                 } catch (AssertionError e) {
-                    throw new AssertionError(String.format("Row %d column %s %s", i, columnName, e.getMessage()));
+                    throw new AssertionError(String.format("Row %d column %s %s", rowIndex, columnName, e.getMessage()));
                 }
             }
         }
+
+        Assert.assertFalse("Expected cursor misses record " + rowIndex, cursorActual.hasNext());
     }
 
-    private static boolean areEqual(Long256 a, Long256 b) {
-        return a.getLong0() == b.getLong0()
-                && a.getLong1() == b.getLong1()
-                && a.getLong2() == b.getLong2()
-                && a.getLong3() == b.getLong3();
+    private static void assertEquals(Long256 expected, Long256 actual) {
+        if (expected == actual) return;
+        if (actual == null) {
+            Assert.fail("Expected " + toHexString(expected) +", but was: null");
+        }
+
+        if (expected.getLong0() != actual.getLong0()
+                || expected.getLong1() != actual.getLong1()
+                || expected.getLong2() != actual.getLong2()
+                || expected.getLong3() != actual.getLong3()) {
+                    Assert.assertEquals(toHexString(expected), toHexString(actual));
+                }
+    }
+
+    private static String toHexString(Long256 expected) {
+        return Long.toHexString(expected.getLong0()) + " " +
+                Long.toHexString(expected.getLong1()) + " " +
+                Long.toHexString(expected.getLong2()) + " " +
+                Long.toHexString(expected.getLong3());
     }
 
     public static boolean areEqual(BinarySequence a, BinarySequence b) {
+        if (a == b) return true;
+        if (a == null || b == null) return false;
+
         if (a.length() != b.length()) return false;
         for (int i = 0; i < a.length(); i++) {
             if (a.byteAt(i) != b.byteAt(i)) return false;

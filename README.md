@@ -4,89 +4,92 @@
 <p>&nbsp;</p>
 
 <p align="center">
+  <a href="https://slack.questdb.io">
+    <img src="https://slack.questdb.io/badge.svg" alt="QuestDB community Slack channel"/>
+  </a>
   <a href="https://github.com/questdb/questdb/blob/master/LICENSE.txt">
-    <img src="https://img.shields.io/github/license/questdb/questdb" />
-  </a>
-  <a href="https://www.codacy.com/app/bluestreak/nfsdb">
-    <img src="https://api.codacy.com/project/badge/grade/83c6250bd9fc45a98c12c191af710754" />
-  </a>
-  <a href="https://dev.azure.com/questdb/questdb">
-    <img src="https://dev.azure.com/questdb/questdb/_apis/build/status/Build%20and%20upload%20snapshot%20(Linux)?branchName=master" />
-  </a>
-  <a href="https://search.maven.org/search?q=g:org.questdb">
-    <img src="https://img.shields.io/maven-central/v/org.questdb/questdb" />
+    <img src="https://img.shields.io/github/license/questdb/questdb" alt="Apache 2.0 licence"/>
   </a>
   <a href="https://hub.docker.com/r/questdb/questdb">
-    <img src="https://img.shields.io/docker/pulls/questdb/questdb.svg" />
+    <img src="https://img.shields.io/docker/pulls/questdb/questdb.svg" alt="QuestDB Docker images"/>
+  </a>
+  <a href="https://dev.azure.com/questdb/questdb">
+    <img src="https://dev.azure.com/questdb/questdb/_apis/build/status/Build%20and%20upload%20snapshot%20%28Linux%29?branchName=master" alt="Azure pipeline status"/>
+  </a>
+  <a href="https://search.maven.org/search?q=g:org.questdb">
+    <img src="https://img.shields.io/maven-central/v/org.questdb/questdb" alt="QuestDB on Apache Maven"/>
   </a>
 </p>
 
+# QuestDB
+
+QuestDB is a high-performance, open-source SQL database for applications in
+financial services, IoT, machine learning, DevOps and observability. It includes
+endpoints for PostgreSQL wire protocol, high-throughput schema-agnostic
+ingestion using InfluxDB Line Protocol, and a REST API for queries, bulk
+imports, and exports.
+
+QuestDB implements ANSI SQL with native extensions for time-oriented language
+features. These extensions make it simple to correlate data from multiple
+sources using relational and time series joins. QuestDB achieves high
+performance from a column-oriented storage model, massively-parallelized vector
+execution, SIMD instructions, and various low-latency techniques. The entire
+codebase was built from the ground up in Java and C++, with no dependencies, and
+is 100% free from garbage collection.
+
 <div align="center">
-  <a href="#contributors">
-    <img src="https://img.shields.io/github/all-contributors/questdb/questdb" />
-  </a>
-  <a href="https://slack.questdb.io">
-    <img src="https://slack.questdb.io/badge.svg" />
+  <a href="https://demo.questdb.io">
+    <img alt="QuestDB Web Console showing multiple SQL statements and visualizing a query as a chart" src=".github/console.png" width="600" />
   </a>
 </div>
 
-## What is QuestDB
+## Try QuestDB
 
-QuestDB is a high performance open source SQL database for time series data.
+We provide a [live demo](https://demo.questdb.io/) provisioned with the latest
+QuestDB release and a 1.6 billion row dataset with 10 years of NYC taxi trips to
+query.
 
-It uses a column-oriented approach, heavy parallelized vectorized execution,
-SIMD instructions and a whole array of low-latency techniques. The whole code
-base is built from scratch, without dependencies and 100% free from garbage
-collection.
+To run QuestDB, Docker can be used to get started quickly:
 
-QuestDB implements SQL and augments it for time-series with native extensions.
-It exposes a PostgreSQL wire protocol, high-performance REST API and supports
-ingestion with InfluxDB Line Protocol. QuestDB uses a relational model with
-maintenance-free schemas. Relational and time-series joins make it easy to
-correlate data over time. Writes are durably committed to disk, meaning that the
-data is safe - yet instantly accessible.
+```bash
+docker run -p 9000:9000 -p 8812:8812 questdb/questdb
+```
 
-[QuestDB's documentation](https://questdb.io/docs/introduction/)
+macOS users can use Homebrew:
 
-## Live demo
+```bash
+brew install questdb
+brew services start questdb
+```
 
-Query [our demo](https://demo.questdb.io) dataset with 1.6 billion rows in
-milliseconds.
+The [QuestDB downloads page](https://questdb.io/get-questdb/) provides direct
+downloads for binaries and has details for other installation and deployment
+methods.
 
-## Web Console
+### Connecting to QuestDB
 
-The interactive console to import data (drag and drop) and start querying right
-away. Check our Web Console guide to get started:
+You can interact with QuestDB using the following interfaces:
 
-<div align="center">
-  <a href="https://questdb.io/docs/reference/web-console/">
-    <img alt="Screenshot of the Web Console showing various SQL statements and the result of one as a chart" src=".github/console.png" width="400" />
-  </a>
-</div>
-<div align="center">
-  <a href="https://questdb.io/docs/reference/web-console/">
-    Web Console guide
-  </a>
-</div>
+- [Web Console](https://questdb.io/docs/reference/web-console/) listening on
+  port `9000`
+- [REST API](https://questdb.io/docs/reference/api/rest/) on port `9000`
+- [PostgreSQL](https://questdb.io/docs/reference/api/postgres/) wire protocol on
+  port `8812`
+- [InfluxDB](https://questdb.io/docs/reference/api/influxdb/) line protocol for
+  high-throughput ingestion on port `9009`
 
 ## Performance figures
 
-### Raw figures
-
-Number operations per second **per thread**. Writes are durable and written to
-disk.
+On a CPU with 6 memory channels, QuestDB can scan through 117GB of data per
+second. The following table shows the number operations per second, per thread:
 
 | Operation | 64-bit double  | 32-bit int     |
 | --------- | -------------- | -------------- |
 | Read      | 120 Million /s | 240 Million /s |
 | Write     | 240 Million /s | 480 Million /s |
 
-On a CPU with 6 memory channels, QuestDB can scan through **117GB of data per
-second**.
-
-### Queries
-
-Execution time on a c5.metal instance using 16 of the 96 threads available.
+The following table shows query execution time on a c5.metal instance using 16
+of the 96 threads available:
 
 | Query                                                     | Runtime    |
 | --------------------------------------------------------- | ---------- |
@@ -94,150 +97,41 @@ Execution time on a c5.metal instance using 16 of the 96 threads available.
 | `SELECT tag, sum(double) FROM 1bn`                        | 0.179 secs |
 | `SELECT tag, sum(double) FROM 1bn WHERE timestamp='2019'` | 0.05 secs  |
 
-## Getting Started
+## Documentation & resources
 
-The easiest way to get started is with Docker:
+- The [QuestDB documentation](https://questdb.io/docs/introduction/) describes
+  how to run and configure QuestDB with technical references.
+- [Our Slack workspace](https://slack.questdb.io) is a great place for technical
+  discussions and to meet other users. :wave:
+- [Tutorials](https://questdb.io/tutorial/) written by our community members
+  show what's possible with QuestDB.
+- [QuestDB on Stack Overflow](https://stackoverflow.com/questions/tagged/questdb)
+  has common troubleshooting solutions.
+- [GitHub issues](https://github.com/questdb/questdb/issues) are used to track
+  bug reports and feature requests.
+- [The product roadmap](https://github.com/questdb/questdb/projects/3) lists the
+  tasks and features we're currently working on.
 
-```script
-docker run -p 9000:9000 -p 8812:8812 questdb/questdb
-```
+## Contribute
 
-You can find more information about Docker usage on the
-[dedicated page](https://questdb.io/docs/get-started/docker/).
+We are always happy to have contributions to the project whether it is source
+code, documentation, bug reports, feature requests or feedback. To get started
+with contributing:
 
-#### Alternative methods
+- Have a look through GitHub issues labeled
+  "[Good first issue](https://github.com/questdb/questdb/issues?q=is%3Aissue+is%3Aopen+label%3A%22Good+first+issue%22)".
+- Read the
+  [contribution guide](https://github.com/questdb/questdb/blob/master/CONTRIBUTING.md).
+- For details on building QuestDB, see the
+  [build instructions](https://github.com/questdb/questdb/blob/master/core/README.md).
+- [Create a fork](https://docs.github.com/en/github/getting-started-with-github/fork-a-repo)
+  of QuestDB and submit a pull request with your proposed changes.
 
-- [Start with Homebrew](https://questdb.io/docs/get-started/homebrew/)
-- [Start with the binaries](https://questdb.io/docs/get-started/binaries/)
+As a sign of our gratitude, we'll send contributors some of our QuestDB swag
+such as stickers and t-shirts! :star2:
 
-### Connecting to QuestDB
-
-You can interact with QuestDB using:
-
-- [Web Console](https://questdb.io/docs/reference/web-console/) listening
-  on port `9000`: [localhost:9000](http://localhost:9000)
-- [Postgres](https://questdb.io/docs/reference/api/postgres/) on port `8812`
-- [REST API](https://questdb.io/docs/reference/api/rest/) on port `9000`
-
-Both the HTTP and PostgreSQL servers reference the database in
-`<root_directory>/db`.
-
-You can connect to the Postgres server as follows. The default password is
-`quest`:
-
-```script
-psql -h localhost -p 8812 -U admin -W -d qdb
-```
-
-## Building from source
-
-#### (a) Prerequisites
-
-- Java 11 64-bit
-- Maven 3
-- Node.js 12 / NPM 6
-
-```script
-java --version
-mvn --version
-node --version
-```
-
-#### (b) Clone the Repository
-
-```script
-git clone git@github.com:questdb/questdb.git
-```
-
-#### (c) Build the Code
-
-Commands below will create JAR without assembling executable binaries nor
-building web console.
-
-```script
-cd questdb
-mvn clean package -DskipTests
-```
-
-To package web console with the jar use the following command:
-
-```script
-mvn clean package -DskipTests -P build-web-console
-```
-
-To build executable binaries use the following command:
-
-```script
-mvn clean package -DskipTests -P build-web-console,build-binaries
-```
-
-To run tests it is not required to have binaries built nor web console. There
-are over 4000 tests that should complete without 2-6 minutes depending on the
-system.
-
-```script
-mvn clean test
-```
-
-To release to Maven Central use the following command that activates deploy
-profile. Ensure that your `~/.m2/settings.xml` contains username/password for
-server `central` and `gnupg` is on hand to sign the artefacts.
-
-```script
-mvn -pl !benchmarks clean deploy -DskipTests -P build-web-console,maven-central-release
-```
-
-#### (d) Run QuestDB
-
-```script
-# Create a database root directory and run QuestDB
-mkdir <root_directory>
-java -p core/target/questdb-5.0.5-SNAPSHOT.jar -m io.questdb/io.questdb.ServerMain -d <root_directory>
-```
-
-## Resources
-
-Complete references are available in the
-[Documentation](https://questdb.io/docs/introduction/).
-
-Get started:
-
-- [Docker](https://questdb.io/docs/get-started/docker/)
-- [Binaries](https://questdb.io/docs/get-started/binaries/)
-- [Homebrew](https://questdb.io/docs/get-started/homebrew/)
-
-Develop:
-
-- [Connect](https://questdb.io/docs/develop/connect/)
-- [Insert data](https://questdb.io/docs/develop/insert-data/)
-- [Query data](https://questdb.io/docs/develop/query-data/)
-- [Authenticate](https://questdb.io/docs/develop/authenticate/)
-
-Concepts:
-
-- [SQL extensions](https://questdb.io/docs/concept/sql-extensions/)
-- [Storage model](https://questdb.io/docs/concept/storage-model/)
-- [Partitions](https://questdb.io/docs/concept/partitions/)
-- [Designated timestamp](https://questdb.io/docs/concept/designated-timestamp/)
-
-## Support / Contact
-
-[Slack Channel](https://slack.questdb.io)
-
-## Roadmap
-
-[Our roadmap is here](https://github.com/questdb/questdb/projects/3)
-
-## Contribution
-
-Feel free to contribute to the project by forking the repository and submitting
-pull requests. Please make sure you have read our
-[contributing guide](https://github.com/questdb/questdb/blob/master/CONTRIBUTING.md).
-
-## Contributors ✨
-
-Thanks to these wonderful people
-([emoji key](https://allcontributors.org/docs/en/emoji-key)):
+A big thanks goes to the following wonderful people who have contributed to
+QuestDB: ([emoji key](https://allcontributors.org/docs/en/emoji-key)):
 
 <!-- ALL-CONTRIBUTORS-LIST:START - Do not remove or modify this section -->
 <!-- prettier-ignore-start -->
@@ -273,6 +167,18 @@ Thanks to these wonderful people
   <tr>
     <td align="center"><a href="https://borowski-software.de/"><img src="https://avatars.githubusercontent.com/u/8701341?v=4" width="100px;" alt=""/><br /><sub><b>TimBo93</b></sub></a><br /><a href="https://github.com/questdb/questdb/issues?q=author%3ATimBo93" title="Bug reports">🐛</a> <a href="#userTesting-TimBo93" title="User Testing">📓</a></td>
     <td align="center"><a href="http://zikani.me"><img src="https://avatars.githubusercontent.com/u/1501387?v=4" width="100px;" alt=""/><br /><sub><b>zikani03</b></sub></a><br /><a href="https://github.com/questdb/questdb/commits?author=zikani03" title="Code">💻</a></td>
+    <td align="center"><a href="https://github.com/jaugsburger"><img src="https://avatars.githubusercontent.com/u/10787042?v=4" width="100px;" alt=""/><br /><sub><b>jaugsburger</b></sub></a><br /><a href="https://github.com/questdb/questdb/commits?author=jaugsburger" title="Code">💻</a> <a href="#maintenance-jaugsburger" title="Maintenance">🚧</a></td>
+    <td align="center"><a href="http://www.questdb.io"><img src="https://avatars.githubusercontent.com/u/52114895?v=4" width="100px;" alt=""/><br /><sub><b>TheTanc</b></sub></a><br /><a href="#projectManagement-TheTanc" title="Project Management">📆</a> <a href="#content-TheTanc" title="Content">🖋</a> <a href="#ideas-TheTanc" title="Ideas, Planning, & Feedback">🤔</a></td>
+    <td align="center"><a href="http://davidgs.com"><img src="https://avatars.githubusercontent.com/u/2071898?v=4" width="100px;" alt=""/><br /><sub><b>davidgs</b></sub></a><br /><a href="https://github.com/questdb/questdb/issues?q=author%3Adavidgs" title="Bug reports">🐛</a> <a href="#content-davidgs" title="Content">🖋</a></td>
+    <td align="center"><a href="https://redalemeden.com"><img src="https://avatars.githubusercontent.com/u/519433?v=4" width="100px;" alt=""/><br /><sub><b>kaishin</b></sub></a><br /><a href="https://github.com/questdb/questdb/commits?author=kaishin" title="Code">💻</a> <a href="#example-kaishin" title="Examples">💡</a></td>
+    <td align="center"><a href="https://questdb.io"><img src="https://avatars.githubusercontent.com/u/7276403?v=4" width="100px;" alt=""/><br /><sub><b>bluestreak01</b></sub></a><br /><a href="https://github.com/questdb/questdb/commits?author=bluestreak01" title="Code">💻</a> <a href="#maintenance-bluestreak01" title="Maintenance">🚧</a> <a href="https://github.com/questdb/questdb/commits?author=bluestreak01" title="Tests">⚠️</a></td>
+  </tr>
+  <tr>
+    <td align="center"><a href="http://patrick.spacesurfer.com/"><img src="https://avatars.githubusercontent.com/u/29952889?v=4" width="100px;" alt=""/><br /><sub><b>patrickSpaceSurfer</b></sub></a><br /><a href="https://github.com/questdb/questdb/commits?author=patrickSpaceSurfer" title="Code">💻</a> <a href="#maintenance-patrickSpaceSurfer" title="Maintenance">🚧</a> <a href="https://github.com/questdb/questdb/commits?author=patrickSpaceSurfer" title="Tests">⚠️</a></td>
+    <td align="center"><a href="http://chenrui.dev"><img src="https://avatars.githubusercontent.com/u/1580956?v=4" width="100px;" alt=""/><br /><sub><b>chenrui333</b></sub></a><br /><a href="#infra-chenrui333" title="Infrastructure (Hosting, Build-Tools, etc)">🚇</a></td>
+    <td align="center"><a href="https://github.com/Ugbot"><img src="https://avatars.githubusercontent.com/u/2143631?v=4" width="100px;" alt=""/><br /><sub><b>Ugbot</b></sub></a><br /><a href="#question-Ugbot" title="Answering Questions">💬</a> <a href="#userTesting-Ugbot" title="User Testing">📓</a> <a href="#talk-Ugbot" title="Talks">📢</a></td>
+    <td align="center"><a href="http://bsmth.de"><img src="https://avatars.githubusercontent.com/u/43580235?v=4" width="100px;" alt=""/><br /><sub><b>bsmth</b></sub></a><br /><a href="https://github.com/questdb/questdb/commits?author=bsmth" title="Documentation">📖</a> <a href="#content-bsmth" title="Content">🖋</a></td>
+    <td align="center"><a href="https://github.com/lepolac"><img src="https://avatars.githubusercontent.com/u/6312424?v=4" width="100px;" alt=""/><br /><sub><b>lepolac</b></sub></a><br /><a href="https://github.com/questdb/questdb/commits?author=lepolac" title="Code">💻</a> <a href="#tool-lepolac" title="Tools">🔧</a></td>
   </tr>
 </table>
 
