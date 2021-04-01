@@ -238,6 +238,7 @@ public class IODispatcherTest {
 
                         Assert.assertEquals(0, Net.close(fd));
                         LOG.info().$("closed [fd=").$(fd).$(']').$();
+                        fd = -1;
 
                         contextClosedLatch.await();
 
@@ -249,7 +250,9 @@ public class IODispatcherTest {
                         Net.freeSockAddr(sockAddr);
                     }
                 } finally {
-                    Net.close(fd);
+                    if (fd != -1) {
+                        Net.close(fd);
+                    }
                 }
             }
         });
@@ -332,6 +335,7 @@ public class IODispatcherTest {
 
                         Assert.assertEquals(0, Net.close(fd));
                         LOG.info().$("closed [fd=").$(fd).$(']').$();
+                        fd = -1;
 
                         contextClosedLatch.await();
 
@@ -343,7 +347,9 @@ public class IODispatcherTest {
                         Net.freeSockAddr(sockAddr);
                     }
                 } finally {
-                    Net.close(fd);
+                    if (fd != -1) {
+                        Net.close(fd);
+                    }
                 }
 
                 Assert.assertEquals(1, closeCount.get());
@@ -4859,6 +4865,7 @@ public class IODispatcherTest {
                         requestReceivedLatch.await();
                         Assert.assertEquals(0, Net.close(fd));
                         LOG.info().$("closed [fd=").$(fd).$(']').$();
+                        fd = -1;
 
                         contextClosedLatch.await();
 
@@ -4872,7 +4879,9 @@ public class IODispatcherTest {
                         Net.freeSockAddr(sockAddr);
                     }
                 } finally {
-                    Net.close(fd);
+                    if (fd != -1) {
+                        Net.close(fd);
+                    }
                 }
 
                 Assert.assertEquals(1, closeCount.get());
@@ -5044,6 +5053,7 @@ public class IODispatcherTest {
 
                         Assert.assertEquals(0, Net.close(fd));
                         LOG.info().$("closed [fd=").$(fd).$(']').$();
+                        fd = -1;
 
                         contextClosedLatch.await();
 
@@ -5057,7 +5067,9 @@ public class IODispatcherTest {
                         Net.freeSockAddr(sockAddr);
                     }
                 } finally {
-                    Net.close(fd);
+                    if (fd != -1) {
+                        Net.close(fd);
+                    }
                 }
 
                 Assert.assertEquals(1, closeCount.get());

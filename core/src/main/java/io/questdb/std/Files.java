@@ -24,13 +24,13 @@
 
 package io.questdb.std;
 
-import io.questdb.std.str.LPSZ;
-import io.questdb.std.str.Path;
-
 import java.io.File;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.atomic.AtomicLong;
+
+import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Path;
 
 public final class Files {
 
@@ -63,6 +63,7 @@ public final class Files {
     public native static long append(long fd, long address, long len);
 
     public static int close(long fd) {
+        assert auditClose(fd);
         int res = close0(fd);
         if (res == 0) {
             OPEN_FILE_COUNT.decrementAndGet();
@@ -172,6 +173,7 @@ public final class Files {
     public static long openAppend(LPSZ lpsz) {
         long fd = openAppend(lpsz.address());
         if (fd != -1) {
+            assert auditOpen(fd);
             bumpFileCount();
         }
         return fd;
@@ -180,6 +182,7 @@ public final class Files {
     public static long openRO(LPSZ lpsz) {
         long fd = openRO(lpsz.address());
         if (fd != -1) {
+            assert auditOpen(fd);
             bumpFileCount();
         }
         return fd;
@@ -188,6 +191,7 @@ public final class Files {
     public static long openRW(LPSZ lpsz) {
         long fd = openRW(lpsz.address());
         if (fd != -1) {
+            assert auditOpen(fd);
             bumpFileCount();
         }
         return fd;
@@ -266,7 +270,7 @@ public final class Files {
 
     public native static long write(long fd, long address, long len, long offset);
 
-    native static int close0(long fd);
+    private native static int close0(long fd);
 
     private static boolean strcmp(long lpsz, CharSequence s) {
         int len = s.length();
@@ -308,4 +312,30 @@ public final class Files {
     private native static boolean setLastModified(long lpszName, long millis);
 
     private static native boolean rename(long lpszOld, long lpszNew);
+
+    private static LongHashSet openFds;
+
+    public static synchronized boolean auditOpen(long fd) {
+        if (null == openFds) {
+            openFds = new LongHashSet();
+        }
+        if (fd < 0) {
+            throw new IllegalStateException("Invalid fd " + fd);
+        }
+        if (openFds.contains(fd)) {
+            throw new IllegalStateException("fd " + fd + " is already open");
+        }
+        openFds.add(fd);
+        return true;
+    }
+
+    public static synchronized boolean auditClose(long fd) {
+        if (fd < 0) {
+            throw new IllegalStateException("Invalid fd " + fd);
+        }
+        if (openFds.remove(fd) == -1) {
+            throw new IllegalStateException("fd " + fd + " is already closed!");
+        }
+        return true;
+    }
 }

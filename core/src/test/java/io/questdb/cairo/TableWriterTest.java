@@ -1536,7 +1536,8 @@ public class TableWriterTest extends AbstractCairoTest {
     @Test
     public void testConstructorTruncatedTodo() throws Exception {
         FilesFacade ff = new FilesFacadeImpl() {
-            long fd = 7686876823L;
+            private static final long TODO_FD = 7686876823L;
+            private long fd = TODO_FD;
 
             @Override
             public boolean exists(LPSZ path) {
@@ -1553,11 +1554,20 @@ public class TableWriterTest extends AbstractCairoTest {
 
             @Override
             public long read(long fd, long buf, long len, long offset) {
-                if (fd == this.fd) {
+                if (fd == TODO_FD) {
+                    Assert.assertEquals(TODO_FD, this.fd);
                     this.fd = -1;
                     return -1;
                 }
                 return super.read(fd, buf, len, offset);
+            }
+
+            @Override
+            public boolean close(long fd) {
+                if (fd == TODO_FD) {
+                    return true;
+                }
+                return super.close(fd);
             }
         };
 
