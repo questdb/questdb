@@ -308,12 +308,18 @@ $.fn.grid = function (msgBus) {
   }
 
   function generatePctWidth(rules) {
+    var maxWidhtPct = 100
+    var viewportWidth = viewport.offsetWidth
+    if (totalWidth * 2 < viewportWidth) {
+      // Single column which is not supposed to be very wide
+      maxWidhtPct = 50
+    }
     for (var i = 0; i < colMax.length; i++) {
       rules.push(
         ".qg-w" +
           i +
           "{width:" +
-          (colMax[i] * 100) / totalWidth +
+          Math.min((colMax[i] * 100) / totalWidth, maxWidhtPct) +
           "%;" +
           getColumnAlignment(i) +
           "}",
