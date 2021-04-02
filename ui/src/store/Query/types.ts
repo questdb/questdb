@@ -20,6 +20,7 @@ export type QueryStateShape = Readonly<{
   notifications: NotificationShape[]
   result?: QueryRawResult
   running: boolean
+  maxNotificationHeight: number
 }>
 
 export enum QueryAT {
@@ -29,6 +30,7 @@ export enum QueryAT {
   SET_RESULT = "QUERY/SET_RESULT",
   STOP_RUNNING = "QUERY/STOP_RUNNING",
   TOGGLE_RUNNING = "QUERY/TOGGLE_RUNNING",
+  CHANGE_MAX_NOTIFICATION_HEIGHTS = "QUERY/CHANGE_MAX_NOTIFICATIONS",
 }
 
 type AddNotificationAction = Readonly<{
@@ -58,6 +60,11 @@ type ToggleRunningAction = Readonly<{
   type: QueryAT.TOGGLE_RUNNING
 }>
 
+type ChangeMaxNotficationHeight = Readonly<{
+  payload: number
+  type: QueryAT.CHANGE_MAX_NOTIFICATION_HEIGHTS
+}>
+
 export type QueryAction =
   | AddNotificationAction
   | CleanupNotificationsAction
@@ -65,3 +72,4 @@ export type QueryAction =
   | SetResultAction
   | StopRunningAction
   | ToggleRunningAction
+  | ChangeMaxNotficationHeight

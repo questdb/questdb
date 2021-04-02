@@ -165,7 +165,7 @@ const Menu = () => {
       )}
 
       {!running && (
-        <SuccessButton onClick={handleClick}>
+        <SuccessButton onClick={handleClick} title="Ctrl+Enter">
           <Play size="18px" />
           <span>Run</span>
         </SuccessButton>
