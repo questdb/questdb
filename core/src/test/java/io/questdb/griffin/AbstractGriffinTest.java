@@ -34,17 +34,15 @@ import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
-import org.junit.After;
 import org.junit.AfterClass;
 import org.junit.Assert;
 import org.junit.BeforeClass;
 
 public class AbstractGriffinTest extends AbstractCairoTest {
-    protected static final BindVariableService bindVariableService = new BindVariableServiceImpl(configuration);
+    protected static BindVariableService bindVariableService;
     private static final LongList rows = new LongList();
     private final static double EPSILON = 0.000001;
     protected static SqlExecutionContext sqlExecutionContext;
-    protected static CairoEngine engine;
     protected static SqlCompiler compiler;
 
     public static void assertReader(String expected, CharSequence tableName) {
@@ -109,9 +107,10 @@ public class AbstractGriffinTest extends AbstractCairoTest {
     }
 
     @BeforeClass
-    public static void setUp2() {
-        engine = new CairoEngine(configuration);
+    public static void setUpStatic() {
+        AbstractCairoTest.setUpStatic();
         compiler = new SqlCompiler(engine);
+        bindVariableService = new BindVariableServiceImpl(configuration);
         sqlExecutionContext = new SqlExecutionContextImpl(
                 engine, 1, engine.getMessageBus())
                 .with(
@@ -124,15 +123,9 @@ public class AbstractGriffinTest extends AbstractCairoTest {
     }
 
     @AfterClass
-    public static void tearDown() {
-        engine.close();
+    public static void tearDownStatic() {
+        AbstractCairoTest.tearDownStatic();
         compiler.close();
-    }
-
-    @After
-    public void tearDownAfterTest() {
-        engine.resetTableId();
-        engine.clear();
     }
 
     protected static void assertQuery(
@@ -733,19 +726,6 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             Assert.assertEquals(index, factory.getMetadata().getTimestampIndex());
             assertTimestampColumnValues(factory, sqlExecutionContext);
         }
-    }
-
-    protected static void assertMemoryLeak(TestUtils.LeakProneCode code) throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try {
-                code.run();
-                engine.releaseInactive();
-                Assert.assertEquals(0, engine.getBusyWriterCount());
-                Assert.assertEquals(0, engine.getBusyReaderCount());
-            } finally {
-                engine.clear();
-            }
-        });
     }
 
     void assertFactoryCursor(
