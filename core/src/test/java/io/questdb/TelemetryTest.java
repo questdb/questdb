@@ -26,6 +26,7 @@ package io.questdb;
 
 import io.questdb.cairo.AbstractCairoTest;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableUtils;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
@@ -39,16 +40,6 @@ public class TelemetryTest extends AbstractCairoTest {
     private final static FilesFacade FF = FilesFacadeImpl.INSTANCE;
 
     @Test
-    public void testTelemetryDisabledByDefault() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try (Path path = new Path()) {
-                Assert.assertEquals(TableUtils.TABLE_DOES_NOT_EXIST, TableUtils.exists(FF, path, root, "telemetry"));
-                Assert.assertEquals(TableUtils.TABLE_DOES_NOT_EXIST, TableUtils.exists(FF, path, root, "telemetry_config"));
-            }
-        });
-    }
-
-    @Test
     public void testTelemetryCreatesTablesWhenEnabled() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (CairoEngine engine = new CairoEngine(configuration)) {
@@ -59,6 +50,16 @@ public class TelemetryTest extends AbstractCairoTest {
                 }
 
                 Misc.free(telemetryJob);
+            }
+        });
+    }
+
+    @Test
+    public void testTelemetryDisabledByDefault() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (Path path = new Path()) {
+                Assert.assertEquals(TableUtils.TABLE_DOES_NOT_EXIST, TableUtils.exists(FF, path, root, "telemetry"));
+                Assert.assertEquals(TableUtils.TABLE_DOES_NOT_EXIST, TableUtils.exists(FF, path, root, "telemetry_config"));
             }
         });
     }
@@ -80,4 +81,17 @@ public class TelemetryTest extends AbstractCairoTest {
             }
         });
     }
+
+    protected void assertColumn(CharSequence expected, CharSequence tableName, int index) {
+        try (TableReader reader = new TableReader(configuration, tableName)) {
+            sink.clear();
+            printer.printFullColumn(reader.getCursor(), reader.getMetadata(), index, false, sink);
+            TestUtils.assertEquals(expected, sink);
+            reader.getCursor().toTop();
+            sink.clear();
+            printer.printFullColumn(reader.getCursor(), reader.getMetadata(), index, false, sink);
+            TestUtils.assertEquals(expected, sink);
+        }
+    }
+
 }

@@ -23,29 +23,31 @@
  ******************************************************************************/
 
 #include <cstdint>
-#include <cstring>
 #include "util.h"
 #include "jni.h"
 #include "fs.h"
 
 #define MAX_TXN_IN_FLIGHT 4096
-#define INITIAL_LO -1
+#define INITIAL_LO (-1)
 
 typedef struct txn_board_t {
     int64_t base = INITIAL_LO;
     int64_t max = 0;
+    // 1-based min txn that is in-use
+    // we have to use 1 based txn to rule out possibility of 0 txn
+    // 0 is initial value when shared memory is created
     int64_t min = L_MAX;
     uint64_t counts[MAX_TXN_IN_FLIGHT]{};
 
-    void init() {
-        if (__sync_val_compare_and_swap(&min, 0, L_MAX) == 0) {
-            base = INITIAL_LO;
-            max = INITIAL_LO;
+    void init(int64_t txn) {
+        if (__sync_val_compare_and_swap(&min, 0, txn + 1) == 0) {
+            base = txn;
+            max = txn;
         }
     }
 
     inline int64_t get_min() {
-        return __atomic_load_n(&min, __ATOMIC_RELAXED);
+        return __atomic_load_n(&min, __ATOMIC_RELAXED) - 1;
     }
 
     inline int64_t get_max() {
@@ -56,18 +58,30 @@ typedef struct txn_board_t {
         return &(counts[offset % MAX_TXN_IN_FLIGHT]);
     }
 
-    [[nodiscard]] inline uint64_t get_offset(int64_t txn) const {
+    inline uint64_t get_count(int64_t offset) {
+        return __atomic_load_n(get_count_ptr(offset), __ATOMIC_RELAXED);
+    }
+
+    [[nodiscard]] inline uint64_t txn_to_offswt(int64_t txn) const {
         return txn - base;
     }
 
+    [[nodiscard]] inline int64_t offset_to_txn(int64_t offset) const {
+        return offset + base;
+    }
+
     inline uint64_t get_max_offset() {
-        return get_offset(get_max());
+        return txn_to_offswt(get_max());
+    }
+
+    inline uint64_t get_min_offset() {
+        return txn_to_offswt(get_min());
     }
 
 } txn_board_t;
 
 typedef struct txn_local {
-    txn_board_t* p_txn_board;
+    txn_board_t *p_txn_board;
     uint64_t ref_counter;
     int64_t hMapping;
 } txn_local_t;
@@ -83,7 +97,7 @@ inline uint64_t dec(uint64_t val) {
 template<typename NEXT>
 inline uint64_t atomic_next(volatile uint64_t *val, NEXT next) {
     do {
-        uint64_t current = *val;
+        uint64_t current = __atomic_load_n(val, __ATOMIC_RELAXED);
         uint64_t n = next(current);
         if (__sync_val_compare_and_swap(val, current, n) == current) {
             return n;
@@ -93,45 +107,37 @@ inline uint64_t atomic_next(volatile uint64_t *val, NEXT next) {
 
 void set_max_atomic(int64_t *slot, int64_t value) {
     do {
-        int64_t current = *slot;
+        int64_t current = __atomic_load_n(slot, __ATOMIC_RELAXED);
         if (value <= current || __sync_val_compare_and_swap(slot, current, value) == current) {
             break;
         }
     } while (true);
 }
 
-void set_min_atomic(int64_t *slot, int64_t value) {
-    do {
-        int64_t current = *slot;
-        if (value >= current || __sync_val_compare_and_swap(slot, current, value) == current) {
-            break;
-        }
-    } while (true);
-}
-
-int64_t txn_release(txn_board_t *p_board, int64_t txn) {
-    int64_t offset = p_board->get_offset(txn);
-    int64_t max_offset = p_board->get_max_offset();
+void txn_release(txn_board_t *p_board, int64_t txn) {
+    int64_t offset = p_board->txn_to_offswt(txn);
+    const int64_t max_offset = p_board->get_max_offset();
     if (atomic_next(p_board->get_count_ptr(offset), dec) == 0 && p_board->get_min() == txn) {
         // skip thru all unused txn values up
-        while (++offset <= max_offset && *p_board->get_count_ptr(offset) == 0);
+        while (++offset <= max_offset && p_board->get_count(offset) == 0);
         // on first non-zero count update the min value
-        const int64_t x = offset + p_board->base;
-        set_max_atomic(&(p_board->min), x);
-        return x - 1;
+        set_max_atomic(&(p_board->min), p_board->offset_to_txn(offset <= max_offset ? offset : max_offset) + 1);
     }
-    return p_board->get_min() - 1;
 }
 
 inline bool txn_acquire(txn_board_t *p_board, int64_t txn) {
-    // lazy update "base" only to assign initial value
-    __sync_val_compare_and_swap(&(p_board->base), INITIAL_LO, txn);
-    const int64_t offset = p_board->get_offset(txn);
+    const int64_t offset = p_board->txn_to_offswt(txn);
     if ((txn - p_board->get_min()) < MAX_TXN_IN_FLIGHT) {
         atomic_next(p_board->get_count_ptr(offset), inc);
-        // update txn range
+        // update max - this could be a new txn
         set_max_atomic(&(p_board->max), txn);
-        set_min_atomic(&(p_board->min), txn);
+        // update min
+        const int64_t min_offset = p_board->get_min_offset();
+        int64_t o = min_offset;
+        while (o < offset && p_board->get_count(o) == 0) {
+            o++;
+        }
+        set_max_atomic(&(p_board->min), p_board->offset_to_txn(o) + 1);
         return true;
     }
     return false;
@@ -147,9 +153,9 @@ JNIEXPORT jboolean JNICALL Java_io_questdb_cairo_TxnScoreboard_acquire0
     );
 }
 
-JNIEXPORT jlong JNICALL Java_io_questdb_cairo_TxnScoreboard_release0
+JNIEXPORT void JNICALL Java_io_questdb_cairo_TxnScoreboard_release0
         (JNIEnv *e, jclass cl, jlong p_board, jlong txn) {
-    return txn_release(
+    txn_release(
             reinterpret_cast<txn_local_t *>(p_board)->p_txn_board,
             txn
     );
@@ -157,23 +163,38 @@ JNIEXPORT jlong JNICALL Java_io_questdb_cairo_TxnScoreboard_release0
 
 JNIEXPORT jlong JNICALL Java_io_questdb_cairo_TxnScoreboard_getOffset
         (JNIEnv *e, jclass cl, jlong p_board, jlong txn) {
-    return reinterpret_cast<txn_local_t *>(p_board)->p_txn_board->get_offset(txn);
+    return reinterpret_cast<txn_local_t *>(p_board)->p_txn_board->txn_to_offswt(txn);
 }
 
 JNIEXPORT jlong JNICALL Java_io_questdb_cairo_TxnScoreboard_getCount
         (JNIEnv *e, jclass cl, jlong p_board, jlong txn) {
     auto *p = reinterpret_cast<txn_local_t *>(p_board)->p_txn_board;
-    return *p->get_count_ptr(p->get_offset(txn));
+    return p->get_count(p->txn_to_offswt(txn));
+}
+
+JNIEXPORT void JNICALL Java_io_questdb_cairo_TxnScoreboard_init
+        (JNIEnv *e, jclass cl, jlong p_board, jlong txn) {
+    reinterpret_cast<txn_local_t *>(p_board)->p_txn_board->init(txn);
+}
+
+JNIEXPORT jlong JNICALL Java_io_questdb_cairo_TxnScoreboard_getMin
+        (JNIEnv *e, jclass cl, jlong p_board) {
+    auto *p = reinterpret_cast<txn_local_t *>(p_board)->p_txn_board;
+    return p->get_min();
+}
+
+JNIEXPORT jlong JNICALL Java_io_questdb_cairo_TxnScoreboard_getMax
+        (JNIEnv *e, jclass cl, jlong p_board) {
+    auto *p = reinterpret_cast<txn_local_t *>(p_board)->p_txn_board;
+    return p->get_max();
 }
 
 JNIEXPORT jlong JNICALL Java_io_questdb_cairo_TxnScoreboard_create0
         (JNIEnv *e, jclass cl, jlong lpszName) {
     uint64_t size = sizeof(txn_board_t);
     int64_t hMapping;
-    auto *pBoard = reinterpret_cast<txn_board_t *>(openShm0(reinterpret_cast<char*>(lpszName), size, &hMapping));
-    pBoard->init();
-
-    auto *pTxnLocal = reinterpret_cast<txn_local_t*>(malloc(sizeof(txn_local_t)));
+    auto *pBoard = reinterpret_cast<txn_board_t *>(openShm0(reinterpret_cast<char *>(lpszName), size, &hMapping));
+    auto *pTxnLocal = reinterpret_cast<txn_local_t *>(malloc(sizeof(txn_local_t)));
     pTxnLocal->p_txn_board = pBoard;
     pTxnLocal->hMapping = hMapping;
     pTxnLocal->ref_counter = 1;

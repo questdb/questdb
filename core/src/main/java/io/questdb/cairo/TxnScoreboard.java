@@ -69,10 +69,10 @@ public class TxnScoreboard {
 
     private native static boolean acquire0(long pTxnScoreboard, long txn);
 
-    static long release(long pTxnScoreboard, long txn) {
+    static void release(long pTxnScoreboard, long txn) {
         assert pTxnScoreboard > 0;
         LOG.info().$("release  [p=").$(pTxnScoreboard).$(", txn=").$(txn).$(']').$();
-        return release0(pTxnScoreboard, txn);
+        release0(pTxnScoreboard, txn);
     }
 
     private native static long release0(long pTxnScoreboard, long txn);
@@ -82,6 +82,12 @@ public class TxnScoreboard {
     private static native long create0(long lpszName);
 
     static native long getCount(long pTxnScoreboard, long txn);
+
+    static native long init(long pTxnScoreboard, long txn);
+
+    static native long getMin(long pTxnScoreboard);
+
+    static native long getMax(long pTxnScoreboard);
 
     private static native long close0(long lpszName, long pTxnScoreboard);
 }

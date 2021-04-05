@@ -74,7 +74,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     private long rowCount;
     private long txn = TableUtils.INITIAL_TXN;
     private long tempMem8b = Unsafe.malloc(8);
-    private boolean active = false;
+    private boolean active;
 
     public TableReader(CairoConfiguration configuration, CharSequence tableName) {
         this(configuration, tableName, 0);
@@ -100,6 +100,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             this.columnCountBits = getColumnBits(columnCount);
             int partitionBy = this.metadata.getPartitionBy();
             this.txFile = new TxReader(ff, path, partitionBy);
+            TxnScoreboard.init(this.txnScoreboard, txFile.readTxn());
             readTxnSlow();
             openSymbolMaps();
             partitionCount = txFile.getPartitionCount();
@@ -125,6 +126,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             this.columnTops = new LongList(capacity / 2);
             this.columnTops.setPos(capacity / 2);
             this.recordCursor.of(this);
+            this.active = true;
         } catch (CairoException e) {
             close();
             throw e;
@@ -291,7 +293,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         if (active) {
             return;
         }
-        reload();
+        reload(true);
         active = true;
     }
 
@@ -427,10 +429,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     public boolean reload() {
-        if (this.txn == txFile.readTxn()) {
-            return false;
-        }
-        return reloadSlow();
+        return reload(false);
     }
 
     public void reshuffleSymbolMapReaders(long pTransitionIndex) {
@@ -822,6 +821,10 @@ public class TableReader implements Closeable, SymbolTableSource {
         return txn;
     }
 
+    long getTxnScoreboard() {
+        return txnScoreboard;
+    }
+
     boolean hasNull(int columnIndex) {
         for (int i = 0; i < partitionCount; i++) {
             openPartition(i);
@@ -987,6 +990,7 @@ public class TableReader implements Closeable, SymbolTableSource {
 
             // exit if this is the same as we already have
             if (txn == this.txn) {
+                TxnScoreboard.acquire(txnScoreboard, txn);
                 return false;
             }
 
@@ -1076,6 +1080,16 @@ public class TableReader implements Closeable, SymbolTableSource {
             return;
         }
         reconcileOpenPartitionsFrom(0);
+    }
+
+    private boolean reload(boolean activation) {
+        if (this.txn == txFile.readTxn()) {
+            if (activation) {
+                TxnScoreboard.acquire(txnScoreboard, txn);
+            }
+            return false;
+        }
+        return reloadSlow();
     }
 
     private void reloadColumnAt(

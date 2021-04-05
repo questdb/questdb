@@ -90,7 +90,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
     }
 
     public static boolean doubleEquals(double a, double b) {
-        return a == b || Math.abs(a - b) < EPSILON;
+        return doubleEquals(a, b, EPSILON);
     }
 
     public static boolean doubleEquals(double a, double b, double epsilon) {
@@ -312,10 +312,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                 return;
             }
 
-            sink.clear();
-            printer.print(cursor, factory.getMetadata(), true, sink);
-
-            TestUtils.assertEquals(expected, sink);
+            TestUtils.assertCursor(expected, cursor, factory.getMetadata(), true, sink);
 
             final RecordMetadata metadata = factory.getMetadata();
 
@@ -397,7 +394,6 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                     }
 
                     TestUtils.assertEquals(expected, sink);
-
                 }
             } else {
                 Assert.assertFalse(factory.recordCursorSupportsRandomAccess());
@@ -529,13 +525,21 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             CharSequence expected,
             CharSequence query,
             CharSequence expectedTimestamp,
-            CharSequence ddl2,
-            CharSequence expected2,
             boolean supportsRandomAccess,
-            boolean checkSameStr,
             boolean expectSize
     ) throws SqlException {
-        printSqlResult(expected, query, expectedTimestamp, ddl2, expected2, supportsRandomAccess, checkSameStr, expectSize, false, null);
+        printSqlResult(
+                expected,
+                query,
+                expectedTimestamp,
+                null,
+                null,
+                supportsRandomAccess,
+                true,
+                expectSize,
+                false,
+                null
+        );
     }
 
     protected static void printSqlResult(
@@ -587,11 +591,10 @@ public class AbstractGriffinTest extends AbstractCairoTest {
         }
     }
 
-    private static void assertQuery(
+    private static void assertQueryNoVerify(
             CharSequence expected,
             CharSequence query,
             @Nullable CharSequence ddl,
-            @Nullable CharSequence verify,
             @Nullable CharSequence expectedTimestamp,
             @Nullable CharSequence ddl2,
             @Nullable CharSequence expected2,
@@ -604,9 +607,6 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             if (ddl != null) {
                 compiler.compile(ddl, sqlExecutionContext);
             }
-            if (verify != null) {
-                printSqlResult(null, verify, expectedTimestamp, ddl2, expected2, supportsRandomAccess, checkSameStr, expectSize, sizeCanBeVariable, null);
-            }
             printSqlResult(expected, query, expectedTimestamp, ddl2, expected2, supportsRandomAccess, checkSameStr, expectSize, sizeCanBeVariable, null);
         });
     }
@@ -617,7 +617,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             CharSequence ddl,
             @Nullable CharSequence expectedTimestamp
     ) throws Exception {
-        assertQuery(expected, query, ddl, null, expectedTimestamp, null, null, true, true, false, false);
+        assertQueryNoVerify(expected, query, ddl, expectedTimestamp, null, null, true, true, false, false);
     }
 
     protected static void assertQuery(
@@ -627,7 +627,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             @Nullable CharSequence expectedTimestamp,
             boolean supportsRandomAccess
     ) throws Exception {
-        assertQuery(expected, query, ddl, null, expectedTimestamp, null, null, supportsRandomAccess, true, false, false);
+        assertQueryNoVerify(expected, query, ddl, expectedTimestamp, null, null, supportsRandomAccess, true, false, false);
     }
 
     protected static void assertQueryExpectSize(
@@ -635,7 +635,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             CharSequence query,
             CharSequence ddl
     ) throws Exception {
-        assertQuery(expected, query, ddl, null, null, null, null, true, true, true, false);
+        assertQueryNoVerify(expected, query, ddl, null, null, null, true, true, true, false);
     }
 
     protected static void assertQuery(
@@ -646,7 +646,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             boolean supportsRandomAccess,
             boolean checkSameStr
     ) throws Exception {
-        assertQuery(expected, query, ddl, null, expectedTimestamp, null, null, supportsRandomAccess, checkSameStr, false, false);
+        assertQueryNoVerify(expected, query, ddl, expectedTimestamp, null, null, supportsRandomAccess, checkSameStr, false, false);
     }
 
     protected static void assertQuery(
@@ -658,7 +658,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             boolean checkSameStr,
             boolean expectSize
     ) throws Exception {
-        assertQuery(expected, query, ddl, null, expectedTimestamp, null, null, supportsRandomAccess, checkSameStr, expectSize, false);
+        assertQueryNoVerify(expected, query, ddl, expectedTimestamp, null, null, supportsRandomAccess, checkSameStr, expectSize, false);
     }
 
     protected static void assertQuery(
@@ -669,7 +669,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             @Nullable CharSequence ddl2,
             @Nullable CharSequence expected2
     ) throws Exception {
-        assertQuery(expected, query, ddl, null, expectedTimestamp, ddl2, expected2, true, true, false, false);
+        assertQueryNoVerify(expected, query, ddl, expectedTimestamp, ddl2, expected2, true, true, false, false);
     }
 
     protected static void assertQuery(
@@ -681,7 +681,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             @Nullable CharSequence expected2,
             boolean supportsRandomAccess
     ) throws Exception {
-        assertQuery(expected, query, ddl, null, expectedTimestamp, ddl2, expected2, supportsRandomAccess, true, false, false);
+        assertQueryNoVerify(expected, query, ddl, expectedTimestamp, ddl2, expected2, supportsRandomAccess, true, false, false);
     }
 
     protected static void assertQuery(
@@ -695,7 +695,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             boolean checkSameStr,
             boolean expectSize
     ) throws Exception {
-        assertQuery(expected, query, ddl, null, expectedTimestamp, ddl2, expected2, supportsRandomAccess, checkSameStr, expectSize, false);
+        assertQueryNoVerify(expected, query, ddl, expectedTimestamp, ddl2, expected2, supportsRandomAccess, checkSameStr, expectSize, false);
     }
 
     protected static void assertQuery(
@@ -710,7 +710,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             boolean expectSize,
             boolean sizeCanBeVariable
     ) throws Exception {
-        assertQuery(expected, query, ddl, null, expectedTimestamp, ddl2, expected2, supportsRandomAccess, checkSameStr, expectSize, sizeCanBeVariable);
+        assertQueryNoVerify(expected, query, ddl, expectedTimestamp, ddl2, expected2, supportsRandomAccess, checkSameStr, expectSize, sizeCanBeVariable);
     }
 
     protected static void assertTimestamp(CharSequence expectedTimestamp, RecordCursorFactory factory) {

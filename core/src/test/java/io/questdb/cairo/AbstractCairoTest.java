@@ -73,16 +73,16 @@ public class AbstractCairoTest {
         }
         configuration = new DefaultCairoConfiguration(root) {
             @Override
-            public MicrosecondClock getMicrosecondClock() {
-                return testMicrosClock;
-            }
-
-            @Override
             public FilesFacade getFilesFacade() {
                 if (ff != null) {
                     return ff;
                 }
                 return super.getFilesFacade();
+            }
+
+            @Override
+            public MicrosecondClock getMicrosecondClock() {
+                return testMicrosClock;
             }
 
             @Override
@@ -137,28 +137,13 @@ public class AbstractCairoTest {
         });
     }
 
-    protected void assertColumn(CharSequence expected, CharSequence tableName, int index) {
-        try (TableReader reader = new TableReader(configuration, tableName)) {
-            final StringSink sink = new StringSink();
-            sink.clear();
-            printer.printFullColumn(reader.getCursor(), reader.getMetadata(), index, false, sink);
-            TestUtils.assertEquals(expected, sink);
-            reader.getCursor().toTop();
-            sink.clear();
-            printer.printFullColumn(reader.getCursor(), reader.getMetadata(), index, false, sink);
-            TestUtils.assertEquals(expected, sink);
-        }
+    protected void assertCursor(CharSequence expected, RecordCursor cursor, RecordMetadata metadata, boolean header) {
+        TestUtils.assertCursor(expected, cursor, metadata, header, sink);
     }
 
-    protected void assertOnce(CharSequence expected, RecordCursor cursor, RecordMetadata metadata, boolean header) {
-        sink.clear();
-        printer.print(cursor, metadata, header, sink);
-        TestUtils.assertEquals(expected, sink);
-    }
-
-    protected void assertThat(CharSequence expected, RecordCursor cursor, RecordMetadata metadata, boolean header) {
-        assertOnce(expected, cursor, metadata, header);
+    protected void assertCursorTwoPass(CharSequence expected, RecordCursor cursor, RecordMetadata metadata, boolean header) {
+        assertCursor(expected, cursor, metadata, header);
         cursor.toTop();
-        assertOnce(expected, cursor, metadata, header);
+        assertCursor(expected, cursor, metadata, header);
     }
 }

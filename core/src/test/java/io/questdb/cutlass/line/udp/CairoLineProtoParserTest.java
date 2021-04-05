@@ -565,7 +565,7 @@ public class CairoLineProtoParserTest extends AbstractCairoTest {
 
     private void assertTable(CharSequence expected, CharSequence tableName) {
         try (TableReader reader = new TableReader(configuration, tableName)) {
-            assertThat(expected, reader.getCursor(), reader.getMetadata(), true);
+            assertCursorTwoPass(expected, reader.getCursor(), reader.getMetadata(), true);
         }
     }
 

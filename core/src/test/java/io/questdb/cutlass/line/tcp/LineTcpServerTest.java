@@ -317,7 +317,7 @@ public class LineTcpServerTest extends AbstractCairoTest {
 
     private void assertTable(CharSequence expected, CharSequence tableName) {
         try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
-            assertThat(expected, reader.getCursor(), reader.getMetadata(), true);
+            assertCursorTwoPass(expected, reader.getCursor(), reader.getMetadata(), true);
         }
     }
 
