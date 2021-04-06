@@ -33,19 +33,15 @@ import io.questdb.std.Vect;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.test.tools.TestUtils;
-import org.junit.After;
-import org.junit.Before;
-import org.junit.Rule;
-import org.junit.Test;
+import org.junit.*;
 import org.junit.rules.TestName;
 
 import java.net.URISyntaxException;
-import java.util.concurrent.atomic.AtomicBoolean;
 
 public class OutOfOrderTest extends AbstractOutOfOrderTest {
     @Rule
     public TestName name = new TestName();
-    private StringBuilder tstData = new StringBuilder();
+    private final StringBuilder tstData = new StringBuilder();
 
     @Before
     public void setUp4() {
@@ -90,11 +86,6 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
     @Test
     public void testBench2Parallel() throws Exception {
         executeWithPool(8, this::bench20);
-    }
-
-    @Test
-    public void testBench2ParallelNR() throws Exception {
-        executeWithPool(8, false, this::bench20);
     }
 
     @Test
@@ -149,11 +140,6 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
     }
 
     @Test
-    public void testColumnTopLastDataMerge2DataParallelNR() throws Exception {
-        executeWithPool(4, false, OutOfOrderTest::testColumnTopLastDataMerge2Data0);
-    }
-
-    @Test
     public void testColumnTopLastDataMergeDataContended() throws Exception {
         executeWithPool(0, OutOfOrderTest::testColumnTopLastDataMergeData0);
     }
@@ -161,11 +147,6 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
     @Test
     public void testColumnTopLastDataMergeDataParallel() throws Exception {
         executeWithPool(4, OutOfOrderTest::testColumnTopLastDataMergeData0);
-    }
-
-    @Test
-    public void testColumnTopLastDataMergeDataParallelNR() throws Exception {
-        executeWithPool(4, false, OutOfOrderTest::testColumnTopLastDataMergeData0);
     }
 
     @Test
@@ -184,11 +165,6 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
     }
 
     @Test
-    public void testColumnTopLastDataOOODataParallelNR() throws Exception {
-        executeWithPool(4, false, OutOfOrderTest::testColumnTopLastDataOOOData0);
-    }
-
-    @Test
     public void testColumnTopLastOOOData() throws Exception {
         executeVanilla(OutOfOrderTest::testColumnTopLastOOOData0);
     }
@@ -201,11 +177,6 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
     @Test
     public void testColumnTopLastOOODataParallel() throws Exception {
         executeWithPool(4, OutOfOrderTest::testColumnTopLastOOOData0);
-    }
-
-    @Test
-    public void testColumnTopLastOOODataParallelNR() throws Exception {
-        executeWithPool(4, false, OutOfOrderTest::testColumnTopLastOOOData0);
     }
 
     @Test
@@ -224,18 +195,8 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
     }
 
     @Test
-    public void testColumnTopLastOOOPrefixParallelNR() throws Exception {
-        executeWithPool(4, false, OutOfOrderTest::testColumnTopLastOOOPrefix0);
-    }
-
-    @Test
     public void testColumnTopLastParallel() throws Exception {
         executeWithPool(4, OutOfOrderTest::testColumnTopLastAppendColumn0);
-    }
-
-    @Test
-    public void testColumnTopLastParallelNR() throws Exception {
-        executeWithPool(4, false, OutOfOrderTest::testColumnTopLastAppendColumn0);
     }
 
     @Test
@@ -259,11 +220,6 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
     }
 
     @Test
-    public void testColumnTopMidAppendBlankParallelNR() throws Exception {
-        executeWithPool(4, false, OutOfOrderTest::testColumnTopMidAppendBlankColumn0);
-    }
-
-    @Test
     public void testColumnTopMidAppendContended() throws Exception {
         executeWithPool(0, OutOfOrderTest::testColumnTopMidAppendColumn0);
     }
@@ -271,11 +227,6 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
     @Test
     public void testColumnTopMidAppendParallel() throws Exception {
         executeWithPool(4, OutOfOrderTest::testColumnTopMidAppendColumn0);
-    }
-
-    @Test
-    public void testColumnTopMidAppendParallelNR() throws Exception {
-        executeWithPool(4, false, OutOfOrderTest::testColumnTopMidAppendColumn0);
     }
 
     @Test
@@ -314,11 +265,6 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
     }
 
     @Test
-    public void testColumnTopMidDataMergeDataParallelNR() throws Exception {
-        executeWithPool(4, false, OutOfOrderTest::testColumnTopMidDataMergeData0);
-    }
-
-    @Test
     public void testColumnTopMidMergeBlank() throws Exception {
         executeVanilla(OutOfOrderTest::testColumnTopMidMergeBlankColumn0);
     }
@@ -331,11 +277,6 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
     @Test
     public void testColumnTopMidMergeBlankParallel() throws Exception {
         executeWithPool(4, OutOfOrderTest::testColumnTopMidMergeBlankColumn0);
-    }
-
-    @Test
-    public void testColumnTopMidMergeBlankParallelNR() throws Exception {
-        executeWithPool(4, false, OutOfOrderTest::testColumnTopMidMergeBlankColumn0);
     }
 
     @Test
@@ -354,11 +295,6 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
     }
 
     @Test
-    public void testColumnTopMidOOODataParallelNR() throws Exception {
-        executeWithPool(4, false, OutOfOrderTest::testColumnTopMidOOOData0);
-    }
-
-    @Test
     public void testColumnTopNewPartitionMiddleOfTableContended() throws Exception {
         executeWithPool(0, OutOfOrderTest::testColumnTopNewPartitionMiddleOfTable0);
     }
@@ -369,26 +305,8 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
     }
 
     @Test
-    public void testColumnTopNewPartitionMiddleOfTableParallelNR() throws Exception {
-        executeWithPool(4, false, OutOfOrderTest::testColumnTopNewPartitionMiddleOfTable0);
-    }
-
-    @Test
-    public void testOOOFollowedByAnotherOOONR() throws Exception {
-        executeWithPool(4, false, new OutOfOrderCodeWithFlag() {
-
-            private AtomicBoolean atomicEnableRename;
-
-            @Override
-            public void delegateFlag(AtomicBoolean flag) {
-                this.atomicEnableRename = flag;
-            }
-
-            @Override
-            public void run(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws Exception {
-                testOooFollowedByAnotherOOO0(engine, compiler, sqlExecutionContext, atomicEnableRename);
-            }
-        });
+    public void testOOOFollowedByAnotherOOO() throws Exception {
+        executeWithPool(4, OutOfOrderTest::testOooFollowedByAnotherOOO0);
     }
 
     @Test
@@ -417,11 +335,6 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
     }
 
     @Test
-    public void testPartitionedDataAppendOODataIndexedParallelNR() throws Exception {
-        executeWithPool(4, false, OutOfOrderTest::testPartitionedDataAppendOODataIndexed0);
-    }
-
-    @Test
     public void testPartitionedDataAppendOODataNotNullStrTail() throws Exception {
         executeVanilla(OutOfOrderTest::testPartitionedDataAppendOODataNotNullStrTail0);
     }
@@ -437,18 +350,8 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
     }
 
     @Test
-    public void testPartitionedDataAppendOODataNotNullStrTailParallelNR() throws Exception {
-        executeWithPool(4, false, OutOfOrderTest::testPartitionedDataAppendOODataNotNullStrTail0);
-    }
-
-    @Test
     public void testPartitionedDataAppendOODataParallel() throws Exception {
         executeWithPool(4, OutOfOrderTest::testPartitionedDataAppendOOData0);
-    }
-
-    @Test
-    public void testPartitionedDataAppendOODataParallelNR() throws Exception {
-        executeWithPool(4, false, OutOfOrderTest::testPartitionedDataAppendOOData0);
     }
 
     @Test
@@ -467,11 +370,6 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
     }
 
     @Test
-    public void testPartitionedDataAppendOOPrependOODataParallelNR() throws Exception {
-        executeWithPool(4, false, OutOfOrderTest::testPartitionedDataAppendOOPrependOOData0);
-    }
-
-    @Test
     public void testPartitionedDataMergeData() throws Exception {
         executeVanilla(OutOfOrderTest::testPartitionedDataMergeData0);
     }
@@ -484,11 +382,6 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
     @Test
     public void testPartitionedDataMergeDataParallel() throws Exception {
         executeWithPool(4, OutOfOrderTest::testPartitionedDataMergeData0);
-    }
-
-    @Test
-    public void testPartitionedDataMergeDataParallelNR() throws Exception {
-        executeWithPool(4, false, OutOfOrderTest::testPartitionedDataMergeData0);
     }
 
     @Test
@@ -507,11 +400,6 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
     }
 
     @Test
-    public void testPartitionedDataMergeEndParallelNR() throws Exception {
-        executeWithPool(4, false, OutOfOrderTest::testPartitionedDataMergeEnd0);
-    }
-
-    @Test
     public void testPartitionedDataOOData() throws Exception {
         executeVanilla(OutOfOrderTest::testPartitionedDataOOData0);
     }
@@ -524,11 +412,6 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
     @Test
     public void testPartitionedDataOODataParallel() throws Exception {
         executeWithPool(4, OutOfOrderTest::testPartitionedDataOOData0);
-    }
-
-    @Test
-    public void testPartitionedDataOODataParallelNR() throws Exception {
-        executeWithPool(4, false, OutOfOrderTest::testPartitionedDataOOData0);
     }
 
     @Test
@@ -552,11 +435,6 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
     }
 
     @Test
-    public void testPartitionedDataOODataPbOODataParallelNR() throws Exception {
-        executeWithPool(4, false, OutOfOrderTest::testPartitionedDataOODataPbOOData0);
-    }
-
-    @Test
     public void testPartitionedDataOOIntoLastIndexSearchBug() throws Exception {
         executeVanilla(OutOfOrderTest::testPartitionedDataOOIntoLastIndexSearchBug0);
     }
@@ -572,11 +450,6 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
     }
 
     @Test
-    public void testPartitionedDataOOIntoLastIndexSearchBugParallelNR() throws Exception {
-        executeWithPool(4, false, OutOfOrderTest::testPartitionedDataOOIntoLastIndexSearchBug0);
-    }
-
-    @Test
     public void testPartitionedDataOOIntoLastOverflowIntoNewPartition() throws Exception {
         executeVanilla(OutOfOrderTest::testPartitionedDataOOIntoLastOverflowIntoNewPartition0);
     }
@@ -589,11 +462,6 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
     @Test
     public void testPartitionedDataOOIntoLastOverflowIntoNewPartitionParallel() throws Exception {
         executeWithPool(4, OutOfOrderTest::testPartitionedDataOOIntoLastOverflowIntoNewPartition0);
-    }
-
-    @Test
-    public void testPartitionedDataOOIntoLastOverflowIntoNewPartitionParallelNR() throws Exception {
-        executeWithPool(4, false, OutOfOrderTest::testPartitionedDataOOIntoLastOverflowIntoNewPartition0);
     }
 
     @Test
@@ -622,18 +490,8 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
     }
 
     @Test
-    public void testPartitionedOODataOOCollapsedParallelNR() throws Exception {
-        executeWithPool(4, false, OutOfOrderTest::testPartitionedOODataOOCollapsed0);
-    }
-
-    @Test
     public void testPartitionedOODataParallel() throws Exception {
         executeWithPool(4, OutOfOrderTest::testPartitionedOOData0);
-    }
-
-    @Test
-    public void testPartitionedOODataParallelNR() throws Exception {
-        executeWithPool(4, false, OutOfOrderTest::testPartitionedOOData0);
     }
 
     @Test
@@ -649,11 +507,6 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
     @Test
     public void testPartitionedOODataUpdateMinTimestampParallel() throws Exception {
         executeWithPool(4, OutOfOrderTest::testPartitionedOODataUpdateMinTimestamp0);
-    }
-
-    @Test
-    public void testPartitionedOODataUpdateMinTimestampParallelNR() throws Exception {
-        executeWithPool(4, false, OutOfOrderTest::testPartitionedOODataUpdateMinTimestamp0);
     }
 
     @Test
@@ -682,11 +535,6 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
     }
 
     @Test
-    public void testPartitionedOOMergeDataParallelNR() throws Exception {
-        executeWithPool(4, false, OutOfOrderTest::testPartitionedOOMergeData0);
-    }
-
-    @Test
     public void testPartitionedOOMergeOO() throws Exception {
         executeVanilla(OutOfOrderTest::testPartitionedOOMergeOO0);
     }
@@ -702,18 +550,8 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
     }
 
     @Test
-    public void testPartitionedOOMergeOOParallelNR() throws Exception {
-        executeWithPool(4, false, OutOfOrderTest::testPartitionedOOMergeOO0);
-    }
-
-    @Test
     public void testPartitionedOOMergeParallel() throws Exception {
         executeWithPool(4, OutOfOrderTest::testPartitionedOOMerge0);
-    }
-
-    @Test
-    public void testPartitionedOOMergeParallelNR() throws Exception {
-        executeWithPool(4, false, OutOfOrderTest::testPartitionedOOMerge0);
     }
 
     @Test
@@ -732,11 +570,6 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
     }
 
     @Test
-    public void testPartitionedOOONullSettersParallelNR() throws Exception {
-        executeWithPool(4, false, OutOfOrderTest::testPartitionedOOONullSetters0);
-    }
-
-    @Test
     public void testPartitionedOOPrefixesExistingPartitions() throws Exception {
         executeVanilla(OutOfOrderTest::testPartitionedOOPrefixesExistingPartitions0);
     }
@@ -752,11 +585,6 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
     }
 
     @Test
-    public void testPartitionedOOPrefixesExistingPartitionsParallelNR() throws Exception {
-        executeWithPool(4, false, OutOfOrderTest::testPartitionedOOPrefixesExistingPartitions0);
-    }
-
-    @Test
     public void testPartitionedOOTopAndBottom() throws Exception {
         executeVanilla(OutOfOrderTest::testPartitionedOOTopAndBottom0);
     }
@@ -769,11 +597,6 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
     @Test
     public void testPartitionedOOTopAndBottomParallel() throws Exception {
         executeWithPool(4, OutOfOrderTest::testPartitionedOOTopAndBottom0);
-    }
-
-    @Test
-    public void testPartitionedOOTopAndBottomParallelNR() throws Exception {
-        executeWithPool(4, false, OutOfOrderTest::testPartitionedOOTopAndBottom0);
     }
 
     private static void testPartitionedOOONullSetters0(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext)
@@ -1437,8 +1260,7 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
     private static void testOooFollowedByAnotherOOO0(
             CairoEngine engine,
             SqlCompiler compiler,
-            SqlExecutionContext sqlExecutionContext,
-            AtomicBoolean atomicEnableRename
+            SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
         compiler.compile(
                 "create table x as (" +
@@ -1531,9 +1353,6 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
         // insert 1AM data into X
         compiler.compile("insert into x select * from 1am", sqlExecutionContext);
 
-        // here we need to "switch on" partition rename
-        atomicEnableRename.set(true);
-
         compiler.compile("insert into x select * from tail", sqlExecutionContext);
 
         printSqlResult(compiler, sqlExecutionContext, "x");
@@ -1541,7 +1360,6 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
         TestUtils.assertEquals(expected, sink);
 
         testXAndIndex(engine, compiler, sqlExecutionContext, expected);
-
     }
 
     private static void testPartitionedOODataOOCollapsed0(

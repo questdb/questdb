@@ -82,9 +82,6 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
                             LOG.info()
                                     .$("open '").utf8(name)
                                     .$("' [at=").$(e.index).$(':').$(i)
-//                                    .$(", allocations=").$(e.allocations[i])
-//                                    .$(", lockOwner=").$(e.lockOwner)
-//                                    .$(", e=").$(e)
                                     .$(']').$();
                             r = new R(this, e, i, name, TxnScoreboard.newRef(e.txnScoreboard));
                         } catch (CairoException ex) {

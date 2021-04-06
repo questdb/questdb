@@ -221,10 +221,6 @@ public interface CairoConfiguration {
         return false;
     }
 
-    default boolean isOutOfOrderRenameEnabled() {
-        return true;
-    }
-
     long getDatabaseIdHi();
 
     long getDatabaseIdLo();

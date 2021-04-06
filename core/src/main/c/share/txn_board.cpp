@@ -119,25 +119,25 @@ void txn_release(txn_scoreboard_t *p_scoreboard, int64_t txn) {
     const int64_t max_offset = p_scoreboard->get_max_offset();
     if (atomic_next(p_scoreboard->get_count_ptr(offset), dec) == 0 && p_scoreboard->get_min() == txn) {
         // skip thru all unused txn values up
-        while (++offset <= max_offset && p_board->get_count(offset) == 0);
+        while (++offset <= max_offset && p_scoreboard->get_count(offset) == 0);
         // on first non-zero count update the min value
-        set_max_atomic(&(p_board->min), p_board->offset_to_txn(offset <= max_offset ? offset : max_offset) + 1);
+        set_max_atomic(&(p_scoreboard->min), p_scoreboard->offset_to_txn(offset <= max_offset ? offset : max_offset) + 1);
     }
 }
 
-inline bool txn_acquire(txn_board_t *p_board, int64_t txn) {
-    const int64_t offset = p_board->txn_to_offswt(txn);
-    if ((txn - p_board->get_min()) < MAX_TXN_IN_FLIGHT) {
-        atomic_next(p_board->get_count_ptr(offset), inc);
+inline bool txn_acquire(txn_scoreboard_t *p_scoreboard, int64_t txn) {
+    const int64_t offset = p_scoreboard->txn_to_offswt(txn);
+    if ((txn - p_scoreboard->get_min()) < MAX_TXN_IN_FLIGHT) {
+        atomic_next(p_scoreboard->get_count_ptr(offset), inc);
         // update max - this could be a new txn
-        set_max_atomic(&(p_board->max), txn);
+        set_max_atomic(&(p_scoreboard->max), txn);
         // update min
-        const int64_t min_offset = p_board->get_min_offset();
+        const int64_t min_offset = p_scoreboard->get_min_offset();
         int64_t o = min_offset;
-        while (o < offset && p_board->get_count(o) == 0) {
+        while (o < offset && p_scoreboard->get_count(o) == 0) {
             o++;
         }
-        set_max_atomic(&(p_board->min), p_board->offset_to_txn(o) + 1);
+        set_max_atomic(&(p_scoreboard->min), p_scoreboard->offset_to_txn(o) + 1);
         return true;
     }
     return false;
@@ -174,18 +174,18 @@ JNIEXPORT jlong JNICALL Java_io_questdb_cairo_TxnScoreboard_getCount
 
 JNIEXPORT void JNICALL Java_io_questdb_cairo_TxnScoreboard_init
         (JNIEnv *e, jclass cl, jlong p_board, jlong txn) {
-    reinterpret_cast<txn_local_t *>(p_board)->p_txn_board->init(txn);
+    reinterpret_cast<txn_local_t *>(p_board)->p_txn_scoreboard->init(txn);
 }
 
 JNIEXPORT jlong JNICALL Java_io_questdb_cairo_TxnScoreboard_getMin
         (JNIEnv *e, jclass cl, jlong p_board) {
-    auto *p = reinterpret_cast<txn_local_t *>(p_board)->p_txn_board;
+    auto *p = reinterpret_cast<txn_local_t *>(p_board)->p_txn_scoreboard;
     return p->get_min();
 }
 
 JNIEXPORT jlong JNICALL Java_io_questdb_cairo_TxnScoreboard_getMax
         (JNIEnv *e, jclass cl, jlong p_board) {
-    auto *p = reinterpret_cast<txn_local_t *>(p_board)->p_txn_board;
+    auto *p = reinterpret_cast<txn_local_t *>(p_board)->p_txn_scoreboard;
     return p->get_max();
 }
 
