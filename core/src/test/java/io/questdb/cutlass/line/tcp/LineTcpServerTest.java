@@ -388,6 +388,7 @@ public class LineTcpServerTest extends AbstractCairoTest {
                         return false;
                     }
                 });
+                sharedWorkerPool.assignCleaner(Path.CLEANER);
                 sharedWorkerPool.start(LOG);
 
                 try {
