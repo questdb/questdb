@@ -24,12 +24,14 @@
 
 
 #include <cstring>
-#include <xmmintrin.h>
 #include "util.h"
 #include "simd.h"
+
 #include "asmlib/asmlib.h"
 #include "vcl/vectorclass.h"
 #include <x86intrin.h>
+#include <xmmintrin.h>
+
 #include "ooo_dispatch.h"
 #include <algorithm>
 
