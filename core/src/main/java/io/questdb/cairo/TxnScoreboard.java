@@ -38,13 +38,13 @@ public class TxnScoreboard {
         return close0(shmPath.address(), pTxnScoreboard);
     }
 
-    public static long close(Path shmPath, CharSequence tableName, long pTxnScoreboard) {
-        setShmName(shmPath, tableName);
+    public static long close(Path shmPath, long databaseIdLo, long databaseIdHi, CharSequence tableName, long pTxnScoreboard) {
+        setShmName(shmPath, databaseIdLo, databaseIdHi, tableName);
         return close(shmPath, pTxnScoreboard);
     }
 
-    public static long create(Path shmPath, CharSequence tableName) {
-        setShmName(shmPath, tableName);
+    public static long create(Path shmPath, long databaseIdLo, long databaseIdHi, CharSequence tableName) {
+        setShmName(shmPath, databaseIdLo, databaseIdHi, tableName);
         return create0(shmPath.address());
     }
 
@@ -53,12 +53,13 @@ public class TxnScoreboard {
         return newRef0(pTxnScoreboard);
     }
 
-    private static void setShmName(Path shmPath, CharSequence name) {
+    private static void setShmName(Path shmPath, long databaseIdLo, long databaseIdHi, CharSequence name) {
         if (Os.type == Os.WINDOWS) {
-            shmPath.of("Local\\").put(name).$();
+            shmPath.of("Local\\");
         } else {
-            shmPath.of("/").put(name).$();
+            shmPath.of("/");
         }
+        shmPath.put(databaseIdLo).put('-').put(databaseIdHi).put('-').put(name).$();
     }
 
     static boolean acquire(long pTxnScoreboard, long txn) {
@@ -86,8 +87,6 @@ public class TxnScoreboard {
     static native long init(long pTxnScoreboard, long txn);
 
     static native long getMin(long pTxnScoreboard);
-
-    static native long getMax(long pTxnScoreboard);
 
     private static native long close0(long lpszName, long pTxnScoreboard);
 }

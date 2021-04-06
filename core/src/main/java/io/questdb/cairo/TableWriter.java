@@ -1043,8 +1043,8 @@ public class TableWriter implements Closeable {
         // this is a crude block to test things for now
         todoMem.putLong(0, ++todoTxn); // write txn, reader will first read txn at offset 24 and then at offset 0
         Unsafe.getUnsafe().storeFence(); // make sure we do not write hash before writing txn (view from another thread)
-        todoMem.putLong(8, configuration.getInstanceHashLo()); // write out our instance hashes
-        todoMem.putLong(16, configuration.getInstanceHashHi());
+        todoMem.putLong(8, configuration.getDatabaseIdLo()); // write out our instance hashes
+        todoMem.putLong(16, configuration.getDatabaseIdHi());
         Unsafe.getUnsafe().storeFence();
         todoMem.putLong(24, todoTxn);
         todoMem.putLong(32, 1);
@@ -2842,8 +2842,8 @@ public class TableWriter implements Closeable {
                 this.todoTxn = todoMem.getLong(0);
                 // check if _todo_ file is consistent, if not, we just ignore its contents and reset hash
                 if (todoMem.getLong(24) != todoTxn) {
-                    todoMem.putLong(8, configuration.getInstanceHashLo());
-                    todoMem.putLong(16, configuration.getInstanceHashHi());
+                    todoMem.putLong(8, configuration.getDatabaseIdLo());
+                    todoMem.putLong(16, configuration.getDatabaseIdHi());
                     Unsafe.getUnsafe().storeFence();
                     todoMem.putLong(24, todoTxn);
                     return 0;
@@ -3739,8 +3739,8 @@ public class TableWriter implements Closeable {
         try {
             todoMem.putLong(0, ++todoTxn); // write txn, reader will first read txn at offset 24 and then at offset 0
             Unsafe.getUnsafe().storeFence(); // make sure we do not write hash before writing txn (view from another thread)
-            todoMem.putLong(8, configuration.getInstanceHashLo()); // write out our instance hashes
-            todoMem.putLong(16, configuration.getInstanceHashHi());
+            todoMem.putLong(8, configuration.getDatabaseIdLo()); // write out our instance hashes
+            todoMem.putLong(16, configuration.getDatabaseIdHi());
             Unsafe.getUnsafe().storeFence();
             todoMem.putLong(32, 1);
             todoMem.putLong(40, TODO_RESTORE_META);

@@ -95,23 +95,7 @@ public class ServerMain {
 
         readServerConfiguration(rootDirectory, properties, log, buildInformation);
 
-        // create database directory
-        try (io.questdb.std.str.Path path = new io.questdb.std.str.Path()) {
-            path.of(configuration.getCairoConfiguration().getRoot());
-            if (!Chars.endsWith(path, io.questdb.std.Files.SEPARATOR)) {
-                // this would end trailing path separator
-                path.concat("");
-            }
-            path.$();
-
-            if (io.questdb.std.Files.mkdirs(path, configuration.getCairoConfiguration().getMkDirMode()) != 0) {
-                log.error().$("could not create database root [dir=").$(path).$(']').$();
-                System.exit(30);
-            } else {
-                log.info().$("database root [dir=").$(path).$(']').$();
-            }
-        }
-
+        log.info().$("open database [id=").$(configuration.getCairoConfiguration().getDatabaseIdLo()).$('.').$(configuration.getCairoConfiguration().getDatabaseIdHi()).$(']').$();
         log.info().$("platform [bit=").$(System.getProperty("sun.arch.data.model")).$(']').$();
         switch (Os.type) {
             case Os.WINDOWS:

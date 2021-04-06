@@ -117,7 +117,14 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
             // all allocated, create next entry if possible
             if (Unsafe.getUnsafe().compareAndSwapInt(e, NEXT_STATUS, NEXT_OPEN, NEXT_ALLOCATED)) {
                 LOG.debug().$("Thread ").$(thread).$(" allocated entry ").$(e.index + 1).$();
-                e.next = new Entry(e.index + 1, clock.getTicks(), name, TxnScoreboard.newRef(e.txnScoreboard));
+                e.next = new Entry(
+                        e.index + 1,
+                        clock.getTicks(),
+                        getConfiguration().getDatabaseIdLo(),
+                        getConfiguration().getDatabaseIdHi(),
+                        name,
+                        TxnScoreboard.newRef(e.txnScoreboard)
+                );
             }
             e = e.next;
         } while (e != null && e.index < maxSegments);
@@ -299,7 +306,14 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
 
         Entry e = entries.get(name);
         if (e == null) {
-            e = new Entry(0, clock.getTicks(), name, 0);
+            e = new Entry(
+                    0,
+                    clock.getTicks(),
+                    getConfiguration().getDatabaseIdLo(),
+                    getConfiguration().getDatabaseIdHi(),
+                    name,
+                    0
+            );
             Entry other = entries.putIfAbsent(name, e);
             if (other != null) {
                 Misc.free(e);
@@ -361,12 +375,12 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
         // not a final, this field gets assigned value via CAS
         private long txnScoreboard;
 
-        public Entry(int index, long currentMicros, CharSequence tableName, long txnScoreboard) {
+        public Entry(int index, long currentMicros, long databaseIdLo, long databaseIdHi, CharSequence tableName, long txnScoreboard) {
             this.index = index;
             Arrays.fill(allocations, UNALLOCATED);
             Arrays.fill(releaseTimes, currentMicros);
             if (txnScoreboard == 0) {
-                this.txnScoreboard = TxnScoreboard.create(this.shmName, tableName);
+                this.txnScoreboard = TxnScoreboard.create(this.shmName, databaseIdLo, databaseIdHi, tableName);
             } else {
                 this.txnScoreboard = txnScoreboard;
             }

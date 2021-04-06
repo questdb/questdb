@@ -87,7 +87,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         this.tableName = Chars.toString(tableName);
         this.path = new Path();
         if (txnScoreboard == 0) {
-            this.txnScoreboard = TxnScoreboard.create(path, tableName);
+            this.txnScoreboard = TxnScoreboard.create(path, configuration.getDatabaseIdLo(), configuration.getDatabaseIdHi(), tableName);
         } else {
             this.txnScoreboard = txnScoreboard;
         }
@@ -173,7 +173,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             Misc.free(todoMem);
             freeColumns();
             freeTempMem();
-            TxnScoreboard.close(path, tableName, txnScoreboard);
+            TxnScoreboard.close(path, configuration.getDatabaseIdLo(), configuration.getDatabaseIdHi(), tableName, txnScoreboard);
             Misc.free(path);
             LOG.debug().$("closed '").utf8(tableName).$('\'').$();
         }
@@ -750,8 +750,8 @@ public class TableReader implements Closeable, SymbolTableSource {
                 } while (todoTxn != todoMem.getLong(0) && --attemptsLeft > 0);
 
                 if (
-                        (instanceHashHi != 0 && instanceHashHi != configuration.getInstanceHashHi())
-                                || (instanceHashLo != 0 && instanceHashLo != configuration.getInstanceHashLo())
+                        (instanceHashHi != 0 && instanceHashHi != configuration.getDatabaseIdHi())
+                                || (instanceHashLo != 0 && instanceHashLo != configuration.getDatabaseIdLo())
                 ) {
                     throw CairoException.instance(0).put("Table ").put(path.$()).put(" is pending recovery.");
                 }

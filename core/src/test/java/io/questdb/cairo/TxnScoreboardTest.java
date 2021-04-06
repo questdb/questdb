@@ -44,9 +44,9 @@ public class TxnScoreboardTest {
 
         try (final Path shmPath = new Path()) {
             int expect = 4096;
-            long p2 = TxnScoreboard.create(shmPath, "hello");
+            long p2 = TxnScoreboard.create(shmPath, 4, 5, "hello");
             try {
-                long p1 = TxnScoreboard.create(shmPath, "hello");
+                long p1 = TxnScoreboard.create(shmPath, 4, 5, "hello");
                 try {
                     init(p1, 125);
                     // we should successfully acquire expected number of entries
@@ -79,7 +79,7 @@ public class TxnScoreboardTest {
                     }
                     System.out.println("done");
                 } finally {
-                    TxnScoreboard.close(shmPath, "hello", p1);
+                    TxnScoreboard.close(shmPath, 4, 5, "hello", p1);
                 }
             } finally {
                 // now check that all counts are available via another memory space
@@ -97,9 +97,9 @@ public class TxnScoreboardTest {
     @Test
     public void testVanilla() {
         try (final Path shmPath = new Path()) {
-            long p2 = TxnScoreboard.create(shmPath, "tab1");
+            long p2 = TxnScoreboard.create(shmPath, 4, 5, "tab1");
             try {
-                long p1 = TxnScoreboard.create(shmPath, "tab1");
+                long p1 = TxnScoreboard.create(shmPath, 4, 5, "tab1");
                 try {
                     init(p1, 55);
                     Assert.assertTrue(acquire(p1, 67));
@@ -125,12 +125,12 @@ public class TxnScoreboardTest {
 
                     Assert.assertTrue(acquire(p1, 72));
                 } finally {
-                    TxnScoreboard.close(shmPath, "tab1", p1);
+                    TxnScoreboard.close(shmPath, 4, 5, "tab1", p1);
                 }
                 Assert.assertTrue(acquire(p2, 72));
                 Assert.assertEquals(2, TxnScoreboard.getCount(p2, 72));
             } finally {
-                TxnScoreboard.close(shmPath, "tab1", p2);
+                TxnScoreboard.close(shmPath, 4, 5, "tab1", p2);
             }
         }
     }
