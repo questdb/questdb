@@ -2508,7 +2508,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
             try (Path path = new Path()) {
                 // create random directory
-                path.of(configuration.getRoot()).concat(PRODUCT).concat("somethingortheother").put(Files.SEPARATOR).$();
+                path.of(configuration.getRoot()).concat(PRODUCT).concat("somethingortheother").$$dir();
                 Assert.assertEquals(0, configuration.getFilesFacade().mkdirs(path, configuration.getMkDirMode()));
 
                 new TableWriter(configuration, PRODUCT).close();

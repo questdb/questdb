@@ -97,7 +97,7 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
     ) {
         final Path path = Path.getThreadLocal(pathToTable);
         final long oooTimestampLo = getTimestampIndexValue(sortedTimestampsAddr, srcOooLo);
-        TableUtils.setPathForPartition(path, partitionBy, oooTimestampLo);
+        TableUtils.setPathForPartition(path, partitionBy, oooTimestampLo, false);
         final int pplen = path.length();
         TableUtils.txnPartitionConditionally(path, srcDataTxn);
         final RecordMetadata metadata = tableWriter.getMetadata();
@@ -118,7 +118,7 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
             // pure OOO data copy into new partition
 
             try {
-                LOG.debug().$("would create [path=").$(path.chopZ().put(Files.SEPARATOR).$()).$(']').$();
+                LOG.debug().$("would create [path=").$(path.chopZ().$$dir()).$(']').$();
                 createDirsOrFail(ff, path, configuration.getMkDirMode());
             } catch (Throwable e) {
                 LOG.debug().$("idle new").$();
@@ -427,7 +427,7 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                     }
                 } else {
                     txnPartition(path.trimTo(pplen), txn);
-                    createDirsOrFail(ff, path.put(Files.SEPARATOR).$(), configuration.getMkDirMode());
+                    createDirsOrFail(ff, path.$$dir(), configuration.getMkDirMode());
                     if (last) {
                         openColumnMode = OPEN_LAST_PARTITION_FOR_MERGE;
                     } else {

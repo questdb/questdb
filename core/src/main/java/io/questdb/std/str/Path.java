@@ -82,6 +82,10 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
         return this;
     }
 
+    public Path $$dir() {
+        return put(Files.SEPARATOR).$();
+    }
+
     @Override
     public long address() {
         return ptr;

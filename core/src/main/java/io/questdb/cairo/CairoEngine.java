@@ -346,7 +346,7 @@ public class CairoEngine implements Closeable, WriterSource {
     public boolean removeDirectory(@Transient Path path, CharSequence dir) {
         path.of(configuration.getRoot()).concat(dir);
         final FilesFacade ff = configuration.getFilesFacade();
-        return ff.rmdir(path.put(Files.SEPARATOR).$());
+        return ff.rmdir(path.$$dir());
     }
 
     public void rename(

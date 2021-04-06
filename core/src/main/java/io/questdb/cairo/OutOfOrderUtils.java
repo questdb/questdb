@@ -194,7 +194,7 @@ public class OutOfOrderUtils {
             int partitionBy
     ) {
         final Path srcPath = Path.getThreadLocal(pathToTable);
-        TableUtils.setPathForPartition(srcPath, partitionBy, partitionTimestamp);
+        TableUtils.setPathForPartition(srcPath, partitionBy, partitionTimestamp, false);
         final int coreLen = srcPath.length();
         TableUtils.txnPartitionConditionally(srcPath, srcDataTxn);
 
@@ -228,7 +228,7 @@ public class OutOfOrderUtils {
         // source path - original data partition
         // this partition may already be on non-initial txn
         final Path srcPath = Path.getThreadLocal(pathToTable);
-        TableUtils.setPathForPartition(srcPath, partitionBy, partitionTimestamp);
+        TableUtils.setPathForPartition(srcPath, partitionBy, partitionTimestamp, false);
         int coreLen = srcPath.length();
 
         TableUtils.txnPartitionConditionally(srcPath, srcDataTxn);
@@ -260,7 +260,7 @@ public class OutOfOrderUtils {
         TableUtils.txnPartitionConditionally(dstPath, srcDataTxn);
         dstLen = dstPath.length();
 
-        moveFiles(ff, srcPath.put(Files.SEPARATOR).$(), srcLen, dstPath.$(), dstLen);
+        moveFiles(ff, srcPath.$$dir(), srcLen, dstPath.$(), dstLen);
 
         // remove empty directory that is left behind
         if (!ff.rmdir(srcPath.trimTo(srcLen).$())) {
