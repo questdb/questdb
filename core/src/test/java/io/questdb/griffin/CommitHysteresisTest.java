@@ -3,7 +3,6 @@ package io.questdb.griffin;
 import java.util.Random;
 
 import org.junit.After;
-import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Ignore;
 import org.junit.Test;
@@ -1183,18 +1182,4 @@ public class CommitHysteresisTest extends AbstractCairoTest {
             OutOfOrderUtils.freeBuf();
         }
     }
-
-    private void assertMemoryLeak(TestUtils.LeakProneCode code) throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try {
-                code.run();
-                engine.releaseInactive();
-                Assert.assertEquals(0, engine.getBusyWriterCount());
-                Assert.assertEquals(0, engine.getBusyReaderCount());
-            } finally {
-                engine.clear();
-            }
-        });
-    }
-
 }
