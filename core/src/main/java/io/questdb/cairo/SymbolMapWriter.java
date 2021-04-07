@@ -182,7 +182,7 @@ public class SymbolMapWriter implements Closeable {
         indexWriter.rollbackValues(keyToOffset(symbolCount));
         offsetMem.jumpTo(keyToOffset(symbolCount));
         jumpCharMemToSymbolCount(symbolCount);
-        transientSymbolCountChangeHandler.handleTansientymbolCountChange(symbolCount);
+        transientSymbolCountChangeHandler.handleTransientSymbolCountChange(symbolCount);
         if (cache != null) {
             cache.clear();
         }
@@ -242,7 +242,7 @@ public class SymbolMapWriter implements Closeable {
         offsetMem.putLong(charMem.putStr(symbol));
         indexWriter.add(hash, offsetOffset);
         int symIndex = offsetToKey(offsetOffset);
-        transientSymbolCountChangeHandler.handleTansientymbolCountChange(symIndex + 1);
+        transientSymbolCountChangeHandler.handleTransientSymbolCountChange(symIndex + 1);
         return symIndex;
     }
 
@@ -291,6 +291,6 @@ public class SymbolMapWriter implements Closeable {
     }
 
     public interface TransientSymbolCountChangeHandler {
-        void handleTansientymbolCountChange(int symbolCount);
+        void handleTransientSymbolCountChange(int symbolCount);
     }
 }

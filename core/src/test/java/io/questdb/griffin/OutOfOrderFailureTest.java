@@ -1318,7 +1318,7 @@ public class OutOfOrderFailureTest extends AbstractOutOfOrderTest {
         assertSqlResultAgainstFile(
                 compiler,
                 sqlExecutionContext,
-                "/oo/testColumnTopLastDataOOOData.txt"
+                "/ooo/testColumnTopLastDataOOOData.txt"
         );
 
     }
@@ -1456,7 +1456,7 @@ public class OutOfOrderFailureTest extends AbstractOutOfOrderTest {
         assertSqlResultAgainstFile(
                 compiler,
                 sqlExecutionContext,
-                "/oo/testColumnTopMidDataMergeData.txt"
+                "/ooo/testColumnTopMidDataMergeData.txt"
         );
     }
 
@@ -1592,7 +1592,7 @@ public class OutOfOrderFailureTest extends AbstractOutOfOrderTest {
         assertSqlResultAgainstFile(
                 compiler,
                 sqlExecutionContext,
-                "/oo/testColumnTopLastOOOPrefix.txt"
+                "/ooo/testColumnTopLastOOOPrefix.txt"
         );
     }
 
@@ -1605,9 +1605,9 @@ public class OutOfOrderFailureTest extends AbstractOutOfOrderTest {
         compiler.compile("create table y as (x union all append)", sqlExecutionContext);
         compiler.compile("insert into x select * from append", sqlExecutionContext);
 
-        assertSqlResultAgainstFile(compiler, sqlExecutionContext, "/oo/testColumnTopMidAppendColumn.txt");
+        assertSqlResultAgainstFile(compiler, sqlExecutionContext, "/ooo/testColumnTopMidAppendColumn.txt");
         engine.releaseAllReaders();
-        assertSqlResultAgainstFile(compiler, sqlExecutionContext, "/oo/testColumnTopMidAppendColumn.txt");
+        assertSqlResultAgainstFile(compiler, sqlExecutionContext, "/ooo/testColumnTopMidAppendColumn.txt");
     }
 
     private static void assertSqlResultAgainstFile(

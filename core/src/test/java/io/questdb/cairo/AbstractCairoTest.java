@@ -105,7 +105,7 @@ public class AbstractCairoTest {
             if (Files.exists(path)) {
                 return;
             }
-            Files.mkdirs(path.of(root).put(Files.SEPARATOR).$(), configuration.getMkDirMode());
+            Files.mkdirs(path.of(root).$$dir(), configuration.getMkDirMode());
         }
     }
 

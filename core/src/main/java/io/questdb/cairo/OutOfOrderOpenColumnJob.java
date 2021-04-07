@@ -113,7 +113,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
     ) {
         final long mergeLen = mergeOOOHi - mergeOOOLo + 1 + mergeDataHi - mergeDataLo + 1;
         final Path path = Path.getThreadLocal(pathToTable);
-        TableUtils.setPathForPartition(path, tableWriter.getPartitionBy(), oooTimestampLo);
+        TableUtils.setPathForPartition(path, tableWriter.getPartitionBy(), oooTimestampLo, false);
         final int pplen = path.length();
         TableUtils.txnPartitionConditionally(path, srcDataTxn);
         final int plen = path.length();

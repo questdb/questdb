@@ -335,7 +335,7 @@ public class EngineMigration {
             final long tsLimit = timestampFloorMethod.floor(maxTimestamp);
             for (long ts = timestampFloorMethod.floor(minTimestamp); ts < tsLimit; ts = timestampAddMethod.calculate(ts, 1)) {
                 path.trimTo(rootLen);
-                setPathForPartition(path, partitionBy, ts);
+                setPathForPartition(path, partitionBy, ts, false);
                 if (ff.exists(path.concat(TX_STRUCT_UPDATE_1_ARCHIVE_FILE_NAME).$())) {
                     if (!removedPartitionsIncludes(ts, txMem, symbolsCount)) {
                         long partitionSize = TableUtils.readLongAtOffset(ff, path, tempMem8b, 0);

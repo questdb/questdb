@@ -5228,7 +5228,7 @@ public class SqlParserTest extends AbstractGriffinTest {
                 } finally {
                     for (int i = 0, n = tableModels.length; i < n; i++) {
                         TableModel tableModel = tableModels[i];
-                        Path path = tableModel.getPath().of(tableModel.getCairoCfg().getRoot()).concat(tableModel.getName()).put(Files.SEPARATOR).$();
+                        Path path = tableModel.getPath().of(tableModel.getCairoCfg().getRoot()).concat(tableModel.getName()).$$dir();
                         Assert.assertTrue(configuration.getFilesFacade().rmdir(path));
                         tableModel.close();
                     }
@@ -5266,7 +5266,7 @@ public class SqlParserTest extends AbstractGriffinTest {
                 } finally {
                     for (int i = 0, n = tableModels.length; i < n; i++) {
                         TableModel tableModel = tableModels[i];
-                        Path path = tableModel.getPath().of(tableModel.getCairoCfg().getRoot()).concat(tableModel.getName()).put(Files.SEPARATOR).$();
+                        Path path = tableModel.getPath().of(tableModel.getCairoCfg().getRoot()).concat(tableModel.getName()).$$dir();
                         Assert.assertTrue(configuration.getFilesFacade().rmdir(path));
                         tableModel.close();
                     }
@@ -5747,7 +5747,7 @@ public class SqlParserTest extends AbstractGriffinTest {
         } finally {
             for (int i = 0, n = tableModels.length; i < n; i++) {
                 TableModel tableModel = tableModels[i];
-                Path path = tableModel.getPath().of(tableModel.getCairoCfg().getRoot()).concat(tableModel.getName()).put(Files.SEPARATOR).$();
+                Path path = tableModel.getPath().of(tableModel.getCairoCfg().getRoot()).concat(tableModel.getName()).$$dir();
                 Assert.assertTrue(configuration.getFilesFacade().rmdir(path));
                 tableModel.close();
             }
@@ -5845,7 +5845,7 @@ public class SqlParserTest extends AbstractGriffinTest {
             Assert.assertTrue(engine.releaseAllReaders());
             for (int i = 0, n = tableModels.length; i < n; i++) {
                 TableModel tableModel = tableModels[i];
-                Path path = tableModel.getPath().of(tableModel.getCairoCfg().getRoot()).concat(tableModel.getName()).put(Files.SEPARATOR).$();
+                Path path = tableModel.getPath().of(tableModel.getCairoCfg().getRoot()).concat(tableModel.getName()).$$dir();
                 Assert.assertTrue(configuration.getFilesFacade().rmdir(path));
                 tableModel.close();
             }

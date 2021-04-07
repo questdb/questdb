@@ -421,7 +421,7 @@ public class TableBackupTest {
             // @formatter:on
 
             try (Path path = new Path()) {
-                path.of(mainConfiguration.getBackupRoot()).concat("tmp").concat(tableName).put(Files.SEPARATOR).$();
+                path.of(mainConfiguration.getBackupRoot()).concat("tmp").concat(tableName).$$dir();
                 int rc = FilesFacadeImpl.INSTANCE.mkdirs(path, mainConfiguration.getBackupMkDirMode());
                 Assert.assertEquals(0, rc);
             }
@@ -511,7 +511,7 @@ public class TableBackupTest {
             finalBackupPath.put('.');
             finalBackupPath.put(n);
         }
-        finalBackupPath.put(Files.SEPARATOR).$();
+        finalBackupPath.$$dir();
     }
 
     private void setFinalBackupPath() {

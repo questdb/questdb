@@ -204,6 +204,7 @@ public class TableWriter implements Closeable {
     private final TxWriter txFile;
     private final FindVisitor removePartitionDirsNotAttached = this::removePartitionDirsNotAttached;
     private final long txnScoreboard;
+    private final LongList oooPartitionRemoveCandidates = new LongList();
     private long todoTxn;
     private ContiguousVirtualMemory timestampMergeMem;
     private long lockFd;
@@ -630,9 +631,9 @@ public class TableWriter implements Closeable {
 
         boolean rollbackRename = false;
         try {
-            setPathForPartition(path, partitionBy, timestamp);
+            setPathForPartition(path, partitionBy, timestamp, false);
             if (!ff.exists(path.$())) {
-                setPathForPartition(other, partitionBy, timestamp);
+                setPathForPartition(other, partitionBy, timestamp, false);
                 other.put(DETACHED_DIR_MARKER);
 
                 if (ff.exists(other.$())) {
@@ -774,6 +775,7 @@ public class TableWriter implements Closeable {
                 transientRowCountBeforeOutOfOrder = txFile.getTransientRowCount();
                 txFile.append(oooRowCount);
             }
+            oooProcessPartitionRemoveCandidates();
         }
     }
 
@@ -994,7 +996,7 @@ public class TableWriter implements Closeable {
             txFile.commit(defaultCommitMode, denseSymbolMapWriters);
 
             if (ff.exists(path.$())) {
-                if (!ff.rmdir(path.chopZ().put(Files.SEPARATOR).$())) {
+                if (!ff.rmdir(path.chopZ().$$dir())) {
                     LOG.info().$("partition directory delete is postponed [ath=").$(path).$(']').$();
                 } else {
                     LOG.info().$("partition marked for delete [path=").$(path).$(']').$();
@@ -2303,6 +2305,7 @@ public class TableWriter implements Closeable {
     }
 
     private void oooProcess(long lastTimestampHysteresisInMicros) {
+        oooPartitionRemoveCandidates.clear();
         oooErrorCount.set(0);
         final int workerId;
         final Thread thread = Thread.currentThread();
@@ -2602,6 +2605,29 @@ public class TableWriter implements Closeable {
         }
     }
 
+    private void oooProcessPartitionRemoveCandidates() {
+        try {
+            long minTxn = TxnScoreboard.getMin(txnScoreboard);
+            if (minTxn == txFile.getTxn() - 1 && TxnScoreboard.getCount(txnScoreboard, minTxn) == 0) {
+                for (int i = 0, n = oooPartitionRemoveCandidates.size(); i < n; i += 2) {
+                    final long timestamp = oooPartitionRemoveCandidates.getQuick(i);
+                    final long txn = oooPartitionRemoveCandidates.getQuick(i + 1);
+                    setPathForPartition(
+                            other,
+                            partitionBy,
+                            timestamp,
+                            false
+                    );
+                    TableUtils.txnPartitionConditionally(other, txn);
+                    ff.rmdir(path.$$dir());
+                }
+            }
+        } finally {
+            oooPartitionRemoveCandidates.clear();
+            other.trimTo(rootLen);
+        }
+    }
+
     private void oooProcessPartitionSafe(
             int workerId,
             MPSequence updSizePubSeq,
@@ -2886,12 +2912,12 @@ public class TableWriter implements Closeable {
                     .$("`, ts=").$ts(partitionTimestamp)
                     .$(", txn=").$(srcDataTxn).$(']').$();
             txFile.updatePartitionSizeByIndexAndTxn(partitionIndex, partitionSize);
+            oooPartitionRemoveCandidates.add(partitionTimestamp);
+            oooPartitionRemoveCandidates.add(srcDataTxn);
         } else {
             txFile.updatePartitionSizeByIndex(partitionIndex, partitionTimestamp, partitionSize);
         }
         txFile.bumpPartitionTableVersion();
-//        long last = TxnScoreboard.getMin(txnScoreboard);
-//        System.out.println("would remove: " + (last - 1));
     }
 
     synchronized void oooUpdatePartitionSizeSynchronized(
@@ -2986,7 +3012,7 @@ public class TableWriter implements Closeable {
         try {
             setStateForTimestamp(path, timestamp, true);
             int plen = path.length();
-            if (ff.mkdirs(path.put(Files.SEPARATOR).$(), mkDirMode) != 0) {
+            if (ff.mkdirs(path.$$dir(), mkDirMode) != 0) {
                 throw CairoException.instance(ff.errno()).put("Cannot create directory: ").put(path);
             }
 
@@ -3313,8 +3339,6 @@ public class TableWriter implements Closeable {
     }
 
     private void removePartitionDirsNotAttached(long pName, int type) {
-        path.trimTo(rootLen);
-        path.concat(pName).$();
         nativeLPSZ.of(pName);
         if (!isDots(nativeLPSZ) && type == Files.DT_DIR) {
             if (Chars.endsWith(nativeLPSZ, DETACHED_DIR_MARKER)) {
@@ -3332,6 +3356,8 @@ public class TableWriter implements Closeable {
                 // ignore exception and remove directory
                 // we rely on this behaviour to remove leftover directories created by OOO processing
             }
+            path.trimTo(rootLen);
+            path.concat(pName).$();
             if (ff.rmdir(path)) {
                 LOG.info().$("removed partition dir: ").$(path).$();
             } else {
@@ -3681,7 +3707,7 @@ public class TableWriter implements Closeable {
      * @param updatePartitionInterval flag indicating that partition interval partitionLo and
      */
     private void setStateForTimestamp(Path path, long timestamp, boolean updatePartitionInterval) {
-        final long partitionTimestampHi = TableUtils.setPathForPartition(path, partitionBy, timestamp);
+        final long partitionTimestampHi = TableUtils.setPathForPartition(path, partitionBy, timestamp, true);
         TableUtils.txnPartitionConditionally(
                 path,
                 txFile.getPartitionNameTxnByPartitionTimestamp(partitionTimestampHi)
@@ -3723,7 +3749,7 @@ public class TableWriter implements Closeable {
                     try {
                         assert columnTop == 0;
                         assert blockColumnTop > 0;
-                        TableUtils.setPathForPartition(path, partitionBy, timestampLo);
+                        TableUtils.setPathForPartition(path, partitionBy, timestampLo, false);
                         columnTops.setQuick(columnIndex, blockColumnTop);
                         writeColumnTop(getMetadata().getColumnName(columnIndex), blockColumnTop);
                     } finally {
@@ -4232,7 +4258,7 @@ public class TableWriter implements Closeable {
         }
 
         @Override
-        public void handleTansientymbolCountChange(int symbolCount) {
+        public void handleTransientSymbolCountChange(int symbolCount) {
             Unsafe.getUnsafe().storeFence();
             txFile.writeTransientSymbolCount(symColIndex, symbolCount);
         }

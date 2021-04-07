@@ -353,7 +353,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         final FilesFacade ff = cairoConfiguration.getFilesFacade();
         try (Path path = new Path()) {
-            ff.mkdirs(path.of(this.databaseRoot).put(Files.SEPARATOR).$(), this.mkdirMode);
+            ff.mkdirs(path.of(this.databaseRoot).$$dir(), this.mkdirMode);
             path.of(this.databaseRoot).concat(TableUtils.TAB_INDEX_FILE_NAME).$();
             final long tableIndexFd = TableUtils.openFileRWOrFail(ff, path);
             final long fileSize = ff.length(tableIndexFd);

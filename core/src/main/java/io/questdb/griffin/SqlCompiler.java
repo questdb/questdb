@@ -1181,8 +1181,8 @@ public class SqlCompiler implements Closeable {
             if (null == configuration.getBackupRoot()) {
                 throw CairoException.instance(0).put("Backup is disabled, no backup root directory is configured in the server configuration ['cairo.sql.backup.root' property]");
             }
-            path.of(configuration.getBackupRoot()).concat(configuration.getBackupTempDirName()).put(Files.SEPARATOR).$();
-            cachedTmpBackupRoot = path.toString();
+            path.of(configuration.getBackupRoot()).concat(configuration.getBackupTempDirName()).$$dir();
+            cachedTmpBackupRoot = Chars.toString(path);
         }
 
         int renameRootLen = renamePath.length();
@@ -1206,7 +1206,7 @@ public class SqlCompiler implements Closeable {
                 }
             }
 
-            path.of(configuration.getBackupRoot()).concat(configuration.getBackupTempDirName()).put(Files.SEPARATOR).concat(tableName).$();
+            path.of(configuration.getBackupRoot()).concat(configuration.getBackupTempDirName()).concat(tableName).$();
             try {
                 renamePath.trimTo(renameRootLen).concat(tableName).$();
                 TableUtils.renameOrFail(ff, path, renamePath);
@@ -1220,7 +1220,7 @@ public class SqlCompiler implements Closeable {
                     .$(", ex=").$(ex.getFlyweightMessage())
                     .$(", errno=").$(ex.getErrno())
                     .$(']').$();
-            path.of(cachedTmpBackupRoot).concat(tableName).put(Files.SEPARATOR).$();
+            path.of(cachedTmpBackupRoot).concat(tableName).$$dir();
             if (!ff.rmdir(path)) {
                 LOG.error().$("coult not delete directory [path=").$(path).$(", errno=").$(ff.errno()).$(']').$();
             }
@@ -1238,7 +1238,7 @@ public class SqlCompiler implements Closeable {
     }
 
     private void cloneMetaData(CharSequence tableName, CharSequence backupRoot, int mkDirMode, TableReader reader) {
-        path.of(backupRoot).concat(tableName).put(Files.SEPARATOR).$();
+        path.of(backupRoot).concat(tableName).$$dir();
 
         if (ff.exists(path)) {
             throw CairoException.instance(0).put("Backup dir for table \"").put(tableName).put("\" already exists [dir=").put(path).put(']');
@@ -1865,7 +1865,7 @@ public class SqlCompiler implements Closeable {
             if (n > 0) {
                 renamePath.put('.').put(n);
             }
-            renamePath.put(Files.SEPARATOR).$();
+            renamePath.$$dir();
             n++;
         } while (ff.exists(renamePath));
         if (ff.mkdirs(renamePath, configuration.getBackupMkDirMode()) != 0) {

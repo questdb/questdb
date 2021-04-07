@@ -115,20 +115,6 @@ public final class TableUtils {
     private TableUtils() {
     }
 
-    public static void txnPartition(CharSink path, long txn) {
-        path.put("-n-").put(txn);
-    }
-
-    public static void txnPartitionConditionally(CharSink path, long txn) {
-        if (txn > -1) {
-            txnPartition(path, txn);
-        }
-    }
-
-    public static void oldPartitionName(Path path, long txn) {
-        path.put("-x-").put(txn);
-    }
-
     public static void createTable(
             FilesFacade ff,
             AppendOnlyVirtualMemory memory,
@@ -154,7 +140,7 @@ public final class TableUtils {
         LOG.debug().$("create table [name=").$(structure.getTableName()).$(']').$();
         path.of(root).concat(structure.getTableName());
 
-        if (ff.mkdirs(path.put(Files.SEPARATOR).$(), mkDirMode) != 0) {
+        if (ff.mkdirs(path.$$dir(), mkDirMode) != 0) {
             throw CairoException.instance(ff.errno()).put("could not create [dir=").put(path).put(']');
         }
 
@@ -226,18 +212,6 @@ public final class TableUtils {
         }
     }
 
-    public static void resetTodoLog(FilesFacade ff, Path path, int rootLen, MappedReadWriteMemory mem) {
-        mem.of(ff, path.trimTo(rootLen).concat(TODO_FILE_NAME).$(), ff.getPageSize());
-        mem.putLong(24, 0); // txn check
-        Unsafe.getUnsafe().storeFence();
-        mem.putLong(8, 0); // hashLo
-        mem.putLong(16, 0); // hashHi
-        Unsafe.getUnsafe().storeFence();
-        mem.putLong(0, 0); // txn
-        mem.putLong(32, 0); // count
-        mem.setSize(40);
-    }
-
     public static int exists(FilesFacade ff, Path path, CharSequence root, CharSequence name) {
         return exists(ff, path, root, name, 0, name.length());
     }
@@ -262,6 +236,19 @@ public final class TableUtils {
 
     public static int getColumnType(ReadOnlyVirtualMemory metaMem, int columnIndex) {
         return metaMem.getByte(META_OFFSET_COLUMN_TYPES + columnIndex * META_COLUMN_DATA_SIZE);
+    }
+
+    public static Timestamps.TimestampAddMethod getPartitionAdd(int partitionBy) {
+        switch (partitionBy) {
+            case PartitionBy.DAY:
+                return Timestamps.ADD_DD;
+            case PartitionBy.MONTH:
+                return Timestamps.ADD_MM;
+            case PartitionBy.YEAR:
+                return Timestamps.ADD_YYYY;
+            default:
+                throw new UnsupportedOperationException("partition by " + partitionBy + " does not have add method");
+        }
     }
 
     public static long getPartitionTableIndexOffset(int symbolWriterCount, int index) {
@@ -376,6 +363,10 @@ public final class TableUtils {
         path.put(".lock").$();
     }
 
+    public static void oldPartitionName(Path path, long txn) {
+        path.put("-x-").put(txn);
+    }
+
     public static long openFileRWOrFail(FilesFacade ff, LPSZ path) {
         long fd = ff.openRW(path);
         if (fd > 0) {
@@ -389,6 +380,18 @@ public final class TableUtils {
         if (!ff.rename(src, dst)) {
             throw CairoException.instance(ff.errno()).put("could not rename ").put(src).put(" -> ").put(dst);
         }
+    }
+
+    public static void resetTodoLog(FilesFacade ff, Path path, int rootLen, MappedReadWriteMemory mem) {
+        mem.of(ff, path.trimTo(rootLen).concat(TODO_FILE_NAME).$(), ff.getPageSize());
+        mem.putLong(24, 0); // txn check
+        Unsafe.getUnsafe().storeFence();
+        mem.putLong(8, 0); // hashLo
+        mem.putLong(16, 0); // hashHi
+        Unsafe.getUnsafe().storeFence();
+        mem.putLong(0, 0); // txn
+        mem.putLong(32, 0); // count
+        mem.setSize(40);
     }
 
     public static void resetTxn(PagedVirtualMemory txMem, int symbolMapCount, long txn, long dataVersion, long partitionTableVersion) {
@@ -434,16 +437,16 @@ public final class TableUtils {
     /**
      * Sets the path to the directory of a partition taking into account the timestamp and the partitioning scheme.
      *
-     * @param path        Set to the root directory for a table, this will be updated to the root directory of the partition
-     * @param partitionBy Partitioning scheme
-     * @param timestamp   A timestamp in the partition
+     * @param path                  Set to the root directory for a table, this will be updated to the root directory of the partition
+     * @param partitionBy           Partitioning scheme
+     * @param timestamp             A timestamp in the partition
+     * @param calculatePartitionMax flag when caller is going to use the return value of this method
      * @return The last timestamp in the partition
      */
-    public static long setPathForPartition(Path path, int partitionBy, long timestamp) {
+    public static long setPathForPartition(CharSink path, int partitionBy, long timestamp, boolean calculatePartitionMax) {
         int y, m, d;
         boolean leap;
         path.put(Files.SEPARATOR);
-        final long partitionTimestampHi;
         switch (partitionBy) {
             case PartitionBy.DAY:
                 y = Timestamps.getYear(timestamp);
@@ -456,10 +459,12 @@ public final class TableUtils {
                 path.put('-');
                 TimestampFormatUtils.append0(path, d);
 
-                partitionTimestampHi = Timestamps.yearMicros(y, leap)
-                        + Timestamps.monthOfYearMicros(m, leap)
-                        + (d - 1) * Timestamps.DAY_MICROS + 24 * Timestamps.HOUR_MICROS - 1;
-                break;
+                if (calculatePartitionMax) {
+                    return Timestamps.yearMicros(y, leap)
+                            + Timestamps.monthOfYearMicros(m, leap)
+                            + (d - 1) * Timestamps.DAY_MICROS + 24 * Timestamps.HOUR_MICROS - 1;
+                }
+                return 0;
             case PartitionBy.MONTH:
                 y = Timestamps.getYear(timestamp);
                 leap = Timestamps.isLeapYear(y);
@@ -468,27 +473,38 @@ public final class TableUtils {
                 path.put('-');
                 TimestampFormatUtils.append0(path, m);
 
-                partitionTimestampHi = Timestamps.yearMicros(y, leap)
-                        + Timestamps.monthOfYearMicros(m, leap)
-                        + Timestamps.getDaysPerMonth(m, leap) * 24L * Timestamps.HOUR_MICROS - 1;
-                break;
+                if (calculatePartitionMax) {
+                    return Timestamps.yearMicros(y, leap)
+                            + Timestamps.monthOfYearMicros(m, leap)
+                            + Timestamps.getDaysPerMonth(m, leap) * 24L * Timestamps.HOUR_MICROS - 1;
+                }
+                return 0;
             case PartitionBy.YEAR:
                 y = Timestamps.getYear(timestamp);
                 leap = Timestamps.isLeapYear(y);
                 TimestampFormatUtils.append000(path, y);
-                partitionTimestampHi = Timestamps.addYear(Timestamps.yearMicros(y, leap), 1) - 1;
-                break;
+                if (calculatePartitionMax) {
+                    return Timestamps.addYear(Timestamps.yearMicros(y, leap), 1) - 1;
+                }
+                return 0;
             default:
                 path.put(DEFAULT_PARTITION_NAME);
-                partitionTimestampHi = Long.MAX_VALUE;
-                break;
+                return Long.MAX_VALUE;
         }
-
-        return partitionTimestampHi;
     }
 
     public static int toIndexKey(int symbolKey) {
         return symbolKey == SymbolTable.VALUE_IS_NULL ? 0 : symbolKey + 1;
+    }
+
+    public static void txnPartition(CharSink path, long txn) {
+        path.put("-n-").put(txn);
+    }
+
+    public static void txnPartitionConditionally(CharSink path, long txn) {
+        if (txn > -1) {
+            txnPartition(path, txn);
+        }
     }
 
     public static void validate(FilesFacade ff, MappedReadOnlyMemory metaMem, CharSequenceIntHashMap nameIndex) {
@@ -576,6 +592,27 @@ public final class TableUtils {
     public static void validateSymbolCapacityCached(boolean cache, int symbolCapacity, int cacheKeywordPosition) throws SqlException {
         if (cache && symbolCapacity > MAX_SYMBOL_CAPACITY_CACHED) {
             throw SqlException.$(cacheKeywordPosition, "max cached symbol capacity is ").put(MAX_SYMBOL_CAPACITY_CACHED);
+        }
+    }
+
+    public static void writeColumnTop(
+            FilesFacade ff,
+            Path path,
+            CharSequence columnName,
+            long columnTop,
+            long tempBuf
+    ) {
+        topFile(path, columnName);
+        final long fd = OutOfOrderUtils.openRW(ff, path);
+        try {
+            //noinspection SuspiciousNameCombination
+            Unsafe.getUnsafe().putLong(tempBuf, columnTop);
+            OutOfOrderUtils.allocateDiskSpace(ff, fd, Long.BYTES);
+            if (ff.write(fd, tempBuf, Long.BYTES, 0) != Long.BYTES) {
+                throw CairoException.instance(ff.errno()).put("could not write top file [path=").put(path).put(']');
+            }
+        } finally {
+            ff.close(fd);
         }
     }
 
@@ -754,19 +791,6 @@ public final class TableUtils {
         }
     }
 
-    public static Timestamps.TimestampAddMethod getPartitionAdd(int partitionBy) {
-        switch (partitionBy) {
-            case PartitionBy.DAY:
-                return Timestamps.ADD_DD;
-            case PartitionBy.MONTH:
-                return Timestamps.ADD_MM;
-            case PartitionBy.YEAR:
-                return Timestamps.ADD_YYYY;
-            default:
-                throw new UnsupportedOperationException("partition by " + partitionBy + " does not have add method");
-        }
-    }
-
     // Scans timestamp file
     // returns size of partition detected, e.g. size of monotonic increase
     // of timestamp longs read from 0 offset to the end of the file
@@ -822,27 +846,6 @@ public final class TableUtils {
     static void createDirsOrFail(FilesFacade ff, Path path, int mkDirMode) {
         if (ff.mkdirs(path, mkDirMode) != 0) {
             throw CairoException.instance(ff.errno()).put("could not create directories [file=").put(path).put(']');
-        }
-    }
-
-    public static void writeColumnTop(
-            FilesFacade ff,
-            Path path,
-            CharSequence columnName,
-            long columnTop,
-            long tempBuf
-    ) {
-        topFile(path, columnName);
-        final long fd = OutOfOrderUtils.openRW(ff, path);
-        try {
-            //noinspection SuspiciousNameCombination
-            Unsafe.getUnsafe().putLong(tempBuf, columnTop);
-            OutOfOrderUtils.allocateDiskSpace(ff, fd, Long.BYTES);
-            if (ff.write(fd, tempBuf, Long.BYTES, 0) != Long.BYTES) {
-                throw CairoException.instance(ff.errno()).put("could not write top file [path=").put(path).put(']');
-            }
-        } finally {
-            ff.close(fd);
         }
     }
 

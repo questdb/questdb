@@ -440,10 +440,10 @@ public class TableBlockWriter implements Closeable {
             assert !opened;
             partitionStruct.of(columnCount);
             path.of(root).concat(writer.getName());
-            timestampHi = TableUtils.setPathForPartition(path, partitionBy, timestampLo);
+            timestampHi = TableUtils.setPathForPartition(path, partitionBy, timestampLo, true);
             int plen = path.length();
             try {
-                if (ff.mkdirs(path.put(Files.SEPARATOR).$(), mkDirMode) != 0) {
+                if (ff.mkdirs(path.$$dir(), mkDirMode) != 0) {
                     throw CairoException.instance(ff.errno()).put("Could not create directory: ").put(path);
                 }
 
