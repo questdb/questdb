@@ -178,14 +178,14 @@ JNIEXPORT void JNICALL Java_io_questdb_cairo_TxnScoreboard_init
 }
 
 JNIEXPORT jlong JNICALL Java_io_questdb_cairo_TxnScoreboard_getMin
-        (JNIEnv *e, jclass cl, jlong p_board) {
-    auto *p = reinterpret_cast<txn_local_t *>(p_board)->p_txn_scoreboard;
+        (JNIEnv *e, jclass cl, jlong p_local) {
+    auto *p = reinterpret_cast<txn_local_t *>(p_local)->p_txn_scoreboard;
     return p->get_min();
 }
 
 JNIEXPORT jlong JNICALL Java_io_questdb_cairo_TxnScoreboard_getMax
-        (JNIEnv *e, jclass cl, jlong p_board) {
-    auto *p = reinterpret_cast<txn_local_t *>(p_board)->p_txn_scoreboard;
+        (JNIEnv *e, jclass cl, jlong p_local) {
+    auto *p = reinterpret_cast<txn_local_t *>(p_local)->p_txn_scoreboard;
     return p->get_max();
 }
 
@@ -209,12 +209,13 @@ JNIEXPORT jlong JNICALL Java_io_questdb_cairo_TxnScoreboard_close0
         auto *pTxnBoard = pTxnLocal->p_txn_scoreboard;
         auto hMapping = pTxnLocal->hMapping;
         free(pTxnLocal);
-        return closeShm0(
+        closeShm0(
                 reinterpret_cast<char *>(lpszName),
                 pTxnBoard,
                 sizeof(txn_scoreboard_t),
                 hMapping
         );
+        return 0;
     }
     return refs_remaining;
 }

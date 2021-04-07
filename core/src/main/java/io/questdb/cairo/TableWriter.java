@@ -2406,17 +2406,18 @@ public class TableWriter implements Closeable {
                     final long timestamp = oooPartitionRemoveCandidates.getQuick(i);
                     final long txn = oooPartitionRemoveCandidates.getQuick(i + 1);
                     setPathForPartition(
-                            path,
+                            other,
                             partitionBy,
                             timestamp,
                             false
                     );
-                    TableUtils.txnPartitionConditionally(path, txn);
+                    TableUtils.txnPartitionConditionally(other, txn);
                     ff.rmdir(path.$$dir());
                 }
             }
         } finally {
-            path.trimTo(rootLen);
+            oooPartitionRemoveCandidates.clear();
+            other.trimTo(rootLen);
         }
     }
 

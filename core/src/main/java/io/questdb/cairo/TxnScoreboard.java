@@ -36,7 +36,7 @@ public class TxnScoreboard {
 
     public static void close(Path shmPath, long pTxnScoreboard) {
         if (close0(shmPath.address(), pTxnScoreboard) == 0) {
-            LOG.info().$("close [p=").$(pTxnScoreboard).$(']').$();
+//            LOG.info().$("close [p=").$(pTxnScoreboard).$(']').$();
             Unsafe.recordMemAlloc(-getScoreboardSize());
         }
     }
@@ -49,6 +49,7 @@ public class TxnScoreboard {
     public static long create(Path shmPath, long databaseIdLo, long databaseIdHi, CharSequence tableName) {
         setShmName(shmPath, databaseIdLo, databaseIdHi, tableName);
         Unsafe.recordMemAlloc(getScoreboardSize());
+//        LOG.info().$("open").$();
         return create0(shmPath.address());
     }
 
@@ -70,7 +71,7 @@ public class TxnScoreboard {
 
     static boolean acquire(long pTxnScoreboard, long txn) {
         assert pTxnScoreboard > 0;
-        LOG.info().$("acquire [p=").$(pTxnScoreboard).$(", txn=").$(txn).$(']').$();
+        LOG.debug().$("acquire [p=").$(pTxnScoreboard).$(", txn=").$(txn).$(']').$();
         return acquire0(pTxnScoreboard, txn);
     }
 
@@ -78,7 +79,7 @@ public class TxnScoreboard {
 
     static void release(long pTxnScoreboard, long txn) {
         assert pTxnScoreboard > 0;
-        LOG.info().$("release  [p=").$(pTxnScoreboard).$(", txn=").$(txn).$(']').$();
+        LOG.debug().$("release  [p=").$(pTxnScoreboard).$(", txn=").$(txn).$(']').$();
         release0(pTxnScoreboard, txn);
     }
 
