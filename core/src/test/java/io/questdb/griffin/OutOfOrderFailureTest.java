@@ -103,7 +103,7 @@ public class OutOfOrderFailureTest extends AbstractOutOfOrderTest {
     private static final FilesFacade ffMkDirFailure = new FilesFacadeImpl() {
         @Override
         public int mkdirs(LPSZ path, int mode) {
-            if (Chars.contains(path, "1970-01-06-n-14") && counter.decrementAndGet() == 0) {
+            if (Chars.contains(path, "1970-01-06.14") && counter.decrementAndGet() == 0) {
                 return -1;
             }
             return super.mkdirs(path, mode);
@@ -138,7 +138,7 @@ public class OutOfOrderFailureTest extends AbstractOutOfOrderTest {
         @Override
         public long openRW(LPSZ name) {
             long fd = super.openRW(name);
-            if (Chars.endsWith(name, "1970-01-07-n-15" + Files.SEPARATOR + "v.top") && counter.decrementAndGet() == 0) {
+            if (Chars.endsWith(name, "1970-01-07.15" + Files.SEPARATOR + "v.top") && counter.decrementAndGet() == 0) {
                 theFd = fd;
             }
             return fd;
@@ -170,7 +170,7 @@ public class OutOfOrderFailureTest extends AbstractOutOfOrderTest {
         @Override
         public long openRW(LPSZ name) {
             long fd = super.openRW(name);
-            if (Chars.endsWith(name, "1970-01-06-n-14" + Files.SEPARATOR + "i.d") && counter.decrementAndGet() == 0) {
+            if (Chars.endsWith(name, "1970-01-06.14" + Files.SEPARATOR + "i.d") && counter.decrementAndGet() == 0) {
                 theFd = fd;
             }
             return fd;
@@ -180,7 +180,7 @@ public class OutOfOrderFailureTest extends AbstractOutOfOrderTest {
     private static final FilesFacade ffOpenRW = new FilesFacadeImpl() {
         @Override
         public long openRW(LPSZ name) {
-            if (Chars.endsWith(name, "1970-01-06-n-14" + Files.SEPARATOR + "i.d") && counter.decrementAndGet() == 0) {
+            if (Chars.endsWith(name, "1970-01-06.14" + Files.SEPARATOR + "i.d") && counter.decrementAndGet() == 0) {
                 return -1;
             }
             return super.openRW(name);
@@ -486,7 +486,7 @@ public class OutOfOrderFailureTest extends AbstractOutOfOrderTest {
             @Override
             public long openRW(LPSZ name) {
                 long fd = super.openRW(name);
-                if (Chars.endsWith(name, "1970-01-06-n-14" + Files.SEPARATOR + "v8.d") && counter.decrementAndGet() == 0) {
+                if (Chars.endsWith(name, "1970-01-06.14" + Files.SEPARATOR + "v8.d") && counter.decrementAndGet() == 0) {
                     theFd = fd;
                 }
                 return fd;
@@ -514,7 +514,7 @@ public class OutOfOrderFailureTest extends AbstractOutOfOrderTest {
             @Override
             public long openRW(LPSZ name) {
                 long fd = super.openRW(name);
-                if (Chars.endsWith(name, "1970-01-06-n-14" + Files.SEPARATOR + "v8.d") && counter.decrementAndGet() == 0) {
+                if (Chars.endsWith(name, "1970-01-06.14" + Files.SEPARATOR + "v8.d") && counter.decrementAndGet() == 0) {
                     theFd = fd;
                 }
                 return fd;
@@ -592,8 +592,9 @@ public class OutOfOrderFailureTest extends AbstractOutOfOrderTest {
 
     @Test
     @Ignore
-    public void testOOOFollowedByAnotherOOONR() throws Exception {
-        counter.set(2);
+    // todo: this test fails because symbol maps are corrupt on writer after experiencing out of disk space errors
+    public void testOOOFollowedByAnotherOOO() throws Exception {
+        counter.set(1);
         final AtomicBoolean restoreDiskSpace = new AtomicBoolean(false);
         executeWithPool(0,
                 (engine, compiler, sqlExecutionContext) -> testOooFollowedByAnotherOOO0(engine, compiler, sqlExecutionContext, restoreDiskSpace),
@@ -613,8 +614,10 @@ public class OutOfOrderFailureTest extends AbstractOutOfOrderTest {
                     @Override
                     public long openRW(LPSZ name) {
                         long fd = super.openRW(name);
-                        if (Chars.endsWith(name, "x" + Files.SEPARATOR + "1970-01-01" + Files.SEPARATOR + "m.d") && counter.decrementAndGet() == 0) {
-                            theFd = fd;
+                        if (Chars.endsWith(name, "x" + Files.SEPARATOR + "1970-01-01.1" + Files.SEPARATOR + "m.d")) {
+                            if (counter.decrementAndGet() == 0) {
+                                theFd = fd;
+                            }
                         }
                         return fd;
                     }
@@ -2328,7 +2331,6 @@ public class OutOfOrderFailureTest extends AbstractOutOfOrderTest {
         }
 
         restoreDiskSpace.set(true);
-        System.out.println("passed");
 
         // check that table data is intact using "cached" table reader
         // e.g. one that had files already open
@@ -2342,10 +2344,12 @@ public class OutOfOrderFailureTest extends AbstractOutOfOrderTest {
         TestUtils.assertEquals(sink, sink2);
 
         // now perform two OOO inserts
-        compiler.compile("insert into x select * from 1am", sqlExecutionContext);
-        compiler.compile("insert into x select * from 1am", sqlExecutionContext);
+//        engine.releaseAllWriters();
 
-        printSqlResult(compiler, sqlExecutionContext, "y");
+        compiler.compile("insert into x select * from 1am", sqlExecutionContext);
+        compiler.compile("insert into x select * from tail", sqlExecutionContext);
+
+        printSqlResult(compiler, sqlExecutionContext, "y order by ts");
         TestUtils.printSql(compiler, sqlExecutionContext, "x", sink2);
         TestUtils.assertEquals(sink, sink2);
     }

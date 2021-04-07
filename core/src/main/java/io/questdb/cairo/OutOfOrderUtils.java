@@ -203,7 +203,7 @@ public class OutOfOrderUtils {
         dstPath.concat("backup");
         TableUtils.txnPartitionConditionally(dstPath, txn);
 
-        // rename "2018-01-10-n-2" to "2018-01-10-n-3/backup-n-3"
+        // rename "2018-01-10.2" to "2018-01-10-n-3/backup-n-3"
         // e.g. all files from src dir will end up in the backup directory of the new partition
         TableUtils.renameOrFail(ff, srcPath.$(), dstPath.$());
 

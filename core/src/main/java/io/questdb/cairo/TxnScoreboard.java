@@ -32,6 +32,7 @@ import io.questdb.std.str.Path;
 
 public class TxnScoreboard {
 
+    public static final long READER_NOT_YET_ACTIVE = -1;
     private static final Log LOG = LogFactory.getLog(TxnScoreboard.class);
 
     public static void close(Path shmPath, long pTxnScoreboard) {
@@ -98,4 +99,16 @@ public class TxnScoreboard {
     private static native long close0(long lpszName, long pTxnScoreboard);
 
     private static native long getScoreboardSize();
+
+    static boolean isTxnUnused(long txn, long txnScoreboard) {
+        final long readerTxn = getMin(txnScoreboard);
+        return
+                // readers had last partition open but they are inactive
+                // (e.g. they are guaranteed to reload when they go active
+                (readerTxn == txn && getCount(txnScoreboard, readerTxn) == 0)
+                        // there are no readers at all
+                        || readerTxn == READER_NOT_YET_ACTIVE
+                        // reader has more recent data in their view
+                        || readerTxn > txn;
+    }
 }

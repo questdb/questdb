@@ -85,7 +85,7 @@ public final class TestUtils {
                             Assert.assertEquals(r.getInt(i), l.getInt(i));
                             break;
                         case ColumnType.STRING:
-                            Assert.assertEquals(r.getStr(i), l.getStr(i));
+                            TestUtils.assertEquals(r.getStr(i), l.getStr(i));
                             break;
                         case ColumnType.SYMBOL:
                             Assert.assertEquals(r.getSym(i), l.getSym(i));

@@ -47,6 +47,14 @@ public class MessageBusImpl implements MessageBus {
     private final MPSequence outOfOrderSortPubSeq;
     private final MCSequence outOfOrderSortSubSeq;
 
+    private final RingQueue<O3PurgeDiscoveryTask> o3PurgeDiscoveryQueue;
+    private final MPSequence o3PurgeDiscoveryPubSeq;
+    private final MCSequence o3PurgeDiscoverySubSeq;
+
+    private final RingQueue<O3PurgeTask> o3PurgeQueue;
+    private final MPSequence o3PurgePubSeq;
+    private final MCSequence o3PurgeSubSeq;
+
     private final RingQueue<OutOfOrderPartitionTask> outOfOrderPartitionQueue;
     private final MPSequence outOfOrderPartitionPubSeq;
     private final MCSequence outOfOrderPartitionSubSeq;
@@ -106,6 +114,14 @@ public class MessageBusImpl implements MessageBus {
         this.outOfOrderUpdPartitionSizePubSeq = new MPSequence(this.outOfOrderUpdPartitionSizeQueue.getCapacity());
         this.outOfOrderUpdPartitionSizeSubSeq = new SCSequence();
         outOfOrderUpdPartitionSizePubSeq.then(outOfOrderUpdPartitionSizeSubSeq).then(outOfOrderUpdPartitionSizePubSeq);
+
+        this.o3PurgeDiscoveryQueue = new RingQueue<>(O3PurgeDiscoveryTask::new, 128);
+        this.o3PurgeDiscoveryPubSeq = new MPSequence(this.o3PurgeDiscoveryQueue.getCapacity());
+        this.o3PurgeDiscoverySubSeq = new MCSequence(this.o3PurgeDiscoveryQueue.getCapacity());
+
+        this.o3PurgeQueue = new RingQueue<>(O3PurgeTask::new, 128);
+        this.o3PurgePubSeq = new MPSequence(this.o3PurgeQueue.getCapacity());
+        this.o3PurgeSubSeq = new MCSequence(this.o3PurgeQueue.getCapacity());
     }
 
     @Override
@@ -189,7 +205,7 @@ public class MessageBusImpl implements MessageBus {
     }
 
     @Override
-    public MPSequence getOutOfOrderCopyPubSequence() {
+    public MPSequence getOutOfOrderCopyPubSeq() {
         return outOfOrderCopyPubSeq;
     }
 
@@ -231,5 +247,35 @@ public class MessageBusImpl implements MessageBus {
     @Override
     public SCSequence getOutOfOrderUpdPartitionSizeSubSequence() {
         return outOfOrderUpdPartitionSizeSubSeq;
+    }
+
+    @Override
+    public RingQueue<O3PurgeDiscoveryTask> getO3PurgeDiscoveryQueue() {
+        return o3PurgeDiscoveryQueue;
+    }
+
+    @Override
+    public MPSequence getO3PurgeDiscoveryPubSeq() {
+        return o3PurgeDiscoveryPubSeq;
+    }
+
+    @Override
+    public MCSequence getO3PurgeDiscoverySubSeq() {
+        return o3PurgeDiscoverySubSeq;
+    }
+
+    @Override
+    public MPSequence getO3PurgePubSeq() {
+        return o3PurgePubSeq;
+    }
+
+    @Override
+    public RingQueue<O3PurgeTask> getO3PurgeQueue() {
+        return o3PurgeQueue;
+    }
+
+    @Override
+    public MCSequence getO3PurgeSubSeq() {
+        return o3PurgeSubSeq;
     }
 }

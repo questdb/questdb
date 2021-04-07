@@ -57,7 +57,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
         super(messageBus.getOutOfOrderOpenColumnQueue(), messageBus.getOutOfOrderOpenColumnSubSequence());
         this.configuration = messageBus.getConfiguration();
         this.outboundQueue = messageBus.getOutOfOrderCopyQueue();
-        this.outboundPubSeq = messageBus.getOutOfOrderCopyPubSequence();
+        this.outboundPubSeq = messageBus.getOutOfOrderCopyPubSeq();
         this.updPartitionSizeTaskQueue = messageBus.getOutOfOrderUpdPartitionSizeQueue();
         this.updPartitionSizePubSeq = messageBus.getOutOfOrderUpdPartitionSizePubSequence();
     }

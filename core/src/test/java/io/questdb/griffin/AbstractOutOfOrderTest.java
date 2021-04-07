@@ -125,7 +125,6 @@ public class AbstractOutOfOrderTest extends AbstractCairoTest {
         compiler.compile(referenceTableDDL, sqlExecutionContext);
         compiler.compile(outOfOrderInsertSQL, sqlExecutionContext);
         assertSqlCursors(compiler, sqlExecutionContext, referenceSQL, assertSQL);
-
         engine.releaseAllReaders();
         assertSqlCursors(compiler, sqlExecutionContext, referenceSQL, assertSQL);
     }
