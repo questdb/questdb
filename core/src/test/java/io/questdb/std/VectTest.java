@@ -377,6 +377,39 @@ public class VectTest {
         }
     }
 
+    @Test
+    public void testMemmove() {
+        int maxSize = 1024*1024;
+        int[] sizes = {1024, 4096, maxSize};
+        int buffSize = 1024 + 4096 + maxSize;
+        long from = Unsafe.getUnsafe().allocateMemory(buffSize);
+        long to = Unsafe.getUnsafe().allocateMemory(maxSize);
+
+        try {
+            // initialize from buffer
+            // with 1, 4, 8, 12 ... integers
+            for (int i = 0; i < buffSize; i += Integer.BYTES) {
+                Unsafe.getUnsafe().putInt(from + i, i);
+            }
+
+            int offset = 0;
+            for(int size: sizes) {
+                // move next portion of from into to
+                Vect.memmove(to, from + offset, size);
+
+                for (int i = 0; i < size; i += Integer.BYTES) {
+                    int actual = Unsafe.getUnsafe().getInt(to + i);
+                    Assert.assertEquals(i + offset, actual);
+                }
+
+                offset += size;
+            }
+        } finally {
+            Unsafe.free(from, buffSize);
+            Unsafe.free(to, maxSize);
+        }
+    }
+
     private void assertIndexAsc(int count, long indexAddr) {
         long v = Unsafe.getUnsafe().getLong(indexAddr);
         for (int i = 1; i < count; i++) {

@@ -25,21 +25,19 @@
 package io.questdb.cairo;
 
 import io.questdb.MessageBus;
-import io.questdb.MessageBusImpl;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
-import org.junit.After;
-import org.junit.Before;
-import org.junit.BeforeClass;
-import org.junit.ClassRule;
+import org.jetbrains.annotations.Nullable;
+import org.junit.*;
 import org.junit.rules.TemporaryFolder;
 
 import java.io.IOException;
@@ -57,26 +55,52 @@ public class AbstractCairoTest {
     protected static long currentMicros = -1;
     protected static MicrosecondClock testMicrosClock =
             () -> currentMicros >= 0 ? currentMicros : MicrosecondClockImpl.INSTANCE.getTicks();
+    protected static CairoEngine engine;
+    protected static String inputRoot = null;
+    protected static FilesFacade ff;
 
     @BeforeClass
-    public static void setUp() throws IOException {
+    public static void setUpStatic() {
         // it is necessary to initialise logger before tests start
         // logger doesn't relinquish memory until JVM stops
         // which causes memory leak detector to fail should logger be
         // created mid-test
         LOG.info().$("begin").$();
-        root = temp.newFolder("dbRoot").getAbsolutePath();
+        try {
+            root = temp.newFolder("dbRoot").getAbsolutePath();
+        } catch (IOException e) {
+            throw new ExceptionInInitializerError();
+        }
         configuration = new DefaultCairoConfiguration(root) {
+            @Override
+            public FilesFacade getFilesFacade() {
+                if (ff != null) {
+                    return ff;
+                }
+                return super.getFilesFacade();
+            }
+
             @Override
             public MicrosecondClock getMicrosecondClock() {
                 return testMicrosClock;
             }
+
+            @Override
+            public CharSequence getInputRoot() {
+                return inputRoot;
+            }
         };
-        messageBus = new MessageBusImpl(configuration);
+        engine = new CairoEngine(configuration);
+        messageBus = engine.getMessageBus();
+    }
+
+    @AfterClass
+    public static void tearDownStatic() {
+        engine.close();
     }
 
     @Before
-    public void setUp0() {
+    public void setUp() {
         try (Path path = new Path().of(root).$()) {
             if (Files.exists(path)) {
                 return;
@@ -86,33 +110,40 @@ public class AbstractCairoTest {
     }
 
     @After
-    public void tearDown0() {
+    public void tearDown() {
+        engine.resetTableId();
+        engine.clear();
         Path path = Path.getThreadLocal(root);
         Files.rmdir(path.$());
     }
 
-    protected void assertColumn(CharSequence expected, CharSequence tableName, int index) {
-        try (TableReader reader = new TableReader(configuration, tableName)) {
-            final StringSink sink = new StringSink();
-            sink.clear();
-            printer.printFullColumn(reader.getCursor(), reader.getMetadata(), index, false, sink);
-            TestUtils.assertEquals(expected, sink);
-            reader.getCursor().toTop();
-            sink.clear();
-            printer.printFullColumn(reader.getCursor(), reader.getMetadata(), index, false, sink);
-            TestUtils.assertEquals(expected, sink);
-        }
+    protected static void assertMemoryLeak(TestUtils.LeakProneCode code) throws Exception {
+        assertMemoryLeak(null, code);
     }
 
-    protected void assertOnce(CharSequence expected, RecordCursor cursor, RecordMetadata metadata, boolean header) {
-        sink.clear();
-        printer.print(cursor, metadata, header, sink);
-        TestUtils.assertEquals(expected, sink);
+    protected static void assertMemoryLeak(@Nullable FilesFacade ff, TestUtils.LeakProneCode code) throws Exception {
+        final FilesFacade ff2 = ff;
+        TestUtils.assertMemoryLeak(() -> {
+            AbstractCairoTest.ff = ff2;
+            try {
+                code.run();
+                engine.releaseInactive();
+                Assert.assertEquals(0, engine.getBusyWriterCount());
+                Assert.assertEquals(0, engine.getBusyReaderCount());
+            } finally {
+                engine.clear();
+                AbstractCairoTest.ff = null;
+            }
+        });
     }
 
-    protected void assertThat(CharSequence expected, RecordCursor cursor, RecordMetadata metadata, boolean header) {
-        assertOnce(expected, cursor, metadata, header);
+    protected void assertCursor(CharSequence expected, RecordCursor cursor, RecordMetadata metadata, boolean header) {
+        TestUtils.assertCursor(expected, cursor, metadata, header, sink);
+    }
+
+    protected void assertCursorTwoPass(CharSequence expected, RecordCursor cursor, RecordMetadata metadata, boolean header) {
+        assertCursor(expected, cursor, metadata, header);
         cursor.toTop();
-        assertOnce(expected, cursor, metadata, header);
+        assertCursor(expected, cursor, metadata, header);
     }
 }

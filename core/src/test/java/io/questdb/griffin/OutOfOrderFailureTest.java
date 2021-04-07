@@ -46,16 +46,6 @@ public class OutOfOrderFailureTest extends AbstractOutOfOrderTest {
 
     private final static AtomicInteger counter = new AtomicInteger(0);
 
-    private static final FilesFacade ff19700107Backup = new FilesFacadeImpl() {
-        @Override
-        public boolean rename(LPSZ from, LPSZ to) {
-            if (Chars.endsWith(from, "1970-01-07") && counter.incrementAndGet() == 1) {
-                return false;
-            }
-            return super.rename(from, to);
-        }
-    };
-
     private static final FilesFacade ffAllocateFailure = new FilesFacadeImpl() {
         @Override
         public boolean allocate(long fd, long size) {
@@ -120,26 +110,6 @@ public class OutOfOrderFailureTest extends AbstractOutOfOrderTest {
         }
     };
 
-    private static final FilesFacade ff19700106Backup = new FilesFacadeImpl() {
-        @Override
-        public boolean rename(LPSZ from, LPSZ to) {
-            if (Chars.endsWith(from, "1970-01-06") && counter.incrementAndGet() == 1) {
-                return false;
-            }
-            return super.rename(from, to);
-        }
-    };
-
-    private static final FilesFacade ff19700107Fwd = new FilesFacadeImpl() {
-        @Override
-        public boolean rename(LPSZ from, LPSZ to) {
-            if (Chars.endsWith(to, "1970-01-07") && counter.incrementAndGet() == 1) {
-                return false;
-            }
-            return super.rename(from, to);
-        }
-    };
-
     private static final FilesFacade ffWriteTop = new FilesFacadeImpl() {
         long theFd;
 
@@ -181,16 +151,6 @@ public class OutOfOrderFailureTest extends AbstractOutOfOrderTest {
                 return 5;
             }
             return super.write(fd, address, len, offset);
-        }
-    };
-
-    private static final FilesFacade ff19700106Fwd = new FilesFacadeImpl() {
-        @Override
-        public boolean rename(LPSZ from, LPSZ to) {
-            if (Chars.endsWith(to, "1970-01-06") && counter.incrementAndGet() == 1) {
-                return false;
-            }
-            return super.rename(from, to);
         }
     };
 
@@ -296,41 +256,6 @@ public class OutOfOrderFailureTest extends AbstractOutOfOrderTest {
                 return fd;
             }
         });
-    }
-
-    @Test
-    @Ignore
-    public void testColumnTopLastDataOOODataFailRetryRename1() throws Exception {
-        counter.set(0);
-        executeWithoutPool(OutOfOrderFailureTest::testColumnTopLastDataOOODataFailRetry0, ff19700107Backup);
-    }
-
-    @Test
-    @Ignore
-    public void testColumnTopLastDataOOODataFailRetryRename1Contended() throws Exception {
-        counter.set(0);
-        executeWithPool(0, OutOfOrderFailureTest::testColumnTopLastDataOOODataFailRetry0, ff19700107Backup);
-    }
-
-    @Test
-    @Ignore
-    public void testColumnTopLastDataOOODataFailRetryRename1Parallel() throws Exception {
-        counter.set(0);
-        executeWithPool(4, OutOfOrderFailureTest::testColumnTopLastDataOOODataFailRetry0, ff19700107Backup);
-    }
-
-    @Test
-    @Ignore
-    public void testColumnTopLastDataOOODataFailRetryRename2() throws Exception {
-        counter.set(0);
-        executeWithoutPool(OutOfOrderFailureTest::testColumnTopLastDataOOODataFailRetry0, ff19700107Fwd);
-    }
-
-    @Test
-    @Ignore
-    public void testColumnTopLastDataOOODataFailRetryRename2Contended() throws Exception {
-        counter.set(0);
-        executeWithPool(0, OutOfOrderFailureTest::testColumnTopLastDataOOODataFailRetry0, ff19700107Fwd);
     }
 
     @Test
@@ -530,48 +455,6 @@ public class OutOfOrderFailureTest extends AbstractOutOfOrderTest {
     }
 
     @Test
-    @Ignore
-    public void testColumnTopMidDataMergeDataFailRetryRename1() throws Exception {
-        counter.set(0);
-        executeWithoutPool(OutOfOrderFailureTest::testColumnTopMidDataMergeDataFailRetry0, ff19700107Backup);
-    }
-
-    @Test
-    @Ignore
-    public void testColumnTopMidDataMergeDataFailRetryRename1Contended() throws Exception {
-        counter.set(0);
-        executeWithPool(0, OutOfOrderFailureTest::testColumnTopMidDataMergeDataFailRetry0, ff19700107Backup);
-    }
-
-    @Test
-    @Ignore
-    public void testColumnTopMidDataMergeDataFailRetryRename1Parallel() throws Exception {
-        counter.set(0);
-        executeWithPool(4, OutOfOrderFailureTest::testColumnTopMidDataMergeDataFailRetry0, ff19700107Backup);
-    }
-
-    @Test
-    @Ignore
-    public void testColumnTopMidDataMergeDataFailRetryRename2() throws Exception {
-        counter.set(0);
-        executeWithoutPool(OutOfOrderFailureTest::testColumnTopMidDataMergeDataFailRetry0, ff19700107Fwd);
-    }
-
-    @Test
-    @Ignore
-    public void testColumnTopMidDataMergeDataFailRetryRename2Contended() throws Exception {
-        counter.set(0);
-        executeWithPool(0, OutOfOrderFailureTest::testColumnTopMidDataMergeDataFailRetry0, ff19700107Fwd);
-    }
-
-    @Test
-    @Ignore
-    public void testColumnTopMidDataMergeDataFailRetryRename2Parallel() throws Exception {
-        counter.set(0);
-        executeWithPool(4, OutOfOrderFailureTest::testColumnTopMidDataMergeDataFailRetry0, ff19700107Fwd);
-    }
-
-    @Test
     public void testColumnTopMidMergeBlankFailRetryMapRW() throws Exception {
         counter.set(1);
         executeWithoutPool(OutOfOrderFailureTest::testColumnTopMidMergeBlankColumnFailRetry0, ffMapRW);
@@ -705,48 +588,6 @@ public class OutOfOrderFailureTest extends AbstractOutOfOrderTest {
                 return super.openRW(name);
             }
         });
-    }
-
-    @Test
-    @Ignore
-    public void testColumnTopMidMergeBlankFailRetryRename1() throws Exception {
-        counter.set(0);
-        executeWithoutPool(OutOfOrderFailureTest::testColumnTopMidMergeBlankColumnFailRetry0, ff19700106Backup);
-    }
-
-    @Test
-    @Ignore
-    public void testColumnTopMidMergeBlankFailRetryRename1Contended() throws Exception {
-        counter.set(0);
-        executeWithPool(0, OutOfOrderFailureTest::testColumnTopMidMergeBlankColumnFailRetry0, ff19700106Backup);
-    }
-
-    @Test
-    @Ignore
-    public void testColumnTopMidMergeBlankFailRetryRename1Parallel() throws Exception {
-        counter.set(0);
-        executeWithPool(4, OutOfOrderFailureTest::testColumnTopMidMergeBlankColumnFailRetry0, ff19700106Backup);
-    }
-
-    @Test
-    @Ignore
-    public void testColumnTopMidMergeBlankFailRetryRename2() throws Exception {
-        counter.set(0);
-        executeWithoutPool(OutOfOrderFailureTest::testColumnTopMidMergeBlankColumnFailRetry0, ff19700106Fwd);
-    }
-
-    @Test
-    @Ignore
-    public void testColumnTopMidMergeBlankFailRetryRename2Contended() throws Exception {
-        counter.set(0);
-        executeWithPool(0, OutOfOrderFailureTest::testColumnTopMidMergeBlankColumnFailRetry0, ff19700106Fwd);
-    }
-
-    @Test
-    @Ignore
-    public void testColumnTopMidMergeBlankFailRetryRename2Parallel() throws Exception {
-        counter.set(0);
-        executeWithPool(4, OutOfOrderFailureTest::testColumnTopMidMergeBlankColumnFailRetry0, ff19700106Fwd);
     }
 
     @Test

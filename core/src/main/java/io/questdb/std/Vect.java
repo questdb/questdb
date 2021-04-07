@@ -107,7 +107,7 @@ public final class Vect {
         }
     }
 
-    public static native void memmove(long src, long dst, long len);
+    public static native void memmove(long dst, long src, long len);
 
     public static native void memset(long dst, long len, int value);
 

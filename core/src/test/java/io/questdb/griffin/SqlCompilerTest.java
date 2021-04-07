@@ -92,32 +92,17 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCannotCreateTable() {
-
-        FilesFacade ff = new FilesFacadeImpl() {
-            @Override
-            public int mkdirs(LPSZ path, int mode) {
-                return -1;
-            }
-        };
-
-        CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
-            @Override
-            public FilesFacade getFilesFacade() {
-                return ff;
-            }
-        };
-
-        CairoEngine engine = new CairoEngine(configuration);
-        SqlCompiler compiler = new SqlCompiler(engine);
-
-        try {
-            compiler.compile("create table x (a int)", sqlExecutionContext);
-            Assert.fail();
-        } catch (SqlException e) {
-            Assert.assertEquals(13, e.getPosition());
-            TestUtils.assertContains(e.getMessage(), "Could not create table");
-        }
+    public void testCannotCreateTable() throws Exception {
+        assertFailure(
+                new FilesFacadeImpl() {
+                    @Override
+                    public int mkdirs(LPSZ path1, int mode) {
+                        return -1;
+                    }
+                },
+                "create table x (a int)",
+                "Could not create table"
+        );
     }
 
     @Test
@@ -1801,113 +1786,65 @@ public class SqlCompilerTest extends AbstractGriffinTest {
 
     @Test
     public void testCreateAsSelectIOError() throws Exception {
+        String sql = "create table y as (" +
+                "select rnd_symbol(4,4,4,2) a from long_sequence(10000)" +
+                "), cast(a as STRING)";
 
-        TestUtils.assertMemoryLeak(new TestUtils.LeakProneCode() {
+        final FilesFacade ff = new FilesFacadeImpl() {
+            int mapCount = 0;
+
             @Override
-            public void run() {
-                String sql = "create table y as (" +
-                        "select rnd_symbol(4,4,4,2) a from long_sequence(10000)" +
-                        "), cast(a as STRING)";
-
-                final FilesFacade ff = new FilesFacadeImpl() {
-                    int mapCount = 0;
-
-                    @Override
-                    public long getMapPageSize() {
-                        return getPageSize();
-                    }
-
-                    @Override
-                    public long mmap(long fd, long len, long offset, int mode) {
-                        if (mapCount++ > 5) {
-                            return -1;
-                        }
-                        return super.mmap(fd, len, offset, mode);
-                    }
-                };
-
-                final DefaultCairoConfiguration configuration = new DefaultCairoConfiguration(root) {
-                    @Override
-                    public FilesFacade getFilesFacade() {
-                        return ff;
-                    }
-                };
-
-                try (
-                        CairoEngine engine = new CairoEngine(configuration);
-                        SqlCompiler compiler = new SqlCompiler(engine)
-                ) {
-                    try {
-                        compiler.compile(sql, sqlExecutionContext);
-                        Assert.fail();
-                    } catch (SqlException e) {
-                        TestUtils.assertContains(e.getMessage(), "Could not create table. See log for details");
-                    }
-
-                    Assert.assertEquals(0, engine.getBusyReaderCount());
-                    Assert.assertEquals(0, engine.getBusyWriterCount());
-
-                    engine.clear();
-                }
+            public long getMapPageSize() {
+                return getPageSize();
             }
-        });
+
+            @Override
+            public long mmap(long fd, long len, long offset, int mode) {
+                if (mapCount++ > 5) {
+                    return -1;
+                }
+                return super.mmap(fd, len, offset, mode);
+            }
+        };
+        assertFailure(
+                ff,
+                sql,
+                "Could not create table. See log for details"
+        );
     }
 
     @Test
     public void testCreateAsSelectIOError2() throws Exception {
+        String sql = "create table y as (" +
+                "select rnd_symbol(4,4,4,2) a from long_sequence(10000)" +
+                "), cast(a as STRING)";
 
-        TestUtils.assertMemoryLeak(new TestUtils.LeakProneCode() {
+        final FilesFacade ff = new FilesFacadeImpl() {
+            int mapCount = 0;
+
             @Override
-            public void run() {
-                String sql = "create table y as (" +
-                        "select rnd_symbol(4,4,4,2) a from long_sequence(10000)" +
-                        "), cast(a as STRING)";
-
-                final FilesFacade ff = new FilesFacadeImpl() {
-                    int mapCount = 0;
-
-                    @Override
-                    public long getMapPageSize() {
-                        return getPageSize();
-                    }
-
-                    @Override
-                    public long mmap(long fd, long len, long offset, int mode) {
-                        // this is very specific failure
-                        // it fails to open table writer metadata
-                        // and then fails to close txMem
-                        if (mapCount++ > 2) {
-                            return -1;
-                        }
-                        return super.mmap(fd, len, offset, mode);
-                    }
-                };
-
-                final DefaultCairoConfiguration configuration = new DefaultCairoConfiguration(root) {
-                    @Override
-                    public FilesFacade getFilesFacade() {
-                        return ff;
-                    }
-                };
-
-                try (
-                        CairoEngine engine = new CairoEngine(configuration);
-                        SqlCompiler compiler = new SqlCompiler(engine)
-                ) {
-                    try {
-                        compiler.compile(sql, sqlExecutionContext);
-                        Assert.fail();
-                    } catch (SqlException e) {
-                        TestUtils.assertContains(e.getMessage(), "Could not create table. See log for details");
-                    }
-
-                    Assert.assertEquals(0, engine.getBusyReaderCount());
-                    Assert.assertEquals(0, engine.getBusyWriterCount());
-
-                    engine.clear();
-                }
+            public long getMapPageSize() {
+                return getPageSize();
             }
-        });
+
+            @Override
+            public long mmap(long fd, long len, long offset, int mode) {
+                // this is very specific failure
+                // it fails to open table writer metadata
+                // and then fails to close txMem
+                if (mapCount++ > 2) {
+                    return -1;
+                }
+                return super.mmap(fd, len, offset, mode);
+            }
+        };
+
+        assertFailure(
+                ff,
+                sql,
+                "Could not create table. See log for details"
+
+        );
     }
 
     @Test
@@ -2225,7 +2162,6 @@ public class SqlCompilerTest extends AbstractGriffinTest {
 
     @Test
     public void testCreateTableFail() throws Exception {
-
         FilesFacade ff = new FilesFacadeImpl() {
             int count = 8; // this count is very deliberately coincidental with
 
@@ -2239,29 +2175,11 @@ public class SqlCompilerTest extends AbstractGriffinTest {
             }
         };
 
-        CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
-            @Override
-            public FilesFacade getFilesFacade() {
-                return ff;
-            }
-        };
-
-        TestUtils.assertMemoryLeak(() -> {
-            try (
-                    CairoEngine engine = new CairoEngine(configuration);
-                    SqlCompiler compiler = new SqlCompiler(engine)
-            ) {
-                try {
-                    compiler.compile("create table x as (select cast(x as int) c, abs(rnd_int() % 650) a from long_sequence(5000000))", sqlExecutionContext);
-                    Assert.fail();
-                } catch (SqlException e) {
-                    TestUtils.assertContains(e.getMessage(), "Could not create table. See log for details");
-                }
-
-                Assert.assertEquals(0, engine.getBusyReaderCount());
-                Assert.assertEquals(0, engine.getBusyWriterCount());
-            }
-        });
+        assertFailure(
+                ff,
+                "create table x as (select cast(x as int) c, abs(rnd_int() % 650) a from long_sequence(5000000))",
+                "Could not create table. See log for details"
+        );
     }
 
     @Test
@@ -2870,8 +2788,6 @@ public class SqlCompilerTest extends AbstractGriffinTest {
 
     @Test
     public void testInsertAsSelectPersistentIOError() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-
             AtomicBoolean inError = new AtomicBoolean(true);
 
             FilesFacade ff = new FilesFacadeImpl() {
@@ -2892,7 +2808,6 @@ public class SqlCompilerTest extends AbstractGriffinTest {
             };
 
             assertInsertAsSelectIOError(inError, ff);
-        });
     }
 
     @Test
@@ -2971,8 +2886,6 @@ public class SqlCompilerTest extends AbstractGriffinTest {
 
     @Test
     public void testInsertAsSelectTemporaryIOError() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-
             AtomicBoolean inError = new AtomicBoolean(true);
 
             FilesFacade ff = new FilesFacadeImpl() {
@@ -2993,7 +2906,6 @@ public class SqlCompilerTest extends AbstractGriffinTest {
             };
 
             assertInsertAsSelectIOError(inError, ff);
-        });
     }
 
     @Test
@@ -3398,8 +3310,22 @@ public class SqlCompilerTest extends AbstractGriffinTest {
         }
     }
 
+    private void assertFailure(FilesFacade ff, CharSequence sql, CharSequence message) throws Exception {
+        assertMemoryLeak(ff,
+                () -> {
+                    try {
+                        compiler.compile(sql, sqlExecutionContext);
+                        Assert.fail();
+                    } catch (SqlException e) {
+                        Assert.assertEquals(13, e.getPosition());
+                        TestUtils.assertContains(e.getFlyweightMessage(), message);
+                    }
+                }
+        );
+    }
+
     protected void assertFailure(int position, CharSequence expectedMessage, CharSequence sql) throws Exception {
-        TestUtils.assertMemoryLeak(() -> assertFailure0(position, expectedMessage, sql));
+        assertMemoryLeak(() -> assertFailure0(position, expectedMessage, sql));
     }
 
     private void assertFailure0(int position, CharSequence expectedMessage, CharSequence sql) {
@@ -3412,43 +3338,33 @@ public class SqlCompilerTest extends AbstractGriffinTest {
         }
     }
 
-    private void assertInsertAsSelectIOError(AtomicBoolean inError, FilesFacade ff) throws SqlException {
-        DefaultCairoConfiguration configuration = new DefaultCairoConfiguration(root) {
-            @Override
-            public FilesFacade getFilesFacade() {
-                return ff;
-            }
-        };
+    private void assertInsertAsSelectIOError(AtomicBoolean inError, FilesFacade ff) throws Exception {
+        assertMemoryLeak(
+                ff,
+                () -> {
+                    compiler.compile("create table x (a INT, b INT)", sqlExecutionContext);
+                    try {
+                        compiler.compile("insert into x select rnd_int() int1, rnd_int() int2 from long_sequence(1000000)", sqlExecutionContext);
+                        Assert.fail();
+                    } catch (CairoException ignore) {
+                    }
 
-        try (CairoEngine engine = new CairoEngine(configuration)) {
-            try (SqlCompiler compiler = new SqlCompiler(engine)) {
+                    inError.set(false);
 
-                compiler.compile("create table x (a INT, b INT)", sqlExecutionContext);
-                try {
+                    try (TableWriter w = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "x")) {
+                        Assert.assertEquals(0, w.size());
+                    }
+
                     compiler.compile("insert into x select rnd_int() int1, rnd_int() int2 from long_sequence(1000000)", sqlExecutionContext);
-                    Assert.fail();
-                } catch (CairoException ignore) {
+                    try (TableWriter w = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "x")) {
+                        Assert.assertEquals(1000000, w.size());
+                    }
+
+                    try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", 0)) {
+                        Assert.assertEquals(1000000, reader.size());
+                    }
                 }
-
-                inError.set(false);
-
-                try (TableWriter w = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "x")) {
-                    Assert.assertEquals(0, w.size());
-                }
-
-                compiler.compile("insert into x select rnd_int() int1, rnd_int() int2 from long_sequence(1000000)", sqlExecutionContext);
-                try (TableWriter w = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "x")) {
-                    Assert.assertEquals(1000000, w.size());
-                }
-
-                try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", 0)) {
-                    Assert.assertEquals(1000000, reader.size());
-                }
-
-                Assert.assertEquals(0, engine.getBusyReaderCount());
-                Assert.assertEquals(0, engine.getBusyWriterCount());
-            }
-        }
+        );
     }
 
     private void testInsertAsSelect(CharSequence expectedData, CharSequence ddl, CharSequence insert, CharSequence select) throws Exception {

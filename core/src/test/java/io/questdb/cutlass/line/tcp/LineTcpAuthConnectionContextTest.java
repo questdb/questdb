@@ -24,7 +24,25 @@
 
 package io.questdb.cutlass.line.tcp;
 
-import static org.junit.Assert.assertEquals;
+import io.questdb.cairo.AbstractCairoTest;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.TableReader;
+import io.questdb.cutlass.line.tcp.LineTcpMeasurementScheduler.NetworkIOJob;
+import io.questdb.cutlass.line.tcp.LineTcpMeasurementScheduler.TableUpdateDetails;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.mp.WorkerPool;
+import io.questdb.mp.WorkerPoolConfiguration;
+import io.questdb.network.*;
+import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.std.ObjList;
+import io.questdb.std.Unsafe;
+import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
+import org.junit.Assert;
+import org.junit.Before;
+import org.junit.Test;
 
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
@@ -36,31 +54,7 @@ import java.util.Random;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.LockSupport;
 
-import org.junit.Assert;
-import org.junit.Before;
-import org.junit.Test;
-
-import io.questdb.cairo.AbstractCairoTest;
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.CairoException;
-import io.questdb.cairo.TableReader;
-import io.questdb.cutlass.line.tcp.LineTcpMeasurementScheduler.NetworkIOJob;
-import io.questdb.cutlass.line.tcp.LineTcpMeasurementScheduler.TableUpdateDetails;
-import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
-import io.questdb.mp.WorkerPool;
-import io.questdb.mp.WorkerPoolConfiguration;
-import io.questdb.network.IODispatcher;
-import io.questdb.network.IOOperation;
-import io.questdb.network.IORequestProcessor;
-import io.questdb.network.NetworkFacade;
-import io.questdb.network.NetworkFacadeImpl;
-import io.questdb.std.CharSequenceObjHashMap;
-import io.questdb.std.ObjList;
-import io.questdb.std.Unsafe;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
-import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
-import io.questdb.test.tools.TestUtils;
+import static org.junit.Assert.assertEquals;
 
 public class LineTcpAuthConnectionContextTest extends AbstractCairoTest {
     private final static Log LOG = LogFactory.getLog(LineTcpAuthConnectionContextTest.class);
@@ -70,19 +64,50 @@ public class LineTcpAuthConnectionContextTest extends AbstractCairoTest {
     private final static PrivateKey AUTH_PRIVATE_KEY2 = AuthDb.importPrivateKey("lwJi3TSb4G6UcHxFJmPhOTWa4BLwJOOiK76wT6Uk7pI");
     private static final int FD = 1_000_000;
     private final Random rand = new Random(0);
+    private final AtomicInteger netMsgBufferSize = new AtomicInteger(1024);
+    private final NetworkIOJob netIoJob = new NetworkIOJob() {
+        private final CharSequenceObjHashMap<TableUpdateDetails> localTableUpdateDetailsByTableName = new CharSequenceObjHashMap<>();
+        private final ObjList<SymbolCache> unusedSymbolCaches = new ObjList<>();
+
+        @Override
+        public int getWorkerId() {
+            return 0;
+        }
+
+        @Override
+        public TableUpdateDetails getTableUpdateDetails(CharSequence tableName) {
+            return localTableUpdateDetailsByTableName.get(tableName);
+        }
+
+        @Override
+        public void addTableUpdateDetails(TableUpdateDetails tableUpdateDetails) {
+            localTableUpdateDetailsByTableName.put(tableUpdateDetails.tableName, tableUpdateDetails);
+        }
+
+        @Override
+        public ObjList<SymbolCache> getUnusedSymbolCaches() {
+            return unusedSymbolCaches;
+        }
+
+        @Override
+        public void close() {
+        }
+
+        @Override
+        public boolean run(int workerId) {
+            Assert.fail("This is a mock job, not designed to run in a wroker pool");
+            return false;
+        }
+    };
     private LineTcpAuthConnectionContext context;
     private LineTcpReceiverConfiguration lineTcpConfiguration;
     private LineTcpMeasurementScheduler scheduler;
-    private final AtomicInteger netMsgBufferSize = new AtomicInteger(1024);
     private boolean disconnected;
     private String recvBuffer;
-
     private byte[] sentBytes;
     private int maxSendBytes = 1024;
-
     private int nWriterThreads;
     private WorkerPool workerPool;
-
     private long microSecondTicks;
 
     @Before
@@ -165,26 +190,69 @@ public class LineTcpAuthConnectionContextTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testGoodAuthentication() throws Exception {
+    public void testBadSignature() throws Exception {
         runInContext(() -> {
-            boolean authSequenceCompleted = authenticate(AUTH_KEY_ID1, AUTH_PRIVATE_KEY1);
+            boolean authSequenceCompleted = authenticate(AUTH_KEY_ID1, AUTH_PRIVATE_KEY2);
             Assert.assertTrue(authSequenceCompleted);
-            Assert.assertFalse(disconnected);
-            recvBuffer = "weather,location=us-midwest temperature=82 1465839830100400200\n";
-            handleContextIO();
-            Assert.assertFalse(disconnected);
-            waitForIOCompletion();
-            closeContext();
-            String expected = "location\ttemperature\ttimestamp\n" +
-                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n";
-            assertTable(expected);
+            Assert.assertTrue(disconnected);
         });
     }
 
     @Test
-    public void testGoodAuthenticationP1363() throws Exception {
+    public void testBadUser() throws Exception {
         runInContext(() -> {
-            boolean authSequenceCompleted = authenticate(AUTH_KEY_ID1, AUTH_PRIVATE_KEY1, false, false, false, true, null);
+            boolean authSequenceCompleted = authenticate(AUTH_KEY_ID2, AUTH_PRIVATE_KEY2);
+            Assert.assertTrue(authSequenceCompleted);
+            Assert.assertTrue(disconnected);
+        });
+    }
+
+    @Test
+    public void testDisconnectedOnChallenge1() throws Exception {
+        runInContext(() -> {
+            maxSendBytes = 0;
+            recvBuffer = AUTH_KEY_ID1 + "\n";
+            handleContextIO();
+            Assert.assertFalse(disconnected);
+            handleContextIO();
+            Assert.assertFalse(disconnected);
+            Assert.assertNull(sentBytes);
+            handleContextIO();
+            Assert.assertFalse(disconnected);
+            Assert.assertNull(sentBytes);
+            maxSendBytes = -1;
+            handleContextIO();
+            Assert.assertNull(sentBytes);
+            Assert.assertTrue(disconnected);
+        });
+    }
+
+    @Test
+    public void testDisconnectedOnChallenge2() throws Exception {
+        runInContext(() -> {
+            maxSendBytes = 5;
+            recvBuffer = AUTH_KEY_ID1 + "\n";
+            handleContextIO();
+            Assert.assertFalse(disconnected);
+            handleContextIO();
+            Assert.assertEquals(maxSendBytes, sentBytes.length);
+            sentBytes = null;
+            Assert.assertFalse(disconnected);
+            handleContextIO();
+            Assert.assertEquals(maxSendBytes, sentBytes.length);
+            sentBytes = null;
+            Assert.assertFalse(disconnected);
+            maxSendBytes = -1;
+            handleContextIO();
+            Assert.assertNull(sentBytes);
+            Assert.assertTrue(disconnected);
+        });
+    }
+
+    @Test
+    public void testGoodAuthentication() throws Exception {
+        runInContext(() -> {
+            boolean authSequenceCompleted = authenticate(AUTH_KEY_ID1, AUTH_PRIVATE_KEY1);
             Assert.assertTrue(authSequenceCompleted);
             Assert.assertFalse(disconnected);
             recvBuffer = "weather,location=us-midwest temperature=82 1465839830100400200\n";
@@ -318,36 +386,37 @@ public class LineTcpAuthConnectionContextTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testBadUser() throws Exception {
+    public void testGoodAuthenticationP1363() throws Exception {
         runInContext(() -> {
-            boolean authSequenceCompleted = authenticate(AUTH_KEY_ID2, AUTH_PRIVATE_KEY2);
+            boolean authSequenceCompleted = authenticate(AUTH_KEY_ID1, AUTH_PRIVATE_KEY1, false, false, false, true, null);
             Assert.assertTrue(authSequenceCompleted);
-            Assert.assertTrue(disconnected);
+            Assert.assertFalse(disconnected);
+            recvBuffer = "weather,location=us-midwest temperature=82 1465839830100400200\n";
+            handleContextIO();
+            Assert.assertFalse(disconnected);
+            waitForIOCompletion();
+            closeContext();
+            String expected = "location\ttemperature\ttimestamp\n" +
+                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n";
+            assertTable(expected);
         });
     }
 
     @Test
-    public void testBadSignature() throws Exception {
-        runInContext(() -> {
-            boolean authSequenceCompleted = authenticate(AUTH_KEY_ID1, AUTH_PRIVATE_KEY2);
-            Assert.assertTrue(authSequenceCompleted);
-            Assert.assertTrue(disconnected);
-        });
-    }
-
-    @Test
-    public void testJunkSignature() throws Exception {
-        runInContext(() -> {
-            int[] junkSignatureInt = { 186, 55, 135, 152, 129, 156, 1, 143, 221, 100, 197, 198, 98, 49, 222, 50, 83, 106, 199, 57, 202, 41, 47, 17, 14, 71, 80, 85, 44, 33, 56, 167, 30,
-                    70, 13, 227, 59, 178, 39, 212, 84, 79, 243, 230, 112, 48, 226, 187, 190, 59, 79, 152, 31, 188, 239, 80, 158, 202, 219, 235, 44, 196, 214, 209, 32 };
-            byte[] junkSignature = new byte[junkSignatureInt.length];
-            for (int n = 0; n < junkSignatureInt.length; n++) {
-                junkSignature[n] = (byte) junkSignatureInt[n];
-            }
-            boolean authSequenceCompleted = authenticate(AUTH_KEY_ID1, AUTH_PRIVATE_KEY1, false, false, false, false, junkSignature);
-            Assert.assertTrue(authSequenceCompleted);
-            Assert.assertTrue(disconnected);
-        });
+    public void testIncorrectConfig() throws Exception {
+        netMsgBufferSize.set(200);
+        try {
+            runInContext(() -> {
+                recvBuffer = "weather,location=us-midwest temperature=82 1465839830100400200\n";
+                handleContextIO();
+                Assert.assertFalse(disconnected);
+                waitForIOCompletion();
+                closeContext();
+                Assert.fail();
+            });
+        } catch (CairoException ex) {
+            Assert.assertEquals("Minimum buffer length is 513", ex.getFlyweightMessage().toString());
+        }
     }
 
     @Test
@@ -359,6 +428,21 @@ public class LineTcpAuthConnectionContextTest extends AbstractCairoTest {
             }
             boolean authSequenceCompleted = authenticate(token.toString(), AUTH_PRIVATE_KEY1);
             Assert.assertFalse(authSequenceCompleted);
+            Assert.assertTrue(disconnected);
+        });
+    }
+
+    @Test
+    public void testJunkSignature() throws Exception {
+        runInContext(() -> {
+            int[] junkSignatureInt = {186, 55, 135, 152, 129, 156, 1, 143, 221, 100, 197, 198, 98, 49, 222, 50, 83, 106, 199, 57, 202, 41, 47, 17, 14, 71, 80, 85, 44, 33, 56, 167, 30,
+                    70, 13, 227, 59, 178, 39, 212, 84, 79, 243, 230, 112, 48, 226, 187, 190, 59, 79, 152, 31, 188, 239, 80, 158, 202, 219, 235, 44, 196, 214, 209, 32};
+            byte[] junkSignature = new byte[junkSignatureInt.length];
+            for (int n = 0; n < junkSignatureInt.length; n++) {
+                junkSignature[n] = (byte) junkSignatureInt[n];
+            }
+            boolean authSequenceCompleted = authenticate(AUTH_KEY_ID1, AUTH_PRIVATE_KEY1, false, false, false, false, junkSignature);
+            Assert.assertTrue(authSequenceCompleted);
             Assert.assertTrue(disconnected);
         });
     }
@@ -378,62 +462,9 @@ public class LineTcpAuthConnectionContextTest extends AbstractCairoTest {
         });
     }
 
-    @Test
-    public void testDisconnectedOnChallenge1() throws Exception {
-        runInContext(() -> {
-            maxSendBytes = 0;
-            recvBuffer = AUTH_KEY_ID1 + "\n";
-            handleContextIO();
-            Assert.assertFalse(disconnected);
-            handleContextIO();
-            Assert.assertFalse(disconnected);
-            Assert.assertNull(sentBytes);
-            handleContextIO();
-            Assert.assertFalse(disconnected);
-            Assert.assertNull(sentBytes);
-            maxSendBytes = -1;
-            handleContextIO();
-            Assert.assertNull(sentBytes);
-            Assert.assertTrue(disconnected);
-        });
-    }
-
-    @Test
-    public void testDisconnectedOnChallenge2() throws Exception {
-        runInContext(() -> {
-            maxSendBytes = 5;
-            recvBuffer = AUTH_KEY_ID1 + "\n";
-            handleContextIO();
-            Assert.assertFalse(disconnected);
-            handleContextIO();
-            Assert.assertEquals(maxSendBytes, sentBytes.length);
-            sentBytes = null;
-            Assert.assertFalse(disconnected);
-            handleContextIO();
-            Assert.assertEquals(maxSendBytes, sentBytes.length);
-            sentBytes = null;
-            Assert.assertFalse(disconnected);
-            maxSendBytes = -1;
-            handleContextIO();
-            Assert.assertNull(sentBytes);
-            Assert.assertTrue(disconnected);
-        });
-    }
-
-    @Test
-    public void testIncorrectConfig() throws Exception {
-        netMsgBufferSize.set(200);
-        try {
-            runInContext(() -> {
-                recvBuffer = "weather,location=us-midwest temperature=82 1465839830100400200\n";
-                handleContextIO();
-                Assert.assertFalse(disconnected);
-                waitForIOCompletion();
-                closeContext();
-                Assert.fail();
-            });
-        } catch (CairoException ex) {
-            Assert.assertEquals("Minimum buffer length is 513", ex.getFlyweightMessage().toString());
+    private void assertTable(CharSequence expected) {
+        try (TableReader reader = new TableReader(configuration, "weather")) {
+            assertCursorTwoPass(expected, reader.getCursor(), reader.getMetadata(), true);
         }
     }
 
@@ -469,23 +500,35 @@ public class LineTcpAuthConnectionContextTest extends AbstractCairoTest {
         return true;
     }
 
-    private void send(String sendStr, boolean fragmented) {
-        if (fragmented) {
-            int nSent = 0;
-            do {
-                int n = 1 + rand.nextInt(3);
-                if (n + nSent > sendStr.length()) {
-                    recvBuffer = sendStr.substring(nSent);
-                } else {
-                    recvBuffer = sendStr.substring(nSent, nSent + n);
-                }
-                nSent += n;
-                handleContextIO();
-            } while (nSent < sendStr.length());
-        } else {
-            recvBuffer = sendStr;
-            handleContextIO();
+    private void closeContext() {
+        if (null != scheduler) {
+            workerPool.halt();
+            Assert.assertFalse(context.invalid());
+            Assert.assertEquals(FD, context.getFd());
+            context.close();
+            Assert.assertTrue(context.invalid());
+            Assert.assertEquals(-1, context.getFd());
+            context = null;
+            scheduler.close();
+            scheduler = null;
         }
+    }
+
+    private boolean handleContextIO() {
+        switch (context.handleIO(netIoJob)) {
+            case NEEDS_READ:
+                context.getDispatcher().registerChannel(context, IOOperation.READ);
+                return false;
+            case NEEDS_WRITE:
+                context.getDispatcher().registerChannel(context, IOOperation.WRITE);
+                return false;
+            case QUEUE_FULL:
+                return true;
+            case NEEDS_DISCONNECT:
+                context.getDispatcher().disconnect(context);
+                return false;
+        }
+        return false;
     }
 
     private byte[] readChallenge(boolean fragment) {
@@ -523,38 +566,34 @@ public class LineTcpAuthConnectionContextTest extends AbstractCairoTest {
         return challengeBytes;
     }
 
-    private void assertTable(CharSequence expected) {
-        try (TableReader reader = new TableReader(configuration, "weather")) {
-            assertThat(expected, reader.getCursor(), reader.getMetadata(), true);
-        }
-    }
-
-    private void closeContext() {
-        if (null != scheduler) {
-            workerPool.halt();
-            Assert.assertFalse(context.invalid());
-            Assert.assertEquals(FD, context.getFd());
-            context.close();
-            Assert.assertTrue(context.invalid());
-            Assert.assertEquals(-1, context.getFd());
-            context = null;
-            scheduler.close();
-            scheduler = null;
-        }
-    }
-
     private void runInContext(Runnable r) throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try (CairoEngine engine = new CairoEngine(configuration)) {
-                setupContext(engine);
-                try {
-                    r.run();
-                } finally {
-                    closeContext();
-                    engine.clear();
-                }
+        assertMemoryLeak(() -> {
+            setupContext(engine);
+            try {
+                r.run();
+            } finally {
+                closeContext();
             }
         });
+    }
+
+    private void send(String sendStr, boolean fragmented) {
+        if (fragmented) {
+            int nSent = 0;
+            do {
+                int n = 1 + rand.nextInt(3);
+                if (n + nSent > sendStr.length()) {
+                    recvBuffer = sendStr.substring(nSent);
+                } else {
+                    recvBuffer = sendStr.substring(nSent, nSent + n);
+                }
+                nSent += n;
+                handleContextIO();
+            } while (nSent < sendStr.length());
+        } else {
+            recvBuffer = sendStr;
+            handleContextIO();
+        }
     }
 
     private void setupContext(CairoEngine engine) {
@@ -585,11 +624,11 @@ public class LineTcpAuthConnectionContextTest extends AbstractCairoTest {
         });
 
         WorkerPool netIoWorkerPool = new WorkerPool(new WorkerPoolConfiguration() {
-            private final int[] affinityByThread = { -1 };
+            private final int[] affinityByThread = {-1};
 
             @Override
-            public boolean haltOnError() {
-                return true;
+            public int[] getWorkerAffinity() {
+                return affinityByThread;
             }
 
             @Override
@@ -598,8 +637,8 @@ public class LineTcpAuthConnectionContextTest extends AbstractCairoTest {
             }
 
             @Override
-            public int[] getWorkerAffinity() {
-                return affinityByThread;
+            public boolean haltOnError() {
+                return true;
             }
         });
 
@@ -652,23 +691,6 @@ public class LineTcpAuthConnectionContextTest extends AbstractCairoTest {
         workerPool.start(LOG);
     }
 
-    private boolean handleContextIO() {
-        switch (context.handleIO(netIoJob)) {
-            case NEEDS_READ:
-                context.getDispatcher().registerChannel(context, IOOperation.READ);
-                return false;
-            case NEEDS_WRITE:
-                context.getDispatcher().registerChannel(context, IOOperation.WRITE);
-                return false;
-            case QUEUE_FULL:
-                return true;
-            case NEEDS_DISCONNECT:
-                context.getDispatcher().disconnect(context);
-                return false;
-        }
-        return false;
-    }
-
     private void waitForIOCompletion() {
         int maxIterations = 256;
         recvBuffer = null;
@@ -688,39 +710,4 @@ public class LineTcpAuthConnectionContextTest extends AbstractCairoTest {
             throw new RuntimeException(ex);
         }
     }
-
-    private final NetworkIOJob netIoJob = new NetworkIOJob() {
-        private final CharSequenceObjHashMap<TableUpdateDetails> localTableUpdateDetailsByTableName = new CharSequenceObjHashMap<>();
-        private final ObjList<SymbolCache> unusedSymbolCaches = new ObjList<>();
-
-        @Override
-        public int getWorkerId() {
-            return 0;
-        }
-
-        @Override
-        public TableUpdateDetails getTableUpdateDetails(CharSequence tableName) {
-            return localTableUpdateDetailsByTableName.get(tableName);
-        }
-
-        @Override
-        public void addTableUpdateDetails(TableUpdateDetails tableUpdateDetails) {
-            localTableUpdateDetailsByTableName.put(tableUpdateDetails.tableName, tableUpdateDetails);
-        }
-
-        @Override
-        public boolean run(int workerId) {
-            Assert.fail("This is a mock job, not designed to run in a wroker pool");
-            return false;
-        }
-
-        @Override
-        public ObjList<SymbolCache> getUnusedSymbolCaches() {
-            return unusedSymbolCaches;
-        }
-
-        @Override
-        public void close() {
-        }
-    };
 }

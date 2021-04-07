@@ -154,8 +154,20 @@ class LineTcpMeasurementScheduler implements Closeable {
         // Both the writer and the net worker pools must have been closed so that their respective cleaners have run
         if (null != pubSeq) {
             pubSeq = null;
-            tableUpdateDetailsByTableName.clear();
-            idleTableUpdateDetailsByTableName.clear();
+            tableUpdateDetailsLock.writeLock().lock();
+            try {
+                ObjList<CharSequence> tableNames = tableUpdateDetailsByTableName.keys();
+                for (int n=0, sz=tableNames.size(); n<sz; n++) {
+                    TableUpdateDetails updateDetails = tableUpdateDetailsByTableName.get(tableNames.get(n));
+                    if (! updateDetails.assignedToJob) {
+                        updateDetails.close();
+                    }
+                }
+                tableUpdateDetailsByTableName.clear();
+                idleTableUpdateDetailsByTableName.clear();
+            } finally {
+                tableUpdateDetailsLock.writeLock().unlock();
+            }
             for (int n = 0; n < queue.getCapacity(); n++) {
                 queue.get(n).close();
             }
@@ -774,7 +786,7 @@ class LineTcpMeasurementScheduler implements Closeable {
         }
 
         @Override
-        public void close() throws IOException {
+        public void close() {
             if (writerThreadId != Integer.MIN_VALUE) {
                 LOG.info().$("closing table [tableName=").$(tableName).$(']').$();
                 if (null != writer) {
@@ -876,7 +888,7 @@ class LineTcpMeasurementScheduler implements Closeable {
             }
 
             @Override
-            public void close() throws IOException {
+            public void close() {
                 Misc.freeObjList(symbolCacheByColumnIndex);
                 path.close();
             }

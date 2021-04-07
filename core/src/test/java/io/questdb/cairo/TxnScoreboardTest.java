@@ -30,8 +30,7 @@ import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
-import static io.questdb.cairo.TxnScoreboard.acquire;
-import static io.questdb.cairo.TxnScoreboard.release;
+import static io.questdb.cairo.TxnScoreboard.*;
 
 public class TxnScoreboardTest {
 
@@ -45,10 +44,11 @@ public class TxnScoreboardTest {
 
         try (final Path shmPath = new Path()) {
             int expect = 4096;
-            long p2 = TxnScoreboard.create(shmPath, "hello");
+            long p2 = TxnScoreboard.create(shmPath, 4, 5, "hello");
             try {
-                long p1 = TxnScoreboard.create(shmPath, "hello");
+                long p1 = TxnScoreboard.create(shmPath, 4, 5, "hello");
                 try {
+                    init(p1, 125);
                     // we should successfully acquire expected number of entries
                     for (int i = 0; i < expect; i++) {
                         Assert.assertTrue(TxnScoreboard.acquire(p1, i + 134));
@@ -58,12 +58,14 @@ public class TxnScoreboardTest {
                     Assert.assertFalse(TxnScoreboard.acquire(p1, expect + 134));
 
                     // now we release middle slot, this does not free any more slots
-                    Assert.assertEquals(133, TxnScoreboard.release(p1, 11 + 134));
+                    TxnScoreboard.release(p1, 11 + 134);
+                    Assert.assertEquals(134, TxnScoreboard.getMin(p1));
                     // we should NOT be able to allocate more slots
                     Assert.assertFalse(TxnScoreboard.acquire(p1, expect + 134));
 
                     // now that we release "head" slot we should be able to acquire more
-                    Assert.assertEquals(134, TxnScoreboard.release(p1, 134));
+                    TxnScoreboard.release(p1, 134);
+                    Assert.assertEquals(135, TxnScoreboard.getMin(p1));
                     // and we should be able to allocate another one
                     Assert.assertTrue(TxnScoreboard.acquire(p1, expect + 134));
 
@@ -75,8 +77,9 @@ public class TxnScoreboardTest {
                             Assert.assertEquals(0, TxnScoreboard.getCount(p1, i + 134));
                         }
                     }
+                    System.out.println("done");
                 } finally {
-                    TxnScoreboard.close(shmPath, "hello", p1);
+                    TxnScoreboard.close(shmPath, 4, 5, "hello", p1);
                 }
             } finally {
                 // now check that all counts are available via another memory space
@@ -94,10 +97,11 @@ public class TxnScoreboardTest {
     @Test
     public void testVanilla() {
         try (final Path shmPath = new Path()) {
-            long p2 = TxnScoreboard.create(shmPath, "tab1");
+            long p2 = TxnScoreboard.create(shmPath, 4, 5, "tab1");
             try {
-                long p1 = TxnScoreboard.create(shmPath, "tab1");
+                long p1 = TxnScoreboard.create(shmPath, 4, 5, "tab1");
                 try {
+                    init(p1, 55);
                     Assert.assertTrue(acquire(p1, 67));
                     Assert.assertTrue(acquire(p1, 68));
                     Assert.assertTrue(acquire(p1, 68));
@@ -105,22 +109,28 @@ public class TxnScoreboardTest {
                     Assert.assertTrue(acquire(p1, 70));
                     Assert.assertTrue(acquire(p1, 71));
 
-                    Assert.assertEquals(66, release(p1, 68));
-                    Assert.assertEquals(66, release(p1, 68));
-                    Assert.assertEquals(68, release(p1, 67));
+                    release(p1, 68);
+                    Assert.assertEquals(67, getMin(p1));
+                    release(p1, 68);
+                    Assert.assertEquals(67, getMin(p1));
+                    release(p1, 67);
+                    Assert.assertEquals(69, getMin(p1));
 
-                    Assert.assertEquals(69, release(p1, 69));
-                    Assert.assertEquals(69, release(p1, 71));
-                    Assert.assertEquals(71, release(p1, 70));
+                    release(p1, 69);
+                    Assert.assertEquals(70, getMin(p1));
+                    release(p1, 71);
+                    Assert.assertEquals(70, getMin(p1));
+                    release(p1, 70);
+                    Assert.assertEquals(71, getMin(p1));
 
                     Assert.assertTrue(acquire(p1, 72));
                 } finally {
-                    TxnScoreboard.close(shmPath, "tab1", p1);
+                    TxnScoreboard.close(shmPath, 4, 5, "tab1", p1);
                 }
                 Assert.assertTrue(acquire(p2, 72));
                 Assert.assertEquals(2, TxnScoreboard.getCount(p2, 72));
             } finally {
-                TxnScoreboard.close(shmPath, "tab1", p2);
+                TxnScoreboard.close(shmPath, 4, 5, "tab1", p2);
             }
         }
     }

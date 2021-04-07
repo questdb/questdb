@@ -44,7 +44,6 @@ import org.junit.Before;
 import java.io.File;
 import java.net.URISyntaxException;
 import java.net.URL;
-import java.util.concurrent.atomic.AtomicBoolean;
 
 public class AbstractOutOfOrderTest extends AbstractCairoTest {
     protected static final StringSink sink2 = new StringSink();
@@ -179,10 +178,12 @@ public class AbstractOutOfOrderTest extends AbstractCairoTest {
         }
     }
 
-    protected static void executeWithPool(int workerCount, boolean enableRename, OutOfOrderCode runnable) throws Exception {
+    protected static void executeWithPool(
+            int workerCount,
+            OutOfOrderCode runnable
+    ) throws Exception {
         executeWithPool(
                 workerCount,
-                enableRename,
                 runnable,
                 FilesFacadeImpl.INSTANCE
         );
@@ -190,7 +191,6 @@ public class AbstractOutOfOrderTest extends AbstractCairoTest {
 
     protected static void executeWithPool(
             int workerCount,
-            boolean enableRename,
             OutOfOrderCode runnable,
             FilesFacade ff
     ) throws Exception {
@@ -201,7 +201,6 @@ public class AbstractOutOfOrderTest extends AbstractCairoTest {
                     affinity[i] = -1;
                 }
 
-                AtomicBoolean atomicEnableRename = new AtomicBoolean(enableRename);
                 WorkerPool pool = new WorkerPool(
                         new WorkerPoolAwareConfiguration() {
                             @Override
@@ -236,16 +235,7 @@ public class AbstractOutOfOrderTest extends AbstractCairoTest {
                     public boolean isOutOfOrderEnabled() {
                         return true;
                     }
-
-                    @Override
-                    public boolean isOutOfOrderRenameEnabled() {
-                        return atomicEnableRename.get();
-                    }
                 };
-
-                if (runnable instanceof OutOfOrderCodeWithFlag) {
-                    ((OutOfOrderCodeWithFlag) runnable).delegateFlag(atomicEnableRename);
-                }
 
                 try {
                     execute0((engine, compiler, sqlExecutionContext) -> {
@@ -294,11 +284,6 @@ public class AbstractOutOfOrderTest extends AbstractCairoTest {
                     public boolean isOutOfOrderEnabled() {
                         return true;
                     }
-
-                    @Override
-                    public boolean isOutOfOrderRenameEnabled() {
-                        return enableRename;
-                    }
                 };
 
                 OutOfOrderUtils.initBuf();
@@ -326,13 +311,5 @@ public class AbstractOutOfOrderTest extends AbstractCairoTest {
             OutOfOrderUtils.initBuf();
             execute0(code, configuration);
         });
-    }
-
-    protected static void executeWithPool(int workerCount, OutOfOrderCode runnable) throws Exception {
-        AbstractOutOfOrderTest.executeWithPool(workerCount, true, runnable);
-    }
-
-    protected static void executeWithPool(int workerCount, OutOfOrderCode runnable, FilesFacade ff) throws Exception {
-        AbstractOutOfOrderTest.executeWithPool(workerCount, true, runnable, ff);
     }
 }

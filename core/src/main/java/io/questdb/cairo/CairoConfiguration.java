@@ -158,8 +158,6 @@ public interface CairoConfiguration {
 
     TextConfiguration getTextConfiguration();
 
-    long getTxPendingPartitionAreaSize();
-
     long getWorkStealTimeoutNanos();
 
     boolean isParallelIndexingEnabled();
@@ -223,11 +221,7 @@ public interface CairoConfiguration {
         return false;
     }
 
-    default boolean isOutOfOrderRenameEnabled() {
-        return true;
-    }
+    long getDatabaseIdHi();
 
-    long getInstanceHashLo();
-
-    long getInstanceHashHi();
+    long getDatabaseIdLo();
 }

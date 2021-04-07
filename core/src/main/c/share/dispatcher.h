@@ -26,6 +26,14 @@
 #define QUESTDB_DISPATCHER_H
 
 #include "vec_dispatch.h"
+
+#ifdef __aarch64__
+
+#define DECLARE_DISPATCHER(FUNCNAME)
+#define  DECLARE_DISPATCHER_TYPE(FUNCNAME, ...)  void FUNCNAME(__VA_ARGS__);
+
+#else // __aarch64__
+
 #include "vcl/vectorclass.h"
 
 #define DECLARE_DISPATCHER(FUNCNAME) TF_##FUNCNAME *FUNCNAME = dispatch_to_ptr(&F_AVX512(FUNCNAME), &F_AVX2(FUNCNAME), &F_SSE41(FUNCNAME), &F_VANILLA(FUNCNAME))
@@ -51,6 +59,8 @@ T *dispatch_to_ptr(T *avx512, T *avx2, T *sse4, T *vanilla) {
 #define MULTI_VERSION_NAME F_SSE41
 #else
 #define MULTI_VERSION_NAME F_VANILLA
+#endif
+
 #endif
 
 #endif //QUESTDB_DISPATCHER_H

@@ -27,38 +27,45 @@ package io.questdb.cairo;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Os;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 
 public class TxnScoreboard {
 
     private static final Log LOG = LogFactory.getLog(TxnScoreboard.class);
 
-    public static long close(Path shmPath, long pTxnScoreboard) {
-        LOG.info().$("close [p=").$(pTxnScoreboard).$(']').$();
-        return close0(shmPath.address(), pTxnScoreboard);
+    public static void close(Path shmPath, long pTxnScoreboard) {
+        if (close0(shmPath.address(), pTxnScoreboard) == 0) {
+            LOG.info().$("close [p=").$(pTxnScoreboard).$(']').$();
+            Unsafe.recordMemAlloc(-getScoreboardSize());
+        }
     }
 
-    public static long close(Path shmPath, CharSequence tableName, long pTxnScoreboard) {
-        setShmName(shmPath, tableName);
-        return close(shmPath, pTxnScoreboard);
+    public static void close(Path shmPath, long databaseIdLo, long databaseIdHi, CharSequence tableName, long pTxnScoreboard) {
+        setShmName(shmPath, databaseIdLo, databaseIdHi, tableName);
+        close(shmPath, pTxnScoreboard);
     }
 
-    public static long create(Path shmPath, CharSequence tableName) {
-        setShmName(shmPath, tableName);
+    public static long create(Path shmPath, long databaseIdLo, long databaseIdHi, CharSequence tableName) {
+        setShmName(shmPath, databaseIdLo, databaseIdHi, tableName);
+        Unsafe.recordMemAlloc(getScoreboardSize());
         return create0(shmPath.address());
     }
 
     public static long newRef(long pTxnScoreboard) {
-        assert pTxnScoreboard > 0;
-        return newRef0(pTxnScoreboard);
+        if (pTxnScoreboard > 0) {
+            return newRef0(pTxnScoreboard);
+        }
+        return pTxnScoreboard;
     }
 
-    private static void setShmName(Path shmPath, CharSequence name) {
+    private static void setShmName(Path shmPath, long databaseIdLo, long databaseIdHi, CharSequence name) {
         if (Os.type == Os.WINDOWS) {
-            shmPath.of("Local\\").put(name).$();
+            shmPath.of("Local\\");
         } else {
-            shmPath.of("/").put(name).$();
+            shmPath.of("/");
         }
+        shmPath.put(databaseIdLo).put('-').put(databaseIdHi).put('-').put(name).$();
     }
 
     static boolean acquire(long pTxnScoreboard, long txn) {
@@ -69,10 +76,10 @@ public class TxnScoreboard {
 
     private native static boolean acquire0(long pTxnScoreboard, long txn);
 
-    static long release(long pTxnScoreboard, long txn) {
+    static void release(long pTxnScoreboard, long txn) {
         assert pTxnScoreboard > 0;
         LOG.info().$("release  [p=").$(pTxnScoreboard).$(", txn=").$(txn).$(']').$();
-        return release0(pTxnScoreboard, txn);
+        release0(pTxnScoreboard, txn);
     }
 
     private native static long release0(long pTxnScoreboard, long txn);
@@ -83,5 +90,11 @@ public class TxnScoreboard {
 
     static native long getCount(long pTxnScoreboard, long txn);
 
+    static native long init(long pTxnScoreboard, long txn);
+
+    static native long getMin(long pTxnScoreboard);
+
     private static native long close0(long lpszName, long pTxnScoreboard);
+
+    private static native long getScoreboardSize();
 }

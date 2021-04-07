@@ -38,6 +38,7 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import java.io.IOException;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static java.nio.file.StandardCopyOption.REPLACE_EXISTING;
 
@@ -217,7 +218,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
 
     @Test
     public void testAttachPartitionMissingColumnType() throws Exception {
-        assertMemoryLeak(() -> assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             try (TableModel src = new TableModel(configuration, "src", PartitionBy.DAY)) {
 
                 createPopulateTable(
@@ -243,7 +244,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                 assertSchemaMismatch(src, dst -> dst.col("ts", ColumnType.CHAR));
                 assertSchemaMismatch(src, dst -> dst.col("ts", ColumnType.SHORT));
             }
-        }));
+        });
     }
 
     @Test
@@ -420,6 +421,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
 
     @Test
     public void testCannotMapTimestampColumn() throws Exception {
+        AtomicInteger counter = new AtomicInteger(1);
         var ff = new FilesFacadeImpl() {
             private long tsdFd;
 
@@ -428,13 +430,14 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                 if (tsdFd != fd) {
                     return super.mmap(fd, len, offset, mode);
                 }
+                tsdFd = 0;
                 return -1;
             }
 
             @Override
             public long openRO(LPSZ name) {
                 var fd = super.openRO(name);
-                if (Chars.endsWith(name, "ts.d")) {
+                if (Chars.endsWith(name, "ts.d") && counter.decrementAndGet() == 0) {
                     this.tsdFd = fd;
                 }
                 return fd;
@@ -446,10 +449,11 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
 
     @Test
     public void testCannotReadTimestampColumn() throws Exception {
+        AtomicInteger counter = new AtomicInteger(1);
         var ff = new FilesFacadeImpl() {
             @Override
             public long openRO(LPSZ name) {
-                if (Chars.endsWith(name, "ts.d")) {
+                if (Chars.endsWith(name, "ts.d") && counter.decrementAndGet() == 0) {
                     return -1;
                 }
                 return super.openRO(name);
@@ -461,10 +465,11 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
 
     @Test
     public void testCannotReadTimestampColumnFileDoesNotExist() throws Exception {
+        AtomicInteger counter = new AtomicInteger(1);
         var ff = new FilesFacadeImpl() {
             @Override
             public boolean exists(LPSZ name) {
-                if (Chars.endsWith(name, "ts.d")) {
+                if (Chars.endsWith(name, "ts.d") && counter.decrementAndGet() == 0) {
                     return false;
                 }
                 return super.exists(name);
@@ -476,10 +481,11 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
 
     @Test
     public void testCannotRenameDetachedFolderOnAttach() throws Exception {
+        AtomicInteger counter = new AtomicInteger(1);
         var ff = new FilesFacadeImpl() {
             @Override
             public boolean rename(LPSZ from, LPSZ to) {
-                if (Chars.endsWith(to, "2020-01-01")) {
+                if (Chars.endsWith(to, "2020-01-01") && counter.decrementAndGet() == 0) {
                     return false;
                 }
                 return super.rename(from, to);
@@ -489,56 +495,8 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
         testSqlFailedOnFsOperation(ff, false, "[12] table 'dst' could not be altered: [", "]: File system error on trying to rename [from=");
     }
 
-    private void testSqlFailedOnFsOperation(FilesFacadeImpl ff, boolean reCopy, String... errorContains) throws Exception {
-        var config = new DefaultCairoConfiguration(root) {
-            @Override
-            public FilesFacade getFilesFacade() {
-                return ff;
-            }
-        };
-
-        assertMemoryLeak(() -> {
-            try (TableModel src = new TableModel(config, "src", PartitionBy.DAY);
-                 TableModel dst = new TableModel(config, "dst", PartitionBy.DAY)) {
-                try (var engine2 = new CairoEngine(config); var compiler2 = new SqlCompiler(engine2)) {
-                    var tempEngine = engine;
-                    var tempCompiler = compiler;
-                    engine = engine2;
-                    compiler = compiler2;
-
-                    createPopulateTable(
-                            src.col("l", ColumnType.LONG)
-                                    .col("i", ColumnType.INT)
-                                    .timestamp("ts"),
-                            100,
-                            "2020-01-01",
-                            1);
-
-                    CairoTestUtils.create(dst.timestamp("ts")
-                            .col("i", ColumnType.INT)
-                            .col("l", ColumnType.LONG));
-
-                    try {
-                        copyAttachPartition(src, dst, 0, "2020-01-01");
-                        Assert.fail();
-                    } catch (SqlException e) {
-                        for (String error : errorContains) {
-                            TestUtils.assertContains(e.getMessage(), error);
-                        }
-                    } finally {
-                        engine2.clear();
-                        engine = tempEngine;
-                        compiler = tempCompiler;
-                    }
-                }
-
-                // second attempt without FilesFacade override should work ok
-                copyAttachPartition(src, dst, 0, !reCopy, "2020-01-01");
-            }
-        });
-    }
-
     private void assertSchemaMatch(AddColumn tm) throws Exception {
+        setUp();
         assertMemoryLeak(() -> {
             try (TableModel src = new TableModel(configuration, "src", PartitionBy.DAY);
                  TableModel dst = new TableModel(configuration, "dst", PartitionBy.DAY)) {
@@ -562,9 +520,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                 copyAttachPartition(src, dst, 0, "2020-01-01");
             }
         });
-        tearDownAfterTest();
-        tearDown0();
-        setUp0();
+        tearDown();
     }
 
     private void assertSchemaMismatch(TableModel src, AddColumn tm) throws IOException, NumericException {
@@ -727,6 +683,40 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             }
             return count;
         }
+    }
+
+    private void testSqlFailedOnFsOperation(FilesFacadeImpl ff, boolean reCopy, String... errorContains) throws Exception {
+        assertMemoryLeak(ff, () -> {
+            try (
+                    TableModel src = new TableModel(configuration, "src", PartitionBy.DAY);
+                    TableModel dst = new TableModel(configuration, "dst", PartitionBy.DAY)
+            ) {
+
+                createPopulateTable(
+                        src.col("l", ColumnType.LONG)
+                                .col("i", ColumnType.INT)
+                                .timestamp("ts"),
+                        100,
+                        "2020-01-01",
+                        1);
+
+                CairoTestUtils.create(dst.timestamp("ts")
+                        .col("i", ColumnType.INT)
+                        .col("l", ColumnType.LONG));
+
+                try {
+                    copyAttachPartition(src, dst, 0, "2020-01-01");
+                    Assert.fail();
+                } catch (SqlException e) {
+                    for (String error : errorContains) {
+                        TestUtils.assertContains(e.getMessage(), error);
+                    }
+                }
+
+                // second attempt without FilesFacade override should work ok
+                copyAttachPartition(src, dst, 0, !reCopy, "2020-01-01");
+            }
+        });
     }
 
     @FunctionalInterface

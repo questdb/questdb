@@ -61,17 +61,17 @@ public class BitmapIndexTest extends AbstractCairoTest {
 
     @Override
     @Before
-    public void setUp0() {
+    public void setUp() {
         path = new Path().of(configuration.getRoot());
         plen = path.length();
-        super.setUp0();
+        super.setUp();
     }
 
     @Override
     @After
-    public void tearDown0() {
+    public void tearDown() {
         Misc.free(path);
-        super.tearDown0();
+        super.tearDown();
     }
 
     @Test

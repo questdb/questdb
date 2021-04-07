@@ -23,7 +23,6 @@
  ******************************************************************************/
 #include "jni.h"
 #include <cstring>
-#include <xmmintrin.h>
 #include "util.h"
 #include "simd.h"
 #include "asmlib/asmlib.h"
@@ -391,6 +390,15 @@ DECLARE_DISPATCHER(platform_memcpy);
 JNIEXPORT void JNICALL Java_io_questdb_std_Vect_memcpy0
         (JNIEnv *e, jclass cl, jlong src, jlong dst, jlong len) {
     platform_memcpy(
+            reinterpret_cast<void *>(dst),
+            reinterpret_cast<void *>(src),
+            __JLONG_REINTERPRET_CAST__(int64_t, len)
+    );
+}
+
+JNIEXPORT void JNICALL Java_io_questdb_std_Vect_memmove
+        (JNIEnv *e, jclass cl, jlong dst, jlong src, jlong len) {
+    memmove(
             reinterpret_cast<void *>(dst),
             reinterpret_cast<void *>(src),
             __JLONG_REINTERPRET_CAST__(int64_t, len)

@@ -362,11 +362,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public long getTxPendingPartitionAreaSize() {
-        return 64 * 1024;
-    }
-
-    @Override
     public long getWorkStealTimeoutNanos() {
         return 10000;
     }
@@ -502,12 +497,12 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public long getInstanceHashLo() {
-        return instanceHashLo;
+    public long getDatabaseIdHi() {
+        return instanceHashHi;
     }
 
     @Override
-    public long getInstanceHashHi() {
-        return instanceHashHi;
+    public long getDatabaseIdLo() {
+        return instanceHashLo;
     }
 }

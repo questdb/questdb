@@ -72,28 +72,28 @@ public class CairoEngine implements Closeable, WriterSource {
         telemetryPubSeq.then(telemetrySubSeq).then(telemetryPubSeq);
 
         final FilesFacade ff = configuration.getFilesFacade();
-        try (Path path = new Path().of(configuration.getRoot()).concat("_tab_index.d").$()) {
-            this.tableIndexMemSize = Files.PAGE_SIZE;
-            tableIndexFd = TableUtils.openFileRWOrFail(ff, path);
-            final long fileSize = ff.length(tableIndexFd);
-            if (fileSize < Long.BYTES) {
-                if (!ff.allocate(tableIndexFd, Files.PAGE_SIZE)) {
-                    ff.close(tableIndexFd);
-                    throw CairoException.instance(ff.errno()).put("Could not allocate [file=").put(path).put(", actual=").put(fileSize).put(", desired=").put(this.tableIndexMemSize).put(']');
-                }
-            }
-
-            this.tableIndexMem = ff.mmap(tableIndexFd, tableIndexMemSize, 0, Files.MAP_RW);
-            if (tableIndexMem == -1) {
+        Path path = Path.getThreadLocal(configuration.getRoot()).concat(TableUtils.TAB_INDEX_FILE_NAME).$();
+        this.tableIndexMemSize = Files.PAGE_SIZE;
+        tableIndexFd = TableUtils.openFileRWOrFail(ff, path);
+        final long fileSize = ff.length(tableIndexFd);
+        if (fileSize < Long.BYTES) {
+            if (!ff.allocate(tableIndexFd, Files.PAGE_SIZE)) {
                 ff.close(tableIndexFd);
-                throw CairoException.instance(ff.errno()).put("Could not mmap [file=").put(path).put(']');
+                throw CairoException.instance(ff.errno()).put("Could not allocate [file=").put(path).put(", actual=").put(fileSize).put(", desired=").put(this.tableIndexMemSize).put(']');
             }
-            try {
-                new EngineMigration(this, configuration).migrateEngineTo(ColumnType.VERSION);
-            } catch (CairoException e) {
-                close();
-                throw e;
-            }
+        }
+
+        this.tableIndexMem = ff.mmap(tableIndexFd, tableIndexMemSize, 0, Files.MAP_RW);
+        if (tableIndexMem == -1) {
+            ff.close(tableIndexFd);
+            throw CairoException.instance(ff.errno()).put("Could not mmap [file=").put(path).put(']');
+        }
+
+        try {
+            new EngineMigration(this, configuration).migrateEngineTo(ColumnType.VERSION);
+        } catch (CairoException e) {
+            close();
+            throw e;
         }
     }
 
@@ -311,8 +311,8 @@ public class CairoEngine implements Closeable, WriterSource {
         return readerPool.releaseAll();
     }
 
-    public boolean releaseAllWriters() {
-        return writerPool.releaseAll();
+    public void releaseAllWriters() {
+        writerPool.releaseAll();
     }
 
     public boolean releaseInactive() {

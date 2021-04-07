@@ -185,8 +185,8 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
                             srcTimestampFd,
                             srcTimestampAddr,
                             srcTimestampSize,
-                            dstKFd,
-                            dstVFd,
+                            0,
+                            0,
                             tableWriter,
                             doneLatch
                     );

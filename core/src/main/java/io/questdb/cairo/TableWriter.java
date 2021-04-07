@@ -203,6 +203,7 @@ public class TableWriter implements Closeable {
     private final MappedReadWriteMemory todoMem = new PagedMappedReadWriteMemory();
     private final TxWriter txFile;
     private final FindVisitor removePartitionDirsNotAttached = this::removePartitionDirsNotAttached;
+    private final long txnScoreboard;
     private long todoTxn;
     private ContiguousVirtualMemory timestampMergeMem;
     private long lockFd;
@@ -268,9 +269,11 @@ public class TableWriter implements Closeable {
         this.ff = configuration.getFilesFacade();
         this.mkDirMode = configuration.getMkDirMode();
         this.fileOperationRetryCount = configuration.getFileOperationRetryCount();
-        this.path = new Path().of(root).concat(name);
-        this.other = new Path().of(root).concat(name);
         this.name = Chars.toString(name);
+        this.path = new Path();
+        this.txnScoreboard = TxnScoreboard.create(this.path, configuration.getDatabaseIdLo(), configuration.getDatabaseIdHi(), this.name);
+        this.path.of(root).concat(name);
+        this.other = new Path().of(root).concat(name);
         this.rootLen = path.length();
         this.blockWriter = new TableBlockWriter(configuration, messageBus);
         try {
@@ -1132,8 +1135,8 @@ public class TableWriter implements Closeable {
         // this is a crude block to test things for now
         todoMem.putLong(0, ++todoTxn); // write txn, reader will first read txn at offset 24 and then at offset 0
         Unsafe.getUnsafe().storeFence(); // make sure we do not write hash before writing txn (view from another thread)
-        todoMem.putLong(8, configuration.getInstanceHashLo()); // write out our instance hashes
-        todoMem.putLong(16, configuration.getInstanceHashHi());
+        todoMem.putLong(8, configuration.getDatabaseIdLo()); // write out our instance hashes
+        todoMem.putLong(16, configuration.getDatabaseIdHi());
         Unsafe.getUnsafe().storeFence();
         todoMem.putLong(24, todoTxn);
         todoMem.putLong(32, 1);
@@ -1913,6 +1916,9 @@ public class TableWriter implements Closeable {
         try {
             releaseLock(!truncate | tx | performRecovery | distressed);
         } finally {
+            if (txnScoreboard != 0) {
+                TxnScoreboard.close(path, configuration.getDatabaseIdLo(), configuration.getDatabaseIdHi(), this.name, this.txnScoreboard);
+            }
             Misc.free(path);
             freeTempMem();
             LOG.info().$("closed '").utf8(name).$('\'').$();
@@ -1965,10 +1971,6 @@ public class TableWriter implements Closeable {
 
     long getColumnTop(int columnIndex) {
         return columnTops.getQuick(columnIndex);
-    }
-
-    long getOooErrorCount() {
-        return oooErrorCount.get();
     }
 
     private long getPartitionLo(long timestamp) {
@@ -2879,35 +2881,17 @@ public class TableWriter implements Closeable {
         final int partitionIndex = txFile.findAttachedPartitionIndexByLoTimestamp(partitionTimestamp);
         if (partitionMutates) {
             final long srcDataTxn = txFile.getPartitionNameTxnByIndex(partitionIndex);
-            if (false &&
-                    configuration.isOutOfOrderRenameEnabled()
-                            && getOooErrorCount() == 0
-            ) {
-                LOG.info()
-                        .$("lock successful [table=`").utf8(path)
-                        .$("`, ts=").$ts(partitionTimestamp)
-                        .$(", txn=").$(srcDataTxn).$(']').$();
-
-                    OutOfOrderUtils.swapPartition(
-                            ff,
-                            path,
-                            partitionTimestamp,
-                            srcDataTxn,
-                            txFile.getTxn(),
-                            partitionBy
-                    );
-                    txFile.updatePartitionSizeByIndex(partitionIndex, partitionTimestamp, partitionSize);
-            } else {
-                LOG.info()
-                        .$("partition busy [table=`").utf8(path)
-                        .$("`, ts=").$ts(partitionTimestamp)
-                        .$(", txn=").$(srcDataTxn).$(']').$();
-                txFile.updatePartitionSizeByIndexAndTxn(partitionIndex, partitionSize);
-            }
+            LOG.info()
+                    .$("partition busy [table=`").utf8(path)
+                    .$("`, ts=").$ts(partitionTimestamp)
+                    .$(", txn=").$(srcDataTxn).$(']').$();
+            txFile.updatePartitionSizeByIndexAndTxn(partitionIndex, partitionSize);
         } else {
             txFile.updatePartitionSizeByIndex(partitionIndex, partitionTimestamp, partitionSize);
         }
         txFile.bumpPartitionTableVersion();
+//        long last = TxnScoreboard.getMin(txnScoreboard);
+//        System.out.println("would remove: " + (last - 1));
     }
 
     synchronized void oooUpdatePartitionSizeSynchronized(
@@ -3049,8 +3033,8 @@ public class TableWriter implements Closeable {
                 this.todoTxn = todoMem.getLong(0);
                 // check if _todo_ file is consistent, if not, we just ignore its contents and reset hash
                 if (todoMem.getLong(24) != todoTxn) {
-                    todoMem.putLong(8, configuration.getInstanceHashLo());
-                    todoMem.putLong(16, configuration.getInstanceHashHi());
+                    todoMem.putLong(8, configuration.getDatabaseIdLo());
+                    todoMem.putLong(16, configuration.getDatabaseIdHi());
                     Unsafe.getUnsafe().storeFence();
                     todoMem.putLong(24, todoTxn);
                     return 0;
@@ -3946,8 +3930,8 @@ public class TableWriter implements Closeable {
         try {
             todoMem.putLong(0, ++todoTxn); // write txn, reader will first read txn at offset 24 and then at offset 0
             Unsafe.getUnsafe().storeFence(); // make sure we do not write hash before writing txn (view from another thread)
-            todoMem.putLong(8, configuration.getInstanceHashLo()); // write out our instance hashes
-            todoMem.putLong(16, configuration.getInstanceHashHi());
+            todoMem.putLong(8, configuration.getDatabaseIdLo()); // write out our instance hashes
+            todoMem.putLong(16, configuration.getDatabaseIdHi());
             Unsafe.getUnsafe().storeFence();
             todoMem.putLong(32, 1);
             todoMem.putLong(40, TODO_RESTORE_META);

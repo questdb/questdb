@@ -87,6 +87,6 @@ public final class Epoll implements Closeable {
     }
 
     public void setOffset(int offset) {
-        this._rPtr = this.events + (long) offset;
+        this._rPtr = this.events + offset;
     }
 }

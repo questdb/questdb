@@ -381,9 +381,8 @@ public final class TestUtils {
         }
     }
 
-    public static void assertReader(String expected, TableReader reader, MutableCharSink sink) {
-        sink.clear();
-        printer.print(reader.getCursor(), reader.getMetadata(), true, sink);
+    public static void assertCursor(CharSequence expected, RecordCursor cursor, RecordMetadata metadata, boolean header, MutableCharSink sink) {
+        printCursor(cursor, metadata, header, sink);
         assertEquals(expected, sink);
     }
 
@@ -403,16 +402,30 @@ public final class TestUtils {
         assertEquals(expected, sink);
     }
 
+    public static void assertReader(CharSequence expected, TableReader reader, MutableCharSink sink) {
+        assertCursor(
+                expected,
+                reader.getCursor(),
+                reader.getMetadata(),
+                true,
+                sink
+        );
+    }
+
+    public static void printCursor(RecordCursor cursor, RecordMetadata metadata, boolean header, MutableCharSink sink) {
+        sink.clear();
+        printer.print(cursor, metadata, header, sink);
+    }
+
     public static void printSql(
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext,
             CharSequence sql,
             MutableCharSink sink
     ) throws SqlException {
-        sink.clear();
         try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                printer.print(cursor, factory.getMetadata(), true, sink);
+                printCursor(cursor, factory.getMetadata(), true, sink);
             }
         }
     }

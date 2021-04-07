@@ -461,7 +461,7 @@ public class TableWriterTest extends AbstractCairoTest {
     public void testAddColumnSwpFileDelete() throws Exception {
 
         TestUtils.assertMemoryLeak(() -> {
-            populateTable(FF);
+            populateTable();
             // simulate existence of _meta.swp
 
             class X extends FilesFacadeImpl {
@@ -1628,7 +1628,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
     @Test
     public void testDefaultPartition() throws Exception {
-        populateTable(FF);
+        populateTable();
     }
 
     @Test
@@ -2832,8 +2832,8 @@ public class TableWriterTest extends AbstractCairoTest {
         return ts;
     }
 
-    long populateTable(FilesFacade ff) throws NumericException {
-        return populateTable(ff, PartitionBy.DAY);
+    long populateTable() throws NumericException {
+        return populateTable(TableWriterTest.FF, PartitionBy.DAY);
     }
 
     long populateTable(FilesFacade ff, int partitionBy) throws NumericException {
@@ -3009,7 +3009,7 @@ public class TableWriterTest extends AbstractCairoTest {
                     return ff;
                 }
             };
-            long ts = populateTable(FF);
+            long ts = populateTable();
             Rnd rnd = new Rnd();
             try (TableWriter writer = new TableWriter(configuration, PRODUCT)) {
                 ts = populateProducts(writer, rnd, ts, 10000, 60000L * 1000L);
@@ -3037,7 +3037,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
     private void testAddColumnRecoverableFault(FilesFacade ff) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            long ts = populateTable(FF);
+            long ts = populateTable();
             Rnd rnd = new Rnd();
             CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
                 @Override
@@ -3725,7 +3725,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
     private void testUnrecoverableAddColumn(FilesFacade ff) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            long ts = populateTable(FF);
+            long ts = populateTable();
             Rnd rnd = new Rnd();
             try (TableWriter writer = new TableWriter(new DefaultCairoConfiguration(root) {
                 @Override

@@ -24,11 +24,6 @@
 
 package io.questdb.cairo;
 
-import org.junit.After;
-import org.junit.Assert;
-import org.junit.Before;
-import org.junit.Test;
-
 import io.questdb.cairo.SymbolMapWriter.TransientSymbolCountChangeHandler;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.PagedMappedReadWriteMemory;
@@ -37,6 +32,8 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
+import org.junit.Test;
 
 public class SymbolMapTest extends AbstractCairoTest {
     private static final TransientSymbolCountChangeHandler TRANSIENT_SYMBOL_COUNT_CHANGE_HANDLER = (symCount) -> {
