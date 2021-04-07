@@ -2619,7 +2619,7 @@ public class TableWriter implements Closeable {
                             false
                     );
                     TableUtils.txnPartitionConditionally(other, txn);
-                    ff.rmdir(path.$$dir());
+                    ff.rmdir(other.$$dir());
                 }
             }
         } finally {
