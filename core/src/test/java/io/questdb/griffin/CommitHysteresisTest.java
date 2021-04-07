@@ -1,13 +1,17 @@
 package io.questdb.griffin;
 
+import java.io.IOException;
 import java.util.Random;
 
 import org.junit.After;
+import org.junit.Assert;
 import org.junit.Before;
+import org.junit.ClassRule;
 import org.junit.Ignore;
 import org.junit.Test;
+import org.junit.rules.TemporaryFolder;
 
-import io.questdb.cairo.AbstractCairoTest;
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.EntityColumnFilter;
@@ -34,12 +38,15 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 
-public class CommitHysteresisTest extends AbstractCairoTest {
+public class CommitHysteresisTest {
     private final static Log LOG = LogFactory.getLog(CommitHysteresisTest.class);
-
+    @ClassRule
+    public static TemporaryFolder temp = new TemporaryFolder();
+    private CairoConfiguration configuration;
     private CairoEngine engine;
     private SqlCompiler compiler;
     private SqlExecutionContext sqlExecutionContext;
+    private static final StringSink sink = new StringSink();
     private static final StringSink sink2 = new StringSink();
     private long minTimestamp;
     private long maxTimestamp;
@@ -1140,7 +1147,13 @@ public class CommitHysteresisTest extends AbstractCairoTest {
     }
 
     @Before
-    public void setUp3() {
+    public void before() throws IOException {
+        LOG.info().$("begin").$();
+        // instantiate these paths so that they are not included in memory leak test
+        Path.PATH.get();
+        Path.PATH2.get();
+
+        CharSequence root = temp.newFolder("dbRoot").getAbsolutePath();
         configuration = new DefaultCairoConfiguration(root) {
             @Override
             public boolean isOutOfOrderEnabled() {
@@ -1162,24 +1175,27 @@ public class CommitHysteresisTest extends AbstractCairoTest {
         bindVariableService.clear();
 
         SharedRandom.RANDOM.set(new Rnd());
-
-        // instantiate these paths so that they are not included in memory leak test
-        Path.PATH.get();
-        Path.PATH2.get();
     }
 
     @After
-    public void tearDown3() {
+    public void after() {
+        LOG.info().$("finished").$();
         Misc.free(compiler);
         Misc.free(engine);
     }
 
     private void executeVanilla(TestUtils.LeakProneCode code) throws Exception {
-        OutOfOrderUtils.initBuf();
-        try {
-            assertMemoryLeak(code);
-        } finally {
-            OutOfOrderUtils.freeBuf();
-        }
+        TestUtils.assertMemoryLeak(() -> {
+            try {
+                OutOfOrderUtils.initBuf();
+                code.run();
+                engine.releaseInactive();
+                Assert.assertEquals(0, engine.getBusyWriterCount());
+                Assert.assertEquals(0, engine.getBusyReaderCount());
+            } finally {
+                engine.clear();
+                OutOfOrderUtils.freeBuf();
+            }
+        });
     }
 }
