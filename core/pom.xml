@@ -578,7 +578,7 @@
                                     <arg>java.base/jdk.internal.math=io.questdb</arg>
                                 </compilerArgs>
                             <fork>true</fork>
-                            <source>1.8</source>
+                            <source>1.9</source>
                             <target>${javac.target}</target>
                         </configuration>
                     </plugin>

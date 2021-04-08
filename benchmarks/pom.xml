@@ -94,7 +94,7 @@
                 <artifactId>maven-compiler-plugin</artifactId>
                 <version>3.6.1</version>
                 <configuration>
-                    <source>${javac.target}</source>
+                    <source>1.9</source>
                     <target>${javac.target}</target>
                     <annotationProcessorPaths>
                         <path>
@@ -203,8 +203,8 @@
                         <version>3.8.1</version>
                         <configuration>
                             <fork>true</fork>
-                            <source>8</source>
-                            <target>8</target>
+                            <source>1.8</source>
+                            <target>1.8</target>
                             <testExcludes>
                                 <exclude>**/module-info.java</exclude>
                             </testExcludes>
