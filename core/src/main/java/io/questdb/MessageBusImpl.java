@@ -118,10 +118,12 @@ public class MessageBusImpl implements MessageBus {
         this.o3PurgeDiscoveryQueue = new RingQueue<>(O3PurgeDiscoveryTask::new, 128);
         this.o3PurgeDiscoveryPubSeq = new MPSequence(this.o3PurgeDiscoveryQueue.getCapacity());
         this.o3PurgeDiscoverySubSeq = new MCSequence(this.o3PurgeDiscoveryQueue.getCapacity());
+        this.o3PurgeDiscoveryPubSeq.then(this.o3PurgeDiscoverySubSeq).then(o3PurgeDiscoveryPubSeq);
 
         this.o3PurgeQueue = new RingQueue<>(O3PurgeTask::new, 128);
         this.o3PurgePubSeq = new MPSequence(this.o3PurgeQueue.getCapacity());
         this.o3PurgeSubSeq = new MCSequence(this.o3PurgeQueue.getCapacity());
+        this.o3PurgePubSeq.then(this.o3PurgeSubSeq).then(this.o3PurgePubSeq);
     }
 
     @Override

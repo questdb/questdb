@@ -367,6 +367,7 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
         @SuppressWarnings("unused")
         int nextStatus = 0;
         volatile Entry next;
+        // todo: thread local
         private Path shmName = new Path();
         @SuppressWarnings("FieldMayBeFinal")
         // not a final, this field gets assigned value via CAS
@@ -387,7 +388,7 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
         public void close() {
             long txnScoreboard = this.txnScoreboard;
             if (txnScoreboard != 0 && Unsafe.cas(this, TXN_SCOREBOARD, txnScoreboard, 0)) {
-                TxnScoreboard.close(this.shmName, txnScoreboard);
+                TxnScoreboard.close(txnScoreboard);
                 shmName = Misc.free(shmName);
             }
         }

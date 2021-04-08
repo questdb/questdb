@@ -243,6 +243,8 @@ public class AbstractOutOfOrderTest extends AbstractCairoTest {
                         pool.assign(new OutOfOrderPartitionJob(engine.getMessageBus()));
                         pool.assign(new OutOfOrderOpenColumnJob(engine.getMessageBus()));
                         pool.assign(new OutOfOrderCopyJob(engine.getMessageBus()));
+                        pool.assign(new O3PurgeDiscoveryJob(engine.getMessageBus()));
+                        pool.assign(new O3PurgeJob(engine.getMessageBus()));
 
                         OutOfOrderUtils.initBuf(pool.getWorkerCount() + 1);
                         pool.start(LOG);

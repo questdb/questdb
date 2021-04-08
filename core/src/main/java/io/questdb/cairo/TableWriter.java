@@ -1834,7 +1834,7 @@ public class TableWriter implements Closeable {
             releaseLock(!truncate | tx | performRecovery | distressed);
         } finally {
             if (txnScoreboard != 0) {
-                TxnScoreboard.close(path, configuration.getDatabaseIdLo(), configuration.getDatabaseIdHi(), this.name, this.txnScoreboard);
+                TxnScoreboard.close(this.txnScoreboard);
             }
             Misc.free(path);
             freeTempMem();

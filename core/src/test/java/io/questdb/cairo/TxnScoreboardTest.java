@@ -26,6 +26,7 @@ package io.questdb.cairo;
 
 import io.questdb.std.Os;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Test;
@@ -41,7 +42,6 @@ public class TxnScoreboardTest {
 
     @Test
     public void testLimits() {
-
         try (final Path shmPath = new Path()) {
             int expect = 4096;
             long p2 = TxnScoreboard.create(shmPath, 4, 5, "hello");
@@ -79,7 +79,7 @@ public class TxnScoreboardTest {
                     }
                     System.out.println("done");
                 } finally {
-                    TxnScoreboard.close(shmPath, 4, 5, "hello", p1);
+                    TxnScoreboard.close(p1);
                 }
             } finally {
                 // now check that all counts are available via another memory space
@@ -91,6 +91,27 @@ public class TxnScoreboardTest {
                     }
                 }
             }
+        }
+    }
+
+    @Test
+    public void testNameLimit() {
+        try (final Path shmPath = new Path()) {
+            StringSink name = new StringSink();
+            for (int i = 0; i < 255; i++) {
+                name.put('a');
+            }
+            final long p = TxnScoreboard.create(shmPath, 4, 5, name);
+            Assert.assertEquals(0, p);
+        }
+    }
+
+    @Test
+    public void testUtf8Name() {
+        try (final Path shmPath = new Path()) {
+            long p = TxnScoreboard.create(shmPath, 4, 5, "бункера");
+            Assert.assertNotEquals(0, p);
+            TxnScoreboard.close(p);
         }
     }
 
@@ -125,12 +146,12 @@ public class TxnScoreboardTest {
 
                     Assert.assertTrue(acquire(p1, 72));
                 } finally {
-                    TxnScoreboard.close(shmPath, 4, 5, "tab1", p1);
+                    TxnScoreboard.close(p1);
                 }
                 Assert.assertTrue(acquire(p2, 72));
                 Assert.assertEquals(2, TxnScoreboard.getCount(p2, 72));
             } finally {
-                TxnScoreboard.close(shmPath, 4, 5, "tab1", p2);
+                TxnScoreboard.close(p2);
             }
         }
     }

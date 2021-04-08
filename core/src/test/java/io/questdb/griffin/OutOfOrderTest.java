@@ -25,16 +25,16 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.O3PurgeDiscoveryJob;
-import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TxnScoreboard;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
-import io.questdb.std.str.NativeLPSZ;
-import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
-import org.junit.*;
+import org.junit.After;
+import org.junit.Before;
+import org.junit.Rule;
+import org.junit.Test;
 import org.junit.rules.TestName;
 
 import java.net.URISyntaxException;
@@ -4308,7 +4308,6 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
     }
 
     @Test
-    @Ignore
     public void testAppendToLastPartition() throws Exception {
         executeWithPool(4, OutOfOrderTest::testAppendToLastPartition);
     }
@@ -4324,9 +4323,6 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
         );
 
         final Rnd rnd = new Rnd();
-        final NativeLPSZ nativeLPSZ = new NativeLPSZ();
-        final StringSink sink = new StringSink();
-        final LongList txnList = new LongList();
         try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x")) {
             long ts = 0;
             long step = 1000000;
@@ -4351,21 +4347,10 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
 
                 ts += step;
 
+                long txn = w.getTxn();
+                TxnScoreboard.acquire(txnScoreboard, txn);
                 w.commit();
-
-                O3PurgeDiscoveryJob.discoverPartitions(
-                        FilesFacadeImpl.INSTANCE,
-                        sink,
-                        nativeLPSZ,
-                        txnList,
-                        null,
-                        null,
-                        configuration.getRoot(),
-                        "x",
-                        PartitionBy.DAY,
-                        Timestamps.floorDD(ts),
-                        w.getTxnScoreboard()
-                );
+                TxnScoreboard.release(txnScoreboard, txn);
             }
         }
     }

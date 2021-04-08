@@ -35,16 +35,10 @@ public class TxnScoreboard {
     public static final long READER_NOT_YET_ACTIVE = -1;
     private static final Log LOG = LogFactory.getLog(TxnScoreboard.class);
 
-    public static void close(Path shmPath, long pTxnScoreboard) {
-        if (close0(shmPath.address(), pTxnScoreboard) == 0) {
-//            LOG.info().$("close [p=").$(pTxnScoreboard).$(']').$();
-            Unsafe.recordMemAlloc(-getScoreboardSize());
-        }
-    }
-
-    public static void close(Path shmPath, long databaseIdLo, long databaseIdHi, CharSequence tableName, long pTxnScoreboard) {
-        setShmName(shmPath, databaseIdLo, databaseIdHi, tableName);
-        close(shmPath, pTxnScoreboard);
+    public static boolean acquire(long pTxnScoreboard, long txn) {
+        assert pTxnScoreboard > 0;
+        LOG.debug().$("acquire [p=").$(pTxnScoreboard).$(", txn=").$(txn).$(']').$();
+        return acquire0(pTxnScoreboard, txn);
     }
 
     public static long create(Path shmPath, long databaseIdLo, long databaseIdHi, CharSequence tableName) {
@@ -70,15 +64,16 @@ public class TxnScoreboard {
         shmPath.put(databaseIdLo).put('-').put(databaseIdHi).put('-').put(name).$();
     }
 
-    static boolean acquire(long pTxnScoreboard, long txn) {
-        assert pTxnScoreboard > 0;
-        LOG.debug().$("acquire [p=").$(pTxnScoreboard).$(", txn=").$(txn).$(']').$();
-        return acquire0(pTxnScoreboard, txn);
+    public static void close(long pTxnScoreboard) {
+        if (close0(pTxnScoreboard) == 0) {
+//            LOG.info().$("close [p=").$(pTxnScoreboard).$(']').$();
+            Unsafe.recordMemAlloc(-getScoreboardSize());
+        }
     }
 
     private native static boolean acquire0(long pTxnScoreboard, long txn);
 
-    static void release(long pTxnScoreboard, long txn) {
+    public static void release(long pTxnScoreboard, long txn) {
         assert pTxnScoreboard > 0;
         LOG.debug().$("release  [p=").$(pTxnScoreboard).$(", txn=").$(txn).$(']').$();
         release0(pTxnScoreboard, txn);
@@ -96,7 +91,7 @@ public class TxnScoreboard {
 
     static native long getMin(long pTxnScoreboard);
 
-    private static native long close0(long lpszName, long pTxnScoreboard);
+    private static native long close0(long pTxnScoreboard);
 
     private static native long getScoreboardSize();
 

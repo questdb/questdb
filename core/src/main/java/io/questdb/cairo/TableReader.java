@@ -173,7 +173,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             Misc.free(todoMem);
             freeColumns();
             freeTempMem();
-            TxnScoreboard.close(path, configuration.getDatabaseIdLo(), configuration.getDatabaseIdHi(), tableName, txnScoreboard);
+            TxnScoreboard.close(txnScoreboard);
             Misc.free(path);
             LOG.debug().$("closed '").utf8(tableName).$('\'').$();
         }

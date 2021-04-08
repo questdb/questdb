@@ -24,11 +24,10 @@
 
 package io.questdb.cairo;
 
+import io.questdb.MessageBus;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.AbstractQueueConsumerJob;
-import io.questdb.mp.RingQueue;
-import io.questdb.mp.Sequence;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.str.Path;
 import io.questdb.tasks.O3PurgeTask;
@@ -39,9 +38,9 @@ public class O3PurgeJob extends AbstractQueueConsumerJob<O3PurgeTask> {
 
     private final CairoConfiguration configuration;
 
-    public O3PurgeJob(CairoConfiguration configuration, RingQueue<O3PurgeTask> queue, Sequence subSeq) {
-        super(queue, subSeq);
-        this.configuration = configuration;
+    public O3PurgeJob(MessageBus messageBus) {
+        super(messageBus.getO3PurgeQueue(), messageBus.getO3PurgeSubSeq());
+        this.configuration = messageBus.getConfiguration();
     }
 
     public static boolean purgePartitionDir(

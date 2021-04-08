@@ -24,6 +24,7 @@
 
 package io.questdb.cairo;
 
+import io.questdb.MessageBus;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.AbstractQueueConsumerJob;
@@ -47,17 +48,11 @@ public class O3PurgeDiscoveryJob extends AbstractQueueConsumerJob<O3PurgeDiscove
     private final RingQueue<O3PurgeTask> purgeQueue;
     private final Sequence purgePubSeq;
 
-    public O3PurgeDiscoveryJob(
-            CairoConfiguration configuration,
-            RingQueue<O3PurgeDiscoveryTask> queue,
-            Sequence subSeq,
-            RingQueue<O3PurgeTask> purgeQueue,
-            Sequence purgePubSeq
-    ) {
-        super(queue, subSeq);
-        this.configuration = configuration;
-        this.purgeQueue = purgeQueue;
-        this.purgePubSeq = purgePubSeq;
+    public O3PurgeDiscoveryJob(MessageBus messageBus) {
+        super(messageBus.getO3PurgeDiscoveryQueue(), messageBus.getO3PurgeDiscoverySubSeq());
+        this.configuration = messageBus.getConfiguration();
+        this.purgeQueue = messageBus.getO3PurgeQueue();
+        this.purgePubSeq = messageBus.getO3PurgePubSeq();
     }
 
     @Override
@@ -95,63 +90,67 @@ public class O3PurgeDiscoveryJob extends AbstractQueueConsumerJob<O3PurgeDiscove
             long partitionTimestamp,
             long txnScoreboard
     ) {
-        Path path = Path.getThreadLocal(root);
-        path.concat(tableName).$$dir();
-        sink.clear();
-        TableUtils.setPathForPartition(sink, partitionBy, partitionTimestamp, false, false);
-        path.$$dir();
+        try {
+            Path path = Path.getThreadLocal(root);
+            path.concat(tableName).$$dir();
+            sink.clear();
+            TableUtils.setPathForPartition(sink, partitionBy, partitionTimestamp, false, false);
+            path.$$dir();
 
-        txnList.clear();
+            txnList.clear();
 
-        long p = ff.findFirst(path);
-        if (p > 0) {
-            try {
-                do {
-                    processDir(sink, nativeLPSZ, tableName, txnList, ff.findName(p), ff.findType(p));
-                } while (ff.findNext(p) > 0);
-            } finally {
-                ff.findClose(p);
-            }
-        }
-
-        if (txnList.size() > 1) {
-            txnList.sort();
-
-            for (int i = 0, n = txnList.size() - 1; i < n; i++) {
-                final long nameTxnToRemove = txnList.getQuick(i);
-                final long minTxnToExpect = txnList.getQuick(i+1);
-                path.of(root).concat(tableName);
-                if (!O3PurgeJob.purgePartitionDir(
-                        ff,
-                        path,
-                        partitionBy,
-                        partitionTimestamp,
-                        txnScoreboard,
-                        nameTxnToRemove,
-                        minTxnToExpect
-                )) {
-                    // queue the job
-                    long cursor = purgePubSeq.next();
-                    if (cursor > -1) {
-                        O3PurgeTask task = purgeQueue.get(cursor);
-                        task.of(
-                                tableName,
-                                partitionBy,
-                                txnScoreboard,
-                                partitionTimestamp,
-                                nameTxnToRemove,
-                                minTxnToExpect
-                        );
-                        purgePubSeq.done(cursor);
-                    } else {
-                        LOG.error().$("purge queue is full [table=").$(tableName).$(", ts=").$ts(partitionTimestamp).$(']').$();
-                    }
+            long p = ff.findFirst(path);
+            if (p > 0) {
+                try {
+                    do {
+                        processDir(sink, nativeLPSZ, tableName, txnList, ff.findName(p), ff.findType(p));
+                    } while (ff.findNext(p) > 0);
+                } finally {
+                    ff.findClose(p);
                 }
             }
-            return true;
-        }
 
-        return false;
+            if (txnList.size() > 1) {
+                txnList.sort();
+
+                for (int i = 0, n = txnList.size() - 1; i < n; i++) {
+                    final long nameTxnToRemove = txnList.getQuick(i);
+                    final long minTxnToExpect = txnList.getQuick(i + 1);
+                    path.of(root).concat(tableName);
+                    if (!O3PurgeJob.purgePartitionDir(
+                            ff,
+                            path,
+                            partitionBy,
+                            partitionTimestamp,
+                            txnScoreboard,
+                            nameTxnToRemove,
+                            minTxnToExpect
+                    )) {
+                        // queue the job
+                        long cursor = purgePubSeq.next();
+                        if (cursor > -1) {
+                            O3PurgeTask task = purgeQueue.get(cursor);
+                            task.of(
+                                    tableName,
+                                    partitionBy,
+                                    TxnScoreboard.newRef(txnScoreboard),
+                                    partitionTimestamp,
+                                    nameTxnToRemove,
+                                    minTxnToExpect
+                            );
+                            purgePubSeq.done(cursor);
+                        } else {
+                            LOG.error().$("purge queue is full [table=").$(tableName).$(", ts=").$ts(partitionTimestamp).$(']').$();
+                        }
+                    }
+                }
+                return true;
+            }
+
+            return false;
+        } finally {
+            TxnScoreboard.close(txnScoreboard);
+        }
     }
 
     private static void processDir(
