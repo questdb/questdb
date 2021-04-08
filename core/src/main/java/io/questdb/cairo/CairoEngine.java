@@ -38,7 +38,6 @@ import io.questdb.mp.*;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.Path;
-import io.questdb.tasks.O3PurgeDiscoveryTask;
 import io.questdb.tasks.TelemetryTask;
 import org.jetbrains.annotations.Nullable;
 
@@ -304,7 +303,6 @@ public class CairoEngine implements Closeable, WriterSource {
     public boolean clear() {
         boolean b1 = readerPool.releaseAll();
         boolean b2 = writerPool.releaseAll();
-        readerPool.freeEntries();
         return b1 & b2;
     }
 
