@@ -339,7 +339,7 @@ public class WriterPoolTest extends AbstractCairoTest {
         assertWithPool(pool -> {
             TableWriter wy = pool.get("y");
 
-            try (wy) {
+            try {
                 Assert.assertNotNull(wy);
                 Assert.assertTrue(wy.isOpen());
 
@@ -393,6 +393,8 @@ public class WriterPoolTest extends AbstractCairoTest {
                     Assert.assertTrue(wx.isOpen());
                 }
 
+            } finally {
+                wy.close();
             }
         });
     }

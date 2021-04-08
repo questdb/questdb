@@ -534,7 +534,7 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
                     engine.releaseAllReaders();
                     engine.releaseAllWriters();
 
-                    try (var reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, src.getName())) {
+                    try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, src.getName())) {
                         long sum = 0;
                         int colIndex = 0;
                         boolean opened = false;

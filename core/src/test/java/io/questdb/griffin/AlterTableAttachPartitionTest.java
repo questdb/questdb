@@ -40,6 +40,7 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import java.io.IOException;
+import java.nio.file.FileSystems;
 
 import static java.nio.file.StandardCopyOption.REPLACE_EXISTING;
 
@@ -340,7 +341,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                 // Add 1 row without commit
                 try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "dst")) {
                     long insertTs = TimestampFormatUtils.parseTimestamp("2020-01-10T23:59:59.999z");
-                    var row = writer.newRow(insertTs);
+                    TableWriter.Row row = writer.newRow(insertTs);
                     row.putLong(0, 1L);
                     row.putInt(1, 1);
                     row.append();
@@ -422,7 +423,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
 
     @Test
     public void testCannotMapTimestampColumn() throws Exception {
-        var ff = new FilesFacadeImpl() {
+        FilesFacadeImpl ff = new FilesFacadeImpl() {
             private long tsdFd;
 
             @Override
@@ -435,7 +436,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
 
             @Override
             public long openRO(LPSZ name) {
-                var fd = super.openRO(name);
+                long fd = super.openRO(name);
                 if (Chars.endsWith(name, "ts.d")) {
                     this.tsdFd = fd;
                 }
@@ -448,7 +449,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
 
     @Test
     public void testCannotReadTimestampColumn() throws Exception {
-        var ff = new FilesFacadeImpl() {
+        FilesFacadeImpl ff = new FilesFacadeImpl() {
             @Override
             public long openRO(LPSZ name) {
                 if (Chars.endsWith(name, "ts.d")) {
@@ -463,7 +464,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
 
     @Test
     public void testCannotReadTimestampColumnFileDoesNotExist() throws Exception {
-        var ff = new FilesFacadeImpl() {
+        FilesFacadeImpl ff = new FilesFacadeImpl() {
             @Override
             public boolean exists(LPSZ name) {
                 if (Chars.endsWith(name, "ts.d")) {
@@ -478,7 +479,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
 
     @Test
     public void testCannotRenameDetachedFolderOnAttach() throws Exception {
-        var ff = new FilesFacadeImpl() {
+        FilesFacadeImpl ff = new FilesFacadeImpl() {
             @Override
             public boolean rename(LPSZ from, LPSZ to) {
                 if (Chars.endsWith(to, "2020-01-01")) {
@@ -492,7 +493,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
     }
 
     private void testSqlFailedOnFsOperation(FilesFacadeImpl ff, boolean reCopy, String... errorContains) throws Exception {
-        var config = new DefaultCairoConfiguration(root) {
+        DefaultCairoConfiguration config = new DefaultCairoConfiguration(root) {
             @Override
             public FilesFacade getFilesFacade() {
                 return ff;
@@ -502,9 +503,9 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             try (TableModel src = new TableModel(config, "src", PartitionBy.DAY);
                  TableModel dst = new TableModel(config, "dst", PartitionBy.DAY)) {
-                try (var engine2 = new CairoEngine(config); var compiler2 = new SqlCompiler(engine2)) {
-                    var tempEngine = engine;
-                    var tempCompiler = compiler;
+                try (CairoEngine engine2 = new CairoEngine(config); SqlCompiler compiler2 = new SqlCompiler(engine2)) {
+                    CairoEngine tempEngine = engine;
+                    SqlCompiler tempCompiler = compiler;
                     engine = engine2;
                     compiler = compiler2;
 
@@ -605,7 +606,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             partitions.append("'");
         }
 
-        try (var tableReader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "dst")) {
+        try (TableReader tableReader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "dst")) {
             int rowCount = readAllRows(tableReader);
 
             String alterCommand = "ALTER TABLE dst ATTACH PARTITION LIST " + partitions + ";";
@@ -657,7 +658,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             // Check table is writable after partition attach
             try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "dst")) {
 
-                var row = writer.newRow(timestamp);
+                TableWriter.Row row = writer.newRow(timestamp);
                 row.putLong(0, 1L);
                 row.putInt(1, 1);
                 row.append();
@@ -683,8 +684,8 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             Assert.fail("Cannot create " + to.toString() + ". Error: " + Os.errno());
         }
 
-        java.nio.file.Path dest = java.nio.file.Path.of(to.toString() + Files.SEPARATOR);
-        java.nio.file.Path src = java.nio.file.Path.of(from.toString() + Files.SEPARATOR);
+        java.nio.file.Path dest = FileSystems.getDefault().getPath(to.toString() + Files.SEPARATOR);
+        java.nio.file.Path src = FileSystems.getDefault().getPath(from.toString() + Files.SEPARATOR);
         java.nio.file.Files.walk(src)
                 .forEach(file -> {
                     java.nio.file.Path destination = dest.resolve(src.relativize(file));
@@ -720,7 +721,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
     }
 
     private int readAllRows(TableReader tableReader) {
-        try (var cursor = new FullFwdDataFrameCursor()) {
+        try (FullFwdDataFrameCursor cursor = new FullFwdDataFrameCursor()) {
             cursor.of(tableReader);
             DataFrame frame;
             int count = 0;

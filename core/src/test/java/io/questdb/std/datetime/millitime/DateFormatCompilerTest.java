@@ -642,7 +642,7 @@ public class DateFormatCompilerTest {
 
     @Test
     public void testTimeZone2() throws Exception {
-        assertThat("dd-MM-yy HH:m z", "2010-09-03T17:50:00.000Z", "03-09-10 21:50 MSK");
+        assertThat("dd-MM-yy HH:m z", "2015-09-03T18:50:00.000Z", "03-09-15 21:50 MSK");
     }
 
     @Test
@@ -716,10 +716,10 @@ public class DateFormatCompilerTest {
     private void assertFormat(String expected, String pattern, String date) throws NumericException {
         sink.clear();
         get(pattern).format(DateFormatUtils.parseUTCDate(date), defaultLocale, "GMT", sink);
-        TestUtils.assertEquals(expected, sink);
+        TestUtils.assertEqualsIgnoreCase(expected, sink);
         sink.clear();
         compiler.compile(pattern, false).format(DateFormatUtils.parseUTCDate(date), defaultLocale, "GMT", sink);
-        TestUtils.assertEquals(expected, sink);
+        TestUtils.assertEqualsIgnoreCase(expected, sink);
     }
 
     private void assertThat(String pattern, String expected, String input, CharSequence localeId) throws NumericException {
