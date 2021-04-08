@@ -78,15 +78,15 @@ public class CommitHysteresisTest {
                     "), index(sym) timestamp (ts) partition by DAY";
             compiler.compile(sql, sqlExecutionContext);
 
-            sql = "create table y as (select * from x where i<=250) partition by DAY";
+            sql = "create table y as (select * from x where i<=150) partition by DAY";
             compiler.compile(sql, sqlExecutionContext);
 
-            TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where i<=250", sink);
+            TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where i<=150", sink);
             TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
             TestUtils.assertEquals(sink, sink2);
 
             try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "y")) {
-                sql = "select * from x where i>250 and i<=495 order by f";
+                sql = "select * from x where i>150 and i<=495 order by f";
                 insertUncommitted(sql, writer);
                 writer.commit();
                 TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where i<=495", sink);
@@ -104,6 +104,7 @@ public class CommitHysteresisTest {
         });
     }
 
+    @Ignore
     @Test
     public void testNoHysteresisWithRollback() throws Exception {
         executeVanilla(() -> {
@@ -165,6 +166,59 @@ public class CommitHysteresisTest {
     }
 
     @Test
+    public void testNoHysteresisEndingAtPartitionBoundary() throws Exception {
+        executeVanilla(() -> {
+            String sql = "create table x as (" +
+                    "select" +
+                    " cast(x as int) i," +
+                    " rnd_symbol('msft','ibm', 'googl') sym," +
+                    " round(rnd_double(0)*100, 3) amt," +
+                    " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                    " rnd_boolean() b," +
+                    " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                    " rnd_double(2) d," +
+                    " rnd_float(2) e," +
+                    " rnd_short(10,1024) f," +
+                    " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                    " rnd_symbol(4,4,4,2) ik," +
+                    " rnd_long() j," +
+                    " timestamp_sequence(500000000000L,100000000L) ts," +
+                    " rnd_byte(2,50) l," +
+                    " rnd_bin(10, 20, 2) m," +
+                    " rnd_str(5,16,2) n," +
+                    " rnd_char() t" +
+                    " from long_sequence(500)" +
+                    "), index(sym) timestamp (ts) partition by DAY";
+            compiler.compile(sql, sqlExecutionContext);
+
+            // i=184 is the last entry in date 1970-01-06
+            sql = "create table y as (select * from x where i<=150) partition by DAY";
+            compiler.compile(sql, sqlExecutionContext);
+
+            TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where i<=150", sink);
+            TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
+            TestUtils.assertEquals(sink, sink2);
+
+            try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "y")) {
+                sql = "select * from x where i>150 and i<=184 order by f";
+                insertUncommitted(sql, writer);
+                writer.commit();
+                TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where i<=184", sink);
+                TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
+                TestUtils.assertEquals(sink, sink2);
+
+                sql = "select * from x where i>184 order by f";
+                insertUncommitted(sql, writer);
+                writer.commit();
+            }
+
+            TestUtils.printSql(compiler, sqlExecutionContext, "select * from x", sink);
+            TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
+            TestUtils.assertEquals(sink, sink2);
+        });
+    }
+
+    @Test
     public void testHysteresisWithinPartition() throws Exception {
         executeVanilla(() -> {
             String sql = "create table x as (" +
@@ -216,6 +270,7 @@ public class CommitHysteresisTest {
         });
     }
 
+    @Ignore
     @Test
     public void testHysteresisWithinPartitionWithRollback() throws Exception {
         executeVanilla(() -> {
@@ -338,6 +393,7 @@ public class CommitHysteresisTest {
         });
     }
 
+    @Ignore
     @Test
     public void testHysteresisStaggeringPartitionsWithRollback() throws Exception {
         executeVanilla(() -> {
@@ -466,6 +522,7 @@ public class CommitHysteresisTest {
         });
     }
 
+    @Ignore
     @Test
     public void testHysteresisEndingAtPartitionBoundaryWithRollback() throws Exception {
         executeVanilla(() -> {
@@ -594,6 +651,7 @@ public class CommitHysteresisTest {
         });
     }
 
+    @Ignore
     @Test
     public void testHysteresisEndingAtPartitionBoundaryPlus1WithRollback() throws Exception {
         executeVanilla(() -> {
@@ -721,6 +779,7 @@ public class CommitHysteresisTest {
         });
     }
 
+    @Ignore
     @Test
     public void testHysteresisStaggeringMultiplePartitionsWithRollback() throws Exception {
         executeVanilla(() -> {
@@ -847,6 +906,7 @@ public class CommitHysteresisTest {
         });
     }
 
+    @Ignore
     @Test
     public void testHysteresisOnInOrderCommitWithRollback() throws Exception {
         executeVanilla(() -> {
@@ -1018,7 +1078,6 @@ public class CommitHysteresisTest {
         });
     }
 
-    @Ignore
     @Test
     public void testContinousBatchedCommit() throws Exception {
         executeVanilla(() -> {
@@ -1153,7 +1212,7 @@ public class CommitHysteresisTest {
         Path.PATH.get();
         Path.PATH2.get();
 
-        CharSequence root = temp.newFolder("dbRoot").getAbsolutePath();
+        CharSequence root = temp.newFolder().getAbsolutePath();
         configuration = new DefaultCairoConfiguration(root) {
             @Override
             public boolean isOutOfOrderEnabled() {

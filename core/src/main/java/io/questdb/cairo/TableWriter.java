@@ -2501,7 +2501,7 @@ public class TableWriter implements Closeable {
             }
             transientRowCountBeforeOutOfOrder = 0;
         }
-        if (columns.getQuick(0).isClosed()) {
+        if (columns.getQuick(0).isClosed() || partitionTimestampHi < txFile.getMaxTimestamp()) {
             openPartition(txFile.getMaxTimestamp());
         }
         setAppendPosition(txFile.getTransientRowCount(), true);
