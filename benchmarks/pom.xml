@@ -184,4 +184,63 @@
         </pluginManagement>
     </build>
 
+    <profiles>
+        <profile>
+            <id>java8</id>
+            <properties>
+                <jdk.version>8</jdk.version>
+                <java.enforce.version>1.8</java.enforce.version>
+            </properties>
+            <activation>
+                <jdk>(,1.8]</jdk>
+            </activation>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-compiler-plugin</artifactId>
+                        <version>3.8.1</version>
+                        <configuration>
+                            <fork>true</fork>
+                            <source>8</source>
+                            <target>8</target>
+                            <testExcludes>
+                                <exclude>**/module-info.java</exclude>
+                            </testExcludes>
+                            <excludes>
+                                <exclude>**/module-info.java</exclude>
+                            </excludes>
+                        </configuration>
+                    </plugin>
+                    <plugin>
+                        <groupId>com.igormaznitsa</groupId>
+                        <artifactId>jcp</artifactId>
+                        <version>7.0.4</version>
+                        <executions>
+                            <!-- make preprocessing of sources -->
+                            <execution>
+                                <id>preprocess-sources</id>
+                                <goals>
+                                    <goal>preprocess</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                        <configuration>
+                            <vars>
+                                <jdk.version>${jdk.version}</jdk.version>
+                            </vars>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+            <dependencies>
+                <dependency>
+                    <groupId>org.jetbrains</groupId>
+                    <artifactId>annotations</artifactId>
+                    <version>16.0.2</version>
+                    <scope>provided</scope>
+                </dependency>
+            </dependencies>
+        </profile>
+    </profiles>
 </project>

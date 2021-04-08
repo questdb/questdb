@@ -118,7 +118,7 @@
                                     <version>3.0.0</version>
                                 </requireMavenVersion>
                                 <requireJavaVersion>
-                                    <version>11</version>
+                                    <version>${java.enforce.version}</version>
                                 </requireJavaVersion>
                             </rules>
                         </configuration>
@@ -168,28 +168,6 @@
                     <doUpdate>false</doUpdate>
                 </configuration>
             </plugin>
-            <plugin>
-                <groupId>com.igormaznitsa</groupId>
-                <artifactId>jcp</artifactId>
-                <version>7.0.4</version>
-                <executions>
-                    <!-- make preprocessing of sources -->
-                    <execution>
-                        <id>preprocess-sources</id>
-                        <goals>
-                            <goal>preprocess</goal>
-                        </goals>
-                    </execution>
-                </executions>
-                <configuration>
-                    <vars>
-                        <jdk.version>${jdk.version}</jdk.version>
-                    </vars>
-                    <excludeFolders>
-                        <folder>${basedir}/src/main/java/io/questdb/cairo</folder>
-                    </excludeFolders>
-                </configuration>
-            </plugin>
         </plugins>
     </build>
 
@@ -223,6 +201,11 @@
                                 </goals>
                             </execution>
                         </executions>
+                        <configuration>
+                            <sourceFileExcludes>
+                                <sourceFileExclude>**/module-info.java</sourceFileExclude>
+                            </sourceFileExcludes>
+                        </configuration>
                     </plugin>
                     <plugin>
                         <groupId>org.apache.maven.plugins</groupId>
@@ -514,6 +497,7 @@
             <id>java8</id>
             <properties>
                 <jdk.version>8</jdk.version>
+                <java.enforce.version>1.8</java.enforce.version>
             </properties>
             <activation>
                 <jdk>(,1.8]</jdk>
@@ -528,9 +512,36 @@
                             <fork>true</fork>
                             <source>8</source>
                             <target>8</target>
+                            <testExcludes>
+                                <exclude>**/module-info.java</exclude>
+                            </testExcludes>
                             <excludes>
                                 <exclude>**/module-info.java</exclude>
                             </excludes>
+                        </configuration>
+                    </plugin>
+                    <plugin>
+                        <groupId>com.igormaznitsa</groupId>
+                        <artifactId>jcp</artifactId>
+                        <version>7.0.4</version>
+                        <executions>
+                            <!-- make preprocessing of sources -->
+                            <execution>
+                                <id>preprocess-sources</id>
+                                <goals>
+                                    <goal>preprocess</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                        <configuration>
+                            <vars>
+                                <jdk.version>${jdk.version}</jdk.version>
+                            </vars>
+                            <excludeExtensions>
+                                <ext>MD</ext>
+                                <ext>md</ext>
+                                <ext>xml</ext>
+                            </excludeExtensions>
                         </configuration>
                     </plugin>
                 </plugins>
@@ -548,6 +559,7 @@
             <id>java11+</id>
             <properties>
                 <jdk.version>11</jdk.version>
+                <java.enforce.version>11</java.enforce.version>
             </properties>
             <activation>
                 <jdk>(1.8,)</jdk>
