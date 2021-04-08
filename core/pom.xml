@@ -81,20 +81,6 @@
         <plugins>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-compiler-plugin</artifactId>
-                <version>3.8.1</version>
-                <configuration>
-                    <compilerArgs>
-                        <arg>--add-exports</arg>
-                        <arg>java.base/jdk.internal.math=io.questdb</arg>
-                    </compilerArgs>
-                    <fork>true</fork>
-                    <source>${javac.target}</source>
-                    <target>${javac.target}</target>
-                </configuration>
-            </plugin>
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-jar-plugin</artifactId>
                 <version>3.0.1</version>
                 <executions>
@@ -180,6 +166,28 @@
                 <configuration>
                     <doCheck>false</doCheck>
                     <doUpdate>false</doUpdate>
+                </configuration>
+            </plugin>
+            <plugin>
+                <groupId>com.igormaznitsa</groupId>
+                <artifactId>jcp</artifactId>
+                <version>7.0.4</version>
+                <executions>
+                    <!-- make preprocessing of sources -->
+                    <execution>
+                        <id>preprocess-sources</id>
+                        <goals>
+                            <goal>preprocess</goal>
+                        </goals>
+                    </execution>
+                </executions>
+                <configuration>
+                    <vars>
+                        <jdk.version>${jdk.version}</jdk.version>
+                    </vars>
+                    <excludeFolders>
+                        <folder>${basedir}/src/main/java/io/questdb/cairo</folder>
+                    </excludeFolders>
                 </configuration>
             </plugin>
         </plugins>
@@ -502,6 +510,75 @@
 				</plugins>
 			</build>
 		</profile>
+        <profile>
+            <id>java8</id>
+            <properties>
+                <jdk.version>8</jdk.version>
+            </properties>
+            <activation>
+                <jdk>(,1.8]</jdk>
+            </activation>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-compiler-plugin</artifactId>
+                        <version>3.8.1</version>
+                        <configuration>
+                            <fork>true</fork>
+                            <source>8</source>
+                            <target>8</target>
+                            <excludes>
+                                <exclude>**/module-info.java</exclude>
+                            </excludes>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+            <dependencies>
+                <dependency>
+                    <groupId>org.jetbrains</groupId>
+                    <artifactId>annotations</artifactId>
+                    <version>16.0.2</version>
+                    <scope>provided</scope>
+                </dependency>
+            </dependencies>
+        </profile>
+        <profile>
+            <id>java11+</id>
+            <properties>
+                <jdk.version>11</jdk.version>
+            </properties>
+            <activation>
+                <jdk>(1.8,)</jdk>
+            </activation>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-compiler-plugin</artifactId>
+                        <version>3.8.1</version>
+                        <configuration>
+                                <compilerArgs>
+                                    <arg>--add-exports</arg>
+                                    <arg>java.base/jdk.internal.math=io.questdb</arg>
+                                </compilerArgs>
+                            <fork>true</fork>
+                            <source>${javac.target}</source>
+                            <target>${javac.target}</target>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+            <dependencies>
+                <dependency>
+                    <groupId>org.jetbrains</groupId>
+                    <artifactId>annotations</artifactId>
+                    <version>17.0.0</version>
+                    <scope>provided</scope>
+                </dependency>
+            </dependencies>
+        </profile>
     </profiles>
 
     <dependencies>
@@ -511,13 +588,6 @@
             <artifactId>junit</artifactId>
             <version>4.13.1</version>
             <scope>test</scope>
-        </dependency>
-
-        <dependency>
-            <groupId>org.jetbrains</groupId>
-            <artifactId>annotations</artifactId>
-            <version>17.0.0</version>
-            <scope>provided</scope>
         </dependency>
 
         <dependency>

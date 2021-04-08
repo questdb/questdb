@@ -25,15 +25,22 @@
 package io.questdb.std;
 
 import io.questdb.std.str.CharSink;
+//#if jdk.version==8
+//$import sun.misc.FDBigInteger;
+//#else
 import jdk.internal.math.FDBigInteger;
+//#endif
+
 
 import java.util.Arrays;
 
 public final class Numbers {
+    //#if jdk.version!=8
     static {
         Module currentModule = Numbers.class.getModule();
         Unsafe.addExports(Unsafe.JAVA_BASE_MODULE, currentModule, "jdk.internal.math");
     }
+    //#endif
 
     public static final int INT_NaN = Integer.MIN_VALUE;
     public static final long LONG_NaN = Long.MIN_VALUE;
