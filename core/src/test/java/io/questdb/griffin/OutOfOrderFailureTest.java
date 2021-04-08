@@ -2367,9 +2367,7 @@ public class OutOfOrderFailureTest extends AbstractOutOfOrderTest {
                     return true;
                 }
             };
-
-            OutOfOrderUtils.initBuf(1);
-            execute0(runnable, configuration);
+            execute1(null, runnable, configuration);
         });
     }
 }

@@ -433,7 +433,7 @@ JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_rmdir
     return FALSE;
 }
 
-#define UTF8_MAX_PATH MAX_PATH * 4
+#define UTF8_MAX_PATH (MAX_PATH * 4)
 
 typedef struct {
     WIN32_FIND_DATAW *find_data;
@@ -447,7 +447,7 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_findFirst
     char path[strlen((const char *) lpszName) + 32];
     sprintf(path, "%s\\*.*", (char *) lpszName);
 
-    size_t len = MultiByteToWideChar(CP_UTF8, 0, path, -1, NULL, 0);
+    int len = MultiByteToWideChar(CP_UTF8, 0, path, -1, NULL, 0);
     if (len > 0) {
         wchar_t buf[len];
         MultiByteToWideChar(CP_UTF8, 0, path, -1, buf, len);

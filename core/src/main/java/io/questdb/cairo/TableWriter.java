@@ -123,7 +123,6 @@ public class TableWriter implements Closeable {
     private final OutOfOrderSortMethod oooSortFixColumnRef = this::oooSortFixColumn;
     private final SOUnboundedCountDownLatch oooLatch = new SOUnboundedCountDownLatch();
     private final AtomicLong oooUpdRemaining = new AtomicLong();
-    private final FindVisitor removePartitionDirsCreatedByOOOVisitor = this::removePartitionDirsCreatedByOOO0;
     private final AtomicInteger oooErrorCount = new AtomicInteger();
     private final MappedReadWriteMemory todoMem = new PagedMappedReadWriteMemory();
     private final TxWriter txFile;
@@ -2028,7 +2027,9 @@ public class TableWriter implements Closeable {
 
     private void o3ProcessPartitionRemoveCandidates() {
         try {
-            if (TxnScoreboard.isTxnUnused(txFile.getTxn() - 1, txnScoreboard)) {
+            final long readerTxn = TxnScoreboard.getMin(txnScoreboard);
+            final long readerTxnCount = TxnScoreboard.getCount(txnScoreboard, readerTxn);
+            if (TxnScoreboard.isTxnUnused(txFile.getTxn() - 1, readerTxn, readerTxnCount, txnScoreboard)) {
                 for (int i = 0, n = o3PartitionRemoveCandidates.size(); i < n; i += 2) {
                     final long timestamp = o3PartitionRemoveCandidates.getQuick(i);
                     final long txn = o3PartitionRemoveCandidates.getQuick(i + 1);
@@ -2042,7 +2043,11 @@ public class TableWriter implements Closeable {
                         TableUtils.txnPartitionConditionally(other, txn);
                         other.$$dir();
                         if (ff.rmdir(other)) {
-                            LOG.info().$("purged [path=").$(other).$(']').$();
+                            LOG.info().$(
+                                    "purged [path=").$(other)
+                                    .$(", readerTxn=").$(readerTxn)
+                                    .$(", readerTxnCount=").$(readerTxnCount)
+                                    .$(']').$();
                         } else {
                             o3QueuePartitionForPurge(timestamp, txn);
                         }
@@ -2077,9 +2082,19 @@ public class TableWriter implements Closeable {
                     txn
             );
             seq.done(cursor);
-            LOG.info().$("queued to purge [errno=").$(ff.errno()).$(", path=").$(other).$(']').$();
+            LOG.info()
+                    .$("queued to purge [errno=").$(ff.errno())
+                    .$(", table=").$(name)
+                    .$(", ts=").$ts(timestamp)
+                    .$(", txn=").$(txn)
+                    .$(']').$();
         } else {
-            LOG.info().$("could not purge [errno=").$(ff.errno()).$(", path=").$(other).$(']').$();
+            LOG.error()
+                    .$("could not purge [errno=").$(ff.errno())
+                    .$(", table=").$(name)
+                    .$(", ts=").$ts(timestamp)
+                    .$(", txn=").$(txn)
+                    .$(']').$();
         }
     }
 
@@ -2928,7 +2943,6 @@ public class TableWriter implements Closeable {
     void purgeUnusedPartitions() {
         if (partitionBy != PartitionBy.NONE) {
             removeNonAttachedPartitions();
-            removePartitionDirsCreatedByOOO();
         }
     }
 
@@ -3142,30 +3156,6 @@ public class TableWriter implements Closeable {
         nativeLPSZ.of(name);
         if (IGNORED_FILES.excludes(nativeLPSZ) && type == Files.DT_DIR && !ff.rmdir(path)) {
             LOG.info().$("could not remove [path=").$(path).$(", errno=").$(ff.errno()).$(']').$();
-        }
-    }
-
-    private void removePartitionDirsCreatedByOOO() {
-        LOG.debug().$("purging OOO artefacts [path=").$(path.$()).$(']').$();
-        try {
-            ff.iterateDir(path.$(), removePartitionDirsCreatedByOOOVisitor);
-        } finally {
-            path.trimTo(rootLen);
-        }
-    }
-
-    private void removePartitionDirsCreatedByOOO0(long pName, int type) {
-        path.trimTo(rootLen);
-        path.concat(pName).$();
-        nativeLPSZ.of(pName);
-        if (!isDots(nativeLPSZ) && type == Files.DT_DIR) {
-            if (Chars.contains(nativeLPSZ, ".")) {
-                if (ff.rmdir(path)) {
-                    LOG.info().$("removing partition dir: ").$(path).$();
-                } else {
-                    LOG.error().$("cannot remove: ").$(path).$(" [errno=").$(ff.errno()).$(']').$();
-                }
-            }
         }
     }
 

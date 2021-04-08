@@ -37,43 +37,30 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.tasks.O3PurgeDiscoveryTask;
 import io.questdb.tasks.O3PurgeTask;
+import org.jetbrains.annotations.Nullable;
 
 public class O3PurgeDiscoveryJob extends AbstractQueueConsumerJob<O3PurgeDiscoveryTask> {
 
     private final static Log LOG = LogFactory.getLog(O3PurgeDiscoveryJob.class);
     private final CairoConfiguration configuration;
-    private final MutableCharSink sink = new StringSink();
-    private final NativeLPSZ nativeLPSZ = new NativeLPSZ();
-    private final LongList txnList = new LongList();
+    private final MutableCharSink[] sink;
+    private final NativeLPSZ[] nativeLPSZ;
+    private final LongList[] txnList;
     private final RingQueue<O3PurgeTask> purgeQueue;
     private final Sequence purgePubSeq;
 
-    public O3PurgeDiscoveryJob(MessageBus messageBus) {
+    public O3PurgeDiscoveryJob(MessageBus messageBus, int workerCount) {
         super(messageBus.getO3PurgeDiscoveryQueue(), messageBus.getO3PurgeDiscoverySubSeq());
         this.configuration = messageBus.getConfiguration();
         this.purgeQueue = messageBus.getO3PurgeQueue();
         this.purgePubSeq = messageBus.getO3PurgePubSeq();
-    }
-
-    @Override
-    protected boolean doRun(int workerId, long cursor) {
-        final O3PurgeDiscoveryTask task = queue.get(cursor);
-        try {
-            return discoverPartitions(
-                    configuration.getFilesFacade(),
-                    sink,
-                    nativeLPSZ,
-                    txnList,
-                    purgeQueue,
-                    purgePubSeq,
-                    configuration.getRoot(),
-                    task.getTableName(),
-                    task.getPartitionBy(),
-                    task.getTimestamp(),
-                    task.getTxnScoreboard()
-            );
-        } finally {
-            subSeq.done(cursor);
+        this.sink = new MutableCharSink[workerCount];
+        this.nativeLPSZ = new NativeLPSZ[workerCount];
+        this.txnList = new LongList[workerCount];
+        for (int i = 0; i < workerCount; i++) {
+            sink[i] = new StringSink();
+            nativeLPSZ[i] = new NativeLPSZ();
+            txnList[i] = new LongList();
         }
     }
 
@@ -83,13 +70,16 @@ public class O3PurgeDiscoveryJob extends AbstractQueueConsumerJob<O3PurgeDiscove
             NativeLPSZ nativeLPSZ,
             LongList txnList,
             RingQueue<O3PurgeTask> purgeQueue,
-            Sequence purgePubSeq,
+            @Nullable Sequence purgePubSeq,
             CharSequence root,
             CharSequence tableName,
             int partitionBy,
             long partitionTimestamp,
             long txnScoreboard
     ) {
+        LOG.info().$("processing [table=").$(tableName)
+                .$(", ts=").$ts(partitionTimestamp)
+                .I$();
         try {
             Path path = Path.getThreadLocal(root);
             path.concat(tableName).$$dir();
@@ -116,10 +106,9 @@ public class O3PurgeDiscoveryJob extends AbstractQueueConsumerJob<O3PurgeDiscove
                 for (int i = 0, n = txnList.size() - 1; i < n; i++) {
                     final long nameTxnToRemove = txnList.getQuick(i);
                     final long minTxnToExpect = txnList.getQuick(i + 1);
-                    path.of(root).concat(tableName);
                     if (!O3PurgeJob.purgePartitionDir(
                             ff,
-                            path,
+                            path.of(root).concat(tableName),
                             partitionBy,
                             partitionTimestamp,
                             txnScoreboard,
@@ -127,26 +116,42 @@ public class O3PurgeDiscoveryJob extends AbstractQueueConsumerJob<O3PurgeDiscove
                             minTxnToExpect
                     )) {
                         // queue the job
-                        long cursor = purgePubSeq.next();
-                        if (cursor > -1) {
-                            O3PurgeTask task = purgeQueue.get(cursor);
-                            task.of(
-                                    tableName,
-                                    partitionBy,
-                                    TxnScoreboard.newRef(txnScoreboard),
-                                    partitionTimestamp,
-                                    nameTxnToRemove,
-                                    minTxnToExpect
-                            );
-                            purgePubSeq.done(cursor);
+                        if (purgePubSeq != null) {
+                            long cursor = purgePubSeq.next();
+                            if (cursor > -1) {
+                                LOG.error()
+                                        .$("queuing [table=").$(tableName)
+                                        .$(", ts=").$ts(partitionTimestamp)
+                                        .$(", txn=").$(nameTxnToRemove)
+                                        .$(']').$();
+                                O3PurgeTask task = purgeQueue.get(cursor);
+                                task.of(
+                                        tableName,
+                                        partitionBy,
+                                        TxnScoreboard.newRef(txnScoreboard),
+                                        partitionTimestamp,
+                                        nameTxnToRemove,
+                                        minTxnToExpect
+                                );
+                                purgePubSeq.done(cursor);
+                            } else {
+                                LOG.error()
+                                        .$("purge queue is full [table=").$(tableName)
+                                        .$(", ts=").$ts(partitionTimestamp)
+                                        .$(", txn=").$(nameTxnToRemove)
+                                        .$(']').$();
+                            }
                         } else {
-                            LOG.error().$("purge queue is full [table=").$(tableName).$(", ts=").$ts(partitionTimestamp).$(']').$();
+                            LOG.error()
+                                    .$("queuing [table=").$(tableName)
+                                    .$(", ts=").$ts(partitionTimestamp)
+                                    .$(", txn=").$(nameTxnToRemove)
+                                    .$(']').$();
                         }
                     }
                 }
                 return true;
             }
-
             return false;
         } finally {
             TxnScoreboard.close(txnScoreboard);
@@ -176,6 +181,28 @@ public class O3PurgeDiscoveryJob extends AbstractQueueConsumerJob<O3PurgeDiscove
                     }
                 }
             }
+        }
+    }
+
+    @Override
+    protected boolean doRun(int workerId, long cursor) {
+        final O3PurgeDiscoveryTask task = queue.get(cursor);
+        try {
+            return discoverPartitions(
+                    configuration.getFilesFacade(),
+                    sink[workerId],
+                    nativeLPSZ[workerId],
+                    txnList[workerId],
+                    purgeQueue,
+                    purgePubSeq,
+                    configuration.getRoot(),
+                    task.getTableName(),
+                    task.getPartitionBy(),
+                    task.getTimestamp(),
+                    task.getTxnScoreboard()
+            );
+        } finally {
+            subSeq.done(cursor);
         }
     }
 }

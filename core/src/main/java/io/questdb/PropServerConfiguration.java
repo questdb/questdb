@@ -187,11 +187,13 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final BuildInformation buildInformation;
     private final int columnIndexerQueueCapacity;
     private final int vectorAggregateQueueCapacity;
-    private final int outOfOrderSortQueueCapacity;
-    private final int outOfOrderPartitionQueueCapacity;
-    private final int outOfOrderOpenColumnQueueCapacity;
-    private final int outOfOrderCopyQueueCapacity;
-    private final int outOfOrderUpdPartitionSizeQueueCapacity;
+    private final int o3SortQueueCapacity;
+    private final int o3PartitionQueueCapacity;
+    private final int o3OpenColumnQueueCapacity;
+    private final int o3CopyQueueCapacity;
+    private final int o3UpdPartitionSizeQueueCapacity;
+    private final int o3PurgeDiscoveryQueueCapacity;
+    private final int o3PurgeQueueCapacity;
     private final long instanceHashLo;
     private final long instanceHashHi;
     private boolean httpAllowDeflateBeforeSend;
@@ -627,11 +629,13 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.tableBlockWriterQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.table.block.writer.queue.capacity", 4096));
             this.columnIndexerQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.column.indexer.queue.capacity", 1024));
             this.vectorAggregateQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.vector.aggregate.queue.capacity", 1024));
-            this.outOfOrderSortQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.ooo.sort.queue.capacity", 1024));
-            this.outOfOrderPartitionQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.ooo.partition.queue.capacity", 1024));
-            this.outOfOrderOpenColumnQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.ooo.open.column.queue.capacity", 1024));
-            this.outOfOrderCopyQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.ooo.copy.queue.capacity", 1024));
-            this.outOfOrderUpdPartitionSizeQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.ooo.upd.partition.size.queue.capacity", 1024));
+            this.o3SortQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.o3.sort.queue.capacity", 1024));
+            this.o3PartitionQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.o3.partition.queue.capacity", 1024));
+            this.o3OpenColumnQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.o3.open.column.queue.capacity", 1024));
+            this.o3CopyQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.o3.copy.queue.capacity", 1024));
+            this.o3UpdPartitionSizeQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.o3.upd.partition.size.queue.capacity", 1024));
+            this.o3PurgeDiscoveryQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.o3.purge.discovery.queue.capacity", 1024));
+            this.o3PurgeQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.o3.purge.queue.capacity", 1024));
             this.sqlAnalyticStorePageSize = Numbers.ceilPow2(getIntSize(properties, env, "cairo.sql.analytic.store.page.size", 1024 * 1024));
             this.sqlAnalyticStoreMaxPages = Numbers.ceilPow2(getIntSize(properties, env, "cairo.sql.analytic.store.max.pages", Integer.MAX_VALUE));
             this.sqlAnalyticRowIdPageSize = Numbers.ceilPow2(getIntSize(properties, env, "cairo.sql.analytic.rowid.page.size", 512 * 1024));
@@ -1391,6 +1395,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getO3PurgeDiscoveryQueueCapacity() {
+            return o3PurgeDiscoveryQueueCapacity;
+        }
+
+        @Override
+        public int getO3PurgeQueueCapacity() {
+            return o3PurgeQueueCapacity;
+        }
+
+        @Override
         public CharSequence getDefaultMapType() {
             return defaultMapType;
         }
@@ -1777,28 +1791,28 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getOutOfOrderSortQueueCapacity() {
-            return outOfOrderSortQueueCapacity;
+        public int getO3SortQueueCapacity() {
+            return o3SortQueueCapacity;
         }
 
         @Override
-        public int getOutOfOrderPartitionQueueCapacity() {
-            return outOfOrderPartitionQueueCapacity;
+        public int getO3PartitionQueueCapacity() {
+            return o3PartitionQueueCapacity;
         }
 
         @Override
-        public int getOutOfOrderOpenColumnQueueCapacity() {
-            return outOfOrderOpenColumnQueueCapacity;
+        public int getO3OpenColumnQueueCapacity() {
+            return o3OpenColumnQueueCapacity;
         }
 
         @Override
-        public int getOutOfOrderCopyQueueCapacity() {
-            return outOfOrderCopyQueueCapacity;
+        public int getO3CopyQueueCapacity() {
+            return o3CopyQueueCapacity;
         }
 
         @Override
-        public int getOutOfOrderUpdPartitionSizeQueueCapacity() {
-            return outOfOrderUpdPartitionSizeQueueCapacity;
+        public int getO3UpdPartitionSizeQueueCapacity() {
+            return o3UpdPartitionSizeQueueCapacity;
         }
 
         @Override

@@ -52,16 +52,21 @@ public class O3PurgeJob extends AbstractQueueConsumerJob<O3PurgeTask> {
             long nameTxnToRemove,
             long minTxnToExpect
     ) {
-        if (TxnScoreboard.isTxnUnused(minTxnToExpect, txnScoreboard)) {
+        final long readerTxn = TxnScoreboard.getMin(txnScoreboard);
+        final long readerTxnCount = TxnScoreboard.getCount(txnScoreboard, readerTxn);
+        if (TxnScoreboard.isTxnUnused(minTxnToExpect, readerTxn, readerTxnCount, txnScoreboard)) {
             TableUtils.setPathForPartition(path, partitionBy, partitionTimestamp, false);
             TableUtils.txnPartitionConditionally(path, nameTxnToRemove);
             path.$$dir();
             if (ff.rmdir(path)) {
-                LOG.info().$("purged [path=").$(path).$(']').$();
+                LOG.info().
+                        $("purged [path=").$(path)
+                        .$(", readerTxn=").$(readerTxn)
+                        .$(", readerTxnCount=").$(readerTxnCount)
+                        .$(']').$();
                 return true;
             }
         }
-        LOG.info().$("queuing [path=").$(path).$(']').$();
         return false;
     }
 
@@ -69,7 +74,7 @@ public class O3PurgeJob extends AbstractQueueConsumerJob<O3PurgeTask> {
     protected boolean doRun(int workerId, long cursor) {
         final O3PurgeTask task = queue.get(cursor);
         try {
-            purgePartitionDir(
+            if (purgePartitionDir(
                     configuration.getFilesFacade(),
                     Path.getThreadLocal(configuration.getRoot()).concat(task.getTableName()),
                     task.getPartitionBy(),
@@ -77,9 +82,18 @@ public class O3PurgeJob extends AbstractQueueConsumerJob<O3PurgeTask> {
                     task.getTxnScoreboard(),
                     task.getNameTxnToRemove(),
                     task.getMinTxnToExpect()
-            );
-            return true;
+            )) {
+                return true;
+            } else {
+                LOG.info()
+                        .$("could not purge, re-queue? [table=").$(task.getTableName())
+                        .$(", ts=").$ts(task.getTimestamp())
+                        .$(", txn=").$(task.getNameTxnToRemove())
+                        .$(']').$();
+                return false;
+            }
         } finally {
+            TxnScoreboard.close(task.getTxnScoreboard());
             subSeq.done(cursor);
         }
     }

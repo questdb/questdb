@@ -229,13 +229,24 @@ JNIEXPORT jlong JNICALL Java_io_questdb_cairo_TxnScoreboard_close0
         free(pTxnLocal);
         return 0;
     }
-    return refs_remaining;
+    return jlong(refs_remaining);
 }
 
 JNIEXPORT jlong JNICALL Java_io_questdb_cairo_TxnScoreboard_newRef0
         (JNIEnv *e, jclass cl, jlong p_local) {
     auto *pTxnLocal = reinterpret_cast<txn_local_t *>(p_local);
-    atomic_next(&(pTxnLocal->ref_counter), inc);
+    uint64_t *val = &(pTxnLocal->ref_counter);
+    do {
+        uint64_t current = __atomic_load_n(val, __ATOMIC_RELAXED);
+        if (current == 0) {
+            return 0;
+        }
+        uint64_t n = current + 1;
+        if (__sync_val_compare_and_swap(val, current, n) == current) {
+            break;
+        }
+    } while (true);
+
     return p_local;
 }
 

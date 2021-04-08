@@ -90,37 +90,37 @@ public class MessageBusImpl implements MessageBus {
         this.tableBlockWriterSubSeq = new MCSequence(tableBlockWriterQueue.getCapacity());
         tableBlockWriterPubSeq.then(tableBlockWriterSubSeq).then(tableBlockWriterPubSeq);
 
-        this.outOfOrderSortQueue = new RingQueue<>(OutOfOrderSortTask::new, configuration.getOutOfOrderSortQueueCapacity());
+        this.outOfOrderSortQueue = new RingQueue<>(OutOfOrderSortTask::new, configuration.getO3SortQueueCapacity());
         this.outOfOrderSortPubSeq = new MPSequence(this.outOfOrderSortQueue.getCapacity());
         this.outOfOrderSortSubSeq = new MCSequence(this.outOfOrderSortQueue.getCapacity());
         outOfOrderSortPubSeq.then(outOfOrderSortSubSeq).then(outOfOrderSortPubSeq);
 
-        this.outOfOrderPartitionQueue = new RingQueue<>(OutOfOrderPartitionTask::new, configuration.getOutOfOrderPartitionQueueCapacity());
+        this.outOfOrderPartitionQueue = new RingQueue<>(OutOfOrderPartitionTask::new, configuration.getO3PartitionQueueCapacity());
         this.outOfOrderPartitionPubSeq = new MPSequence(this.outOfOrderPartitionQueue.getCapacity());
         this.outOfOrderPartitionSubSeq = new MCSequence(this.outOfOrderPartitionQueue.getCapacity());
         outOfOrderPartitionPubSeq.then(outOfOrderPartitionSubSeq).then(outOfOrderPartitionPubSeq);
 
-        this.outOfOrderOpenColumnQueue = new RingQueue<>(OutOfOrderOpenColumnTask::new, configuration.getOutOfOrderOpenColumnQueueCapacity());
+        this.outOfOrderOpenColumnQueue = new RingQueue<>(OutOfOrderOpenColumnTask::new, configuration.getO3OpenColumnQueueCapacity());
         this.outOfOrderOpenColumnPubSeq = new MPSequence(this.outOfOrderOpenColumnQueue.getCapacity());
         this.outOfOrderOpenColumnSubSeq = new MCSequence(this.outOfOrderOpenColumnQueue.getCapacity());
         outOfOrderOpenColumnPubSeq.then(outOfOrderOpenColumnSubSeq).then(outOfOrderOpenColumnPubSeq);
 
-        this.outOfOrderCopyQueue = new RingQueue<>(OutOfOrderCopyTask::new, configuration.getOutOfOrderCopyQueueCapacity());
+        this.outOfOrderCopyQueue = new RingQueue<>(OutOfOrderCopyTask::new, configuration.getO3CopyQueueCapacity());
         this.outOfOrderCopyPubSeq = new MPSequence(this.outOfOrderCopyQueue.getCapacity());
         this.outOfOrderCopySubSeq = new MCSequence(this.outOfOrderCopyQueue.getCapacity());
         outOfOrderCopyPubSeq.then(outOfOrderCopySubSeq).then(outOfOrderCopyPubSeq);
 
-        this.outOfOrderUpdPartitionSizeQueue = new RingQueue<>(OutOfOrderUpdPartitionSizeTask::new, configuration.getOutOfOrderUpdPartitionSizeQueueCapacity());
+        this.outOfOrderUpdPartitionSizeQueue = new RingQueue<>(OutOfOrderUpdPartitionSizeTask::new, configuration.getO3UpdPartitionSizeQueueCapacity());
         this.outOfOrderUpdPartitionSizePubSeq = new MPSequence(this.outOfOrderUpdPartitionSizeQueue.getCapacity());
         this.outOfOrderUpdPartitionSizeSubSeq = new SCSequence();
         outOfOrderUpdPartitionSizePubSeq.then(outOfOrderUpdPartitionSizeSubSeq).then(outOfOrderUpdPartitionSizePubSeq);
 
-        this.o3PurgeDiscoveryQueue = new RingQueue<>(O3PurgeDiscoveryTask::new, 128);
+        this.o3PurgeDiscoveryQueue = new RingQueue<>(O3PurgeDiscoveryTask::new, configuration.getO3PurgeDiscoveryQueueCapacity());
         this.o3PurgeDiscoveryPubSeq = new MPSequence(this.o3PurgeDiscoveryQueue.getCapacity());
         this.o3PurgeDiscoverySubSeq = new MCSequence(this.o3PurgeDiscoveryQueue.getCapacity());
         this.o3PurgeDiscoveryPubSeq.then(this.o3PurgeDiscoverySubSeq).then(o3PurgeDiscoveryPubSeq);
 
-        this.o3PurgeQueue = new RingQueue<>(O3PurgeTask::new, 128);
+        this.o3PurgeQueue = new RingQueue<>(O3PurgeTask::new, configuration.getO3PurgeQueueCapacity());
         this.o3PurgePubSeq = new MPSequence(this.o3PurgeQueue.getCapacity());
         this.o3PurgeSubSeq = new MCSequence(this.o3PurgeQueue.getCapacity());
         this.o3PurgePubSeq.then(this.o3PurgeSubSeq).then(this.o3PurgePubSeq);

@@ -38,6 +38,7 @@ import io.questdb.std.Rnd;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.Before;
 
@@ -236,23 +237,7 @@ public class AbstractOutOfOrderTest extends AbstractCairoTest {
                     }
                 };
 
-                try {
-                    execute0((engine, compiler, sqlExecutionContext) -> {
-                        pool.assignCleaner(Path.CLEANER);
-                        pool.assign(new OutOfOrderSortJob(engine.getMessageBus()));
-                        pool.assign(new OutOfOrderPartitionJob(engine.getMessageBus()));
-                        pool.assign(new OutOfOrderOpenColumnJob(engine.getMessageBus()));
-                        pool.assign(new OutOfOrderCopyJob(engine.getMessageBus()));
-                        pool.assign(new O3PurgeDiscoveryJob(engine.getMessageBus()));
-                        pool.assign(new O3PurgeJob(engine.getMessageBus()));
-
-                        OutOfOrderUtils.initBuf(pool.getWorkerCount() + 1);
-                        pool.start(LOG);
-                        runnable.run(engine, compiler, sqlExecutionContext);
-                    }, configuration);
-                } finally {
-                    pool.halt();
-                }
+                execute1(pool, runnable, configuration);
             } else {
                 // we need to create entire engine
                 final CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
@@ -262,22 +247,32 @@ public class AbstractOutOfOrderTest extends AbstractCairoTest {
                     }
 
                     @Override
-                    public int getOutOfOrderSortQueueCapacity() {
+                    public int getO3SortQueueCapacity() {
                         return 0;
                     }
 
                     @Override
-                    public int getOutOfOrderPartitionQueueCapacity() {
+                    public int getO3PartitionQueueCapacity() {
                         return 0;
                     }
 
                     @Override
-                    public int getOutOfOrderOpenColumnQueueCapacity() {
+                    public int getO3OpenColumnQueueCapacity() {
                         return 0;
                     }
 
                     @Override
-                    public int getOutOfOrderCopyQueueCapacity() {
+                    public int getO3CopyQueueCapacity() {
+                        return 0;
+                    }
+
+                    @Override
+                    public int getO3PurgeDiscoveryQueueCapacity() {
+                        return 0;
+                    }
+
+                    @Override
+                    public int getO3PurgeQueueCapacity() {
                         return 0;
                     }
 
@@ -286,9 +281,7 @@ public class AbstractOutOfOrderTest extends AbstractCairoTest {
                         return true;
                     }
                 };
-
-                OutOfOrderUtils.initBuf();
-                execute0(runnable, configuration);
+                execute1(null, runnable, configuration);
             }
         });
     }
@@ -307,10 +300,41 @@ public class AbstractOutOfOrderTest extends AbstractCairoTest {
         }
     }
 
+    protected static void execute1(@Nullable WorkerPool pool, OutOfOrderCode runnable, CairoConfiguration configuration) throws Exception {
+        try (
+                final CairoEngine engine = new CairoEngine(configuration);
+                final SqlCompiler compiler = new SqlCompiler(engine);
+                final SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
+        ) {
+            try (O3PurgeCleaner ignored = new O3PurgeCleaner(engine.getMessageBus())) {
+                if (pool != null) {
+                    pool.assignCleaner(Path.CLEANER);
+                    pool.assign(new OutOfOrderSortJob(engine.getMessageBus()));
+                    pool.assign(new OutOfOrderPartitionJob(engine.getMessageBus()));
+                    pool.assign(new OutOfOrderOpenColumnJob(engine.getMessageBus()));
+                    pool.assign(new OutOfOrderCopyJob(engine.getMessageBus()));
+                    pool.assign(new O3PurgeDiscoveryJob(engine.getMessageBus(), pool.getWorkerCount()));
+                    pool.assign(new O3PurgeJob(engine.getMessageBus()));
+
+                    OutOfOrderUtils.initBuf(pool.getWorkerCount() + 1);
+                    pool.start(LOG);
+                } else {
+                    OutOfOrderUtils.initBuf();
+                }
+
+                runnable.run(engine, compiler, sqlExecutionContext);
+                Assert.assertEquals(0, engine.getBusyWriterCount());
+                Assert.assertEquals(0, engine.getBusyReaderCount());
+            } finally {
+                if (pool != null) {
+                    pool.halt();
+                }
+                OutOfOrderUtils.freeBuf();
+            }
+        }
+    }
+
     protected static void executeVanilla(OutOfOrderCode code) throws Exception {
-        executeVanilla(() -> {
-            OutOfOrderUtils.initBuf();
-            execute0(code, configuration);
-        });
+        executeVanilla(() -> execute1(null, code, configuration));
     }
 }

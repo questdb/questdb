@@ -51,7 +51,7 @@ import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.security.PrivateKey;
 import java.util.Random;
-import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.locks.LockSupport;
 
 public class LineTcpServerTest extends AbstractCairoTest {
     private final static Log LOG = LogFactory.getLog(LineTcpServerTest.class);
@@ -59,7 +59,6 @@ public class LineTcpServerTest extends AbstractCairoTest {
     private final static PrivateKey AUTH_PRIVATE_KEY1 = AuthDb.importPrivateKey("5UjEMuA0Pj5pjK8a-fa24dyIf-Es5mYny3oE_Wmus48");
     private final static String AUTH_KEY_ID2 = "testUser2";
     private final static PrivateKey AUTH_PRIVATE_KEY2 = AuthDb.importPrivateKey("lwJi3TSb4G6UcHxFJmPhOTWa4BLwJOOiK76wT6Uk7pI");
-    private static final AtomicInteger N_TEST = new AtomicInteger();
     private static final long TEST_TIMEOUT_IN_MS = 120000;
     private final WorkerPool sharedWorkerPool = new WorkerPool(new WorkerPoolConfiguration() {
         private final int[] affinity = {-1, -1};
@@ -142,6 +141,7 @@ public class LineTcpServerTest extends AbstractCairoTest {
                 return null;
             }
             URL u = getClass().getResource("authDb.txt");
+            assert u != null;
             return u.getFile();
         }
 
@@ -424,7 +424,7 @@ public class LineTcpServerTest extends AbstractCairoTest {
                         sender.field("temp", temp);
                         tsSink.clear();
                         TimestampFormatUtils.appendDateTimeUSec(tsSink, ts);
-                        sb.append(tsSink.toString());
+                        sb.append(tsSink);
                         sb.append('\n');
                         sender.$(ts * 1000);
                         sender.flush();
@@ -446,14 +446,19 @@ public class LineTcpServerTest extends AbstractCairoTest {
                             LOG.error().$("after ").$(timeTakenMs).$("ms tables only had ").$(nRowsWritten).$(" rows out of ").$(nRows).$();
                             break;
                         }
-
                         Thread.yield();
                         for (int n = 0; n < tables.length; n++) {
                             String tableName = tables[n];
-                            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
-                                TableReaderRecordCursor cursor = reader.getCursor();
-                                while (cursor.hasNext()) {
-                                    nRowsWritten++;
+                            while (true) {
+                                try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+                                    TableReaderRecordCursor cursor = reader.getCursor();
+                                    while (cursor.hasNext()) {
+                                        nRowsWritten++;
+                                    }
+                                    break;
+                                } catch (EntryLockedException ex) {
+                                    LOG.info().$("retrying read for ").$(tableName).$();
+                                    LockSupport.parkNanos(1);
                                 }
                             }
                         }

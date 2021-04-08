@@ -24,12 +24,19 @@
 
 package io.questdb.cairo;
 
+import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Os;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.BeforeClass;
+import org.junit.Ignore;
 import org.junit.Test;
+
+import java.util.concurrent.BrokenBarrierException;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.atomic.AtomicLong;
 
 import static io.questdb.cairo.TxnScoreboard.*;
 
@@ -104,6 +111,41 @@ public class TxnScoreboardTest {
             final long p = TxnScoreboard.create(shmPath, 4, 5, name);
             Assert.assertEquals(0, p);
         }
+    }
+
+    @Test
+    @Ignore
+    public void testNewRefBetweenFastOpenClose() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            AtomicLong ref = new AtomicLong();
+            try (Path path = new Path()) {
+                for (int i = 0; i < 100; i++) {
+                    ref.set(0);
+                    CyclicBarrier barrier = new CyclicBarrier(2);
+                    SOCountDownLatch haltLatch = new SOCountDownLatch(1);
+                    new Thread(() -> {
+                        try {
+                            barrier.await();
+                            long p = TxnScoreboard.create(path, 0, 0, "test");
+                            ref.set(p);
+                            long val = TxnScoreboard.newRef(p);
+                            if (val != 0) {
+                                TxnScoreboard.close(val);
+                            }
+                            haltLatch.countDown();
+                        } catch (InterruptedException | BrokenBarrierException e) {
+                            e.printStackTrace();
+                        }
+                    }).start();
+
+                    barrier.await();
+                    long val;
+                    while ((val = ref.get()) == 0) ;
+                    TxnScoreboard.close(val);
+                    haltLatch.await();
+                }
+            }
+        });
     }
 
     @Test
