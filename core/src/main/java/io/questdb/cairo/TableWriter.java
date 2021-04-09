@@ -4844,9 +4844,15 @@ public class TableWriter implements Closeable {
                 l = TimestampFormatUtils.parseUTCTimestamp(value);
             } catch (NumericException e) {
                 try {
+                    // try timestamp mills
                     l = TimestampFormatUtils.parseTimestamp(value);
                 } catch (NumericException numericException) {
-                    throw CairoException.instance(0).put("could not convert to timestamp [value=").put(value).put(']');
+                    try {
+                        // try all known timestamps
+                        l = TimestampFormatUtils.SEC_UTC_FORMAT.parse(value, 0, value.length(), TimestampFormatUtils.enLocale);
+                    } catch (NumericException numericException2) {
+                        throw CairoException.instance(0).put("could not convert to timestamp [value=").put(value).put(']');
+                    }
                 }
             }
             putTimestamp(index, l);

@@ -1701,8 +1701,11 @@ public class SqlCompiler implements Closeable {
             if (writerTimestampIndex > -1 && cursorTimestampIndex == -1) {
                 if (cursorColumnCount <= writerTimestampIndex) {
                     throw SqlException.$(name.position, "select clause must provide timestamp column");
-                } else if (cursorMetadata.getColumnType(writerTimestampIndex) != ColumnType.TIMESTAMP) {
-                    throw SqlException.$(name.position, "expected timestamp column but type is ").put(ColumnType.nameOf(cursorMetadata.getColumnType(writerTimestampIndex)));
+                } else {
+                    int columnType = cursorMetadata.getColumnType(writerTimestampIndex);
+                    if (columnType != ColumnType.TIMESTAMP && columnType != ColumnType.STRING) {
+                        throw SqlException.$(name.position, "expected timestamp column but type is ").put(ColumnType.nameOf(columnType));
+                    }
                 }
             }
 

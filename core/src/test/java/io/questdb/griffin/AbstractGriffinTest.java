@@ -780,6 +780,28 @@ public class AbstractGriffinTest extends AbstractCairoTest {
         assertQuery(expected, query, ddl, null, expectedTimestamp, ddl2, expected2, supportsRandomAccess, checkSameStr, expectSize, false);
     }
 
+    protected static void assertInsertQuery(
+            CharSequence expected,
+            CharSequence query,
+            CharSequence ddl,
+            @Nullable CharSequence expectedTimestamp,
+            @Nullable CharSequence ddl2,
+            @Nullable CharSequence expected2,
+            boolean supportsRandomAccess,
+            boolean checkSameStr,
+            boolean expectSize
+    ) throws Exception {
+        assertMemoryLeak(() -> {
+            if (ddl != null) {
+                compiler.compile(ddl, sqlExecutionContext);
+            }
+            if (verify != null) {
+                printSqlResult(null, verify, expectedTimestamp, ddl2, expected2, supportsRandomAccess, checkSameStr, expectSize, sizeCanBeVariable, null);
+            }
+            printSqlResult(expected, query, expectedTimestamp, ddl2, expected2, supportsRandomAccess, checkSameStr, expectSize, sizeCanBeVariable, null);
+        });
+    }
+
     protected static void assertQuery(
             CharSequence expected,
             CharSequence query,

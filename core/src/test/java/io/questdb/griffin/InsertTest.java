@@ -599,6 +599,96 @@ public class InsertTest extends AbstractGriffinTest {
         });
     }
 
+    @Test
+    public void testInsertDateStringToTimestampColumn() throws Exception {
+        final String expected = "seq\tts\n" +
+                "1\t2021-01-03T00:00:00.000000Z\n";
+
+        assertQuery(
+                "seq\tts\n",
+                "tab",
+                "create table tab(seq long, ts timestamp);",
+                null,
+                "insert into tab select 1, '2021-01-03T00:00:00Z'",
+                expected,
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testInsertMillDateTimeStringToTimestampColumn() throws Exception {
+        final String expected = "seq\tts\n" +
+                "1\t2021-01-03T00:00:00.033000Z\n";
+
+        assertQuery(
+                "seq\tts\n",
+                "tab",
+                "create table tab(seq long, ts timestamp);",
+                null,
+                "insert into tab select 1, '2021-01-03T00:00:00.033Z'",
+                expected,
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testInsertMicroDateTimeStringToTimestampColumn() throws Exception {
+        final String expected = "seq\tts\n" +
+                "1\t2021-01-03T00:00:00.033011Z\n";
+
+        assertQuery(
+                "seq\tts\n",
+                "tab",
+                "create table tab(seq long, ts timestamp);",
+                null,
+                "insert into tab select 1, '2021-01-03T00:00:00.033011Z'",
+                expected,
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testInsertDateStringToDesignatedTimestampColumn() throws Exception {
+        final String expected = "seq\tts\n" +
+                "1\t2021-01-03T00:00:00.000000Z\n";
+
+        assertInsertQuery(
+                "seq\tts\n",
+                "tab",
+                "create table tab(seq long, ts timestamp) timestamp(ts)",
+                "ts",
+                "insert into tab values (1, '2021-01-03T00:00:00Z')",
+                expected,
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testInsertAsSelectDateStringToDesignatedTimestampColumn() throws Exception {
+        final String expected = "seq\tts\n" +
+                "1\t2021-01-03T00:00:00.000000Z\n";
+
+        assertQuery(
+                "seq\tts\n",
+                "tab",
+                "create table tab(seq long, ts timestamp) timestamp(ts)",
+                "ts",
+                "insert into tab select 1, '2021-01-03T00:00:00Z'",
+                expected,
+                true,
+                true,
+                true
+        );
+    }
+
     private void testBindVariableInsert(
             int partitionBy,
             TimestampFunction timestampFunction,
