@@ -152,11 +152,18 @@ public class ServerMain {
             workerPool.assign(telemetryJob);
         }
 
+        Metrics metrics;
+        if (configuration.getMetricsConfiguration().isEnabled()) {
+            metrics = Metrics.enabled();
+        } else {
+            metrics = Metrics.disabled();
+        }
+
         try {
             initQuestDb(workerPool, cairoEngine, log);
 
-            instancesToClean.add(createHttpServer(workerPool, log, cairoEngine, functionFactoryCache));
-            instancesToClean.add(createMinHttpServer(workerPool, log, cairoEngine, functionFactoryCache));
+            instancesToClean.add(createHttpServer(workerPool, log, cairoEngine, functionFactoryCache, metrics));
+            instancesToClean.add(createMinHttpServer(workerPool, log, cairoEngine, functionFactoryCache, metrics));
 
             if (configuration.getPGWireConfiguration().isEnabled()) {
                 instancesToClean.add(PGWireServer.create(
@@ -164,7 +171,8 @@ public class ServerMain {
                         workerPool,
                         log,
                         cairoEngine,
-                        functionFactoryCache
+                        functionFactoryCache,
+                        metrics
                 ));
             }
 
@@ -415,23 +423,35 @@ public class ServerMain {
         Misc.freeObjList(instancesToClean);
     }
 
-    protected HttpServer createHttpServer(final WorkerPool workerPool, final Log log, final CairoEngine cairoEngine, FunctionFactoryCache functionFactoryCache) {
+    protected HttpServer createHttpServer(
+            final WorkerPool workerPool,
+            final Log log,
+            final CairoEngine cairoEngine,
+            FunctionFactoryCache functionFactoryCache,
+            Metrics metrics) {
         return HttpServer.create(
                 configuration.getHttpServerConfiguration(),
                 workerPool,
                 log,
                 cairoEngine,
-                functionFactoryCache
+                functionFactoryCache,
+                metrics
         );
     }
 
-    protected HttpServer createMinHttpServer(final WorkerPool workerPool, final Log log, final CairoEngine cairoEngine, FunctionFactoryCache functionFactoryCache) {
+    protected HttpServer createMinHttpServer(
+            final WorkerPool workerPool,
+            final Log log,
+            final CairoEngine cairoEngine,
+            FunctionFactoryCache functionFactoryCache,
+            Metrics metrics) {
         return HttpServer.createMin(
                 configuration.getHttpMinServerConfiguration(),
                 workerPool,
                 log,
                 cairoEngine,
-                functionFactoryCache
+                functionFactoryCache,
+                metrics
         );
     }
 

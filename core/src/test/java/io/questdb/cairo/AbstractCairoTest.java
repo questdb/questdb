@@ -24,6 +24,7 @@
 
 package io.questdb.cairo;
 
+import io.questdb.Metrics;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.log.Log;
@@ -54,6 +55,7 @@ public class AbstractCairoTest {
     protected static long currentMicros = -1;
     protected static MicrosecondClock testMicrosClock =
             () -> currentMicros >= 0 ? currentMicros : MicrosecondClockImpl.INSTANCE.getTicks();
+    protected static Metrics metrics = Metrics.enabled();
 
     @BeforeClass
     public static void setUp() throws IOException {

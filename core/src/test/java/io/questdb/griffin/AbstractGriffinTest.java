@@ -24,6 +24,7 @@
 
 package io.questdb.griffin;
 
+import io.questdb.Metrics;
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.*;
@@ -45,6 +46,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
     protected static SqlExecutionContext sqlExecutionContext;
     protected static CairoEngine engine;
     protected static SqlCompiler compiler;
+    protected static Metrics metrics = Metrics.enabled();
 
     private final static double EPSILON = 0.000001;
 

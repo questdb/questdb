@@ -71,7 +71,8 @@ public interface WorkerPoolAwareConfiguration extends WorkerPoolConfiguration {
             Log log,
             CairoEngine cairoEngine,
             ServerFactory<T, C> factory,
-            FunctionFactoryCache functionFactoryCache
+            FunctionFactoryCache functionFactoryCache,
+            Metrics metrics
     ) {
         final T server;
         if (configuration.isEnabled()) {
@@ -80,7 +81,7 @@ public interface WorkerPoolAwareConfiguration extends WorkerPoolConfiguration {
             final boolean local = localPool != sharedWorkerPool;
             final MessageBus bus = local ? new MessageBusImpl(cairoEngine.getConfiguration()) : cairoEngine.getMessageBus();
 
-            server = factory.create(configuration, cairoEngine, localPool, local, bus, functionFactoryCache);
+            server = factory.create(configuration, cairoEngine, localPool, local, bus, functionFactoryCache, metrics);
 
             if (local) {
                 localPool.start(log);
@@ -95,6 +96,14 @@ public interface WorkerPoolAwareConfiguration extends WorkerPoolConfiguration {
 
     @FunctionalInterface
     interface ServerFactory<T extends Closeable, C> {
-        T create(C configuration, CairoEngine engine, WorkerPool workerPool, boolean local, @Nullable MessageBus messageBus, @Nullable FunctionFactoryCache functionFactoryCache);
+        T create(
+                C configuration,
+                CairoEngine engine,
+                WorkerPool workerPool,
+                boolean local,
+                @Nullable MessageBus messageBus,
+                @Nullable FunctionFactoryCache functionFactoryCache,
+                Metrics metrics
+        );
     }
 }
