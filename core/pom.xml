@@ -81,6 +81,26 @@
         <plugins>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <version>3.8.1</version>
+                <configuration>
+                    <compilerArgs>
+                        <arg>${compilerArg1}</arg>
+                        <arg>${compilerArg2}</arg>
+                    </compilerArgs>
+                    <fork>true</fork>
+                    <source>${javac.compile.source}</source>
+                    <target>${javac.compile.target}</target>
+                    <testExcludes>
+                        <exclude>${excludePattern1}</exclude>
+                    </testExcludes>
+                    <excludes>
+                        <exclude>${excludeTestPattern1}</exclude>
+                    </excludes>
+                </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-jar-plugin</artifactId>
                 <version>3.0.1</version>
                 <executions>
@@ -202,8 +222,12 @@
                             </execution>
                         </executions>
                         <configuration>
+                            <additionalJOptions>
+                                <additionalJOption>${compilerArg1}</additionalJOption>
+                                <additionalJOption>${compilerArg2}</additionalJOption>
+                            </additionalJOptions>
                             <sourceFileExcludes>
-                                <sourceFileExclude>**/module-info.java</sourceFileExclude>
+                                <sourceFileExclude>${excludePattern1}</sourceFileExclude>
                             </sourceFileExcludes>
                         </configuration>
                     </plugin>
@@ -499,28 +523,18 @@
                 <jdk.version>8</jdk.version>
                 <java.enforce.version>1.8.0_242</java.enforce.version>
                 <questdb.artifactid>questdb-jdk8</questdb.artifactid>
+                <compilerArg1></compilerArg1>
+                <compilerArg2></compilerArg2>
+                <excludePattern1>module-info.java</excludePattern1>
+                <excludeTestPattern1>module-info.java</excludeTestPattern1>
+                <javac.compile.source>1.8</javac.compile.source>
+                <javac.compile.target>1.8</javac.compile.target>
             </properties>
             <activation>
                 <jdk>(,1.8]</jdk>
             </activation>
             <build>
                 <plugins>
-                    <plugin>
-                        <groupId>org.apache.maven.plugins</groupId>
-                        <artifactId>maven-compiler-plugin</artifactId>
-                        <version>3.8.1</version>
-                        <configuration>
-                            <fork>true</fork>
-                            <source>1.8</source>
-                            <target>1.8</target>
-                            <testExcludes>
-                                <exclude>**/module-info.java</exclude>
-                            </testExcludes>
-                            <excludes>
-                                <exclude>**/module-info.java</exclude>
-                            </excludes>
-                        </configuration>
-                    </plugin>
                     <plugin>
                         <groupId>com.igormaznitsa</groupId>
                         <artifactId>jcp</artifactId>
@@ -562,28 +576,16 @@
                 <jdk.version>11</jdk.version>
                 <java.enforce.version>11</java.enforce.version>
                 <questdb.artifactid>questdb</questdb.artifactid>
+                <compilerArg1>--add-exports</compilerArg1>
+                <compilerArg2>java.base/jdk.internal.math=io.questdb</compilerArg2>
+                <excludePattern1>nothing-to-exclude-dummy-value-include-all-java11plus</excludePattern1>
+                <excludeTestPattern1>nothing-to-exclude-dummy-value-include-all-java11plus</excludeTestPattern1>
+                <javac.compile.source>${javac.target}</javac.compile.source>
+                <javac.compile.target>${javac.target}</javac.compile.target>
             </properties>
             <activation>
                 <jdk>(1.8,)</jdk>
             </activation>
-            <build>
-                <plugins>
-                    <plugin>
-                        <groupId>org.apache.maven.plugins</groupId>
-                        <artifactId>maven-compiler-plugin</artifactId>
-                        <version>3.8.1</version>
-                        <configuration>
-                                <compilerArgs>
-                                    <arg>--add-exports</arg>
-                                    <arg>java.base/jdk.internal.math=io.questdb</arg>
-                                </compilerArgs>
-                            <fork>true</fork>
-                            <source>1.9</source>
-                            <target>${javac.target}</target>
-                        </configuration>
-                    </plugin>
-                </plugins>
-            </build>
             <dependencies>
                 <dependency>
                     <groupId>org.jetbrains</groupId>
