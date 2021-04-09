@@ -2618,19 +2618,15 @@ public class TableWriter implements Closeable {
                         extendedSize = uncommittedRowCount << pow2ColSize;
                         sourceOffset = committedTransientRowCount << pow2ColSize;
                     } else {
-                        // TODO use Vect#shiftCopyFixedSizeColumnData
                         AppendOnlyVirtualMemory sourceIndexMem = getSecondaryColumn(colIndex);
                         appendOffset = targetDataMem.getAppendOffset();
-                        long sourceEndOffset = sourceMem.getAppendOffset();
                         long sourceStartOffset = sourceIndexMem.getLong(committedTransientRowCount << 3);
+                        OutOfOrderUtils.shiftCopyFixedSizeColumnData(sourceStartOffset - appendOffset, sourceIndexMem.addressOf(committedTransientRowCount << 3), 0,
+                                uncommittedRowCount << 3, targetIndexMem.addressOf(targetIndexMem.getAppendOffset()));
+                        long sourceEndOffset = sourceMem.getAppendOffset();
                         extendedSize = sourceEndOffset - sourceStartOffset;
                         sourceOffset = sourceStartOffset;
-                        for (long n = 1; n < uncommittedRowCount; n++) {
-                            targetIndexMem.putLong(sourceOffset - sourceStartOffset + appendOffset);
-                            sourceOffset = sourceIndexMem.getLong((committedTransientRowCount + n) << 3);
-                        }
-                        targetIndexMem.putLong(sourceOffset - sourceStartOffset + appendOffset);
-                        sourceOffset = sourceStartOffset;
+                        targetIndexMem.jumpTo(targetIndexMem.getAppendOffset() + uncommittedRowCount << 3);
                         sourceIndexMem.jumpTo(committedTransientRowCount << 3);
                     }
 
@@ -2676,32 +2672,8 @@ public class TableWriter implements Closeable {
                 }
 
                 dataMem.jumpTo(targetOffset + size);
-                // TODO use memmove
-                Vect.memcpy(dataMem.addressOf(sourceOffset), dataMem.addressOf(targetOffset), size);
+                Vect.memmove(dataMem.addressOf(targetOffset), dataMem.addressOf(sourceOffset), size);
             }
-        }
-    }
-
-    private void oooProcessPartitionRemoveCandidates() {
-        try {
-            long minTxn = TxnScoreboard.getMin(txnScoreboard);
-            if (minTxn == txFile.getTxn() - 1 && TxnScoreboard.getCount(txnScoreboard, minTxn) == 0) {
-                for (int i = 0, n = o3PartitionRemoveCandidates.size(); i < n; i += 2) {
-                    final long timestamp = o3PartitionRemoveCandidates.getQuick(i);
-                    final long txn = o3PartitionRemoveCandidates.getQuick(i + 1);
-                    setPathForPartition(
-                            other,
-                            partitionBy,
-                            timestamp,
-                            false
-                    );
-                    TableUtils.txnPartitionConditionally(other, txn);
-                    ff.rmdir(other.$$dir());
-                }
-            }
-        } finally {
-            o3PartitionRemoveCandidates.clear();
-            other.trimTo(rootLen);
         }
     }
 

@@ -255,9 +255,61 @@ public class CommitHysteresisTest {
                 sql = "select * from x where i>490 order by f";
                 insertUncommitted(sql, writer);
                 long lastTimestampHysteresisInMicros = (maxTimestamp - minTimestamp) / 2;
-                minTimestamp += lastTimestampHysteresisInMicros;
+                maxTimestamp -= lastTimestampHysteresisInMicros;
                 writer.commitWithHysteresis(lastTimestampHysteresisInMicros);
-                TestUtils.printSql(compiler, sqlExecutionContext, "select i, ts from x where ts<=cast(" + minTimestamp + " as timestamp)", sink);
+                TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where ts<=cast(" + maxTimestamp + " as timestamp)", sink);
+                TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
+                TestUtils.assertEquals(sink, sink2);
+
+                writer.commit();
+            }
+
+            TestUtils.printSql(compiler, sqlExecutionContext, "select * from x", sink);
+            TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
+            TestUtils.assertEquals(sink, sink2);
+        });
+    }
+
+    @Test
+    public void testLargeHysteresisWithinPartition() throws Exception {
+        executeVanilla(() -> {
+            String sql = "create table x as (" +
+                    "select" +
+                    " cast(x as int) i," +
+                    " rnd_symbol('msft','ibm', 'googl') sym," +
+                    " round(rnd_double(0)*100, 3) amt," +
+                    " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                    " rnd_boolean() b," +
+                    " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                    " rnd_double(2) d," +
+                    " rnd_float(2) e," +
+                    " rnd_short(10,1024) f," +
+                    " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                    " rnd_symbol(4,4,4,2) ik," +
+                    " rnd_long() j," +
+                    " timestamp_sequence(500000000000L,100000000L) ts," +
+                    " rnd_byte(2,50) l," +
+                    " rnd_bin(10, 20, 2) m," +
+                    " rnd_str(5,16,2) n," +
+                    " rnd_char() t" +
+                    " from long_sequence(500)" +
+                    "), index(sym) timestamp (ts) partition by DAY";
+            compiler.compile(sql, sqlExecutionContext);
+
+            sql = "create table y as (select * from x where i<=250) partition by DAY";
+            compiler.compile(sql, sqlExecutionContext);
+
+            TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where i<=250", sink);
+            TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
+            TestUtils.assertEquals(sink, sink2);
+
+            try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "y")) {
+                sql = "select * from x where i>250 order by f";
+                insertUncommitted(sql, writer);
+                long lastTimestampHysteresisInMicros = (maxTimestamp - minTimestamp) * 3 / 4;
+                maxTimestamp -= lastTimestampHysteresisInMicros;
+                writer.commitWithHysteresis(lastTimestampHysteresisInMicros);
+                TestUtils.printSql(compiler, sqlExecutionContext, "select i, ts from x where ts<=cast(" + maxTimestamp + " as timestamp)", sink);
                 TestUtils.printSql(compiler, sqlExecutionContext, "select i, ts from y", sink2);
                 TestUtils.assertEquals(sink, sink2);
 
@@ -308,9 +360,9 @@ public class CommitHysteresisTest {
                 sql = "select * from x where i>250 order by f";
                 insertUncommitted(sql, writer);
                 long lastTimestampHysteresisInMicros = (maxTimestamp - minTimestamp) / 2;
-                minTimestamp += lastTimestampHysteresisInMicros;
+                maxTimestamp -= lastTimestampHysteresisInMicros;
                 writer.commitWithHysteresis(lastTimestampHysteresisInMicros);
-                TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where ts<=cast(" + minTimestamp + " as timestamp)", sink);
+                TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where ts<=cast(" + maxTimestamp + " as timestamp)", sink);
                 TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
                 TestUtils.assertEquals(sink, sink2);
 
@@ -369,18 +421,18 @@ public class CommitHysteresisTest {
                 sql = "select * from x where i>150 and i<200 order by f";
                 insertUncommitted(sql, writer);
                 long lastTimestampHysteresisInMicros = (maxTimestamp - minTimestamp) / 2;
-                minTimestamp += lastTimestampHysteresisInMicros;
+                maxTimestamp -= lastTimestampHysteresisInMicros;
                 writer.commitWithHysteresis(lastTimestampHysteresisInMicros);
-                TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where ts<=cast(" + minTimestamp + " as timestamp)", sink);
+                TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where ts<=cast(" + maxTimestamp + " as timestamp)", sink);
                 TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
                 TestUtils.assertEquals(sink, sink2);
 
                 sql = "select * from x where i>=200 order by f";
                 insertUncommitted(sql, writer);
                 lastTimestampHysteresisInMicros = (maxTimestamp - minTimestamp) / 2;
-                minTimestamp += lastTimestampHysteresisInMicros;
+                maxTimestamp -= lastTimestampHysteresisInMicros;
                 writer.commitWithHysteresis(lastTimestampHysteresisInMicros);
-                TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where ts<=cast(" + minTimestamp + " as timestamp)", sink);
+                TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where ts<=cast(" + maxTimestamp + " as timestamp)", sink);
                 TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
                 TestUtils.assertEquals(sink, sink2);
 
@@ -432,9 +484,9 @@ public class CommitHysteresisTest {
                 sql = "select * from x where i>150 and i<200 order by f";
                 insertUncommitted(sql, writer);
                 long lastTimestampHysteresisInMicros = (maxTimestamp - minTimestamp) / 2;
-                minTimestamp += lastTimestampHysteresisInMicros;
+                maxTimestamp -= lastTimestampHysteresisInMicros;
                 writer.commitWithHysteresis(lastTimestampHysteresisInMicros);
-                TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where ts<=cast(" + minTimestamp + " as timestamp)", sink);
+                TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where ts<=cast(" + maxTimestamp + " as timestamp)", sink);
                 TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
                 TestUtils.assertEquals(sink, sink2);
 
@@ -445,9 +497,9 @@ public class CommitHysteresisTest {
                 sql = "select * from x where i>=200 order by f";
                 insertUncommitted(sql, writer);
                 lastTimestampHysteresisInMicros = (maxTimestamp - minTimestamp) / 2;
-                minTimestamp += lastTimestampHysteresisInMicros;
+                maxTimestamp -= lastTimestampHysteresisInMicros;
                 writer.commitWithHysteresis(lastTimestampHysteresisInMicros);
-                TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where ts<=cast(" + minTimestamp + " as timestamp) and (i<=175 or i>=200)", sink);
+                TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where ts<=cast(" + maxTimestamp + " as timestamp) and (i<=175 or i>=200)", sink);
                 TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
                 TestUtils.assertEquals(sink, sink2);
 
@@ -498,18 +550,18 @@ public class CommitHysteresisTest {
                 sql = "select * from x where i>150 and i<200 order by f";
                 insertUncommitted(sql, writer);
                 long lastTimestampHysteresisInMicros = maxTimestamp - TimestampFormatUtils.parseTimestamp("1970-01-06T23:59:59.000Z");
-                minTimestamp = maxTimestamp - lastTimestampHysteresisInMicros;
+                maxTimestamp -= lastTimestampHysteresisInMicros;
                 writer.commitWithHysteresis(lastTimestampHysteresisInMicros);
-                TestUtils.printSql(compiler, sqlExecutionContext, "select i, ts from x where ts<=cast(" + minTimestamp + " as timestamp)", sink);
+                TestUtils.printSql(compiler, sqlExecutionContext, "select i, ts from x where ts<=cast(" + maxTimestamp + " as timestamp)", sink);
                 TestUtils.printSql(compiler, sqlExecutionContext, "select i, ts from y", sink2);
                 TestUtils.assertEquals(sink, sink2);
 
                 sql = "select * from x where i>=200 order by f";
                 insertUncommitted(sql, writer);
                 lastTimestampHysteresisInMicros = (maxTimestamp - minTimestamp) / 2;
-                minTimestamp += lastTimestampHysteresisInMicros;
+                maxTimestamp -= lastTimestampHysteresisInMicros;
                 writer.commitWithHysteresis(lastTimestampHysteresisInMicros);
-                TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where ts<=cast(" + minTimestamp + " as timestamp)", sink);
+                TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where ts<=cast(" + maxTimestamp + " as timestamp)", sink);
                 TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
                 TestUtils.assertEquals(sink, sink2);
 
@@ -563,7 +615,7 @@ public class CommitHysteresisTest {
                 long lastTimestampHysteresisInMicros = maxTimestamp - TimestampFormatUtils.parseTimestamp("1970-01-06T23:59:59.000Z");
                 minTimestamp = maxTimestamp - lastTimestampHysteresisInMicros;
                 writer.commitWithHysteresis(lastTimestampHysteresisInMicros);
-                TestUtils.printSql(compiler, sqlExecutionContext, "select i, ts from x where ts<=cast(" + minTimestamp + " as timestamp)", sink);
+                TestUtils.printSql(compiler, sqlExecutionContext, "select i, ts from x where ts<=cast(" + maxTimestamp + " as timestamp)", sink);
                 TestUtils.printSql(compiler, sqlExecutionContext, "select i, ts from y", sink2);
                 TestUtils.assertEquals(sink, sink2);
 
@@ -574,9 +626,9 @@ public class CommitHysteresisTest {
                 sql = "select * from x where i>=200 order by f";
                 insertUncommitted(sql, writer);
                 lastTimestampHysteresisInMicros = (maxTimestamp - minTimestamp) / 2;
-                minTimestamp += lastTimestampHysteresisInMicros;
+                maxTimestamp -= lastTimestampHysteresisInMicros;
                 writer.commitWithHysteresis(lastTimestampHysteresisInMicros);
-                TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where ts<=cast(" + minTimestamp + " as timestamp) and (i<=184 or i>=200)", sink);
+                TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where ts<=cast(" + maxTimestamp + " as timestamp) and (i<=184 or i>=200)", sink);
                 TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
                 TestUtils.assertEquals(sink, sink2);
 
@@ -627,18 +679,18 @@ public class CommitHysteresisTest {
                 sql = "select * from x where i>150 and i<200 order by f";
                 insertUncommitted(sql, writer);
                 long lastTimestampHysteresisInMicros = maxTimestamp - TimestampFormatUtils.parseTimestamp("1970-01-07T00:00:00.000Z");
-                minTimestamp = maxTimestamp - lastTimestampHysteresisInMicros;
+                maxTimestamp -= lastTimestampHysteresisInMicros;
                 writer.commitWithHysteresis(lastTimestampHysteresisInMicros);
-                TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where ts<=cast(" + minTimestamp + " as timestamp)", sink);
+                TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where ts<=cast(" + maxTimestamp + " as timestamp)", sink);
                 TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
                 TestUtils.assertEquals(sink, sink2);
 
                 sql = "select * from x where i>=200 order by f";
                 insertUncommitted(sql, writer);
                 lastTimestampHysteresisInMicros = (maxTimestamp - minTimestamp) / 2;
-                minTimestamp += lastTimestampHysteresisInMicros;
+                maxTimestamp -= lastTimestampHysteresisInMicros;
                 writer.commitWithHysteresis(lastTimestampHysteresisInMicros);
-                TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where ts<=cast(" + minTimestamp + " as timestamp)", sink);
+                TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where ts<=cast(" + maxTimestamp + " as timestamp)", sink);
                 TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
                 TestUtils.assertEquals(sink, sink2);
 
@@ -692,7 +744,7 @@ public class CommitHysteresisTest {
                 long lastTimestampHysteresisInMicros = maxTimestamp - TimestampFormatUtils.parseTimestamp("1970-01-07T00:00:00.000Z");
                 minTimestamp = maxTimestamp - lastTimestampHysteresisInMicros;
                 writer.commitWithHysteresis(lastTimestampHysteresisInMicros);
-                TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where ts<=cast(" + minTimestamp + " as timestamp)", sink);
+                TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where ts<=cast(" + maxTimestamp + " as timestamp)", sink);
                 TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
                 TestUtils.assertEquals(sink, sink2);
 
@@ -703,9 +755,9 @@ public class CommitHysteresisTest {
                 sql = "select * from x where i>=200 order by f";
                 insertUncommitted(sql, writer);
                 lastTimestampHysteresisInMicros = (maxTimestamp - minTimestamp) / 2;
-                minTimestamp += lastTimestampHysteresisInMicros;
+                maxTimestamp -= lastTimestampHysteresisInMicros;
                 writer.commitWithHysteresis(lastTimestampHysteresisInMicros);
-                TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where ts<=cast(" + minTimestamp + " as timestamp) and (i<=185 or i>=200)", sink);
+                TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where ts<=cast(" + maxTimestamp + " as timestamp) and (i<=185 or i>=200)", sink);
                 TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
                 TestUtils.assertEquals(sink, sink2);
 
@@ -755,9 +807,9 @@ public class CommitHysteresisTest {
                 sql = "select * from x where i>250 or (i>50 and i<100) order by f";
                 insertUncommitted(sql, writer);
                 long lastTimestampHysteresisInMicros = (maxTimestamp - minTimestamp) / 2;
-                minTimestamp += lastTimestampHysteresisInMicros;
+                maxTimestamp -= lastTimestampHysteresisInMicros;
                 writer.commitWithHysteresis(lastTimestampHysteresisInMicros);
-                TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where ts<=cast(" + minTimestamp + " as timestamp)", sink);
+                TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where ts<=cast(" + maxTimestamp + " as timestamp)", sink);
                 TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
                 TestUtils.assertEquals(sink, sink2);
 
@@ -809,9 +861,9 @@ public class CommitHysteresisTest {
                 sql = "select * from x where i>=300 order by f";
                 insertUncommitted(sql, writer);
                 long lastTimestampHysteresisInMicros = (maxTimestamp - minTimestamp) / 2;
-                minTimestamp += lastTimestampHysteresisInMicros;
+                maxTimestamp -= lastTimestampHysteresisInMicros;
                 writer.commitWithHysteresis(lastTimestampHysteresisInMicros);
-                TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where ts<=cast(" + minTimestamp + " as timestamp)", sink);
+                TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where ts<=cast(" + maxTimestamp + " as timestamp)", sink);
                 TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
                 TestUtils.assertEquals(sink, sink2);
 
