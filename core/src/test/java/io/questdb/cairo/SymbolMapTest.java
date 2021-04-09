@@ -223,6 +223,38 @@ public class SymbolMapTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRollbackAndRetry() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            int N = 1024;
+            try (Path path = new Path().of(configuration.getRoot())) {
+                create(path, "x", N, true);
+                try (SymbolMapWriter writer = new SymbolMapWriter(configuration, path, "x", 0, TRANSIENT_SYMBOL_COUNT_CHANGE_HANDLER)) {
+                    Assert.assertEquals(0, writer.put("A1"));
+                    Assert.assertEquals(1, writer.put("A2"));
+                    Assert.assertEquals(2, writer.put("A3"));
+                    Assert.assertEquals(3, writer.put("A4"));
+                    Assert.assertEquals(4, writer.put("A5"));
+
+                    Assert.assertEquals(5, writer.put("A6"));
+                    Assert.assertEquals(6, writer.put("A7"));
+                    Assert.assertEquals(7, writer.put("A8"));
+                    Assert.assertEquals(8, writer.put("A9"));
+                    Assert.assertEquals(9, writer.put("A10"));
+
+                    writer.rollback(5);
+
+                    Assert.assertEquals(5, writer.put("A6"));
+                    Assert.assertEquals(6, writer.put("A7"));
+                    Assert.assertEquals(7, writer.put("A8"));
+                    Assert.assertEquals(8, writer.put("A9"));
+                    Assert.assertEquals(9, writer.put("A10"));
+
+                }
+            }
+        });
+    }
+
+    @Test
     public void testShortHeader() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (Path path = new Path().of(configuration.getRoot())) {
