@@ -529,13 +529,13 @@ public class LimitTest extends AbstractGriffinTest {
     public void testLimitMinusOne() throws Exception {
         compiler.compile("create table t1 (ts Timestamp, id symbol)", sqlExecutionContext);
 
-        var inserts = "insert into t1 values (0L, 'abc')\n" +
+        String inserts = "insert into t1 values (0L, 'abc')\n" +
                 "insert into t1 values (2L, 'a1')\n" +
                 "insert into t1 values (3L, 'abc')\n" +
                 "insert into t1 values (4L, 'abc')\n" +
                 "insert into t1 values (5L, 'a2')";
 
-        for(var sql: inserts.split("\\r?\\n")) {
+        for(String sql: inserts.split("\\r?\\n")) {
             executeInsert(sql);
         }
 

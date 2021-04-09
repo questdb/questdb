@@ -1237,7 +1237,7 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
         context = new LineTcpConnectionContext(lineTcpConfiguration, scheduler);
         disconnected = false;
         recvBuffer = null;
-        IODispatcher<LineTcpConnectionContext> dispatcher = new IODispatcher<>() {
+        IODispatcher<LineTcpConnectionContext> dispatcher = new IODispatcher<LineTcpConnectionContext>() {
             @Override
             public void close() {
             }
