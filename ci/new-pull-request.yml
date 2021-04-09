@@ -20,12 +20,19 @@ stages:
             linux:
               imageName: "ubuntu-latest"
               os: Linux
+              jdk: "1.11"
             mac:
               imageName: "macos-latest"
               os: macOS
+              jdk: "1.11"
             windows:
               imageName: "windows-latest"
               os: Windows
+              jdk: "1.11"
+            linux-jdk8:
+              imageName: "ubuntu-latest"
+              os: Linux
+              jdk: "1.8"
         pool:
           vmImage: $(imageName)
         timeoutInMinutes: 30
@@ -40,14 +47,14 @@ stages:
               mavenPomFile: "core/pom.xml"
               mavenOptions: "-Xmx3072m"
               options: "compile -DskipTests"
-              jdkVersionOption: "1.11"
+              jdkVersionOption: $(jdk)
           - task: Maven@3
             displayName: "Run tests with Maven"
             inputs:
               mavenPomFile: "core/pom.xml"
               mavenOptions: "-Xmx3072m"
               options: "--batch-mode --quiet -DquestdbLog=$(Build.SourcesDirectory)/ci/qlog.conf"
-              jdkVersionOption: "1.11"
+              jdkVersionOption: $(jdk)
           - task: ArchiveFiles@2
             displayName: "Tests failed -- Compress logs"
             condition: failed()
