@@ -50,8 +50,8 @@ public class SymbolMapWriter implements Closeable {
     private final CharSequenceIntHashMap cache;
     private final DirectCharSequence tmpSymbol;
     private final int maxHash;
-    private boolean nullValue = false;
     private final TransientSymbolCountChangeHandler transientSymbolCountChangeHandler;
+    private boolean nullValue = false;
 
     public SymbolMapWriter(CairoConfiguration configuration, Path path, CharSequence name, int symbolCount, TransientSymbolCountChangeHandler transientSymbolCountChangeHandler) {
         this.transientSymbolCountChangeHandler = transientSymbolCountChangeHandler;
@@ -141,6 +141,16 @@ public class SymbolMapWriter implements Closeable {
         return path.concat(columnName).put(".o").$();
     }
 
+    public void appendSymbolCharsBlock(long blockSize, long sourceAddress) {
+        long appendOffset = charMem.getAppendOffset();
+        try {
+            charMem.jumpTo(appendOffset);
+            charMem.putBlockOfBytes(sourceAddress, blockSize);
+        } finally {
+            charMem.jumpTo(appendOffset);
+        }
+    }
+
     @Override
     public void close() {
         Misc.free(indexWriter);
@@ -151,6 +161,33 @@ public class SymbolMapWriter implements Closeable {
             LOG.debug().$("closed [fd=").$(fd).$(']').$();
         }
         nullValue = false;
+    }
+
+    public void commitAppendedBlock(int nSymbolsAdded) {
+        long offset = charMem.getAppendOffset();
+        int symbolIndex = getSymbolCount();
+        int nSymbols = symbolIndex + nSymbolsAdded;
+        while (symbolIndex < nSymbols) {
+            long symCharsOffset = offset;
+            int symLen = charMem.getInt(offset);
+            offset += Integer.BYTES;
+            long symCharsOffsetHi = offset + symLen * 2L;
+            tmpSymbol.of(charMem.addressOf(offset), charMem.addressOf(symCharsOffsetHi));
+
+            long offsetOffset = offsetMem.getAppendOffset();
+            offsetMem.putLong(symCharsOffset);
+            int hash = Hash.boundedHash(tmpSymbol, maxHash);
+            indexWriter.add(hash, offsetOffset);
+
+            if (cache != null) {
+                cache.putAt(symbolIndex, tmpSymbol.toString(), offsetToKey(offsetOffset));
+            }
+
+            offset = symCharsOffsetHi;
+            charMem.jumpTo(offset);
+            symbolIndex++;
+        }
+        LOG.debug().$("appended a block of ").$(nSymbolsAdded).$("symbols [fd=").$(this.offsetMem.getFd()).$(']').$();
     }
 
     public int getSymbolCount() {
@@ -179,7 +216,7 @@ public class SymbolMapWriter implements Closeable {
     }
 
     public void rollback(int symbolCount) {
-        indexWriter.rollbackValues(keyToOffset(symbolCount));
+        indexWriter.rollbackValues(keyToOffset(symbolCount - 1));
         offsetMem.jumpTo(keyToOffset(symbolCount));
         jumpCharMemToSymbolCount(symbolCount);
         transientSymbolCountChangeHandler.handleTransientSymbolCountChange(symbolCount);
@@ -244,43 +281,6 @@ public class SymbolMapWriter implements Closeable {
         int symIndex = offsetToKey(offsetOffset);
         transientSymbolCountChangeHandler.handleTransientSymbolCountChange(symIndex + 1);
         return symIndex;
-    }
-
-    public void appendSymbolCharsBlock(long blockSize, long sourceAddress) {
-        long appendOffset = charMem.getAppendOffset();
-        try {
-            charMem.jumpTo(appendOffset);
-            charMem.putBlockOfBytes(sourceAddress, blockSize);
-        } finally {
-            charMem.jumpTo(appendOffset);
-        }
-    }
-
-    public void commitAppendedBlock(int nSymbolsAdded) {
-        long offset = charMem.getAppendOffset();
-        int symbolIndex = getSymbolCount();
-        int nSymbols = symbolIndex + nSymbolsAdded;
-        while (symbolIndex < nSymbols) {
-            long symCharsOffset = offset;
-            int symLen = charMem.getInt(offset);
-            offset += Integer.BYTES;
-            long symCharsOffsetHi = offset + symLen * 2L;
-            tmpSymbol.of(charMem.addressOf(offset), charMem.addressOf(symCharsOffsetHi));
-
-            long offsetOffset = offsetMem.getAppendOffset();
-            offsetMem.putLong(symCharsOffset);
-            int hash = Hash.boundedHash(tmpSymbol, maxHash);
-            indexWriter.add(hash, offsetOffset);
-
-            if (cache != null) {
-                cache.putAt(symbolIndex, tmpSymbol.toString(), offsetToKey(offsetOffset));
-            }
-
-            offset = symCharsOffsetHi;
-            charMem.jumpTo(offset);
-            symbolIndex++;
-        }
-        LOG.debug().$("appended a block of ").$(nSymbolsAdded).$("symbols [fd=").$(this.offsetMem.getFd()).$(']').$();
     }
 
     void truncate() {

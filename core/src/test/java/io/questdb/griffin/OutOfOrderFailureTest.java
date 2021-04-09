@@ -24,7 +24,10 @@
 
 package io.questdb.griffin;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
@@ -33,7 +36,6 @@ import io.questdb.std.str.LPSZ;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
-import org.junit.Ignore;
 import org.junit.Test;
 
 import java.io.File;
@@ -591,8 +593,6 @@ public class OutOfOrderFailureTest extends AbstractOutOfOrderTest {
     }
 
     @Test
-    @Ignore
-    // todo: this test fails because symbol maps are corrupt on writer after experiencing out of disk space errors
     public void testOOOFollowedByAnotherOOO() throws Exception {
         counter.set(1);
         final AtomicBoolean restoreDiskSpace = new AtomicBoolean(false);
