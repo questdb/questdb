@@ -865,6 +865,7 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
 
     @Override
     protected boolean doRun(int workerId, long cursor) {
+        //todo: throttle down worker threads
         copy(queue.get(cursor), cursor, subSeq);
         return true;
     }

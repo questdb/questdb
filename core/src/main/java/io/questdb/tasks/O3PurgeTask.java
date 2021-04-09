@@ -24,15 +24,20 @@
 
 package io.questdb.tasks;
 
-public class OutOfOrderPurgeDiscoveryTask {
+public class O3PurgeTask {
     private CharSequence tableName;
     private int partitionBy;
     private long txnScoreboard;
     private long timestamp;
-    private long mostRecentTxn;
+    private long nameTxnToRemove;
+    private long minTxnToExpect;
 
-    public long getMostRecentTxn() {
-        return mostRecentTxn;
+    public long getMinTxnToExpect() {
+        return minTxnToExpect;
+    }
+
+    public long getNameTxnToRemove() {
+        return nameTxnToRemove;
     }
 
     public int getPartitionBy() {
@@ -51,11 +56,12 @@ public class OutOfOrderPurgeDiscoveryTask {
         return txnScoreboard;
     }
 
-    public void of(CharSequence tableName, int partitionBy, long txnScoreboard, long timestamp, long mostRecentTxn) {
+    public void of(CharSequence tableName, int partitionBy, long txnScoreboard, long timestamp, long nameTxnToRemove, long minTxnToExpect) {
         this.tableName = tableName;
         this.partitionBy = partitionBy;
         this.txnScoreboard = txnScoreboard;
         this.timestamp = timestamp;
-        this.mostRecentTxn = mostRecentTxn;
+        this.nameTxnToRemove = nameTxnToRemove;
+        this.minTxnToExpect = minTxnToExpect;
     }
 }

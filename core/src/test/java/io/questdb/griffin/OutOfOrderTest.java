@@ -26,17 +26,12 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableWriter;
-import io.questdb.std.Chars;
-import io.questdb.std.NumericException;
-import io.questdb.std.Os;
-import io.questdb.std.Vect;
+import io.questdb.cairo.TxnScoreboard;
+import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.test.tools.TestUtils;
-import org.junit.After;
-import org.junit.Before;
-import org.junit.Rule;
-import org.junit.Test;
+import org.junit.*;
 import org.junit.rules.TestName;
 
 import java.net.URISyntaxException;
@@ -67,11 +62,10 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
 
             Thread.sleep(10);
             System.err.flush();
-            System.err.println(tstData.toString());
+            System.err.println(tstData);
             System.err.flush();
         }
     }
-
 
     @Test
     public void testBench() throws Exception {
@@ -103,7 +97,7 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
     public void testBenchParallel() throws Exception {
         // On OSX it's not trivial to increase open file limit per process
         if (Os.type != Os.OSX) {
-            executeWithPool(4, OutOfOrderTest::testBench0);
+            executeWithPool(8, OutOfOrderTest::testBench0);
         }
     }
 
@@ -4310,6 +4304,54 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
         );
     }
 
+    @Test
+    public void testAppendToLastPartition() throws Exception {
+        executeWithPool(4, OutOfOrderTest::testAppendToLastPartition);
+    }
+
+    private static void testAppendToLastPartition(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        compiler.compile(
+                "create table x (" +
+                        " a int," +
+                        " b double," +
+                        " ts timestamp" +
+                        ") timestamp (ts) partition by DAY",
+                sqlExecutionContext
+        );
+
+        final Rnd rnd = new Rnd();
+        try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x")) {
+            long ts = 0;
+            long step = 1000000;
+            long txnScoreboard = w.getTxnScoreboard();
+            for (int i = 0; i < 1000; i++) {
+                TableWriter.Row r;
+                // todo: we need to truncate last partition when we close it, otherwise we're leaving massive files behind
+                r = w.newRow(ts - step);
+                r.putInt(0, rnd.nextInt());
+                r.putDouble(1, rnd.nextDouble());
+                r.append();
+
+                r = w.newRow(ts);
+                r.putInt(0, rnd.nextInt());
+                r.putDouble(1, rnd.nextDouble());
+                r.append();
+
+                r = w.newRow(ts + step);
+                r.putInt(0, rnd.nextInt());
+                r.putDouble(1, rnd.nextDouble());
+                r.append();
+
+                ts += step;
+
+                long txn = w.getTxn();
+                TxnScoreboard.acquire(txnScoreboard, txn);
+                w.commit();
+                TxnScoreboard.release(txnScoreboard, txn);
+            }
+        }
+    }
+
     private static void testBench0(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
         // create table with roughly 2AM data
         compiler.compile(
@@ -4365,7 +4407,6 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
                         ")",
                 sqlExecutionContext
         );
-
 
         assertOutOfOrderDataConsistency(
                 engine,

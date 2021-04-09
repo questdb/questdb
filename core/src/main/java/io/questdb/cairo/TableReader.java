@@ -77,20 +77,12 @@ public class TableReader implements Closeable, SymbolTableSource {
     private boolean active;
 
     public TableReader(CairoConfiguration configuration, CharSequence tableName) {
-        this(configuration, tableName, 0);
-    }
-
-    public TableReader(CairoConfiguration configuration, CharSequence tableName, long txnScoreboard) {
         LOG.debug().$("open '").utf8(tableName).$('\'').$();
         this.configuration = configuration;
         this.ff = configuration.getFilesFacade();
         this.tableName = Chars.toString(tableName);
         this.path = new Path();
-        if (txnScoreboard == 0) {
-            this.txnScoreboard = TxnScoreboard.create(path, configuration.getDatabaseIdLo(), configuration.getDatabaseIdHi(), tableName);
-        } else {
-            this.txnScoreboard = txnScoreboard;
-        }
+        this.txnScoreboard = TxnScoreboard.create(path, configuration.getDatabaseIdLo(), configuration.getDatabaseIdHi(), tableName);
         this.path.of(configuration.getRoot()).concat(tableName);
         this.rootLen = path.length();
         try {
@@ -173,7 +165,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             Misc.free(todoMem);
             freeColumns();
             freeTempMem();
-            TxnScoreboard.close(path, configuration.getDatabaseIdLo(), configuration.getDatabaseIdHi(), tableName, txnScoreboard);
+            TxnScoreboard.close(txnScoreboard);
             Misc.free(path);
             LOG.debug().$("closed '").utf8(tableName).$('\'').$();
         }

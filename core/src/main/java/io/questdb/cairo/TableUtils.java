@@ -444,9 +444,15 @@ public final class TableUtils {
      * @return The last timestamp in the partition
      */
     public static long setPathForPartition(CharSink path, int partitionBy, long timestamp, boolean calculatePartitionMax) {
+        return setPathForPartition(path, partitionBy, timestamp, calculatePartitionMax, true);
+    }
+
+    public static long setPathForPartition(CharSink path, int partitionBy, long timestamp, boolean calculatePartitionMax, boolean prefix) {
         int y, m, d;
         boolean leap;
-        path.put(Files.SEPARATOR);
+        if (prefix) {
+            path.put(Files.SEPARATOR);
+        }
         switch (partitionBy) {
             case PartitionBy.DAY:
                 y = Timestamps.getYear(timestamp);
@@ -498,7 +504,7 @@ public final class TableUtils {
     }
 
     public static void txnPartition(CharSink path, long txn) {
-        path.put("-n-").put(txn);
+        path.put('.').put(txn);
     }
 
     public static void txnPartitionConditionally(CharSink path, long txn) {

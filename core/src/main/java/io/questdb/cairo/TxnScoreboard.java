@@ -32,32 +32,46 @@ import io.questdb.std.str.Path;
 
 public class TxnScoreboard {
 
+    public static final long READER_NOT_YET_ACTIVE = -1;
     private static final Log LOG = LogFactory.getLog(TxnScoreboard.class);
 
-    public static void close(Path shmPath, long pTxnScoreboard) {
-        if (close0(shmPath.address(), pTxnScoreboard) == 0) {
-//            LOG.info().$("close [p=").$(pTxnScoreboard).$(']').$();
-            Unsafe.recordMemAlloc(-getScoreboardSize());
-        }
+    public static boolean acquire(long pTxnScoreboard, long txn) {
+        assert pTxnScoreboard > 0;
+        LOG.debug().$("acquire [p=").$(pTxnScoreboard).$(", txn=").$(txn).$(']').$();
+        return acquire0(pTxnScoreboard, txn);
     }
 
-    public static void close(Path shmPath, long databaseIdLo, long databaseIdHi, CharSequence tableName, long pTxnScoreboard) {
-        setShmName(shmPath, databaseIdLo, databaseIdHi, tableName);
-        close(shmPath, pTxnScoreboard);
+    public static void close(long pTxnScoreboard) {
+        long x;
+        if ((x = close0(pTxnScoreboard)) == 0) {
+            LOG.info().$("close [p=").$(pTxnScoreboard).$(']').$();
+            Unsafe.recordMemAlloc(-getScoreboardSize());
+        } else {
+            LOG.info().$("close called [p=").$(pTxnScoreboard).$(", remaining=").$(x)
+                    .$(']').$();
+        }
     }
 
     public static long create(Path shmPath, long databaseIdLo, long databaseIdHi, CharSequence tableName) {
         setShmName(shmPath, databaseIdLo, databaseIdHi, tableName);
         Unsafe.recordMemAlloc(getScoreboardSize());
-//        LOG.info().$("open").$();
-        return create0(shmPath.address());
+        final long p = create0(shmPath.address());
+        LOG.info().$("open [name=").$(tableName).$(", p=").$(p).$(']').$();
+        return p;
     }
 
     public static long newRef(long pTxnScoreboard) {
         if (pTxnScoreboard > 0) {
+            LOG.info().$("new ref [p=").$(pTxnScoreboard).$(']').$();
             return newRef0(pTxnScoreboard);
         }
         return pTxnScoreboard;
+    }
+
+    public static void release(long pTxnScoreboard, long txn) {
+        assert pTxnScoreboard > 0;
+        LOG.debug().$("release  [p=").$(pTxnScoreboard).$(", txn=").$(txn).$(']').$();
+        release0(pTxnScoreboard, txn);
     }
 
     private static void setShmName(Path shmPath, long databaseIdLo, long databaseIdHi, CharSequence name) {
@@ -69,19 +83,7 @@ public class TxnScoreboard {
         shmPath.put(databaseIdLo).put('-').put(databaseIdHi).put('-').put(name).$();
     }
 
-    static boolean acquire(long pTxnScoreboard, long txn) {
-        assert pTxnScoreboard > 0;
-        LOG.debug().$("acquire [p=").$(pTxnScoreboard).$(", txn=").$(txn).$(']').$();
-        return acquire0(pTxnScoreboard, txn);
-    }
-
     private native static boolean acquire0(long pTxnScoreboard, long txn);
-
-    static void release(long pTxnScoreboard, long txn) {
-        assert pTxnScoreboard > 0;
-        LOG.debug().$("release  [p=").$(pTxnScoreboard).$(", txn=").$(txn).$(']').$();
-        release0(pTxnScoreboard, txn);
-    }
 
     private native static long release0(long pTxnScoreboard, long txn);
 
@@ -95,7 +97,18 @@ public class TxnScoreboard {
 
     static native long getMin(long pTxnScoreboard);
 
-    private static native long close0(long lpszName, long pTxnScoreboard);
+    private static native long close0(long pTxnScoreboard);
 
     private static native long getScoreboardSize();
+
+    static boolean isTxnUnused(long nameTxn, long readerTxn, long countAtTxn, long txnScoreboard) {
+        return
+                // readers had last partition open but they are inactive
+                // (e.g. they are guaranteed to reload when they go active
+                (readerTxn == nameTxn && getCount(txnScoreboard, readerTxn) == 0)
+                        // there are no readers at all
+                        || readerTxn == READER_NOT_YET_ACTIVE
+                        // reader has more recent data in their view
+                        || readerTxn > nameTxn;
+    }
 }

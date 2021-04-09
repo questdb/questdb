@@ -38,6 +38,10 @@ public interface CairoConfiguration {
 
     int getBindVariablePoolSize();
 
+    int getO3PurgeDiscoveryQueueCapacity();
+
+    int getO3PurgeQueueCapacity();
+
     int getSqlCopyBufferSize();
 
     int getCopyPoolCapacity();
@@ -205,15 +209,15 @@ public interface CairoConfiguration {
 
     int getVectorAggregateQueueCapacity();
 
-    int getOutOfOrderSortQueueCapacity();
+    int getO3SortQueueCapacity();
 
-    int getOutOfOrderPartitionQueueCapacity();
+    int getO3PartitionQueueCapacity();
 
-    int getOutOfOrderOpenColumnQueueCapacity();
+    int getO3OpenColumnQueueCapacity();
 
-    int getOutOfOrderCopyQueueCapacity();
+    int getO3CopyQueueCapacity();
 
-    int getOutOfOrderUpdPartitionSizeQueueCapacity();
+    int getO3UpdPartitionSizeQueueCapacity();
 
     BuildInformation getBuildInformation();
 

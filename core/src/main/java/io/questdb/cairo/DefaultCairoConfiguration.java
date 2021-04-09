@@ -49,14 +49,14 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     private final BuildInformation buildInformation = new BuildInformationHolder();
 
-    private final long instanceHashLo;
-    private final long instanceHashHi;
+    private final long databaseIdLo;
+    private final long databaseIdHi;
 
     public DefaultCairoConfiguration(CharSequence root) {
         this.root = Chars.toString(root);
         Rnd rnd = new Rnd(NanosecondClockImpl.INSTANCE.getTicks(), MicrosecondClockImpl.INSTANCE.getTicks());
-        this.instanceHashLo = rnd.nextLong();
-        this.instanceHashHi = rnd.nextLong();
+        this.databaseIdLo = rnd.nextLong();
+        this.databaseIdHi = rnd.nextLong();
     }
 
     @Override
@@ -467,27 +467,27 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getOutOfOrderSortQueueCapacity() {
+    public int getO3SortQueueCapacity() {
         return 1024;
     }
 
     @Override
-    public int getOutOfOrderPartitionQueueCapacity() {
+    public int getO3PartitionQueueCapacity() {
         return 1024;
     }
 
     @Override
-    public int getOutOfOrderOpenColumnQueueCapacity() {
+    public int getO3OpenColumnQueueCapacity() {
         return 1024;
     }
 
     @Override
-    public int getOutOfOrderCopyQueueCapacity() {
+    public int getO3CopyQueueCapacity() {
         return 1024;
     }
 
     @Override
-    public int getOutOfOrderUpdPartitionSizeQueueCapacity() {
+    public int getO3UpdPartitionSizeQueueCapacity() {
         return 1024;
     }
 
@@ -498,11 +498,21 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public long getDatabaseIdHi() {
-        return instanceHashHi;
+        return databaseIdHi;
     }
 
     @Override
     public long getDatabaseIdLo() {
-        return instanceHashLo;
+        return databaseIdLo;
+    }
+
+    @Override
+    public int getO3PurgeDiscoveryQueueCapacity() {
+        return 1024;
+    }
+
+    @Override
+    public int getO3PurgeQueueCapacity() {
+        return 1024;
     }
 }

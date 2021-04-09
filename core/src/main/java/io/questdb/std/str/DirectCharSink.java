@@ -31,11 +31,11 @@ import java.io.Closeable;
 
 public class DirectCharSink extends AbstractCharSink implements MutableCharSink, Closeable {
     private long ptr;
-    private int capacity;
+    private long capacity;
     private long lo;
     private long hi;
 
-    public DirectCharSink(int capacity) {
+    public DirectCharSink(long capacity) {
         ptr = Unsafe.malloc(capacity);
         this.capacity = capacity;
         this.lo = ptr;
@@ -74,7 +74,7 @@ public class DirectCharSink extends AbstractCharSink implements MutableCharSink,
             int l2 = l * 2;
 
             if (lo + l2 >= hi) {
-                resize((int) Math.max(capacity * 2L, (lo - ptr + l2) * 2L));
+                resize(Math.max(capacity * 2L, (lo - ptr + l2) * 2L));
             }
 
             for (int i = 0; i < l; i++) {
@@ -117,7 +117,10 @@ public class DirectCharSink extends AbstractCharSink implements MutableCharSink,
         return AbstractCharSequence.getString(this);
     }
 
-    private void resize(int cap) {
+    private void resize(long cap) {
+        if (cap < 0) {
+            System.out.println("fk");
+        }
         long temp = Unsafe.realloc(ptr, capacity, cap);
         int len = (int) (lo - ptr);
         this.ptr = temp;

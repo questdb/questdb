@@ -124,6 +124,7 @@ import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.NativeLPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.tasks.ColumnIndexerTask;
+import io.questdb.tasks.O3PurgeDiscoveryTask;
 import io.questdb.tasks.OutOfOrderCopyTask;
 import io.questdb.tasks.OutOfOrderOpenColumnTask;
 import io.questdb.tasks.OutOfOrderPartitionTask;
@@ -198,13 +199,12 @@ public class TableWriter implements Closeable {
     private final OutOfOrderSortMethod oooSortFixColumnRef = this::oooSortFixColumn;
     private final SOUnboundedCountDownLatch oooLatch = new SOUnboundedCountDownLatch();
     private final AtomicLong oooUpdRemaining = new AtomicLong();
-    private final FindVisitor removePartitionDirsCreatedByOOOVisitor = this::removePartitionDirsCreatedByOOO0;
     private final AtomicInteger oooErrorCount = new AtomicInteger();
     private final MappedReadWriteMemory todoMem = new PagedMappedReadWriteMemory();
     private final TxWriter txFile;
     private final FindVisitor removePartitionDirsNotAttached = this::removePartitionDirsNotAttached;
     private final long txnScoreboard;
-    private final LongList oooPartitionRemoveCandidates = new LongList();
+    private final LongList o3PartitionRemoveCandidates = new LongList();
     private long todoTxn;
     private ContiguousVirtualMemory timestampMergeMem;
     private long lockFd;
@@ -775,7 +775,7 @@ public class TableWriter implements Closeable {
                 transientRowCountBeforeOutOfOrder = txFile.getTransientRowCount();
                 txFile.append(oooRowCount);
             }
-            oooProcessPartitionRemoveCandidates();
+            o3ProcessPartitionRemoveCandidates();
         }
     }
 
@@ -821,6 +821,10 @@ public class TableWriter implements Closeable {
 
     public long getTxn() {
         return txFile.getTxn();
+    }
+
+    public long getTxnScoreboard() {
+        return txnScoreboard;
     }
 
     public boolean inTransaction() {
@@ -1919,7 +1923,7 @@ public class TableWriter implements Closeable {
             releaseLock(!truncate | tx | performRecovery | distressed);
         } finally {
             if (txnScoreboard != 0) {
-                TxnScoreboard.close(path, configuration.getDatabaseIdLo(), configuration.getDatabaseIdHi(), this.name, this.txnScoreboard);
+                TxnScoreboard.close(this.txnScoreboard);
             }
             Misc.free(path);
             freeTempMem();
@@ -2111,6 +2115,79 @@ public class TableWriter implements Closeable {
         timestampMergeMem.putLong(oooRowCount++);
     }
 
+    private void o3ProcessPartitionRemoveCandidates() {
+        try {
+            final long readerTxn = TxnScoreboard.getMin(txnScoreboard);
+            final long readerTxnCount = TxnScoreboard.getCount(txnScoreboard, readerTxn);
+            if (TxnScoreboard.isTxnUnused(txFile.getTxn() - 1, readerTxn, readerTxnCount, txnScoreboard)) {
+                for (int i = 0, n = o3PartitionRemoveCandidates.size(); i < n; i += 2) {
+                    final long timestamp = o3PartitionRemoveCandidates.getQuick(i);
+                    final long txn = o3PartitionRemoveCandidates.getQuick(i + 1);
+                    try {
+                        setPathForPartition(
+                                other,
+                                partitionBy,
+                                timestamp,
+                                false
+                        );
+                        TableUtils.txnPartitionConditionally(other, txn);
+                        other.$$dir();
+                        if (ff.rmdir(other)) {
+                            LOG.info().$(
+                                    "purged [path=").$(other)
+                                    .$(", readerTxn=").$(readerTxn)
+                                    .$(", readerTxnCount=").$(readerTxnCount)
+                                    .$(']').$();
+                        } else {
+                            o3QueuePartitionForPurge(timestamp, txn);
+                        }
+                    } finally {
+                        other.trimTo(rootLen);
+                    }
+                }
+            } else {
+                // queue all updated partitions
+                for (int i = 0, n = o3PartitionRemoveCandidates.size(); i < n; i += 2) {
+                    o3QueuePartitionForPurge(
+                            o3PartitionRemoveCandidates.getQuick(i),
+                            o3PartitionRemoveCandidates.getQuick(i + 1)
+                    );
+                }
+            }
+        } finally {
+            o3PartitionRemoveCandidates.clear();
+        }
+    }
+
+    private void o3QueuePartitionForPurge(long timestamp, long txn) {
+        final MPSequence seq = messageBus.getO3PurgeDiscoveryPubSeq();
+        long cursor = seq.next();
+        if (cursor > -1) {
+            O3PurgeDiscoveryTask task = messageBus.getO3PurgeDiscoveryQueue().get(cursor);
+            task.of(
+                    name,
+                    partitionBy,
+                    TxnScoreboard.newRef(txnScoreboard),
+                    timestamp,
+                    txn
+            );
+            seq.done(cursor);
+            LOG.info()
+                    .$("queued to purge [errno=").$(ff.errno())
+                    .$(", table=").$(name)
+                    .$(", ts=").$ts(timestamp)
+                    .$(", txn=").$(txn)
+                    .$(']').$();
+        } else {
+            LOG.error()
+                    .$("could not purge [errno=").$(ff.errno())
+                    .$(", table=").$(name)
+                    .$(", ts=").$ts(timestamp)
+                    .$(", txn=").$(txn)
+                    .$(']').$();
+        }
+    }
+
     private void oooConsumeUpdPartitionSizeTasks(
             int workerId,
             long srcOooMax,
@@ -2124,7 +2201,7 @@ public class TableWriter implements Closeable {
         final RingQueue<OutOfOrderPartitionTask> partitionQueue = messageBus.getOutOfOrderPartitionQueue();
         final Sequence openColumnSubSeq = messageBus.getOutOfOrderOpenColumnSubSequence();
         final RingQueue<OutOfOrderOpenColumnTask> openColumnQueue = messageBus.getOutOfOrderOpenColumnQueue();
-        final Sequence copyPubSeq = messageBus.getOutOfOrderCopyPubSequence();
+        final Sequence copyPubSeq = messageBus.getOutOfOrderCopyPubSeq();
         final Sequence copySubSeq = messageBus.getOutOfOrderCopySubSequence();
         final RingQueue<OutOfOrderCopyTask> copyQueue = messageBus.getOutOfOrderCopyQueue();
 
@@ -2305,7 +2382,7 @@ public class TableWriter implements Closeable {
     }
 
     private void oooProcess(long lastTimestampHysteresisInMicros) {
-        oooPartitionRemoveCandidates.clear();
+        o3PartitionRemoveCandidates.clear();
         oooErrorCount.set(0);
         final int workerId;
         final Thread thread = Thread.currentThread();
@@ -2327,7 +2404,7 @@ public class TableWriter implements Closeable {
             // to determine that 'ooTimestampLo' goes into current partition
             // we need to compare 'partitionTimestampHi', which is appropriately truncated to DAY/MONTH/YEAR
             // to this.maxTimestamp, which isn't truncated yet. So we need to truncate it first
-            LOG.info().$("sorting [name=").$(name).$(']').$();
+            LOG.info().$("sorting o3 [table=").$(name).$(']').$();
             final long sortedTimestampsAddr = timestampMergeMem.addressOf(0);
             Vect.sortLongIndexAscInPlace(sortedTimestampsAddr, oooRowCount);
             // reshuffle all variable length columns
@@ -2427,7 +2504,7 @@ public class TableWriter implements Closeable {
                                     messageBus.getOutOfOrderOpenColumnQueue(),
                                     messageBus.getOutOfOrderOpenColumnPubSequence(),
                                     messageBus.getOutOfOrderCopyQueue(),
-                                    messageBus.getOutOfOrderCopyPubSequence(),
+                                    messageBus.getOutOfOrderCopyPubSeq(),
                                     messageBus.getOutOfOrderUpdPartitionSizeQueue(),
                                     messageBus.getOutOfOrderUpdPartitionSizePubSequence(),
                                     ff,
@@ -2609,9 +2686,9 @@ public class TableWriter implements Closeable {
         try {
             long minTxn = TxnScoreboard.getMin(txnScoreboard);
             if (minTxn == txFile.getTxn() - 1 && TxnScoreboard.getCount(txnScoreboard, minTxn) == 0) {
-                for (int i = 0, n = oooPartitionRemoveCandidates.size(); i < n; i += 2) {
-                    final long timestamp = oooPartitionRemoveCandidates.getQuick(i);
-                    final long txn = oooPartitionRemoveCandidates.getQuick(i + 1);
+                for (int i = 0, n = o3PartitionRemoveCandidates.size(); i < n; i += 2) {
+                    final long timestamp = o3PartitionRemoveCandidates.getQuick(i);
+                    final long txn = o3PartitionRemoveCandidates.getQuick(i + 1);
                     setPathForPartition(
                             other,
                             partitionBy,
@@ -2623,7 +2700,7 @@ public class TableWriter implements Closeable {
                 }
             }
         } finally {
-            oooPartitionRemoveCandidates.clear();
+            o3PartitionRemoveCandidates.clear();
             other.trimTo(rootLen);
         }
     }
@@ -2908,12 +2985,12 @@ public class TableWriter implements Closeable {
         if (partitionMutates) {
             final long srcDataTxn = txFile.getPartitionNameTxnByIndex(partitionIndex);
             LOG.info()
-                    .$("partition busy [table=`").utf8(path)
+                    .$("merged partition [table=`").utf8(name)
                     .$("`, ts=").$ts(partitionTimestamp)
-                    .$(", txn=").$(srcDataTxn).$(']').$();
+                    .$(", txn=").$(txFile.txn).$(']').$();
             txFile.updatePartitionSizeByIndexAndTxn(partitionIndex, partitionSize);
-            oooPartitionRemoveCandidates.add(partitionTimestamp);
-            oooPartitionRemoveCandidates.add(srcDataTxn);
+            o3PartitionRemoveCandidates.add(partitionTimestamp);
+            o3PartitionRemoveCandidates.add(srcDataTxn);
         } else {
             txFile.updatePartitionSizeByIndex(partitionIndex, partitionTimestamp, partitionSize);
         }
@@ -2975,7 +3052,7 @@ public class TableWriter implements Closeable {
         }
         row.activeColumns = oooColumns;
         row.activeNullSetters = oooNullSetters;
-        LOG.info().$("switched partition to memory").$();
+        LOG.debug().$("switched partition to memory").$();
     }
 
     private void openNewColumnFiles(CharSequence name, boolean indexFlag, int indexValueBlockCapacity) {
@@ -3040,7 +3117,7 @@ public class TableWriter implements Closeable {
                     indexer.configureFollowerAndWriter(configuration, path, name, getPrimaryColumn(i), columnTop);
                 }
             }
-            LOG.info().$("switched partition to '").$(path).$('\'').$();
+            LOG.info().$("switched partition [path='").$(path).$("']").$();
         } finally {
             path.trimTo(rootLen);
         }
@@ -3097,7 +3174,6 @@ public class TableWriter implements Closeable {
     void purgeUnusedPartitions() {
         if (partitionBy != PartitionBy.NONE) {
             removeNonAttachedPartitions();
-            removePartitionDirsCreatedByOOO();
         }
     }
 
@@ -3311,30 +3387,6 @@ public class TableWriter implements Closeable {
         nativeLPSZ.of(name);
         if (IGNORED_FILES.excludes(nativeLPSZ) && type == Files.DT_DIR && !ff.rmdir(path)) {
             LOG.info().$("could not remove [path=").$(path).$(", errno=").$(ff.errno()).$(']').$();
-        }
-    }
-
-    private void removePartitionDirsCreatedByOOO() {
-        LOG.debug().$("purging OOO artefacts [path=").$(path.$()).$(']').$();
-        try {
-            ff.iterateDir(path.$(), removePartitionDirsCreatedByOOOVisitor);
-        } finally {
-            path.trimTo(rootLen);
-        }
-    }
-
-    private void removePartitionDirsCreatedByOOO0(long pName, int type) {
-        path.trimTo(rootLen);
-        path.concat(pName).$();
-        nativeLPSZ.of(pName);
-        if (!isDots(nativeLPSZ) && type == Files.DT_DIR) {
-            if (Chars.contains(nativeLPSZ, "-n-")) {
-                if (ff.rmdir(path)) {
-                    LOG.info().$("removing partition dir: ").$(path).$();
-                } else {
-                    LOG.error().$("cannot remove: ").$(path).$(" [errno=").$(ff.errno()).$(']').$();
-                }
-            }
         }
     }
 
@@ -4070,7 +4122,7 @@ public class TableWriter implements Closeable {
         private Row newRow0(long timestamp) {
             if (timestamp < txFile.getMaxTimestamp()) {
                 if (outOfOrderEnabled) {
-                    LOG.info().$("out-of-order").$();
+                    LOG.info().$("switched to o3").$();
                     transientRowCountBeforeOutOfOrder = txFile.getTransientRowCount();
                     txFile.beginPartitionSizeUpdate();
                     openMergePartition();

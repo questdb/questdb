@@ -23,6 +23,8 @@
  ******************************************************************************/
 
 #include <cstdint>
+#include <cstring>
+#include <cerrno>
 #include "util.h"
 #include "jni.h"
 #include "fs.h"
@@ -80,10 +82,13 @@ typedef struct txn_scoreboard_t {
 
 } txn_scoreboard_t;
 
+#define MAX_LEN 256
+
 typedef struct txn_local {
     txn_scoreboard_t* p_txn_scoreboard;
     uint64_t ref_counter;
     int64_t hMapping;
+    char name[MAX_LEN];
 } txn_local_t;
 
 inline uint64_t inc(uint64_t val) {
@@ -193,37 +198,55 @@ JNIEXPORT jlong JNICALL Java_io_questdb_cairo_TxnScoreboard_create0
         (JNIEnv *e, jclass cl, jlong lpszName) {
     uint64_t size = sizeof(txn_scoreboard_t);
     int64_t hMapping;
-    auto *pBoard = reinterpret_cast<txn_scoreboard_t *>(openShm0(reinterpret_cast<char *>(lpszName), size, &hMapping));
-    auto *pTxnLocal = reinterpret_cast<txn_local_t *>(malloc(sizeof(txn_local_t)));
-    pTxnLocal->p_txn_scoreboard = pBoard;
-    pTxnLocal->hMapping = hMapping;
-    pTxnLocal->ref_counter = 1;
-    return reinterpret_cast<jlong>(pTxnLocal);
+    auto name = reinterpret_cast<char *>(lpszName);
+    // check name length
+    if (strlen(name) < MAX_LEN) {
+        auto *pBoard = reinterpret_cast<txn_scoreboard_t *>(openShm0(name, size, &hMapping));
+        auto *pTxnLocal = reinterpret_cast<txn_local_t *>(malloc(sizeof(txn_local_t)));
+        pTxnLocal->p_txn_scoreboard = pBoard;
+        pTxnLocal->hMapping = hMapping;
+        pTxnLocal->ref_counter = 1;
+        strcpy(pTxnLocal->name, name);
+        return reinterpret_cast<jlong>(pTxnLocal);
+    }
+    errno = ENAMETOOLONG;
+    return 0;
 }
 
 JNIEXPORT jlong JNICALL Java_io_questdb_cairo_TxnScoreboard_close0
-        (JNIEnv *e, jclass cl, jlong lpszName, jlong p_local) {
+        (JNIEnv *e, jclass cl, jlong p_local) {
     auto *pTxnLocal = reinterpret_cast<txn_local_t *>(p_local);
     auto refs_remaining = atomic_next(&(pTxnLocal->ref_counter), dec);
     if (refs_remaining == 0) {
         auto *pTxnBoard = pTxnLocal->p_txn_scoreboard;
         auto hMapping = pTxnLocal->hMapping;
-        free(pTxnLocal);
         closeShm0(
-                reinterpret_cast<char *>(lpszName),
+                pTxnLocal->name,
                 pTxnBoard,
                 sizeof(txn_scoreboard_t),
                 hMapping
         );
+        free(pTxnLocal);
         return 0;
     }
-    return refs_remaining;
+    return jlong(refs_remaining);
 }
 
 JNIEXPORT jlong JNICALL Java_io_questdb_cairo_TxnScoreboard_newRef0
         (JNIEnv *e, jclass cl, jlong p_local) {
     auto *pTxnLocal = reinterpret_cast<txn_local_t *>(p_local);
-    atomic_next(&(pTxnLocal->ref_counter), inc);
+    uint64_t *val = &(pTxnLocal->ref_counter);
+    do {
+        uint64_t current = __atomic_load_n(val, __ATOMIC_RELAXED);
+        if (current == 0) {
+            return 0;
+        }
+        uint64_t n = current + 1;
+        if (__sync_val_compare_and_swap(val, current, n) == current) {
+            break;
+        }
+    } while (true);
+
     return p_local;
 }
 

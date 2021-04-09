@@ -46,7 +46,19 @@ public interface MessageBus extends Closeable {
 
     Sequence getIndexerSubSequence();
 
-    MPSequence getOutOfOrderCopyPubSequence();
+    MPSequence getO3PurgeDiscoveryPubSeq();
+
+    RingQueue<O3PurgeDiscoveryTask> getO3PurgeDiscoveryQueue();
+
+    MCSequence getO3PurgeDiscoverySubSeq();
+
+    MPSequence getO3PurgePubSeq();
+
+    RingQueue<O3PurgeTask> getO3PurgeQueue();
+
+    MCSequence getO3PurgeSubSeq();
+
+    MPSequence getOutOfOrderCopyPubSeq();
 
     RingQueue<OutOfOrderCopyTask> getOutOfOrderCopyQueue();
 

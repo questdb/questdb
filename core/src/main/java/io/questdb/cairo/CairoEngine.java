@@ -303,7 +303,6 @@ public class CairoEngine implements Closeable, WriterSource {
     public boolean clear() {
         boolean b1 = readerPool.releaseAll();
         boolean b2 = writerPool.releaseAll();
-        readerPool.freeEntries();
         return b1 & b2;
     }
 
