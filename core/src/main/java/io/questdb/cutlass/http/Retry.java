@@ -26,17 +26,26 @@ package io.questdb.cutlass.http;
 
 public interface Retry {
     /**
-     * Run a retry
+     * Notify client that re-run failed
+     *
+     * @param selector processor selector
+     * @param e        exception information
      */
-    boolean tryRerun(HttpRequestProcessorSelector selector, RescheduleContext rescheduleContext);
+    void fail(HttpRequestProcessorSelector selector, HttpException e);
 
     /**
-     * Gets retry run attributes
+     * Provides retry information
+     *
+     * @return retry attributes
      */
     RetryAttemptAttributes getAttemptDetails();
 
     /**
-     * Notify client that re-run failed
+     * Retries context that could not acquire resource during regular execution.
+     *
+     * @param selector          processor selector
+     * @param rescheduleContext context to be retried
+     * @return success indicator
      */
-    void fail(HttpRequestProcessorSelector selector, HttpException e);
+    boolean tryRerun(HttpRequestProcessorSelector selector, RescheduleContext rescheduleContext);
 }
