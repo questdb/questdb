@@ -52,6 +52,7 @@ export type ButtonProps = Readonly<{
   onClick?: (event: MouseEvent) => void
   size: Size
   type: Type
+  title?: string
 }>
 
 type ThemeShape = {

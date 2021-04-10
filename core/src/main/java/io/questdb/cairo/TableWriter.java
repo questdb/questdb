@@ -1947,7 +1947,7 @@ public class TableWriter implements Closeable {
         final long maxTimestamp = timestampFloorMethod.floor(this.txFile.getMaxTimestamp());
         long timestamp = txFile.getMinTimestamp();
 
-        try (indexer; final MappedReadOnlyMemory roMem = new SinglePageMappedReadOnlyPageMemory()) {
+        try (final MappedReadOnlyMemory roMem = new SinglePageMappedReadOnlyPageMemory()) {
 
             while (timestamp < maxTimestamp) {
 
@@ -1985,6 +1985,8 @@ public class TableWriter implements Closeable {
                 }
                 timestamp = timestampAddMethod.calculate(timestamp, 1);
             }
+        } finally {
+            indexer.close();
         }
         return timestamp;
     }

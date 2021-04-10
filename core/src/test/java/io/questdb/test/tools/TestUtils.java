@@ -309,8 +309,8 @@ public final class TestUtils {
     }
 
     public static void assertFileContentsEquals(Path expected, Path actual) throws IOException {
-        try (var expectedStream = new BufferedInputStream(new FileInputStream(expected.toString()));
-             var actualStream = new BufferedInputStream(new FileInputStream(actual.toString()))) {
+        try (BufferedInputStream expectedStream = new BufferedInputStream(new FileInputStream(expected.toString()));
+             BufferedInputStream actualStream = new BufferedInputStream(new FileInputStream(actual.toString()))) {
             int byte1, byte2;
             long length = 0;
             do {
@@ -428,6 +428,44 @@ public final class TestUtils {
                 printCursor(cursor, factory.getMetadata(), true, sink);
             }
         }
+    }
+
+    public static void assertEqualsIgnoreCase(CharSequence expected, CharSequence actual) {
+        assertEqualsIgnoreCase(null, expected, actual);
+    }
+
+    public static void assertEqualsIgnoreCase(String message, CharSequence expected, CharSequence actual) {
+        if (expected == null && actual == null) {
+            return;
+        }
+
+        if (expected != null && actual == null) {
+            Assert.fail("Expected: \n`" + expected + "`but have NULL");
+        }
+
+        if (expected == null) {
+            Assert.fail("Expected: NULL but have \n`" + actual + "`\n");
+        }
+
+        if (expected.length() != actual.length()) {
+            Assert.assertEquals(message, expected, actual);
+        }
+
+        for (int i = 0; i < expected.length(); i++) {
+            if (Character.toLowerCase(expected.charAt(i)) != Character.toLowerCase(actual.charAt(i))) {
+                Assert.assertEquals(message, expected, actual);
+            }
+        }
+    }
+
+    public static int getJavaVersion() {
+        String version = System.getProperty("java.version");
+        if(version.startsWith("1.")) {
+            version = version.substring(2, 3);
+        } else {
+            int dot = version.indexOf(".");
+            if(dot != -1) { version = version.substring(0, dot); }
+        } return Integer.parseInt(version);
     }
 
     @FunctionalInterface

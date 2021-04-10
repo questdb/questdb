@@ -225,7 +225,7 @@ public class FilesTest {
         File temp = temporaryFolder.newFile();
         int fileSize = 2 * 1024 * 1024; // in MB
         byte[] page = new byte[1024 * 64];
-        var rnd = new Rnd();
+        Rnd rnd = new Rnd();
 
         for(int i = 0; i < page.length; i++) {
             page[i] = rnd.nextByte();
