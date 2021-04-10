@@ -1820,7 +1820,7 @@ public class TableWriter implements Closeable {
 
     private void doClose(boolean truncate) {
         boolean tx = inTransaction();
-        freeColumns(truncate);
+        freeColumns(truncate & !distressed);
         freeSymbolMapWriters();
         freeIndexers();
         Misc.free(txFile);
@@ -1947,6 +1947,7 @@ public class TableWriter implements Closeable {
         final long maxTimestamp = timestampFloorMethod.floor(this.txFile.getMaxTimestamp());
         long timestamp = txFile.getMinTimestamp();
 
+        //noinspection TryFinallyCanBeTryWithResources
         try (final MappedReadOnlyMemory roMem = new SinglePageMappedReadOnlyPageMemory()) {
 
             while (timestamp < maxTimestamp) {

@@ -418,7 +418,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
         try (Path path = new Path()) {
             path.concat(root).concat(src.getName()).concat(TableUtils.META_FILE_NAME);
             FilesFacade ff = configuration.getFilesFacade();
-            try (ReadWriteMemory rwTx = new PagedMappedReadWriteMemory(ff, path.$(), ff.getPageSize())) {
+            try (PagedMappedReadWriteMemory rwTx = new PagedMappedReadWriteMemory(ff, path.$(), ff.getPageSize())) {
                 if (rwTx.getInt(META_OFFSET_VERSION) >= VERSION_TX_STRUCT_UPDATE_1 - 1) {
                     rwTx.putInt(META_OFFSET_VERSION, VERSION_TX_STRUCT_UPDATE_1 - 1);
                 }
@@ -439,7 +439,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
             }
 
             path.trimTo(0).concat(root).concat(src.getName()).concat(TXN_FILE_NAME);
-            try (ReadWriteMemory rwTx = new PagedMappedReadWriteMemory(ff, path.$(), ff.getPageSize())) {
+            try (PagedMappedReadWriteMemory rwTx = new PagedMappedReadWriteMemory(ff, path.$(), ff.getPageSize())) {
                 rwTx.putInt(TX_STRUCT_UPDATE_1_OFFSET_MAP_WRITER_COUNT, symbolCounts.size());
                 rwTx.jumpTo(TX_STRUCT_UPDATE_1_OFFSET_MAP_WRITER_COUNT + 4);
 
@@ -472,7 +472,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
                     if (ff.exists(path.$())) {
                         ff.remove(path);
                     }
-                    try (ReadWriteMemory rwAr = new PagedMappedReadWriteMemory(ff, path.$(), 8)) {
+                    try (PagedMappedReadWriteMemory rwAr = new PagedMappedReadWriteMemory(ff, path.$(), 8)) {
                         rwAr.putLong(partitionSize);
                     }
                 }

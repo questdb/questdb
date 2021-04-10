@@ -66,9 +66,9 @@ public class EngineMigration {
         int tempMemSize = 8;
         long mem = Unsafe.malloc(tempMemSize);
 
-        try (VirtualMemory virtualMem = new PagedVirtualMemory(ff.getPageSize(), 8);
+        try (PagedVirtualMemory virtualMem = new PagedVirtualMemory(ff.getPageSize(), 8);
              Path path = new Path();
-             ReadWriteMemory rwMemory = new PagedMappedReadWriteMemory()) {
+             PagedMappedReadWriteMemory rwMemory = new PagedMappedReadWriteMemory()) {
 
             MigrationContext context = new MigrationContext(mem, tempMemSize, virtualMem, rwMemory);
             path.of(configuration.getRoot());
@@ -269,10 +269,10 @@ public class EngineMigration {
             }
 
             LOG.debug().$("opening for rw [path=").$(path).I$();
-            ReadWriteMemory txMem = migrationContext.createRwMemoryOf(ff, path.$(), ff.getPageSize());
+            MappedReadWriteMemory txMem = migrationContext.createRwMemoryOf(ff, path.$(), ff.getPageSize());
             long tempMem8b = migrationContext.getTempMemory(8);
 
-            VirtualMemory txFileUpdate = migrationContext.getTempVirtualMem();
+            PagedVirtualMemory txFileUpdate = migrationContext.getTempVirtualMem();
             txFileUpdate.clear();
             txFileUpdate.jumpTo(0);
 

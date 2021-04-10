@@ -40,12 +40,14 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
+import java.security.NoSuchAlgorithmException;
 import java.security.PrivateKey;
 import java.security.Signature;
 import java.util.Arrays;
@@ -184,6 +186,7 @@ public class LineTcpAuthConnectionContextTest extends AbstractCairoTest {
             @Override
             public String getAuthDbPath() {
                 URL u = getClass().getResource("authDb.txt");
+                assert u != null;
                 return u.getFile();
             }
         };
@@ -432,7 +435,7 @@ public class LineTcpAuthConnectionContextTest extends AbstractCairoTest {
                 Assert.fail();
             });
         } catch (CairoException ex) {
-            Assert.assertEquals("Minimum buffer length is 513", ex.getFlyweightMessage().toString());
+            TestUtils.assertEquals("Minimum buffer length is 513", ex.getFlyweightMessage());
         }
     }
 
@@ -441,7 +444,7 @@ public class LineTcpAuthConnectionContextTest extends AbstractCairoTest {
         runInContext(() -> {
             StringBuilder token = new StringBuilder("xxxxxxxx");
             while (token.length() < netMsgBufferSize.get()) {
-                token.append(token.toString());
+                token.append(token);
             }
             boolean authSequenceCompleted = authenticate(token.toString(), AUTH_PRIVATE_KEY1);
             Assert.assertFalse(authSequenceCompleted);
