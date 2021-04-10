@@ -189,7 +189,6 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
                         , (int) columnNameType.getQuick(i * 2 + 1)
                         , i
                         , cache.get(columnValues.getQuick(i))
-                        , LOG
                 );
             }
             row.append();
@@ -213,7 +212,6 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
                         , Numbers.decodeHighInt(value)
                         , Numbers.decodeLowInt(value)
                         , cache.get(columnValues.getQuick(i))
-                        , LOG
                 );
             }
             row.append();

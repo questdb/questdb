@@ -653,12 +653,14 @@ public class SqlCodeGenerator implements Mutable {
         model.setWhereClause(null);
         final Function f = compileFilter(filter, factory.getMetadata(), executionContext);
         if (f.isConstant()) {
-            try (f) {
+            try {
                 if (f.getBool(null)) {
                     return factory;
                 }
                 // metadata is always a GenericRecordMetadata instance
                 return new EmptyTableRecordCursorFactory(factory.getMetadata());
+            } finally {
+                f.close();
             }
         }
         return new FilteredRecordCursorFactory(factory, f);

@@ -66,11 +66,11 @@ public class EngineMigration {
         int tempMemSize = 8;
         long mem = Unsafe.malloc(tempMemSize);
 
-        try (var virtualMem = new PagedVirtualMemory(ff.getPageSize(), 8);
-             var path = new Path();
-             var rwMemory = new PagedMappedReadWriteMemory()) {
+        try (PagedVirtualMemory virtualMem = new PagedVirtualMemory(ff.getPageSize(), 8);
+             Path path = new Path();
+             PagedMappedReadWriteMemory rwMemory = new PagedMappedReadWriteMemory()) {
 
-            var context = new MigrationContext(mem, tempMemSize, virtualMem, rwMemory);
+            MigrationContext context = new MigrationContext(mem, tempMemSize, virtualMem, rwMemory);
             path.of(configuration.getRoot());
 
             // check if all tables have been upgraded already
@@ -160,7 +160,7 @@ public class EngineMigration {
                                         context.of(path, copyPath, fd);
 
                                         for (int i = currentTableVersion + 1; i <= latestVersion; i++) {
-                                            var migration = getMigrationToVersion(i);
+                                            MigrationAction migration = getMigrationToVersion(i);
                                             try {
                                                 if (migration != null) {
                                                     LOG.info().$("upgrading table [path=").$(path).$(",toVersion=").$(i).I$();
@@ -242,8 +242,8 @@ public class EngineMigration {
             // Before there was 1 int per symbol and list of removed partitions
             // Now there is 2 ints per symbol and 4 longs per each non-removed partition
 
-            var path = migrationContext.getTablePath();
-            final var ff = migrationContext.getFf();
+            Path path = migrationContext.getTablePath();
+            final FilesFacade ff = migrationContext.getFf();
             int pathDirLen = path.length();
 
             path.concat(TXN_FILE_NAME).$();
@@ -253,7 +253,7 @@ public class EngineMigration {
             }
 
             // make a copy
-            var copyPath = migrationContext.getTablePath2();
+            Path copyPath = migrationContext.getTablePath2();
             copyPath.concat(TX_STRUCT_UPDATE_1_BACKUP_NAME).$();
             if (ff.exists(copyPath)) {
                 LOG.info().$("back tx file exists, [path=").$(copyPath).I$();
@@ -269,10 +269,10 @@ public class EngineMigration {
             }
 
             LOG.debug().$("opening for rw [path=").$(path).I$();
-            var txMem = migrationContext.createRwMemoryOf(ff, path.$(), ff.getPageSize());
-            var tempMem8b = migrationContext.getTempMemory(8);
+            MappedReadWriteMemory txMem = migrationContext.createRwMemoryOf(ff, path.$(), ff.getPageSize());
+            long tempMem8b = migrationContext.getTempMemory(8);
 
-            var txFileUpdate = migrationContext.getTempVirtualMem();
+            PagedVirtualMemory txFileUpdate = migrationContext.getTempVirtualMem();
             txFileUpdate.clear();
             txFileUpdate.jumpTo(0);
 

@@ -46,22 +46,26 @@ public class OrFunctionFactory implements FunctionFactory {
         final Function leftFunc = args.getQuick(0);
         final Function rightFunc = args.getQuick(1);
         if (leftFunc.isConstant()) {
-            try (leftFunc) {
+            try {
                 if (leftFunc.getBool(null)) {
                     Misc.free(rightFunc);
                     return new BooleanConstant(position, true);
                 }
                 return rightFunc;
+            } finally {
+                leftFunc.close();
             }
         }
 
         if (rightFunc.isConstant()) {
-            try (rightFunc) {
+            try {
                 if (rightFunc.getBool(null)) {
                     Misc.free(leftFunc);
                     return new BooleanConstant(position, true);
                 }
                 return leftFunc;
+            } finally {
+                rightFunc.close();
             }
         }
         return new MyBooleanFunction(position, leftFunc, rightFunc);

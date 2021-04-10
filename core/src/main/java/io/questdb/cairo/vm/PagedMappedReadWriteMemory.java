@@ -98,21 +98,7 @@ public class PagedMappedReadWriteMemory extends PagedVirtualMemory implements Ma
         close();
         this.ff = ff;
         fd = TableUtils.openFileRWOrFail(ff, name);
-        setPageSize(pageSize);
-        if (!ff.allocate(fd, size)) {
-            throw CairoException.instance(ff.errno()).put("Not enough space left on device");
-        }
-        ensurePagesListCapacity(size);
-        LOG.debug().$("open ").$(name).$(" [fd=").$(fd).$(']').$();
-        try {
-            // we may not be able to map page here
-            // make sure we close file before bailing out
-            jumpTo(size);
-        } catch (CairoException e) {
-            ff.close(fd);
-            fd = -1;
-            throw e;
-        }
+        of0(ff, name, pageSize, size);
     }
 
     @Override
@@ -120,7 +106,10 @@ public class PagedMappedReadWriteMemory extends PagedVirtualMemory implements Ma
         close();
         this.ff = ff;
         fd = TableUtils.openFileRWOrFail(ff, name);
-        final long size = ff.length(fd);
+        of0(ff, name, pageSize, ff.length(fd));
+    }
+
+    private void of0(FilesFacade ff, LPSZ name, long pageSize, long size) {
         setPageSize(pageSize);
         ensurePagesListCapacity(size);
         LOG.debug().$("open ").$(name).$(" [fd=").$(fd).$(']').$();
