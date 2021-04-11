@@ -31,7 +31,10 @@ import io.questdb.cairo.vm.ContiguousVirtualMemory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.*;
-import io.questdb.std.*;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.ObjList;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 import io.questdb.std.str.Path;
 import io.questdb.tasks.OutOfOrderCopyTask;
 import io.questdb.tasks.OutOfOrderOpenColumnTask;
@@ -110,7 +113,7 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
         // is out of order data hitting the last partition?
         // if so we do not need to re-open files and and write to existing file descriptors
 
-        if (srcDataMax == -1) {
+        if (srcDataMax < 1) {
 
             // this has to be a brand new partition for either of two cases:
             // - this partition is above min partition of the table
