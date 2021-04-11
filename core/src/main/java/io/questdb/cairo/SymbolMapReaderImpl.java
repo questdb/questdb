@@ -46,6 +46,9 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
     private int symbolCapacity;
     private boolean nullValue;
 
+    public SymbolMapReaderImpl() {
+    }
+
     public SymbolMapReaderImpl(CairoConfiguration configuration, Path path, CharSequence name, int symbolCount) {
         of(configuration, path, name, symbolCount);
     }
@@ -165,6 +168,7 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
         return SymbolTable.VALUE_IS_NULL;
     }
 
+    @Override
     public boolean containsNullValue() {
         return nullValue;
     }
@@ -176,6 +180,17 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
                 return cachedValue(key);
             }
             return uncachedValue(key);
+        }
+        return null;
+    }
+
+    @Override
+    public CharSequence valueBOf(int key) {
+        if (key > -1 && key < symbolCount) {
+            if (cached) {
+                return cachedValue(key);
+            }
+            return uncachedValue2(key);
         }
         return null;
     }
@@ -207,6 +222,10 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
 
     private CharSequence uncachedValue(int key) {
         return charMem.getStr(offsetMem.getLong(SymbolMapWriter.keyToOffset(key)));
+    }
+
+    private CharSequence uncachedValue2(int key) {
+        return charMem.getStr2(offsetMem.getLong(SymbolMapWriter.keyToOffset(key)));
     }
 
     @Override

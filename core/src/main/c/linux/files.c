@@ -28,7 +28,12 @@
 #include <errno.h>
 #include <string.h>
 #include <stdio.h>
- 
+#include <sys/sendfile.h>
+#include <unistd.h>
+#include <sys/stat.h>
+#include <sys/fcntl.h>
+
+
 inline jlong _io_questdb_std_Files_mremap0
         (jlong fd, jlong address, jlong previousLen, jlong newLen, jlong offset, jint flags) {
     int prot = 0;
@@ -57,3 +62,29 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_mremap0
     return _io_questdb_std_Files_mremap0(fd, address, previousLen, newLen, offset, flags);
 }
 
+JNIEXPORT jint JNICALL Java_io_questdb_std_Files_copy
+        (JNIEnv *e, jclass cls, jlong lpszFrom, jlong lpszTo) {
+    const char* from = (const char *) lpszFrom;
+    const char* to = (const char *) lpszTo;
+    const int input = open(from, O_RDONLY);
+    if (-1 ==  (input)) {
+        return -1;
+    }
+
+    const int output = creat(to, 0644);
+    if (-1 == (output)) {
+        close(input);
+        return -1;
+    }
+
+    // On linux sendfile can accept file as well as sockets
+    off_t offset = 0;
+    struct stat fileStat = {0};
+    fstat(input, &fileStat);
+    int result = sendfile(output, input, &offset, fileStat.st_size);
+
+    close(input);
+    close(output);
+
+    return result;
+}

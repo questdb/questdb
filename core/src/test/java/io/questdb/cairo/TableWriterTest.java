@@ -43,8 +43,6 @@ import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
-import static io.questdb.cairo.TableUtils.ARCHIVE_FILE_NAME;
-
 public class TableWriterTest extends AbstractCairoTest {
 
     public static final String PRODUCT = "product";
@@ -1538,7 +1536,8 @@ public class TableWriterTest extends AbstractCairoTest {
     @Test
     public void testConstructorTruncatedTodo() throws Exception {
         FilesFacade ff = new FilesFacadeImpl() {
-            long fd = 7686876823L;
+            private static final long TODO_FD = 7686876823L;
+            private long fd = TODO_FD;
 
             @Override
             public boolean exists(LPSZ path) {
@@ -1555,11 +1554,20 @@ public class TableWriterTest extends AbstractCairoTest {
 
             @Override
             public long read(long fd, long buf, long len, long offset) {
-                if (fd == this.fd) {
+                if (fd == TODO_FD) {
+                    Assert.assertEquals(TODO_FD, this.fd);
                     this.fd = -1;
                     return -1;
                 }
                 return super.read(fd, buf, len, offset);
+            }
+
+            @Override
+            public boolean close(long fd) {
+                if (fd == TODO_FD) {
+                    return true;
+                }
+                return super.close(fd);
             }
         };
 
@@ -1654,44 +1662,6 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testFailureToOpenArchiveFile() throws Exception {
-        testCommitRetryAfterFailure(new CountingFilesFacade() {
-            @Override
-            public long openRW(LPSZ name) {
-                if (Chars.contains(name, ARCHIVE_FILE_NAME) && --count < 1L) {
-                    return -1;
-                }
-                return super.openRW(name);
-            }
-        });
-    }
-
-    @Test
-    public void testFailureToWriteArchiveFile() throws Exception {
-        testCommitRetryAfterFailure(new CountingFilesFacade() {
-            long fd = -1;
-
-            @Override
-            public long openRW(LPSZ name) {
-                if (Chars.contains(name, ARCHIVE_FILE_NAME) && --count < 1L) {
-                    return fd = super.openRW(name);
-                }
-                return super.openRW(name);
-            }
-
-            @Override
-            public long write(long fd, long address, long len, long offset) {
-                if (fd == this.fd) {
-                    // single shot failure
-                    this.fd = -1;
-                    return -1;
-                }
-                return super.write(fd, address, len, offset);
-            }
-        });
-    }
-
-    @Test
     public void testGetColumnIndex() {
         CairoTestUtils.createAllTable(configuration, PartitionBy.NONE);
         try (TableWriter writer = new TableWriter(configuration, "all")) {
@@ -1747,7 +1717,7 @@ public class TableWriterTest extends AbstractCairoTest {
         populateTable(new FilesFacadeImpl() {
             @Override
             public long getPageSize() {
-                return super.getPageSize() * super.getPageSize();
+                return super.getPageSize() * 500;
             }
         }, PartitionBy.MONTH);
     }
@@ -1811,7 +1781,7 @@ public class TableWriterTest extends AbstractCairoTest {
     @Test
     public void testOutOfOrderAfterReopen() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            CairoTestUtils.createAllTable(configuration, PartitionBy.NONE);
+            CairoTestUtils.createAllTableWithTimestamp(configuration, PartitionBy.NONE);
             Rnd rnd = new Rnd();
             long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
             testAppendNulls(rnd, ts);
@@ -1844,6 +1814,20 @@ public class TableWriterTest extends AbstractCairoTest {
                 .col("productName", ColumnType.STRING)
                 .col("supplier", ColumnType.SYMBOL)
                 .col("category", ColumnType.SYMBOL)
+                .col("price", ColumnType.DOUBLE)
+                .timestamp()) {
+            CairoTestUtils.create(model);
+            testRemoveColumn(model);
+        }
+    }
+
+    @Test
+    public void testRemoveColumnBeforeTimestamp3Symbols() throws Exception {
+        try (TableModel model = new TableModel(configuration, "ABC", PartitionBy.DAY)
+                .col("productId", ColumnType.INT)
+                .col("supplier", ColumnType.SYMBOL)
+                .col("category", ColumnType.SYMBOL)
+                .col("productName", ColumnType.SYMBOL)
                 .col("price", ColumnType.DOUBLE)
                 .timestamp()) {
             CairoTestUtils.create(model);
@@ -2459,12 +2443,12 @@ public class TableWriterTest extends AbstractCairoTest {
             boolean removeAttempted = false;
 
             @Override
-            public boolean rmdir(Path name) {
-                if (Chars.endsWith(name, "2013-03-12")) {
+            public boolean rename(LPSZ from, LPSZ to) {
+                if (Chars.endsWith(from, "2013-03-12")) {
                     removeAttempted = true;
                     return false;
                 }
-                return super.rmdir(name);
+                return super.rename(from, to);
             }
         }
 
@@ -2514,12 +2498,12 @@ public class TableWriterTest extends AbstractCairoTest {
             boolean removeAttempted = false;
 
             @Override
-            public boolean rmdir(Path name) {
-                if (Chars.endsWith(name, "2013-03-12")) {
+            public boolean rename(LPSZ from, LPSZ to) {
+                if (Chars.endsWith(from, "2013-03-12")) {
                     removeAttempted = true;
                     return false;
                 }
-                return super.rmdir(name);
+                return super.rename(from, to);
             }
         }
 
@@ -2803,11 +2787,16 @@ public class TableWriterTest extends AbstractCairoTest {
         int productName = writer.getColumnIndex("productName");
         int category = writer.getColumnIndex("category");
         int price = writer.getColumnIndex("price");
+        boolean isSym = writer.getMetadata().getColumnType(productName) == ColumnType.SYMBOL;
 
         for (int i = 0; i < 10000; i++) {
             TableWriter.Row r = writer.newRow(ts += 60000L * 1000L);
             r.putInt(productId, rnd.nextPositiveInt());
-            r.putStr(productName, rnd.nextString(4));
+            if (!isSym) {
+                r.putStr(productName, rnd.nextString(4));
+            } else {
+                r.putSym(productName, rnd.nextString(4));
+            }
             r.putSym(category, rnd.nextString(11));
             r.putDouble(price, rnd.nextDouble());
             r.append();
@@ -2839,11 +2828,16 @@ public class TableWriterTest extends AbstractCairoTest {
         int supplier = writer.getColumnIndex("supplier");
         int category = writer.getColumnIndex("category");
         int price = writer.getColumnIndex("price");
+        boolean isSym = writer.getMetadata().getColumnType(productName) == ColumnType.SYMBOL;
 
         for (int i = 0; i < 10000; i++) {
             TableWriter.Row r = writer.newRow(ts += 60000L * 1000L);
             r.putInt(productId, rnd.nextPositiveInt());
-            r.putStr(productName, rnd.nextString(10));
+            if (!isSym) {
+                r.putStr(productName, rnd.nextString(4));
+            } else {
+                r.putSym(productName, rnd.nextString(4));
+            }
             r.putSym(supplier, rnd.nextString(4));
             r.putSym(category, rnd.nextString(11));
             r.putDouble(price, rnd.nextDouble());
@@ -2859,11 +2853,16 @@ public class TableWriterTest extends AbstractCairoTest {
         int supplier = writer.getColumnIndex("sup");
         int category = writer.getColumnIndex("category");
         int price = writer.getColumnIndex("price");
+        boolean isSym = writer.getMetadata().getColumnType(productName) == ColumnType.SYMBOL;
 
         for (int i = 0; i < 10000; i++) {
             TableWriter.Row r = writer.newRow(ts += 60000L * 1000L);
             r.putInt(productId, rnd.nextPositiveInt());
-            r.putStr(productName, rnd.nextString(4));
+            if (!isSym) {
+                r.putStr(productName, rnd.nextString(4));
+            } else {
+                r.putSym(productName, rnd.nextString(4));
+            }
             r.putSym(supplier, rnd.nextString(4));
             r.putSym(category, rnd.nextString(11));
             r.putDouble(price, rnd.nextDouble());

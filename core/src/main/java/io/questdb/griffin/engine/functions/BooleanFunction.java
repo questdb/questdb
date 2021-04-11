@@ -141,6 +141,11 @@ public abstract class BooleanFunction implements ScalarFunction {
     }
 
     @Override
+    public final CharSequence getSymbolB(Record rec) {
+        return getStr0(rec);
+    }
+
+    @Override
     public long getTimestamp(Record rec) {
         return getBool(rec) ? 0 : 1;
     }

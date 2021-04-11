@@ -374,6 +374,20 @@ public class SqlKeywords {
                 && (tok.charAt(i) | 32) == 'p';
     }
 
+    public static boolean isAttachKeyword(CharSequence tok) {
+        if (tok.length() != 6) {
+            return false;
+        }
+
+        int i = 0;
+        return (tok.charAt(i++) | 32) == 'a'
+                && (tok.charAt(i++) | 32) == 't'
+                && (tok.charAt(i++) | 32) == 't'
+                && (tok.charAt(i++) | 32) == 'a'
+                && (tok.charAt(i++) | 32) == 'c'
+                && (tok.charAt(i) | 32) == 'h';
+    }
+
     public static boolean isEndKeyword(CharSequence tok) {
         if (tok.length() != 3) {
             return false;
@@ -1167,5 +1181,19 @@ public class SqlKeywords {
                 && (tok.charAt(i++) | 32) == 't'
                 && (tok.charAt(i++) | 32) == 'e'
                 && (tok.charAt(i) | 32) == 'r';
+    }
+
+    public static boolean isTextArrayKeyword(CharSequence tok) {
+        if (tok.length() != 6) {
+            return false;
+        }
+
+        int i = 0;
+        return (tok.charAt(i++) | 32) == 't'
+                && (tok.charAt(i++) | 32) == 'e'
+                && (tok.charAt(i++) | 32) == 'x'
+                && (tok.charAt(i++) | 32) == 't'
+                && (tok.charAt(i++)) == '['
+                && (tok.charAt(i)) == ']';
     }
 }

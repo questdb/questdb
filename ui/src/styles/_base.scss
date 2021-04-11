@@ -74,7 +74,7 @@ body {
 
 body #wrapper,
 body #page-wrapper {
-  height: 100%;
+  height: calc(100% - 4rem);
 }
 
 body.boxed-layout #wrapper {

@@ -1339,6 +1339,7 @@ public class TableReaderTest extends AbstractCairoTest {
             r.putInt(20, rnd.nextInt());
         }
     };
+
     private static final FieldGenerator BATCH9_GENERATOR = (r, rnd, ts, blob) -> {
         if (rnd.nextBoolean()) {
             r.putByte(1, rnd.nextByte());
@@ -1540,7 +1541,7 @@ public class TableReaderTest extends AbstractCairoTest {
         testConcurrentReloadMultiplePartitions(PartitionBy.MONTH, 12 * 3000000);
     }
 
-    public void testConcurrentReloadMultiplePartitions(int partitionBy, long stride) throws Exception {
+    private void testConcurrentReloadMultiplePartitions(int partitionBy, long stride) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             // model data
             LongList list = new LongList();
@@ -1845,85 +1846,6 @@ public class TableReaderTest extends AbstractCairoTest {
                 Assert.assertEquals(N, count);
             }
         }
-    }
-
-    @Test
-    public void testPartitionArchiveDoesNotExist() throws Exception {
-        RecoverableTestFilesFacade ff = new RecoverableTestFilesFacade() {
-
-            boolean called = false;
-
-            @Override
-            public boolean exists(LPSZ path) {
-                if (!recovered && Chars.endsWith(path, TableUtils.ARCHIVE_FILE_NAME)) {
-                    called = true;
-                    return false;
-                }
-                return super.exists(path);
-            }
-
-            @Override
-            public boolean wasCalled() {
-                return called;
-            }
-        };
-        testSwitchPartitionFail(ff);
-    }
-
-    @Test
-    public void testPartitionArchiveDoesNotOpen() throws Exception {
-        RecoverableTestFilesFacade ff = new RecoverableTestFilesFacade() {
-
-            boolean called = false;
-
-            @Override
-            public long openRO(LPSZ name) {
-                if (!recovered && Chars.endsWith(name, TableUtils.ARCHIVE_FILE_NAME)) {
-                    called = true;
-                    return -1L;
-                }
-                return super.openRO(name);
-            }
-
-            @Override
-            public boolean wasCalled() {
-                return called;
-            }
-        };
-        testSwitchPartitionFail(ff);
-    }
-
-    @Test
-    public void testPartitionCannotReadArchive() throws Exception {
-        RecoverableTestFilesFacade ff = new RecoverableTestFilesFacade() {
-
-            boolean called = false;
-            long fd = -1L;
-
-            @Override
-            public long openRO(LPSZ name) {
-                if (!recovered && Chars.endsWith(name, TableUtils.ARCHIVE_FILE_NAME)) {
-                    called = true;
-                    fd = super.openRO(name);
-                    return fd;
-                }
-                return super.openRO(name);
-            }
-
-            @Override
-            public long read(long fd, long buf, long len, long offset) {
-                if (this.fd == fd && !recovered) {
-                    return 0;
-                }
-                return super.read(fd, buf, len, offset);
-            }
-
-            @Override
-            public boolean wasCalled() {
-                return called;
-            }
-        };
-        testSwitchPartitionFail(ff);
     }
 
     @Test

@@ -24,9 +24,9 @@
 
 package io.questdb.std;
 
-import io.questdb.std.ex.FatalError;
-
+import java.lang.reflect.AccessibleObject;
 import java.lang.reflect.Field;
+import java.lang.reflect.Method;
 import java.util.concurrent.atomic.AtomicLong;
 
 public final class Unsafe {
@@ -38,6 +38,10 @@ public final class Unsafe {
     private static final sun.misc.Unsafe UNSAFE;
     private static final AtomicLong MALLOC_COUNT = new AtomicLong(0);
     private static final AtomicLong FREE_COUNT = new AtomicLong(0);
+    //#if jdk.version!=8
+    private static final long OVERRIDE;
+    private static final Method implAddExports;
+    //#endif
 
     static {
         try {
@@ -50,11 +54,66 @@ public final class Unsafe {
 
             LONG_OFFSET = Unsafe.getUnsafe().arrayBaseOffset(long[].class);
             LONG_SCALE = msb(Unsafe.getUnsafe().arrayIndexScale(long[].class));
-
-        } catch (Exception e) {
-            throw new FatalError(e);
+            //#if jdk.version!=8
+            OVERRIDE = AccessibleObject_override_fieldOffset();
+            implAddExports = Module.class.getDeclaredMethod("implAddExports", String.class, Module.class);
+            //#endif
+        } catch (ReflectiveOperationException e) {
+            throw new ExceptionInInitializerError(e);
         }
+        //#if jdk.version!=8
+        makeAccessible(implAddExports);
+        //#endif
     }
+
+    //#if jdk.version!=8
+    private static long AccessibleObject_override_fieldOffset() {
+        if (isJava8Or11()) {
+            return getFieldOffset(AccessibleObject.class, "override");
+        }
+        // From Java 12 onwards, AccessibleObject#override is protected and cannot be accessed reflectively.
+        boolean is32BitJVM = is32BitJVM();
+        if (is32BitJVM) {
+            return 8L;
+        }
+        if (getOrdinaryObjectPointersCompressionStatus(is32BitJVM)) {
+            return 12L;
+        }
+        return 16L;
+    }
+
+    private static boolean isJava8Or11() {
+        String javaVersion = System.getProperty("java.version");
+        return javaVersion.startsWith("11") || javaVersion.startsWith("1.8");
+    }
+
+    private static boolean is32BitJVM() {
+        String sunArchDataModel = System.getProperty("sun.arch.data.model");
+        return sunArchDataModel.equals("32");
+    }
+
+    private static boolean getOrdinaryObjectPointersCompressionStatus(boolean is32BitJVM) {
+        class Probe {
+            private int intField;
+
+            boolean probe() {
+                long offset = getFieldOffset(Probe.class, "intField");
+                if (offset == 8L) {
+                    assert is32BitJVM;
+                    return false;
+                }
+                if (offset == 12L) {
+                    return true;
+                }
+                if (offset == 16L) {
+                    return false;
+                }
+                throw new AssertionError(offset);
+            }
+        }
+        return new Probe().probe();
+    }
+    //#endif
 
     private Unsafe() {
     }
@@ -100,11 +159,9 @@ public final class Unsafe {
 
     public static long getFieldOffset(Class<?> clazz, String name) {
         try {
-            Field f = clazz.getDeclaredField(name);
-//            f.setAccessible(true);
-            return UNSAFE.objectFieldOffset(f);
+            return UNSAFE.objectFieldOffset(clazz.getDeclaredField(name));
         } catch (NoSuchFieldException e) {
-            throw new RuntimeException(e);
+            throw new ExceptionInInitializerError(e);
         }
     }
 
@@ -144,4 +201,24 @@ public final class Unsafe {
     private static int msb(int value) {
         return 31 - Integer.numberOfLeadingZeros(value);
     }
+
+    //#if jdk.version!=8
+    /**
+     * Equivalent to {@link AccessibleObject#setAccessible(boolean) AccessibleObject.setAccessible(true)}, except that
+     * it does not produce an illegal access error or warning.
+     */
+    public static void makeAccessible(AccessibleObject accessibleObject) {
+        UNSAFE.putBooleanVolatile(accessibleObject, OVERRIDE, true);
+    }
+
+    public static void addExports(Module from, Module to, String packageName) {
+        try {
+            implAddExports.invoke(from, packageName, to);
+        } catch (ReflectiveOperationException e) {
+            e.printStackTrace();
+        }
+    }
+
+    public static final Module JAVA_BASE_MODULE = System.class.getModule();
+    //#endif
 }

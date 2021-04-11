@@ -45,6 +45,11 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
+    public int copy(LPSZ from, LPSZ to) {
+        return Files.copy(from, to);
+    }
+
+    @Override
     public int errno() {
         return Os.errno();
     }

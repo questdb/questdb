@@ -35,12 +35,10 @@ import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.network.ServerDisconnectException;
 import org.jetbrains.annotations.NotNull;
-import org.junit.Assert;
-import org.junit.ComparisonFailure;
-import org.junit.Rule;
-import org.junit.Test;
+import org.junit.*;
 import org.junit.rules.TemporaryFolder;
 
+import java.util.Arrays;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -293,6 +291,50 @@ public class RetryIODispatcherTest {
         }
     }
 
+    // TODO: fix HTTP server to deliver failed response before aborting connection on failed csv uploads
+    @Test
+    @Ignore
+    public void testImportsCreateAsSelectAndDrop() throws Exception {
+        new HttpQueryTestBuilder()
+                .withTempFolder(temp)
+                .withWorkerCount(4)
+                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+                .withTelemetry(false)
+                .run((engine) -> {
+                    for (int i = 0; i < 10; i++) {
+                        System.out.println("*************************************************************************************");
+                        System.out.println("**************************         Run " + i + "            ********************************");
+                        System.out.println("*************************************************************************************");
+                        SendAndReceiveRequestBuilder sendAndReceiveRequestBuilder = new SendAndReceiveRequestBuilder()
+                                .withNetworkFacade(getSendDelayNetworkFacade(0))
+                                .withCompareLength(ValidImportResponse.length());
+                        sendAndReceiveRequestBuilder.execute(ValidImportRequest, ValidImportResponse);
+
+                        if (i == 0) {
+                            new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
+                                    "GET /query?query=create+table+copy+as+(select+*+from+%22fhv_tripdata_2017-02.csv%22)&count=true HTTP/1.1\r\n",
+                                    "0c\r\n" +
+                                            "{\"ddl\":\"OK\"}\r\n" +
+                                            "00\r\n" +
+                                            "\r\n");
+                        } else {
+                            new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
+                                    "GET /query?query=insert+into+copy+select+*+from+%22fhv_tripdata_2017-02.csv%22&count=true HTTP/1.1\r\n",
+                                    "0c\r\n" +
+                                            "{\"ddl\":\"OK\"}\r\n" +
+                                            "00\r\n" +
+                                            "\r\n");
+                        }
+
+                        new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
+                                "GET /query?query=drop+table+%22fhv_tripdata_2017-02.csv%22&count=true HTTP/1.1\r\n",
+                                "0c\r\n" +
+                                        "{\"ddl\":\"OK\"}\r\n" +
+                                        "00\r\n");
+                    }
+                });
+    }
+
     private void assertImportProcessedWhenClientDisconnected() throws Exception {
         final int parallelCount = 2;
         new HttpQueryTestBuilder()
@@ -309,14 +351,17 @@ public class RetryIODispatcherTest {
                     final int validRequestRecordCount = 24;
                     final int insertCount = 1;
                     CountDownLatch countDownLatch = new CountDownLatch(parallelCount);
+                    long[] fds = new long[parallelCount * insertCount];
+                    Arrays.fill(fds, -1);
                     for (int i = 0; i < parallelCount; i++) {
-                        int finalI = i;
+                        final int threadI = i;
                         new Thread(() -> {
                             try {
                                 for (int r = 0; r < insertCount; r++) {
                                     // insert one record
                                     try {
-                                        new SendAndReceiveRequestBuilder().execute(ValidImportRequest, "");
+                                        long fd = new SendAndReceiveRequestBuilder().connectAndSendRequest(ValidImportRequest);
+                                        fds[threadI * insertCount + r] = fd;
                                     } catch (Exception e) {
                                         LOG.error().$("Failed execute insert http request. Server error ").$(e).$();
                                     }
@@ -324,25 +369,25 @@ public class RetryIODispatcherTest {
                             } finally {
                                 countDownLatch.countDown();
                             }
-                            LOG.info().$("Stopped thread ").$(finalI).$();
+                            LOG.info().$("Stopped thread ").$(threadI).$();
                         }).start();
                     }
-
                     countDownLatch.await();
+                    assertNRowsInserted(validRequestRecordCount);
+
+                    for (int n = 0; n < fds.length; n++) {
+                        Assert.assertFalse(fds[n] == -1);
+                        NetworkFacadeImpl.INSTANCE.close(fds[n]);
+                    }
 
                     // Cairo engine should not allow second writer to be opened on the same table, all requests should wait for the writer to be available
                     writer.close();
 
                     for (int i = 0; i < 20; i++) {
-
                         try {
                             // check if we have parallelCount x insertCount  records
-                            new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
-                                    "GET /query?query=select+count(*)+from+%22fhv_tripdata_2017-02.csv%22&count=true HTTP/1.1\r\n",
-                                    "83\r\n" +
-                                            "{\"query\":\"select count(*) from \\\"fhv_tripdata_2017-02.csv\\\"\",\"columns\":[{\"name\":\"count\",\"type\":\"LONG\"}],\"dataset\":[[" + (parallelCount + 1) * validRequestRecordCount + "]],\"count\":1}\r\n" +
-                                            "00\r\n" +
-                                            "\r\n");
+                            int nRows = (parallelCount + 1) * validRequestRecordCount;
+                            assertNRowsInserted(nRows);
                             return;
                         } catch (ComparisonFailure e) {
                             if (i < 9) {
@@ -354,6 +399,16 @@ public class RetryIODispatcherTest {
                     }
 
                 });
+    }
+
+    protected void assertNRowsInserted(final int nRows) throws InterruptedException {
+        new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
+                "GET /query?query=select+count(*)+from+%22fhv_tripdata_2017-02.csv%22&count=true HTTP/1.1\r\n",
+                "83\r\n" +
+                        "{\"query\":\"select count(*) from \\\"fhv_tripdata_2017-02.csv\\\"\",\"columns\":[{\"name\":\"count\",\"type\":\"LONG\"}],\"dataset\":[[" + nRows +
+                        "]],\"count\":1}\r\n" +
+                        "00\r\n" +
+                        "\r\n");
     }
 
     private void assertInsertWaitsExceedsRerunProcessingQueueSize() throws Exception {
@@ -586,22 +641,21 @@ public class RetryIODispatcherTest {
 
                     TableWriter writer = lockWriter(engine, "balances_x");
                     CountDownLatch countDownLatch = new CountDownLatch(parallelCount);
+                    long[] fds = new long[parallelCount];
+                    Arrays.fill(fds, -1);
                     Thread[] threads = new Thread[parallelCount];
                     for (int i = 0; i < parallelCount; i++) {
-                        int finalI = i;
+                        final int threadI = i;
                         threads[i] = new Thread(() -> {
                             try {
                                 // insert one record
                                 // await nothing
                                 try {
-                                    Thread.sleep(finalI * 5);
-                                    new SendAndReceiveRequestBuilder()
-                                            .withPauseBetweenSendAndReceive(200)
-                                            .execute(
-                                                    "GET /query?query=%0A%0Ainsert+into+balances_x+(cust_id%2C+balance_ccy%2C+balance%2C+timestamp)+values+(" + finalI + "%2C+%27USD%27%2C+1500.00%2C+6000000001)&limit=0%2C1000&count=true HTTP/1.1\r\n"
-                                                            + SendAndReceiveRequestBuilder.RequestHeaders,
-                                                    ""
-                                            );
+                                    Thread.sleep(threadI * 5);
+                                    String request = "GET /query?query=%0A%0Ainsert+into+balances_x+(cust_id%2C+balance_ccy%2C+balance%2C+timestamp)+values+(" + threadI +
+                                            "%2C+%27USD%27%2C+1500.00%2C+6000000001)&limit=0%2C1000&count=true HTTP/1.1\r\n" + SendAndReceiveRequestBuilder.RequestHeaders;
+                                    long fd = new SendAndReceiveRequestBuilder().connectAndSendRequest(request);
+                                    fds[threadI] = fd;
                                 } catch (Exception e) {
                                     LOG.error().$("Failed execute insert http request. Server error ").$(e);
                                 }
@@ -611,8 +665,18 @@ public class RetryIODispatcherTest {
                         });
                         threads[i].start();
                     }
-
                     countDownLatch.await();
+                    new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
+                            "GET /query?query=SELECT+1 HTTP/1.1\r\n",
+                            "54\r\n" +
+                                    "{\"query\":\"SELECT 1\",\"columns\":[{\"name\":\"1\",\"type\":\"INT\"}],\"dataset\":[[1]],\"count\":1}\r\n" +
+                                    "00\r\n" +
+                                    "\r\n");
+                    for (int n = 0; n < fds.length; n++) {
+                        Assert.assertFalse(fds[n] == -1);
+                        NetworkFacadeImpl.INSTANCE.close(fds[n]);
+                    }
+
                     writer.close();
 
                     // check if we have parallelCount x insertCount  records

@@ -419,6 +419,10 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.bool.InStrFunctionFactory,
             io.questdb.griffin.engine.functions.bool.InCharFunctionFactory,
             io.questdb.griffin.engine.functions.bool.InSymbolFunctionFactory,
+//                  'all'
+            io.questdb.griffin.engine.functions.bool.AllNotEqStrFunctionFactory,
+//                  'agg' group by function
+            io.questdb.griffin.engine.functions.groupby.StringAggGroupByFunctionFactory,
 //                  'sum' group by function
             io.questdb.griffin.engine.functions.groupby.SumDoubleGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.SumFloatGroupByFunctionFactory,
@@ -511,6 +515,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.catalogue.FormatTypeFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.ProcCatalogueFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.RangeCatalogueFunctionFactory,
+            io.questdb.griffin.engine.functions.catalogue.PrefixedPgGetKeywordsFunctionFactory,
 //                  concat()
             io.questdb.griffin.engine.functions.str.ConcatFunctionFactory,
             // replace()

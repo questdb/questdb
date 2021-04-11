@@ -204,4 +204,47 @@ public class FilesTest {
             }
         }
     }
+
+    @Test
+    public void testCopy() throws Exception {
+        File temp = temporaryFolder.newFile();
+        TestUtils.writeStringToFile(temp, "abcde");
+        try (Path path = new Path().of(temp.getAbsolutePath()).$()) {
+            Assert.assertTrue(Files.exists(path));
+            try (Path copyPath = new Path().of(temp.getAbsolutePath()).put("-copy").$()) {
+                Files.copy(path, copyPath);
+
+                Assert.assertEquals(5, Files.length(copyPath));
+                TestUtils.assertFileContentsEquals(path, copyPath);
+            }
+        }
+    }
+
+    @Test
+    public void testCopyBigFile() throws Exception {
+        File temp = temporaryFolder.newFile();
+        int fileSize = 2 * 1024 * 1024; // in MB
+        byte[] page = new byte[1024 * 64];
+        Rnd rnd = new Rnd();
+
+        for(int i = 0; i < page.length; i++) {
+            page[i] = rnd.nextByte();
+        }
+
+        try (FileOutputStream fos = new FileOutputStream(temp)) {
+            for (int i = 0; i < fileSize / page.length; i++) {
+                fos.write(page);
+            }
+        }
+
+        try (Path path = new Path().of(temp.getAbsolutePath()).$()) {
+            Assert.assertTrue(Files.exists(path));
+            try (Path copyPath = new Path().of(temp.getAbsolutePath()).put("-copy").$()) {
+                Files.copy(path, copyPath);
+
+                Assert.assertEquals(fileSize, Files.length(copyPath));
+                TestUtils.assertFileContentsEquals(path, copyPath);
+            }
+        }
+    }
 }

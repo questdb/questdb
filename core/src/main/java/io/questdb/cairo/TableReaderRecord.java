@@ -211,6 +211,16 @@ public class TableReaderRecord implements Record {
         return reader.getSymbolMapReader(col).valueOf(reader.getColumn(absoluteColumnIndex).getInt(offset));
     }
 
+    @Override
+    public CharSequence getSymB(int col) {
+        final long offset = getAdjustedRecordIndex(col) * Integer.BYTES;
+        final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(
+                offset,
+                TableReader.getPrimaryColumnIndex(columnBase, col)
+        );
+        return reader.getSymbolMapReader(col).valueBOf(reader.getColumn(absoluteColumnIndex).getInt(offset));
+    }
+
     public long getRecordIndex() {
         return recordIndex;
     }

@@ -235,8 +235,10 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
             traverseAlgo.traverse(node, this);
             final Function function = stack.poll();
             if (function != null && function.isConstant() && (function instanceof ScalarFunction)) {
-                try (function) {
+                try {
                     return functionToConstant(function);
+                } finally {
+                    function.close();
                 }
             }
             return function;

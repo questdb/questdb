@@ -118,6 +118,10 @@ public interface Record {
         throw new UnsupportedOperationException();
     }
 
+    default CharSequence getSymB(int col) {
+        throw new UnsupportedOperationException();
+    }
+
     default long getTimestamp(int col) {
         return getLong(col);
     }

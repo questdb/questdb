@@ -153,7 +153,7 @@ public final class TestUtils {
         if (expected.length() != actual.length()) {
             Assert.assertEquals(message, expected, actual);
         }
-        Assert.assertEquals(expected.length(), actual.length());
+
         for (int i = 0; i < expected.length(); i++) {
             if (expected.charAt(i) != actual.charAt(i)) {
                 Assert.assertEquals(message, expected, actual);
@@ -175,6 +175,23 @@ public final class TestUtils {
                     Assert.fail("Failed comparison at [" + l + "], expected: " + b1 + ", actual: " + b2);
                 }
                 Assert.assertEquals(bs.byteAt(l), actBs.byteAt(l));
+            }
+        }
+    }
+
+    public static void assertFileContentsEquals(Path expected, Path actual) throws IOException {
+        try (BufferedInputStream expectedStream = new BufferedInputStream(new FileInputStream(expected.toString()));
+             BufferedInputStream actualStream = new BufferedInputStream(new FileInputStream(actual.toString()))) {
+            int byte1, byte2;
+            long length = 0;
+            do {
+                length++;
+                byte1 = expectedStream.read();
+                byte2 = actualStream.read();
+            } while (byte1 == byte2 && byte1 > 0 && byte2 > 0);
+
+            if (byte1 != byte2) {
+                Assert.fail("Files are different at offset " + (length - 1));
             }
         }
     }
@@ -231,6 +248,44 @@ public final class TestUtils {
         try (FileOutputStream fos = new FileOutputStream(file)) {
             fos.write(s.getBytes(Files.UTF_8));
         }
+    }
+
+    public static void assertEqualsIgnoreCase(CharSequence expected, CharSequence actual) {
+        assertEqualsIgnoreCase(null, expected, actual);
+    }
+
+    public static void assertEqualsIgnoreCase(String message, CharSequence expected, CharSequence actual) {
+        if (expected == null && actual == null) {
+            return;
+        }
+
+        if (expected != null && actual == null) {
+            Assert.fail("Expected: \n`" + expected + "`but have NULL");
+        }
+
+        if (expected == null) {
+            Assert.fail("Expected: NULL but have \n`" + actual + "`\n");
+        }
+
+        if (expected.length() != actual.length()) {
+            Assert.assertEquals(message, expected, actual);
+        }
+
+        for (int i = 0; i < expected.length(); i++) {
+            if (Character.toLowerCase(expected.charAt(i)) != Character.toLowerCase(actual.charAt(i))) {
+                Assert.assertEquals(message, expected, actual);
+            }
+        }
+    }
+
+    public static int getJavaVersion() {
+        String version = System.getProperty("java.version");
+        if(version.startsWith("1.")) {
+            version = version.substring(2, 3);
+        } else {
+            int dot = version.indexOf(".");
+            if(dot != -1) { version = version.substring(0, dot); }
+        } return Integer.parseInt(version);
     }
 
     @FunctionalInterface

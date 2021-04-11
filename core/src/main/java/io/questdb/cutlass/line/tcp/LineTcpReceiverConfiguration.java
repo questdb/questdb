@@ -49,13 +49,15 @@ public interface LineTcpReceiverConfiguration {
 
     NetworkFacade getNetworkFacade();
 
-    int getWriterQueueSize();
+    int getWriterQueueCapacity();
 
     MicrosecondClock getMicrosecondClock();
 
     MillisecondClock getMillisecondClock();
 
-    WorkerPoolAwareConfiguration getWorkerPoolConfiguration();
+    WorkerPoolAwareConfiguration getWriterWorkerPoolConfiguration();
+
+    WorkerPoolAwareConfiguration getIOWorkerPoolConfiguration();
 
     int getNUpdatesPerLoadRebalance();
 
@@ -66,4 +68,10 @@ public interface LineTcpReceiverConfiguration {
     long getMaintenanceJobHysteresisInMs();
     
     String getAuthDbPath();
+
+    int getDefaultPartitionBy();
+
+    boolean isIOAggressiveRecv();
+
+    long getMinIdleMsBeforeWriterRelease();
 }

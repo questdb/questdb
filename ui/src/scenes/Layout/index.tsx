@@ -1,12 +1,37 @@
+/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2020 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
 import React, { useCallback, useEffect } from "react"
 import { createPortal } from "react-dom"
 import styled from "styled-components"
 
 import { Splitter, useScreenSize } from "components"
-import { BusEvent } from "utils"
+import { BusEvent } from "consts"
 
 import Editor from "../Editor"
 import Footer from "../Footer"
+import Modal from "../Modal"
 import Notifications from "../Notifications"
 import Result from "../Result"
 import SideMenu from "../SideMenu"
@@ -20,9 +45,9 @@ const Top = styled.div`
 
 const Layout = () => {
   const consoleNode = document.getElementById("console")
-  const footerNode = document.getElementById("footer")
   const notificationsNode = document.getElementById("notifications")
   const sideMenuNode = document.getElementById("sideMenu")
+  const modalNode = document.getElementById("modal")
   const { sm } = useScreenSize()
 
   const handleResultSplitterChange = useCallback(() => {
@@ -38,6 +63,7 @@ const Layout = () => {
   return (
     <>
       <Sidebar />
+      <Footer />
       {consoleNode &&
         createPortal(
           <Splitter
@@ -56,7 +82,7 @@ const Layout = () => {
                 min={200}
                 name="schema"
               >
-                {sm === false && <Schema />}
+                {!sm && <Schema />}
                 <Editor />
               </Splitter>
             </Top>
@@ -64,9 +90,9 @@ const Layout = () => {
           </Splitter>,
           consoleNode,
         )}
-      {footerNode && createPortal(<Footer />, footerNode)}
       {notificationsNode && createPortal(<Notifications />, notificationsNode)}
       {sideMenuNode && createPortal(<SideMenu />, sideMenuNode)}
+      {modalNode && createPortal(<Modal />, modalNode)}
     </>
   )
 }

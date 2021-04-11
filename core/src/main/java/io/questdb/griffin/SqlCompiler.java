@@ -52,6 +52,12 @@ import static io.questdb.griffin.SqlKeywords.*;
 
 
 public class SqlCompiler implements Closeable {
+    public final static class PartitionAction {
+        public static final int NONE = 0;
+        public static final int DROP = 1;
+        public static final int ATTACH = 2;
+    }
+
     public static final ObjList<String> sqlControlSymbols = new ObjList<>(8);
     private final static Log LOG = LogFactory.getLog(SqlCompiler.class);
     private static final IntList castGroups = new IntList();
@@ -764,7 +770,14 @@ public class SqlCompiler implements Closeable {
                     if (SqlKeywords.isColumnKeyword(tok)) {
                         alterTableDropColumn(tableNamePosition, writer);
                     } else if (SqlKeywords.isPartitionKeyword(tok)) {
-                        alterTableDropPartition(writer, executionContext);
+                        alterTableDropOrAttachPartition(writer, PartitionAction.DROP, executionContext);
+                    } else {
+                        throw SqlException.$(lexer.lastTokenPosition(), "'column' or 'partition' expected");
+                    }
+                } else if (SqlKeywords.isAttachKeyword(tok)) {
+                    tok = expectToken(lexer, "'partition'");
+                    if (SqlKeywords.isPartitionKeyword(tok)) {
+                        alterTableDropOrAttachPartition(writer, PartitionAction.ATTACH, executionContext);
                     } else {
                         throw SqlException.$(lexer.lastTokenPosition(), "'column' or 'partition' expected");
                     }
@@ -799,7 +812,7 @@ public class SqlCompiler implements Closeable {
                     }
 
                 } else {
-                    throw SqlException.$(lexer.lastTokenPosition(), "'add' or 'drop' or 'rename' expected");
+                    throw SqlException.$(lexer.lastTokenPosition(), "'add', 'drop', 'attach' or 'rename' expected");
                 }
             } catch (CairoException e) {
                 LOG.info().$("could not alter table [table=").$(tableName).$(", ex=").$((Sinkable) e).$();
@@ -1032,11 +1045,11 @@ public class SqlCompiler implements Closeable {
         } while (true);
     }
 
-    private void alterTableDropPartition(TableWriter writer, SqlExecutionContext executionContext) throws SqlException {
+    private void alterTableDropOrAttachPartition(TableWriter writer, int action, SqlExecutionContext executionContext) throws SqlException {
         final int pos = lexer.lastTokenPosition();
         final CharSequence tok = expectToken(lexer, "'list' or 'where'");
         if (SqlKeywords.isListKeyword(tok)) {
-            alterTableDropPartitionByList(writer);
+            alterTableDropOrAttachPartitionByList(writer, action);
         } else if (SqlKeywords.isWhereKeyword(tok)) {
             ExpressionNode expr = parser.expr(lexer, (QueryModel) null);
             String designatedTimestampColumnName = writer.getDesignatedTimestampColumnName();
@@ -1058,7 +1071,7 @@ public class SqlCompiler implements Closeable {
         }
     }
 
-    private void alterTableDropPartitionByList(TableWriter writer) throws SqlException {
+    private void alterTableDropOrAttachPartitionByList(TableWriter writer, int action) throws SqlException {
         do {
             CharSequence tok = expectToken(lexer, "partition name");
             if (Chars.equals(tok, ',')) {
@@ -1074,13 +1087,36 @@ public class SqlCompiler implements Closeable {
                         .put("[errno=").put(e.getErrno()).put(']');
             }
 
-            if (!writer.removePartition(timestamp)) {
-                throw SqlException.$(lexer.lastTokenPosition(), "could not remove partition '").put(unquoted).put('\'');
+            switch (action) {
+                case PartitionAction.DROP:
+                    if (!writer.removePartition(timestamp)) {
+                        throw SqlException.$(lexer.lastTokenPosition(), "could not remove partition '").put(unquoted).put('\'');
+                    }
+                    break;
+                case PartitionAction.ATTACH:
+                    int statusCode = writer.attachPartition(timestamp);
+                    switch (statusCode) {
+                        case StatusCode.OK:
+                            break;
+                        case StatusCode.CANNOT_ATTACH_MISSING_PARTITION:
+                            throw SqlException.$(lexer.lastTokenPosition(), "attach partition failed, folder '").put(unquoted).put("' does not exist");
+                        case StatusCode.TABLE_HAS_SYMBOLS:
+                            throw SqlException.$(lexer.lastTokenPosition(), "attaching partitions to tables with symbol columns not supported");
+                        case StatusCode.PARTITION_EMPTY:
+                            throw SqlException.$(lexer.lastTokenPosition(), "failed to attach partition '").put(unquoted).put("', data does not correspond to the partition folder or partition is empty");
+                        case StatusCode.PARTITION_ALREADY_ATTACHED:
+                            throw SqlException.$(lexer.lastTokenPosition(), "failed to attach partition '").put(unquoted).put("', partition already attached to the table");
+                        default:
+                            throw SqlException.$(lexer.lastTokenPosition(), "attach partition '").put(unquoted).put("', failed with error ").put(statusCode);
+                    }
+                    break;
+                default:
+                    throw SqlException.$(lexer.lastTokenPosition(), "unsupported partition action");
             }
 
             tok = SqlUtil.fetchNext(lexer);
 
-            if (tok == null) {
+            if (tok == null || Chars.equals(tok, ';')) {
                 break;
             }
 
@@ -1231,7 +1267,7 @@ public class SqlCompiler implements Closeable {
                 }
             }
             mem.of(ff, path.trimTo(rootLen).concat(TableUtils.TXN_FILE_NAME).$(), ff.getPageSize());
-            TableUtils.resetTxn(mem, symbolMapCount, 0L, TableUtils.INITIAL_TXN);
+            TableUtils.resetTxn(mem, symbolMapCount, 0L, TableUtils.INITIAL_TXN, 0L);
         } finally {
             mem.close();
         }
@@ -1761,7 +1797,8 @@ public class SqlCompiler implements Closeable {
             throw SqlException.$(tableName.position, "literal expected");
         }
 
-        if (model.getColumnSet().size() > 0 && model.getColumnSet().size() != model.getColumnValues().size()) {
+        int columnSetSize = model.getColumnSet().size();
+        if (columnSetSize > 0 && columnSetSize != model.getColumnValues().size()) {
             throw SqlException.$(model.getColumnPosition(0), "value count does not match column count");
         }
 

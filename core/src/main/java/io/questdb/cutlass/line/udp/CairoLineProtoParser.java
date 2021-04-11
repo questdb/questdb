@@ -188,7 +188,6 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
                         , (int) columnNameType.getQuick(i * 2 + 1)
                         , i
                         , cache.get(columnValues.getQuick(i))
-                        , LOG
                 );
             }
             row.append();
@@ -212,7 +211,6 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
                         , Numbers.decodeHighInt(value)
                         , Numbers.decodeLowInt(value)
                         , cache.get(columnValues.getQuick(i))
-                        , LOG
                 );
             }
             row.append();
@@ -345,27 +343,44 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
     }
 
     private void parseValue(CachedCharSequence value, int valueType, CharSequenceCache cache) {
-        if (columnType == valueType) {
-            columnIndexAndType.add(Numbers.encodeLowHighInts(columnIndex, valueType));
-            columnValues.add(value.getCacheAddress());
-        } else {
-            possibleNewColumn(value, valueType, cache);
-        }
-    }
+        assert valueType > -1;
+        if (columnType > -1) {
+            boolean valid;
+            switch (valueType) {
+                case ColumnType.LONG:
+                    valid = columnType == ColumnType.LONG || columnType == ColumnType.INT || columnType == ColumnType.SHORT || columnType == ColumnType.BYTE
+                            || columnType == ColumnType.TIMESTAMP || columnType == ColumnType.DATE;
+                    break;
+                case ColumnType.BOOLEAN:
+                    valid = columnType == ColumnType.BOOLEAN;
+                    break;
+                case ColumnType.STRING:
+                    valid = columnType == ColumnType.STRING;
+                    break;
+                case ColumnType.DOUBLE:
+                    valid = columnType == ColumnType.DOUBLE || columnType == ColumnType.FLOAT;
+                    break;
+                case ColumnType.SYMBOL:
+                    valid = columnType == ColumnType.SYMBOL;
+                    break;
+                case ColumnType.LONG256:
+                    valid = columnType == ColumnType.LONG256;
+                    break;
+                default:
+                    valid = false;
+            }
+            if (valid) {
+                columnIndexAndType.add(Numbers.encodeLowHighInts(columnIndex, columnType));
+                columnValues.add(value.getCacheAddress());
+            } else {
+                LOG.error().$("mismatched column and value types [table=").$(writer.getName())
+                        .$(", column=").$(metadata.getColumnName(columnIndex))
+                        .$(", columnType=").$(ColumnType.nameOf(columnType))
+                        .$(", valueType=").$(ColumnType.nameOf(valueType))
+                        .$(']').$();
+                switchModeToSkipLine();
 
-    private void parseValueNewTable(CachedCharSequence value, int valueType) {
-        columnNameType.add(valueType);
-        columnValues.add(value.getCacheAddress());
-    }
-
-    private void possibleNewColumn(CachedCharSequence value, int valueType, CharSequenceCache cache) {
-        if (columnIndex > -1) {
-            LOG.error().$("mismatched column and value types [table=").$(writer.getName())
-                    .$(", column=").$(metadata.getColumnName(columnIndex))
-                    .$(", columnType=").$(ColumnType.nameOf(columnType))
-                    .$(", valueType=").$(ColumnType.nameOf(valueType))
-                    .$(']').$();
-            switchModeToSkipLine();
+            }
         } else {
             CharSequence colNameAsChars = cache.get(columnName);
             if (TableUtils.isValidColumnName(colNameAsChars)) {
@@ -379,6 +394,11 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
                 switchModeToSkipLine();
             }
         }
+    }
+
+    private void parseValueNewTable(CachedCharSequence value, int valueType) {
+        columnNameType.add(valueType);
+        columnValues.add(value.getCacheAddress());
     }
 
     private void prepareNewColumn(CachedCharSequence token) {

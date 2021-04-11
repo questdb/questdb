@@ -36,6 +36,30 @@ public class ExpressionParserTest extends AbstractCairoTest {
     private final static RpnBuilder rpnBuilder = new RpnBuilder();
 
     @Test
+    public void testAllNotEqual() throws SqlException {
+        x("ab<>all", "a <> all(b)");
+        x("ab<>all", "a != all(b)");
+    }
+
+    @Test
+    public void testAllInvalidOperator() {
+        assertFail(
+                "a || all(b)",
+                2,
+                "unexpected operator"
+        );
+    }
+
+    @Test
+    public void testAllNoOperator() {
+        assertFail(
+                "a all(b)",
+                2,
+                "missing operator"
+        );
+    }
+
+    @Test
     public void testArrayDereferenceExpr() throws SqlException {
         x("ai10+[]", "a[i+10]");
     }
@@ -207,6 +231,11 @@ public class ExpressionParserTest extends AbstractCairoTest {
     @Test
     public void testTypeQualifier() throws SqlException {
         x("'hello'something::", "'hello'::something");
+    }
+
+    @Test
+    public void testTextArrayQualifier() throws SqlException {
+        x("'{hello}'text[]::", "'{hello}'::text[]");
     }
 
     @Test

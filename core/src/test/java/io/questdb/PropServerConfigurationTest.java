@@ -25,6 +25,7 @@
 package io.questdb;
 
 import io.questdb.cairo.CommitMode;
+import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cutlass.json.JsonException;
 import io.questdb.cutlass.line.LineProtoHourTimestampAdapter;
@@ -83,7 +84,6 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(10_000, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getMultipartIdleSpinCount());
         Assert.assertEquals(1048576, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getRecvBufferSize());
         Assert.assertEquals(64448, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getRequestHeaderBufferSize());
-        Assert.assertEquals(32768, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getResponseHeaderBufferSize());
         Assert.assertEquals(0, configuration.getHttpServerConfiguration().getWorkerCount());
         Assert.assertFalse(configuration.getHttpServerConfiguration().haltOnError());
         Assert.assertArrayEquals(new int[]{}, configuration.getHttpServerConfiguration().getWorkerAffinity());
@@ -240,14 +240,24 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(LineProtoNanoTimestampAdapter.INSTANCE, configuration.getLineTcpReceiverConfiguration().getTimestampAdapter());
         Assert.assertEquals(4096, configuration.getLineTcpReceiverConfiguration().getNetMsgBufferSize());
         Assert.assertEquals(4096, configuration.getLineTcpReceiverConfiguration().getMaxMeasurementSize());
-        Assert.assertEquals(128, configuration.getLineTcpReceiverConfiguration().getWriterQueueSize());
-        Assert.assertEquals(0, configuration.getLineTcpReceiverConfiguration().getWorkerPoolConfiguration().getWorkerCount());
-        Assert.assertArrayEquals(new int[]{}, configuration.getLineTcpReceiverConfiguration().getWorkerPoolConfiguration().getWorkerAffinity());
-        Assert.assertFalse(configuration.getLineTcpReceiverConfiguration().getWorkerPoolConfiguration().haltOnError());
+        Assert.assertEquals(128, configuration.getLineTcpReceiverConfiguration().getWriterQueueCapacity());
+        Assert.assertEquals(0, configuration.getLineTcpReceiverConfiguration().getWriterWorkerPoolConfiguration().getWorkerCount());
+        Assert.assertEquals(10, configuration.getLineTcpReceiverConfiguration().getWriterWorkerPoolConfiguration().getYieldThreshold());
+        Assert.assertEquals(10_000, configuration.getLineTcpReceiverConfiguration().getWriterWorkerPoolConfiguration().getSleepThreshold());
+        Assert.assertArrayEquals(new int[] {}, configuration.getLineTcpReceiverConfiguration().getWriterWorkerPoolConfiguration().getWorkerAffinity());
+        Assert.assertFalse(configuration.getLineTcpReceiverConfiguration().getWriterWorkerPoolConfiguration().haltOnError());
+        Assert.assertEquals(0, configuration.getLineTcpReceiverConfiguration().getIOWorkerPoolConfiguration().getWorkerCount());
+        Assert.assertEquals(10, configuration.getLineTcpReceiverConfiguration().getIOWorkerPoolConfiguration().getYieldThreshold());
+        Assert.assertEquals(10_000, configuration.getLineTcpReceiverConfiguration().getIOWorkerPoolConfiguration().getSleepThreshold());
+        Assert.assertArrayEquals(new int[] {}, configuration.getLineTcpReceiverConfiguration().getIOWorkerPoolConfiguration().getWorkerAffinity());
+        Assert.assertFalse(configuration.getLineTcpReceiverConfiguration().getIOWorkerPoolConfiguration().haltOnError());
         Assert.assertEquals(10_000, configuration.getLineTcpReceiverConfiguration().getNUpdatesPerLoadRebalance());
         Assert.assertEquals(1.9, configuration.getLineTcpReceiverConfiguration().getMaxLoadRatio(), 0.001);
         Assert.assertEquals(1000, configuration.getLineTcpReceiverConfiguration().getMaxUncommittedRows());
         Assert.assertEquals(250, configuration.getLineTcpReceiverConfiguration().getMaintenanceJobHysteresisInMs());
+        Assert.assertEquals(PartitionBy.DAY, configuration.getLineTcpReceiverConfiguration().getDefaultPartitionBy());
+        Assert.assertEquals(false, configuration.getLineTcpReceiverConfiguration().isIOAggressiveRecv());
+        Assert.assertEquals(30_000, configuration.getLineTcpReceiverConfiguration().getMinIdleMsBeforeWriterRelease());
 
         Assert.assertTrue(configuration.getHttpServerConfiguration().getHttpContextConfiguration().getServerKeepAlive());
         Assert.assertEquals("HTTP/1.1 ", configuration.getHttpServerConfiguration().getHttpContextConfiguration().getHttpVersion());
@@ -421,7 +431,6 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(100_000, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getMultipartIdleSpinCount());
             Assert.assertEquals(4096, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getRecvBufferSize());
             Assert.assertEquals(2048, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getRequestHeaderBufferSize());
-            Assert.assertEquals(9012, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getResponseHeaderBufferSize());
             Assert.assertEquals(6, configuration.getHttpServerConfiguration().getWorkerCount());
             Assert.assertArrayEquals(new int[]{1, 2, 3, 4, 5, 6}, configuration.getHttpServerConfiguration().getWorkerAffinity());
             Assert.assertTrue(configuration.getHttpServerConfiguration().haltOnError());
@@ -552,14 +561,24 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(LineProtoMicroTimestampAdapter.INSTANCE, configuration.getLineTcpReceiverConfiguration().getTimestampAdapter());
             Assert.assertEquals(2049, configuration.getLineTcpReceiverConfiguration().getNetMsgBufferSize());
             Assert.assertEquals(128, configuration.getLineTcpReceiverConfiguration().getMaxMeasurementSize());
-            Assert.assertEquals(256, configuration.getLineTcpReceiverConfiguration().getWriterQueueSize());
-            Assert.assertEquals(2, configuration.getLineTcpReceiverConfiguration().getWorkerPoolConfiguration().getWorkerCount());
-            Assert.assertArrayEquals(new int[]{1, 2}, configuration.getLineTcpReceiverConfiguration().getWorkerPoolConfiguration().getWorkerAffinity());
-            Assert.assertTrue(configuration.getLineTcpReceiverConfiguration().getWorkerPoolConfiguration().haltOnError());
+            Assert.assertEquals(256, configuration.getLineTcpReceiverConfiguration().getWriterQueueCapacity());
+            Assert.assertEquals(2, configuration.getLineTcpReceiverConfiguration().getWriterWorkerPoolConfiguration().getWorkerCount());
+            Assert.assertArrayEquals(new int[] { 1, 2 }, configuration.getLineTcpReceiverConfiguration().getWriterWorkerPoolConfiguration().getWorkerAffinity());
+            Assert.assertEquals(20, configuration.getLineTcpReceiverConfiguration().getWriterWorkerPoolConfiguration().getYieldThreshold());
+            Assert.assertEquals(10_002, configuration.getLineTcpReceiverConfiguration().getWriterWorkerPoolConfiguration().getSleepThreshold());
+            Assert.assertTrue(configuration.getLineTcpReceiverConfiguration().getWriterWorkerPoolConfiguration().haltOnError());
+            Assert.assertEquals(3, configuration.getLineTcpReceiverConfiguration().getIOWorkerPoolConfiguration().getWorkerCount());
+            Assert.assertArrayEquals(new int[] { 3, 4, 5 }, configuration.getLineTcpReceiverConfiguration().getIOWorkerPoolConfiguration().getWorkerAffinity());
+            Assert.assertEquals(30, configuration.getLineTcpReceiverConfiguration().getIOWorkerPoolConfiguration().getYieldThreshold());
+            Assert.assertEquals(10_003, configuration.getLineTcpReceiverConfiguration().getIOWorkerPoolConfiguration().getSleepThreshold());
+            Assert.assertTrue(configuration.getLineTcpReceiverConfiguration().getIOWorkerPoolConfiguration().haltOnError());
             Assert.assertEquals(100_000, configuration.getLineTcpReceiverConfiguration().getNUpdatesPerLoadRebalance());
             Assert.assertEquals(1.5, configuration.getLineTcpReceiverConfiguration().getMaxLoadRatio(), 0.001);
             Assert.assertEquals(100000, configuration.getLineTcpReceiverConfiguration().getMaxUncommittedRows());
             Assert.assertEquals(1000, configuration.getLineTcpReceiverConfiguration().getMaintenanceJobHysteresisInMs());
+            Assert.assertEquals(PartitionBy.MONTH, configuration.getLineTcpReceiverConfiguration().getDefaultPartitionBy());
+            Assert.assertEquals(true, configuration.getLineTcpReceiverConfiguration().isIOAggressiveRecv());
+            Assert.assertEquals(5_000, configuration.getLineTcpReceiverConfiguration().getMinIdleMsBeforeWriterRelease());
 
             Assert.assertTrue(configuration.getCairoConfiguration().getTelemetryConfiguration().getEnabled());
             Assert.assertEquals(512, configuration.getCairoConfiguration().getTelemetryConfiguration().getQueueCapacity());

@@ -27,6 +27,7 @@ package io.questdb.cairo;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.model.RuntimeIntervalModel;
+import io.questdb.std.Chars;
 import io.questdb.std.LongList;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
@@ -103,7 +104,7 @@ public class IntervalFwdDataFrameCursorTest extends AbstractCairoTest {
         intervals.add(TimestampFormatUtils.parseTimestamp("1983-01-01T00:00:00.000Z"));
         intervals.add(TimestampFormatUtils.parseTimestamp("1983-01-02T00:00:00.000Z"));
 
-        final String expected = "1983-01-01T00:00:00.000000Z\n".repeat(N);
+        final CharSequence expected = Chars.repeat("1983-01-01T00:00:00.000000Z\n", N);
 
         testIntervals(PartitionBy.NONE, 0, N, expected, N);
     }

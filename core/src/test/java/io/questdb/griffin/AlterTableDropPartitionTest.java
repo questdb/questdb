@@ -24,6 +24,8 @@
 
 package io.questdb.griffin;
 
+import io.questdb.cairo.*;
+import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
@@ -32,6 +34,9 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
+
+import java.io.File;
+import java.nio.file.Paths;
 
 import static io.questdb.griffin.CompiledQuery.ALTER;
 
@@ -438,6 +443,167 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
                     }
                 }
         );
+    }
+
+    @Test
+    public void testPartitionDeletedFromDiskWithoutDropByDay() throws Exception {
+        String expected = "[0] Partition '2020-01-02' does not exist in table 'src' directory. " +
+                "Run [ALTER TABLE src DROP PARTITION LIST '2020-01-02'] " +
+                "to repair the table or restore the partition directory.";
+        String startDate = "2020-01-01";
+        int day = PartitionBy.DAY;
+        int partitionToCheck = 0;
+        String folderToDelete = "2020-01-02";
+        int deletedPartitionIndex = 1;
+        int rowCount = 10000;
+        testPartitionDirDeleted(expected, startDate, day, partitionToCheck, folderToDelete, deletedPartitionIndex, 5, rowCount, rowCount / 5);
+    }
+
+    @Test
+    public void testPartitionDeletedFromDiskWithoutDropByMonth() throws Exception {
+        String expected = "[0] Partition '2020-02' does not exist in table 'src' directory. " +
+                "Run [ALTER TABLE src DROP PARTITION LIST '2020-02'] " +
+                "to repair the table or restore the partition directory.";
+        String startDate = "2020-01-01";
+        int day = PartitionBy.MONTH;
+        int partitionToCheck = 0;
+        String folderToDelete = "2020-02";
+        int deletedPartitionIndex = 1;
+        int rowCount = 10000;
+        testPartitionDirDeleted(expected, startDate, day, partitionToCheck, folderToDelete, deletedPartitionIndex, 5, rowCount, 2039);
+    }
+
+    @Test
+    public void testPartitionDeletedFromDiskWithoutDropByNone() throws Exception {
+        String expected = "[0] Table 'src' data directory does not exist on the disk at ";
+        String startDate = "2020-01-01";
+        int day = PartitionBy.NONE;
+        int partitionToCheck = -1;
+        String folderToDelete = "default";
+        int deletedPartitionIndex = 0;
+        int rowCount = 1000;
+        testPartitionDirDeleted(expected, startDate, day, partitionToCheck, folderToDelete, deletedPartitionIndex, 1, rowCount, rowCount);
+    }
+
+    @Test
+    public void testPartitionDeletedFromDiskWithoutDropAfterOpeningByDay() throws Exception {
+        // Cannot run this on Windows - e.g. delete opened files
+        if (!configuration.getFilesFacade().isRestrictedFileSystem()) {
+            String startDate = "2020-01-01";
+            int day = PartitionBy.DAY;
+            int partitionToCheck = 0;
+            String folderToDelete = "2020-01-02";
+            int deletedPartitionIndex = 0;
+            int rowCount = 10000;
+            testPartitionDirDeleted(null, startDate, day, partitionToCheck, folderToDelete, deletedPartitionIndex, 5, rowCount, rowCount / 5);
+        }
+    }
+
+    @Test
+    public void testPartitionDeletedFromDiskAfterOpening() throws Exception {
+        String expected = "[0] Table 'src' data directory does not exist on the disk at ";
+        String startDate = "2020-01-01";
+        int day = PartitionBy.NONE;
+        int partitionToCheck = -1;
+        String folderToDelete = "default";
+        int deletedPartitionIndex = 0;
+        int rowCount = 10000;
+        testPartitionDirDeleted(expected, startDate, day, partitionToCheck, folderToDelete, deletedPartitionIndex, 5, rowCount, rowCount / 5);
+    }
+
+    private void testPartitionDirDeleted(
+            String expected,
+            String startDate,
+            int partitionBy,
+            int partitionToCheck,
+            String folderToDelete,
+            int deletedPartitionIndex,
+            int partitionCount,
+            int rowCount, int partitionRowCount) throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            assertMemoryLeak(() -> {
+                try (TableModel src = new TableModel(configuration, "src", partitionBy)) {
+                    createPopulateTable(
+                            src.col("l", ColumnType.LONG)
+                                    .col("i", ColumnType.INT)
+                                    .timestamp("ts"),
+                            rowCount,
+                            startDate,
+                            partitionCount);
+
+                    engine.releaseAllReaders();
+                    engine.releaseAllWriters();
+
+                    try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, src.getName())) {
+                        long sum = 0;
+                        int colIndex = 0;
+                        boolean opened = false;
+                        if (partitionToCheck > -1) {
+                            Assert.assertEquals(partitionRowCount, reader.openPartition(partitionToCheck));
+                            opened = true;
+
+                            // read first column on first partition
+                            colIndex = TableReader.getPrimaryColumnIndex(reader.getColumnBase(partitionToCheck), 0);
+                            Assert.assertTrue(colIndex > 0); // This can change with refactoring, test has to be updated to get col index correctly
+                            sum = readSumLongColumn(reader, partitionRowCount, colIndex);
+                            long expectedSumFrom0ToPartitionCount = (long) (partitionRowCount * (partitionRowCount + 1.0) / 2.0);
+                            Assert.assertEquals(expectedSumFrom0ToPartitionCount, sum);
+                        }
+
+                        // Delete partition folder
+                        File dir = new File(Paths.get(root.toString(), src.getName(), folderToDelete).toString());
+                        deleteDir(dir);
+
+                        if (opened) {
+                            // Should not affect open partition
+                            reader.reload();
+                            long sum2 = readSumLongColumn(reader, partitionRowCount, colIndex);
+                            Assert.assertEquals(sum, sum2);
+                        }
+
+                        if (expected == null) {
+                            // Don't check that partition open fails if it's already opened
+                            Assert.assertEquals(partitionRowCount, reader.openPartition(deletedPartitionIndex));
+                        } else {
+                            // Should throw something meaningful
+                            try {
+                                reader.openPartition(deletedPartitionIndex);
+                                Assert.fail();
+                            } catch (CairoException ex) {
+                                TestUtils.assertContains(ex.getMessage(), expected);
+                            }
+
+                            if (partitionBy != PartitionBy.NONE) {
+                                compiler.compile("ALTER TABLE " + src.getName() + " DROP PARTITION LIST '" + folderToDelete + "';", sqlExecutionContext);
+                            }
+                        }
+                    }
+                }
+            });
+        });
+    }
+
+    private long readSumLongColumn(TableReader reader, int partitionRowCount, int colIndex) {
+        long sum = 0L;
+        for (int i = 0; i < partitionRowCount; i++) {
+            long aLong = reader.getColumn(colIndex).getLong(i * Long.BYTES);
+            sum += aLong;
+        }
+        return sum;
+    }
+
+    private void deleteDir(File file) {
+        File[] contents = file.listFiles();
+        if (contents != null) {
+            for (File f : contents) {
+                deleteDir(f);
+            }
+        }
+        if (file.delete()) {
+            System.out.println("Deleted: " + file.getAbsolutePath());
+        } else {
+            Assert.fail("Failed to delete dir: " + file.getAbsolutePath());
+        }
     }
 
     private void assertFailure(String sql, int position, String message) throws Exception {

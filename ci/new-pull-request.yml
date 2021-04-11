@@ -1,0 +1,71 @@
+trigger: none
+
+pr:
+  branches:
+    include:
+      - master
+
+variables:
+  QDB_LOG_W_FILE_LOCATION: "$(Build.BinariesDirectory)/tests.log"
+  ARCHIVED_LOGS: "$(Build.ArtifactStagingDirectory)/questdb-$(Build.SourceBranchName)-$(Build.SourceVersion)-$(System.StageAttempt).zip"
+
+stages:
+  - stage: RunTestsBranches
+    displayName: "Running tests"
+    jobs:
+      - job: RunOn
+        displayName: "on"
+        strategy:
+          matrix:
+            linux:
+              imageName: "ubuntu-latest"
+              os: Linux
+              jdk: "1.11"
+            mac:
+              imageName: "macos-latest"
+              os: macOS
+              jdk: "1.11"
+            windows:
+              imageName: "windows-latest"
+              os: Windows
+              jdk: "1.11"
+            linux-jdk8:
+              imageName: "ubuntu-latest"
+              os: Linux
+              jdk: "1.8"
+        pool:
+          vmImage: $(imageName)
+        timeoutInMinutes: 30
+        steps:
+          - checkout: self
+            fetchDepth: 1
+            lfs: false
+            submodules: false
+          - task: Maven@3
+            displayName: "Compile with Maven"
+            inputs:
+              mavenPomFile: "core/pom.xml"
+              mavenOptions: "-Xmx3072m"
+              options: "compile -DskipTests"
+              jdkVersionOption: $(jdk)
+          - task: Maven@3
+            displayName: "Run tests with Maven"
+            inputs:
+              mavenPomFile: "core/pom.xml"
+              mavenOptions: "-Xmx3072m"
+              options: "--batch-mode --quiet -DquestdbLog=$(Build.SourcesDirectory)/ci/qlog.conf"
+              jdkVersionOption: $(jdk)
+          - task: ArchiveFiles@2
+            displayName: "Tests failed -- Compress logs"
+            condition: failed()
+            inputs:
+              rootFolderOrFile: $(QDB_LOG_W_FILE_LOCATION)
+              includeRootFolder: false
+              archiveFile: $(ARCHIVED_LOGS)
+              quiet: true
+          - task: PublishBuildArtifacts@1
+            displayName: "Tests failed -- Upload logs"
+            condition: failed()
+            inputs:
+              pathToPublish: $(ARCHIVED_LOGS)
+              artifactName: MavenFailedTestsLogs
