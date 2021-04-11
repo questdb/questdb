@@ -24,6 +24,7 @@
 
 package io.questdb.tasks;
 
+import io.questdb.cairo.BitmapIndexWriter;
 import io.questdb.cairo.TableWriter;
 import io.questdb.mp.SOUnboundedCountDownLatch;
 import io.questdb.std.FilesFacade;
@@ -71,6 +72,7 @@ public class OutOfOrderOpenColumnTask {
     private long activeFixFd;
     private long activeVarFd;
     private TableWriter tableWriter;
+    private BitmapIndexWriter indexWriter;
     private SOUnboundedCountDownLatch doneLatch;
 
     public long getActiveFixFd() {
@@ -225,6 +227,10 @@ public class OutOfOrderOpenColumnTask {
         return tableWriter;
     }
 
+    public BitmapIndexWriter getIndexWriter() {
+        return indexWriter;
+    }
+
     public long getTimestampMergeIndexAddr() {
         return timestampMergeIndexAddr;
     }
@@ -278,6 +284,7 @@ public class OutOfOrderOpenColumnTask {
             long activeFixFd,
             long activeVarFd,
             TableWriter tableWriter,
+            BitmapIndexWriter indexWriter,
             SOUnboundedCountDownLatch doneLatch
     ) {
         this.openColumnMode = openColumnMode;
@@ -320,6 +327,7 @@ public class OutOfOrderOpenColumnTask {
         this.activeFixFd = activeFixFd;
         this.activeVarFd = activeVarFd;
         this.tableWriter = tableWriter;
+        this.indexWriter = indexWriter;
         this.doneLatch = doneLatch;
     }
 }

@@ -1953,6 +1953,10 @@ public class TableWriter implements Closeable {
         return symbolMapWriters.getQuick(columnIndex);
     }
 
+    BitmapIndexWriter getBitmapIndexWriter(int columnIndex) {
+        return indexers.getQuick(columnIndex).getWriter();
+    }
+
     int getTxPartitionCount() {
         return txFile.getAppendedPartitionCount();
     }
@@ -2383,10 +2387,11 @@ public class TableWriter implements Closeable {
         }
 
         final int timestampIndex = metadata.getTimestampIndex();
+        final long maxTimestamp = txFile.getMaxTimestamp();
         try {
-            if (lastTimestampHysteresisInMicros > 0 && txFile.getAppendedPartitionCount() == 1) {
+//            if (lastTimestampHysteresisInMicros > 0 && txFile.getAppendedPartitionCount() == 1) {
                 oooMoveUncommittedInOrderRowsToMergeSpace(timestampIndex);
-            }
+//            }
 
             // we may need to re-use file descriptors when this partition is the "current" one
             // we cannot open file again due to sharing violation
@@ -2417,8 +2422,7 @@ public class TableWriter implements Closeable {
             final long srcOooMax = oooRowCount;
             final long oooTimestampMin = getTimestampIndexValue(sortedTimestampsAddr, 0);
             final long oooTimestampMax = getTimestampIndexValue(sortedTimestampsAddr, srcOooMax - 1);
-            final long maxTimestamp = txFile.getMaxTimestamp();
-            this.lastPartitionTimestamp = maxTimestamp != Numbers.LONG_NaN ? timestampFloorMethod.floor(maxTimestamp) : maxTimestamp;
+            this.lastPartitionTimestamp = timestampFloorMethod.floor(maxTimestamp);
             final RingQueue<OutOfOrderPartitionTask> oooPartitionQueue = messageBus.getOutOfOrderPartitionQueue();
             final Sequence oooPartitionPubSeq = messageBus.getOutOfOrderPartitionPubSeq();
             this.oooLatch.reset();
@@ -2441,7 +2445,7 @@ public class TableWriter implements Closeable {
                         );
 
                         final long partitionTimestamp = timestampFloorMethod.floor(srcOooTimestamp);
-                        final boolean last = partitionTimestamp == lastPartitionTimestamp || lastPartitionTimestamp == Numbers.LONG_NaN;
+                        final boolean last = partitionTimestamp == lastPartitionTimestamp;
 
                         srcOoo = srcOooHi + 1;
                         srcOooTimestamp = getTimestampIndexValue(sortedTimestampsAddr, srcOoo);

@@ -90,11 +90,30 @@ public class AbstractOutOfOrderTest extends AbstractCairoTest {
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        AbstractOutOfOrderTest.assertIndexConsistency(
+        assertIndexConsistency(
                 compiler,
                 sqlExecutionContext,
                 "y"
         );
+    }
+
+    protected static void assertIndexConsistencySink(
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
+        printSqlResult(
+                compiler,
+                sqlExecutionContext,
+                "y where sym = 'googl' order by ts"
+        );
+
+        TestUtils.printSql(
+                compiler,
+                sqlExecutionContext,
+                "x where sym = 'googl'",
+                sink2
+        );
+        TestUtils.assertEquals(sink, sink2);
     }
 
     protected static void printSqlResult(

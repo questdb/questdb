@@ -102,6 +102,7 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
             long srcTimestampSize,
             boolean partitionMutates,
             TableWriter tableWriter,
+            BitmapIndexWriter indexWriter,
             SOUnboundedCountDownLatch doneLatch
     ) {
         switch (blockType) {
@@ -163,7 +164,11 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
             if (isIndexed) {
                 // dstKFd & dstVFd are closed by the indexer
                 try {
-                    updateIndex(configuration, dstFixAddr, dstFixSize, dstKFd, dstVFd, dstIndexOffset);
+                    if (indexWriter != null) {
+                        updateIndex(dstFixAddr, dstFixSize, dstIndexOffset, indexWriter);
+                    } else {
+                        updateIndex(configuration, dstFixAddr, dstFixSize, dstKFd, dstVFd, dstIndexOffset);
+                    }
                 } catch (Throwable e) {
                     tableWriter.bumpOooErrorCount();
                     copyIdleQuick(
@@ -285,6 +290,7 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
         final long srcTimestampSize = task.getSrcTimestampSize();
         final boolean partitionMutates = task.isPartitionMutates();
         final TableWriter tableWriter = task.getTableWriter();
+        final BitmapIndexWriter indexWriter = task.getIndexWriter();
         final SOUnboundedCountDownLatch doneLatch = task.getDoneLatch();
 
         subSeq.done(cursor);
@@ -340,6 +346,7 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
                 srcTimestampSize,
                 partitionMutates,
                 tableWriter,
+                indexWriter,
                 doneLatch
         );
     }
@@ -499,24 +506,28 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
             boolean partitionMutates,
             TableWriter tableWriter
     ) {
-        if (srcTimestampFd < 0) {
-            tableWriter.closeActivePartition();
-        } else if (srcTimestampFd > 0) {
-            ff.close(srcTimestampFd);
+        try {
+            // todo: create test to ensure this does not regress
+            if (srcTimestampFd < 0) {
+                tableWriter.closeActivePartition();
+            } else if (srcTimestampFd > 0) {
+                ff.close(srcTimestampFd);
+            }
+        } finally {
+            notifyWriter(
+                    updPartitionSizeQueue,
+                    updPartitionPubSeq,
+                    srcOooPartitionLo,
+                    srcOooPartitionHi,
+                    timestampMin,
+                    timestampMax,
+                    partitionTimestamp,
+                    srcOooMax,
+                    srcDataMax,
+                    partitionMutates,
+                    tableWriter
+            );
         }
-        notifyWriter(
-                updPartitionSizeQueue,
-                updPartitionPubSeq,
-                srcOooPartitionLo,
-                srcOooPartitionHi,
-                timestampMin,
-                timestampMax,
-                partitionTimestamp,
-                srcOooMax,
-                srcDataMax,
-                partitionMutates,
-                tableWriter
-        );
     }
 
     static void notifyWriter(
@@ -850,6 +861,21 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
             }
             w.setMaxValue(count - 1);
         }
+    }
+
+    private static void updateIndex(
+            long dstFixAddr,
+            long dstFixSize,
+            long dstIndexOffset,
+            BitmapIndexWriter indexWriter
+    ) {
+        long row = dstIndexOffset / Integer.BYTES;
+        indexWriter.rollbackConditionally(row);
+        final long count = dstFixSize / Integer.BYTES;
+        for (; row < count; row++) {
+            indexWriter.add(TableUtils.toIndexKey(Unsafe.getUnsafe().getInt(dstFixAddr + row * Integer.BYTES)), row);
+        }
+        indexWriter.setMaxValue(count - 1);
     }
 
     private void copy(OutOfOrderCopyTask task, long cursor, Sequence subSeq) {

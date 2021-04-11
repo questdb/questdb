@@ -171,14 +171,20 @@ public class AppendOnlyVirtualMemory extends PagedVirtualMemory implements Mappe
 
     static void bestEffortTruncate(FilesFacade ff, Log log, long fd, long size, long mapPageSize) {
         if (ff.truncate(Math.abs(fd), size)) {
-            log.debug().$("truncated and closed [fd=").$(fd).$(']').$();
+            log.debug()
+                    .$("truncated and closed [fd=").$(fd)
+                    .$(", size=").$(size)
+                    .$(']').$();
         } else {
             if (ff.isRestrictedFileSystem()) {
                 // Windows does truncate file if it has a mapped page somewhere, could be another handle and process.
                 // To make it work size needs to be rounded up to nearest page.
                 long n = (size - 1) / mapPageSize;
                 if (ff.truncate(Math.abs(fd), (n + 1) * mapPageSize)) {
-                    log.debug().$("truncated and closed, second attempt [fd=").$(fd).$(']').$();
+                    log.debug()
+                            .$("truncated and closed, second attempt [fd=").$(fd)
+                            .$(", size=").$((n + 1) * mapPageSize)
+                            .$(']').$();
                     return;
                 }
             }

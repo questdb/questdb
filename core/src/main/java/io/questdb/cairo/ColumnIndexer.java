@@ -39,6 +39,8 @@ public interface ColumnIndexer {
 
     void index(ReadOnlyVirtualMemory mem, long loRow, long hiRow);
 
+    BitmapIndexWriter getWriter();
+
     boolean isDistressed();
 
     void configureFollowerAndWriter(CairoConfiguration configuration, Path path, CharSequence name, AppendOnlyVirtualMemory columnMem, long columnTop);

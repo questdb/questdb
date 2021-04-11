@@ -118,17 +118,20 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
             // this has to be a brand new partition for either of two cases:
             // - this partition is above min partition of the table
             // - this partition is below max partition of the table
+            // - this is last partition that is empty
             // pure OOO data copy into new partition
 
-            try {
-                LOG.debug().$("would create [path=").$(path.chopZ().$$dir()).$(']').$();
-                createDirsOrFail(ff, path, configuration.getMkDirMode());
-            } catch (Throwable e) {
-                LOG.debug().$("idle new").$();
-                tableWriter.bumpOooErrorCount();
-                tableWriter.bumpPartitionUpdateCount();
-                doneLatch.countDown();
-                throw e;
+            if (!last) {
+                try {
+                    LOG.debug().$("would create [path=").$(path.chopZ().$$dir()).$(']').$();
+                    createDirsOrFail(ff, path, configuration.getMkDirMode());
+                } catch (Throwable e) {
+                    LOG.debug().$("idle new").$();
+                    tableWriter.bumpOooErrorCount();
+                    tableWriter.bumpPartitionUpdateCount();
+                    doneLatch.countDown();
+                    throw e;
+                }
             }
 
             publishOpenColumnTasks(
@@ -166,8 +169,8 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                     0,
                     0,
                     srcDataTxn,
-                    OPEN_NEW_PARTITION_FOR_APPEND,
-                    -1,  // timestamp fd
+                    last ? OPEN_LAST_PARTITION_FOR_APPEND : OPEN_NEW_PARTITION_FOR_APPEND,
+                    last ? -columns.getQuick(getPrimaryColumnIndex(timestampIndex)).getFd() : 0,  // timestamp fd
                     0,
                     0,
                     timestampIndex,
@@ -638,6 +641,7 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
             long activeFixFd,
             long activeVarFd,
             TableWriter tableWriter,
+            BitmapIndexWriter indexWriter,
             SOUnboundedCountDownLatch doneLatch
     ) {
         final OutOfOrderOpenColumnTask openColumnTask = openColumnTaskOutboundQueue.get(cursor);
@@ -682,6 +686,7 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                 activeFixFd,
                 activeVarFd,
                 tableWriter,
+                indexWriter,
                 doneLatch
         );
         openColumnPubSeq.done(cursor);
@@ -791,6 +796,13 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                     srcDataTop = -1; // column open job will have to find out if top exists and its value
                 }
 
+                final BitmapIndexWriter indexWriter;
+                if (isIndexed && openColumnMode == OPEN_LAST_PARTITION_FOR_APPEND) {
+                    indexWriter = tableWriter.getBitmapIndexWriter(i);
+                } else {
+                    indexWriter = null;
+                }
+
                 try {
                     final long cursor = openColumnPubSeq.next();
                     if (cursor > -1) {
@@ -838,6 +850,7 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                                 activeFixFd,
                                 activeVarFd,
                                 tableWriter,
+                                indexWriter,
                                 doneLatch
                         );
                     } else {
@@ -891,6 +904,7 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                                 activeFixFd,
                                 activeVarFd,
                                 tableWriter,
+                                indexWriter,
                                 doneLatch
                         );
                     }
@@ -966,6 +980,7 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
             long activeFixFd,
             long activeVarFd,
             TableWriter tableWriter,
+            BitmapIndexWriter indexWriter,
             SOUnboundedCountDownLatch doneLatch
     ) {
         while (cursor == -2) {
@@ -1017,6 +1032,7 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                     activeFixFd,
                     activeVarFd,
                     tableWriter,
+                    indexWriter,
                     doneLatch
             );
         } else {
@@ -1067,6 +1083,7 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                     activeFixFd,
                     activeVarFd,
                     tableWriter,
+                    indexWriter,
                     doneLatch
             );
         }
