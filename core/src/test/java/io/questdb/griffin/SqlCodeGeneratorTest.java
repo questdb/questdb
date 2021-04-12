@@ -4920,7 +4920,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     @Test
     public void testVectorSumAvgDoubleRndColumnWithNullsParallel() throws Exception {
 
-        Sequence seq = engine.getMessageBus().getVectorAggregateSubSequence();
+        Sequence seq = engine.getMessageBus().getVectorAggregateSubSeq();
         // consume sequence fully and do nothing
         // this might be needed to make sure we don't consume things other tests publish here
         while (true) {

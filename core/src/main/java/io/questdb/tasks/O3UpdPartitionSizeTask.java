@@ -24,7 +24,7 @@
 
 package io.questdb.tasks;
 
-public class OutOfOrderUpdPartitionSizeTask {
+public class O3UpdPartitionSizeTask {
     private long partitionTimestamp;
     private long srcOooPartitionLo;
     private long srcOooPartitionHi;

@@ -31,8 +31,8 @@ import io.questdb.mp.Sequence;
 import io.questdb.tasks.O3CallbackTask;
 import org.jetbrains.annotations.Nullable;
 
-public class OutOfOrderColumnUpdateJob extends AbstractQueueConsumerJob<O3CallbackTask> {
-    public OutOfOrderColumnUpdateJob(MessageBus messageBus) {
+public class O3CallbackJob extends AbstractQueueConsumerJob<O3CallbackTask> {
+    public O3CallbackJob(MessageBus messageBus) {
         super(messageBus.getO3CallbackQueue(), messageBus.getO3CallbackSubSeq());
     }
 
@@ -41,7 +41,7 @@ public class OutOfOrderColumnUpdateJob extends AbstractQueueConsumerJob<O3Callba
         final int columnType = task.getColumnType();
         final long mergedTimestampsAddr = task.getMergedTimestampsAddr();
         final long valueCount = task.getValueCount();
-        final TableWriter.OutOfOrderColumnUpdateMethod sortMethod = task.getWriterCallbackMethod();
+        final TableWriter.O3ColumnUpdateMethod sortMethod = task.getWriterCallbackMethod();
         final CountDownLatchSPI countDownLatchSPI = task.getCountDownLatchSPI();
         if (subSeq != null) {
             subSeq.done(cursor);

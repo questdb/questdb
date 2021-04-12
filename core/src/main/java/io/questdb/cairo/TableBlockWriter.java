@@ -81,7 +81,7 @@ public class TableBlockWriter implements Closeable {
         this.ff = configuration.getFilesFacade();
         this.mkDirMode = configuration.getMkDirMode();
         queue = messageBus.getTableBlockWriterQueue();
-        pubSeq = messageBus.getTableBlockWriterPubSequence();
+        pubSeq = messageBus.getTableBlockWriterPubSeq();
     }
 
     public void appendPageFrameColumn(int columnIndex, long pageFrameSize, long sourceAddress) {
@@ -406,7 +406,7 @@ public class TableBlockWriter implements Closeable {
 
     public static class TableBlockWriterJob extends AbstractQueueConsumerJob<TableBlockWriterTaskHolder> {
         public TableBlockWriterJob(MessageBus messageBus) {
-            super(messageBus.getTableBlockWriterQueue(), messageBus.getTableBlockWriterSubSequence());
+            super(messageBus.getTableBlockWriterQueue(), messageBus.getTableBlockWriterSubSeq());
         }
 
         @Override

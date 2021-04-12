@@ -711,27 +711,27 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testAppendOutOfOrder() throws Exception {
+    public void testAppendO3() throws Exception {
         int N = 10000;
         create(FF, PartitionBy.NONE, N);
-        testOutOfOrderRecordsFail(N);
+        testO3RecordsFail(N);
     }
 
     @Test
-    public void testAppendOutOfOrderPartitioned() throws Exception {
+    public void testAppendO3Partitioned() throws Exception {
         int N = 10000;
         create(FF, PartitionBy.DAY, N);
-        testOutOfOrderRecordsFail(N);
+        testO3RecordsFail(N);
     }
 
     @Test
-    public void testAppendOutOfOrderPartitionedNewerFirst() throws Exception {
-        OutOfOrderUtils.initBuf();
+    public void testAppendO3PartitionedNewerFirst() throws Exception {
+        O3Utils.initBuf();
         int N = 10000;
         create(FF, PartitionBy.DAY, N);
-        testOutOfOrderRecordsNewerThanOlder(N, new DefaultCairoConfiguration(root) {
+        testO3RecordsNewerThanOlder(N, new DefaultCairoConfiguration(root) {
             @Override
-            public boolean isOutOfOrderEnabled() {
+            public boolean isO3Enabled() {
                 return true;
             }
         });
@@ -1749,7 +1749,7 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testOutOfOrderAfterReopen() throws Exception {
+    public void testO3AfterReopen() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             CairoTestUtils.createAllTableWithTimestamp(configuration, PartitionBy.NONE);
             Rnd rnd = new Rnd();
@@ -3284,7 +3284,7 @@ public class TableWriterTest extends AbstractCairoTest {
         });
     }
 
-    private void testOutOfOrderRecordsFail(int N) throws Exception {
+    private void testO3RecordsFail(int N) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (TableWriter writer = new TableWriter(configuration, PRODUCT)) {
 
@@ -3327,7 +3327,7 @@ public class TableWriterTest extends AbstractCairoTest {
         });
     }
 
-    private void testOutOfOrderRecordsNewerThanOlder(int N, CairoConfiguration configuration) throws Exception {
+    private void testO3RecordsNewerThanOlder(int N, CairoConfiguration configuration) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (TableWriter writer = new TableWriter(configuration, PRODUCT)) {
 

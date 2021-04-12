@@ -34,7 +34,7 @@ public class O3CallbackTask extends AbstractLockable {
     private int columnType;
     private long mergedTimestampsAddr;
     private long valueCount;
-    private TableWriter.OutOfOrderColumnUpdateMethod writerCallbackMethod;
+    private TableWriter.O3ColumnUpdateMethod writerCallbackMethod;
 
     public int getColumnIndex() {
         return columnIndex;
@@ -52,7 +52,7 @@ public class O3CallbackTask extends AbstractLockable {
         return columnType;
     }
 
-    public TableWriter.OutOfOrderColumnUpdateMethod getWriterCallbackMethod() {
+    public TableWriter.O3ColumnUpdateMethod getWriterCallbackMethod() {
         return writerCallbackMethod;
     }
 
@@ -66,7 +66,7 @@ public class O3CallbackTask extends AbstractLockable {
             int columnType,
             long mergedTimestampsAddr,
             long rowCount,
-            TableWriter.OutOfOrderColumnUpdateMethod writerCallbackMethod
+            TableWriter.O3ColumnUpdateMethod writerCallbackMethod
     ) {
         of(columnIndex);
         this.countDownLatchSPI = countDownLatchSPI;

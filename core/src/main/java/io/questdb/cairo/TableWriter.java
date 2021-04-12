@@ -84,7 +84,7 @@ public class TableWriter implements Closeable {
     private final RowFunction openPartitionFunction = new OpenPartitionRowFunction();
     private final RowFunction noPartitionFunction = new NoPartitionFunction();
     private final RowFunction noTimestampFunction = new NoTimestampFunction();
-    private final RowFunction oooRowFunction = new OutOfOrderPartitionFunction();
+    private final RowFunction oooRowFunction = new O3PartitionFunction();
     private final NativeLPSZ nativeLPSZ = new NativeLPSZ();
     private final LongList columnTops;
     private final FilesFacade ff;
@@ -112,10 +112,10 @@ public class TableWriter implements Closeable {
     private final ObjList<ContiguousVirtualMemory> oooColumns2;
     private final TableBlockWriter blockWriter;
     private final TimestampValueRecord dropPartitionFunctionRec = new TimestampValueRecord();
-    private final boolean outOfOrderEnabled;
+    private final boolean o3Enabled;
     private final ObjList<O3CallbackTask> o3PendingCallbackTasks = new ObjList<>();
-    private final OutOfOrderColumnUpdateMethod oooSortVarColumnRef = this::oooSortVarColumn;
-    private final OutOfOrderColumnUpdateMethod oooSortFixColumnRef = this::oooSortFixColumn;
+    private final O3ColumnUpdateMethod oooSortVarColumnRef = this::oooSortVarColumn;
+    private final O3ColumnUpdateMethod oooSortFixColumnRef = this::oooSortFixColumn;
     private final SOUnboundedCountDownLatch oooLatch = new SOUnboundedCountDownLatch();
     private final AtomicLong oooUpdRemaining = new AtomicLong();
     private final AtomicInteger oooErrorCount = new AtomicInteger();
@@ -150,10 +150,10 @@ public class TableWriter implements Closeable {
     private String designatedTimestampColumnName;
     private long o3RowCount;
     private final LongConsumer mergeTimestampMethodRef = this::mergeTimestampSetter;
-    private long transientRowCountBeforeOutOfOrder;
+    private long o3PrevTransientCount;
     private long lastPartitionTimestamp;
     private long o3HysteresisRowCount;
-    private final OutOfOrderColumnUpdateMethod o3MoveHysteresisRef = this::o3MoveHysteresis0;
+    private final O3ColumnUpdateMethod o3MoveHysteresisRef = this::o3MoveHysteresis0;
 
     public TableWriter(CairoConfiguration configuration, CharSequence name) {
         this(configuration, name, new MessageBusImpl(configuration));
@@ -183,7 +183,7 @@ public class TableWriter implements Closeable {
     ) {
         LOG.info().$("open '").utf8(name).$('\'').$();
         this.configuration = configuration;
-        this.outOfOrderEnabled = configuration.isOutOfOrderEnabled();
+        this.o3Enabled = configuration.isO3Enabled();
         this.messageBus = messageBus;
         this.defaultCommitMode = configuration.getCommitMode();
         this.lifecycleManager = lifecycleManager;
@@ -1595,7 +1595,7 @@ public class TableWriter implements Closeable {
             txFile.commit(commitMode, this.denseSymbolMapWriters);
             if (o3RowCount > 0) {
                 // OOO rows remain due to hysteresis
-                transientRowCountBeforeOutOfOrder = txFile.getTransientRowCount();
+                o3PrevTransientCount = txFile.getTransientRowCount();
                 txFile.append(o3RowCount);
             }
             o3ProcessPartitionRemoveCandidates();
@@ -2065,7 +2065,7 @@ public class TableWriter implements Closeable {
         } else {
             sourceOffset = indexMem.getLong(o3RowCount << 3);
             size = dataMem.getAppendOffset() - sourceOffset;
-            OutOfOrderUtils.shiftCopyFixedSizeColumnData(sourceOffset, indexMem.addressOf(o3RowCount << 3), 0, o3HysteresisRowCount << 3, indexMem.addressOf(0));
+            O3Utils.shiftCopyFixedSizeColumnData(sourceOffset, indexMem.addressOf(o3RowCount << 3), 0, o3HysteresisRowCount << 3, indexMem.addressOf(0));
             indexMem.jumpTo(valueCount << 3);
         }
 
@@ -2111,7 +2111,7 @@ public class TableWriter implements Closeable {
                     } else {
                         final AppendOnlyVirtualMemory srcFixMem = getSecondaryColumn(colIndex);
                         long srcVarOffset = srcFixMem.getLong(committedTransientRowCount << 3);
-                        OutOfOrderUtils.shiftCopyFixedSizeColumnData(
+                        O3Utils.shiftCopyFixedSizeColumnData(
                                 srcVarOffset - dstVarOffset,
                                 srcFixMem.addressOf(committedTransientRowCount << 3),
                                 0,
@@ -2135,7 +2135,7 @@ public class TableWriter implements Closeable {
             }
             txFile.resetToLastPartition(committedTransientRowCount);
             o3RowCount += uncommittedTransientRowCount;
-            transientRowCountBeforeOutOfOrder = committedTransientRowCount;
+            o3PrevTransientCount = committedTransientRowCount;
         }
     }
 
@@ -2188,8 +2188,8 @@ public class TableWriter implements Closeable {
             final long srcOooMax = o3RowCount;
             final long oooTimestampMin = getTimestampIndexValue(sortedTimestampsAddr, 0);
             final long oooTimestampMax = getTimestampIndexValue(sortedTimestampsAddr, srcOooMax - 1);
-            final RingQueue<OutOfOrderPartitionTask> oooPartitionQueue = messageBus.getOutOfOrderPartitionQueue();
-            final Sequence oooPartitionPubSeq = messageBus.getOutOfOrderPartitionPubSeq();
+            final RingQueue<O3PartitionTask> oooPartitionQueue = messageBus.getO3PartitionQueue();
+            final Sequence oooPartitionPubSeq = messageBus.getO3PartitionPubSeq();
             this.oooLatch.reset();
             this.oooUpdRemaining.set(0);
             boolean success = true;
@@ -2220,7 +2220,7 @@ public class TableWriter implements Closeable {
                         final int partitionIndex = txFile.findAttachedPartitionIndexByLoTimestamp(partitionTimestamp);
                         if (partitionIndex > -1) {
                             if (last) {
-                                srcDataSize = transientRowCountBeforeOutOfOrder;
+                                srcDataSize = o3PrevTransientCount;
                             } else {
                                 srcDataSize = getPartitionSizeByIndex(partitionIndex);
                             }
@@ -2233,7 +2233,7 @@ public class TableWriter implements Closeable {
                         oooUpdRemaining.incrementAndGet();
                         long cursor = oooPartitionPubSeq.next();
                         if (cursor > -1) {
-                            OutOfOrderPartitionTask task = oooPartitionQueue.get(cursor);
+                            O3PartitionTask task = oooPartitionQueue.get(cursor);
                             task.of(
                                     ff,
                                     path,
@@ -2257,15 +2257,15 @@ public class TableWriter implements Closeable {
                             );
                             oooPartitionPubSeq.done(cursor);
                         } else {
-                            OutOfOrderPartitionJob.processPartition(
+                            O3PartitionJob.processPartition(
                                     workerId,
                                     configuration,
-                                    messageBus.getOutOfOrderOpenColumnQueue(),
-                                    messageBus.getOutOfOrderOpenColumnPubSequence(),
-                                    messageBus.getOutOfOrderCopyQueue(),
-                                    messageBus.getOutOfOrderCopyPubSeq(),
-                                    messageBus.getOutOfOrderUpdPartitionSizeQueue(),
-                                    messageBus.getOutOfOrderUpdPartitionSizePubSequence(),
+                                    messageBus.getO3OpenColumnQueue(),
+                                    messageBus.getO3OpenColumnPubSeq(),
+                                    messageBus.getO3CopyQueue(),
+                                    messageBus.getO3CopyPubSeq(),
+                                    messageBus.getO3UpdPartitionSizeQueue(),
+                                    messageBus.getO3UpdPartitionSizePubSeq(),
                                     ff,
                                     path,
                                     partitionBy,
@@ -2335,7 +2335,7 @@ public class TableWriter implements Closeable {
                 this.o3RowCount = o3HysteresisRowCount;
                 o3HysteresisRowCount = 0;
             }
-            transientRowCountBeforeOutOfOrder = 0;
+            o3PrevTransientCount = 0;
         }
         if (columns.getQuick(0).isClosed() || partitionTimestampHi < txFile.getMaxTimestamp()) {
             openPartition(txFile.getMaxTimestamp());
@@ -2453,7 +2453,7 @@ public class TableWriter implements Closeable {
         for (int n = o3PendingCallbackTasks.size() - 1; n > -1; n--) {
             final O3CallbackTask task = o3PendingCallbackTasks.getQuick(n);
             if (task.tryLock()) {
-                OutOfOrderColumnUpdateJob.runCallbackWithCol(
+                O3CallbackJob.runCallbackWithCol(
                         task,
                         -1,
                         null
@@ -2508,7 +2508,7 @@ public class TableWriter implements Closeable {
         for (int n = o3PendingCallbackTasks.size() - 1; n > -1; n--) {
             final O3CallbackTask task = o3PendingCallbackTasks.getQuick(n);
             if (task.tryLock()) {
-                OutOfOrderColumnUpdateJob.runCallbackWithCol(
+                O3CallbackJob.runCallbackWithCol(
                         task,
                         -1,
                         null
@@ -2525,21 +2525,21 @@ public class TableWriter implements Closeable {
             long timestampMin,
             long timestampMax
     ) {
-        final MPSequence updSizePubSeq = messageBus.getOutOfOrderUpdPartitionSizePubSequence();
-        final Sequence updSizeSubSeq = messageBus.getOutOfOrderUpdPartitionSizeSubSequence();
-        final RingQueue<OutOfOrderUpdPartitionSizeTask> updSizeQueue = messageBus.getOutOfOrderUpdPartitionSizeQueue();
-        final Sequence partitionSubSeq = messageBus.getOutOfOrderPartitionSubSeq();
-        final RingQueue<OutOfOrderPartitionTask> partitionQueue = messageBus.getOutOfOrderPartitionQueue();
-        final Sequence openColumnSubSeq = messageBus.getOutOfOrderOpenColumnSubSequence();
-        final RingQueue<OutOfOrderOpenColumnTask> openColumnQueue = messageBus.getOutOfOrderOpenColumnQueue();
-        final Sequence copyPubSeq = messageBus.getOutOfOrderCopyPubSeq();
-        final Sequence copySubSeq = messageBus.getOutOfOrderCopySubSequence();
-        final RingQueue<OutOfOrderCopyTask> copyQueue = messageBus.getOutOfOrderCopyQueue();
+        final MPSequence updSizePubSeq = messageBus.getO3UpdPartitionSizePubSeq();
+        final Sequence updSizeSubSeq = messageBus.getO3UpdPartitionSizeSubSeq();
+        final RingQueue<O3UpdPartitionSizeTask> updSizeQueue = messageBus.getO3UpdPartitionSizeQueue();
+        final Sequence partitionSubSeq = messageBus.getO3PartitionSubSeq();
+        final RingQueue<O3PartitionTask> partitionQueue = messageBus.getO3PartitionQueue();
+        final Sequence openColumnSubSeq = messageBus.getO3OpenColumnSubSeq();
+        final RingQueue<O3OpenColumnTask> openColumnQueue = messageBus.getO3OpenColumnQueue();
+        final Sequence copyPubSeq = messageBus.getO3CopyPubSeq();
+        final Sequence copySubSeq = messageBus.getO3CopySubSeq();
+        final RingQueue<O3CopyTask> copyQueue = messageBus.getO3CopyQueue();
 
         do {
             long cursor = updSizeSubSeq.next();
             if (cursor > -1) {
-                final OutOfOrderUpdPartitionSizeTask task = updSizeQueue.get(cursor);
+                final O3UpdPartitionSizeTask task = updSizeQueue.get(cursor);
                 final long partitionTimestamp = task.getPartitionTimestamp();
                 final long srcOooPartitionLo = task.getSrcOooPartitionLo();
                 final long srcOooPartitionHi = task.getSrcOooPartitionHi();
@@ -2551,7 +2551,7 @@ public class TableWriter implements Closeable {
                 updSizeSubSeq.done(cursor);
 
                 if (oooErrorCount.get() == 0) {
-                    oooUpdatePartitionSize(
+                    o3UpdatePartitionSize(
                             timestampMin,
                             timestampMax,
                             partitionTimestamp,
@@ -2565,7 +2565,7 @@ public class TableWriter implements Closeable {
             } else {
                 cursor = partitionSubSeq.next();
                 if (cursor > -1) {
-                    final OutOfOrderPartitionTask partitionTask = partitionQueue.get(cursor);
+                    final O3PartitionTask partitionTask = partitionQueue.get(cursor);
                     if (oooErrorCount.get() > 0) {
                         // do we need to free anything on the task?
                         bumpPartitionUpdateCount();
@@ -2587,9 +2587,9 @@ public class TableWriter implements Closeable {
                 } else {
                     cursor = openColumnSubSeq.next();
                     if (cursor > -1) {
-                        OutOfOrderOpenColumnTask openColumnTask = openColumnQueue.get(cursor);
+                        O3OpenColumnTask openColumnTask = openColumnQueue.get(cursor);
                         if (oooErrorCount.get() > 0) {
-                            OutOfOrderCopyJob.closeColumnIdle(
+                            O3CopyJob.closeColumnIdle(
                                     openColumnTask.getColumnCounter(),
                                     ff,
                                     openColumnTask.getTimestampMergeIndexAddr(),
@@ -2615,9 +2615,9 @@ public class TableWriter implements Closeable {
                     } else {
                         cursor = copySubSeq.next();
                         if (cursor > -1) {
-                            OutOfOrderCopyTask copyTask = copyQueue.get(cursor);
+                            O3CopyTask copyTask = copyQueue.get(cursor);
                             if (oooErrorCount.get() > 0) {
-                                OutOfOrderCopyJob.copyIdle(
+                                O3CopyJob.copyIdle(
                                         copyTask.getColumnCounter(),
                                         copyTask.getPartCounter(),
                                         ff,
@@ -2661,14 +2661,14 @@ public class TableWriter implements Closeable {
 
     private void oooCopySafe(
             MPSequence updSizePubSeq,
-            RingQueue<OutOfOrderUpdPartitionSizeTask> updSizeQueue,
+            RingQueue<O3UpdPartitionSizeTask> updSizeQueue,
             Sequence copySubSeq,
-            RingQueue<OutOfOrderCopyTask> copyQueue,
+            RingQueue<O3CopyTask> copyQueue,
             long cursor
     ) {
-        final OutOfOrderCopyTask task = copyQueue.get(cursor);
+        final O3CopyTask task = copyQueue.get(cursor);
         try {
-            OutOfOrderCopyJob.copy(
+            O3CopyJob.copy(
                     configuration,
                     updSizeQueue,
                     updSizePubSeq,
@@ -2686,15 +2686,15 @@ public class TableWriter implements Closeable {
     private void oooOpenColumnSafe(
             int workerId,
             MPSequence updSizePubSeq,
-            RingQueue<OutOfOrderUpdPartitionSizeTask> updSizeQueue,
+            RingQueue<O3UpdPartitionSizeTask> updSizeQueue,
             Sequence openColumnSubSeq,
             Sequence copyPubSeq,
-            RingQueue<OutOfOrderCopyTask> copyQueue,
+            RingQueue<O3CopyTask> copyQueue,
             long cursor,
-            OutOfOrderOpenColumnTask openColumnTask
+            O3OpenColumnTask openColumnTask
     ) {
         try {
-            OutOfOrderOpenColumnJob.openColumn(
+            O3OpenColumnJob.openColumn(
                     workerId,
                     configuration,
                     copyQueue,
@@ -2715,20 +2715,20 @@ public class TableWriter implements Closeable {
     private void oooProcessPartitionSafe(
             int workerId,
             MPSequence updSizePubSeq,
-            RingQueue<OutOfOrderUpdPartitionSizeTask> updSizeQueue,
+            RingQueue<O3UpdPartitionSizeTask> updSizeQueue,
             Sequence partitionSubSeq,
-            RingQueue<OutOfOrderOpenColumnTask> openColumnQueue,
+            RingQueue<O3OpenColumnTask> openColumnQueue,
             Sequence copyPubSeq,
-            RingQueue<OutOfOrderCopyTask> copyQueue,
+            RingQueue<O3CopyTask> copyQueue,
             long cursor,
-            OutOfOrderPartitionTask partitionTask
+            O3PartitionTask partitionTask
     ) {
         try {
-            OutOfOrderPartitionJob.processPartition(
+            O3PartitionJob.processPartition(
                     workerId,
                     configuration,
                     openColumnQueue,
-                    messageBus.getOutOfOrderOpenColumnPubSequence(),
+                    messageBus.getO3OpenColumnPubSeq(),
                     copyQueue,
                     copyPubSeq,
                     updSizeQueue,
@@ -2836,7 +2836,7 @@ public class TableWriter implements Closeable {
         indexMem.jumpTo(valueCount * Long.BYTES);
     }
 
-    private void oooUpdatePartitionSize(
+    private void o3UpdatePartitionSize(
             long timestampMin,
             long timestampMax,
             long partitionTimestamp,
@@ -2856,7 +2856,7 @@ public class TableWriter implements Closeable {
                 if (rowDelta >= -1) {
                     // when we exit here we need to rollback transientRowCount we've been incrementing
                     // while adding out-of-order data
-                    this.txFile.transientRowCount = this.transientRowCountBeforeOutOfOrder;
+                    this.txFile.transientRowCount = this.o3PrevTransientCount;
                 }
             } else {
                 this.txFile.fixedRowCount += partitionSize;
@@ -2901,7 +2901,7 @@ public class TableWriter implements Closeable {
     ) {
         bumpPartitionUpdateCount();
 
-        oooUpdatePartitionSize(
+        o3UpdatePartitionSize(
                 timestampMin,
                 timestampMax,
                 partitionTimestamp,
@@ -3926,7 +3926,7 @@ public class TableWriter implements Closeable {
     }
 
     @FunctionalInterface
-    public interface OutOfOrderColumnUpdateMethod {
+    public interface O3ColumnUpdateMethod {
         void run(
                 int columnIndex,
                 long mergedTimestampsAddr,
@@ -3984,7 +3984,7 @@ public class TableWriter implements Closeable {
         }
     }
 
-    private class OutOfOrderPartitionFunction implements RowFunction {
+    private class O3PartitionFunction implements RowFunction {
         @Override
         public Row newRow(long timestamp) {
             bumpMasterRef();
@@ -4007,9 +4007,9 @@ public class TableWriter implements Closeable {
         @NotNull
         private Row newRow0(long timestamp) {
             if (timestamp < txFile.getMaxTimestamp()) {
-                if (outOfOrderEnabled) {
+                if (o3Enabled) {
                     LOG.info().$("switched to o3").$();
-                    transientRowCountBeforeOutOfOrder = txFile.getTransientRowCount();
+                    o3PrevTransientCount = txFile.getTransientRowCount();
                     txFile.beginPartitionSizeUpdate();
                     openMergePartition();
                     TableWriter.this.o3RowCount = 0;

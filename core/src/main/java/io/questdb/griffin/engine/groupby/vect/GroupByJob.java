@@ -31,7 +31,7 @@ import io.questdb.tasks.VectorAggregateTask;
 public class GroupByJob extends AbstractQueueConsumerJob<VectorAggregateTask> {
 
     public GroupByJob(MessageBus messageBus) {
-        super(messageBus.getVectorAggregateQueue(), messageBus.getVectorAggregateSubSequence());
+        super(messageBus.getVectorAggregateQueue(), messageBus.getVectorAggregateSubSeq());
     }
 
     @Override

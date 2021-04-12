@@ -35,7 +35,7 @@ import java.io.Closeable;
 public interface MessageBus extends Closeable {
     @Override
     default void close() {
-        Misc.free(getOutOfOrderPartitionQueue());
+        Misc.free(getO3PartitionQueue());
     }
 
     CairoConfiguration getConfiguration();
@@ -58,23 +58,23 @@ public interface MessageBus extends Closeable {
 
     MCSequence getO3PurgeSubSeq();
 
-    MPSequence getOutOfOrderCopyPubSeq();
+    MPSequence getO3CopyPubSeq();
 
-    RingQueue<OutOfOrderCopyTask> getOutOfOrderCopyQueue();
+    RingQueue<O3CopyTask> getO3CopyQueue();
 
-    MCSequence getOutOfOrderCopySubSequence();
+    MCSequence getO3CopySubSeq();
 
-    MPSequence getOutOfOrderOpenColumnPubSequence();
+    MPSequence getO3OpenColumnPubSeq();
 
-    RingQueue<OutOfOrderOpenColumnTask> getOutOfOrderOpenColumnQueue();
+    RingQueue<O3OpenColumnTask> getO3OpenColumnQueue();
 
-    MCSequence getOutOfOrderOpenColumnSubSequence();
+    MCSequence getO3OpenColumnSubSeq();
 
-    MPSequence getOutOfOrderPartitionPubSeq();
+    MPSequence getO3PartitionPubSeq();
 
-    RingQueue<OutOfOrderPartitionTask> getOutOfOrderPartitionQueue();
+    RingQueue<O3PartitionTask> getO3PartitionQueue();
 
-    MCSequence getOutOfOrderPartitionSubSeq();
+    MCSequence getO3PartitionSubSeq();
 
     MPSequence getO3CallbackPubSeq();
 
@@ -82,13 +82,13 @@ public interface MessageBus extends Closeable {
 
     MCSequence getO3CallbackSubSeq();
 
-    MPSequence getOutOfOrderUpdPartitionSizePubSequence();
+    MPSequence getO3UpdPartitionSizePubSeq();
 
-    RingQueue<OutOfOrderUpdPartitionSizeTask> getOutOfOrderUpdPartitionSizeQueue();
+    RingQueue<O3UpdPartitionSizeTask> getO3UpdPartitionSizeQueue();
 
-    SCSequence getOutOfOrderUpdPartitionSizeSubSequence();
+    SCSequence getO3UpdPartitionSizeSubSeq();
 
-    default Sequence getTableBlockWriterPubSequence() {
+    default Sequence getTableBlockWriterPubSeq() {
         return null;
     }
 
@@ -96,13 +96,13 @@ public interface MessageBus extends Closeable {
         return null;
     }
 
-    default Sequence getTableBlockWriterSubSequence() {
+    default Sequence getTableBlockWriterSubSeq() {
         return null;
     }
 
-    Sequence getVectorAggregatePubSequence();
+    Sequence getVectorAggregatePubSeq();
 
     RingQueue<VectorAggregateTask> getVectorAggregateQueue();
 
-    Sequence getVectorAggregateSubSequence();
+    Sequence getVectorAggregateSubSeq();
 }

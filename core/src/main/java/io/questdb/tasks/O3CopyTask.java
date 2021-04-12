@@ -32,7 +32,7 @@ import io.questdb.std.FilesFacade;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
-public class OutOfOrderCopyTask extends AbstractLockable {
+public class O3CopyTask extends AbstractLockable {
     private AtomicInteger columnCounter;
     private AtomicInteger partCounter;
     private FilesFacade ff;

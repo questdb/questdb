@@ -31,7 +31,7 @@ import io.questdb.std.FilesFacade;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
-public class OutOfOrderOpenColumnTask {
+public class O3OpenColumnTask {
     private CharSequence pathToTable;
     private FilesFacade ff;
     private AtomicInteger columnCounter;

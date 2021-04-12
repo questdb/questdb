@@ -2497,47 +2497,47 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
         }
 
         @Override
-        public MPSequence getOutOfOrderCopyPubSeq() {
+        public MPSequence getO3CopyPubSeq() {
             return null;
         }
 
         @Override
-        public RingQueue<OutOfOrderCopyTask> getOutOfOrderCopyQueue() {
+        public RingQueue<O3CopyTask> getO3CopyQueue() {
             return null;
         }
 
         @Override
-        public MCSequence getOutOfOrderCopySubSequence() {
+        public MCSequence getO3CopySubSeq() {
             return null;
         }
 
         @Override
-        public MPSequence getOutOfOrderOpenColumnPubSequence() {
+        public MPSequence getO3OpenColumnPubSeq() {
             return null;
         }
 
         @Override
-        public RingQueue<OutOfOrderOpenColumnTask> getOutOfOrderOpenColumnQueue() {
+        public RingQueue<O3OpenColumnTask> getO3OpenColumnQueue() {
             return null;
         }
 
         @Override
-        public MCSequence getOutOfOrderOpenColumnSubSequence() {
+        public MCSequence getO3OpenColumnSubSeq() {
             return null;
         }
 
         @Override
-        public MPSequence getOutOfOrderPartitionPubSeq() {
+        public MPSequence getO3PartitionPubSeq() {
             return null;
         }
 
         @Override
-        public RingQueue<OutOfOrderPartitionTask> getOutOfOrderPartitionQueue() {
+        public RingQueue<O3PartitionTask> getO3PartitionQueue() {
             return null;
         }
 
         @Override
-        public MCSequence getOutOfOrderPartitionSubSeq() {
+        public MCSequence getO3PartitionSubSeq() {
             return null;
         }
 
@@ -2557,22 +2557,22 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
         }
 
         @Override
-        public MPSequence getOutOfOrderUpdPartitionSizePubSequence() {
+        public MPSequence getO3UpdPartitionSizePubSeq() {
             return null;
         }
 
         @Override
-        public RingQueue<OutOfOrderUpdPartitionSizeTask> getOutOfOrderUpdPartitionSizeQueue() {
+        public RingQueue<O3UpdPartitionSizeTask> getO3UpdPartitionSizeQueue() {
             return null;
         }
 
         @Override
-        public SCSequence getOutOfOrderUpdPartitionSizeSubSequence() {
+        public SCSequence getO3UpdPartitionSizeSubSeq() {
             return null;
         }
 
         @Override
-        public Sequence getVectorAggregatePubSequence() {
+        public Sequence getVectorAggregatePubSeq() {
             return null;
         }
 
@@ -2582,7 +2582,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
         }
 
         @Override
-        public Sequence getVectorAggregateSubSequence() {
+        public Sequence getVectorAggregateSubSeq() {
             return null;
         }
     }

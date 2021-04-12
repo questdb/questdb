@@ -35,7 +35,6 @@ import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.str.LPSZ;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
-import org.junit.Before;
 import org.junit.Test;
 
 import java.io.File;
@@ -44,7 +43,7 @@ import java.net.URL;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
-public class OutOfOrderFailureTest extends AbstractOutOfOrderTest {
+public class O3FailureTest extends AbstractO3Test {
 
     private final static AtomicInteger counter = new AtomicInteger(0);
 
@@ -192,19 +191,19 @@ public class OutOfOrderFailureTest extends AbstractOutOfOrderTest {
     @Test
     public void testColumnTopLastDataOOODataFailRetryCantWriteTop() throws Exception {
         counter.set(1);
-        executeWithoutPool(OutOfOrderFailureTest::testColumnTopLastDataOOODataFailRetry0, ffWriteTop19700107);
+        executeWithoutPool(O3FailureTest::testColumnTopLastDataOOODataFailRetry0, ffWriteTop19700107);
     }
 
     @Test
     public void testColumnTopLastDataOOODataFailRetryCantWriteTopContended() throws Exception {
         counter.set(1);
-        executeWithPool(0, OutOfOrderFailureTest::testColumnTopLastDataOOODataFailRetry0, ffWriteTop19700107);
+        executeWithPool(0, O3FailureTest::testColumnTopLastDataOOODataFailRetry0, ffWriteTop19700107);
     }
 
     @Test
     public void testColumnTopLastDataOOODataFailRetryMapRo() throws Exception {
         counter.set(1);
-        executeWithoutPool(OutOfOrderFailureTest::testColumnTopLastDataOOODataFailRetry0, new FilesFacadeImpl() {
+        executeWithoutPool(O3FailureTest::testColumnTopLastDataOOODataFailRetry0, new FilesFacadeImpl() {
 
             long theFd = 0;
 
@@ -231,7 +230,7 @@ public class OutOfOrderFailureTest extends AbstractOutOfOrderTest {
     @Test
     public void testColumnTopLastDataOOODataFailRetryMapRoContended() throws Exception {
         counter.set(1);
-        executeWithPool(0, OutOfOrderFailureTest::testColumnTopLastDataOOODataFailRetry0, new FilesFacadeImpl() {
+        executeWithPool(0, O3FailureTest::testColumnTopLastDataOOODataFailRetry0, new FilesFacadeImpl() {
 
             long theFd = 0;
 
@@ -258,7 +257,7 @@ public class OutOfOrderFailureTest extends AbstractOutOfOrderTest {
     @Test
     public void testColumnTopLastOOOPrefixReadBinLen() throws Exception {
         counter.set(1);
-        executeWithoutPool(OutOfOrderFailureTest::testColumnTopLastOOOPrefixFailRetry0, new FilesFacadeImpl() {
+        executeWithoutPool(O3FailureTest::testColumnTopLastOOOPrefixFailRetry0, new FilesFacadeImpl() {
             long theFd;
 
             @Override
@@ -284,7 +283,7 @@ public class OutOfOrderFailureTest extends AbstractOutOfOrderTest {
     @Test
     public void testColumnTopLastOOOPrefixReadBinLenContended() throws Exception {
         counter.set(1);
-        executeWithPool(0, OutOfOrderFailureTest::testColumnTopLastOOOPrefixFailRetry0, new FilesFacadeImpl() {
+        executeWithPool(0, O3FailureTest::testColumnTopLastOOOPrefixFailRetry0, new FilesFacadeImpl() {
             long theFd;
 
             @Override
@@ -310,7 +309,7 @@ public class OutOfOrderFailureTest extends AbstractOutOfOrderTest {
     @Test
     public void testColumnTopLastOOOPrefixReadStrLen() throws Exception {
         counter.set(1);
-        executeWithoutPool(OutOfOrderFailureTest::testColumnTopLastOOOPrefixFailRetry0, new FilesFacadeImpl() {
+        executeWithoutPool(O3FailureTest::testColumnTopLastOOOPrefixFailRetry0, new FilesFacadeImpl() {
             long theFd;
 
             @Override
@@ -336,7 +335,7 @@ public class OutOfOrderFailureTest extends AbstractOutOfOrderTest {
     @Test
     public void testColumnTopLastOOOPrefixReadStrLenContended() throws Exception {
         counter.set(1);
-        executeWithPool(0, OutOfOrderFailureTest::testColumnTopLastOOOPrefixFailRetry0, new FilesFacadeImpl() {
+        executeWithPool(0, O3FailureTest::testColumnTopLastOOOPrefixFailRetry0, new FilesFacadeImpl() {
             long theFd;
 
             @Override
@@ -362,7 +361,7 @@ public class OutOfOrderFailureTest extends AbstractOutOfOrderTest {
     @Test
     public void testColumnTopMidAppend() throws Exception {
         counter.set(3);
-        executeWithoutPool(OutOfOrderFailureTest::testColumnTopMidAppendColumnFailRetry0, new FilesFacadeImpl() {
+        executeWithoutPool(O3FailureTest::testColumnTopMidAppendColumnFailRetry0, new FilesFacadeImpl() {
             @Override
             public long openRW(LPSZ name) {
                 if (Chars.endsWith(name, "1970-01-07" + Files.SEPARATOR + "v12.d") && counter.decrementAndGet() == 0) {
@@ -376,19 +375,19 @@ public class OutOfOrderFailureTest extends AbstractOutOfOrderTest {
     @Test
     public void testColumnTopMidAppendBlank() throws Exception {
         counter.set(1);
-        executeWithoutPool(OutOfOrderFailureTest::testColumnTopMidAppendBlankColumnFailRetry0, ffWriteTop);
+        executeWithoutPool(O3FailureTest::testColumnTopMidAppendBlankColumnFailRetry0, ffWriteTop);
     }
 
     @Test
     public void testColumnTopMidAppendBlankContended() throws Exception {
         counter.set(1);
-        executeWithPool(0, OutOfOrderFailureTest::testColumnTopMidAppendBlankColumnFailRetry0, ffWriteTop);
+        executeWithPool(0, O3FailureTest::testColumnTopMidAppendBlankColumnFailRetry0, ffWriteTop);
     }
 
     @Test
     public void testColumnTopMidAppendContended() throws Exception {
         counter.set(3);
-        executeWithPool(0, OutOfOrderFailureTest::testColumnTopMidAppendColumnFailRetry0, new FilesFacadeImpl() {
+        executeWithPool(0, O3FailureTest::testColumnTopMidAppendColumnFailRetry0, new FilesFacadeImpl() {
             @Override
             public long openRW(LPSZ name) {
                 if (Chars.endsWith(name, "1970-01-07" + Files.SEPARATOR + "v12.d") && counter.decrementAndGet() == 0) {
@@ -402,7 +401,7 @@ public class OutOfOrderFailureTest extends AbstractOutOfOrderTest {
     @Test
     public void testColumnTopMidDataMergeDataFailRetryReadTop() throws Exception {
         counter.set(2);
-        executeWithoutPool(OutOfOrderFailureTest::testColumnTopMidDataMergeDataFailRetry0, new FilesFacadeImpl() {
+        executeWithoutPool(O3FailureTest::testColumnTopMidDataMergeDataFailRetry0, new FilesFacadeImpl() {
             long theFd;
 
             @Override
@@ -428,7 +427,7 @@ public class OutOfOrderFailureTest extends AbstractOutOfOrderTest {
     @Test
     public void testColumnTopMidDataMergeDataFailRetryReadTopContended() throws Exception {
         counter.set(2);
-        executeWithPool(0, OutOfOrderFailureTest::testColumnTopMidDataMergeDataFailRetry0, new FilesFacadeImpl() {
+        executeWithPool(0, O3FailureTest::testColumnTopMidDataMergeDataFailRetry0, new FilesFacadeImpl() {
             long theFd;
 
             @Override
@@ -454,19 +453,19 @@ public class OutOfOrderFailureTest extends AbstractOutOfOrderTest {
     @Test
     public void testColumnTopMidMergeBlankFailRetryMapRW() throws Exception {
         counter.set(1);
-        executeWithoutPool(OutOfOrderFailureTest::testColumnTopMidMergeBlankColumnFailRetry0, ffMapRW);
+        executeWithoutPool(O3FailureTest::testColumnTopMidMergeBlankColumnFailRetry0, ffMapRW);
     }
 
     @Test
     public void testColumnTopMidMergeBlankFailRetryMapRWContended() throws Exception {
         counter.set(1);
-        executeWithPool(0, OutOfOrderFailureTest::testColumnTopMidMergeBlankColumnFailRetry0, ffMapRW);
+        executeWithPool(0, O3FailureTest::testColumnTopMidMergeBlankColumnFailRetry0, ffMapRW);
     }
 
     @Test
     public void testColumnTopMidMergeBlankFailRetryMergeFixMapRW() throws Exception {
         counter.set(1);
-        executeWithoutPool(OutOfOrderFailureTest::testColumnTopMidMergeBlankColumnFailRetry0, new FilesFacadeImpl() {
+        executeWithoutPool(O3FailureTest::testColumnTopMidMergeBlankColumnFailRetry0, new FilesFacadeImpl() {
 
             long theFd = 0;
 
@@ -494,7 +493,7 @@ public class OutOfOrderFailureTest extends AbstractOutOfOrderTest {
     @Test
     public void testColumnTopMidMergeBlankFailRetryMergeFixMapRWContended() throws Exception {
         counter.set(1);
-        executeWithPool(0, OutOfOrderFailureTest::testColumnTopMidMergeBlankColumnFailRetry0, new FilesFacadeImpl() {
+        executeWithPool(0, O3FailureTest::testColumnTopMidMergeBlankColumnFailRetry0, new FilesFacadeImpl() {
 
             long theFd = 0;
 
@@ -522,19 +521,19 @@ public class OutOfOrderFailureTest extends AbstractOutOfOrderTest {
     @Test
     public void testColumnTopMidMergeBlankFailRetryOpenRW() throws Exception {
         counter.set(1);
-        executeWithoutPool(OutOfOrderFailureTest::testColumnTopMidMergeBlankColumnFailRetry0, ffOpenRW);
+        executeWithoutPool(O3FailureTest::testColumnTopMidMergeBlankColumnFailRetry0, ffOpenRW);
     }
 
     @Test
     public void testColumnTopMidMergeBlankFailRetryOpenRWContended() throws Exception {
         counter.set(1);
-        executeWithPool(0, OutOfOrderFailureTest::testColumnTopMidMergeBlankColumnFailRetry0, ffOpenRW);
+        executeWithPool(0, O3FailureTest::testColumnTopMidMergeBlankColumnFailRetry0, ffOpenRW);
     }
 
     @Test
     public void testColumnTopMidMergeBlankFailRetryOpenRw() throws Exception {
         counter.set(3);
-        executeWithoutPool(OutOfOrderFailureTest::testColumnTopMidMergeBlankColumnFailRetry0, new FilesFacadeImpl() {
+        executeWithoutPool(O3FailureTest::testColumnTopMidMergeBlankColumnFailRetry0, new FilesFacadeImpl() {
             @Override
             public long openRW(LPSZ name) {
                 if (Chars.endsWith(name, "1970-01-06" + Files.SEPARATOR + "m.d") && counter.decrementAndGet() == 0) {
@@ -548,7 +547,7 @@ public class OutOfOrderFailureTest extends AbstractOutOfOrderTest {
     @Test
     public void testColumnTopMidMergeBlankFailRetryOpenRw2() throws Exception {
         counter.set(3);
-        executeWithoutPool(OutOfOrderFailureTest::testColumnTopMidMergeBlankColumnFailRetry0, new FilesFacadeImpl() {
+        executeWithoutPool(O3FailureTest::testColumnTopMidMergeBlankColumnFailRetry0, new FilesFacadeImpl() {
             @Override
             public long openRW(LPSZ name) {
                 if (Chars.endsWith(name, "1970-01-06" + Files.SEPARATOR + "b.d") && counter.decrementAndGet() == 0) {
@@ -562,7 +561,7 @@ public class OutOfOrderFailureTest extends AbstractOutOfOrderTest {
     @Test
     public void testColumnTopMidMergeBlankFailRetryOpenRw2Contended() throws Exception {
         counter.set(3);
-        executeWithPool(0, OutOfOrderFailureTest::testColumnTopMidMergeBlankColumnFailRetry0, new FilesFacadeImpl() {
+        executeWithPool(0, O3FailureTest::testColumnTopMidMergeBlankColumnFailRetry0, new FilesFacadeImpl() {
             @Override
             public long openRW(LPSZ name) {
                 if (Chars.endsWith(name, "1970-01-06" + Files.SEPARATOR + "b.d") && counter.decrementAndGet() == 0) {
@@ -576,7 +575,7 @@ public class OutOfOrderFailureTest extends AbstractOutOfOrderTest {
     @Test
     public void testColumnTopMidMergeBlankFailRetryOpenRwContended() throws Exception {
         counter.set(3);
-        executeWithPool(0, OutOfOrderFailureTest::testColumnTopMidMergeBlankColumnFailRetry0, new FilesFacadeImpl() {
+        executeWithPool(0, O3FailureTest::testColumnTopMidMergeBlankColumnFailRetry0, new FilesFacadeImpl() {
             @Override
             public long openRW(LPSZ name) {
                 if (Chars.endsWith(name, "1970-01-06" + Files.SEPARATOR + "m.d") && counter.decrementAndGet() == 0) {
@@ -639,7 +638,7 @@ public class OutOfOrderFailureTest extends AbstractOutOfOrderTest {
     @Test
     public void testPartitionedAllocateLastPartitionFail() throws Exception {
         counter.set(2);
-        executeWithoutPool(OutOfOrderFailureTest::testPartitionedDataAppendOOPrependOODataFailRetry0, new FilesFacadeImpl() {
+        executeWithoutPool(O3FailureTest::testPartitionedDataAppendOOPrependOODataFailRetry0, new FilesFacadeImpl() {
             long theFd;
 
             @Override
@@ -664,19 +663,19 @@ public class OutOfOrderFailureTest extends AbstractOutOfOrderTest {
     @Test
     public void testPartitionedCreateDirFail() throws Exception {
         counter.set(1);
-        executeWithoutPool(OutOfOrderFailureTest::testColumnTopMidMergeBlankColumnFailRetry0, ffMkDirFailure);
+        executeWithoutPool(O3FailureTest::testColumnTopMidMergeBlankColumnFailRetry0, ffMkDirFailure);
     }
 
     @Test
     public void testPartitionedCreateDirFailContended() throws Exception {
         counter.set(1);
-        executeWithPool(0, OutOfOrderFailureTest::testColumnTopMidMergeBlankColumnFailRetry0, ffMkDirFailure);
+        executeWithPool(0, O3FailureTest::testColumnTopMidMergeBlankColumnFailRetry0, ffMkDirFailure);
     }
 
     @Test
     public void testPartitionedDataAppendOOData() throws Exception {
         counter.set(4);
-        executeWithoutPool(OutOfOrderFailureTest::testPartitionedDataAppendOODataFailRetry0, new FilesFacadeImpl() {
+        executeWithoutPool(O3FailureTest::testPartitionedDataAppendOODataFailRetry0, new FilesFacadeImpl() {
 
             private final AtomicInteger mapCounter = new AtomicInteger(2);
             private long theFd = 0;
@@ -704,7 +703,7 @@ public class OutOfOrderFailureTest extends AbstractOutOfOrderTest {
     @Test
     public void testPartitionedDataAppendOODataContended() throws Exception {
         counter.set(4);
-        executeWithPool(0, OutOfOrderFailureTest::testPartitionedDataAppendOODataFailRetry0, new FilesFacadeImpl() {
+        executeWithPool(0, O3FailureTest::testPartitionedDataAppendOODataFailRetry0, new FilesFacadeImpl() {
 
             private final AtomicInteger mapCounter = new AtomicInteger(2);
             private long theFd = 0;
@@ -732,7 +731,7 @@ public class OutOfOrderFailureTest extends AbstractOutOfOrderTest {
     @Test
     public void testPartitionedDataAppendOODataIndexed() throws Exception {
         counter.set(3);
-        executeWithoutPool(OutOfOrderFailureTest::testPartitionedDataAppendOODataIndexedFailRetry0, new FilesFacadeImpl() {
+        executeWithoutPool(O3FailureTest::testPartitionedDataAppendOODataIndexedFailRetry0, new FilesFacadeImpl() {
             @Override
             public long openRW(LPSZ name) {
                 if (Chars.endsWith(name, "1970-01-06" + Files.SEPARATOR + "timestamp.d") && counter.decrementAndGet() == 0) {
@@ -746,7 +745,7 @@ public class OutOfOrderFailureTest extends AbstractOutOfOrderTest {
     @Test
     public void testPartitionedDataAppendOODataIndexedContended() throws Exception {
         counter.set(3);
-        executeWithPool(0, OutOfOrderFailureTest::testPartitionedDataAppendOODataIndexedFailRetry0, new FilesFacadeImpl() {
+        executeWithPool(0, O3FailureTest::testPartitionedDataAppendOODataIndexedFailRetry0, new FilesFacadeImpl() {
             @Override
             public long openRW(LPSZ name) {
                 if (Chars.endsWith(name, "1970-01-06" + Files.SEPARATOR + "timestamp.d") && counter.decrementAndGet() == 0) {
@@ -760,55 +759,55 @@ public class OutOfOrderFailureTest extends AbstractOutOfOrderTest {
     @Test
     public void testPartitionedDataAppendOODataNotNullStrTail() throws Exception {
         counter.set(110);
-        executeWithoutPool(OutOfOrderFailureTest::testPartitionedDataAppendOODataNotNullStrTailFailRetry0, ffAllocateFailure);
+        executeWithoutPool(O3FailureTest::testPartitionedDataAppendOODataNotNullStrTailFailRetry0, ffAllocateFailure);
     }
 
     @Test
     public void testPartitionedDataAppendOODataNotNullStrTailContended() throws Exception {
         counter.set(110);
-        executeWithPool(0, OutOfOrderFailureTest::testPartitionedDataAppendOODataNotNullStrTailFailRetry0, ffAllocateFailure);
+        executeWithPool(0, O3FailureTest::testPartitionedDataAppendOODataNotNullStrTailFailRetry0, ffAllocateFailure);
     }
 
     @Test
     public void testPartitionedDataAppendOODataNotNullStrTailIndexAllocateFail() throws Exception {
         counter.set(2);
-        executeWithoutPool(OutOfOrderFailureTest::testPartitionedDataAppendOODataNotNullStrTailFailRetry0, ffIndexAllocateFailure);
+        executeWithoutPool(O3FailureTest::testPartitionedDataAppendOODataNotNullStrTailFailRetry0, ffIndexAllocateFailure);
     }
 
     @Test
     public void testPartitionedDataAppendOODataNotNullStrTailIndexAllocateFailContended() throws Exception {
         counter.set(2);
-        executeWithPool(0, OutOfOrderFailureTest::testPartitionedDataAppendOODataNotNullStrTailFailRetry0, ffIndexAllocateFailure);
+        executeWithPool(0, O3FailureTest::testPartitionedDataAppendOODataNotNullStrTailFailRetry0, ffIndexAllocateFailure);
     }
 
     @Test
     public void testPartitionedDataAppendOODataNotNullStrTailParallel() throws Exception {
         counter.set(110);
-        executeWithPool(2, OutOfOrderFailureTest::testPartitionedDataAppendOODataNotNullStrTailFailRetry0, ffAllocateFailure);
+        executeWithPool(2, O3FailureTest::testPartitionedDataAppendOODataNotNullStrTailFailRetry0, ffAllocateFailure);
     }
 
     @Test
     public void testPartitionedDataAppendOOPrependOODatThenRegularAppend() throws Exception {
         counter.set(150);
-        executeWithPool(0, OutOfOrderFailureTest::testPartitionedDataAppendOOPrependOODatThenRegularAppend0, ffAllocateFailure);
+        executeWithPool(0, O3FailureTest::testPartitionedDataAppendOOPrependOODatThenRegularAppend0, ffAllocateFailure);
     }
 
     @Test
     public void testPartitionedDataAppendOOPrependOOData() throws Exception {
         counter.set(150);
-        executeWithoutPool(OutOfOrderFailureTest::testPartitionedDataAppendOOPrependOODataFailRetry0, ffAllocateFailure);
+        executeWithoutPool(O3FailureTest::testPartitionedDataAppendOOPrependOODataFailRetry0, ffAllocateFailure);
     }
 
     @Test
     public void testPartitionedDataAppendOOPrependOODataContended() throws Exception {
         counter.set(150);
-        executeWithPool(0, OutOfOrderFailureTest::testPartitionedDataAppendOOPrependOODataFailRetry0, ffAllocateFailure);
+        executeWithPool(0, O3FailureTest::testPartitionedDataAppendOOPrependOODataFailRetry0, ffAllocateFailure);
     }
 
     @Test
     public void testPartitionedDataAppendOOPrependOODataMapVar() throws Exception {
         counter.set(3);
-        executeWithoutPool(OutOfOrderFailureTest::testPartitionedDataAppendOOPrependOODataFailRetry0, new FilesFacadeImpl() {
+        executeWithoutPool(O3FailureTest::testPartitionedDataAppendOOPrependOODataFailRetry0, new FilesFacadeImpl() {
 
             private long theFd = 0;
 
@@ -835,7 +834,7 @@ public class OutOfOrderFailureTest extends AbstractOutOfOrderTest {
     @Test
     public void testPartitionedDataAppendOOPrependOODataMapVarContended() throws Exception {
         counter.set(3);
-        executeWithPool(0, OutOfOrderFailureTest::testPartitionedDataAppendOOPrependOODataFailRetry0, new FilesFacadeImpl() {
+        executeWithPool(0, O3FailureTest::testPartitionedDataAppendOOPrependOODataFailRetry0, new FilesFacadeImpl() {
 
             private long theFd = 0;
 
@@ -862,25 +861,25 @@ public class OutOfOrderFailureTest extends AbstractOutOfOrderTest {
     @Test
     public void testPartitionedDataAppendOOPrependOODataParallel() throws Exception {
         counter.set(170);
-        executeWithPool(4, OutOfOrderFailureTest::testPartitionedDataAppendOOPrependOODataFailRetry0, ffAllocateFailure);
+        executeWithPool(4, O3FailureTest::testPartitionedDataAppendOOPrependOODataFailRetry0, ffAllocateFailure);
     }
 
     @Test
     public void testPartitionedOOPrefixesExistingPartitions() throws Exception {
         counter.set(1);
-        executeWithoutPool(OutOfOrderFailureTest::testPartitionedOOPrefixesExistingPartitionsFailRetry0, ffOpenIndexFailure);
+        executeWithoutPool(O3FailureTest::testPartitionedOOPrefixesExistingPartitionsFailRetry0, ffOpenIndexFailure);
     }
 
     @Test
     public void testPartitionedOOPrefixesExistingPartitionsContended() throws Exception {
         counter.set(1);
-        executeWithPool(0, OutOfOrderFailureTest::testPartitionedOOPrefixesExistingPartitionsFailRetry0, ffOpenIndexFailure);
+        executeWithPool(0, O3FailureTest::testPartitionedOOPrefixesExistingPartitionsFailRetry0, ffOpenIndexFailure);
     }
 
     @Test
     public void testPartitionedOOPrefixesExistingPartitionsCreateDirs() throws Exception {
         counter.set(2);
-        executeWithoutPool(OutOfOrderFailureTest::testPartitionedOOPrefixesExistingPartitionsFailRetry0, new FilesFacadeImpl() {
+        executeWithoutPool(O3FailureTest::testPartitionedOOPrefixesExistingPartitionsFailRetry0, new FilesFacadeImpl() {
             @Override
             public int mkdirs(LPSZ path, int mode) {
                 if (Chars.contains(path, "1970-01-01") && counter.decrementAndGet() == 0) {
@@ -894,7 +893,7 @@ public class OutOfOrderFailureTest extends AbstractOutOfOrderTest {
     @Test
     public void testPartitionedOOPrefixesExistingPartitionsCreateDirsContended() throws Exception {
         counter.set(2);
-        executeWithPool(0, OutOfOrderFailureTest::testPartitionedOOPrefixesExistingPartitionsFailRetry0, new FilesFacadeImpl() {
+        executeWithPool(0, O3FailureTest::testPartitionedOOPrefixesExistingPartitionsFailRetry0, new FilesFacadeImpl() {
             @Override
             public int mkdirs(LPSZ path, int mode) {
                 if (Chars.contains(path, "1970-01-01") && counter.decrementAndGet() == 0) {
@@ -908,13 +907,13 @@ public class OutOfOrderFailureTest extends AbstractOutOfOrderTest {
     @Test
     public void testPartitionedOpenTimestampFail() throws Exception {
         counter.set(3);
-        executeWithoutPool(OutOfOrderFailureTest::testPartitionedDataAppendOOPrependOODataFailRetry0, ffOpenFailure);
+        executeWithoutPool(O3FailureTest::testPartitionedDataAppendOOPrependOODataFailRetry0, ffOpenFailure);
     }
 
     @Test
     public void testPartitionedOpenTimestampFailContended() throws Exception {
         counter.set(3);
-        executeWithPool(0, OutOfOrderFailureTest::testPartitionedDataAppendOOPrependOODataFailRetry0, ffOpenFailure);
+        executeWithPool(0, O3FailureTest::testPartitionedDataAppendOOPrependOODataFailRetry0, ffOpenFailure);
     }
 
     private static void testPartitionedOOPrefixesExistingPartitionsFailRetry0(
@@ -980,7 +979,7 @@ public class OutOfOrderFailureTest extends AbstractOutOfOrderTest {
         } catch (CairoException ignored) {
         }
 
-        assertOutOfOrderDataConsistency(
+        assertO3DataConsistency(
                 engine,
                 compiler,
                 sqlExecutionContext,
@@ -1052,7 +1051,7 @@ public class OutOfOrderFailureTest extends AbstractOutOfOrderTest {
         } catch (CairoException ignored) {
         }
 
-        assertOutOfOrderDataConsistency(
+        assertO3DataConsistency(
                 engine,
                 compiler,
                 sqlExecutionContext,
@@ -1124,7 +1123,7 @@ public class OutOfOrderFailureTest extends AbstractOutOfOrderTest {
         } catch (CairoException ignored) {
         }
 
-        assertOutOfOrderDataConsistency(
+        assertO3DataConsistency(
                 engine,
                 compiler,
                 sqlExecutionContext,
@@ -1558,7 +1557,7 @@ public class OutOfOrderFailureTest extends AbstractOutOfOrderTest {
         );
     }
 
-    private static void assertOutOfOrderDataConsistency(
+    private static void assertO3DataConsistency(
             CairoEngine engine,
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
@@ -1579,7 +1578,7 @@ public class OutOfOrderFailureTest extends AbstractOutOfOrderTest {
     ) throws URISyntaxException, SqlException {
         printSqlResult(compiler, sqlExecutionContext, "x");
 
-        URL url = OutOfOrderFailureTest.class.getResource(resourceName);
+        URL url = O3FailureTest.class.getResource(resourceName);
         Assert.assertNotNull(url);
         TestUtils.assertEquals(new File(url.toURI()), sink);
     }
@@ -1646,7 +1645,7 @@ public class OutOfOrderFailureTest extends AbstractOutOfOrderTest {
         } catch (CairoException ignored) {
         }
         // create third table, which will contain both X and 1AM
-        assertOutOfOrderDataConsistency(
+        assertO3DataConsistency(
                 engine,
                 compiler,
                 executionContext,
@@ -1748,7 +1747,7 @@ public class OutOfOrderFailureTest extends AbstractOutOfOrderTest {
         }
 
         // create third table, which will contain both X and 1AM
-        assertOutOfOrderDataConsistency(
+        assertO3DataConsistency(
                 engine,
                 compiler,
                 executionContext,
@@ -1850,7 +1849,7 @@ public class OutOfOrderFailureTest extends AbstractOutOfOrderTest {
         }
 
         // create third table, which will contain both X and 1AM
-        assertOutOfOrderDataConsistency(
+        assertO3DataConsistency(
                 engine,
                 compiler,
                 sqlExecutionContext,
@@ -1989,7 +1988,7 @@ public class OutOfOrderFailureTest extends AbstractOutOfOrderTest {
         } catch (CairoException ignore) {
         }
 
-        assertOutOfOrderDataConsistency(
+        assertO3DataConsistency(
                 engine,
                 compiler,
                 sqlExecutionContext
@@ -2063,7 +2062,7 @@ public class OutOfOrderFailureTest extends AbstractOutOfOrderTest {
         }
 
         // create third table, which will contain both X and 1AM
-        assertOutOfOrderDataConsistency(
+        assertO3DataConsistency(
                 engine,
                 compiler,
                 sqlExecutionContext,
@@ -2170,7 +2169,7 @@ public class OutOfOrderFailureTest extends AbstractOutOfOrderTest {
 
 
         // create third table, which will contain both X and 1AM
-        assertOutOfOrderDataConsistency(
+        assertO3DataConsistency(
                 engine,
                 compiler,
                 sqlExecutionContext,
@@ -2313,7 +2312,7 @@ public class OutOfOrderFailureTest extends AbstractOutOfOrderTest {
         TestUtils.assertEquals(sink, sink2);
     }
 
-    private void executeWithoutPool(OutOfOrderCode runnable, FilesFacade ff) throws Exception {
+    private void executeWithoutPool(O3Runnable runnable, FilesFacade ff) throws Exception {
         executeVanilla(() -> {
             final CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
                 @Override
@@ -2322,7 +2321,7 @@ public class OutOfOrderFailureTest extends AbstractOutOfOrderTest {
                 }
 
                 @Override
-                public boolean isOutOfOrderEnabled() {
+                public boolean isO3Enabled() {
                     return true;
                 }
             };

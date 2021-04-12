@@ -221,7 +221,7 @@ public interface CairoConfiguration {
 
     BuildInformation getBuildInformation();
 
-    default boolean isOutOfOrderEnabled() {
+    default boolean isO3Enabled() {
         return false;
     }
 

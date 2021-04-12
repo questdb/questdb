@@ -45,8 +45,8 @@ import org.junit.Test;
 
 import java.util.Random;
 
-public class CommitHysteresisTest extends AbstractOutOfOrderTest {
-    private final static Log LOG = LogFactory.getLog(CommitHysteresisTest.class);
+public class O3HysteresisTest extends AbstractO3Test {
+    private final static Log LOG = LogFactory.getLog(O3HysteresisTest.class);
     private long minTimestamp;
     private long maxTimestamp;
     private RecordToRowCopier copier;
@@ -795,7 +795,7 @@ public class CommitHysteresisTest extends AbstractOutOfOrderTest {
     }
 
     @Test
-    public void testHysteresisWithLargeOutOfOrderContended() throws Exception {
+    public void testHysteresisWithLargeO3Contended() throws Exception {
         executeWithPool(0, (engine, compiler, sqlExecutionContext) -> {
             String sql = "create table x as (" +
                     "select" +
@@ -847,7 +847,7 @@ public class CommitHysteresisTest extends AbstractOutOfOrderTest {
     }
 
     @Test
-    public void testHysteresisWithInOrderBatchFollowedByOutOfOrderBatchContended() throws Exception {
+    public void testHysteresisWithInOrderBatchFollowedByO3BatchContended() throws Exception {
         executeWithPool(0, (engine, compiler, sqlExecutionContext) -> {
             String sql = "create table x as (" +
                     "select" +

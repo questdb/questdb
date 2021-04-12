@@ -31,7 +31,7 @@ import io.questdb.mp.SOUnboundedCountDownLatch;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.ObjList;
 
-public class OutOfOrderPartitionTask {
+public class O3PartitionTask {
     private FilesFacade ff;
     private CharSequence pathToTable;
     private int partitionBy;

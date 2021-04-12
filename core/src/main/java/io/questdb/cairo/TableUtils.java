@@ -609,11 +609,11 @@ public final class TableUtils {
             long tempBuf
     ) {
         topFile(path, columnName);
-        final long fd = OutOfOrderUtils.openRW(ff, path);
+        final long fd = O3Utils.openRW(ff, path);
         try {
             //noinspection SuspiciousNameCombination
             Unsafe.getUnsafe().putLong(tempBuf, columnTop);
-            OutOfOrderUtils.allocateDiskSpace(ff, fd, Long.BYTES);
+            O3Utils.allocateDiskSpace(ff, fd, Long.BYTES);
             if (ff.write(fd, tempBuf, Long.BYTES, 0) != Long.BYTES) {
                 throw CairoException.instance(ff.errno()).put("could not write top file [path=").put(path).put(']');
             }

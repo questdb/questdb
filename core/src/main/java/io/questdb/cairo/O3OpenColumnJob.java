@@ -31,43 +31,43 @@ import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.std.str.Path;
-import io.questdb.tasks.OutOfOrderCopyTask;
-import io.questdb.tasks.OutOfOrderOpenColumnTask;
-import io.questdb.tasks.OutOfOrderUpdPartitionSizeTask;
+import io.questdb.tasks.O3CopyTask;
+import io.questdb.tasks.O3OpenColumnTask;
+import io.questdb.tasks.O3UpdPartitionSizeTask;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
-import static io.questdb.cairo.OutOfOrderUtils.get8ByteBuf;
+import static io.questdb.cairo.O3Utils.get8ByteBuf;
 import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.TableWriter.*;
 
-public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrderOpenColumnTask> {
+public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> {
     public static final int OPEN_MID_PARTITION_FOR_APPEND = 1;
     public static final int OPEN_LAST_PARTITION_FOR_APPEND = 2;
     public static final int OPEN_MID_PARTITION_FOR_MERGE = 3;
     public static final int OPEN_LAST_PARTITION_FOR_MERGE = 4;
     public static final int OPEN_NEW_PARTITION_FOR_APPEND = 5;
     private final CairoConfiguration configuration;
-    private final RingQueue<OutOfOrderCopyTask> outboundQueue;
+    private final RingQueue<O3CopyTask> outboundQueue;
     private final Sequence outboundPubSeq;
-    private final RingQueue<OutOfOrderUpdPartitionSizeTask> updPartitionSizeTaskQueue;
+    private final RingQueue<O3UpdPartitionSizeTask> updPartitionSizeTaskQueue;
     private final MPSequence updPartitionSizePubSeq;
 
-    public OutOfOrderOpenColumnJob(MessageBus messageBus) {
-        super(messageBus.getOutOfOrderOpenColumnQueue(), messageBus.getOutOfOrderOpenColumnSubSequence());
+    public O3OpenColumnJob(MessageBus messageBus) {
+        super(messageBus.getO3OpenColumnQueue(), messageBus.getO3OpenColumnSubSeq());
         this.configuration = messageBus.getConfiguration();
-        this.outboundQueue = messageBus.getOutOfOrderCopyQueue();
-        this.outboundPubSeq = messageBus.getOutOfOrderCopyPubSeq();
-        this.updPartitionSizeTaskQueue = messageBus.getOutOfOrderUpdPartitionSizeQueue();
-        this.updPartitionSizePubSeq = messageBus.getOutOfOrderUpdPartitionSizePubSequence();
+        this.outboundQueue = messageBus.getO3CopyQueue();
+        this.outboundPubSeq = messageBus.getO3CopyPubSeq();
+        this.updPartitionSizeTaskQueue = messageBus.getO3UpdPartitionSizeQueue();
+        this.updPartitionSizePubSeq = messageBus.getO3UpdPartitionSizePubSeq();
     }
 
     public static void openColumn(
             int workerId,
             CairoConfiguration configuration,
-            RingQueue<OutOfOrderCopyTask> outboundQueue,
+            RingQueue<O3CopyTask> outboundQueue,
             Sequence outboundPubSeq,
-            RingQueue<OutOfOrderUpdPartitionSizeTask> updPartitionSizeTaskQueue,
+            RingQueue<O3UpdPartitionSizeTask> updPartitionSizeTaskQueue,
             MPSequence updPartitionSizePubSeq,
             int openColumnMode,
             FilesFacade ff,
@@ -337,11 +337,11 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
     public static void openColumn(
             int workerId,
             CairoConfiguration configuration,
-            RingQueue<OutOfOrderCopyTask> outboundQueue,
+            RingQueue<O3CopyTask> outboundQueue,
             Sequence outboundPubSeq,
-            RingQueue<OutOfOrderUpdPartitionSizeTask> updPartitionSizeTaskQueue,
+            RingQueue<O3UpdPartitionSizeTask> updPartitionSizeTaskQueue,
             MPSequence updPartitionSizePubSeq,
-            OutOfOrderOpenColumnTask task,
+            O3OpenColumnTask task,
             long cursor,
             Sequence subSeq
     ) {
@@ -473,9 +473,9 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
     private static void appendMidPartition(
             int workerId,
             CairoConfiguration configuration,
-            RingQueue<OutOfOrderCopyTask> outboundQueue,
+            RingQueue<O3CopyTask> outboundQueue,
             Sequence outboundPubSeq,
-            RingQueue<OutOfOrderUpdPartitionSizeTask> updPartitionSizeTaskQueue,
+            RingQueue<O3UpdPartitionSizeTask> updPartitionSizeTaskQueue,
             MPSequence updPartitionSizePubSeq,
             FilesFacade ff,
             Path path,
@@ -514,7 +514,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                 }
             } catch (Throwable e) {
                 tableWriter.bumpOooErrorCount();
-                OutOfOrderCopyJob.copyIdleQuick(
+                O3CopyJob.copyIdleQuick(
                         columnCounter,
                         ff,
                         0,
@@ -549,13 +549,13 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                 try {
                     // index files are opened as normal
                     iFile(path.trimTo(plen), columnName);
-                    dstFixFd = OutOfOrderUtils.openRW(ff, path);
+                    dstFixFd = O3Utils.openRW(ff, path);
                     // open data file now
                     dFile(path.trimTo(plen), columnName);
-                    dstVarFd = OutOfOrderUtils.openRW(ff, path);
+                    dstVarFd = O3Utils.openRW(ff, path);
                 } catch (Throwable e) {
                     tableWriter.bumpOooErrorCount();
-                    OutOfOrderCopyJob.copyIdleQuick(
+                    O3CopyJob.copyIdleQuick(
                             columnCounter,
                             ff,
                             0,
@@ -650,10 +650,10 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
             default:
                 try {
                     dFile(path.trimTo(plen), columnName);
-                    dstFixFd = OutOfOrderUtils.openRW(ff, path);
+                    dstFixFd = O3Utils.openRW(ff, path);
                 } catch (Throwable e) {
                     tableWriter.bumpOooErrorCount();
-                    OutOfOrderCopyJob.copyIdleQuick(
+                    O3CopyJob.copyIdleQuick(
                             columnCounter,
                             ff,
                             0,
@@ -720,9 +720,9 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
 
     private static void appendFixColumn(
             CairoConfiguration configuration,
-            RingQueue<OutOfOrderCopyTask> outboundQueue,
+            RingQueue<O3CopyTask> outboundQueue,
             Sequence outboundPubSeq,
-            RingQueue<OutOfOrderUpdPartitionSizeTask> updPartitionSizeTaskQueue,
+            RingQueue<O3UpdPartitionSizeTask> updPartitionSizeTaskQueue,
             MPSequence updPartitionSizePubSeq,
             FilesFacade ff,
             Path path,
@@ -764,17 +764,17 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
         try {
             dstFixSize = dstLen << shl;
             dstFixOffset = (srcDataMax - srcDataTop) << shl;
-            dstFixAddr = OutOfOrderUtils.mapRW(ff, Math.abs(dstFixFd), dstFixSize);
+            dstFixAddr = O3Utils.mapRW(ff, Math.abs(dstFixFd), dstFixSize);
             dstIndexOffset = dstFixOffset;
             if (isIndexed && indexWriter == null) {
                 BitmapIndexUtils.keyFileName(path.trimTo(plen), columnName);
-                dstKFd = OutOfOrderUtils.openRW(ff, path);
+                dstKFd = O3Utils.openRW(ff, path);
                 BitmapIndexUtils.valueFileName(path.trimTo(plen), columnName);
-                dstVFd = OutOfOrderUtils.openRW(ff, path);
+                dstVFd = O3Utils.openRW(ff, path);
             }
         } catch (Throwable e) {
             tableWriter.bumpOooErrorCount();
-            OutOfOrderCopyJob.copyIdleQuick(
+            O3CopyJob.copyIdleQuick(
                     columnCounter,
                     ff,
                     0,
@@ -861,9 +861,9 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
 
     private static void appendTimestampColumn(
             CairoConfiguration configuration,
-            RingQueue<OutOfOrderCopyTask> outboundQueue,
+            RingQueue<O3CopyTask> outboundQueue,
             Sequence outboundPubSeq,
-            RingQueue<OutOfOrderUpdPartitionSizeTask> updPartitionSizeTaskQueue,
+            RingQueue<O3UpdPartitionSizeTask> updPartitionSizeTaskQueue,
             MPSequence updPartitionSizePubSeq,
             FilesFacade ff,
             AtomicInteger partCounter,
@@ -897,10 +897,10 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
             dstFixSize = dstLen * Long.BYTES;
             dstFixOffset = srcDataMax * Long.BYTES;
             dstFixFd = -Math.abs(srcTimestampFd);
-            dstFixAddr = OutOfOrderUtils.mapRW(ff, -dstFixFd, dstFixSize);
+            dstFixAddr = O3Utils.mapRW(ff, -dstFixFd, dstFixSize);
         } catch (Throwable e) {
             tableWriter.bumpOooErrorCount();
-            OutOfOrderCopyJob.copyIdleQuick(
+            O3CopyJob.copyIdleQuick(
                     columnCounter,
                     ff,
                     0,
@@ -986,9 +986,9 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
     private static void appendVarColumn(
             int workerId,
             CairoConfiguration configuration,
-            RingQueue<OutOfOrderCopyTask> outboundQueue,
+            RingQueue<O3CopyTask> outboundQueue,
             Sequence outboundPubSeq,
-            RingQueue<OutOfOrderUpdPartitionSizeTask> updPartitionSizeTaskQueue,
+            RingQueue<O3UpdPartitionSizeTask> updPartitionSizeTaskQueue,
             MPSequence updPartitionSizePubSeq,
             FilesFacade ff,
             AtomicInteger partCounter,
@@ -1024,7 +1024,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
         long dstFixAddr = 0;
         try {
             dstFixSize = dstLen * Long.BYTES;
-            dstFixAddr = OutOfOrderUtils.mapRW(ff, Math.abs(dstFixFd), dstFixSize);
+            dstFixAddr = O3Utils.mapRW(ff, Math.abs(dstFixFd), dstFixSize);
             dstFixOffset = (srcDataMax - srcDataTop) * Long.BYTES;
             if (dstFixOffset > 0) {
                 dstVarOffset = getVarColumnSize(
@@ -1038,12 +1038,12 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                 dstVarOffset = 0;
             }
 
-            dstVarSize = OutOfOrderUtils.getVarColumnLength(srcOooLo, srcOooHi, srcOooFixAddr, srcOooFixSize, srcOooVarSize) + dstVarOffset;
-            dstVarAddr = OutOfOrderUtils.mapRW(ff, Math.abs(dstVarFd), dstVarSize);
+            dstVarSize = O3Utils.getVarColumnLength(srcOooLo, srcOooHi, srcOooFixAddr, srcOooFixSize, srcOooVarSize) + dstVarOffset;
+            dstVarAddr = O3Utils.mapRW(ff, Math.abs(dstVarFd), dstVarSize);
 
         } catch (Throwable e) {
             tableWriter.bumpOooErrorCount();
-            OutOfOrderCopyJob.copyIdleQuick(
+            O3CopyJob.copyIdleQuick(
                     columnCounter,
                     ff,
                     0,
@@ -1129,9 +1129,9 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
 
     private static void publishCopyTask(
             CairoConfiguration configuration,
-            RingQueue<OutOfOrderCopyTask> outboundQueue,
+            RingQueue<O3CopyTask> outboundQueue,
             Sequence outboundPubSeq,
-            RingQueue<OutOfOrderUpdPartitionSizeTask> updPartitionSizeTaskQueue,
+            RingQueue<O3UpdPartitionSizeTask> updPartitionSizeTaskQueue,
             MPSequence updPartitionSizePubSeq,
             AtomicInteger columnCounter,
             AtomicInteger partCounter,
@@ -1301,10 +1301,10 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
 
     private static void publishCopyTaskContended(
             CairoConfiguration configuration,
-            RingQueue<OutOfOrderCopyTask> outboundQueue,
+            RingQueue<O3CopyTask> outboundQueue,
             Sequence outboundPubSeq,
             long cursor,
-            RingQueue<OutOfOrderUpdPartitionSizeTask> updPartitionSizeTaskQueue,
+            RingQueue<O3UpdPartitionSizeTask> updPartitionSizeTaskQueue,
             MPSequence updPartitionSizePubSeq,
             AtomicInteger columnCounter,
             AtomicInteger partCounter,
@@ -1361,7 +1361,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
         }
 
         if (cursor == -1) {
-            OutOfOrderCopyJob.copy(
+            O3CopyJob.copy(
                     configuration,
                     updPartitionSizeTaskQueue,
                     updPartitionSizePubSeq,
@@ -1472,7 +1472,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
     }
 
     private static void publishCopyTaskHarmonized(
-            RingQueue<OutOfOrderCopyTask> outboundQueue,
+            RingQueue<O3CopyTask> outboundQueue,
             Sequence outboundPubSeq,
             AtomicInteger columnCounter,
             AtomicInteger partCounter,
@@ -1525,7 +1525,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
             BitmapIndexWriter indexWriter,
             SOUnboundedCountDownLatch doneLatch
     ) {
-        OutOfOrderCopyTask task = outboundQueue.get(cursor);
+        O3CopyTask task = outboundQueue.get(cursor);
         task.of(
                 columnCounter,
                 partCounter,
@@ -1583,9 +1583,9 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
     private static void appendLastPartition(
             int workerId,
             CairoConfiguration configuration,
-            RingQueue<OutOfOrderCopyTask> outboundQueue,
+            RingQueue<O3CopyTask> outboundQueue,
             Sequence outboundPubSeq,
-            RingQueue<OutOfOrderUpdPartitionSizeTask> updPartitionSizeTaskQueue,
+            RingQueue<O3UpdPartitionSizeTask> updPartitionSizeTaskQueue,
             MPSequence updPartitionSizePubSeq,
             FilesFacade ff,
             Path path,
@@ -1729,9 +1729,9 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
     private static void mergeLastPartition(
             int workerId,
             CairoConfiguration configuration,
-            RingQueue<OutOfOrderCopyTask> outboundQueue,
+            RingQueue<O3CopyTask> outboundQueue,
             Sequence outboundPubSeq,
-            RingQueue<OutOfOrderUpdPartitionSizeTask> updPartitionSizeTaskQueue,
+            RingQueue<O3UpdPartitionSizeTask> updPartitionSizeTaskQueue,
             MPSequence updPartitionSizePubSeq,
             FilesFacade ff,
             Path path,
@@ -1892,9 +1892,9 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
     private static void mergeMidPartition(
             int workerId,
             CairoConfiguration configuration,
-            RingQueue<OutOfOrderCopyTask> outboundQueue,
+            RingQueue<O3CopyTask> outboundQueue,
             Sequence outboundPubSeq,
-            RingQueue<OutOfOrderUpdPartitionSizeTask> updPartitionSizeTaskQueue,
+            RingQueue<O3UpdPartitionSizeTask> updPartitionSizeTaskQueue,
             MPSequence updPartitionSizePubSeq,
             FilesFacade ff,
             Path path,
@@ -1944,7 +1944,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                 srcDataTop = getSrcDataTop(workerId, ff, path, plen, columnName, srcDataMax);
             } catch (Throwable e) {
                 tableWriter.bumpOooErrorCount();
-                OutOfOrderCopyJob.copyIdleQuick(
+                O3CopyJob.copyIdleQuick(
                         columnCounter,
                         ff,
                         0,
@@ -1979,12 +1979,12 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
             case ColumnType.STRING:
                 try {
                     iFile(path.trimTo(plen), columnName);
-                    srcDataFixFd = OutOfOrderUtils.openRW(ff, path);
+                    srcDataFixFd = O3Utils.openRW(ff, path);
                     dFile(path.trimTo(plen), columnName);
-                    srcDataVarFd = OutOfOrderUtils.openRW(ff, path);
+                    srcDataVarFd = O3Utils.openRW(ff, path);
                 } catch (Throwable e) {
                     tableWriter.bumpOooErrorCount();
-                    OutOfOrderCopyJob.copyIdleQuick(
+                    O3CopyJob.copyIdleQuick(
                             columnCounter,
                             ff,
                             0,
@@ -2068,11 +2068,11 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                         srcDataFixFd = -srcTimestampFd;
                     } else {
                         dFile(path.trimTo(plen), columnName);
-                        srcDataFixFd = OutOfOrderUtils.openRW(ff, path);
+                        srcDataFixFd = O3Utils.openRW(ff, path);
                     }
                 } catch (Throwable e) {
                     tableWriter.bumpOooErrorCount();
-                    OutOfOrderCopyJob.copyIdleQuick(
+                    O3CopyJob.copyIdleQuick(
                             columnCounter,
                             ff,
                             0,
@@ -2163,7 +2163,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
         topFile(path.trimTo(plen), columnName);
         if (dFileExists && ff.exists(path)) {
             long buf = get8ByteBuf(workerId);
-            long topFd = OutOfOrderUtils.openRW(ff, path);
+            long topFd = O3Utils.openRW(ff, path);
             try {
                 if (ff.read(topFd, buf, Long.BYTES, 0) == Long.BYTES) {
                     return Unsafe.getUnsafe().getLong(buf);
@@ -2182,9 +2182,9 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
     private static void mergeFixColumn(
             int workerId,
             CairoConfiguration configuration,
-            RingQueue<OutOfOrderCopyTask> outboundQueue,
+            RingQueue<O3CopyTask> outboundQueue,
             Sequence outboundPubSeq,
-            RingQueue<OutOfOrderUpdPartitionSizeTask> updPartitionSizeTaskQueue,
+            RingQueue<O3UpdPartitionSizeTask> updPartitionSizeTaskQueue,
             MPSequence updPartitionSizePubSeq,
             FilesFacade ff,
             Path path,
@@ -2254,7 +2254,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                 if (srcDataTop > prefixHi || prefixType == OO_BLOCK_OO) {
                     // extend the existing column down, we will be discarding it anyway
                     srcDataFixSize = srcDataActualBytes + srcDataMaxBytes;
-                    srcDataFixAddr = OutOfOrderUtils.mapRW(ff, srcFixFd, srcDataFixSize);
+                    srcDataFixAddr = O3Utils.mapRW(ff, srcFixFd, srcDataFixSize);
                     setNull(columnType, srcDataFixAddr + srcDataActualBytes, srcDataTop);
                     Vect.memcpy(srcDataFixAddr, srcDataFixAddr + srcDataMaxBytes, srcDataActualBytes);
                     srcDataTop = 0;
@@ -2264,21 +2264,21 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                     // of moving data
                     writeColumnTop(ff, path.trimTo(pDirNameLen), columnName, srcDataTop, workerId);
                     srcDataFixSize = srcDataActualBytes;
-                    srcDataFixAddr = OutOfOrderUtils.mapRW(ff, srcFixFd, srcDataFixSize);
+                    srcDataFixAddr = O3Utils.mapRW(ff, srcFixFd, srcDataFixSize);
                     srcDataFixOffset = 0;
                 }
             } else {
                 srcDataFixSize = srcDataMax << shl;
-                srcDataFixAddr = OutOfOrderUtils.mapRW(ff, srcFixFd, srcDataFixSize);
+                srcDataFixAddr = O3Utils.mapRW(ff, srcFixFd, srcDataFixSize);
                 srcDataFixOffset = 0;
             }
 
             srcDataTopOffset = srcDataTop << shl;
 
             path.trimTo(pDirNameLen).concat(columnName).put(FILE_SUFFIX_D).$();
-            dstFixFd = OutOfOrderUtils.openRW(ff, path);
+            dstFixFd = O3Utils.openRW(ff, path);
             dstFixSize = ((srcOooHi - srcOooLo + 1) + srcDataMax - srcDataTop) << shl;
-            dstFixAddr = OutOfOrderUtils.mapRW(ff, dstFixFd, dstFixSize);
+            dstFixAddr = O3Utils.mapRW(ff, dstFixFd, dstFixSize);
 
             // when prefix is "data" we need to reduce it by "srcDataTop"
             if (prefixType == OO_BLOCK_DATA) {
@@ -2301,9 +2301,9 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
 
             if (isIndexed) {
                 BitmapIndexUtils.keyFileName(path.trimTo(pDirNameLen), columnName);
-                dstKFd = OutOfOrderUtils.openRW(ff, path);
+                dstKFd = O3Utils.openRW(ff, path);
                 BitmapIndexUtils.valueFileName(path.trimTo(pDirNameLen), columnName);
-                dstVFd = OutOfOrderUtils.openRW(ff, path);
+                dstVFd = O3Utils.openRW(ff, path);
             }
 
             if (prefixType != OO_BLOCK_NONE) {
@@ -2319,7 +2319,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
             }
         } catch (Throwable e) {
             tableWriter.bumpOooErrorCount();
-            OutOfOrderCopyJob.copyIdleQuick(
+            O3CopyJob.copyIdleQuick(
                     columnCounter,
                     ff,
                     timestampMergeIndexAddr,
@@ -2414,9 +2414,9 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
     private static void mergeVarColumn(
             int workerId,
             CairoConfiguration configuration,
-            RingQueue<OutOfOrderCopyTask> outboundQueue,
+            RingQueue<O3CopyTask> outboundQueue,
             Sequence outboundPubSeq,
-            RingQueue<OutOfOrderUpdPartitionSizeTask> updPartitionSizeTaskQueue,
+            RingQueue<O3UpdPartitionSizeTask> updPartitionSizeTaskQueue,
             MPSequence updPartitionSizePubSeq,
             FilesFacade ff,
             Path path,
@@ -2491,7 +2491,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                 if (srcDataTop > prefixHi || prefixType == OO_BLOCK_OO) {
                     // extend the existing column down, we will be discarding it anyway
                     srcDataFixSize = srcDataActualBytes + srcDataMaxBytes;
-                    srcDataFixAddr = OutOfOrderUtils.mapRW(ff, srcFixFd, srcDataFixSize);
+                    srcDataFixAddr = O3Utils.mapRW(ff, srcFixFd, srcDataFixSize);
 
                     if (srcDataActualBytes > 0) {
                         srcDataVarSize = getVarColumnSize(
@@ -2508,7 +2508,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                     if (columnType == ColumnType.STRING) {
                         srcDataVarOffset = srcDataVarSize;
                         srcDataVarSize += srcDataTop * Integer.BYTES + srcDataVarSize;
-                        srcDataVarAddr = OutOfOrderUtils.mapRW(ff, srcVarFd, srcDataVarSize);
+                        srcDataVarAddr = O3Utils.mapRW(ff, srcVarFd, srcDataVarSize);
                         Vect.setMemoryInt(srcDataVarAddr + srcDataVarOffset, -1, srcDataTop);
 
                         // now set the "empty" bit of fixed size column with references to those
@@ -2516,12 +2516,12 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                         Vect.setVarColumnRefs32Bit(srcDataFixAddr + srcDataActualBytes, 0, srcDataTop);
                         // we need to shift copy the original column so that new block points at strings "below" the
                         // nulls we created above
-                        OutOfOrderUtils.shiftCopyFixedSizeColumnData(-srcDataTop * Integer.BYTES, srcDataFixAddr, 0, srcDataMax - srcDataTop, srcDataFixAddr + srcDataMaxBytes);
+                        O3Utils.shiftCopyFixedSizeColumnData(-srcDataTop * Integer.BYTES, srcDataFixAddr, 0, srcDataMax - srcDataTop, srcDataFixAddr + srcDataMaxBytes);
                         Vect.memcpy(srcDataVarAddr, srcDataVarAddr + srcDataVarOffset + srcDataTop * Integer.BYTES, srcDataVarOffset);
                     } else {
                         srcDataVarOffset = srcDataVarSize;
                         srcDataVarSize += srcDataTop * Long.BYTES + srcDataVarSize;
-                        srcDataVarAddr = OutOfOrderUtils.mapRW(ff, srcVarFd, srcDataVarSize);
+                        srcDataVarAddr = O3Utils.mapRW(ff, srcVarFd, srcDataVarSize);
 
                         Vect.setMemoryLong(srcDataVarAddr + srcDataVarOffset, -1, srcDataTop);
 
@@ -2530,7 +2530,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                         Vect.setVarColumnRefs64Bit(srcDataFixAddr + srcDataActualBytes, 0, srcDataTop);
                         // we need to shift copy the original column so that new block points at strings "below" the
                         // nulls we created above
-                        OutOfOrderUtils.shiftCopyFixedSizeColumnData(-srcDataTop * Long.BYTES, srcDataFixAddr, 0, srcDataMax - srcDataTop, srcDataFixAddr + srcDataMaxBytes);
+                        O3Utils.shiftCopyFixedSizeColumnData(-srcDataTop * Long.BYTES, srcDataFixAddr, 0, srcDataMax - srcDataTop, srcDataFixAddr + srcDataMaxBytes);
                         Vect.memcpy(srcDataVarAddr, srcDataVarAddr + srcDataVarOffset + srcDataTop * Long.BYTES, srcDataVarOffset);
                     }
                     srcDataTop = 0;
@@ -2540,7 +2540,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                     // of moving data
                     writeColumnTop(ff, path.trimTo(pDirNameLen), columnName, srcDataTop, workerId);
                     srcDataFixSize = srcDataActualBytes;
-                    srcDataFixAddr = OutOfOrderUtils.mapRW(ff, srcFixFd, srcDataFixSize);
+                    srcDataFixAddr = O3Utils.mapRW(ff, srcFixFd, srcDataFixSize);
                     srcDataFixOffset = 0;
 
                     srcDataVarSize = getVarColumnSize(
@@ -2550,11 +2550,11 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                             Unsafe.getUnsafe().getLong(srcDataFixAddr + srcDataFixSize - srcDataFixOffset - Long.BYTES),
                             workerId
                     );
-                    srcDataVarAddr = OutOfOrderUtils.mapRO(ff, srcVarFd, srcDataVarSize);
+                    srcDataVarAddr = O3Utils.mapRO(ff, srcVarFd, srcDataVarSize);
                 }
             } else {
                 srcDataFixSize = srcDataMax * Long.BYTES;
-                srcDataFixAddr = OutOfOrderUtils.mapRW(ff, srcFixFd, srcDataFixSize);
+                srcDataFixAddr = O3Utils.mapRW(ff, srcFixFd, srcDataFixSize);
                 srcDataFixOffset = 0;
 
                 srcDataVarSize = getVarColumnSize(
@@ -2564,7 +2564,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                         Unsafe.getUnsafe().getLong(srcDataFixAddr + srcDataFixSize - Long.BYTES),
                         workerId
                 );
-                srcDataVarAddr = OutOfOrderUtils.mapRO(ff, srcVarFd, srcDataVarSize);
+                srcDataVarAddr = O3Utils.mapRO(ff, srcVarFd, srcDataVarSize);
             }
 
             // upgrade srcDataTop to offset
@@ -2573,15 +2573,15 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
             path.trimTo(pDirNameLen).concat(columnName);
             int pColNameLen = path.length();
             path.put(FILE_SUFFIX_I).$();
-            dstFixFd = OutOfOrderUtils.openRW(ff, path);
+            dstFixFd = O3Utils.openRW(ff, path);
             dstFixSize = (srcOooHi - srcOooLo + 1 + srcDataMax - srcDataTop) * Long.BYTES;
-            dstFixAddr = OutOfOrderUtils.mapRW(ff, dstFixFd, dstFixSize);
+            dstFixAddr = O3Utils.mapRW(ff, dstFixFd, dstFixSize);
 
             path.trimTo(pColNameLen);
             path.put(FILE_SUFFIX_D).$();
-            dstVarFd = OutOfOrderUtils.openRW(ff, path);
-            dstVarSize = srcDataVarSize - srcDataVarOffset + OutOfOrderUtils.getVarColumnLength(srcOooLo, srcOooHi, srcOooFixAddr, srcOooFixSize, srcOooVarSize);
-            dstVarAddr = OutOfOrderUtils.mapRW(ff, dstVarFd, dstVarSize);
+            dstVarFd = O3Utils.openRW(ff, path);
+            dstVarSize = srcDataVarSize - srcDataVarOffset + O3Utils.getVarColumnLength(srcOooLo, srcOooHi, srcOooFixAddr, srcOooFixSize, srcOooVarSize);
+            dstVarAddr = O3Utils.mapRW(ff, dstVarFd, dstVarSize);
 
             if (prefixType == OO_BLOCK_DATA) {
                 dstFixAppendOffset1 = (prefixHi - prefixLo + 1 - srcDataTop) * Long.BYTES;
@@ -2598,11 +2598,11 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
             // configure offsets
             switch (prefixType) {
                 case OO_BLOCK_OO:
-                    dstVarAppendOffset1 = OutOfOrderUtils.getVarColumnLength(prefixLo, prefixHi, srcOooFixAddr, srcOooFixSize, srcOooVarSize);
+                    dstVarAppendOffset1 = O3Utils.getVarColumnLength(prefixLo, prefixHi, srcOooFixAddr, srcOooFixSize, srcOooVarSize);
                     partCount++;
                     break;
                 case OO_BLOCK_DATA:
-                    dstVarAppendOffset1 = OutOfOrderUtils.getVarColumnLength(prefixLo, prefixHi, srcDataFixAddr + srcDataFixOffset, srcDataFixSize, srcDataVarSize - srcDataVarOffset);
+                    dstVarAppendOffset1 = O3Utils.getVarColumnLength(prefixLo, prefixHi, srcDataFixAddr + srcDataFixOffset, srcDataFixSize, srcDataVarSize - srcDataVarOffset);
                     partCount++;
                     break;
                 default:
@@ -2611,8 +2611,8 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
 
             // offset 2
             if (mergeDataLo > -1 && mergeOOOLo > -1) {
-                long oooLen = OutOfOrderUtils.getVarColumnLength(mergeOOOLo, mergeOOOHi, srcOooFixAddr, srcOooFixSize, srcOooVarSize);
-                long dataLen = OutOfOrderUtils.getVarColumnLength(mergeDataLo, mergeDataHi, srcDataFixAddr + srcDataFixOffset - srcDataTop * 8, srcDataFixSize, srcDataVarSize - srcDataVarOffset);
+                long oooLen = O3Utils.getVarColumnLength(mergeOOOLo, mergeOOOHi, srcOooFixAddr, srcOooFixSize, srcOooVarSize);
+                long dataLen = O3Utils.getVarColumnLength(mergeDataLo, mergeDataHi, srcDataFixAddr + srcDataFixOffset - srcDataTop * 8, srcDataFixSize, srcDataVarSize - srcDataVarOffset);
                 dstFixAppendOffset2 = dstFixAppendOffset1 + (mergeLen * Long.BYTES);
                 dstVarAppendOffset2 = dstVarAppendOffset1 + oooLen + dataLen;
             } else {
@@ -2629,7 +2629,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
             }
         } catch (Throwable e) {
             tableWriter.bumpOooErrorCount();
-            OutOfOrderCopyJob.copyIdleQuick(
+            O3CopyJob.copyIdleQuick(
                     columnCounter,
                     ff,
                     timestampMergeIndexAddr,
@@ -2770,9 +2770,9 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
 
     private static void appendNewPartition(
             CairoConfiguration configuration,
-            RingQueue<OutOfOrderCopyTask> outboundQueue,
+            RingQueue<O3CopyTask> outboundQueue,
             Sequence outboundPubSeq,
-            RingQueue<OutOfOrderUpdPartitionSizeTask> updPartitionSizeTaskQueue,
+            RingQueue<O3UpdPartitionSizeTask> updPartitionSizeTaskQueue,
             MPSequence updPartitionSizePubSeq,
             FilesFacade ff,
             Path path,
@@ -2812,31 +2812,31 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                 case ColumnType.BINARY:
                 case ColumnType.STRING:
                     oooSetPath(path.trimTo(plen), columnName, FILE_SUFFIX_I);
-                    dstFixFd = OutOfOrderUtils.openRW(ff, path);
+                    dstFixFd = O3Utils.openRW(ff, path);
                     dstFixSize = (srcOooHi - srcOooLo + 1) * Long.BYTES;
-                    dstFixAddr = OutOfOrderUtils.mapRW(ff, dstFixFd, dstFixSize);
+                    dstFixAddr = O3Utils.mapRW(ff, dstFixFd, dstFixSize);
 
                     oooSetPath(path.trimTo(plen), columnName, FILE_SUFFIX_D);
-                    dstVarFd = OutOfOrderUtils.openRW(ff, path);
-                    dstVarSize = OutOfOrderUtils.getVarColumnLength(srcOooLo, srcOooHi, srcOooFixAddr, srcOooFixSize, srcOooVarSize);
-                    dstVarAddr = OutOfOrderUtils.mapRW(ff, dstVarFd, dstVarSize);
+                    dstVarFd = O3Utils.openRW(ff, path);
+                    dstVarSize = O3Utils.getVarColumnLength(srcOooLo, srcOooHi, srcOooFixAddr, srcOooFixSize, srcOooVarSize);
+                    dstVarAddr = O3Utils.mapRW(ff, dstVarFd, dstVarSize);
                     break;
                 default:
                     oooSetPath(path.trimTo(plen), columnName, FILE_SUFFIX_D);
-                    dstFixFd = OutOfOrderUtils.openRW(ff, path);
+                    dstFixFd = O3Utils.openRW(ff, path);
                     dstFixSize = (srcOooHi - srcOooLo + 1) << ColumnType.pow2SizeOf(Math.abs(columnType));
-                    dstFixAddr = OutOfOrderUtils.mapRW(ff, dstFixFd, dstFixSize);
+                    dstFixAddr = O3Utils.mapRW(ff, dstFixFd, dstFixSize);
                     if (isIndexed) {
                         BitmapIndexUtils.keyFileName(path.trimTo(plen), columnName);
-                        dstKFd = OutOfOrderUtils.openRW(ff, path);
+                        dstKFd = O3Utils.openRW(ff, path);
                         BitmapIndexUtils.valueFileName(path.trimTo(plen), columnName);
-                        dstVFd = OutOfOrderUtils.openRW(ff, path);
+                        dstVFd = O3Utils.openRW(ff, path);
                     }
                     break;
             }
         } catch (Throwable e) {
             tableWriter.bumpOooErrorCount();
-            OutOfOrderCopyJob.copyIdleQuick(
+            O3CopyJob.copyIdleQuick(
                     columnCounter,
                     ff,
                     0,
@@ -2928,9 +2928,9 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
 
     private static void publishMultiCopyTasks(
             CairoConfiguration configuration,
-            RingQueue<OutOfOrderCopyTask> outboundQueue,
+            RingQueue<O3CopyTask> outboundQueue,
             Sequence outboundPubSeq,
-            RingQueue<OutOfOrderUpdPartitionSizeTask> updPartitionSizeTaskQueue,
+            RingQueue<O3UpdPartitionSizeTask> updPartitionSizeTaskQueue,
             MPSequence updPartitionSizePubSeq,
             int partCount,
             AtomicInteger columnCounter,
@@ -3406,7 +3406,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
         return true;
     }
 
-    private void openColumn(int workerId, OutOfOrderOpenColumnTask task, long cursor, Sequence subSeq) {
+    private void openColumn(int workerId, O3OpenColumnTask task, long cursor, Sequence subSeq) {
         openColumn(
                 workerId,
                 configuration,

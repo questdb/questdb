@@ -32,9 +32,9 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.std.str.Path;
 
-public class OutOfOrderUtils {
+public class O3Utils {
 
-    private static final Log LOG = LogFactory.getLog(OutOfOrderUtils.class);
+    private static final Log LOG = LogFactory.getLog(O3Utils.class);
     private static long[] temp8ByteBuf;
 
     public static void freeBuf() {

@@ -47,10 +47,10 @@ import java.io.IOException;
 import java.net.URISyntaxException;
 import java.net.URL;
 
-public class AbstractOutOfOrderTest {
+public class AbstractO3Test {
     protected static final StringSink sink = new StringSink();
     protected static final StringSink sink2 = new StringSink();
-    private final static Log LOG = LogFactory.getLog(OutOfOrderTest.class);
+    private final static Log LOG = LogFactory.getLog(O3Test.class);
     @ClassRule
     public static TemporaryFolder temp = new TemporaryFolder();
     protected static CharSequence root;
@@ -141,32 +141,32 @@ public class AbstractOutOfOrderTest {
             SqlExecutionContext sqlExecutionContext,
             String resourceName
     ) throws SqlException, URISyntaxException {
-        AbstractOutOfOrderTest.assertSqlResultAgainstFile(compiler, sqlExecutionContext, "x where sym = 'googl'", resourceName);
+        AbstractO3Test.assertSqlResultAgainstFile(compiler, sqlExecutionContext, "x where sym = 'googl'", resourceName);
     }
 
-    protected static void assertOutOfOrderDataConsistency(
+    protected static void assertO3DataConsistency(
             CairoEngine engine,
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext,
             String referenceTableDDL,
             String referenceSQL,
-            String outOfOrderInsertSQL,
+            String o3InsertSQL,
             String assertSQL
     ) throws SqlException {
         // create third table, which will contain both X and 1AM
         compiler.compile(referenceTableDDL, sqlExecutionContext);
-        compiler.compile(outOfOrderInsertSQL, sqlExecutionContext);
+        compiler.compile(o3InsertSQL, sqlExecutionContext);
         assertSqlCursors(compiler, sqlExecutionContext, referenceSQL, assertSQL);
         engine.releaseAllReaders();
         assertSqlCursors(compiler, sqlExecutionContext, referenceSQL, assertSQL);
     }
 
-    protected static void assertOutOfOrderDataConsistency(
+    protected static void assertO3DataConsistency(
             CairoEngine engine,
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext,
             final String referenceTableDDL,
-            final String outOfOrderSQL,
+            final String o3InsertSQL,
             final String resourceName
     ) throws SqlException, URISyntaxException {
         // create third table, which will contain both X and 1AM
@@ -175,13 +175,13 @@ public class AbstractOutOfOrderTest {
         // expected outcome - output ignored, but useful for debug
         // y ordered with 'order by ts' is not the same order as OOO insert into x when there are several records
         // with the same ts value
-        AbstractOutOfOrderTest.printSqlResult(compiler, sqlExecutionContext, "y order by ts");
-        compiler.compile(outOfOrderSQL, sqlExecutionContext);
-        AbstractOutOfOrderTest.assertSqlResultAgainstFile(compiler, sqlExecutionContext, "x", resourceName);
+        AbstractO3Test.printSqlResult(compiler, sqlExecutionContext, "y order by ts");
+        compiler.compile(o3InsertSQL, sqlExecutionContext);
+        AbstractO3Test.assertSqlResultAgainstFile(compiler, sqlExecutionContext, "x", resourceName);
 
         // check that reader can process out of order partition layout after fresh open
         engine.releaseAllReaders();
-        AbstractOutOfOrderTest.assertSqlResultAgainstFile(compiler, sqlExecutionContext, "x", resourceName);
+        AbstractO3Test.assertSqlResultAgainstFile(compiler, sqlExecutionContext, "x", resourceName);
     }
 
     protected static void assertSqlResultAgainstFile(
@@ -190,8 +190,8 @@ public class AbstractOutOfOrderTest {
             String sql,
             String resourceName
     ) throws URISyntaxException, SqlException {
-        AbstractOutOfOrderTest.printSqlResult(compiler, sqlExecutionContext, sql);
-        URL url = OutOfOrderTest.class.getResource(resourceName);
+        AbstractO3Test.printSqlResult(compiler, sqlExecutionContext, sql);
+        URL url = O3Test.class.getResource(resourceName);
         Assert.assertNotNull(url);
         TestUtils.assertEquals(new File(url.toURI()), sink);
     }
@@ -201,17 +201,17 @@ public class AbstractOutOfOrderTest {
     }
 
     static void executeVanilla(TestUtils.LeakProneCode code) throws Exception {
-        OutOfOrderUtils.initBuf();
+        O3Utils.initBuf();
         try {
-            AbstractOutOfOrderTest.assertMemoryLeak(code);
+            AbstractO3Test.assertMemoryLeak(code);
         } finally {
-            OutOfOrderUtils.freeBuf();
+            O3Utils.freeBuf();
         }
     }
 
     protected static void executeWithPool(
             int workerCount,
-            OutOfOrderCode runnable
+            O3Runnable runnable
     ) throws Exception {
         executeWithPool(
                 workerCount,
@@ -222,7 +222,7 @@ public class AbstractOutOfOrderTest {
 
     protected static void executeWithPool(
             int workerCount,
-            OutOfOrderCode runnable,
+            O3Runnable runnable,
             FilesFacade ff
     ) throws Exception {
         executeVanilla(() -> {
@@ -263,7 +263,7 @@ public class AbstractOutOfOrderTest {
                     }
 
                     @Override
-                    public boolean isOutOfOrderEnabled() {
+                    public boolean isO3Enabled() {
                         return true;
                     }
                 };
@@ -308,7 +308,7 @@ public class AbstractOutOfOrderTest {
                     }
 
                     @Override
-                    public boolean isOutOfOrderEnabled() {
+                    public boolean isO3Enabled() {
                         return true;
                     }
                 };
@@ -317,7 +317,7 @@ public class AbstractOutOfOrderTest {
         });
     }
 
-    protected static void execute1(@Nullable WorkerPool pool, OutOfOrderCode runnable, CairoConfiguration configuration) throws Exception {
+    protected static void execute1(@Nullable WorkerPool pool, O3Runnable runnable, CairoConfiguration configuration) throws Exception {
         try (
                 final CairoEngine engine = new CairoEngine(configuration);
                 final SqlCompiler compiler = new SqlCompiler(engine);
@@ -326,17 +326,17 @@ public class AbstractOutOfOrderTest {
             try (O3PurgeCleaner ignored = new O3PurgeCleaner(engine.getMessageBus())) {
                 if (pool != null) {
                     pool.assignCleaner(Path.CLEANER);
-                    pool.assign(new OutOfOrderColumnUpdateJob(engine.getMessageBus()));
-                    pool.assign(new OutOfOrderPartitionJob(engine.getMessageBus()));
-                    pool.assign(new OutOfOrderOpenColumnJob(engine.getMessageBus()));
-                    pool.assign(new OutOfOrderCopyJob(engine.getMessageBus()));
+                    pool.assign(new O3CallbackJob(engine.getMessageBus()));
+                    pool.assign(new O3PartitionJob(engine.getMessageBus()));
+                    pool.assign(new O3OpenColumnJob(engine.getMessageBus()));
+                    pool.assign(new O3CopyJob(engine.getMessageBus()));
                     pool.assign(new O3PurgeDiscoveryJob(engine.getMessageBus(), pool.getWorkerCount()));
                     pool.assign(new O3PurgeJob(engine.getMessageBus()));
 
-                    OutOfOrderUtils.initBuf(pool.getWorkerCount() + 1);
+                    O3Utils.initBuf(pool.getWorkerCount() + 1);
                     pool.start(LOG);
                 } else {
-                    OutOfOrderUtils.initBuf();
+                    O3Utils.initBuf();
                 }
 
                 runnable.run(engine, compiler, sqlExecutionContext);
@@ -346,26 +346,26 @@ public class AbstractOutOfOrderTest {
                 if (pool != null) {
                     pool.halt();
                 }
-                OutOfOrderUtils.freeBuf();
+                O3Utils.freeBuf();
             }
         }
     }
 
-    protected static void executeVanilla(OutOfOrderCode code) throws Exception {
+    protected static void executeVanilla(O3Runnable code) throws Exception {
         executeVanilla(() -> execute1(null, code, new DefaultCairoConfiguration(root) {
             @Override
-            public boolean isOutOfOrderEnabled() {
+            public boolean isO3Enabled() {
                 return true;
             }
         }));
     }
 
-    static void assertOutOfOrderDataConsistency(
+    static void assertO3DataConsistency(
             final CairoEngine engine,
             final SqlCompiler compiler,
             final SqlExecutionContext sqlExecutionContext,
             final String referenceTableDDL,
-            final String outOfOrderInsertSQL
+            final String o3InsertSQL
     ) throws SqlException {
         // create third table, which will contain both X and 1AM
         compiler.compile(referenceTableDDL, sqlExecutionContext);
@@ -373,7 +373,7 @@ public class AbstractOutOfOrderTest {
         // expected outcome
         printSqlResult(compiler, sqlExecutionContext, "y order by ts");
 
-        compiler.compile(outOfOrderInsertSQL, sqlExecutionContext);
+        compiler.compile(o3InsertSQL, sqlExecutionContext);
 
         TestUtils.printSql(
                 compiler,

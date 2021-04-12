@@ -36,47 +36,47 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.std.str.Path;
-import io.questdb.tasks.OutOfOrderCopyTask;
-import io.questdb.tasks.OutOfOrderOpenColumnTask;
-import io.questdb.tasks.OutOfOrderPartitionTask;
-import io.questdb.tasks.OutOfOrderUpdPartitionSizeTask;
+import io.questdb.tasks.O3CopyTask;
+import io.questdb.tasks.O3OpenColumnTask;
+import io.questdb.tasks.O3PartitionTask;
+import io.questdb.tasks.O3UpdPartitionSizeTask;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
-import static io.questdb.cairo.OutOfOrderOpenColumnJob.*;
+import static io.questdb.cairo.O3OpenColumnJob.*;
 import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.TableWriter.*;
 
-public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderPartitionTask> {
+public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
-    private static final Log LOG = LogFactory.getLog(OutOfOrderPartitionJob.class);
+    private static final Log LOG = LogFactory.getLog(O3PartitionJob.class);
     private final CairoConfiguration configuration;
-    private final RingQueue<OutOfOrderOpenColumnTask> openColumnTaskOutboundQueue;
+    private final RingQueue<O3OpenColumnTask> openColumnTaskOutboundQueue;
     private final Sequence openColumnPubSeq;
-    private final RingQueue<OutOfOrderCopyTask> copyTaskOutboundQueue;
+    private final RingQueue<O3CopyTask> copyTaskOutboundQueue;
     private final Sequence copyTaskPubSeq;
-    private final RingQueue<OutOfOrderUpdPartitionSizeTask> updPartitionSizeQueue;
+    private final RingQueue<O3UpdPartitionSizeTask> updPartitionSizeQueue;
     private final MPSequence updPartitionSizePubSeq;
 
-    public OutOfOrderPartitionJob(MessageBus messageBus) {
-        super(messageBus.getOutOfOrderPartitionQueue(), messageBus.getOutOfOrderPartitionSubSeq());
+    public O3PartitionJob(MessageBus messageBus) {
+        super(messageBus.getO3PartitionQueue(), messageBus.getO3PartitionSubSeq());
         this.configuration = messageBus.getConfiguration();
-        this.openColumnTaskOutboundQueue = messageBus.getOutOfOrderOpenColumnQueue();
-        this.openColumnPubSeq = messageBus.getOutOfOrderOpenColumnPubSequence();
-        this.copyTaskOutboundQueue = messageBus.getOutOfOrderCopyQueue();
-        this.copyTaskPubSeq = messageBus.getOutOfOrderCopyPubSeq();
-        this.updPartitionSizeQueue = messageBus.getOutOfOrderUpdPartitionSizeQueue();
-        this.updPartitionSizePubSeq = messageBus.getOutOfOrderUpdPartitionSizePubSequence();
+        this.openColumnTaskOutboundQueue = messageBus.getO3OpenColumnQueue();
+        this.openColumnPubSeq = messageBus.getO3OpenColumnPubSeq();
+        this.copyTaskOutboundQueue = messageBus.getO3CopyQueue();
+        this.copyTaskPubSeq = messageBus.getO3CopyPubSeq();
+        this.updPartitionSizeQueue = messageBus.getO3UpdPartitionSizeQueue();
+        this.updPartitionSizePubSeq = messageBus.getO3UpdPartitionSizePubSeq();
     }
 
     public static void processPartition(
             int workerId,
             CairoConfiguration configuration,
-            RingQueue<OutOfOrderOpenColumnTask> openColumnTaskOutboundQueue,
+            RingQueue<O3OpenColumnTask> openColumnTaskOutboundQueue,
             Sequence openColumnPubSeq,
-            RingQueue<OutOfOrderCopyTask> copyTaskOutboundQueue,
+            RingQueue<O3CopyTask> copyTaskOutboundQueue,
             Sequence copyTaskPubSeq,
-            RingQueue<OutOfOrderUpdPartitionSizeTask> updPartitionSizeTaskQueue,
+            RingQueue<O3UpdPartitionSizeTask> updPartitionSizeTaskQueue,
             MPSequence updPartitionSizePubSeq,
             FilesFacade ff,
             CharSequence pathToTable,
@@ -203,7 +203,7 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                     srcTimestampSize = srcDataMax * 8L;
                     // negative fd indicates descriptor reuse
                     srcTimestampFd = -columns.getQuick(getPrimaryColumnIndex(timestampIndex)).getFd();
-                    srcTimestampAddr = OutOfOrderUtils.mapRO(ff, -srcTimestampFd, srcTimestampSize);
+                    srcTimestampAddr = O3Utils.mapRO(ff, -srcTimestampFd, srcTimestampSize);
                 } else {
                     srcTimestampSize = srcDataMax * 8L;
                     // out of order data is going into archive partition
@@ -213,8 +213,8 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                     dFile(path.trimTo(plen), metadata.getColumnName(timestampIndex));
 
                     // also track the fd that we need to eventually close
-                    srcTimestampFd = OutOfOrderUtils.openRW(ff, path);
-                    srcTimestampAddr = OutOfOrderUtils.mapRW(ff, srcTimestampFd, srcTimestampSize);
+                    srcTimestampFd = O3Utils.openRW(ff, path);
+                    srcTimestampAddr = O3Utils.mapRW(ff, srcTimestampFd, srcTimestampSize);
                     dataTimestampHi = Unsafe.getUnsafe().getLong(srcTimestampAddr + srcTimestampSize - Long.BYTES);
                 }
                 dataTimestampLo = Unsafe.getUnsafe().getLong(srcTimestampAddr);
@@ -442,8 +442,8 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                 }
             } catch (Throwable e) {
                 LOG.debug().$("idle existing").$();
-                OutOfOrderUtils.unmap(ff, srcTimestampAddr, srcTimestampSize);
-                OutOfOrderUtils.close(ff, srcTimestampFd);
+                O3Utils.unmap(ff, srcTimestampAddr, srcTimestampSize);
+                O3Utils.close(ff, srcTimestampFd);
                 tableWriter.bumpOooErrorCount();
                 tableWriter.bumpPartitionUpdateCount();
                 doneLatch.countDown();
@@ -504,13 +504,13 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
     public static void processPartition(
             int workerId,
             CairoConfiguration configuration,
-            RingQueue<OutOfOrderOpenColumnTask> openColumnTaskOutboundQueue,
+            RingQueue<O3OpenColumnTask> openColumnTaskOutboundQueue,
             Sequence openColumnPubSeq,
-            RingQueue<OutOfOrderCopyTask> copyTaskOutboundQueue,
+            RingQueue<O3CopyTask> copyTaskOutboundQueue,
             Sequence copyTaskPubSeq,
-            RingQueue<OutOfOrderUpdPartitionSizeTask> updPartitionSizeQueue,
+            RingQueue<O3UpdPartitionSizeTask> updPartitionSizeQueue,
             MPSequence updPartitionSizePubSeq,
-            OutOfOrderPartitionTask task,
+            O3PartitionTask task,
             long cursor,
             Sequence subSeq
     ) {
@@ -598,7 +598,7 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
     }
 
     private static void publishOpenColumnTaskHarmonized(
-            RingQueue<OutOfOrderOpenColumnTask> openColumnTaskOutboundQueue,
+            RingQueue<O3OpenColumnTask> openColumnTaskOutboundQueue,
             Sequence openColumnPubSeq,
             long cursor,
             int openColumnMode,
@@ -644,7 +644,7 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
             BitmapIndexWriter indexWriter,
             SOUnboundedCountDownLatch doneLatch
     ) {
-        final OutOfOrderOpenColumnTask openColumnTask = openColumnTaskOutboundQueue.get(cursor);
+        final O3OpenColumnTask openColumnTask = openColumnTaskOutboundQueue.get(cursor);
         openColumnTask.of(
                 openColumnMode,
                 ff,
@@ -695,11 +695,11 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
     private static void publishOpenColumnTasks(
             int workerId,
             CairoConfiguration configuration,
-            RingQueue<OutOfOrderOpenColumnTask> openColumnTaskOutboundQueue,
+            RingQueue<O3OpenColumnTask> openColumnTaskOutboundQueue,
             Sequence openColumnPubSeq,
-            RingQueue<OutOfOrderCopyTask> copyTaskOutboundQueue,
+            RingQueue<O3CopyTask> copyTaskOutboundQueue,
             Sequence copyTaskPubSeq,
-            RingQueue<OutOfOrderUpdPartitionSizeTask> updPartitionSizeTaskQueue,
+            RingQueue<O3UpdPartitionSizeTask> updPartitionSizeTaskQueue,
             MPSequence updPartitionSizePubSeq,
             FilesFacade ff,
             long txn,
@@ -917,7 +917,7 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
             final int delta = columnsInFlight - columnCount;
             LOG.debug().$("idle [delta=").$(delta).$(']').$();
             if (delta < 0 && columnCounter.addAndGet(delta) == 0) {
-                OutOfOrderCopyJob.closeColumnIdleQuick(
+                O3CopyJob.closeColumnIdleQuick(
                         ff,
                         timestampMergeIndexAddr,
                         srcTimestampFd,
@@ -933,12 +933,12 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
     private static void publishOpenColumnTaskContended(
             int workerId,
             CairoConfiguration configuration,
-            RingQueue<OutOfOrderOpenColumnTask> openColumnTaskOutboundQueue,
+            RingQueue<O3OpenColumnTask> openColumnTaskOutboundQueue,
             Sequence openColumnPubSeq,
             long cursor,
-            RingQueue<OutOfOrderCopyTask> copyTaskOutboundQueue,
+            RingQueue<O3CopyTask> copyTaskOutboundQueue,
             Sequence copyTaskPubSeq,
-            RingQueue<OutOfOrderUpdPartitionSizeTask> updPartitionSizeTaskQueue,
+            RingQueue<O3UpdPartitionSizeTask> updPartitionSizeTaskQueue,
             MPSequence updPartitionSizePubSeq,
             int openColumnMode,
             FilesFacade ff,
@@ -1036,7 +1036,7 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                     doneLatch
             );
         } else {
-            OutOfOrderOpenColumnJob.openColumn(
+            O3OpenColumnJob.openColumn(
                     workerId,
                     configuration,
                     copyTaskOutboundQueue,
@@ -1095,7 +1095,7 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
         return true;
     }
 
-    private void processPartition(int workerId, OutOfOrderPartitionTask task, long cursor, Sequence subSeq) {
+    private void processPartition(int workerId, O3PartitionTask task, long cursor, Sequence subSeq) {
         processPartition(
                 workerId,
                 configuration,

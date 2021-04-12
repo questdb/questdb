@@ -39,7 +39,7 @@ import org.junit.rules.TestName;
 
 import java.net.URISyntaxException;
 
-public class OutOfOrderTest extends AbstractOutOfOrderTest {
+public class O3Test extends AbstractO3Test {
     @Rule
     public TestName name = new TestName();
     private final StringBuilder tstData = new StringBuilder();
@@ -74,7 +74,7 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
     public void testBench() throws Exception {
         // On OSX it's not trivial to increase open file limit per process
         if (Os.type != Os.OSX) {
-            executeVanilla(OutOfOrderTest::testBench0);
+            executeVanilla(O3Test::testBench0);
         }
     }
 
@@ -92,7 +92,7 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
     public void testBenchContended() throws Exception {
         // On OSX it's not trivial to increase open file limit per process
         if (Os.type != Os.OSX) {
-            executeWithPool(0, OutOfOrderTest::testBench0);
+            executeWithPool(0, O3Test::testBench0);
         }
     }
 
@@ -100,518 +100,518 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
     public void testBenchParallel() throws Exception {
         // On OSX it's not trivial to increase open file limit per process
         if (Os.type != Os.OSX) {
-            executeWithPool(8, OutOfOrderTest::testBench0);
+            executeWithPool(8, O3Test::testBench0);
         }
     }
 
     @Test
     public void testColumnTopLastAppend() throws Exception {
-        executeVanilla(OutOfOrderTest::testColumnTopLastAppendColumn0);
+        executeVanilla(O3Test::testColumnTopLastAppendColumn0);
     }
 
     @Test
     public void testColumnTopLastAppendBlankContended() throws Exception {
-        executeWithPool(0, OutOfOrderTest::testColumnTopLastAppendBlankColumn0);
+        executeWithPool(0, O3Test::testColumnTopLastAppendBlankColumn0);
     }
 
     @Test
     public void testColumnTopLastAppendContended() throws Exception {
-        executeWithPool(0, OutOfOrderTest::testColumnTopLastAppendColumn0);
+        executeWithPool(0, O3Test::testColumnTopLastAppendColumn0);
     }
 
     @Test
     public void testColumnTopLastDataMerge() throws Exception {
-        executeVanilla(OutOfOrderTest::testColumnTopLastDataMergeData0);
+        executeVanilla(O3Test::testColumnTopLastDataMergeData0);
     }
 
     @Test
     public void testColumnTopLastDataMerge2Data() throws Exception {
-        executeVanilla(OutOfOrderTest::testColumnTopLastDataMerge2Data0);
+        executeVanilla(O3Test::testColumnTopLastDataMerge2Data0);
     }
 
     @Test
     public void testColumnTopLastDataMerge2DataContended() throws Exception {
-        executeWithPool(0, OutOfOrderTest::testColumnTopLastDataMerge2Data0);
+        executeWithPool(0, O3Test::testColumnTopLastDataMerge2Data0);
     }
 
     @Test
     public void testColumnTopLastDataMerge2DataParallel() throws Exception {
-        executeWithPool(4, OutOfOrderTest::testColumnTopLastDataMerge2Data0);
+        executeWithPool(4, O3Test::testColumnTopLastDataMerge2Data0);
     }
 
     @Test
     public void testColumnTopLastDataMergeDataContended() throws Exception {
-        executeWithPool(0, OutOfOrderTest::testColumnTopLastDataMergeData0);
+        executeWithPool(0, O3Test::testColumnTopLastDataMergeData0);
     }
 
     @Test
     public void testColumnTopLastDataMergeDataParallel() throws Exception {
-        executeWithPool(4, OutOfOrderTest::testColumnTopLastDataMergeData0);
+        executeWithPool(4, O3Test::testColumnTopLastDataMergeData0);
     }
 
     @Test
     public void testColumnTopLastDataOOOData() throws Exception {
-        executeVanilla(OutOfOrderTest::testColumnTopLastDataOOOData0);
+        executeVanilla(O3Test::testColumnTopLastDataOOOData0);
     }
 
     @Test
     public void testColumnTopLastDataOOODataContended() throws Exception {
-        executeWithPool(0, OutOfOrderTest::testColumnTopLastDataOOOData0);
+        executeWithPool(0, O3Test::testColumnTopLastDataOOOData0);
     }
 
     @Test
     public void testColumnTopLastDataOOODataParallel() throws Exception {
-        executeWithPool(4, OutOfOrderTest::testColumnTopLastDataOOOData0);
+        executeWithPool(4, O3Test::testColumnTopLastDataOOOData0);
     }
 
     @Test
     public void testColumnTopLastOOOData() throws Exception {
-        executeVanilla(OutOfOrderTest::testColumnTopLastOOOData0);
+        executeVanilla(O3Test::testColumnTopLastOOOData0);
     }
 
     @Test
     public void testColumnTopLastOOODataContended() throws Exception {
-        executeWithPool(0, OutOfOrderTest::testColumnTopLastOOOData0);
+        executeWithPool(0, O3Test::testColumnTopLastOOOData0);
     }
 
     @Test
     public void testColumnTopLastOOODataParallel() throws Exception {
-        executeWithPool(4, OutOfOrderTest::testColumnTopLastOOOData0);
+        executeWithPool(4, O3Test::testColumnTopLastOOOData0);
     }
 
     @Test
     public void testColumnTopLastOOOPrefix() throws Exception {
-        executeVanilla(OutOfOrderTest::testColumnTopLastOOOPrefix0);
+        executeVanilla(O3Test::testColumnTopLastOOOPrefix0);
     }
 
     @Test
     public void testColumnTopLastOOOPrefixContended() throws Exception {
-        executeWithPool(0, OutOfOrderTest::testColumnTopLastOOOPrefix0);
+        executeWithPool(0, O3Test::testColumnTopLastOOOPrefix0);
     }
 
     @Test
     public void testColumnTopLastOOOPrefixParallel() throws Exception {
-        executeWithPool(4, OutOfOrderTest::testColumnTopLastOOOPrefix0);
+        executeWithPool(4, O3Test::testColumnTopLastOOOPrefix0);
     }
 
     @Test
     public void testColumnTopLastParallel() throws Exception {
-        executeWithPool(4, OutOfOrderTest::testColumnTopLastAppendColumn0);
+        executeWithPool(4, O3Test::testColumnTopLastAppendColumn0);
     }
 
     @Test
     public void testColumnTopMidAppend() throws Exception {
-        executeVanilla(OutOfOrderTest::testColumnTopMidAppendColumn0);
+        executeVanilla(O3Test::testColumnTopMidAppendColumn0);
     }
 
     @Test
     public void testColumnTopMidAppendBlank() throws Exception {
-        executeVanilla(OutOfOrderTest::testColumnTopMidAppendBlankColumn0);
+        executeVanilla(O3Test::testColumnTopMidAppendBlankColumn0);
     }
 
     @Test
     public void testColumnTopMidAppendBlankContended() throws Exception {
-        executeWithPool(0, OutOfOrderTest::testColumnTopMidAppendBlankColumn0);
+        executeWithPool(0, O3Test::testColumnTopMidAppendBlankColumn0);
     }
 
     @Test
     public void testColumnTopMidAppendBlankParallel() throws Exception {
-        executeWithPool(4, OutOfOrderTest::testColumnTopMidAppendBlankColumn0);
+        executeWithPool(4, O3Test::testColumnTopMidAppendBlankColumn0);
     }
 
     @Test
     public void testColumnTopMidAppendContended() throws Exception {
-        executeWithPool(0, OutOfOrderTest::testColumnTopMidAppendColumn0);
+        executeWithPool(0, O3Test::testColumnTopMidAppendColumn0);
     }
 
     @Test
     public void testColumnTopMidAppendParallel() throws Exception {
-        executeWithPool(4, OutOfOrderTest::testColumnTopMidAppendColumn0);
+        executeWithPool(4, O3Test::testColumnTopMidAppendColumn0);
     }
 
     @Test
     public void testInsertTouchesNotLastPartition() throws Exception {
-        executeVanilla(OutOfOrderTest::testOOOTouchesNotLastPartition0);
+        executeVanilla(O3Test::testOOOTouchesNotLastPartition0);
     }
 
     @Test
     public void testInsertTouchesNotLastPartitionParallel() throws Exception {
-        executeWithPool(4, OutOfOrderTest::testOOOTouchesNotLastPartition0);
+        executeWithPool(4, O3Test::testOOOTouchesNotLastPartition0);
     }
 
     @Test
     public void testInsertTouchesNotLastTopPartition() throws Exception {
-        executeVanilla(OutOfOrderTest::testOOOTouchesNotLastPartitionTop0);
+        executeVanilla(O3Test::testOOOTouchesNotLastPartitionTop0);
     }
 
     @Test
     public void testInsertTouchesNotLastPartitionTopParallel() throws Exception {
-        executeWithPool(4, OutOfOrderTest::testOOOTouchesNotLastPartitionTop0);
+        executeWithPool(4, O3Test::testOOOTouchesNotLastPartitionTop0);
     }
 
     @Test
     public void testColumnTopMidDataMergeData() throws Exception {
-        executeVanilla(OutOfOrderTest::testColumnTopMidDataMergeData0);
+        executeVanilla(O3Test::testColumnTopMidDataMergeData0);
     }
 
     @Test
     public void testColumnTopMidDataMergeDataContended() throws Exception {
-        executeWithPool(0, OutOfOrderTest::testColumnTopMidDataMergeData0);
+        executeWithPool(0, O3Test::testColumnTopMidDataMergeData0);
     }
 
     @Test
     public void testColumnTopMidDataMergeDataParallel() throws Exception {
-        executeWithPool(4, OutOfOrderTest::testColumnTopMidDataMergeData0);
+        executeWithPool(4, O3Test::testColumnTopMidDataMergeData0);
     }
 
     @Test
     public void testColumnTopMidMergeBlank() throws Exception {
-        executeVanilla(OutOfOrderTest::testColumnTopMidMergeBlankColumn0);
+        executeVanilla(O3Test::testColumnTopMidMergeBlankColumn0);
     }
 
     @Test
     public void testColumnTopMidMergeBlankContended() throws Exception {
-        executeWithPool(0, OutOfOrderTest::testColumnTopMidMergeBlankColumn0);
+        executeWithPool(0, O3Test::testColumnTopMidMergeBlankColumn0);
     }
 
     @Test
     public void testColumnTopMidMergeBlankParallel() throws Exception {
-        executeWithPool(4, OutOfOrderTest::testColumnTopMidMergeBlankColumn0);
+        executeWithPool(4, O3Test::testColumnTopMidMergeBlankColumn0);
     }
 
     @Test
     public void testColumnTopMidOOOData() throws Exception {
-        executeVanilla(OutOfOrderTest::testColumnTopMidOOOData0);
+        executeVanilla(O3Test::testColumnTopMidOOOData0);
     }
 
     @Test
     public void testColumnTopMidOOODataContended() throws Exception {
-        executeWithPool(0, OutOfOrderTest::testColumnTopMidOOOData0);
+        executeWithPool(0, O3Test::testColumnTopMidOOOData0);
     }
 
     @Test
     public void testColumnTopMidOOODataParallel() throws Exception {
-        executeWithPool(4, OutOfOrderTest::testColumnTopMidOOOData0);
+        executeWithPool(4, O3Test::testColumnTopMidOOOData0);
     }
 
     @Test
     public void testColumnTopNewPartitionMiddleOfTableContended() throws Exception {
-        executeWithPool(0, OutOfOrderTest::testColumnTopNewPartitionMiddleOfTable0);
+        executeWithPool(0, O3Test::testColumnTopNewPartitionMiddleOfTable0);
     }
 
     @Test
     public void testColumnTopNewPartitionMiddleOfTableParallel() throws Exception {
-        executeWithPool(4, OutOfOrderTest::testColumnTopNewPartitionMiddleOfTable0);
+        executeWithPool(4, O3Test::testColumnTopNewPartitionMiddleOfTable0);
     }
 
     @Test
     public void testOOOFollowedByAnotherOOO() throws Exception {
-        executeWithPool(4, OutOfOrderTest::testOooFollowedByAnotherOOO0);
+        executeWithPool(4, O3Test::testOooFollowedByAnotherOOO0);
     }
 
     @Test
     public void testPartitionedDataAppendOOData() throws Exception {
-        executeVanilla(OutOfOrderTest::testPartitionedDataAppendOOData0);
+        executeVanilla(O3Test::testPartitionedDataAppendOOData0);
     }
 
     @Test
     public void testPartitionedDataAppendOODataContended() throws Exception {
-        executeWithPool(0, OutOfOrderTest::testPartitionedDataAppendOOData0);
+        executeWithPool(0, O3Test::testPartitionedDataAppendOOData0);
     }
 
     @Test
     public void testPartitionedDataAppendOODataIndexed() throws Exception {
-        executeVanilla(OutOfOrderTest::testPartitionedDataAppendOODataIndexed0);
+        executeVanilla(O3Test::testPartitionedDataAppendOODataIndexed0);
     }
 
     @Test
     public void testPartitionedDataAppendOODataIndexedContended() throws Exception {
-        executeWithPool(0, OutOfOrderTest::testPartitionedDataAppendOODataIndexed0);
+        executeWithPool(0, O3Test::testPartitionedDataAppendOODataIndexed0);
     }
 
     @Test
     public void testPartitionedDataAppendOODataIndexedParallel() throws Exception {
-        executeWithPool(4, OutOfOrderTest::testPartitionedDataAppendOODataIndexed0);
+        executeWithPool(4, O3Test::testPartitionedDataAppendOODataIndexed0);
     }
 
     @Test
     public void testPartitionedDataAppendOODataNotNullStrTail() throws Exception {
-        executeVanilla(OutOfOrderTest::testPartitionedDataAppendOODataNotNullStrTail0);
+        executeVanilla(O3Test::testPartitionedDataAppendOODataNotNullStrTail0);
     }
 
     @Test
     public void testPartitionedDataAppendOODataNotNullStrTailContended() throws Exception {
-        executeWithPool(0, OutOfOrderTest::testPartitionedDataAppendOODataNotNullStrTail0);
+        executeWithPool(0, O3Test::testPartitionedDataAppendOODataNotNullStrTail0);
     }
 
     @Test
     public void testPartitionedDataAppendOODataNotNullStrTailParallel() throws Exception {
-        executeWithPool(4, OutOfOrderTest::testPartitionedDataAppendOODataNotNullStrTail0);
+        executeWithPool(4, O3Test::testPartitionedDataAppendOODataNotNullStrTail0);
     }
 
     @Test
     public void testPartitionedDataAppendOODataParallel() throws Exception {
-        executeWithPool(4, OutOfOrderTest::testPartitionedDataAppendOOData0);
+        executeWithPool(4, O3Test::testPartitionedDataAppendOOData0);
     }
 
     @Test
     public void testPartitionedDataAppendOOPrependOOData() throws Exception {
-        executeVanilla(OutOfOrderTest::testPartitionedDataAppendOOPrependOOData0);
+        executeVanilla(O3Test::testPartitionedDataAppendOOPrependOOData0);
     }
 
     @Test
     public void testPartitionedDataAppendOOPrependOODataContended() throws Exception {
-        executeWithPool(0, OutOfOrderTest::testPartitionedDataAppendOOPrependOOData0);
+        executeWithPool(0, O3Test::testPartitionedDataAppendOOPrependOOData0);
     }
 
     @Test
     public void testPartitionedDataAppendOOPrependOODataParallel() throws Exception {
-        executeWithPool(4, OutOfOrderTest::testPartitionedDataAppendOOPrependOOData0);
+        executeWithPool(4, O3Test::testPartitionedDataAppendOOPrependOOData0);
     }
 
     @Test
     public void testPartitionedDataMergeData() throws Exception {
-        executeVanilla(OutOfOrderTest::testPartitionedDataMergeData0);
+        executeVanilla(O3Test::testPartitionedDataMergeData0);
     }
 
     @Test
     public void testPartitionedDataMergeDataContended() throws Exception {
-        executeWithPool(0, OutOfOrderTest::testPartitionedDataMergeData0);
+        executeWithPool(0, O3Test::testPartitionedDataMergeData0);
     }
 
     @Test
     public void testPartitionedDataMergeDataParallel() throws Exception {
-        executeWithPool(4, OutOfOrderTest::testPartitionedDataMergeData0);
+        executeWithPool(4, O3Test::testPartitionedDataMergeData0);
     }
 
     @Test
     public void testPartitionedDataMergeEnd() throws Exception {
-        executeVanilla(OutOfOrderTest::testPartitionedDataMergeEnd0);
+        executeVanilla(O3Test::testPartitionedDataMergeEnd0);
     }
 
     @Test
     public void testPartitionedDataMergeEndContended() throws Exception {
-        executeWithPool(0, OutOfOrderTest::testPartitionedDataMergeEnd0);
+        executeWithPool(0, O3Test::testPartitionedDataMergeEnd0);
     }
 
     @Test
     public void testPartitionedDataMergeEndParallel() throws Exception {
-        executeWithPool(4, OutOfOrderTest::testPartitionedDataMergeEnd0);
+        executeWithPool(4, O3Test::testPartitionedDataMergeEnd0);
     }
 
     @Test
     public void testPartitionedDataOOData() throws Exception {
-        executeVanilla(OutOfOrderTest::testPartitionedDataOOData0);
+        executeVanilla(O3Test::testPartitionedDataOOData0);
     }
 
     @Test
     public void testPartitionedDataOODataContended() throws Exception {
-        executeWithPool(0, OutOfOrderTest::testPartitionedDataOOData0);
+        executeWithPool(0, O3Test::testPartitionedDataOOData0);
     }
 
     @Test
     public void testPartitionedDataOODataParallel() throws Exception {
-        executeWithPool(4, OutOfOrderTest::testPartitionedDataOOData0);
+        executeWithPool(4, O3Test::testPartitionedDataOOData0);
     }
 
     @Test
     public void testPartitionedDataOODataPbOOData() throws Exception {
-        executeVanilla(OutOfOrderTest::testPartitionedDataOODataPbOOData0);
+        executeVanilla(O3Test::testPartitionedDataOODataPbOOData0);
     }
 
     @Test
     public void testPartitionedDataOODataPbOODataContended() throws Exception {
-        executeWithPool(0, OutOfOrderTest::testPartitionedDataOODataPbOOData0);
+        executeWithPool(0, O3Test::testPartitionedDataOODataPbOOData0);
     }
 
     @Test
     public void testPartitionedDataOODataPbOODataDropColumnContended() throws Exception {
-        executeWithPool(0, OutOfOrderTest::testPartitionedDataOODataPbOODataDropColumn0);
+        executeWithPool(0, O3Test::testPartitionedDataOODataPbOODataDropColumn0);
     }
 
     @Test
     public void testPartitionedDataOODataPbOODataParallel() throws Exception {
-        executeWithPool(4, OutOfOrderTest::testPartitionedDataOODataPbOOData0);
+        executeWithPool(4, O3Test::testPartitionedDataOODataPbOOData0);
     }
 
     @Test
     public void testPartitionedDataOOIntoLastIndexSearchBug() throws Exception {
-        executeVanilla(OutOfOrderTest::testPartitionedDataOOIntoLastIndexSearchBug0);
+        executeVanilla(O3Test::testPartitionedDataOOIntoLastIndexSearchBug0);
     }
 
     @Test
     public void testPartitionedDataOOIntoLastIndexSearchBugContended() throws Exception {
-        executeWithPool(0, OutOfOrderTest::testPartitionedDataOOIntoLastIndexSearchBug0);
+        executeWithPool(0, O3Test::testPartitionedDataOOIntoLastIndexSearchBug0);
     }
 
     @Test
     public void testPartitionedDataOOIntoLastIndexSearchBugParallel() throws Exception {
-        executeWithPool(4, OutOfOrderTest::testPartitionedDataOOIntoLastIndexSearchBug0);
+        executeWithPool(4, O3Test::testPartitionedDataOOIntoLastIndexSearchBug0);
     }
 
     @Test
     public void testPartitionedDataOOIntoLastOverflowIntoNewPartition() throws Exception {
-        executeVanilla(OutOfOrderTest::testPartitionedDataOOIntoLastOverflowIntoNewPartition0);
+        executeVanilla(O3Test::testPartitionedDataOOIntoLastOverflowIntoNewPartition0);
     }
 
     @Test
     public void testPartitionedDataOOIntoLastOverflowIntoNewPartitionContended() throws Exception {
-        executeWithPool(0, OutOfOrderTest::testPartitionedDataOOIntoLastOverflowIntoNewPartition0);
+        executeWithPool(0, O3Test::testPartitionedDataOOIntoLastOverflowIntoNewPartition0);
     }
 
     @Test
     public void testPartitionedDataOOIntoLastOverflowIntoNewPartitionParallel() throws Exception {
-        executeWithPool(4, OutOfOrderTest::testPartitionedDataOOIntoLastOverflowIntoNewPartition0);
+        executeWithPool(4, O3Test::testPartitionedDataOOIntoLastOverflowIntoNewPartition0);
     }
 
     @Test
     public void testPartitionedOOData() throws Exception {
-        executeVanilla(OutOfOrderTest::testPartitionedOOData0);
+        executeVanilla(O3Test::testPartitionedOOData0);
     }
 
     @Test
     public void testPartitionedOODataContended() throws Exception {
-        executeWithPool(0, OutOfOrderTest::testPartitionedOOData0);
+        executeWithPool(0, O3Test::testPartitionedOOData0);
     }
 
     @Test
     public void testPartitionedOODataOOCollapsed() throws Exception {
-        executeVanilla(OutOfOrderTest::testPartitionedOODataOOCollapsed0);
+        executeVanilla(O3Test::testPartitionedOODataOOCollapsed0);
     }
 
     @Test
     public void testPartitionedOODataOOCollapsedContended() throws Exception {
-        executeWithPool(0, OutOfOrderTest::testPartitionedOODataOOCollapsed0);
+        executeWithPool(0, O3Test::testPartitionedOODataOOCollapsed0);
     }
 
     @Test
     public void testPartitionedOODataOOCollapsedParallel() throws Exception {
-        executeWithPool(4, OutOfOrderTest::testPartitionedOODataOOCollapsed0);
+        executeWithPool(4, O3Test::testPartitionedOODataOOCollapsed0);
     }
 
     @Test
     public void testPartitionedOODataParallel() throws Exception {
-        executeWithPool(4, OutOfOrderTest::testPartitionedOOData0);
+        executeWithPool(4, O3Test::testPartitionedOOData0);
     }
 
     @Test
     public void testPartitionedOODataUpdateMinTimestamp() throws Exception {
-        executeVanilla(OutOfOrderTest::testPartitionedOODataUpdateMinTimestamp0);
+        executeVanilla(O3Test::testPartitionedOODataUpdateMinTimestamp0);
     }
 
     @Test
     public void testPartitionedOODataUpdateMinTimestampContended() throws Exception {
-        executeWithPool(0, OutOfOrderTest::testPartitionedOODataUpdateMinTimestamp0);
+        executeWithPool(0, O3Test::testPartitionedOODataUpdateMinTimestamp0);
     }
 
     @Test
     public void testPartitionedOODataUpdateMinTimestampParallel() throws Exception {
-        executeWithPool(4, OutOfOrderTest::testPartitionedOODataUpdateMinTimestamp0);
+        executeWithPool(4, O3Test::testPartitionedOODataUpdateMinTimestamp0);
     }
 
     @Test
     public void testPartitionedOOMerge() throws Exception {
-        executeVanilla(OutOfOrderTest::testPartitionedOOMerge0);
+        executeVanilla(O3Test::testPartitionedOOMerge0);
     }
 
     @Test
     public void testPartitionedOOMergeContended() throws Exception {
-        executeWithPool(0, OutOfOrderTest::testPartitionedOOMerge0);
+        executeWithPool(0, O3Test::testPartitionedOOMerge0);
     }
 
     @Test
     public void testPartitionedOOMergeData() throws Exception {
-        executeVanilla(OutOfOrderTest::testPartitionedOOMergeData0);
+        executeVanilla(O3Test::testPartitionedOOMergeData0);
     }
 
     @Test
     public void testPartitionedOOMergeDataContended() throws Exception {
-        executeWithPool(0, OutOfOrderTest::testPartitionedOOMergeData0);
+        executeWithPool(0, O3Test::testPartitionedOOMergeData0);
     }
 
     @Test
     public void testPartitionedOOMergeDataParallel() throws Exception {
-        executeWithPool(4, OutOfOrderTest::testPartitionedOOMergeData0);
+        executeWithPool(4, O3Test::testPartitionedOOMergeData0);
     }
 
     @Test
     public void testPartitionedOOMergeOO() throws Exception {
-        executeVanilla(OutOfOrderTest::testPartitionedOOMergeOO0);
+        executeVanilla(O3Test::testPartitionedOOMergeOO0);
     }
 
     @Test
     public void testPartitionedOOMergeOOContended() throws Exception {
-        executeWithPool(0, OutOfOrderTest::testPartitionedOOMergeOO0);
+        executeWithPool(0, O3Test::testPartitionedOOMergeOO0);
     }
 
     @Test
     public void testPartitionedOOMergeOOParallel() throws Exception {
-        executeWithPool(4, OutOfOrderTest::testPartitionedOOMergeOO0);
+        executeWithPool(4, O3Test::testPartitionedOOMergeOO0);
     }
 
     @Test
     public void testPartitionedOOMergeParallel() throws Exception {
-        executeWithPool(4, OutOfOrderTest::testPartitionedOOMerge0);
+        executeWithPool(4, O3Test::testPartitionedOOMerge0);
     }
 
     @Test
     public void testPartitionedOOONullSetters() throws Exception {
-        executeVanilla(OutOfOrderTest::testPartitionedOOONullSetters0);
+        executeVanilla(O3Test::testPartitionedOOONullSetters0);
     }
 
     @Test
     public void testPartitionedOOONullSettersContended() throws Exception {
-        executeWithPool(0, OutOfOrderTest::testPartitionedOOONullSetters0);
+        executeWithPool(0, O3Test::testPartitionedOOONullSetters0);
     }
 
     @Test
     public void testPartitionedOOONullSettersParallel() throws Exception {
-        executeWithPool(4, OutOfOrderTest::testPartitionedOOONullSetters0);
+        executeWithPool(4, O3Test::testPartitionedOOONullSetters0);
     }
 
     @Test
     public void testPartitionedOOPrefixesExistingPartitions() throws Exception {
-        executeVanilla(OutOfOrderTest::testPartitionedOOPrefixesExistingPartitions0);
+        executeVanilla(O3Test::testPartitionedOOPrefixesExistingPartitions0);
     }
 
     @Test
     public void testPartitionedOOPrefixesExistingPartitionsContended() throws Exception {
-        executeWithPool(0, OutOfOrderTest::testPartitionedOOPrefixesExistingPartitions0);
+        executeWithPool(0, O3Test::testPartitionedOOPrefixesExistingPartitions0);
     }
 
     @Test
     public void testPartitionedOOPrefixesExistingPartitionsParallel() throws Exception {
-        executeWithPool(4, OutOfOrderTest::testPartitionedOOPrefixesExistingPartitions0);
+        executeWithPool(4, O3Test::testPartitionedOOPrefixesExistingPartitions0);
     }
 
     @Test
     public void testPartitionedOOTopAndBottom() throws Exception {
-        executeVanilla(OutOfOrderTest::testPartitionedOOTopAndBottom0);
+        executeVanilla(O3Test::testPartitionedOOTopAndBottom0);
     }
 
     @Test
     public void testPartitionedOOTopAndBottomContended() throws Exception {
-        executeWithPool(0, OutOfOrderTest::testPartitionedOOTopAndBottom0);
+        executeWithPool(0, O3Test::testPartitionedOOTopAndBottom0);
     }
 
     @Test
     public void testVanillaHysteresis() throws Exception {
-        executeVanilla(OutOfOrderTest::testVanillaHysteresis0);
+        executeVanilla(O3Test::testVanillaHysteresis0);
     }
 
     @Test
     public void testVanillaHysteresisContended() throws Exception {
-        executeWithPool(0, OutOfOrderTest::testVanillaHysteresis0);
+        executeWithPool(0, O3Test::testVanillaHysteresis0);
     }
 
     @Test
     public void testVanillaHysteresisParallel() throws Exception {
-        executeWithPool(4, OutOfOrderTest::testVanillaHysteresis0);
+        executeWithPool(4, O3Test::testVanillaHysteresis0);
     }
 
     @Test
     public void testPartitionedOOTopAndBottomParallel() throws Exception {
-        executeWithPool(4, OutOfOrderTest::testPartitionedOOTopAndBottom0);
+        executeWithPool(4, O3Test::testPartitionedOOTopAndBottom0);
     }
 
     private static void testPartitionedOOONullSetters0(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext)
@@ -713,7 +713,7 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
         );
 
         // create third table, which will contain both X and 1AM
-        assertOutOfOrderDataConsistency(
+        assertO3DataConsistency(
                 engine,
                 compiler,
                 sqlExecutionContext,
@@ -789,7 +789,7 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
         );
 
         // create third table, which will contain both X and 1AM
-        assertOutOfOrderDataConsistency(
+        assertO3DataConsistency(
                 engine,
                 compiler,
                 sqlExecutionContext,
@@ -888,7 +888,7 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
         );
 
         // create third table, which will contain both X and 1AM
-        assertOutOfOrderDataConsistency(
+        assertO3DataConsistency(
                 engine,
                 compiler,
                 sqlExecutionContext,
@@ -960,7 +960,7 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
         );
 
         // create third table, which will contain both X and 1AM
-        assertOutOfOrderDataConsistency(
+        assertO3DataConsistency(
                 engine,
                 compiler,
                 sqlExecutionContext,
@@ -1224,7 +1224,7 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
         );
 
         // create third table, which will contain both X and 1AM
-        assertOutOfOrderDataConsistency(
+        assertO3DataConsistency(
                 engine,
                 compiler,
                 sqlExecutionContext,
@@ -1508,7 +1508,7 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
         );
 
         // create third table, which will contain both X and 1AM
-        assertOutOfOrderDataConsistency(
+        assertO3DataConsistency(
                 engine,
                 compiler,
                 sqlExecutionContext,
@@ -1906,7 +1906,7 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
                 sqlExecutionContext
         );
 
-        assertOutOfOrderDataConsistency(
+        assertO3DataConsistency(
                 engine,
                 compiler,
                 sqlExecutionContext,
@@ -1919,12 +1919,12 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
         // check that reader can process out of order partition layout after fresh open
         String filteredColumnSelect = "select i,sym,amt,timestamp,b,c,d,e,f,g,ik,j,ts,l,m,n,t from x";
         engine.releaseAllReaders();
-        AbstractOutOfOrderTest.assertSqlResultAgainstFile(compiler,
+        AbstractO3Test.assertSqlResultAgainstFile(compiler,
                 sqlExecutionContext,
                 filteredColumnSelect,
                 "/ooo/testPartitionedDataMergeData.txt");
 
-        AbstractOutOfOrderTest.assertSqlResultAgainstFile(compiler, sqlExecutionContext,
+        AbstractO3Test.assertSqlResultAgainstFile(compiler, sqlExecutionContext,
                 filteredColumnSelect + " where sym = 'googl'",
                 "/ooo/testPartitionedDataMergeData_Index.txt");
     }
@@ -1984,7 +1984,7 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
                 sqlExecutionContext
         );
 
-        assertOutOfOrderDataConsistency(
+        assertO3DataConsistency(
                 engine,
                 compiler,
                 sqlExecutionContext,
@@ -2058,7 +2058,7 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
         );
 
         // create third table, which will contain both X and 1AM
-        assertOutOfOrderDataConsistency(
+        assertO3DataConsistency(
                 engine,
                 compiler,
                 sqlExecutionContext,
@@ -2127,7 +2127,7 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
                 sqlExecutionContext
         );
 
-        assertOutOfOrderDataConsistency(
+        assertO3DataConsistency(
                 engine,
                 compiler,
                 sqlExecutionContext,
@@ -2198,7 +2198,7 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
         );
 
         // create third table, which will contain both X and 1AM
-        assertOutOfOrderDataConsistency(
+        assertO3DataConsistency(
                 engine,
                 compiler,
                 sqlExecutionContext,
@@ -3276,7 +3276,7 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
         );
 
         // create third table, which will contain both X and 1AM
-        assertOutOfOrderDataConsistency(
+        assertO3DataConsistency(
                 engine,
                 compiler,
                 executionContext,
@@ -3317,7 +3317,7 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
         );
 
         // create third table, which will contain both X and 1AM
-        assertOutOfOrderDataConsistency(
+        assertO3DataConsistency(
                 engine,
                 compiler,
                 executionContext,
@@ -3417,7 +3417,7 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
         );
 
         // create third table, which will contain both X and 1AM
-        assertOutOfOrderDataConsistency(
+        assertO3DataConsistency(
                 engine,
                 compiler,
                 executionContext,
@@ -3515,7 +3515,7 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
         );
 
         // create third table, which will contain both X and 1AM
-        assertOutOfOrderDataConsistency(
+        assertO3DataConsistency(
                 engine,
                 compiler,
                 executionContext,
@@ -3616,7 +3616,7 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
         );
 
         // create third table, which will contain both X and 1AM
-        assertOutOfOrderDataConsistency(
+        assertO3DataConsistency(
                 engine,
                 compiler,
                 executionContext,
@@ -3740,7 +3740,7 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
         );
 
         // create third table, which will contain both X and 1AM
-        assertOutOfOrderDataConsistency(
+        assertO3DataConsistency(
                 engine,
                 compiler,
                 sqlExecutionContext,
@@ -3875,7 +3875,7 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
                 sqlExecutionContext
         );
 
-        assertOutOfOrderDataConsistency(
+        assertO3DataConsistency(
                 engine,
                 compiler,
                 sqlExecutionContext,
@@ -3950,7 +3950,7 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
                 sqlExecutionContext
         );
 
-        assertOutOfOrderDataConsistency(
+        assertO3DataConsistency(
                 engine,
                 compiler,
                 sqlExecutionContext,
@@ -4028,7 +4028,7 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
                 sqlExecutionContext
         );
 
-        assertOutOfOrderDataConsistency(
+        assertO3DataConsistency(
                 engine,
                 compiler,
                 sqlExecutionContext,
@@ -4163,7 +4163,7 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
                 sqlExecutionContext
         );
 
-        assertOutOfOrderDataConsistency(
+        assertO3DataConsistency(
                 engine,
                 compiler,
                 sqlExecutionContext,
@@ -4258,7 +4258,7 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
         );
 
         // create third table, which will contain both X and 1AM
-        assertOutOfOrderDataConsistency(
+        assertO3DataConsistency(
                 engine,
                 compiler,
                 sqlExecutionContext,
@@ -4358,7 +4358,7 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
                 sqlExecutionContext
         );
 
-        assertOutOfOrderDataConsistency(
+        assertO3DataConsistency(
                 engine,
                 compiler,
                 sqlExecutionContext,
@@ -4375,7 +4375,7 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
 
         compiler.compile("alter table x drop column c", sqlExecutionContext);
 
-        assertOutOfOrderDataConsistency(
+        assertO3DataConsistency(
                 engine,
                 compiler,
                 sqlExecutionContext,
@@ -4394,7 +4394,7 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
 
     @Test
     public void testAppendToLastPartition() throws Exception {
-        executeWithPool(4, OutOfOrderTest::testAppendToLastPartition);
+        executeWithPool(4, O3Test::testAppendToLastPartition);
     }
 
     private static void testAppendToLastPartition(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
@@ -4496,7 +4496,7 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
                 sqlExecutionContext
         );
 
-        assertOutOfOrderDataConsistency(
+        assertO3DataConsistency(
                 engine,
                 compiler,
                 sqlExecutionContext,
@@ -4563,7 +4563,7 @@ public class OutOfOrderTest extends AbstractOutOfOrderTest {
                 executionContext
         );
 
-        assertOutOfOrderDataConsistency(
+        assertO3DataConsistency(
                 engine,
                 compiler,
                 executionContext,

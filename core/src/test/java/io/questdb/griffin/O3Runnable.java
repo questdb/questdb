@@ -27,6 +27,6 @@ package io.questdb.griffin;
 import io.questdb.cairo.CairoEngine;
 
 @FunctionalInterface
-interface OutOfOrderCode {
+interface O3Runnable {
     void run(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws Exception;
 }

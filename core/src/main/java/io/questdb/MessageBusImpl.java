@@ -55,21 +55,21 @@ public class MessageBusImpl implements MessageBus {
     private final MPSequence o3PurgePubSeq;
     private final MCSequence o3PurgeSubSeq;
 
-    private final RingQueue<OutOfOrderPartitionTask> outOfOrderPartitionQueue;
-    private final MPSequence outOfOrderPartitionPubSeq;
-    private final MCSequence outOfOrderPartitionSubSeq;
+    private final RingQueue<O3PartitionTask> o3PartitionQueue;
+    private final MPSequence o3PartitionPubSeq;
+    private final MCSequence o3PartitionSubSeq;
 
-    private final RingQueue<OutOfOrderOpenColumnTask> outOfOrderOpenColumnQueue;
-    private final MPSequence outOfOrderOpenColumnPubSeq;
-    private final MCSequence outOfOrderOpenColumnSubSeq;
+    private final RingQueue<O3OpenColumnTask> o3OpenColumnQueue;
+    private final MPSequence o3OpenColumnPubSeq;
+    private final MCSequence o3OpenColumnSubSeq;
 
-    private final RingQueue<OutOfOrderCopyTask> outOfOrderCopyQueue;
-    private final MPSequence outOfOrderCopyPubSeq;
-    private final MCSequence outOfOrderCopySubSeq;
+    private final RingQueue<O3CopyTask> o3CopyQueue;
+    private final MPSequence o3CopyPubSeq;
+    private final MCSequence o3CopySubSeq;
 
-    private final RingQueue<OutOfOrderUpdPartitionSizeTask> outOfOrderUpdPartitionSizeQueue;
-    private final MPSequence outOfOrderUpdPartitionSizePubSeq;
-    private final SCSequence outOfOrderUpdPartitionSizeSubSeq;
+    private final RingQueue<O3UpdPartitionSizeTask> o3UpdPartitionSizeQueue;
+    private final MPSequence o3UpdPartitionSizePubSeq;
+    private final SCSequence o3UpdPartitionSizeSubSeq;
 
     private final CairoConfiguration configuration;
 
@@ -95,25 +95,25 @@ public class MessageBusImpl implements MessageBus {
         this.o3CallbackSubSeq = new MCSequence(this.o3CallbackQueue.getCapacity());
         o3CallbackPubSeq.then(o3CallbackSubSeq).then(o3CallbackPubSeq);
 
-        this.outOfOrderPartitionQueue = new RingQueue<>(OutOfOrderPartitionTask::new, configuration.getO3PartitionQueueCapacity());
-        this.outOfOrderPartitionPubSeq = new MPSequence(this.outOfOrderPartitionQueue.getCapacity());
-        this.outOfOrderPartitionSubSeq = new MCSequence(this.outOfOrderPartitionQueue.getCapacity());
-        outOfOrderPartitionPubSeq.then(outOfOrderPartitionSubSeq).then(outOfOrderPartitionPubSeq);
+        this.o3PartitionQueue = new RingQueue<>(O3PartitionTask::new, configuration.getO3PartitionQueueCapacity());
+        this.o3PartitionPubSeq = new MPSequence(this.o3PartitionQueue.getCapacity());
+        this.o3PartitionSubSeq = new MCSequence(this.o3PartitionQueue.getCapacity());
+        o3PartitionPubSeq.then(o3PartitionSubSeq).then(o3PartitionPubSeq);
 
-        this.outOfOrderOpenColumnQueue = new RingQueue<>(OutOfOrderOpenColumnTask::new, configuration.getO3OpenColumnQueueCapacity());
-        this.outOfOrderOpenColumnPubSeq = new MPSequence(this.outOfOrderOpenColumnQueue.getCapacity());
-        this.outOfOrderOpenColumnSubSeq = new MCSequence(this.outOfOrderOpenColumnQueue.getCapacity());
-        outOfOrderOpenColumnPubSeq.then(outOfOrderOpenColumnSubSeq).then(outOfOrderOpenColumnPubSeq);
+        this.o3OpenColumnQueue = new RingQueue<>(O3OpenColumnTask::new, configuration.getO3OpenColumnQueueCapacity());
+        this.o3OpenColumnPubSeq = new MPSequence(this.o3OpenColumnQueue.getCapacity());
+        this.o3OpenColumnSubSeq = new MCSequence(this.o3OpenColumnQueue.getCapacity());
+        o3OpenColumnPubSeq.then(o3OpenColumnSubSeq).then(o3OpenColumnPubSeq);
 
-        this.outOfOrderCopyQueue = new RingQueue<>(OutOfOrderCopyTask::new, configuration.getO3CopyQueueCapacity());
-        this.outOfOrderCopyPubSeq = new MPSequence(this.outOfOrderCopyQueue.getCapacity());
-        this.outOfOrderCopySubSeq = new MCSequence(this.outOfOrderCopyQueue.getCapacity());
-        outOfOrderCopyPubSeq.then(outOfOrderCopySubSeq).then(outOfOrderCopyPubSeq);
+        this.o3CopyQueue = new RingQueue<>(O3CopyTask::new, configuration.getO3CopyQueueCapacity());
+        this.o3CopyPubSeq = new MPSequence(this.o3CopyQueue.getCapacity());
+        this.o3CopySubSeq = new MCSequence(this.o3CopyQueue.getCapacity());
+        o3CopyPubSeq.then(o3CopySubSeq).then(o3CopyPubSeq);
 
-        this.outOfOrderUpdPartitionSizeQueue = new RingQueue<>(OutOfOrderUpdPartitionSizeTask::new, configuration.getO3UpdPartitionSizeQueueCapacity());
-        this.outOfOrderUpdPartitionSizePubSeq = new MPSequence(this.outOfOrderUpdPartitionSizeQueue.getCapacity());
-        this.outOfOrderUpdPartitionSizeSubSeq = new SCSequence();
-        outOfOrderUpdPartitionSizePubSeq.then(outOfOrderUpdPartitionSizeSubSeq).then(outOfOrderUpdPartitionSizePubSeq);
+        this.o3UpdPartitionSizeQueue = new RingQueue<>(O3UpdPartitionSizeTask::new, configuration.getO3UpdPartitionSizeQueueCapacity());
+        this.o3UpdPartitionSizePubSeq = new MPSequence(this.o3UpdPartitionSizeQueue.getCapacity());
+        this.o3UpdPartitionSizeSubSeq = new SCSequence();
+        o3UpdPartitionSizePubSeq.then(o3UpdPartitionSizeSubSeq).then(o3UpdPartitionSizePubSeq);
 
         this.o3PurgeDiscoveryQueue = new RingQueue<>(O3PurgeDiscoveryTask::new, configuration.getO3PurgeDiscoveryQueueCapacity());
         this.o3PurgeDiscoveryPubSeq = new MPSequence(this.o3PurgeDiscoveryQueue.getCapacity());
@@ -167,12 +167,12 @@ public class MessageBusImpl implements MessageBus {
     }
 
     @Override
-    public Sequence getVectorAggregatePubSequence() {
+    public Sequence getVectorAggregatePubSeq() {
         return vectorAggregatePubSeq;
     }
 
     @Override
-    public Sequence getVectorAggregateSubSequence() {
+    public Sequence getVectorAggregateSubSeq() {
         return vectorAggregateSubSeq;
     }
 
@@ -182,73 +182,73 @@ public class MessageBusImpl implements MessageBus {
     }
 
     @Override
-    public Sequence getTableBlockWriterPubSequence() {
+    public Sequence getTableBlockWriterPubSeq() {
         return tableBlockWriterPubSeq;
     }
 
     @Override
-    public Sequence getTableBlockWriterSubSequence() {
+    public Sequence getTableBlockWriterSubSeq() {
         return tableBlockWriterSubSeq;
     }
 
     @Override
-    public MPSequence getOutOfOrderPartitionPubSeq() {
-        return outOfOrderPartitionPubSeq;
+    public MPSequence getO3PartitionPubSeq() {
+        return o3PartitionPubSeq;
     }
 
     @Override
-    public RingQueue<OutOfOrderPartitionTask> getOutOfOrderPartitionQueue() {
-        return outOfOrderPartitionQueue;
+    public RingQueue<O3PartitionTask> getO3PartitionQueue() {
+        return o3PartitionQueue;
     }
 
     @Override
-    public MCSequence getOutOfOrderPartitionSubSeq() {
-        return outOfOrderPartitionSubSeq;
+    public MCSequence getO3PartitionSubSeq() {
+        return o3PartitionSubSeq;
     }
 
     @Override
-    public MPSequence getOutOfOrderCopyPubSeq() {
-        return outOfOrderCopyPubSeq;
+    public MPSequence getO3CopyPubSeq() {
+        return o3CopyPubSeq;
     }
 
     @Override
-    public RingQueue<OutOfOrderCopyTask> getOutOfOrderCopyQueue() {
-        return outOfOrderCopyQueue;
+    public RingQueue<O3CopyTask> getO3CopyQueue() {
+        return o3CopyQueue;
     }
 
     @Override
-    public MCSequence getOutOfOrderCopySubSequence() {
-        return outOfOrderCopySubSeq;
+    public MCSequence getO3CopySubSeq() {
+        return o3CopySubSeq;
     }
 
     @Override
-    public MPSequence getOutOfOrderOpenColumnPubSequence() {
-        return outOfOrderOpenColumnPubSeq;
+    public MPSequence getO3OpenColumnPubSeq() {
+        return o3OpenColumnPubSeq;
     }
 
     @Override
-    public RingQueue<OutOfOrderOpenColumnTask> getOutOfOrderOpenColumnQueue() {
-        return outOfOrderOpenColumnQueue;
+    public RingQueue<O3OpenColumnTask> getO3OpenColumnQueue() {
+        return o3OpenColumnQueue;
     }
 
     @Override
-    public MCSequence getOutOfOrderOpenColumnSubSequence() {
-        return outOfOrderOpenColumnSubSeq;
+    public MCSequence getO3OpenColumnSubSeq() {
+        return o3OpenColumnSubSeq;
     }
 
     @Override
-    public MPSequence getOutOfOrderUpdPartitionSizePubSequence() {
-        return outOfOrderUpdPartitionSizePubSeq;
+    public MPSequence getO3UpdPartitionSizePubSeq() {
+        return o3UpdPartitionSizePubSeq;
     }
 
     @Override
-    public RingQueue<OutOfOrderUpdPartitionSizeTask> getOutOfOrderUpdPartitionSizeQueue() {
-        return outOfOrderUpdPartitionSizeQueue;
+    public RingQueue<O3UpdPartitionSizeTask> getO3UpdPartitionSizeQueue() {
+        return o3UpdPartitionSizeQueue;
     }
 
     @Override
-    public SCSequence getOutOfOrderUpdPartitionSizeSubSequence() {
-        return outOfOrderUpdPartitionSizeSubSeq;
+    public SCSequence getO3UpdPartitionSizeSubSeq() {
+        return o3UpdPartitionSizeSubSeq;
     }
 
     @Override

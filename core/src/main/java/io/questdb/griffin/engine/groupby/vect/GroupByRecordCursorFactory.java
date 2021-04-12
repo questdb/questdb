@@ -176,7 +176,7 @@ public class GroupByRecordCursorFactory implements RecordCursorFactory {
         }
 
         final RingQueue<VectorAggregateTask> queue = bus.getVectorAggregateQueue();
-        final Sequence pubSeq = bus.getVectorAggregatePubSequence();
+        final Sequence pubSeq = bus.getVectorAggregatePubSeq();
 
         this.entryPool.clear();
         this.activeEntries.clear();
