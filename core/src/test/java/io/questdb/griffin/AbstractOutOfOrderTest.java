@@ -51,16 +51,9 @@ public class AbstractOutOfOrderTest extends AbstractCairoTest {
     private final static Log LOG = LogFactory.getLog(OutOfOrderTest.class);
 
     @Before
-    public void setUp3() {
-        configuration = new DefaultCairoConfiguration(root) {
-            @Override
-            public boolean isOutOfOrderEnabled() {
-                return true;
-            }
-        };
-
+    public void setUp() {
+        super.setUp();
         SharedRandom.RANDOM.set(new Rnd());
-
         // instantiate these paths so that they are not included in memory leak test
         Path.PATH.get();
         Path.PATH2.get();
@@ -340,7 +333,12 @@ public class AbstractOutOfOrderTest extends AbstractCairoTest {
     }
 
     protected static void executeVanilla(OutOfOrderCode code) throws Exception {
-        executeVanilla(() -> execute1(null, code, configuration));
+        executeVanilla(() -> execute1(null, code, new DefaultCairoConfiguration(root) {
+            @Override
+            public boolean isOutOfOrderEnabled() {
+                return true;
+            }
+        }));
     }
 
     static void assertOutOfOrderDataConsistency(

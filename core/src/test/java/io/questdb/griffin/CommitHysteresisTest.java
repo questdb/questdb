@@ -24,46 +24,36 @@
 
 package io.questdb.griffin;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.EntityColumnFilter;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriter.Row;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlCompiler.RecordToRowCopier;
-import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
-import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.IntList;
-import io.questdb.std.Misc;
-import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
-import io.questdb.std.str.Path;
-import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
-import org.junit.*;
-import org.junit.rules.TemporaryFolder;
+import org.junit.Before;
+import org.junit.Ignore;
+import org.junit.Test;
 
-import java.io.IOException;
 import java.util.Random;
 
-public class CommitHysteresisTest {
+public class CommitHysteresisTest extends AbstractOutOfOrderTest {
     private final static Log LOG = LogFactory.getLog(CommitHysteresisTest.class);
-    @ClassRule
-    public static TemporaryFolder temp = new TemporaryFolder();
-    private CairoConfiguration configuration;
-    private CairoEngine engine;
-    private SqlCompiler compiler;
-    private SqlExecutionContext sqlExecutionContext;
-    private static final StringSink sink = new StringSink();
-    private static final StringSink sink2 = new StringSink();
     private long minTimestamp;
     private long maxTimestamp;
     private RecordToRowCopier copier;
 
     @Test
-    public void testNoHysteresis() throws Exception {
-        executeVanilla(() -> {
+    public void testNoHysteresisContended() throws Exception {
+        executeWithPool(0, (engine, compiler, sqlExecutionContext) -> {
             String sql = "create table x as (" +
                     "select" +
                     " cast(x as int) i," +
@@ -96,14 +86,14 @@ public class CommitHysteresisTest {
 
             try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "y")) {
                 sql = "select * from x where i>150 and i<=495 order by f";
-                insertUncommitted(sql, writer);
+                insertUncommitted(compiler, sqlExecutionContext, sql, writer);
                 writer.commit();
                 TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where i<=495", sink);
                 TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
                 TestUtils.assertEquals(sink, sink2);
 
                 sql = "select * from x where i>495 order by f";
-                insertUncommitted(sql, writer);
+                insertUncommitted(compiler, sqlExecutionContext, sql, writer);
                 writer.commit();
             }
 
@@ -114,8 +104,8 @@ public class CommitHysteresisTest {
     }
 
     @Test
-    public void testNoHysteresisWithRollback() throws Exception {
-        executeVanilla(() -> {
+    public void testNoHysteresisWithRollbackContended() throws Exception {
+        executeWithPool(0, (engine, compiler, sqlExecutionContext) -> {
             String sql = "create table x as (" +
                     "select" +
                     " cast(x as int) i," +
@@ -148,20 +138,20 @@ public class CommitHysteresisTest {
 
             try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "y")) {
                 sql = "select * from x where i>250 and i<=375 order by f";
-                insertUncommitted(sql, writer);
+                insertUncommitted(compiler, sqlExecutionContext, sql, writer);
                 writer.commit();
                 TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where i<=375", sink);
                 TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
                 TestUtils.assertEquals(sink, sink2);
 
                 sql = "select * from x where i>375 order by f";
-                insertUncommitted(sql, writer);
+                insertUncommitted(compiler, sqlExecutionContext, sql, writer);
                 writer.rollback();
                 TestUtils.printSql(compiler, sqlExecutionContext, "select count(*) from y", sink);
                 TestUtils.assertEquals(sink, "count\n375\n");
 
                 sql = "select * from x where i>380 order by f";
-                insertUncommitted(sql, writer);
+                insertUncommitted(compiler, sqlExecutionContext, sql, writer);
                 writer.commit();
                 TestUtils.printSql(compiler, sqlExecutionContext, "select count(*) from y", sink);
                 TestUtils.assertEquals(sink, "count\n495\n");
@@ -174,8 +164,8 @@ public class CommitHysteresisTest {
     }
 
     @Test
-    public void testNoHysteresisEndingAtPartitionBoundary() throws Exception {
-        executeVanilla(() -> {
+    public void testNoHysteresisEndingAtPartitionBoundaryContended() throws Exception {
+        executeWithPool(0, (engine, compiler, sqlExecutionContext) -> {
             String sql = "create table x as (" +
                     "select" +
                     " cast(x as int) i," +
@@ -209,14 +199,14 @@ public class CommitHysteresisTest {
 
             try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "y")) {
                 sql = "select * from x where i>150 and i<=184 order by f";
-                insertUncommitted(sql, writer);
+                insertUncommitted(compiler, sqlExecutionContext, sql, writer);
                 writer.commit();
                 TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where i<=184", sink);
                 TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
                 TestUtils.assertEquals(sink, sink2);
 
                 sql = "select * from x where i>184 order by f";
-                insertUncommitted(sql, writer);
+                insertUncommitted(compiler, sqlExecutionContext, sql, writer);
                 writer.commit();
             }
 
@@ -227,8 +217,8 @@ public class CommitHysteresisTest {
     }
 
     @Test
-    public void testHysteresisWithinPartition() throws Exception {
-        executeVanilla(() -> {
+    public void testHysteresisWithinPartitionContended() throws Exception {
+        executeWithPool(0, (engine, compiler, sqlExecutionContext) -> {
             String sql = "create table x as (" +
                     "select" +
                     " cast(x as int) i," +
@@ -261,7 +251,7 @@ public class CommitHysteresisTest {
 
             try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "y")) {
                 sql = "select * from x where i>490 order by f";
-                insertUncommitted(sql, writer);
+                insertUncommitted(compiler, sqlExecutionContext, sql, writer);
                 long lastTimestampHysteresisInMicros = (maxTimestamp - minTimestamp) / 2;
                 maxTimestamp -= lastTimestampHysteresisInMicros;
                 writer.commitWithHysteresis(lastTimestampHysteresisInMicros);
@@ -279,8 +269,8 @@ public class CommitHysteresisTest {
     }
 
     @Test
-    public void testLargeHysteresisWithinPartition() throws Exception {
-        executeVanilla(() -> {
+    public void testLargeHysteresisWithinPartitionContended() throws Exception {
+        executeWithPool(0, (engine, compiler, sqlExecutionContext) -> {
             String sql = "create table x as (" +
                     "select" +
                     " cast(x as int) i," +
@@ -313,7 +303,7 @@ public class CommitHysteresisTest {
 
             try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "y")) {
                 sql = "select * from x where i>250 order by f";
-                insertUncommitted(sql, writer);
+                insertUncommitted(compiler, sqlExecutionContext, sql, writer);
                 long lastTimestampHysteresisInMicros = (maxTimestamp - minTimestamp) * 3 / 4;
                 maxTimestamp -= lastTimestampHysteresisInMicros;
                 writer.commitWithHysteresis(lastTimestampHysteresisInMicros);
@@ -331,8 +321,8 @@ public class CommitHysteresisTest {
     }
 
     @Test
-    public void testHysteresisWithinPartitionWithRollback() throws Exception {
-        executeVanilla(() -> {
+    public void testHysteresisWithinPartitionWithRollbackContended() throws Exception {
+        executeWithPool(0, (engine, compiler, sqlExecutionContext) -> {
             String sql = "create table x as (" +
                     "select" +
                     " cast(x as int) i," +
@@ -365,7 +355,7 @@ public class CommitHysteresisTest {
 
             try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "y")) {
                 sql = "select * from x where i>250 order by f";
-                insertUncommitted(sql, writer);
+                insertUncommitted(compiler, sqlExecutionContext, sql, writer);
                 long lastTimestampHysteresisInMicros = (maxTimestamp - minTimestamp) / 2;
                 maxTimestamp -= lastTimestampHysteresisInMicros;
                 writer.commitWithHysteresis(lastTimestampHysteresisInMicros);
@@ -378,7 +368,7 @@ public class CommitHysteresisTest {
                 TestUtils.assertEquals(sink, "count\n375\n");
 
                 sql = "select * from x where i>380 order by f";
-                insertUncommitted(sql, writer);
+                insertUncommitted(compiler, sqlExecutionContext, sql, writer);
                 writer.commit();
                 TestUtils.printSql(compiler, sqlExecutionContext, "select count(*) from y", sink);
                 TestUtils.assertEquals(sink, "count\n495\n");
@@ -391,8 +381,8 @@ public class CommitHysteresisTest {
     }
 
     @Test
-    public void testHysteresisStaggeringPartitions() throws Exception {
-        executeVanilla(() -> {
+    public void testHysteresisStaggeringPartitionsContended() throws Exception {
+        executeWithPool(0, (engine, compiler, sqlExecutionContext) -> {
             String sql = "create table x as (" +
                     "select" +
                     " cast(x as int) i," +
@@ -426,7 +416,7 @@ public class CommitHysteresisTest {
 
             try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "y")) {
                 sql = "select * from x where i>150 and i<200 order by f";
-                insertUncommitted(sql, writer);
+                insertUncommitted(compiler, sqlExecutionContext, sql, writer);
                 long lastTimestampHysteresisInMicros = (maxTimestamp - minTimestamp) / 2;
                 maxTimestamp -= lastTimestampHysteresisInMicros;
                 writer.commitWithHysteresis(lastTimestampHysteresisInMicros);
@@ -435,7 +425,7 @@ public class CommitHysteresisTest {
                 TestUtils.assertEquals(sink, sink2);
 
                 sql = "select * from x where i>=200 order by f";
-                insertUncommitted(sql, writer);
+                insertUncommitted(compiler, sqlExecutionContext, sql, writer);
                 lastTimestampHysteresisInMicros = (maxTimestamp - minTimestamp) / 2;
                 maxTimestamp -= lastTimestampHysteresisInMicros;
                 writer.commitWithHysteresis(lastTimestampHysteresisInMicros);
@@ -453,8 +443,8 @@ public class CommitHysteresisTest {
     }
 
     @Test
-    public void testHysteresisStaggeringPartitionsWithRollback() throws Exception {
-        executeVanilla(() -> {
+    public void testHysteresisStaggeringPartitionsWithRollbackContended() throws Exception {
+        executeWithPool(0, (engine, compiler, sqlExecutionContext) -> {
             String sql = "create table x as (" +
                     "select" +
                     " cast(x as int) i," +
@@ -488,7 +478,7 @@ public class CommitHysteresisTest {
 
             try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "y")) {
                 sql = "select * from x where i>150 and i<200 order by f";
-                insertUncommitted(sql, writer);
+                insertUncommitted(compiler, sqlExecutionContext, sql, writer);
                 long lastTimestampHysteresisInMicros = (maxTimestamp - minTimestamp) / 2;
                 maxTimestamp -= lastTimestampHysteresisInMicros;
                 writer.commitWithHysteresis(lastTimestampHysteresisInMicros);
@@ -501,7 +491,7 @@ public class CommitHysteresisTest {
                 TestUtils.assertEquals(sink, "count\n175\n");
 
                 sql = "select * from x where i>=200 order by f";
-                insertUncommitted(sql, writer);
+                insertUncommitted(compiler, sqlExecutionContext, sql, writer);
                 lastTimestampHysteresisInMicros = (maxTimestamp - minTimestamp) / 2;
                 maxTimestamp -= lastTimestampHysteresisInMicros;
                 writer.commitWithHysteresis(lastTimestampHysteresisInMicros);
@@ -519,8 +509,8 @@ public class CommitHysteresisTest {
     }
 
     @Test
-    public void testHysteresisEndingAtPartitionBoundary() throws Exception {
-        executeVanilla(() -> {
+    public void testHysteresisEndingAtPartitionBoundaryContended() throws Exception {
+        executeWithPool(0, (engine, compiler, sqlExecutionContext) -> {
             String sql = "create table x as (" +
                     "select" +
                     " cast(x as int) i," +
@@ -554,7 +544,7 @@ public class CommitHysteresisTest {
 
             try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "y")) {
                 sql = "select * from x where i>150 and i<200 order by f";
-                insertUncommitted(sql, writer);
+                insertUncommitted(compiler, sqlExecutionContext, sql, writer);
                 long lastTimestampHysteresisInMicros = maxTimestamp - TimestampFormatUtils.parseTimestamp("1970-01-06T23:59:59.000Z");
                 maxTimestamp -= lastTimestampHysteresisInMicros;
                 writer.commitWithHysteresis(lastTimestampHysteresisInMicros);
@@ -563,7 +553,7 @@ public class CommitHysteresisTest {
                 TestUtils.assertEquals(sink, sink2);
 
                 sql = "select * from x where i>=200 order by f";
-                insertUncommitted(sql, writer);
+                insertUncommitted(compiler, sqlExecutionContext, sql, writer);
                 lastTimestampHysteresisInMicros = (maxTimestamp - minTimestamp) / 2;
                 maxTimestamp -= lastTimestampHysteresisInMicros;
                 writer.commitWithHysteresis(lastTimestampHysteresisInMicros);
@@ -582,8 +572,8 @@ public class CommitHysteresisTest {
 
     @Test
     @Ignore
-    public void testContinousBatchedCommit() throws Exception {
-        executeVanilla(() -> {
+    public void testContinuousBatchedCommitContended() throws Exception {
+        executeWithPool(0, (engine, compiler, sqlExecutionContext) -> {
             int nTotalRows = 50000;
             int nInitialStateRows = 150;
             long microsBetweenRows = 100000000;
@@ -654,7 +644,7 @@ public class CommitHysteresisTest {
 
                     LOG.info().$("inserting rows from ").$(fromRow).$(" to ").$(toRow).$();
                     sql = "select * from x where ts>=cast(" + fromRow * microsBetweenRows + " as timestamp) and ts<cast(" + toRow * microsBetweenRows + " as timestamp)";
-                    insertUncommitted(sql, writer);
+                    insertUncommitted(compiler, sqlExecutionContext, sql, writer);
 
                     nRowsAppended += toRow - fromRow;
                     if (nRowsAppended >= nRowsPerCommit) {
@@ -675,8 +665,8 @@ public class CommitHysteresisTest {
     }
 
     @Test
-    public void testHysteresisEndingAtPartitionBoundaryPlus1() throws Exception {
-        executeVanilla(() -> {
+    public void testHysteresisEndingAtPartitionBoundaryPlus1Contended() throws Exception {
+        executeWithPool(0, (engine, compiler, sqlExecutionContext) -> {
             String sql = "create table x as (" +
                     "select" +
                     " cast(x as int) i," +
@@ -710,7 +700,7 @@ public class CommitHysteresisTest {
 
             try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "y")) {
                 sql = "select * from x where i>150 and i<200 order by f";
-                insertUncommitted(sql, writer);
+                insertUncommitted(compiler, sqlExecutionContext, sql, writer);
                 long lastTimestampHysteresisInMicros = maxTimestamp - TimestampFormatUtils.parseTimestamp("1970-01-07T00:00:00.000Z");
                 maxTimestamp -= lastTimestampHysteresisInMicros;
                 writer.commitWithHysteresis(lastTimestampHysteresisInMicros);
@@ -719,7 +709,7 @@ public class CommitHysteresisTest {
                 TestUtils.assertEquals(sink, sink2);
 
                 sql = "select * from x where i>=200 order by f";
-                insertUncommitted(sql, writer);
+                insertUncommitted(compiler, sqlExecutionContext, sql, writer);
                 lastTimestampHysteresisInMicros = (maxTimestamp - minTimestamp) / 2;
                 maxTimestamp -= lastTimestampHysteresisInMicros;
                 writer.commitWithHysteresis(lastTimestampHysteresisInMicros);
@@ -737,8 +727,8 @@ public class CommitHysteresisTest {
     }
 
     @Test
-    public void testHysteresisEndingAtPartitionBoundaryPlus1WithRollback() throws Exception {
-        executeVanilla(() -> {
+    public void testHysteresisEndingAtPartitionBoundaryPlus1WithRollbackContended() throws Exception {
+        executeWithPool(0, (engine, compiler, sqlExecutionContext) -> {
             String sql = "create table x as (" +
                     "select" +
                     " cast(x as int) i," +
@@ -772,7 +762,7 @@ public class CommitHysteresisTest {
 
             try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "y")) {
                 sql = "select * from x where i>150 and i<200 order by f";
-                insertUncommitted(sql, writer);
+                insertUncommitted(compiler, sqlExecutionContext, sql, writer);
                 long lastTimestampHysteresisInMicros = maxTimestamp - TimestampFormatUtils.parseTimestamp("1970-01-07T00:00:00.000Z");
                 minTimestamp = maxTimestamp - lastTimestampHysteresisInMicros;
                 writer.commitWithHysteresis(lastTimestampHysteresisInMicros);
@@ -785,7 +775,7 @@ public class CommitHysteresisTest {
                 TestUtils.assertEquals(sink, "count\n185\n");
 
                 sql = "select * from x where i>=200 order by f";
-                insertUncommitted(sql, writer);
+                insertUncommitted(compiler, sqlExecutionContext, sql, writer);
                 lastTimestampHysteresisInMicros = (maxTimestamp - minTimestamp) / 2;
                 maxTimestamp -= lastTimestampHysteresisInMicros;
                 writer.commitWithHysteresis(lastTimestampHysteresisInMicros);
@@ -803,8 +793,8 @@ public class CommitHysteresisTest {
     }
 
     @Test
-    public void testHysteresisWithLargeOutOfOrder() throws Exception {
-        executeVanilla(() -> {
+    public void testHysteresisWithLargeOutOfOrderContended() throws Exception {
+        executeWithPool(0, (engine, compiler, sqlExecutionContext) -> {
             String sql = "create table x as (" +
                     "select" +
                     " cast(x as int) i," +
@@ -837,7 +827,7 @@ public class CommitHysteresisTest {
 
             try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "y")) {
                 sql = "select * from x where i>250 or (i>50 and i<100) order by f";
-                insertUncommitted(sql, writer);
+                insertUncommitted(compiler, sqlExecutionContext, sql, writer);
                 long lastTimestampHysteresisInMicros = (maxTimestamp - minTimestamp) / 2;
                 maxTimestamp -= lastTimestampHysteresisInMicros;
                 writer.commitWithHysteresis(lastTimestampHysteresisInMicros);
@@ -855,8 +845,8 @@ public class CommitHysteresisTest {
     }
 
     @Test
-    public void testHysteresisWithInOrderBatchFollowedByOutOfOrderBatch() throws Exception {
-        executeVanilla(() -> {
+    public void testHysteresisWithInOrderBatchFollowedByOutOfOrderBatchContended() throws Exception {
+        executeWithPool(0, (engine, compiler, sqlExecutionContext) -> {
             String sql = "create table x as (" +
                     "select" +
                     " cast(x as int) i," +
@@ -889,9 +879,9 @@ public class CommitHysteresisTest {
 
             try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "y")) {
                 sql = "select * from x where i>250 and i<300";
-                insertUncommitted(sql, writer);
+                insertUncommitted(compiler, sqlExecutionContext, sql, writer);
                 sql = "select * from x where i>=300 order by f";
-                insertUncommitted(sql, writer);
+                insertUncommitted(compiler, sqlExecutionContext, sql, writer);
                 long lastTimestampHysteresisInMicros = (maxTimestamp - minTimestamp) / 2;
                 maxTimestamp -= lastTimestampHysteresisInMicros;
                 writer.commitWithHysteresis(lastTimestampHysteresisInMicros);
@@ -909,8 +899,8 @@ public class CommitHysteresisTest {
     }
 
     @Test
-    public void testHysteresisEndingAtPartitionBoundaryWithRollback() throws Exception {
-        executeVanilla(() -> {
+    public void testHysteresisEndingAtPartitionBoundaryWithRollbackContended() throws Exception {
+        executeWithPool(0, (engine, compiler, sqlExecutionContext) -> {
             String sql = "create table x as (" +
                     "select" +
                     " cast(x as int) i," +
@@ -944,7 +934,7 @@ public class CommitHysteresisTest {
 
             try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "y")) {
                 sql = "select * from x where i>150 and i<200 order by f";
-                insertUncommitted(sql, writer);
+                insertUncommitted(compiler, sqlExecutionContext, sql, writer);
                 long lastTimestampHysteresisInMicros = maxTimestamp - TimestampFormatUtils.parseTimestamp("1970-01-06T23:59:59.000Z");
                 minTimestamp = maxTimestamp - lastTimestampHysteresisInMicros;
                 writer.commitWithHysteresis(lastTimestampHysteresisInMicros);
@@ -957,7 +947,7 @@ public class CommitHysteresisTest {
                 TestUtils.assertEquals(sink, "count\n184\n");
 
                 sql = "select * from x where i>=200 order by f";
-                insertUncommitted(sql, writer);
+                insertUncommitted(compiler, sqlExecutionContext, sql, writer);
                 lastTimestampHysteresisInMicros = (maxTimestamp - minTimestamp) / 2;
                 maxTimestamp -= lastTimestampHysteresisInMicros;
                 writer.commitWithHysteresis(lastTimestampHysteresisInMicros);
@@ -974,7 +964,12 @@ public class CommitHysteresisTest {
         });
     }
 
-    protected void insertUncommitted(String sql, TableWriter writer) throws SqlException {
+    private void insertUncommitted(
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext,
+            String sql,
+            TableWriter writer
+    ) throws SqlException {
         minTimestamp = Long.MAX_VALUE;
         maxTimestamp = Long.MIN_VALUE;
         try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
@@ -1006,58 +1001,5 @@ public class CommitHysteresisTest {
     @Before
     public void clearRecordToRowCopier() {
         copier = null;
-    }
-
-    @Before
-    public void before() throws IOException {
-        LOG.info().$("begin").$();
-        // instantiate these paths so that they are not included in memory leak test
-        Path.PATH.get();
-        Path.PATH2.get();
-
-        CharSequence root = temp.newFolder().getAbsolutePath();
-        configuration = new DefaultCairoConfiguration(root) {
-            @Override
-            public boolean isOutOfOrderEnabled() {
-                return true;
-            }
-        };
-
-        engine = new CairoEngine(configuration);
-        BindVariableService bindVariableService = new BindVariableServiceImpl(configuration);
-        compiler = new SqlCompiler(engine);
-        sqlExecutionContext = new SqlExecutionContextImpl(
-                engine, 1)
-                        .with(
-                                AllowAllCairoSecurityContext.INSTANCE,
-                                bindVariableService,
-                                null,
-                                -1,
-                                null);
-        bindVariableService.clear();
-
-        SharedRandom.RANDOM.set(new Rnd());
-    }
-
-    @After
-    public void after() {
-        LOG.info().$("finished").$();
-        Misc.free(compiler);
-        Misc.free(engine);
-    }
-
-    private void executeVanilla(TestUtils.LeakProneCode code) throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try {
-                OutOfOrderUtils.initBuf();
-                code.run();
-                engine.releaseInactive();
-                Assert.assertEquals(0, engine.getBusyWriterCount());
-                Assert.assertEquals(0, engine.getBusyReaderCount());
-            } finally {
-                engine.clear();
-                OutOfOrderUtils.freeBuf();
-            }
-        });
     }
 }

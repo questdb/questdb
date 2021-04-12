@@ -189,11 +189,6 @@ public class OutOfOrderFailureTest extends AbstractOutOfOrderTest {
         }
     };
 
-    @Before
-    public void setUp3() {
-        super.setUp3();
-    }
-
     @Test
     public void testColumnTopLastDataOOODataFailRetryCantWriteTop() throws Exception {
         counter.set(1);
