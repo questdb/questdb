@@ -134,6 +134,7 @@ public class TableWriter implements Closeable {
     private long lockFd;
     private LongConsumer timestampSetter;
     private LongConsumer prevTimestampSetter;
+    private final LongConsumer appendTimestampSetter;
     private int columnCount;
     private RowFunction rowFunction = openPartitionFunction;
     private boolean avoidIndexOnCommit = false;
@@ -268,6 +269,7 @@ public class TableWriter implements Closeable {
 
             configureColumnMemory();
             timestampSetter = configureTimestampSetter();
+            this.appendTimestampSetter = timestampSetter;
             this.txFile.readRowCounts();
             configureAppendPosition();
             purgeUnusedPartitions();
@@ -671,7 +673,7 @@ public class TableWriter implements Closeable {
      * <b>Pending rows</b>
      * <p>This method will cancel pending rows by calling {@link #cancelRow()}. Data in partially appended row will be lost.</p>
      *
-     * @param commitMode commit durability mode.
+     * @param commitMode                      commit durability mode.
      * @param lastTimestampHysteresisInMicros if > 0 then do a partial commit, leaving the rows within the hysteresis in a new uncommitted transaction
      */
     private void commit(int commitMode, long lastTimestampHysteresisInMicros) {
@@ -685,7 +687,7 @@ public class TableWriter implements Closeable {
         if (inTransaction()) {
 
             if (oooRowCount > 0) {
-                oooProcess(lastTimestampHysteresisInMicros);
+                o3Process(lastTimestampHysteresisInMicros);
             }
 
             if (commitMode != CommitMode.NOSYNC) {
@@ -1620,7 +1622,6 @@ public class TableWriter implements Closeable {
     }
 
     private void configureAppendPosition() {
-//        this.txFile.readUnchecked();
         if (this.txFile.getMaxTimestamp() > Long.MIN_VALUE || partitionBy == PartitionBy.NONE) {
             openFirstPartition(this.txFile.getMaxTimestamp());
             if (partitionBy == PartitionBy.NONE) {
@@ -1628,12 +1629,15 @@ public class TableWriter implements Closeable {
                     rowFunction = noTimestampFunction;
                 } else {
                     rowFunction = noPartitionFunction;
+                    timestampSetter = appendTimestampSetter;
                 }
             } else {
                 rowFunction = switchPartitionFunction;
+                timestampSetter = appendTimestampSetter;
             }
         } else {
             rowFunction = openPartitionFunction;
+            timestampSetter = appendTimestampSetter;
         }
     }
 
@@ -2312,7 +2316,7 @@ public class TableWriter implements Closeable {
         }
     }
 
-    private void oooMoveUncommittedInOrderRowsToMergeSpace(final int timestampIndex) {
+    private void o3MoveUncommitted(final int timestampIndex) {
         // Move uncommitted (in order) rows from the end of the last committed column files into the reorder memory
         // TODO use memcpy and make parallel
         long committedTransientRowCount = txFile.getCommittedTransientRowCount();
@@ -2375,7 +2379,7 @@ public class TableWriter implements Closeable {
         }
     }
 
-    private void oooProcess(long lastTimestampHysteresisInMicros) {
+    private void o3Process(long lastTimestampHysteresisInMicros) {
         o3PartitionRemoveCandidates.clear();
         oooErrorCount.set(0);
         final int workerId;
@@ -2387,11 +2391,13 @@ public class TableWriter implements Closeable {
         }
 
         final int timestampIndex = metadata.getTimestampIndex();
-        final long maxTimestamp = txFile.getMaxTimestamp();
+        long maxTimestamp = txFile.getMaxTimestamp();
+        this.lastPartitionTimestamp = timestampFloorMethod.floor(maxTimestamp);
         try {
-//            if (lastTimestampHysteresisInMicros > 0 && txFile.getAppendedPartitionCount() == 1) {
-                oooMoveUncommittedInOrderRowsToMergeSpace(timestampIndex);
-//            }
+            o3MoveUncommitted(timestampIndex);
+            // move uncommitted is liable to change max timestamp
+            // however we need to identify last partition before max timestamp skips to NULL for example
+            maxTimestamp = txFile.getMaxTimestamp();
 
             // we may need to re-use file descriptors when this partition is the "current" one
             // we cannot open file again due to sharing violation
@@ -2403,7 +2409,7 @@ public class TableWriter implements Closeable {
             final long sortedTimestampsAddr = timestampMergeMem.addressOf(0);
             Vect.sortLongIndexAscInPlace(sortedTimestampsAddr, oooRowCount);
             // reshuffle all variable length columns
-            oooSortParallel(sortedTimestampsAddr, timestampIndex);
+            o3Sort(sortedTimestampsAddr, timestampIndex);
             Vect.flattenIndex(sortedTimestampsAddr, oooRowCount);
 
             // we have three frames:
@@ -2422,7 +2428,6 @@ public class TableWriter implements Closeable {
             final long srcOooMax = oooRowCount;
             final long oooTimestampMin = getTimestampIndexValue(sortedTimestampsAddr, 0);
             final long oooTimestampMax = getTimestampIndexValue(sortedTimestampsAddr, srcOooMax - 1);
-            this.lastPartitionTimestamp = timestampFloorMethod.floor(maxTimestamp);
             final RingQueue<OutOfOrderPartitionTask> oooPartitionQueue = messageBus.getOutOfOrderPartitionQueue();
             final Sequence oooPartitionPubSeq = messageBus.getOutOfOrderPartitionPubSeq();
             this.oooLatch.reset();
@@ -2692,7 +2697,7 @@ public class TableWriter implements Closeable {
         mem2.replacePage(src, srcSize);
     }
 
-    private void oooSortParallel(long mergedTimestamps, int timestampIndex) {
+    private void o3Sort(long mergedTimestamps, int timestampIndex) {
         oooPendingSortTasks.clear();
 
         final Sequence pubSeq = this.messageBus.getOutOfOrderSortPubSeq();
