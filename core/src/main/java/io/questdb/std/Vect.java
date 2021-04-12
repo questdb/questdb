@@ -91,6 +91,8 @@ public final class Vect {
 
     public static native long makeTimestampIndex(long pData, long low, long high, long pIndex);
 
+    public static native long shiftTimestampIndex(long pSrc, long count, long pDest);
+
     public static native double maxDouble(long pDouble, long count);
 
     public static native int maxInt(long pInt, long count);

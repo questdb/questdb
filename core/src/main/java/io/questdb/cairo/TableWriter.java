@@ -2614,6 +2614,12 @@ public class TableWriter implements Closeable {
 
     private void o3cleanupBeyondHysteresisRowsParallel(int timestampIndex) {
         long sourceOffset = oooRowCount << 4;
+
+        // TODO: replace below block with C call when hysteresis is stable:
+        //        long mergeMemAddr = timestampMergeMem.addressOf(0);
+        //        Vect.shiftTimestampIndex(mergeMemAddr + sourceOffset, oooBeyondHysteresisRowCount, mergeMemAddr);
+        //        timestampMergeMem.jumpTo(oooBeyondHysteresisRowCount << 4);
+
         timestampMergeMem.jumpTo(0);
         for (int n = 0; n < oooBeyondHysteresisRowCount; n++) {
             long ts = timestampMergeMem.getLong(sourceOffset);

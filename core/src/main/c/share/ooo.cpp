@@ -362,7 +362,7 @@ void k_way_merge_long_index(
 }
 
 #ifdef OOO_CPP_PROFILE_TIMING
-const int perf_counter_length = 31;
+const int perf_counter_length = 32;
 std::atomic_ulong perf_counters[perf_counter_length];
 
 uint64_t currentTimeNanos() {
@@ -698,6 +698,18 @@ Java_io_questdb_std_Vect_makeTimestampIndex(JNIEnv *env, jclass cl, jlong pData,
                 low,
                 high,
                 reinterpret_cast<index_t *>(pIndex)
+        );
+    });
+}
+
+DECLARE_DISPATCHER(shift_timestamp_index);
+JNIEXPORT void JNICALL
+Java_io_questdb_std_Vect_shiftTimestampIndex(JNIEnv *env, jclass cl, jlong pSrc, jlong count, jlong pDest) {
+    measure_time(31, [=]() {
+        shift_timestamp_index(
+                reinterpret_cast<index_t *>(pSrc),
+                __JLONG_REINTERPRET_CAST__(int64_t, count),
+                reinterpret_cast<index_t *>(pDest)
         );
     });
 }

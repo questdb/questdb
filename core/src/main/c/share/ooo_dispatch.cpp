@@ -391,6 +391,15 @@ void MULTI_VERSION_NAME (make_timestamp_index)(const int64_t *data, int64_t low,
     }
 }
 
+//31
+void MULTI_VERSION_NAME(shift_timestamp_index) (const index_t *src, int64_t count, index_t *dest) {
+    // Same as vanilla, not expected to be big arrays
+    for (int64_t l = 0; l < count; l++) {
+        dest[l].ts = src[l].ts;
+        dest[l].i = l;
+    }
+}
+
 // 19
 void MULTI_VERSION_NAME (set_memory_vanilla_int64)(int64_t *data, const int64_t value, const int64_t count) {
     set_memory_vanilla<int64_t, Vec8q>(data, value, count);

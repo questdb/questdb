@@ -159,6 +159,14 @@ void make_timestamp_index(const int64_t *data, int64_t low, int64_t high, index_
     }
 }
 
+// 31
+void shift_timestamp_index(const index_t *data, int64_t count, index_t *dest) {
+    for (int64_t l = 0; l < count; l++) {
+        dest[l].ts = data[l].ts;
+        dest[l].i = l;
+    }
+}
+
 // 19
 void set_memory_vanilla_int64(int64_t *data, const int64_t value, const int64_t count) {
     set_memory_vanilla<int64_t>(data, value, count);
