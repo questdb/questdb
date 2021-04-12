@@ -2276,11 +2276,97 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testInsertAsSelectBadBatchSize() throws Exception {
+        assertSyntaxError(
+                "insert batch 2a hysteresis 100000 into x select * from y",
+                13, "bad long integer",
+                modelOf("x")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.STRING),
+                modelOf("y")
+                        .col("c", ColumnType.INT)
+                        .col("d", ColumnType.STRING)
+        );
+    }
+
+    @Test
+    public void testInsertAsSelectBadHysteresis() throws Exception {
+        assertSyntaxError(
+                "insert batch 2 hysteresis aa into x select * from y",
+                26, "bad long integer",
+                modelOf("x")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.STRING),
+                modelOf("y")
+                        .col("c", ColumnType.INT)
+                        .col("d", ColumnType.STRING)
+        );
+    }
+
+    @Test
+    public void testInsertAsSelectBatchSize() throws SqlException {
+        assertModel(
+                "insert batch 15000 into x select-choose c, d from (select [c, d] from y)",
+                "insert batch 15000 into x select * from y",
+                ExecutionModel.INSERT,
+                modelOf("x")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.STRING),
+                modelOf("y")
+                        .col("c", ColumnType.INT)
+                        .col("d", ColumnType.STRING)
+        );
+    }
+
+    @Test
+    public void testInsertAsSelectBatchSizeAndHysteresis() throws SqlException {
+        assertModel(
+                "insert batch 10000 hysteresis 100000 into x select-choose c, d from (select [c, d] from y)",
+                "insert batch 10000 hysteresis 100000 into x select * from y",
+                ExecutionModel.INSERT,
+                modelOf("x")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.STRING),
+                modelOf("y")
+                        .col("c", ColumnType.INT)
+                        .col("d", ColumnType.STRING)
+        );
+    }
+
+    @Test
     public void testInsertAsSelectColumnList() throws SqlException {
         assertModel(
                 "insert into x (a, b) select-choose c, d from (select [c, d] from y)",
                 "insert into x (a,b) select * from y",
                 ExecutionModel.INSERT,
+                modelOf("x")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.STRING),
+                modelOf("y")
+                        .col("c", ColumnType.INT)
+                        .col("d", ColumnType.STRING)
+        );
+    }
+
+    @Test
+    public void testInsertAsSelectNegativeBatchSize() throws Exception {
+        assertSyntaxError(
+                "insert batch -25 hysteresis 100000 into x select * from y",
+                14, "must be positive",
+                modelOf("x")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.STRING),
+                modelOf("y")
+                        .col("c", ColumnType.INT)
+                        .col("d", ColumnType.STRING)
+        );
+    }
+
+    @Test
+    public void testInsertAsSelectNegativeHysteresis() throws Exception {
+        assertSyntaxError(
+                "insert batch 2 hysteresis -4 into x select * from y",
+                27, "hysteresis must be a positive integer microseconds",
                 modelOf("x")
                         .col("a", ColumnType.INT)
                         .col("b", ColumnType.STRING),

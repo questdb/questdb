@@ -39,31 +39,43 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.Nullable;
-import org.junit.Assert;
-import org.junit.Before;
+import org.junit.*;
+import org.junit.rules.TemporaryFolder;
 
 import java.io.File;
+import java.io.IOException;
 import java.net.URISyntaxException;
 import java.net.URL;
 
-public class AbstractOutOfOrderTest extends AbstractCairoTest {
+public class AbstractOutOfOrderTest {
+    protected static final StringSink sink = new StringSink();
     protected static final StringSink sink2 = new StringSink();
     private final static Log LOG = LogFactory.getLog(OutOfOrderTest.class);
+    @ClassRule
+    public static TemporaryFolder temp = new TemporaryFolder();
+    protected static CharSequence root;
+
+    @BeforeClass
+    public static void setupStatic() {
+        try {
+            root = temp.newFolder("dbRoot").getAbsolutePath();
+        } catch (IOException e) {
+            throw new RuntimeException();
+        }
+    }
 
     @Before
-    public void setUp3() {
-        configuration = new DefaultCairoConfiguration(root) {
-            @Override
-            public boolean isOutOfOrderEnabled() {
-                return true;
-            }
-        };
-
+    public void setUp() {
         SharedRandom.RANDOM.set(new Rnd());
-
         // instantiate these paths so that they are not included in memory leak test
         Path.PATH.get();
         Path.PATH2.get();
+        TestUtils.createTestPath(root);
+    }
+
+    @After
+    public void tearDown() {
+        TestUtils.removeTestPath(root);
     }
 
     protected static void assertSqlCursors(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, String expected, String actual) throws SqlException {
@@ -90,11 +102,30 @@ public class AbstractOutOfOrderTest extends AbstractCairoTest {
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        AbstractOutOfOrderTest.assertIndexConsistency(
+        assertIndexConsistency(
                 compiler,
                 sqlExecutionContext,
                 "y"
         );
+    }
+
+    protected static void assertIndexConsistencySink(
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
+        printSqlResult(
+                compiler,
+                sqlExecutionContext,
+                "y where sym = 'googl' order by ts"
+        );
+
+        TestUtils.printSql(
+                compiler,
+                sqlExecutionContext,
+                "x where sym = 'googl'",
+                sink2
+        );
+        TestUtils.assertEquals(sink, sink2);
     }
 
     protected static void printSqlResult(
@@ -102,7 +133,7 @@ public class AbstractOutOfOrderTest extends AbstractCairoTest {
             SqlExecutionContext sqlExecutionContext,
             String sql
     ) throws SqlException {
-        TestUtils.printSql(compiler, sqlExecutionContext, sql, AbstractCairoTest.sink);
+        TestUtils.printSql(compiler, sqlExecutionContext, sql, sink);
     }
 
     protected static void assertIndexResultAgainstFile(
@@ -247,7 +278,7 @@ public class AbstractOutOfOrderTest extends AbstractCairoTest {
                     }
 
                     @Override
-                    public int getO3SortQueueCapacity() {
+                    public int getO3CallbackQueueCapacity() {
                         return 0;
                     }
 
@@ -286,20 +317,6 @@ public class AbstractOutOfOrderTest extends AbstractCairoTest {
         });
     }
 
-    protected static void execute0(OutOfOrderCode runnable, CairoConfiguration configuration) throws Exception {
-        try (
-                final CairoEngine engine = new CairoEngine(configuration);
-                final SqlCompiler compiler = new SqlCompiler(engine);
-                final SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
-        ) {
-            runnable.run(engine, compiler, sqlExecutionContext);
-            Assert.assertEquals(0, engine.getBusyWriterCount());
-            Assert.assertEquals(0, engine.getBusyReaderCount());
-        } finally {
-            OutOfOrderUtils.freeBuf();
-        }
-    }
-
     protected static void execute1(@Nullable WorkerPool pool, OutOfOrderCode runnable, CairoConfiguration configuration) throws Exception {
         try (
                 final CairoEngine engine = new CairoEngine(configuration);
@@ -309,7 +326,7 @@ public class AbstractOutOfOrderTest extends AbstractCairoTest {
             try (O3PurgeCleaner ignored = new O3PurgeCleaner(engine.getMessageBus())) {
                 if (pool != null) {
                     pool.assignCleaner(Path.CLEANER);
-                    pool.assign(new OutOfOrderSortJob(engine.getMessageBus()));
+                    pool.assign(new OutOfOrderColumnUpdateJob(engine.getMessageBus()));
                     pool.assign(new OutOfOrderPartitionJob(engine.getMessageBus()));
                     pool.assign(new OutOfOrderOpenColumnJob(engine.getMessageBus()));
                     pool.assign(new OutOfOrderCopyJob(engine.getMessageBus()));
@@ -335,6 +352,47 @@ public class AbstractOutOfOrderTest extends AbstractCairoTest {
     }
 
     protected static void executeVanilla(OutOfOrderCode code) throws Exception {
-        executeVanilla(() -> execute1(null, code, configuration));
+        executeVanilla(() -> execute1(null, code, new DefaultCairoConfiguration(root) {
+            @Override
+            public boolean isOutOfOrderEnabled() {
+                return true;
+            }
+        }));
+    }
+
+    static void assertOutOfOrderDataConsistency(
+            final CairoEngine engine,
+            final SqlCompiler compiler,
+            final SqlExecutionContext sqlExecutionContext,
+            final String referenceTableDDL,
+            final String outOfOrderInsertSQL
+    ) throws SqlException {
+        // create third table, which will contain both X and 1AM
+        compiler.compile(referenceTableDDL, sqlExecutionContext);
+
+        // expected outcome
+        printSqlResult(compiler, sqlExecutionContext, "y order by ts");
+
+        compiler.compile(outOfOrderInsertSQL, sqlExecutionContext);
+
+        TestUtils.printSql(
+                compiler,
+                sqlExecutionContext,
+                "x",
+                sink2
+        );
+
+        TestUtils.assertEquals(sink, sink2);
+
+        engine.releaseAllReaders();
+
+        TestUtils.printSql(
+                compiler,
+                sqlExecutionContext,
+                "x",
+                sink2
+        );
+
+        TestUtils.assertEquals(sink, sink2);
     }
 }

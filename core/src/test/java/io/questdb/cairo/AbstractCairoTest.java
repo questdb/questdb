@@ -29,11 +29,9 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
-import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.Nullable;
@@ -101,20 +99,14 @@ public class AbstractCairoTest {
 
     @Before
     public void setUp() {
-        try (Path path = new Path().of(root).$()) {
-            if (Files.exists(path)) {
-                return;
-            }
-            Files.mkdirs(path.of(root).$$dir(), configuration.getMkDirMode());
-        }
+        TestUtils.createTestPath(root);
     }
 
     @After
     public void tearDown() {
         engine.resetTableId();
         engine.clear();
-        Path path = Path.getThreadLocal(root);
-        Files.rmdir(path.$());
+        TestUtils.removeTestPath(root);
     }
 
     protected static void assertMemoryLeak(TestUtils.LeakProneCode code) throws Exception {

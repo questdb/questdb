@@ -468,6 +468,20 @@ public final class TestUtils {
         } return Integer.parseInt(version);
     }
 
+    public static void createTestPath(CharSequence root) {
+        try (Path path = new Path().of(root).$()) {
+            if (Files.exists(path)) {
+                return;
+            }
+            Files.mkdirs(path.of(root).$$dir(), 509);
+        }
+    }
+
+    public static void removeTestPath(CharSequence root) {
+        Path path = Path.getThreadLocal(root);
+        Files.rmdir(path.$());
+    }
+
     @FunctionalInterface
     public interface LeakProneCode {
         void run() throws Exception;

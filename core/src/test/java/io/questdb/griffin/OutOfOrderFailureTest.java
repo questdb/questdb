@@ -189,11 +189,6 @@ public class OutOfOrderFailureTest extends AbstractOutOfOrderTest {
         }
     };
 
-    @Before
-    public void setUp3() {
-        super.setUp3();
-    }
-
     @Test
     public void testColumnTopLastDataOOODataFailRetryCantWriteTop() throws Exception {
         counter.set(1);
@@ -1066,42 +1061,6 @@ public class OutOfOrderFailureTest extends AbstractOutOfOrderTest {
         );
 
         assertIndexConsistency(compiler, sqlExecutionContext);
-    }
-
-    private static void assertOutOfOrderDataConsistency(
-            final CairoEngine engine,
-            final SqlCompiler compiler,
-            final SqlExecutionContext sqlExecutionContext,
-            final String referenceTableDDL,
-            final String outOfOrderInsertSQL
-    ) throws SqlException {
-        // create third table, which will contain both X and 1AM
-        compiler.compile(referenceTableDDL, sqlExecutionContext);
-
-        // expected outcome
-        printSqlResult(compiler, sqlExecutionContext, "y order by ts");
-
-        compiler.compile(outOfOrderInsertSQL, sqlExecutionContext);
-
-        TestUtils.printSql(
-                compiler,
-                sqlExecutionContext,
-                "x",
-                sink2
-        );
-
-        TestUtils.assertEquals(sink, sink2);
-
-        engine.releaseAllReaders();
-
-        TestUtils.printSql(
-                compiler,
-                sqlExecutionContext,
-                "x",
-                sink2
-        );
-
-        TestUtils.assertEquals(sink, sink2);
     }
 
     private static void testPartitionedDataAppendOODataIndexedFailRetry0(

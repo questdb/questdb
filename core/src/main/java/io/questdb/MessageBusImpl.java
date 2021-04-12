@@ -43,9 +43,9 @@ public class MessageBusImpl implements MessageBus {
     private final MPSequence tableBlockWriterPubSeq;
     private final MCSequence tableBlockWriterSubSeq;
 
-    private final RingQueue<OutOfOrderSortTask> outOfOrderSortQueue;
-    private final MPSequence outOfOrderSortPubSeq;
-    private final MCSequence outOfOrderSortSubSeq;
+    private final RingQueue<O3CallbackTask> o3CallbackQueue;
+    private final MPSequence o3CallbackPubSeq;
+    private final MCSequence o3CallbackSubSeq;
 
     private final RingQueue<O3PurgeDiscoveryTask> o3PurgeDiscoveryQueue;
     private final MPSequence o3PurgeDiscoveryPubSeq;
@@ -90,10 +90,10 @@ public class MessageBusImpl implements MessageBus {
         this.tableBlockWriterSubSeq = new MCSequence(tableBlockWriterQueue.getCapacity());
         tableBlockWriterPubSeq.then(tableBlockWriterSubSeq).then(tableBlockWriterPubSeq);
 
-        this.outOfOrderSortQueue = new RingQueue<>(OutOfOrderSortTask::new, configuration.getO3SortQueueCapacity());
-        this.outOfOrderSortPubSeq = new MPSequence(this.outOfOrderSortQueue.getCapacity());
-        this.outOfOrderSortSubSeq = new MCSequence(this.outOfOrderSortQueue.getCapacity());
-        outOfOrderSortPubSeq.then(outOfOrderSortSubSeq).then(outOfOrderSortPubSeq);
+        this.o3CallbackQueue = new RingQueue<>(O3CallbackTask::new, configuration.getO3CallbackQueueCapacity());
+        this.o3CallbackPubSeq = new MPSequence(this.o3CallbackQueue.getCapacity());
+        this.o3CallbackSubSeq = new MCSequence(this.o3CallbackQueue.getCapacity());
+        o3CallbackPubSeq.then(o3CallbackSubSeq).then(o3CallbackPubSeq);
 
         this.outOfOrderPartitionQueue = new RingQueue<>(OutOfOrderPartitionTask::new, configuration.getO3PartitionQueueCapacity());
         this.outOfOrderPartitionPubSeq = new MPSequence(this.outOfOrderPartitionQueue.getCapacity());
@@ -127,18 +127,18 @@ public class MessageBusImpl implements MessageBus {
     }
 
     @Override
-    public MPSequence getOutOfOrderSortPubSeq() {
-        return outOfOrderSortPubSeq;
+    public MPSequence getO3CallbackPubSeq() {
+        return o3CallbackPubSeq;
     }
 
     @Override
-    public RingQueue<OutOfOrderSortTask> getOutOfOrderSortQueue() {
-        return outOfOrderSortQueue;
+    public RingQueue<O3CallbackTask> getO3CallbackQueue() {
+        return o3CallbackQueue;
     }
 
     @Override
-    public MCSequence getOutOfOrderSortSubSeq() {
-        return outOfOrderSortSubSeq;
+    public MCSequence getO3CallbackSubSeq() {
+        return o3CallbackSubSeq;
     }
 
     @Override

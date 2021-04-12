@@ -163,21 +163,17 @@ public final class TxWriter extends TxReader implements Closeable {
         Unsafe.getUnsafe().storeFence();
 
         txMem.putLong(TX_OFFSET_TRANSIENT_ROW_COUNT, transientRowCount);
-        txMem.putLong(TX_OFFSET_PARTITION_TABLE_VERSION, this.partitionTableVersion);
-
-        if (txPartitionCount > 1) {
-            txMem.putLong(TX_OFFSET_FIXED_ROW_COUNT, fixedRowCount);
-            txPartitionCount = 1;
-        }
-
+        txMem.putLong(TX_OFFSET_FIXED_ROW_COUNT, fixedRowCount);
         txMem.putLong(TX_OFFSET_MIN_TIMESTAMP, minTimestamp);
         txMem.putLong(TX_OFFSET_MAX_TIMESTAMP, maxTimestamp);
+        txMem.putLong(TX_OFFSET_PARTITION_TABLE_VERSION, this.partitionTableVersion);
 
         // store symbol counts
         storeSymbolCounts(denseSymbolMapWriters);
 
         // store attached partitions
         symbolsCount = denseSymbolMapWriters.size();
+        txPartitionCount = 1;
         saveAttachedPartitionsToTx(symbolsCount);
 
         Unsafe.getUnsafe().storeFence();
@@ -331,9 +327,20 @@ public final class TxWriter extends TxReader implements Closeable {
         txMem.putInt(getSymbolWriterTransientIndexOffset(symbolIndex), symCount);
     }
 
+    void append(long nRows) {
+        transientRowCount += nRows;
+    }
 
     void bumpPartitionTableVersion() {
         partitionTableVersion++;
+    }
+
+    long getCommittedFixedRowCount() {
+        return txMem.getLong(TX_OFFSET_FIXED_ROW_COUNT);
+    }
+
+    long getCommittedTransientRowCount() {
+        return txMem.getLong(TX_OFFSET_TRANSIENT_ROW_COUNT);
     }
 
     private int insertPartitionSizeByTimestamp(int index, long partitionTimestamp, long partitionSize) {
@@ -346,6 +353,13 @@ public final class TxWriter extends TxReader implements Closeable {
         }
         initPartitionAt(index, partitionTimestamp, partitionSize);
         return index;
+    }
+
+    void resetToLastPartition(long committedTransientRowCount) {
+        updatePartitionSizeByTimestamp(maxTimestamp, committedTransientRowCount);
+        prevMaxTimestamp = txMem.getLong(TX_OFFSET_MAX_TIMESTAMP);
+        maxTimestamp = prevMaxTimestamp;
+        transientRowCount = committedTransientRowCount;
     }
 
     private void saveAttachedPartitionsToTx(int symCount) {

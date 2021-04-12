@@ -77,6 +77,8 @@ DECLARE_DISPATCHER_TYPE(set_memory_vanilla_short, int16_t *data, const int16_t v
 
 DECLARE_DISPATCHER_TYPE(make_timestamp_index, const int64_t *data, int64_t low, int64_t high, index_t *dest);
 
+DECLARE_DISPATCHER_TYPE(shift_timestamp_index, const index_t *data, int64_t count, index_t *dest);
+
 DECLARE_DISPATCHER_TYPE(flatten_index, index_t *index, int64_t count);
 
 DECLARE_DISPATCHER_TYPE(merge_shuffle_int64, const int64_t *src1, const int64_t *src2, int64_t *dest,

@@ -24,6 +24,7 @@
 
 package io.questdb.tasks;
 
+import io.questdb.cairo.BitmapIndexWriter;
 import io.questdb.cairo.TableWriter;
 import io.questdb.mp.SOUnboundedCountDownLatch;
 import io.questdb.std.AbstractLockable;
@@ -79,6 +80,7 @@ public class OutOfOrderCopyTask extends AbstractLockable {
     private long srcTimestampSize;
     private boolean partitionMutates;
     private TableWriter tableWriter;
+    private BitmapIndexWriter indexWriter;
     private SOUnboundedCountDownLatch doneLatch;
 
     public int getBlockType() {
@@ -253,6 +255,10 @@ public class OutOfOrderCopyTask extends AbstractLockable {
         return tableWriter;
     }
 
+    public BitmapIndexWriter getIndexWriter() {
+        return indexWriter;
+    }
+
     public long getTimestampMax() {
         return timestampMax;
     }
@@ -321,6 +327,7 @@ public class OutOfOrderCopyTask extends AbstractLockable {
             long srcTimestampSize,
             boolean partitionMutates,
             TableWriter tableWriter,
+            BitmapIndexWriter indexWriter,
             SOUnboundedCountDownLatch doneLatch
     ) {
         this.columnCounter = columnCounter;
@@ -370,6 +377,7 @@ public class OutOfOrderCopyTask extends AbstractLockable {
         this.srcTimestampSize = srcTimestampSize;
         this.partitionMutates = partitionMutates;
         this.tableWriter = tableWriter;
+        this.indexWriter = indexWriter;
         this.doneLatch = doneLatch;
     }
 }

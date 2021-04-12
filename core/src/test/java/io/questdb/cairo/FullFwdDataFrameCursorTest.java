@@ -2542,17 +2542,17 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
         }
 
         @Override
-        public MPSequence getOutOfOrderSortPubSeq() {
+        public MPSequence getO3CallbackPubSeq() {
             return null;
         }
 
         @Override
-        public RingQueue<OutOfOrderSortTask> getOutOfOrderSortQueue() {
+        public RingQueue<O3CallbackTask> getO3CallbackQueue() {
             return null;
         }
 
         @Override
-        public MCSequence getOutOfOrderSortSubSeq() {
+        public MCSequence getO3CallbackSubSeq() {
             return null;
         }
 
