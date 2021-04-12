@@ -129,6 +129,7 @@ public class TableWriter implements Closeable {
     private final FindVisitor removePartitionDirsNotAttached = this::removePartitionDirsNotAttached;
     private final long txnScoreboard;
     private final LongList o3PartitionRemoveCandidates = new LongList();
+    private final OutOfOrderSortMethod columnCleanupBeyondHysteresisMethod = this::columnCleanupBeyondHysteresis;
     private long todoTxn;
     private ContiguousVirtualMemory timestampMergeMem;
     private long lockFd;
@@ -2552,7 +2553,7 @@ public class TableWriter implements Closeable {
             }
 
             if (oooBeyondHysteresisRowCount > 0) {
-                oooCleanupBeyondHysteresisRows(timestampIndex);
+                oooCleanupBeyondHysteresisRowsParallel(timestampIndex);
             }
         } finally {
             if (denseIndexers.size() == 0) {
@@ -2615,6 +2616,92 @@ public class TableWriter implements Closeable {
             }
         }
     }
+
+    private void oooCleanupBeyondHysteresisRowsParallel(int timestampIndex) {
+        long sourceOffset = oooRowCount << 4;
+        timestampMergeMem.jumpTo(0);
+        for (int n = 0; n < oooBeyondHysteresisRowCount; n++) {
+            long ts = timestampMergeMem.getLong(sourceOffset);
+            timestampMergeMem.putLong(ts);
+            timestampMergeMem.putLong(n);
+            sourceOffset += Long.BYTES + Long.BYTES;
+        }
+
+        oooPendingSortTasks.clear();
+
+        final Sequence pubSeq = this.messageBus.getOutOfOrderSortPubSeq();
+        final RingQueue<OutOfOrderSortTask> queue = this.messageBus.getOutOfOrderSortQueue();
+
+        oooLatch.reset();
+        int queuedCount = 0;
+        for (int colIndex = 0; colIndex < columnCount; colIndex++) {
+            if (colIndex != timestampIndex) {
+                int type = metadata.getColumnType(colIndex);
+                int pow2ColSize = ColumnType.pow2SizeOf(type);
+
+                long cursor = -1;
+                if (cursor > -1) {
+                    try {
+                        final OutOfOrderSortTask task = queue.get(cursor);
+                        task.of(
+                                oooLatch,
+                                colIndex,
+                                pow2ColSize,
+                                sourceOffset,
+                                oooBeyondHysteresisRowCount,
+                                null,
+                                this.columnCleanupBeyondHysteresisMethod
+                        );
+
+                        oooPendingSortTasks.add(task);
+                    } finally {
+                        queuedCount++;
+                        pubSeq.done(cursor);
+                    }
+                } else {
+                    columnCleanupBeyondHysteresis(colIndex, -1, oooBeyondHysteresisRowCount, pow2ColSize, null);
+                }
+            }
+        }
+
+        for (int n = oooPendingSortTasks.size() - 1; n > -1; n--) {
+            final OutOfOrderSortTask task = oooPendingSortTasks.getQuick(n);
+            if (task.tryLock()) {
+                OutOfOrderSortJob.doSort(
+                        task,
+                        -1,
+                        null
+                );
+            }
+        }
+
+        oooLatch.await(queuedCount);
+    }
+
+    private void columnCleanupBeyondHysteresis(int columnIndex,
+                                               long ignore1,
+                                               long valueCount,
+                                               final int shl,
+                                               final OutOfOrderNativeSortMethod ignore2) {
+        ContiguousVirtualMemory dataMem = oooColumns.get(getPrimaryColumnIndex(columnIndex));
+        ContiguousVirtualMemory indexMem = oooColumns.get(getSecondaryColumnIndex(columnIndex));
+
+        long size;
+        long sourceOffset;
+        if (null == indexMem) {
+            sourceOffset = oooRowCount << shl;
+            size = oooBeyondHysteresisRowCount << shl;
+        } else {
+            sourceOffset = indexMem.getLong(oooRowCount << 3);
+            size = dataMem.getAppendOffset() - sourceOffset;
+            OutOfOrderUtils.shiftCopyFixedSizeColumnData(sourceOffset, indexMem.addressOf(oooRowCount << 3), 0, oooBeyondHysteresisRowCount << 3, indexMem.addressOf(0));
+            indexMem.jumpTo(oooBeyondHysteresisRowCount << 3);
+        }
+
+        dataMem.jumpTo(0 + size);
+        Vect.memmove(dataMem.addressOf(0), dataMem.addressOf(sourceOffset), size);
+    }
+
 
     private void oooProcessPartitionSafe(
             int workerId,
