@@ -28,14 +28,13 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.mp.CountDownLatchSPI;
 import io.questdb.std.AbstractLockable;
 
-public class OutOfOrderSortTask extends AbstractLockable {
+public class OutOfOrderColumnTask extends AbstractLockable {
     private CountDownLatchSPI countDownLatchSPI;
     private int columnIndex;
-    private int shl;
+    private int columnType;
     private long mergedTimestampsAddr;
     private long valueCount;
-    private TableWriter.OutOfOrderNativeSortMethod nativeSortMethod;
-    private TableWriter.OutOfOrderSortMethod sortMethod;
+    private TableWriter.OutOfOrderColumnUpdateMethod writerCallbackMethod;
 
     public int getColumnIndex() {
         return columnIndex;
@@ -49,16 +48,12 @@ public class OutOfOrderSortTask extends AbstractLockable {
         return mergedTimestampsAddr;
     }
 
-    public TableWriter.OutOfOrderNativeSortMethod getNativeSortMethod() {
-        return nativeSortMethod;
+    public int getColumnType() {
+        return columnType;
     }
 
-    public int getShl() {
-        return shl;
-    }
-
-    public TableWriter.OutOfOrderSortMethod getSortMethod() {
-        return sortMethod;
+    public TableWriter.OutOfOrderColumnUpdateMethod getWriterCallbackMethod() {
+        return writerCallbackMethod;
     }
 
     public long getValueCount() {
@@ -68,19 +63,17 @@ public class OutOfOrderSortTask extends AbstractLockable {
     public void of(
             CountDownLatchSPI countDownLatchSPI,
             int columnIndex,
-            int shl, // pow2 size of column type
+            int columnType,
             long mergedTimestampsAddr,
             long rowCount,
-            TableWriter.OutOfOrderNativeSortMethod nativeSortMethod,
-            TableWriter.OutOfOrderSortMethod sortMethod
+            TableWriter.OutOfOrderColumnUpdateMethod writerCallbackMethod
     ) {
         of(columnIndex);
         this.countDownLatchSPI = countDownLatchSPI;
         this.columnIndex = columnIndex;
-        this.shl = shl;
+        this.columnType = columnType;
         this.mergedTimestampsAddr = mergedTimestampsAddr;
         this.valueCount = rowCount;
-        this.nativeSortMethod = nativeSortMethod;
-        this.sortMethod = sortMethod;
+        this.writerCallbackMethod = writerCallbackMethod;
     }
 }

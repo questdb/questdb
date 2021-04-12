@@ -76,11 +76,11 @@ public interface MessageBus extends Closeable {
 
     MCSequence getOutOfOrderPartitionSubSeq();
 
-    MPSequence getOutOfOrderSortPubSeq();
+    MPSequence getOutOfOrderColumnUpdateSeq();
 
-    RingQueue<OutOfOrderSortTask> getOutOfOrderSortQueue();
+    RingQueue<OutOfOrderColumnTask> getOutOfOrderColumnUpdateQueue();
 
-    MCSequence getOutOfOrderSortSubSeq();
+    MCSequence getOutOfOrderColumnUpdateSubSeq();
 
     MPSequence getOutOfOrderUpdPartitionSizePubSequence();
 

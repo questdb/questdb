@@ -314,7 +314,7 @@ public class AbstractOutOfOrderTest extends AbstractCairoTest {
             try (O3PurgeCleaner ignored = new O3PurgeCleaner(engine.getMessageBus())) {
                 if (pool != null) {
                     pool.assignCleaner(Path.CLEANER);
-                    pool.assign(new OutOfOrderSortJob(engine.getMessageBus()));
+                    pool.assign(new OutOfOrderColumnUpdateJob(engine.getMessageBus()));
                     pool.assign(new OutOfOrderPartitionJob(engine.getMessageBus()));
                     pool.assign(new OutOfOrderOpenColumnJob(engine.getMessageBus()));
                     pool.assign(new OutOfOrderCopyJob(engine.getMessageBus()));

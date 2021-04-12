@@ -67,11 +67,6 @@ public class TableWriter implements Closeable {
     };
     private final static RemoveFileLambda REMOVE_OR_LOG = TableWriter::removeFileAndOrLog;
     private final static RemoveFileLambda REMOVE_OR_EXCEPTION = TableWriter::removeOrException;
-    private final static OutOfOrderNativeSortMethod SHUFFLE_8 = Vect::indexReshuffle8Bit;
-    private final static OutOfOrderNativeSortMethod SHUFFLE_16 = Vect::indexReshuffle16Bit;
-    private final static OutOfOrderNativeSortMethod SHUFFLE_32 = Vect::indexReshuffle32Bit;
-    private final static OutOfOrderNativeSortMethod SHUFFLE_64 = Vect::indexReshuffle64Bit;
-    private final static OutOfOrderNativeSortMethod SHUFFLE_256 = Vect::indexReshuffle256Bit;
     final ObjList<AppendOnlyVirtualMemory> columns;
     private final ObjList<SymbolMapWriter> symbolMapWriters;
     private final ObjList<SymbolMapWriter> denseSymbolMapWriters;
@@ -118,9 +113,10 @@ public class TableWriter implements Closeable {
     private final TableBlockWriter blockWriter;
     private final TimestampValueRecord dropPartitionFunctionRec = new TimestampValueRecord();
     private final boolean outOfOrderEnabled;
-    private final ObjList<OutOfOrderSortTask> oooPendingSortTasks = new ObjList<>();
-    private final OutOfOrderSortMethod oooSortVarColumnRef = this::oooSortVarColumn;
-    private final OutOfOrderSortMethod oooSortFixColumnRef = this::oooSortFixColumn;
+    private final ObjList<OutOfOrderColumnTask> oooPendingColumnUpdateTasks = new ObjList<>();
+    private final OutOfOrderColumnUpdateMethod oooSortVarColumnRef = this::oooSortVarColumn;
+    private final OutOfOrderColumnUpdateMethod oooSortFixColumnRef = this::oooSortFixColumn;
+    private final OutOfOrderColumnUpdateMethod shiftO3inMemoryColumnToZeroOffsetRef = this::shiftO3inMemoryColumnToZeroOffset;
     private final SOUnboundedCountDownLatch oooLatch = new SOUnboundedCountDownLatch();
     private final AtomicLong oooUpdRemaining = new AtomicLong();
     private final AtomicInteger oooErrorCount = new AtomicInteger();
@@ -129,7 +125,6 @@ public class TableWriter implements Closeable {
     private final FindVisitor removePartitionDirsNotAttached = this::removePartitionDirsNotAttached;
     private final long txnScoreboard;
     private final LongList o3PartitionRemoveCandidates = new LongList();
-    private final OutOfOrderSortMethod columnCleanupBeyondHysteresisMethod = this::columnCleanupBeyondHysteresis;
     private long todoTxn;
     private ContiguousVirtualMemory timestampMergeMem;
     private long lockFd;
@@ -2553,7 +2548,7 @@ public class TableWriter implements Closeable {
             }
 
             if (oooBeyondHysteresisRowCount > 0) {
-                oooCleanupBeyondHysteresisRowsParallel(timestampIndex);
+                o3cleanupBeyondHysteresisRowsParallel(timestampIndex);
             }
         } finally {
             if (denseIndexers.size() == 0) {
@@ -2617,7 +2612,7 @@ public class TableWriter implements Closeable {
         }
     }
 
-    private void oooCleanupBeyondHysteresisRowsParallel(int timestampIndex) {
+    private void o3cleanupBeyondHysteresisRowsParallel(int timestampIndex) {
         long sourceOffset = oooRowCount << 4;
         timestampMergeMem.jumpTo(0);
         for (int n = 0; n < oooBeyondHysteresisRowCount; n++) {
@@ -2627,47 +2622,45 @@ public class TableWriter implements Closeable {
             sourceOffset += Long.BYTES + Long.BYTES;
         }
 
-        oooPendingSortTasks.clear();
+        oooPendingColumnUpdateTasks.clear();
 
-        final Sequence pubSeq = this.messageBus.getOutOfOrderSortPubSeq();
-        final RingQueue<OutOfOrderSortTask> queue = this.messageBus.getOutOfOrderSortQueue();
+        final Sequence pubSeq = this.messageBus.getOutOfOrderColumnUpdateSeq();
+        final RingQueue<OutOfOrderColumnTask> queue = this.messageBus.getOutOfOrderColumnUpdateQueue();
+        final int ignoredAddr = -1;
 
         oooLatch.reset();
         int queuedCount = 0;
         for (int colIndex = 0; colIndex < columnCount; colIndex++) {
             if (colIndex != timestampIndex) {
-                int type = metadata.getColumnType(colIndex);
-                int pow2ColSize = ColumnType.pow2SizeOf(type);
-
-                long cursor = -1;
+                int columnType = metadata.getColumnType(colIndex);
+                long cursor = pubSeq.next();
                 if (cursor > -1) {
                     try {
-                        final OutOfOrderSortTask task = queue.get(cursor);
+                        final OutOfOrderColumnTask task = queue.get(cursor);
                         task.of(
                                 oooLatch,
                                 colIndex,
-                                pow2ColSize,
-                                sourceOffset,
+                                columnType,
+                                ignoredAddr,
                                 oooBeyondHysteresisRowCount,
-                                null,
-                                this.columnCleanupBeyondHysteresisMethod
+                                this.shiftO3inMemoryColumnToZeroOffsetRef
                         );
 
-                        oooPendingSortTasks.add(task);
+                        oooPendingColumnUpdateTasks.add(task);
                     } finally {
                         queuedCount++;
                         pubSeq.done(cursor);
                     }
                 } else {
-                    columnCleanupBeyondHysteresis(colIndex, -1, oooBeyondHysteresisRowCount, pow2ColSize, null);
+                    shiftO3inMemoryColumnToZeroOffset(colIndex, ignoredAddr, oooBeyondHysteresisRowCount, columnType);
                 }
             }
         }
 
-        for (int n = oooPendingSortTasks.size() - 1; n > -1; n--) {
-            final OutOfOrderSortTask task = oooPendingSortTasks.getQuick(n);
+        for (int n = oooPendingColumnUpdateTasks.size() - 1; n > -1; n--) {
+            final OutOfOrderColumnTask task = oooPendingColumnUpdateTasks.getQuick(n);
             if (task.tryLock()) {
-                OutOfOrderSortJob.doSort(
+                OutOfOrderColumnUpdateJob.runCallbackWithCol(
                         task,
                         -1,
                         null
@@ -2678,27 +2671,29 @@ public class TableWriter implements Closeable {
         oooLatch.await(queuedCount);
     }
 
-    private void columnCleanupBeyondHysteresis(int columnIndex,
-                                               long ignore1,
-                                               long valueCount,
-                                               final int shl,
-                                               final OutOfOrderNativeSortMethod ignore2) {
+    private void shiftO3inMemoryColumnToZeroOffset(
+            int columnIndex,
+            long ignore1,
+            long valueCount,
+            final int columnType
+    ) {
         ContiguousVirtualMemory dataMem = oooColumns.get(getPrimaryColumnIndex(columnIndex));
         ContiguousVirtualMemory indexMem = oooColumns.get(getSecondaryColumnIndex(columnIndex));
 
         long size;
         long sourceOffset;
+        final int shl = ColumnType.pow2SizeOf(columnType);
         if (null == indexMem) {
             sourceOffset = oooRowCount << shl;
-            size = oooBeyondHysteresisRowCount << shl;
+            size = valueCount << shl;
         } else {
             sourceOffset = indexMem.getLong(oooRowCount << 3);
             size = dataMem.getAppendOffset() - sourceOffset;
             OutOfOrderUtils.shiftCopyFixedSizeColumnData(sourceOffset, indexMem.addressOf(oooRowCount << 3), 0, oooBeyondHysteresisRowCount << 3, indexMem.addressOf(0));
-            indexMem.jumpTo(oooBeyondHysteresisRowCount << 3);
+            indexMem.jumpTo(valueCount << 3);
         }
 
-        dataMem.jumpTo(0 + size);
+        dataMem.jumpTo(size);
         Vect.memmove(dataMem.addressOf(0), dataMem.addressOf(sourceOffset), size);
     }
 
@@ -2739,28 +2734,10 @@ public class TableWriter implements Closeable {
         switch (type) {
             case ColumnType.BINARY:
             case ColumnType.STRING:
-                oooSortVarColumn(i, mergedTimestamps, oooRowCount, 0, null);
-                break;
-            case ColumnType.FLOAT:
-            case ColumnType.INT:
-            case ColumnType.SYMBOL:
-                oooSortFixColumn(i, mergedTimestamps, oooRowCount, 2, SHUFFLE_32);
-                break;
-            case ColumnType.LONG:
-            case ColumnType.DOUBLE:
-            case ColumnType.DATE:
-            case ColumnType.TIMESTAMP:
-                oooSortFixColumn(i, mergedTimestamps, oooRowCount, 3, SHUFFLE_64);
-                break;
-            case ColumnType.SHORT:
-            case ColumnType.CHAR:
-                oooSortFixColumn(i, mergedTimestamps, oooRowCount, 1, SHUFFLE_16);
-                break;
-            case ColumnType.LONG256:
-                oooSortFixColumn(i, mergedTimestamps, oooRowCount, 5, SHUFFLE_256);
+                oooSortVarColumn(i, mergedTimestamps, oooRowCount, type);
                 break;
             default:
-                oooSortFixColumn(i, mergedTimestamps, oooRowCount, 0, SHUFFLE_8);
+                oooSortFixColumn(i, mergedTimestamps, oooRowCount, type);
                 break;
         }
     }
@@ -2769,26 +2746,45 @@ public class TableWriter implements Closeable {
             int columnIndex,
             long mergedTimestampsAddr,
             long valueCount,
-            final int shl,
-            final OutOfOrderNativeSortMethod shuffleFunc
+            final int columnType
     ) {
         final int columnOffset = getPrimaryColumnIndex(columnIndex);
         final ContiguousVirtualMemory mem = oooColumns.getQuick(columnOffset);
         final ContiguousVirtualMemory mem2 = oooColumns2.getQuick(columnOffset);
         final long src = mem.addressOf(0);
         final long srcSize = mem.size();
+        final int shl = ColumnType.pow2SizeOf(columnType);
         final long tgtDataAddr = mem2.resize(valueCount << shl);
         final long tgtDataSize = mem2.size();
-        shuffleFunc.shuffle(src, tgtDataAddr, mergedTimestampsAddr, valueCount);
+        switch (shl) {
+            case 0:
+                Vect.indexReshuffle8Bit(src, tgtDataAddr, mergedTimestampsAddr, valueCount);
+                break;
+            case 1:
+                Vect.indexReshuffle16Bit(src, tgtDataAddr, mergedTimestampsAddr, valueCount);
+                break;
+            case 2:
+                Vect.indexReshuffle32Bit(src, tgtDataAddr, mergedTimestampsAddr, valueCount);
+                break;
+            case 3:
+                Vect.indexReshuffle64Bit(src, tgtDataAddr, mergedTimestampsAddr, valueCount);
+                break;
+            case 5:
+                Vect.indexReshuffle256Bit(src, tgtDataAddr, mergedTimestampsAddr, valueCount);
+                break;
+            default:
+                assert false : "col type unsupported";
+                break;
+        }
         mem.replacePage(tgtDataAddr, tgtDataSize);
         mem2.replacePage(src, srcSize);
     }
 
     private void o3Sort(long mergedTimestamps, int timestampIndex) {
-        oooPendingSortTasks.clear();
+        oooPendingColumnUpdateTasks.clear();
 
-        final Sequence pubSeq = this.messageBus.getOutOfOrderSortPubSeq();
-        final RingQueue<OutOfOrderSortTask> queue = this.messageBus.getOutOfOrderSortQueue();
+        final Sequence pubSeq = this.messageBus.getOutOfOrderColumnUpdateSeq();
+        final RingQueue<OutOfOrderColumnTask> queue = this.messageBus.getOutOfOrderColumnUpdateQueue();
 
         oooLatch.reset();
         int queuedCount = 0;
@@ -2798,83 +2794,16 @@ public class TableWriter implements Closeable {
                 long cursor = pubSeq.next();
                 if (cursor > -1) {
                     try {
-                        final OutOfOrderSortTask task = queue.get(cursor);
-                        switch (type) {
-                            case ColumnType.BINARY:
-                            case ColumnType.STRING:
-                                task.of(
-                                        oooLatch,
-                                        i,
-                                        0,
-                                        mergedTimestamps,
-                                        oooRowCount,
-                                        null,
-                                        oooSortVarColumnRef
-                                );
-                                break;
-                            case ColumnType.FLOAT:
-                            case ColumnType.INT:
-                            case ColumnType.SYMBOL:
-                                task.of(
-                                        oooLatch,
-                                        i,
-                                        2,
-                                        mergedTimestamps,
-                                        oooRowCount,
-                                        SHUFFLE_32,
-                                        oooSortFixColumnRef
-                                );
-                                break;
-                            case ColumnType.LONG:
-                            case ColumnType.DOUBLE:
-                            case ColumnType.DATE:
-                            case ColumnType.TIMESTAMP:
-                                task.of(
-                                        oooLatch,
-                                        i,
-                                        3,
-                                        mergedTimestamps,
-                                        oooRowCount,
-                                        SHUFFLE_64,
-                                        oooSortFixColumnRef
-                                );
-                                break;
-                            case ColumnType.SHORT:
-                            case ColumnType.CHAR:
-                                task.of(
-                                        oooLatch,
-                                        i,
-                                        1,
-                                        mergedTimestamps,
-                                        oooRowCount,
-                                        SHUFFLE_16,
-                                        oooSortFixColumnRef
-                                );
-                                break;
-                            case ColumnType.LONG256:
-                                task.of(
-                                        oooLatch,
-                                        i,
-                                        5,
-                                        mergedTimestamps,
-                                        oooRowCount,
-                                        SHUFFLE_256,
-                                        oooSortFixColumnRef
-                                );
-                                break;
-                            default:
-                                task.of(
-                                        oooLatch,
-                                        i,
-                                        0,
-                                        mergedTimestamps,
-                                        oooRowCount,
-                                        SHUFFLE_8,
-                                        oooSortFixColumnRef
-                                );
-                                break;
-                        }
-                        oooPendingSortTasks.add(task);
+                        final OutOfOrderColumnTask task = queue.get(cursor);
+                        task.of(
+                                oooLatch,
+                                i,
+                                type,
+                                mergedTimestamps,
+                                oooRowCount,
+                                type == ColumnType.STRING || type == ColumnType.BINARY ? oooSortVarColumnRef : oooSortFixColumnRef
+                        );
+                        oooPendingColumnUpdateTasks.add(task);
                     } finally {
                         queuedCount++;
                         pubSeq.done(cursor);
@@ -2885,10 +2814,10 @@ public class TableWriter implements Closeable {
             }
         }
 
-        for (int n = oooPendingSortTasks.size() - 1; n > -1; n--) {
-            final OutOfOrderSortTask task = oooPendingSortTasks.getQuick(n);
+        for (int n = oooPendingColumnUpdateTasks.size() - 1; n > -1; n--) {
+            final OutOfOrderColumnTask task = oooPendingColumnUpdateTasks.getQuick(n);
             if (task.tryLock()) {
-                OutOfOrderSortJob.doSort(
+                OutOfOrderColumnUpdateJob.runCallbackWithCol(
                         task,
                         -1,
                         null
@@ -2903,8 +2832,7 @@ public class TableWriter implements Closeable {
             int columnIndex,
             long mergedTimestampsAddr,
             long valueCount,
-            int shl,
-            OutOfOrderNativeSortMethod nativeSortMethod
+            int columnType
     ) {
         final int primaryIndex = getPrimaryColumnIndex(columnIndex);
         final int secondaryIndex = primaryIndex + 1;
@@ -4022,11 +3950,6 @@ public class TableWriter implements Closeable {
     }
 
     @FunctionalInterface
-    public interface OutOfOrderNativeSortMethod {
-        void shuffle(long pSrc, long pDest, long pIndex, long valueCount);
-    }
-
-    @FunctionalInterface
     private interface RemoveFileLambda {
         void remove(FilesFacade ff, LPSZ name);
     }
@@ -4037,13 +3960,12 @@ public class TableWriter implements Closeable {
     }
 
     @FunctionalInterface
-    public interface OutOfOrderSortMethod {
-        void sort(
+    public interface OutOfOrderColumnUpdateMethod {
+        void run(
                 int columnIndex,
                 long mergedTimestampsAddr,
                 long valueCount,
-                final int shl,
-                final OutOfOrderNativeSortMethod shuffleFunc
+                final int columnType
         );
     }
 

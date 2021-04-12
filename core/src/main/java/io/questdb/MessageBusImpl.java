@@ -43,7 +43,7 @@ public class MessageBusImpl implements MessageBus {
     private final MPSequence tableBlockWriterPubSeq;
     private final MCSequence tableBlockWriterSubSeq;
 
-    private final RingQueue<OutOfOrderSortTask> outOfOrderSortQueue;
+    private final RingQueue<OutOfOrderColumnTask> outOfOrderSortQueue;
     private final MPSequence outOfOrderSortPubSeq;
     private final MCSequence outOfOrderSortSubSeq;
 
@@ -90,7 +90,7 @@ public class MessageBusImpl implements MessageBus {
         this.tableBlockWriterSubSeq = new MCSequence(tableBlockWriterQueue.getCapacity());
         tableBlockWriterPubSeq.then(tableBlockWriterSubSeq).then(tableBlockWriterPubSeq);
 
-        this.outOfOrderSortQueue = new RingQueue<>(OutOfOrderSortTask::new, configuration.getO3SortQueueCapacity());
+        this.outOfOrderSortQueue = new RingQueue<>(OutOfOrderColumnTask::new, configuration.getO3SortQueueCapacity());
         this.outOfOrderSortPubSeq = new MPSequence(this.outOfOrderSortQueue.getCapacity());
         this.outOfOrderSortSubSeq = new MCSequence(this.outOfOrderSortQueue.getCapacity());
         outOfOrderSortPubSeq.then(outOfOrderSortSubSeq).then(outOfOrderSortPubSeq);
@@ -127,17 +127,17 @@ public class MessageBusImpl implements MessageBus {
     }
 
     @Override
-    public MPSequence getOutOfOrderSortPubSeq() {
+    public MPSequence getOutOfOrderColumnUpdateSeq() {
         return outOfOrderSortPubSeq;
     }
 
     @Override
-    public RingQueue<OutOfOrderSortTask> getOutOfOrderSortQueue() {
+    public RingQueue<OutOfOrderColumnTask> getOutOfOrderColumnUpdateQueue() {
         return outOfOrderSortQueue;
     }
 
     @Override
-    public MCSequence getOutOfOrderSortSubSeq() {
+    public MCSequence getOutOfOrderColumnUpdateSubSeq() {
         return outOfOrderSortSubSeq;
     }
 

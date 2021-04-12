@@ -28,33 +28,31 @@ import io.questdb.MessageBus;
 import io.questdb.mp.AbstractQueueConsumerJob;
 import io.questdb.mp.CountDownLatchSPI;
 import io.questdb.mp.Sequence;
-import io.questdb.tasks.OutOfOrderSortTask;
+import io.questdb.tasks.OutOfOrderColumnTask;
 import org.jetbrains.annotations.Nullable;
 
-public class OutOfOrderSortJob extends AbstractQueueConsumerJob<OutOfOrderSortTask> {
-    public OutOfOrderSortJob(MessageBus messageBus) {
-        super(messageBus.getOutOfOrderSortQueue(), messageBus.getOutOfOrderSortSubSeq());
+public class OutOfOrderColumnUpdateJob extends AbstractQueueConsumerJob<OutOfOrderColumnTask> {
+    public OutOfOrderColumnUpdateJob(MessageBus messageBus) {
+        super(messageBus.getOutOfOrderColumnUpdateQueue(), messageBus.getOutOfOrderColumnUpdateSubSeq());
     }
 
-    public static void doSort(OutOfOrderSortTask task, long cursor, @Nullable Sequence subSeq) {
+    public static void runCallbackWithCol(OutOfOrderColumnTask task, long cursor, @Nullable Sequence subSeq) {
         final int columnIndex = task.getColumnIndex();
-        final int shl = task.getShl();
+        final int columnType = task.getColumnType();
         final long mergedTimestampsAddr = task.getMergedTimestampsAddr();
         final long valueCount = task.getValueCount();
-        final TableWriter.OutOfOrderSortMethod sortMethod = task.getSortMethod();
-        final TableWriter.OutOfOrderNativeSortMethod nativeSortMethod = task.getNativeSortMethod();
+        final TableWriter.OutOfOrderColumnUpdateMethod sortMethod = task.getWriterCallbackMethod();
         final CountDownLatchSPI countDownLatchSPI = task.getCountDownLatchSPI();
         if (subSeq != null) {
             subSeq.done(cursor);
         }
 
         try {
-            sortMethod.sort(
+            sortMethod.run(
                     columnIndex,
                     mergedTimestampsAddr,
                     valueCount,
-                    shl,
-                    nativeSortMethod
+                    columnType
             );
         } finally {
             countDownLatchSPI.countDown();
@@ -63,13 +61,13 @@ public class OutOfOrderSortJob extends AbstractQueueConsumerJob<OutOfOrderSortTa
 
     @Override
     protected boolean doRun(int workerId, long cursor) {
-        OutOfOrderSortTask task = queue.get(cursor);
+        OutOfOrderColumnTask task = queue.get(cursor);
         // copy task on stack so that publisher has fighting chance of
         // publishing all it has to the queue
 
         final boolean locked = task.tryLock();
         if (locked) {
-            doSort(task, cursor, subSeq);
+            runCallbackWithCol(task, cursor, subSeq);
         } else {
             subSeq.done(cursor);
         }
