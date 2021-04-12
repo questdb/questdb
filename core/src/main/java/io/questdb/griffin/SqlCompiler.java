@@ -1333,12 +1333,40 @@ public class SqlCompiler implements Closeable {
         }
     }
 
-    private void copyOrdered(TableWriter writer, RecordCursor cursor, RecordToRowCopier copier, int cursorTimestampIndex) {
+    private void copyOrdered(
+            TableWriter writer,
+            RecordCursor cursor,
+            RecordToRowCopier copier,
+            int cursorTimestampIndex
+    ) {
         final Record record = cursor.getRecord();
         while (cursor.hasNext()) {
             TableWriter.Row row = writer.newRow(record.getTimestamp(cursorTimestampIndex));
             copier.copy(record, row);
             row.append();
+        }
+        writer.commit();
+    }
+
+    private void copyOrderedBatched(
+            TableWriter writer,
+            RecordCursor cursor,
+            RecordToRowCopier copier,
+            int cursorTimestampIndex,
+            long batchSize,
+            long hysteresis
+    ) {
+        long deadline = batchSize;
+        long rowCount = 0;
+        final Record record = cursor.getRecord();
+        while (cursor.hasNext()) {
+            TableWriter.Row row = writer.newRow(record.getTimestamp(cursorTimestampIndex));
+            copier.copy(record, row);
+            row.append();
+            if (++rowCount > deadline) {
+                writer.commitWithHysteresis(hysteresis);
+                deadline = rowCount + batchSize;
+            }
         }
         writer.commit();
     }
@@ -1778,7 +1806,18 @@ public class SqlCompiler implements Closeable {
                     if (writerTimestampIndex == -1) {
                         copyUnordered(cursor, writer, copier);
                     } else {
-                        copyOrdered(writer, cursor, copier, writerTimestampIndex);
+                        if (model.getBatchSize() != -1) {
+                            copyOrderedBatched(
+                                    writer,
+                                    cursor,
+                                    copier,
+                                    writerTimestampIndex,
+                                    model.getBatchSize(),
+                                    model.getHysteresis()
+                            );
+                        } else {
+                            copyOrdered(writer, cursor, copier, writerTimestampIndex);
+                        }
                     }
                 } catch (CairoException e) {
                     // rollback data when system error occurs

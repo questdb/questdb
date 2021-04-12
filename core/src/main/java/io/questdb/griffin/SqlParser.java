@@ -179,6 +179,23 @@ public final class SqlParser {
         }
     }
 
+    private long expectLong(GenericLexer lexer) throws SqlException {
+        CharSequence tok = tok(lexer, "long integer");
+        boolean negative;
+        if (Chars.equals(tok, '-')) {
+            negative = true;
+            tok = tok(lexer, "long integer");
+        } else {
+            negative = false;
+        }
+        try {
+            long result = Numbers.parseLong(tok);
+            return negative ? -result : result;
+        } catch (NumericException e) {
+            throw err(lexer, "bad long integer");
+        }
+    }
+
     private ExpressionNode expectLiteral(GenericLexer lexer) throws SqlException {
         CharSequence tok = tok(lexer, "literal");
         int pos = lexer.lastTokenPosition();
@@ -892,12 +909,36 @@ public final class SqlParser {
     }
 
     private ExecutionModel parseInsert(GenericLexer lexer) throws SqlException {
-        expectTok(lexer, "into");
 
         final InsertModel model = insertModelPool.next();
+        CharSequence tok = tok(lexer, "into or batch");
+        if (SqlKeywords.isBatch(tok)) {
+            long val = expectLong(lexer);
+            if (val > 0) {
+                model.setBatchSize(val);
+            } else {
+                throw SqlException.$(lexer.lastTokenPosition(), "batch size must be positive integer");
+            }
+
+            tok = tok(lexer, "into or hysteresis");
+            if (SqlKeywords.isHysteresis(tok)) {
+                val = expectLong(lexer);
+                if (val > 0) {
+                    model.setHysteresis(val);
+                } else {
+                    throw SqlException.$(lexer.lastTokenPosition(), "hysteresis must be a positive integer microseconds");
+                }
+                expectTok(lexer, "into");
+            }
+        }
+
+        if (!SqlKeywords.isInto(tok)) {
+            throw SqlException.$(lexer.lastTokenPosition(), "'into' expected");
+        }
+
         model.setTableName(expectLiteral(lexer));
 
-        CharSequence tok = tok(lexer, "'(' or 'select'");
+        tok = tok(lexer, "'(' or 'select'");
 
         if (Chars.equals(tok, '(')) {
             do {

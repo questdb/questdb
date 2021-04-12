@@ -836,4 +836,23 @@ public final class Chars {
         }
         return sink.toString();
     }
+
+    public static CharSequence repeat(String s, int times) {
+        return new CharSequence() {
+            @Override
+            public int length() {
+                return s.length() * times;
+            }
+
+            @Override
+            public char charAt(int index) {
+                return s.charAt(index % s.length());
+            }
+
+            @Override
+            public CharSequence subSequence(int start, int end) {
+                throw new UnsupportedOperationException();
+            }
+        };
+    }
 }

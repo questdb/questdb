@@ -55,6 +55,11 @@ class SymbolColumnIndexer implements ColumnIndexer, Closeable {
     }
 
     @Override
+    public BitmapIndexWriter getWriter() {
+        return writer;
+    }
+
+    @Override
     public long getFd() {
         return mem.getFd();
     }

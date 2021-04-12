@@ -668,7 +668,7 @@ public class TimestampFormatCompilerTest {
 
     @Test
     public void testTimeZone2() throws Exception {
-        assertThat("dd-MM-yy HH:m z", "2010-09-03T17:50:00.000Z", "03-09-10 21:50 MSK");
+        assertThat("dd-MM-yyyy HH:m z", "2015-09-03T18:50:00.000Z", "03-09-2015 21:50 EET");
     }
 
     @Test
@@ -757,10 +757,10 @@ public class TimestampFormatCompilerTest {
         sink.clear();
         long micros = TimestampFormatUtils.parseTimestamp(date) + mic;
         get(pattern).format(micros, defaultLocale, "GMT", sink);
-        TestUtils.assertEquals(expected, sink);
+        TestUtils.assertEqualsIgnoreCase(expected, sink);
         sink.clear();
         compiler.compile(pattern, false).format(micros, defaultLocale, "GMT", sink);
-        TestUtils.assertEquals(expected, sink);
+        TestUtils.assertEqualsIgnoreCase(expected, sink);
     }
 
     private void assertMicros(String pattern, String expected, String input) throws NumericException {

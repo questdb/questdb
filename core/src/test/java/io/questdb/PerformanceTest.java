@@ -48,7 +48,7 @@ public class PerformanceTest extends AbstractCairoTest {
     @Test
     public void testCairoPartitionedReaderReloadSpeed() throws InterruptedException {
         int operations = 1_00_000 * 100;
-        var speed = measureReloadSpeed(1_00_000, operations, 100000);
+        double speed = measureReloadSpeed(1_00_000, operations, 100000);
 
         // Add 10x slowdown for slow / busy build server.
         Assert.assertTrue("Total reload should be around 300 ms", TimeUnit.NANOSECONDS.toMillis((long) (operations * speed)) < 3000);
@@ -134,7 +134,7 @@ public class PerformanceTest extends AbstractCairoTest {
         int iterations = 50;
         double avg = 0;
         for (int i = 0; i < iterations; i++) {
-            var ns = measureReloadSpeed(1_00_000, 1_00_000 * 100, 100000);
+            double ns = measureReloadSpeed(1_00_000, 1_00_000 * 100, 100000);
             min = Math.min(min, ns);
             avg = (avg * i + ns) / (i + 1);
         }
@@ -159,8 +159,8 @@ public class PerformanceTest extends AbstractCairoTest {
 
         CountDownLatch stopLatch = new CountDownLatch(2);
         CountDownLatch startLatch = new CountDownLatch(2);
-        try (var w = new TableWriter(configuration, "quote");
-             var reader = new TableReader(configuration, "quote")) {
+        try (TableWriter w = new TableWriter(configuration, "quote");
+             TableReader reader = new TableReader(configuration, "quote")) {
             // Writing
             new Thread(() -> {
                 try {

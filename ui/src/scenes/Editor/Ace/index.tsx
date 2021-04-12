@@ -72,6 +72,7 @@ enum Command {
   EXECUTE = "execute",
   EXECUTE_AT = "execute_at",
   FOCUS_GRID = "focus_grid",
+  CLEANUP_NOTIFICATIONS = "clean_notifications",
 }
 
 const Ace = () => {
@@ -204,7 +205,10 @@ const Ace = () => {
       dispatch(actions.query.toggleRunning())
     }
     const ro = new ResizeObserver(() => {
-      editor.resize()
+      const height = editor.renderer.container?.clientHeight
+      if (height) {
+        dispatch(actions.query.changeMaxNotficationHeight(height))
+      }
     })
 
     if (wrapper.current) {
@@ -236,6 +240,17 @@ const Ace = () => {
         window.bus.trigger("grid.focus")
       },
       name: Command.FOCUS_GRID,
+    })
+
+    editor.commands.addCommand({
+      bindKey: {
+        mac: "Command-K",
+        win: "Ctrl-K",
+      },
+      exec: () => {
+        dispatch(actions.query.cleanupNotifications())
+      },
+      name: Command.CLEANUP_NOTIFICATIONS,
     })
 
     window.bus.on(BusEvent.MSG_QUERY_FIND_N_EXEC, (_event, query: string) => {

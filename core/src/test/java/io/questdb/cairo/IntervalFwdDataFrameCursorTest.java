@@ -27,6 +27,7 @@ package io.questdb.cairo;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.model.RuntimeIntervalModel;
+import io.questdb.std.Chars;
 import io.questdb.std.LongList;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;

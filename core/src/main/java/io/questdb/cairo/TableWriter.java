@@ -24,58 +24,6 @@
 
 package io.questdb.cairo;
 
-import static io.questdb.cairo.StatusCode.CANNOT_ATTACH_MISSING_PARTITION;
-import static io.questdb.cairo.StatusCode.PARTITION_ALREADY_ATTACHED;
-import static io.questdb.cairo.StatusCode.PARTITION_EMPTY;
-import static io.questdb.cairo.StatusCode.TABLE_HAS_SYMBOLS;
-import static io.questdb.cairo.TableUtils.DETACHED_DIR_MARKER;
-import static io.questdb.cairo.TableUtils.FILE_SUFFIX_D;
-import static io.questdb.cairo.TableUtils.FILE_SUFFIX_I;
-import static io.questdb.cairo.TableUtils.META_COLUMN_DATA_RESERVED;
-import static io.questdb.cairo.TableUtils.META_FILE_NAME;
-import static io.questdb.cairo.TableUtils.META_FLAG_BIT_INDEXED;
-import static io.questdb.cairo.TableUtils.META_FLAG_BIT_SEQUENTIAL;
-import static io.questdb.cairo.TableUtils.META_OFFSET_COLUMN_TYPES;
-import static io.questdb.cairo.TableUtils.META_OFFSET_COUNT;
-import static io.questdb.cairo.TableUtils.META_OFFSET_PARTITION_BY;
-import static io.questdb.cairo.TableUtils.META_OFFSET_TABLE_ID;
-import static io.questdb.cairo.TableUtils.META_OFFSET_TIMESTAMP_INDEX;
-import static io.questdb.cairo.TableUtils.META_PREV_FILE_NAME;
-import static io.questdb.cairo.TableUtils.META_SWAP_FILE_NAME;
-import static io.questdb.cairo.TableUtils.TODO_FILE_NAME;
-import static io.questdb.cairo.TableUtils.TODO_RESTORE_META;
-import static io.questdb.cairo.TableUtils.TODO_TRUNCATE;
-import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
-import static io.questdb.cairo.TableUtils.dFile;
-import static io.questdb.cairo.TableUtils.fmtDay;
-import static io.questdb.cairo.TableUtils.fmtMonth;
-import static io.questdb.cairo.TableUtils.fmtYear;
-import static io.questdb.cairo.TableUtils.getColumnNameOffset;
-import static io.questdb.cairo.TableUtils.getColumnType;
-import static io.questdb.cairo.TableUtils.getIndexBlockCapacity;
-import static io.questdb.cairo.TableUtils.getPartitionAdd;
-import static io.questdb.cairo.TableUtils.getPartitionCeil;
-import static io.questdb.cairo.TableUtils.getPartitionDateFmt;
-import static io.questdb.cairo.TableUtils.getPartitionFloor;
-import static io.questdb.cairo.TableUtils.iFile;
-import static io.questdb.cairo.TableUtils.isColumnIndexed;
-import static io.questdb.cairo.TableUtils.isSequential;
-import static io.questdb.cairo.TableUtils.lockName;
-import static io.questdb.cairo.TableUtils.openMetaSwapFile;
-import static io.questdb.cairo.TableUtils.readColumnTop;
-import static io.questdb.cairo.TableUtils.readPartitionSizeMinMax;
-import static io.questdb.cairo.TableUtils.setPathForPartition;
-import static io.questdb.cairo.TableUtils.topFile;
-import static io.questdb.cairo.TableUtils.validate;
-import static io.questdb.std.Files.isDots;
-
-import java.io.Closeable;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicLong;
-import java.util.function.LongConsumer;
-
-import org.jetbrains.annotations.NotNull;
-
 import io.questdb.MessageBus;
 import io.questdb.MessageBusImpl;
 import io.questdb.cairo.SymbolMapWriter.TransientSymbolCountChangeHandler;
@@ -83,53 +31,29 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SymbolTable;
-import io.questdb.cairo.vm.AppendOnlyVirtualMemory;
-import io.questdb.cairo.vm.ContiguousVirtualMemory;
-import io.questdb.cairo.vm.MappedReadOnlyMemory;
-import io.questdb.cairo.vm.MappedReadWriteMemory;
-import io.questdb.cairo.vm.PagedMappedReadWriteMemory;
-import io.questdb.cairo.vm.SinglePageMappedReadOnlyPageMemory;
-import io.questdb.cairo.vm.VmUtils;
-import io.questdb.cairo.vm.WriteOnlyVirtualMemory;
+import io.questdb.cairo.vm.*;
 import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.mp.MPSequence;
-import io.questdb.mp.RingQueue;
-import io.questdb.mp.SOCountDownLatch;
-import io.questdb.mp.SOUnboundedCountDownLatch;
-import io.questdb.mp.Sequence;
-import io.questdb.mp.Worker;
-import io.questdb.std.BinarySequence;
-import io.questdb.std.CharSequenceHashSet;
-import io.questdb.std.CharSequenceIntHashMap;
-import io.questdb.std.Chars;
-import io.questdb.std.Files;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.FindVisitor;
-import io.questdb.std.Long256;
-import io.questdb.std.LongList;
-import io.questdb.std.Misc;
-import io.questdb.std.Numbers;
-import io.questdb.std.NumericException;
-import io.questdb.std.ObjList;
-import io.questdb.std.Os;
-import io.questdb.std.Sinkable;
-import io.questdb.std.Unsafe;
-import io.questdb.std.Vect;
+import io.questdb.mp.*;
+import io.questdb.std.*;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.NativeLPSZ;
 import io.questdb.std.str.Path;
-import io.questdb.tasks.ColumnIndexerTask;
-import io.questdb.tasks.O3PurgeDiscoveryTask;
-import io.questdb.tasks.OutOfOrderCopyTask;
-import io.questdb.tasks.OutOfOrderOpenColumnTask;
-import io.questdb.tasks.OutOfOrderPartitionTask;
-import io.questdb.tasks.OutOfOrderSortTask;
-import io.questdb.tasks.OutOfOrderUpdPartitionSizeTask;
+import io.questdb.tasks.*;
+import org.jetbrains.annotations.NotNull;
+
+import java.io.Closeable;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.LongConsumer;
+
+import static io.questdb.cairo.StatusCode.*;
+import static io.questdb.cairo.TableUtils.*;
+import static io.questdb.std.Files.isDots;
 
 public class TableWriter implements Closeable {
     public static final int TIMESTAMP_MERGE_ENTRY_BYTES = Long.BYTES * 2;
@@ -210,6 +134,7 @@ public class TableWriter implements Closeable {
     private long lockFd;
     private LongConsumer timestampSetter;
     private LongConsumer prevTimestampSetter;
+    private final LongConsumer appendTimestampSetter;
     private int columnCount;
     private RowFunction rowFunction = openPartitionFunction;
     private boolean avoidIndexOnCommit = false;
@@ -344,6 +269,7 @@ public class TableWriter implements Closeable {
 
             configureColumnMemory();
             timestampSetter = configureTimestampSetter();
+            this.appendTimestampSetter = timestampSetter;
             this.txFile.readRowCounts();
             configureAppendPosition();
             purgeUnusedPartitions();
@@ -747,7 +673,7 @@ public class TableWriter implements Closeable {
      * <b>Pending rows</b>
      * <p>This method will cancel pending rows by calling {@link #cancelRow()}. Data in partially appended row will be lost.</p>
      *
-     * @param commitMode commit durability mode.
+     * @param commitMode                      commit durability mode.
      * @param lastTimestampHysteresisInMicros if > 0 then do a partial commit, leaving the rows within the hysteresis in a new uncommitted transaction
      */
     private void commit(int commitMode, long lastTimestampHysteresisInMicros) {
@@ -761,7 +687,7 @@ public class TableWriter implements Closeable {
         if (inTransaction()) {
 
             if (oooRowCount > 0) {
-                oooProcess(lastTimestampHysteresisInMicros);
+                o3Process(lastTimestampHysteresisInMicros);
             }
 
             if (commitMode != CommitMode.NOSYNC) {
@@ -1696,7 +1622,6 @@ public class TableWriter implements Closeable {
     }
 
     private void configureAppendPosition() {
-//        this.txFile.readUnchecked();
         if (this.txFile.getMaxTimestamp() > Long.MIN_VALUE || partitionBy == PartitionBy.NONE) {
             openFirstPartition(this.txFile.getMaxTimestamp());
             if (partitionBy == PartitionBy.NONE) {
@@ -1704,12 +1629,15 @@ public class TableWriter implements Closeable {
                     rowFunction = noTimestampFunction;
                 } else {
                     rowFunction = noPartitionFunction;
+                    timestampSetter = appendTimestampSetter;
                 }
             } else {
                 rowFunction = switchPartitionFunction;
+                timestampSetter = appendTimestampSetter;
             }
         } else {
             rowFunction = openPartitionFunction;
+            timestampSetter = appendTimestampSetter;
         }
     }
 
@@ -1910,7 +1838,7 @@ public class TableWriter implements Closeable {
 
     private void doClose(boolean truncate) {
         boolean tx = inTransaction();
-        freeColumns(truncate);
+        freeColumns(truncate & !distressed);
         freeSymbolMapWriters();
         freeIndexers();
         Misc.free(txFile);
@@ -2029,6 +1957,10 @@ public class TableWriter implements Closeable {
         return symbolMapWriters.getQuick(columnIndex);
     }
 
+    BitmapIndexWriter getBitmapIndexWriter(int columnIndex) {
+        return indexers.getQuick(columnIndex).getWriter();
+    }
+
     int getTxPartitionCount() {
         return txFile.getAppendedPartitionCount();
     }
@@ -2037,7 +1969,8 @@ public class TableWriter implements Closeable {
         final long maxTimestamp = timestampFloorMethod.floor(this.txFile.getMaxTimestamp());
         long timestamp = txFile.getMinTimestamp();
 
-        try (indexer; final MappedReadOnlyMemory roMem = new SinglePageMappedReadOnlyPageMemory()) {
+        //noinspection TryFinallyCanBeTryWithResources
+        try (final MappedReadOnlyMemory roMem = new SinglePageMappedReadOnlyPageMemory()) {
 
             while (timestamp < maxTimestamp) {
 
@@ -2075,6 +2008,8 @@ public class TableWriter implements Closeable {
                 }
                 timestamp = timestampAddMethod.calculate(timestamp, 1);
             }
+        } finally {
+            indexer.close();
         }
         return timestamp;
     }
@@ -2381,7 +2316,70 @@ public class TableWriter implements Closeable {
         }
     }
 
-    private void oooProcess(long lastTimestampHysteresisInMicros) {
+    private void o3MoveUncommitted(final int timestampIndex) {
+        // Move uncommitted (in order) rows from the end of the last committed column files into the reorder memory
+        // TODO use memcpy and make parallel
+        long committedTransientRowCount = txFile.getCommittedTransientRowCount();
+        long uncommittedRowCount = txFile.getTransientRowCount() - txFile.getCommittedTransientRowCount() - oooRowCount;
+        if (uncommittedRowCount > 0) {
+            int pow2ColSize = ColumnType.pow2SizeOf(ColumnType.TIMESTAMP);
+            AppendOnlyVirtualMemory sourceMem = getPrimaryColumn(timestampIndex);
+            long sourceOffset = committedTransientRowCount << pow2ColSize;
+            for (long n = 0; n < uncommittedRowCount; n++) {
+                long ts = sourceMem.getLong(sourceOffset + (n << pow2ColSize));
+                timestampMergeMem.putLong(ts);
+                timestampMergeMem.putLong(oooRowCount + n);
+            }
+            sourceMem.jumpTo(sourceOffset);
+            for (int colIndex = 0; colIndex < columnCount; colIndex++) {
+                if (colIndex != timestampIndex) {
+                    pow2ColSize = ColumnType.pow2SizeOf(metadata.getColumnType(colIndex));
+                    ContiguousVirtualMemory targetDataMem = oooColumns.get(getPrimaryColumnIndex(colIndex));
+                    ContiguousVirtualMemory targetIndexMem = oooColumns.get(getSecondaryColumnIndex(colIndex));
+                    sourceMem = getPrimaryColumn(colIndex);
+                    long extendedSize;
+                    long newSize;
+                    long sourceAddress;
+                    long appendOffset;
+                    long appendAddress;
+
+                    if (null == targetIndexMem) {
+                        appendOffset = targetDataMem.getAppendOffset();
+                        extendedSize = uncommittedRowCount << pow2ColSize;
+                        sourceOffset = committedTransientRowCount << pow2ColSize;
+                    } else {
+                        AppendOnlyVirtualMemory sourceIndexMem = getSecondaryColumn(colIndex);
+                        appendOffset = targetDataMem.getAppendOffset();
+                        long sourceStartOffset = sourceIndexMem.getLong(committedTransientRowCount << 3);
+                        OutOfOrderUtils.shiftCopyFixedSizeColumnData(
+                                sourceStartOffset - appendOffset,
+                                sourceIndexMem.addressOf(committedTransientRowCount << 3),
+                                0,
+                                uncommittedRowCount << 3,
+                                targetIndexMem.addressOf(targetIndexMem.getAppendOffset())
+                        );
+                        long sourceEndOffset = sourceMem.getAppendOffset();
+                        extendedSize = sourceEndOffset - sourceStartOffset;
+                        sourceOffset = sourceStartOffset;
+                        targetIndexMem.jumpTo(targetIndexMem.getAppendOffset() + uncommittedRowCount << 3);
+                        sourceIndexMem.jumpTo(committedTransientRowCount << 3);
+                    }
+
+                    newSize = appendOffset + extendedSize;
+                    targetDataMem.jumpTo(newSize);
+                    appendAddress = targetDataMem.addressOf(appendOffset);
+                    sourceMem.jumpTo(sourceOffset);
+                    sourceAddress = sourceMem.addressOf(sourceOffset);
+                    Vect.memcpy(sourceAddress, appendAddress, extendedSize);
+                }
+            }
+            txFile.resetToLastPartition(committedTransientRowCount);
+            oooRowCount += uncommittedRowCount;
+            transientRowCountBeforeOutOfOrder = committedTransientRowCount;
+        }
+    }
+
+    private void o3Process(long lastTimestampHysteresisInMicros) {
         o3PartitionRemoveCandidates.clear();
         oooErrorCount.set(0);
         final int workerId;
@@ -2393,10 +2391,13 @@ public class TableWriter implements Closeable {
         }
 
         final int timestampIndex = metadata.getTimestampIndex();
+        long maxTimestamp = txFile.getMaxTimestamp();
+        this.lastPartitionTimestamp = timestampFloorMethod.floor(maxTimestamp);
         try {
-            if (lastTimestampHysteresisInMicros > 0 && txFile.getAppendedPartitionCount() == 1) {
-                oooMoveUncommittedInOrderRowsToMergeSpace(timestampIndex);
-            }
+            o3MoveUncommitted(timestampIndex);
+            // move uncommitted is liable to change max timestamp
+            // however we need to identify last partition before max timestamp skips to NULL for example
+            maxTimestamp = txFile.getMaxTimestamp();
 
             // we may need to re-use file descriptors when this partition is the "current" one
             // we cannot open file again due to sharing violation
@@ -2408,7 +2409,7 @@ public class TableWriter implements Closeable {
             final long sortedTimestampsAddr = timestampMergeMem.addressOf(0);
             Vect.sortLongIndexAscInPlace(sortedTimestampsAddr, oooRowCount);
             // reshuffle all variable length columns
-            oooSortParallel(sortedTimestampsAddr, timestampIndex);
+            o3Sort(sortedTimestampsAddr, timestampIndex);
             Vect.flattenIndex(sortedTimestampsAddr, oooRowCount);
 
             // we have three frames:
@@ -2427,8 +2428,6 @@ public class TableWriter implements Closeable {
             final long srcOooMax = oooRowCount;
             final long oooTimestampMin = getTimestampIndexValue(sortedTimestampsAddr, 0);
             final long oooTimestampMax = getTimestampIndexValue(sortedTimestampsAddr, srcOooMax - 1);
-            final long maxTimestamp = txFile.getMaxTimestamp();
-            this.lastPartitionTimestamp = timestampFloorMethod.floor(maxTimestamp);
             final RingQueue<OutOfOrderPartitionTask> oooPartitionQueue = messageBus.getOutOfOrderPartitionQueue();
             final Sequence oooPartitionPubSeq = messageBus.getOutOfOrderPartitionPubSeq();
             this.oooLatch.reset();
@@ -2584,66 +2583,6 @@ public class TableWriter implements Closeable {
         setAppendPosition(txFile.getTransientRowCount(), true);
     }
 
-    private void oooMoveUncommittedInOrderRowsToMergeSpace(final int timestampIndex) {
-        // Move uncommitted (in order) rows from the end of the last committed column files into the reorder memory
-        // TODO use memcpy and make parallel
-        long committedTransientRowCount = txFile.getCommittedTransientRowCount();
-        long uncommittedRowCount = txFile.getTransientRowCount() - txFile.getCommittedTransientRowCount() - oooRowCount;
-        if (uncommittedRowCount > 0) {
-            int pow2ColSize = ColumnType.pow2SizeOf(ColumnType.TIMESTAMP);
-            AppendOnlyVirtualMemory sourceMem = getPrimaryColumn(timestampIndex);
-            long sourceOffset = committedTransientRowCount << pow2ColSize;
-            for (long n = 0; n < uncommittedRowCount; n++) {
-                long ts = sourceMem.getLong(sourceOffset + (n << pow2ColSize));
-                timestampMergeMem.putLong(ts);
-                timestampMergeMem.putLong(oooRowCount + n);
-            }
-            sourceMem.jumpTo(sourceOffset);
-            long totalNewRowCount = uncommittedRowCount + oooRowCount;
-            for (int colIndex = 0; colIndex < columnCount; colIndex++) {
-                if (colIndex != timestampIndex) {
-                    pow2ColSize = ColumnType.pow2SizeOf(metadata.getColumnType(colIndex));
-                    ContiguousVirtualMemory targetDataMem = oooColumns.get(getPrimaryColumnIndex(colIndex));
-                    ContiguousVirtualMemory targetIndexMem = oooColumns.get(getSecondaryColumnIndex(colIndex));
-                    sourceMem = getPrimaryColumn(colIndex);
-                    long extendedSize;
-                    long newSize;
-                    long sourceAddress;
-                    long appendOffset;
-                    long appendAddress;
-
-                    if (null == targetIndexMem) {
-                        newSize = totalNewRowCount << pow2ColSize;
-                        appendOffset = targetDataMem.getAppendOffset();
-                        extendedSize = uncommittedRowCount << pow2ColSize;
-                        sourceOffset = committedTransientRowCount << pow2ColSize;
-                    } else {
-                        AppendOnlyVirtualMemory sourceIndexMem = getSecondaryColumn(colIndex);
-                        appendOffset = targetDataMem.getAppendOffset();
-                        long sourceStartOffset = sourceIndexMem.getLong(committedTransientRowCount << 3);
-                        OutOfOrderUtils.shiftCopyFixedSizeColumnData(sourceStartOffset - appendOffset, sourceIndexMem.addressOf(committedTransientRowCount << 3), 0,
-                                uncommittedRowCount << 3, targetIndexMem.addressOf(targetIndexMem.getAppendOffset()));
-                        long sourceEndOffset = sourceMem.getAppendOffset();
-                        extendedSize = sourceEndOffset - sourceStartOffset;
-                        sourceOffset = sourceStartOffset;
-                        targetIndexMem.jumpTo(targetIndexMem.getAppendOffset() + uncommittedRowCount << 3);
-                        sourceIndexMem.jumpTo(committedTransientRowCount << 3);
-                    }
-
-                    newSize = appendOffset + extendedSize;
-                    targetDataMem.jumpTo(newSize);
-                    appendAddress = targetDataMem.addressOf(appendOffset);
-                    sourceMem.jumpTo(sourceOffset);
-                    sourceAddress = sourceMem.addressOf(sourceOffset);
-                    Vect.memcpy(sourceAddress, appendAddress, extendedSize);
-                }
-            }
-            txFile.resetToLastPartition(committedTransientRowCount);
-            oooRowCount += uncommittedRowCount;
-            transientRowCountBeforeOutOfOrder = committedTransientRowCount;
-        }
-    }
-
     private void oooCleanupBeyondHysteresisRows(int timestampIndex) {
         long sourceOffset = oooRowCount << 4;
         timestampMergeMem.jumpTo(0);
@@ -2758,7 +2697,7 @@ public class TableWriter implements Closeable {
         mem2.replacePage(src, srcSize);
     }
 
-    private void oooSortParallel(long mergedTimestamps, int timestampIndex) {
+    private void o3Sort(long mergedTimestamps, int timestampIndex) {
         oooPendingSortTasks.clear();
 
         final Sequence pubSeq = this.messageBus.getOutOfOrderSortPubSeq();

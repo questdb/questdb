@@ -90,11 +90,30 @@ public class AbstractOutOfOrderTest extends AbstractCairoTest {
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        AbstractOutOfOrderTest.assertIndexConsistency(
+        assertIndexConsistency(
                 compiler,
                 sqlExecutionContext,
                 "y"
         );
+    }
+
+    protected static void assertIndexConsistencySink(
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
+        printSqlResult(
+                compiler,
+                sqlExecutionContext,
+                "y where sym = 'googl' order by ts"
+        );
+
+        TestUtils.printSql(
+                compiler,
+                sqlExecutionContext,
+                "x where sym = 'googl'",
+                sink2
+        );
+        TestUtils.assertEquals(sink, sink2);
     }
 
     protected static void printSqlResult(
@@ -286,20 +305,6 @@ public class AbstractOutOfOrderTest extends AbstractCairoTest {
         });
     }
 
-    protected static void execute0(OutOfOrderCode runnable, CairoConfiguration configuration) throws Exception {
-        try (
-                final CairoEngine engine = new CairoEngine(configuration);
-                final SqlCompiler compiler = new SqlCompiler(engine);
-                final SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
-        ) {
-            runnable.run(engine, compiler, sqlExecutionContext);
-            Assert.assertEquals(0, engine.getBusyWriterCount());
-            Assert.assertEquals(0, engine.getBusyReaderCount());
-        } finally {
-            OutOfOrderUtils.freeBuf();
-        }
-    }
-
     protected static void execute1(@Nullable WorkerPool pool, OutOfOrderCode runnable, CairoConfiguration configuration) throws Exception {
         try (
                 final CairoEngine engine = new CairoEngine(configuration);
@@ -336,5 +341,41 @@ public class AbstractOutOfOrderTest extends AbstractCairoTest {
 
     protected static void executeVanilla(OutOfOrderCode code) throws Exception {
         executeVanilla(() -> execute1(null, code, configuration));
+    }
+
+    static void assertOutOfOrderDataConsistency(
+            final CairoEngine engine,
+            final SqlCompiler compiler,
+            final SqlExecutionContext sqlExecutionContext,
+            final String referenceTableDDL,
+            final String outOfOrderInsertSQL
+    ) throws SqlException {
+        // create third table, which will contain both X and 1AM
+        compiler.compile(referenceTableDDL, sqlExecutionContext);
+
+        // expected outcome
+        printSqlResult(compiler, sqlExecutionContext, "y order by ts");
+
+        compiler.compile(outOfOrderInsertSQL, sqlExecutionContext);
+
+        TestUtils.printSql(
+                compiler,
+                sqlExecutionContext,
+                "x",
+                sink2
+        );
+
+        TestUtils.assertEquals(sink, sink2);
+
+        engine.releaseAllReaders();
+
+        TestUtils.printSql(
+                compiler,
+                sqlExecutionContext,
+                "x",
+                sink2
+        );
+
+        TestUtils.assertEquals(sink, sink2);
     }
 }

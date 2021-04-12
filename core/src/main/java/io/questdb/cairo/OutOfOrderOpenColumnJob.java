@@ -109,6 +109,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
             long activeFixFd,
             long activeVarFd,
             TableWriter tableWriter,
+            BitmapIndexWriter indexWriter,
             SOUnboundedCountDownLatch doneLatch
     ) {
         final long mergeLen = mergeOOOHi - mergeOOOLo + 1 + mergeDataHi - mergeDataLo + 1;
@@ -190,6 +191,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                         srcTimestampAddr,
                         srcTimestampSize,
                         tableWriter,
+                        indexWriter,
                         doneLatch
                 );
                 break;
@@ -291,6 +293,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                         srcTimestampAddr,
                         srcTimestampSize,
                         tableWriter,
+                        indexWriter,
                         doneLatch
                 );
                 break;
@@ -322,6 +325,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                         srcDataMax,
                         isIndexed,
                         tableWriter,
+                        indexWriter,
                         doneLatch
                 );
                 break;
@@ -381,6 +385,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
         final long activeVarFd = task.getActiveVarFd();
         final long srcDataTop = task.getSrcDataTop();
         final TableWriter tableWriter = task.getTableWriter();
+        final BitmapIndexWriter indexWriter = task.getIndexWriter();
         final SOUnboundedCountDownLatch doneLatch = task.getDoneLatch();
 
         subSeq.done(cursor);
@@ -432,6 +437,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                 activeFixFd,
                 activeVarFd,
                 tableWriter,
+                indexWriter,
                 doneLatch
         );
     }
@@ -703,6 +709,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                         srcTimestampAddr,
                         srcTimestampSize,
                         tableWriter,
+                        null, // mid table column would not have active index writer
                         doneLatch,
                         dstFixFd,
                         dstLen
@@ -741,6 +748,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
             long srcTimestampAddr,
             long srcTimestampSize,
             TableWriter tableWriter,
+            BitmapIndexWriter indexWriter,
             SOUnboundedCountDownLatch doneLatch,
             long dstFixFd,
             long dstLen
@@ -758,7 +766,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
             dstFixOffset = (srcDataMax - srcDataTop) << shl;
             dstFixAddr = OutOfOrderUtils.mapRW(ff, Math.abs(dstFixFd), dstFixSize);
             dstIndexOffset = dstFixOffset;
-            if (isIndexed) {
+            if (isIndexed && indexWriter == null) {
                 BitmapIndexUtils.keyFileName(path.trimTo(plen), columnName);
                 dstKFd = OutOfOrderUtils.openRW(ff, path);
                 BitmapIndexUtils.valueFileName(path.trimTo(plen), columnName);
@@ -846,6 +854,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                 srcTimestampSize,
                 false,
                 tableWriter,
+                indexWriter,
                 doneLatch
         );
     }
@@ -887,8 +896,8 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
         try {
             dstFixSize = dstLen * Long.BYTES;
             dstFixOffset = srcDataMax * Long.BYTES;
-            dstFixFd = -srcTimestampFd;
-            dstFixAddr = OutOfOrderUtils.mapRW(ff, Math.abs(dstFixFd), dstFixSize);
+            dstFixFd = -Math.abs(srcTimestampFd);
+            dstFixAddr = OutOfOrderUtils.mapRW(ff, -dstFixFd, dstFixSize);
         } catch (Throwable e) {
             tableWriter.bumpOooErrorCount();
             OutOfOrderCopyJob.copyIdleQuick(
@@ -969,6 +978,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                 srcTimestampSize,
                 false,
                 tableWriter,
+                null,
                 doneLatch
         );
     }
@@ -1112,6 +1122,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                 srcTimestampSize,
                 false,
                 tableWriter,
+                null,
                 doneLatch
         );
     }
@@ -1169,6 +1180,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
             long srcTimestampSize,
             boolean partitionMutates,
             TableWriter tableWriter,
+            BitmapIndexWriter indexWriter,
             SOUnboundedCountDownLatch doneLatch
     ) {
         long cursor = outboundPubSeq.next();
@@ -1224,6 +1236,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                     srcTimestampSize,
                     partitionMutates,
                     tableWriter,
+                    indexWriter,
                     doneLatch
             );
         } else {
@@ -1280,6 +1293,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                     srcTimestampSize,
                     partitionMutates,
                     tableWriter,
+                    indexWriter,
                     doneLatch
             );
         }
@@ -1339,6 +1353,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
             long srcTimestampSize,
             boolean partitionMutates,
             TableWriter tableWriter,
+            BitmapIndexWriter indexWriter,
             SOUnboundedCountDownLatch doneLatch
     ) {
         while (cursor == -2) {
@@ -1397,6 +1412,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                     srcTimestampSize,
                     partitionMutates,
                     tableWriter,
+                    indexWriter,
                     doneLatch
             );
         } else {
@@ -1449,6 +1465,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                     srcTimestampSize,
                     partitionMutates,
                     tableWriter,
+                    indexWriter,
                     doneLatch
             );
         }
@@ -1505,6 +1522,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
             long srcTimestampSize,
             boolean partitionMutates,
             TableWriter tableWriter,
+            BitmapIndexWriter indexWriter,
             SOUnboundedCountDownLatch doneLatch
     ) {
         OutOfOrderCopyTask task = outboundQueue.get(cursor);
@@ -1556,6 +1574,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                 srcTimestampSize,
                 partitionMutates,
                 tableWriter,
+                indexWriter,
                 doneLatch
         );
         outboundPubSeq.done(cursor);
@@ -1594,6 +1613,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
             long srcTimestampAddr,
             long srcTimestampSize,
             TableWriter tableWriter,
+            BitmapIndexWriter indexWriter,
             SOUnboundedCountDownLatch doneLatch
     ) {
         final long dstLen = srcOooHi - srcOooLo + 1 + srcDataMax - srcDataTop;
@@ -1658,7 +1678,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                         srcDataTop,
                         srcDataMax,
                         isIndexed,
-                        -srcTimestampFd,
+                        srcTimestampFd,
                         srcTimestampAddr,
                         srcTimestampSize,
                         tableWriter,
@@ -1697,6 +1717,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                         srcTimestampAddr,
                         srcTimestampSize,
                         tableWriter,
+                        indexWriter,
                         doneLatch,
                         -activeFixFd,
                         dstLen
@@ -1752,6 +1773,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
             long srcTimestampAddr,
             long srcTimestampSize,
             TableWriter tableWriter,
+            BitmapIndexWriter indexWriter,
             SOUnboundedCountDownLatch doneLatch
     ) {
         long srcDataFixFd;
@@ -1859,6 +1881,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                         srcTimestampAddr,
                         srcTimestampSize,
                         tableWriter,
+                        indexWriter,
                         doneLatch,
                         srcDataFixFd
                 );
@@ -2120,6 +2143,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                         srcTimestampAddr,
                         srcTimestampSize,
                         tableWriter,
+                        null, // mid table partition would not have active index writer
                         doneLatch,
                         srcDataFixFd
                 );
@@ -2200,6 +2224,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
             long srcTimestampAddr,
             long srcTimestampSize,
             TableWriter tableWriter,
+            BitmapIndexWriter indexWriter,
             SOUnboundedCountDownLatch doneLatch,
             long srcDataFixFd
     ) {
@@ -2381,6 +2406,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                 srcTimestampAddr,
                 srcTimestampSize,
                 tableWriter,
+                indexWriter,
                 doneLatch
         );
     }
@@ -2690,6 +2716,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                 srcTimestampAddr,
                 srcTimestampSize,
                 tableWriter,
+                null,
                 doneLatch
         );
     }
@@ -2768,6 +2795,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
             long srcDataMax,
             boolean isIndexed,
             TableWriter tableWriter,
+            BitmapIndexWriter indexWriter,
             SOUnboundedCountDownLatch doneLatch
     ) {
         long dstFixFd = 0;
@@ -2889,6 +2917,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                 0,
                 false, // partition does not mutate above the append line
                 tableWriter,
+                indexWriter,
                 doneLatch
         );
     }
@@ -2957,6 +2986,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
             long srcTimestampAddr,
             long srcTimestampSize,
             TableWriter tableWriter,
+            BitmapIndexWriter indexWriter,
             SOUnboundedCountDownLatch doneLatch
     ) {
         final boolean partitionMutates = true;
@@ -3014,6 +3044,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                         srcTimestampSize,
                         partitionMutates,
                         tableWriter,
+                        indexWriter,
                         doneLatch
                 );
                 break;
@@ -3069,6 +3100,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                         srcTimestampSize,
                         partitionMutates,
                         tableWriter,
+                        indexWriter,
                         doneLatch
                 );
                 break;
@@ -3129,6 +3161,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                         srcTimestampSize,
                         partitionMutates,
                         tableWriter,
+                        indexWriter,
                         doneLatch
                 );
                 break;
@@ -3184,6 +3217,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                         srcTimestampSize,
                         partitionMutates,
                         tableWriter,
+                        indexWriter,
                         doneLatch
                 );
                 break;
@@ -3239,6 +3273,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                         srcTimestampSize,
                         partitionMutates,
                         tableWriter,
+                        indexWriter,
                         doneLatch
                 );
                 break;
@@ -3299,6 +3334,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                         srcTimestampSize,
                         partitionMutates,
                         tableWriter,
+                        indexWriter,
                         doneLatch
                 );
                 break;
@@ -3354,6 +3390,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                         srcTimestampSize,
                         partitionMutates,
                         tableWriter,
+                        indexWriter,
                         doneLatch
                 );
                 break;
