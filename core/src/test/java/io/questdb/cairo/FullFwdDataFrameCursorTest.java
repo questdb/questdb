@@ -2557,17 +2557,17 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
         }
 
         @Override
-        public MPSequence getO3UpdPartitionSizePubSeq() {
+        public MPSequence getO3PartitionUpdatePubSeq() {
             return null;
         }
 
         @Override
-        public RingQueue<O3UpdPartitionSizeTask> getO3UpdPartitionSizeQueue() {
+        public RingQueue<O3PartitionUpdateTask> getO3PartitionUpdateQueue() {
             return null;
         }
 
         @Override
-        public SCSequence getO3UpdPartitionSizeSubSeq() {
+        public SCSequence getO3PartitionUpdateSubSeq() {
             return null;
         }
 

@@ -1279,7 +1279,7 @@ public class O3FailureTest extends AbstractO3Test {
         assertSqlResultAgainstFile(
                 compiler,
                 sqlExecutionContext,
-                "/ooo/testColumnTopLastDataOOOData.txt"
+                "/o3/testColumnTopLastDataOOOData.txt"
         );
 
     }
@@ -1417,7 +1417,7 @@ public class O3FailureTest extends AbstractO3Test {
         assertSqlResultAgainstFile(
                 compiler,
                 sqlExecutionContext,
-                "/ooo/testColumnTopMidDataMergeData.txt"
+                "/o3/testColumnTopMidDataMergeData.txt"
         );
     }
 
@@ -1553,7 +1553,7 @@ public class O3FailureTest extends AbstractO3Test {
         assertSqlResultAgainstFile(
                 compiler,
                 sqlExecutionContext,
-                "/ooo/testColumnTopLastOOOPrefix.txt"
+                "/o3/testColumnTopLastOOOPrefix.txt"
         );
     }
 
@@ -1566,9 +1566,9 @@ public class O3FailureTest extends AbstractO3Test {
         compiler.compile("create table y as (x union all append)", sqlExecutionContext);
         compiler.compile("insert into x select * from append", sqlExecutionContext);
 
-        assertSqlResultAgainstFile(compiler, sqlExecutionContext, "/ooo/testColumnTopMidAppendColumn.txt");
+        assertSqlResultAgainstFile(compiler, sqlExecutionContext, "/o3/testColumnTopMidAppendColumn.txt");
         engine.releaseAllReaders();
-        assertSqlResultAgainstFile(compiler, sqlExecutionContext, "/ooo/testColumnTopMidAppendColumn.txt");
+        assertSqlResultAgainstFile(compiler, sqlExecutionContext, "/o3/testColumnTopMidAppendColumn.txt");
     }
 
     private static void assertSqlResultAgainstFile(

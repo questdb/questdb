@@ -32,7 +32,7 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.tasks.O3CopyTask;
-import io.questdb.tasks.O3UpdPartitionSizeTask;
+import io.questdb.tasks.O3PartitionUpdateTask;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -41,19 +41,19 @@ import static io.questdb.cairo.TableWriter.*;
 public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
     private static final Log LOG = LogFactory.getLog(O3CopyJob.class);
     private final CairoConfiguration configuration;
-    private final RingQueue<O3UpdPartitionSizeTask> updPartitionSizeQueue;
+    private final RingQueue<O3PartitionUpdateTask> updPartitionSizeQueue;
     private final MPSequence updPartitionSizePubSeq;
 
     public O3CopyJob(MessageBus messageBus) {
         super(messageBus.getO3CopyQueue(), messageBus.getO3CopySubSeq());
         this.configuration = messageBus.getConfiguration();
-        this.updPartitionSizeQueue = messageBus.getO3UpdPartitionSizeQueue();
-        this.updPartitionSizePubSeq = messageBus.getO3UpdPartitionSizePubSeq();
+        this.updPartitionSizeQueue = messageBus.getO3PartitionUpdateQueue();
+        this.updPartitionSizePubSeq = messageBus.getO3PartitionUpdatePubSeq();
     }
 
     public static void copy(
             CairoConfiguration configuration,
-            RingQueue<O3UpdPartitionSizeTask> updPartitionSizeTaskQueue,
+            RingQueue<O3PartitionUpdateTask> updPartitionSizeTaskQueue,
             MPSequence updPartitionSizePubSeq,
             AtomicInteger columnCounter,
             AtomicInteger partCounter,
@@ -107,7 +107,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
     ) {
         switch (blockType) {
             case OO_BLOCK_MERGE:
-                oooMergeCopy(
+                mergeCopy(
                         columnType,
                         timestampMergeIndexAddr,
                         // this is a hack, when we have column top we can have only of of the two:
@@ -128,7 +128,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                 );
                 break;
             case OO_BLOCK_OO:
-                oooCopyOOO(
+                copyO3(
                         columnType,
                         srcOooFixAddr,
                         srcOooFixSize,
@@ -142,7 +142,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                 );
                 break;
             case OO_BLOCK_DATA:
-                oooCopyData(
+                copyData(
                         columnType,
                         srcDataFixAddr + srcDataFixOffset,
                         srcDataFixSize - srcDataFixOffset,
@@ -170,7 +170,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                         updateIndex(configuration, dstFixAddr, dstFixSize, dstKFd, dstVFd, dstIndexOffset);
                     }
                 } catch (Throwable e) {
-                    tableWriter.bumpOooErrorCount();
+                    tableWriter.o3BumpErrorCount();
                     copyIdleQuick(
                             columnCounter,
                             ff,
@@ -237,7 +237,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
 
     public static void copy(
             CairoConfiguration configuration,
-            RingQueue<O3UpdPartitionSizeTask> updPartitionSizeQueue,
+            RingQueue<O3PartitionUpdateTask> updPartitionSizeQueue,
             MPSequence updPartitionSizePubSeq,
             O3CopyTask task,
             long cursor,
@@ -487,13 +487,13 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
         if (timestampMergeIndexAddr != 0) {
             Vect.freeMergedIndex(timestampMergeIndexAddr);
         }
-        tableWriter.bumpPartitionUpdateCount();
+        tableWriter.o3ClockDownPartitionUpdateCount();
         doneLatch.countDown();
     }
 
     private static void touchPartition(
             FilesFacade ff,
-            RingQueue<O3UpdPartitionSizeTask> updPartitionSizeQueue,
+            RingQueue<O3PartitionUpdateTask> updPartitionSizeQueue,
             MPSequence updPartitionPubSeq,
             long srcOooPartitionLo,
             long srcOooPartitionHi,
@@ -531,7 +531,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
     }
 
     static void notifyWriter(
-            RingQueue<O3UpdPartitionSizeTask> updPartitionSizeQueue,
+            RingQueue<O3PartitionUpdateTask> updPartitionSizeQueue,
             MPSequence updPartitionPubSeq,
             long srcOooPartitionLo,
             long srcOooPartitionHi,
@@ -574,7 +574,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
     }
 
     private static void publishUpdPartitionSizeTaskContended(
-            RingQueue<O3UpdPartitionSizeTask> updPartitionSizeQueue,
+            RingQueue<O3PartitionUpdateTask> updPartitionSizeQueue,
             MPSequence updPartitionPubSeq,
             long cursor,
             long srcOooPartitionLo,
@@ -603,7 +603,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                     partitionMutates
             );
         } else {
-            tableWriter.oooUpdatePartitionSizeSynchronized(
+            tableWriter.o3PartitionUpdateSynchronized(
                     timestampMin,
                     timestampMax,
                     partitionTimestamp,
@@ -617,7 +617,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
     }
 
     private static void publishUpdPartitionSizeTaskHarmonized(
-            RingQueue<O3UpdPartitionSizeTask> updPartitionSizeQueue,
+            RingQueue<O3PartitionUpdateTask> updPartitionSizeQueue,
             MPSequence updPartitionPubSeq, long cursor,
             long srcOooPartitionLo,
             long srcOooPartitionHi,
@@ -625,7 +625,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             long srcDataMax,
             boolean partitionMutates
     ) {
-        final O3UpdPartitionSizeTask task = updPartitionSizeQueue.get(cursor);
+        final O3PartitionUpdateTask task = updPartitionSizeQueue.get(cursor);
         task.of(
                 partitionTimestamp,
                 srcOooPartitionLo,
@@ -636,7 +636,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
         updPartitionPubSeq.done(cursor);
     }
 
-    private static void oooCopyData(
+    private static void copyData(
             int columnType,
             long srcFixAddr,
             long srcFixSize,
@@ -651,7 +651,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
         switch (columnType) {
             case ColumnType.STRING:
             case ColumnType.BINARY:
-                oooCopyVarSizeCol(
+                copyVarSizeCol(
                         srcFixAddr,
                         srcFixSize,
                         srcVarAddr,
@@ -664,7 +664,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                 );
                 break;
             default:
-                oooCopyFixedSizeCol(
+                copyFixedSizeCol(
                         srcFixAddr,
                         srcLo,
                         srcHi,
@@ -675,11 +675,11 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
         }
     }
 
-    private static void oooCopyFixedSizeCol(long src, long srcLo, long srcHi, long dst, final int shl) {
+    private static void copyFixedSizeCol(long src, long srcLo, long srcHi, long dst, final int shl) {
         Vect.memcpy(src + (srcLo << shl), dst, (srcHi - srcLo + 1) << shl);
     }
 
-    private static void oooCopyOOO(
+    private static void copyO3(
             int columnType,
             long srcOooFixAddr,
             long srcOooFixSize,
@@ -697,7 +697,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                 // we can find out the edge of string column in one of two ways
                 // 1. if srcOooHi is at the limit of the page - we need to copy the whole page of strings
                 // 2  if there are more items behind srcOooHi we can get offset of srcOooHi+1
-                oooCopyVarSizeCol(
+                copyVarSizeCol(
                         srcOooFixAddr,
                         srcOooFixSize,
                         srcOooVarAddr,
@@ -711,36 +711,36 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                 break;
             case ColumnType.BOOLEAN:
             case ColumnType.BYTE:
-                oooCopyFixedSizeCol(srcOooFixAddr, srcOooLo, srcOooHi, dstFixAddr, 0);
+                copyFixedSizeCol(srcOooFixAddr, srcOooLo, srcOooHi, dstFixAddr, 0);
                 break;
             case ColumnType.CHAR:
             case ColumnType.SHORT:
-                oooCopyFixedSizeCol(srcOooFixAddr, srcOooLo, srcOooHi, dstFixAddr, 1);
+                copyFixedSizeCol(srcOooFixAddr, srcOooLo, srcOooHi, dstFixAddr, 1);
                 break;
             case ColumnType.INT:
             case ColumnType.FLOAT:
             case ColumnType.SYMBOL:
-                oooCopyFixedSizeCol(srcOooFixAddr, srcOooLo, srcOooHi, dstFixAddr, 2);
+                copyFixedSizeCol(srcOooFixAddr, srcOooLo, srcOooHi, dstFixAddr, 2);
                 break;
             case ColumnType.LONG:
             case ColumnType.DATE:
             case ColumnType.DOUBLE:
             case ColumnType.TIMESTAMP:
-                oooCopyFixedSizeCol(srcOooFixAddr, srcOooLo, srcOooHi, dstFixAddr, 3);
+                copyFixedSizeCol(srcOooFixAddr, srcOooLo, srcOooHi, dstFixAddr, 3);
                 break;
             case -ColumnType.TIMESTAMP:
                 O3Utils.copyFromTimestampIndex(srcOooFixAddr, srcOooLo, srcOooHi, dstFixAddr);
                 break;
             case ColumnType.LONG256:
-                oooCopyFixedSizeCol(srcOooFixAddr, srcOooLo, srcOooHi, dstFixAddr, 5);
+                copyFixedSizeCol(srcOooFixAddr, srcOooLo, srcOooHi, dstFixAddr, 5);
                 break;
             default:
-                oooCopyFixedSizeCol(srcOooFixAddr, srcOooLo, srcOooHi, dstFixAddr, ColumnType.pow2SizeOf(Math.abs(columnType)));
+                copyFixedSizeCol(srcOooFixAddr, srcOooLo, srcOooHi, dstFixAddr, ColumnType.pow2SizeOf(Math.abs(columnType)));
                 break;
         }
     }
 
-    private static void oooCopyVarSizeCol(
+    private static void copyVarSizeCol(
             long srcFixAddr,
             long srcFixSize,
             long srcVarAddr,
@@ -764,13 +764,13 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
         final long len = hi - lo;
         Vect.memcpy(srcVarAddr + lo, dest, len);
         if (lo == dstVarOffset) {
-            oooCopyFixedSizeCol(srcFixAddr, srcLo, srcHi, dstFixAddr, 3);
+            copyFixedSizeCol(srcFixAddr, srcLo, srcHi, dstFixAddr, 3);
         } else {
             O3Utils.shiftCopyFixedSizeColumnData(lo - dstVarOffset, srcFixAddr, srcLo, srcHi, dstFixAddr);
         }
     }
 
-    private static void oooMergeCopy(
+    private static void mergeCopy(
             int columnType,
             long mergeIndexAddr,
             long srcDataFixAddr,

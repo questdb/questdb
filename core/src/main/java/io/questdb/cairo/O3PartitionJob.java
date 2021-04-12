@@ -39,7 +39,7 @@ import io.questdb.std.str.Path;
 import io.questdb.tasks.O3CopyTask;
 import io.questdb.tasks.O3OpenColumnTask;
 import io.questdb.tasks.O3PartitionTask;
-import io.questdb.tasks.O3UpdPartitionSizeTask;
+import io.questdb.tasks.O3PartitionUpdateTask;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -55,7 +55,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
     private final Sequence openColumnPubSeq;
     private final RingQueue<O3CopyTask> copyTaskOutboundQueue;
     private final Sequence copyTaskPubSeq;
-    private final RingQueue<O3UpdPartitionSizeTask> updPartitionSizeQueue;
+    private final RingQueue<O3PartitionUpdateTask> updPartitionSizeQueue;
     private final MPSequence updPartitionSizePubSeq;
 
     public O3PartitionJob(MessageBus messageBus) {
@@ -65,8 +65,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         this.openColumnPubSeq = messageBus.getO3OpenColumnPubSeq();
         this.copyTaskOutboundQueue = messageBus.getO3CopyQueue();
         this.copyTaskPubSeq = messageBus.getO3CopyPubSeq();
-        this.updPartitionSizeQueue = messageBus.getO3UpdPartitionSizeQueue();
-        this.updPartitionSizePubSeq = messageBus.getO3UpdPartitionSizePubSeq();
+        this.updPartitionSizeQueue = messageBus.getO3PartitionUpdateQueue();
+        this.updPartitionSizePubSeq = messageBus.getO3PartitionUpdatePubSeq();
     }
 
     public static void processPartition(
@@ -76,7 +76,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             Sequence openColumnPubSeq,
             RingQueue<O3CopyTask> copyTaskOutboundQueue,
             Sequence copyTaskPubSeq,
-            RingQueue<O3UpdPartitionSizeTask> updPartitionSizeTaskQueue,
+            RingQueue<O3PartitionUpdateTask> updPartitionSizeTaskQueue,
             MPSequence updPartitionSizePubSeq,
             FilesFacade ff,
             CharSequence pathToTable,
@@ -127,8 +127,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     createDirsOrFail(ff, path, configuration.getMkDirMode());
                 } catch (Throwable e) {
                     LOG.debug().$("idle new").$();
-                    tableWriter.bumpOooErrorCount();
-                    tableWriter.bumpPartitionUpdateCount();
+                    tableWriter.o3BumpErrorCount();
+                    tableWriter.o3ClockDownPartitionUpdateCount();
                     doneLatch.countDown();
                     throw e;
                 }
@@ -444,8 +444,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 LOG.debug().$("idle existing").$();
                 O3Utils.unmap(ff, srcTimestampAddr, srcTimestampSize);
                 O3Utils.close(ff, srcTimestampFd);
-                tableWriter.bumpOooErrorCount();
-                tableWriter.bumpPartitionUpdateCount();
+                tableWriter.o3BumpErrorCount();
+                tableWriter.o3ClockDownPartitionUpdateCount();
                 doneLatch.countDown();
                 throw e;
             }
@@ -508,7 +508,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             Sequence openColumnPubSeq,
             RingQueue<O3CopyTask> copyTaskOutboundQueue,
             Sequence copyTaskPubSeq,
-            RingQueue<O3UpdPartitionSizeTask> updPartitionSizeQueue,
+            RingQueue<O3PartitionUpdateTask> updPartitionSizeQueue,
             MPSequence updPartitionSizePubSeq,
             O3PartitionTask task,
             long cursor,
@@ -571,7 +571,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
     }
 
-    private static long oooCreateMergeIndex(
+    private static long createMergeIndex(
             long srcDataTimestampAddr,
             long sortedTimestampsAddr,
             long mergeDataLo,
@@ -699,7 +699,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             Sequence openColumnPubSeq,
             RingQueue<O3CopyTask> copyTaskOutboundQueue,
             Sequence copyTaskPubSeq,
-            RingQueue<O3UpdPartitionSizeTask> updPartitionSizeTaskQueue,
+            RingQueue<O3PartitionUpdateTask> updPartitionSizeTaskQueue,
             MPSequence updPartitionSizePubSeq,
             FilesFacade ff,
             long txn,
@@ -739,7 +739,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
         final long timestampMergeIndexAddr;
         if (mergeType == OO_BLOCK_MERGE) {
-            timestampMergeIndexAddr = oooCreateMergeIndex(
+            timestampMergeIndexAddr = createMergeIndex(
                     srcTimestampAddr,
                     sortedTimestampsAddr,
                     mergeDataLo,
@@ -938,7 +938,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             long cursor,
             RingQueue<O3CopyTask> copyTaskOutboundQueue,
             Sequence copyTaskPubSeq,
-            RingQueue<O3UpdPartitionSizeTask> updPartitionSizeTaskQueue,
+            RingQueue<O3PartitionUpdateTask> updPartitionSizeTaskQueue,
             MPSequence updPartitionSizePubSeq,
             int openColumnMode,
             FilesFacade ff,

@@ -1719,7 +1719,7 @@ public class O3Test extends AbstractO3Test {
                 compiler,
                 sqlExecutionContext,
                 "x",
-                "/ooo/testPartitionedDataOOIntoLastOverflowIntoNewPartition.txt"
+                "/o3/testPartitionedDataOOIntoLastOverflowIntoNewPartition.txt"
         );
 
         assertIndexConsistency(compiler, sqlExecutionContext);
@@ -1731,7 +1731,7 @@ public class O3Test extends AbstractO3Test {
                 compiler,
                 sqlExecutionContext,
                 "x",
-                "/ooo/testPartitionedDataOOIntoLastOverflowIntoNewPartition.txt"
+                "/o3/testPartitionedDataOOIntoLastOverflowIntoNewPartition.txt"
         );
         assertIndexConsistency(compiler, sqlExecutionContext);
     }
@@ -1922,11 +1922,11 @@ public class O3Test extends AbstractO3Test {
         AbstractO3Test.assertSqlResultAgainstFile(compiler,
                 sqlExecutionContext,
                 filteredColumnSelect,
-                "/ooo/testPartitionedDataMergeData.txt");
+                "/o3/testPartitionedDataMergeData.txt");
 
         AbstractO3Test.assertSqlResultAgainstFile(compiler, sqlExecutionContext,
                 filteredColumnSelect + " where sym = 'googl'",
-                "/ooo/testPartitionedDataMergeData_Index.txt");
+                "/o3/testPartitionedDataMergeData_Index.txt");
     }
 
     private static void testPartitionedDataMergeEnd0(
@@ -1990,13 +1990,13 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext,
                 "create table y as (x union all middle)",
                 "insert into x select * from middle",
-                "/ooo/testPartitionedDataMergeEnd.txt"
+                "/o3/testPartitionedDataMergeEnd.txt"
         );
 
         assertIndexResultAgainstFile(
                 compiler,
                 sqlExecutionContext,
-                "/ooo/testPartitionedDataMergeEnd_Index.txt"
+                "/o3/testPartitionedDataMergeEnd_Index.txt"
         );
     }
 
@@ -2064,7 +2064,7 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext,
                 "create table y as (x union all middle)",
                 "insert into x select * from middle",
-                "/ooo/testPartitionedDataOOData.txt"
+                "/o3/testPartitionedDataOOData.txt"
         );
 
         assertIndexConsistency(compiler, sqlExecutionContext);
@@ -2351,7 +2351,7 @@ public class O3Test extends AbstractO3Test {
                 compiler,
                 sqlExecutionContext,
                 "x",
-                "/ooo/testColumnTopLastDataOOOData.txt"
+                "/o3/testColumnTopLastDataOOOData.txt"
         );
     }
 
@@ -2497,7 +2497,7 @@ public class O3Test extends AbstractO3Test {
                 compiler,
                 sqlExecutionContext,
                 "x",
-                "/ooo/testColumnTopLastDataMergeData.txt"
+                "/o3/testColumnTopLastDataMergeData.txt"
         );
     }
 
@@ -2629,7 +2629,7 @@ public class O3Test extends AbstractO3Test {
                 compiler,
                 sqlExecutionContext,
                 "x",
-                "/ooo/testColumnTopMidDataMergeData.txt"
+                "/o3/testColumnTopMidDataMergeData.txt"
         );
     }
 
@@ -2764,7 +2764,7 @@ public class O3Test extends AbstractO3Test {
                 compiler,
                 sqlExecutionContext,
                 "x",
-                "/ooo/testColumnTopLastDataMerge2Data.txt"
+                "/o3/testColumnTopLastDataMerge2Data.txt"
         );
 
         // 599820000000
@@ -2814,7 +2814,7 @@ public class O3Test extends AbstractO3Test {
                 compiler,
                 sqlExecutionContext,
                 "x",
-                "/ooo/testColumnTopLastDataMerge2DataStep2.txt"
+                "/o3/testColumnTopLastDataMerge2DataStep2.txt"
         );
     }
 
@@ -2951,7 +2951,7 @@ public class O3Test extends AbstractO3Test {
                 compiler,
                 sqlExecutionContext,
                 "select i,sym,amt,timestamp,b,c,d,e,f,g,ik,j,ts,l,m,n,t,v,v1,v2,v3,v4,v5,v6,v7,v8,v10,v11,v12,v9 from x",
-                "/ooo/testColumnTopLastOOOPrefix.txt"
+                "/o3/testColumnTopLastOOOPrefix.txt"
         );
     }
 
@@ -3082,7 +3082,7 @@ public class O3Test extends AbstractO3Test {
                 compiler,
                 sqlExecutionContext,
                 "x",
-                "/ooo/testColumnTopLastOOOData.txt"
+                "/o3/testColumnTopLastOOOData.txt"
         );
     }
 
@@ -3213,7 +3213,7 @@ public class O3Test extends AbstractO3Test {
                 compiler,
                 sqlExecutionContext,
                 "x",
-                "/ooo/testColumnTopMidOOOData.txt"
+                "/o3/testColumnTopMidOOOData.txt"
         );
     }
 
@@ -3881,7 +3881,7 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext,
                 "create table y as (x union all append)",
                 "insert into x select * from append",
-                "/ooo/testColumnTopMidAppendColumn.txt"
+                "/o3/testColumnTopMidAppendColumn.txt"
         );
 
         assertIndexConsistency(compiler, sqlExecutionContext);
@@ -4169,7 +4169,7 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext,
                 "create table y as (x union all append)",
                 "insert into x select * from append",
-                "/ooo/testColumnTopLastAppendColumn.txt"
+                "/o3/testColumnTopLastAppendColumn.txt"
         );
 
         assertIndexConsistency(compiler, sqlExecutionContext);
@@ -4264,13 +4264,13 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext,
                 "create table y as (select * from x union all select * from 1am union all select * from top2)",
                 "insert into x select * from (1am union all top2)",
-                "/ooo/testPartitionedDataOODataPbOOData.txt"
+                "/o3/testPartitionedDataOODataPbOOData.txt"
         );
 
         assertIndexResultAgainstFile(
                 compiler,
                 sqlExecutionContext,
-                "/ooo/testPartitionedDataOODataPbOOData_Index.txt"
+                "/o3/testPartitionedDataOODataPbOOData_Index.txt"
         );
     }
 
