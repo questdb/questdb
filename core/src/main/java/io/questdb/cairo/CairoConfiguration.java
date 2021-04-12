@@ -209,7 +209,7 @@ public interface CairoConfiguration {
 
     int getVectorAggregateQueueCapacity();
 
-    int getO3SortQueueCapacity();
+    int getO3CallbackQueueCapacity();
 
     int getO3PartitionQueueCapacity();
 

@@ -28,15 +28,15 @@ import io.questdb.MessageBus;
 import io.questdb.mp.AbstractQueueConsumerJob;
 import io.questdb.mp.CountDownLatchSPI;
 import io.questdb.mp.Sequence;
-import io.questdb.tasks.OutOfOrderColumnTask;
+import io.questdb.tasks.O3CallbackTask;
 import org.jetbrains.annotations.Nullable;
 
-public class OutOfOrderColumnUpdateJob extends AbstractQueueConsumerJob<OutOfOrderColumnTask> {
+public class OutOfOrderColumnUpdateJob extends AbstractQueueConsumerJob<O3CallbackTask> {
     public OutOfOrderColumnUpdateJob(MessageBus messageBus) {
-        super(messageBus.getOutOfOrderColumnUpdateQueue(), messageBus.getOutOfOrderColumnUpdateSubSeq());
+        super(messageBus.getO3CallbackQueue(), messageBus.getO3CallbackSubSeq());
     }
 
-    public static void runCallbackWithCol(OutOfOrderColumnTask task, long cursor, @Nullable Sequence subSeq) {
+    public static void runCallbackWithCol(O3CallbackTask task, long cursor, @Nullable Sequence subSeq) {
         final int columnIndex = task.getColumnIndex();
         final int columnType = task.getColumnType();
         final long mergedTimestampsAddr = task.getMergedTimestampsAddr();
@@ -61,7 +61,7 @@ public class OutOfOrderColumnUpdateJob extends AbstractQueueConsumerJob<OutOfOrd
 
     @Override
     protected boolean doRun(int workerId, long cursor) {
-        OutOfOrderColumnTask task = queue.get(cursor);
+        O3CallbackTask task = queue.get(cursor);
         // copy task on stack so that publisher has fighting chance of
         // publishing all it has to the queue
 

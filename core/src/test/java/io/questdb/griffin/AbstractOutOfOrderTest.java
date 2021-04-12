@@ -39,24 +39,43 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.Nullable;
-import org.junit.Assert;
-import org.junit.Before;
+import org.junit.*;
+import org.junit.rules.TemporaryFolder;
 
 import java.io.File;
+import java.io.IOException;
 import java.net.URISyntaxException;
 import java.net.URL;
 
-public class AbstractOutOfOrderTest extends AbstractCairoTest {
+public class AbstractOutOfOrderTest {
+    protected static final StringSink sink = new StringSink();
     protected static final StringSink sink2 = new StringSink();
     private final static Log LOG = LogFactory.getLog(OutOfOrderTest.class);
+    @ClassRule
+    public static TemporaryFolder temp = new TemporaryFolder();
+    protected static CharSequence root;
+
+    @BeforeClass
+    public static void setupStatic() {
+        try {
+            root = temp.newFolder("dbRoot").getAbsolutePath();
+        } catch (IOException e) {
+            throw new RuntimeException();
+        }
+    }
 
     @Before
     public void setUp() {
-        super.setUp();
         SharedRandom.RANDOM.set(new Rnd());
         // instantiate these paths so that they are not included in memory leak test
         Path.PATH.get();
         Path.PATH2.get();
+        TestUtils.createTestPath(root);
+    }
+
+    @After
+    public void tearDown() {
+        TestUtils.removeTestPath(root);
     }
 
     protected static void assertSqlCursors(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, String expected, String actual) throws SqlException {
@@ -114,7 +133,7 @@ public class AbstractOutOfOrderTest extends AbstractCairoTest {
             SqlExecutionContext sqlExecutionContext,
             String sql
     ) throws SqlException {
-        TestUtils.printSql(compiler, sqlExecutionContext, sql, AbstractCairoTest.sink);
+        TestUtils.printSql(compiler, sqlExecutionContext, sql, sink);
     }
 
     protected static void assertIndexResultAgainstFile(
@@ -259,7 +278,7 @@ public class AbstractOutOfOrderTest extends AbstractCairoTest {
                     }
 
                     @Override
-                    public int getO3SortQueueCapacity() {
+                    public int getO3CallbackQueueCapacity() {
                         return 0;
                     }
 

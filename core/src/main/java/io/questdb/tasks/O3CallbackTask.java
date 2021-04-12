@@ -28,7 +28,7 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.mp.CountDownLatchSPI;
 import io.questdb.std.AbstractLockable;
 
-public class OutOfOrderColumnTask extends AbstractLockable {
+public class O3CallbackTask extends AbstractLockable {
     private CountDownLatchSPI countDownLatchSPI;
     private int columnIndex;
     private int columnType;

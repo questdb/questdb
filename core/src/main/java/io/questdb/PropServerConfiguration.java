@@ -187,7 +187,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final BuildInformation buildInformation;
     private final int columnIndexerQueueCapacity;
     private final int vectorAggregateQueueCapacity;
-    private final int o3SortQueueCapacity;
+    private final int o3CallbackQueueCapacity;
     private final int o3PartitionQueueCapacity;
     private final int o3OpenColumnQueueCapacity;
     private final int o3CopyQueueCapacity;
@@ -629,7 +629,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.tableBlockWriterQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.table.block.writer.queue.capacity", 4096));
             this.columnIndexerQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.column.indexer.queue.capacity", 1024));
             this.vectorAggregateQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.vector.aggregate.queue.capacity", 1024));
-            this.o3SortQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.o3.sort.queue.capacity", 1024));
+            this.o3CallbackQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.o3.callback.queue.capacity", 1024));
             this.o3PartitionQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.o3.partition.queue.capacity", 1024));
             this.o3OpenColumnQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.o3.open.column.queue.capacity", 1024));
             this.o3CopyQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.o3.copy.queue.capacity", 1024));
@@ -1791,8 +1791,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getO3SortQueueCapacity() {
-            return o3SortQueueCapacity;
+        public int getO3CallbackQueueCapacity() {
+            return o3CallbackQueueCapacity;
         }
 
         @Override

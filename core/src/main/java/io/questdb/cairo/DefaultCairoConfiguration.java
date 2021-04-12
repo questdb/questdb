@@ -467,7 +467,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getO3SortQueueCapacity() {
+    public int getO3CallbackQueueCapacity() {
         return 1024;
     }
 
