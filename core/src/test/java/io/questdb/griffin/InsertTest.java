@@ -622,7 +622,7 @@ public class InsertTest extends AbstractGriffinTest {
         final String expected = "seq\tts\n" +
                 "1\t2021-01-03T00:00:00.033000Z\n";
 
-        assertQuery(
+        assertInsertQuery(
                 "seq\tts\n",
                 "tab",
                 "create table tab(seq long, ts timestamp);",
@@ -640,7 +640,7 @@ public class InsertTest extends AbstractGriffinTest {
         final String expected = "seq\tts\n" +
                 "1\t2021-01-03T00:00:00.033011Z\n";
 
-        assertQuery(
+        assertInsertQuery(
                 "seq\tts\n",
                 "tab",
                 "create table tab(seq long, ts timestamp);",
@@ -676,7 +676,7 @@ public class InsertTest extends AbstractGriffinTest {
         final String expected = "seq\tts\n" +
                 "1\t2021-01-03T00:00:00.000000Z\n";
 
-        assertQuery(
+        assertInsertQuery(
                 "seq\tts\n",
                 "tab",
                 "create table tab(seq long, ts timestamp) timestamp(ts)",
