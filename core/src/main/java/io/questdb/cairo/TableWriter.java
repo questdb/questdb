@@ -2053,24 +2053,41 @@ public class TableWriter implements Closeable {
             long valueCount,
             final int columnType
     ) {
-        ContiguousVirtualMemory dataMem = o3Columns.get(getPrimaryColumnIndex(columnIndex));
-        ContiguousVirtualMemory indexMem = o3Columns.get(getSecondaryColumnIndex(columnIndex));
+        if (columnIndex > -1) {
+            ContiguousVirtualMemory dataMem = o3Columns.get(getPrimaryColumnIndex(columnIndex));
+            ContiguousVirtualMemory indexMem = o3Columns.get(getSecondaryColumnIndex(columnIndex));
 
-        long size;
-        long sourceOffset;
-        final int shl = ColumnType.pow2SizeOf(columnType);
-        if (null == indexMem) {
-            sourceOffset = o3RowCount << shl;
-            size = valueCount << shl;
+            long size;
+            long sourceOffset;
+            final int shl = ColumnType.pow2SizeOf(columnType);
+            if (null == indexMem) {
+                // Fixed size column
+                sourceOffset = o3RowCount << shl;
+                size = valueCount << shl;
+            } else {
+                // Var size column
+                sourceOffset = indexMem.getLong(o3RowCount * 8);
+                size = dataMem.getAppendOffset() - sourceOffset;
+                O3Utils.shiftCopyFixedSizeColumnData(
+                        sourceOffset,
+                        indexMem.addressOf(o3RowCount * 8),
+                        0,
+                        valueCount * 8,
+                        indexMem.addressOf(0)
+                );
+                indexMem.jumpTo(valueCount * 8);
+            }
+
+            dataMem.jumpTo(size);
+            Vect.memmove(dataMem.addressOf(0), dataMem.addressOf(sourceOffset), size);
         } else {
-            sourceOffset = indexMem.getLong(o3RowCount << 3);
-            size = dataMem.getAppendOffset() - sourceOffset;
-            O3Utils.shiftCopyFixedSizeColumnData(sourceOffset, indexMem.addressOf(o3RowCount << 3), 0, o3HysteresisRowCount << 3, indexMem.addressOf(0));
-            indexMem.jumpTo(valueCount << 3);
+            // Special case, designated timestamp column
+            // Move values and set index to  0..valueCount
+            final long sourceOffset = o3RowCount * 16;
+            final long mergeMemAddr = timestampMergeMem.addressOf(0);
+            Vect.shiftTimestampIndex(mergeMemAddr + sourceOffset, valueCount, mergeMemAddr);
+            timestampMergeMem.jumpTo(valueCount * 16);
         }
-
-        dataMem.jumpTo(size);
-        Vect.memmove(dataMem.addressOf(0), dataMem.addressOf(sourceOffset), size);
     }
 
     private void o3MoveUncommitted(final int timestampIndex) {
@@ -2377,11 +2394,6 @@ public class TableWriter implements Closeable {
     }
 
     private void o3MoveHysteresis(int timestampIndex) {
-        final long sourceOffset = o3RowCount * 16;
-        final long mergeMemAddr = timestampMergeMem.addressOf(0);
-        Vect.shiftTimestampIndex(mergeMemAddr + sourceOffset, o3HysteresisRowCount, mergeMemAddr);
-        timestampMergeMem.jumpTo(o3HysteresisRowCount * 16);
-
         o3PendingCallbackTasks.clear();
 
         final Sequence pubSeq = this.messageBus.getO3CallbackPubSeq();
@@ -2391,29 +2403,30 @@ public class TableWriter implements Closeable {
         oooLatch.reset();
         int queuedCount = 0;
         for (int colIndex = 0; colIndex < columnCount; colIndex++) {
-            if (colIndex != timestampIndex) {
-                int columnType = metadata.getColumnType(colIndex);
-                long cursor = pubSeq.next();
-                if (cursor > -1) {
-                    try {
-                        final O3CallbackTask task = queue.get(cursor);
-                        task.of(
-                                oooLatch,
-                                colIndex,
-                                columnType,
-                                ignoredAddr,
-                                o3HysteresisRowCount,
-                                this.o3MoveHysteresisRef
-                        );
+            int columnType = metadata.getColumnType(colIndex);
+            long cursor = pubSeq.next();
 
-                        o3PendingCallbackTasks.add(task);
-                    } finally {
-                        queuedCount++;
-                        pubSeq.done(cursor);
-                    }
-                } else {
-                    o3MoveHysteresis0(colIndex, ignoredAddr, o3HysteresisRowCount, columnType);
+            // Pass column index as -1 when it's designated timestamp column to o3 move method
+            int columnIndex = colIndex != timestampIndex ? colIndex : -1;
+            if (cursor > -1) {
+                try {
+                    final O3CallbackTask task = queue.get(cursor);
+                    task.of(
+                            oooLatch,
+                            columnIndex,
+                            columnType,
+                            ignoredAddr,
+                            o3HysteresisRowCount,
+                            this.o3MoveHysteresisRef
+                    );
+
+                    o3PendingCallbackTasks.add(task);
+                } finally {
+                    queuedCount++;
+                    pubSeq.done(cursor);
                 }
+            } else {
+                o3MoveHysteresis0(columnIndex, ignoredAddr, o3HysteresisRowCount, columnType);
             }
         }
 
