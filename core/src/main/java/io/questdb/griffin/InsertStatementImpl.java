@@ -59,13 +59,16 @@ public class InsertStatementImpl implements InsertStatement {
         this.copier = copier;
         this.timestampFunction = timestampFunction;
         if (timestampFunction != null) {
-            rowFactory = this::getRowWithTimestamp;
+            if (timestampFunction.getType() != ColumnType.STRING) {
+                rowFactory = this::getRowWithTimestamp;
+            } else {
+                rowFactory = this::getRowWithStringTimestamp;
+            }
         } else {
             rowFactory = this::getRowWithoutTimestamp;
         }
         this.structureVersion = structureVersion;
     }
-
     @Override
     public void close() {
         detachWriter();
@@ -106,19 +109,18 @@ public class InsertStatementImpl implements InsertStatement {
     }
 
     private TableWriter.Row getRowWithTimestamp(TableWriter tableWriter) {
-        return tableWriter.newRow(getTimestamp(timestampFunction));
+        long timestamp = timestampFunction.getTimestamp(null);
+        return tableWriter.newRow(timestamp);
     }
 
-    private long getTimestamp(Function timestampFunction) {
-        if (timestampFunction.getType() == ColumnType.STRING) {
-            CharSequence tsStr = timestampFunction.getStr(null);
-            try {
-                return IntervalUtils.parseFloorPartialDate(tsStr);
-            } catch (NumericException e) {
-                throw CairoException.instance(0).put("Invalid timestamp: ").put(tsStr);
-            }
+    private TableWriter.Row getRowWithStringTimestamp(TableWriter tableWriter) {
+        CharSequence tsStr = timestampFunction.getStr(null);
+        try {
+            long timestamp = IntervalUtils.parseFloorPartialDate(tsStr);
+            return tableWriter.newRow(timestamp);
+        } catch (NumericException e) {
+            throw CairoException.instance(0).put("Invalid timestamp: ").put(tsStr);
         }
-        return timestampFunction.getTimestamp(null);
     }
 
     private TableWriter.Row getRowWithoutTimestamp(TableWriter tableWriter) {
