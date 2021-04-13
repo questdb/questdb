@@ -41,18 +41,18 @@ public class O3CallbackJob extends AbstractQueueConsumerJob<O3CallbackTask> {
         final int columnType = task.getColumnType();
         final long mergedTimestampsAddr = task.getMergedTimestampsAddr();
         final long valueCount = task.getValueCount();
-        final TableWriter.O3ColumnUpdateMethod sortMethod = task.getWriterCallbackMethod();
+        final TableWriter.O3ColumnUpdateMethod callbackMethod = task.getWriterCallbackMethod();
         final CountDownLatchSPI countDownLatchSPI = task.getCountDownLatchSPI();
         if (subSeq != null) {
             subSeq.done(cursor);
         }
 
         try {
-            sortMethod.run(
+            callbackMethod.run(
                     columnIndex,
+                    columnType,
                     mergedTimestampsAddr,
-                    valueCount,
-                    columnType
+                    valueCount
             );
         } finally {
             countDownLatchSPI.countDown();

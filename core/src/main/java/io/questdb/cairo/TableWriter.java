@@ -154,6 +154,7 @@ public class TableWriter implements Closeable {
     private long lastPartitionTimestamp;
     private long o3HysteresisRowCount;
     private final O3ColumnUpdateMethod o3MoveHysteresisRef = this::o3MoveHysteresis0;
+    private final O3ColumnUpdateMethod o3MoveUncommittedRef = this::o3MoveUncommitted0;
     private final ObjectPool<MutableAtomicInteger> o3ColumnCounters = new ObjectPool<MutableAtomicInteger>(MutableAtomicInteger::new, 64);
 
     public TableWriter(CairoConfiguration configuration, CharSequence name) {
@@ -2050,9 +2051,9 @@ public class TableWriter implements Closeable {
 
     private void o3MoveHysteresis0(
             int columnIndex,
+            final int columnType,
             long ignore1,
-            long valueCount,
-            final int columnType
+            long valueCount
     ) {
         if (columnIndex > -1) {
             ContiguousVirtualMemory dataMem = o3Columns.get(getPrimaryColumnIndex(columnIndex));
@@ -2099,61 +2100,110 @@ public class TableWriter implements Closeable {
         final long uncommittedTransientRowCount = transientRowsAdded - o3RowCount;
 
         if (uncommittedTransientRowCount > 0) {
+            o3PendingCallbackTasks.clear();
+
+            final Sequence pubSeq = this.messageBus.getO3CallbackPubSeq();
+            final RingQueue<O3CallbackTask> queue = this.messageBus.getO3CallbackQueue();
+
+            oooLatch.reset();
+            int queuedCount = 0;
+            for (int colIndex = 0; colIndex < columnCount; colIndex++) {
+                int columnType = metadata.getColumnType(colIndex);
+                int columnIndex = colIndex != timestampIndex ? colIndex : -colIndex - 1;
+
+                long cursor = pubSeq.next();
+
+                // Pass column index as -1 when it's designated timestamp column to o3 move method
+                if (cursor > -1) {
+                    try {
+                        final O3CallbackTask task = queue.get(cursor);
+                        task.of(
+                                oooLatch,
+                                columnIndex,
+                                columnType,
+                                committedTransientRowCount,
+                                uncommittedTransientRowCount,
+                                this.o3MoveUncommittedRef
+                        );
+
+                        o3PendingCallbackTasks.add(task);
+                    } finally {
+                        queuedCount++;
+                        pubSeq.done(cursor);
+                    }
+                } else {
+                    o3MoveUncommitted0(columnIndex, columnType, committedTransientRowCount, uncommittedTransientRowCount);
+                }
+            }
+
+            for (int n = o3PendingCallbackTasks.size() - 1; n > -1; n--) {
+                final O3CallbackTask task = o3PendingCallbackTasks.getQuick(n);
+                if (task.tryLock()) {
+                    O3CallbackJob.runCallbackWithCol(
+                            task,
+                            -1,
+                            null
+                    );
+                }
+            }
+
+            oooLatch.await(queuedCount);
+            txFile.resetToLastPartition(committedTransientRowCount);
+            o3RowCount += uncommittedTransientRowCount;
+            o3PrevTransientCount = committedTransientRowCount;
+        }
+    }
+
+    private void o3MoveUncommitted0(int colIndex, int columnType, long committedTransientRowCount, long uncommittedTransientRowCount) {
+        if (colIndex > -1) {
+            AppendOnlyVirtualMemory srcDataMem = getPrimaryColumn(colIndex);
+            int shl = ColumnType.pow2SizeOf(columnType);
+            long srcFixOffset;
+            final ContiguousVirtualMemory dstFixMem = o3Columns.get(getPrimaryColumnIndex(colIndex));
+            final ContiguousVirtualMemory dstVarMem = o3Columns.get(getSecondaryColumnIndex(colIndex));
+
+            long extendedSize;
+            long dstVarOffset = dstFixMem.getAppendOffset();
+
+            if (null == dstVarMem) {
+                // Fixed size
+                extendedSize = uncommittedTransientRowCount << shl;
+                srcFixOffset = committedTransientRowCount << shl;
+            } else {
+                // Var size
+                final AppendOnlyVirtualMemory srcFixMem = getSecondaryColumn(colIndex);
+                long srcVarOffset = srcFixMem.getLong(committedTransientRowCount * Long.BYTES);
+                O3Utils.shiftCopyFixedSizeColumnData(
+                        srcVarOffset - dstVarOffset,
+                        srcFixMem.addressOf(committedTransientRowCount * Long.BYTES),
+                        0,
+                        uncommittedTransientRowCount * Long.BYTES,
+                        dstVarMem.addressOf(dstVarMem.getAppendOffset())
+                );
+                long sourceEndOffset = srcDataMem.getAppendOffset();
+                extendedSize = sourceEndOffset - srcVarOffset;
+                srcFixOffset = srcVarOffset;
+                dstVarMem.jumpTo(dstVarMem.getAppendOffset() + uncommittedTransientRowCount * Long.BYTES);
+                srcFixMem.jumpTo(committedTransientRowCount * Long.BYTES);
+            }
+
+            dstFixMem.jumpTo(dstVarOffset + extendedSize);
+            long appendAddress = dstFixMem.addressOf(dstVarOffset);
+            long sourceAddress = srcDataMem.addressOf(srcFixOffset);
+            Vect.memcpy(sourceAddress, appendAddress, extendedSize);
+            srcDataMem.jumpTo(srcFixOffset);
+        } else {
+            // Timestamp column
+            colIndex = -colIndex - 1;
             int shl = ColumnType.pow2SizeOf(ColumnType.TIMESTAMP);
-            AppendOnlyVirtualMemory srcDataMem = getPrimaryColumn(timestampIndex);
+            AppendOnlyVirtualMemory srcDataMem = getPrimaryColumn(colIndex);
             long srcFixOffset = committedTransientRowCount << shl;
             for (long n = 0; n < uncommittedTransientRowCount; n++) {
                 long ts = srcDataMem.getLong(srcFixOffset + (n << shl));
                 timestampMergeMem.putLong(ts);
                 timestampMergeMem.putLong(o3RowCount + n);
             }
-
             srcDataMem.jumpTo(srcFixOffset);
-            for (int colIndex = 0; colIndex < columnCount; colIndex++) {
-                if (colIndex != timestampIndex) {
-                    shl = ColumnType.pow2SizeOf(metadata.getColumnType(colIndex));
-                    final ContiguousVirtualMemory dstFixMem = o3Columns.get(getPrimaryColumnIndex(colIndex));
-                    ContiguousVirtualMemory dstVarMem = o3Columns.get(getSecondaryColumnIndex(colIndex));
-
-                    srcDataMem = getPrimaryColumn(colIndex);
-                    long extendedSize;
-                    long newSize;
-                    long sourceAddress;
-                    long dstVarOffset;
-                    long appendAddress;
-                    dstVarOffset = dstFixMem.getAppendOffset();
-
-                    if (null == dstVarMem) {
-                        extendedSize = uncommittedTransientRowCount << shl;
-                        srcFixOffset = committedTransientRowCount << shl;
-                    } else {
-                        final AppendOnlyVirtualMemory srcFixMem = getSecondaryColumn(colIndex);
-                        long srcVarOffset = srcFixMem.getLong(committedTransientRowCount << 3);
-                        O3Utils.shiftCopyFixedSizeColumnData(
-                                srcVarOffset - dstVarOffset,
-                                srcFixMem.addressOf(committedTransientRowCount << 3),
-                                0,
-                                uncommittedTransientRowCount << 3,
-                                dstVarMem.addressOf(dstVarMem.getAppendOffset())
-                        );
-                        long sourceEndOffset = srcDataMem.getAppendOffset();
-                        extendedSize = sourceEndOffset - srcVarOffset;
-                        srcFixOffset = srcVarOffset;
-                        dstVarMem.jumpTo(dstVarMem.getAppendOffset() + uncommittedTransientRowCount << 3);
-                        srcFixMem.jumpTo(committedTransientRowCount << 3);
-                    }
-
-                    newSize = dstVarOffset + extendedSize;
-                    dstFixMem.jumpTo(newSize);
-                    appendAddress = dstFixMem.addressOf(dstVarOffset);
-                    srcDataMem.jumpTo(srcFixOffset);
-                    sourceAddress = srcDataMem.addressOf(srcFixOffset);
-                    Vect.memcpy(sourceAddress, appendAddress, extendedSize);
-                }
-            }
-            txFile.resetToLastPartition(committedTransientRowCount);
-            o3RowCount += uncommittedTransientRowCount;
-            o3PrevTransientCount = committedTransientRowCount;
         }
     }
 
@@ -2408,7 +2458,7 @@ public class TableWriter implements Closeable {
             long cursor = pubSeq.next();
 
             // Pass column index as -1 when it's designated timestamp column to o3 move method
-            int columnIndex = colIndex != timestampIndex ? colIndex : -1;
+            int columnIndex = colIndex != timestampIndex ? colIndex : -colIndex - 1;
             if (cursor > -1) {
                 try {
                     final O3CallbackTask task = queue.get(cursor);
@@ -2427,7 +2477,7 @@ public class TableWriter implements Closeable {
                     pubSeq.done(cursor);
                 }
             } else {
-                o3MoveHysteresis0(columnIndex, ignoredAddr, o3HysteresisRowCount, columnType);
+                o3MoveHysteresis0(columnIndex, columnType, ignoredAddr, o3HysteresisRowCount);
             }
         }
 
@@ -2645,7 +2695,7 @@ public class TableWriter implements Closeable {
                         }
 
                         if (last && (srcDataSize < 0) || getTimestampIndexValue(sortedTimestampsAddr, 0) >= maxTimestamp) {
-                            System.out.println("this is append");
+                            LOG.info().$("this is append").$();
                         }
                         o3PartitionUpdRemaining.incrementAndGet();
                         long cursor = oooPartitionPubSeq.next();
@@ -2846,19 +2896,19 @@ public class TableWriter implements Closeable {
         switch (type) {
             case ColumnType.BINARY:
             case ColumnType.STRING:
-                o3SortVarColumn(i, mergedTimestamps, o3RowCount, type);
+                o3SortVarColumn(i, type, mergedTimestamps, o3RowCount);
                 break;
             default:
-                o3SortFixColumn(i, mergedTimestamps, o3RowCount, type);
+                o3SortFixColumn(i, type, mergedTimestamps, o3RowCount);
                 break;
         }
     }
 
     private void o3SortFixColumn(
             int columnIndex,
+            final int columnType,
             long mergedTimestampsAddr,
-            long valueCount,
-            final int columnType
+            long valueCount
     ) {
         final int columnOffset = getPrimaryColumnIndex(columnIndex);
         final ContiguousVirtualMemory mem = o3Columns.getQuick(columnOffset);
@@ -2894,9 +2944,9 @@ public class TableWriter implements Closeable {
 
     private void o3SortVarColumn(
             int columnIndex,
+            int columnType,
             long mergedTimestampsAddr,
-            long valueCount,
-            int columnType
+            long valueCount
     ) {
         final int primaryIndex = getPrimaryColumnIndex(columnIndex);
         final int secondaryIndex = primaryIndex + 1;
@@ -3952,9 +4002,9 @@ public class TableWriter implements Closeable {
     public interface O3ColumnUpdateMethod {
         void run(
                 int columnIndex,
+                final int columnType,
                 long mergedTimestampsAddr,
-                long valueCount,
-                final int columnType
+                long valueCount
         );
     }
 
