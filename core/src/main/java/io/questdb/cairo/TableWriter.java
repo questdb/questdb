@@ -154,6 +154,7 @@ public class TableWriter implements Closeable {
     private long lastPartitionTimestamp;
     private long o3HysteresisRowCount;
     private final O3ColumnUpdateMethod o3MoveHysteresisRef = this::o3MoveHysteresis0;
+    private final ObjectPool<MutableAtomicInteger> o3ColumnCounters = new ObjectPool<MutableAtomicInteger>(MutableAtomicInteger::new, 64);
 
     public TableWriter(CairoConfiguration configuration, CharSequence name) {
         this(configuration, name, new MessageBusImpl(configuration));
@@ -2540,6 +2541,8 @@ public class TableWriter implements Closeable {
     private void o3Process(long lastTimestampHysteresisInMicros) {
         o3PartitionRemoveCandidates.clear();
         o3ErrorCount.set(0);
+        o3ColumnCounters.clear();
+
         final int workerId;
         final Thread thread = Thread.currentThread();
         if (thread instanceof Worker) {
@@ -2628,6 +2631,9 @@ public class TableWriter implements Closeable {
                             srcDataTxn = -1;
                         }
 
+                        if (last && (srcDataSize < 0) || getTimestampIndexValue(sortedTimestampsAddr, 0) >= maxTimestamp) {
+                            System.out.println("this is append");
+                        }
                         o3PartitionUpdRemaining.incrementAndGet();
                         long cursor = oooPartitionPubSeq.next();
                         if (cursor > -1) {
@@ -2651,6 +2657,7 @@ public class TableWriter implements Closeable {
                                     getTxn(),
                                     sortedTimestampsAddr,
                                     this,
+                                    o3ColumnCounters.next(),
                                     this.oooLatch
                             );
                             oooPartitionPubSeq.done(cursor);
@@ -2682,6 +2689,7 @@ public class TableWriter implements Closeable {
                                     getTxn(),
                                     sortedTimestampsAddr,
                                     this,
+                                    o3ColumnCounters.next(),
                                     oooLatch
                             );
                         }
@@ -4212,4 +4220,10 @@ public class TableWriter implements Closeable {
         IGNORED_FILES.add(TODO_FILE_NAME);
     }
 
+    private static class MutableAtomicInteger extends AtomicInteger implements Mutable {
+        @Override
+        public void clear() {
+            set(0);
+        }
+    }
 }

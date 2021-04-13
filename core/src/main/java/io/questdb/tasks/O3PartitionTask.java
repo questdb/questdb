@@ -31,6 +31,8 @@ import io.questdb.mp.SOUnboundedCountDownLatch;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.ObjList;
 
+import java.util.concurrent.atomic.AtomicInteger;
+
 public class O3PartitionTask {
     private FilesFacade ff;
     private CharSequence pathToTable;
@@ -50,6 +52,7 @@ public class O3PartitionTask {
     private long txn;
     private long sortedTimestampsAddr;
     private TableWriter tableWriter;
+    private AtomicInteger columnCounter;
     private SOUnboundedCountDownLatch doneLatch;
 
     public ObjList<AppendOnlyVirtualMemory> getColumns() {
@@ -120,6 +123,10 @@ public class O3PartitionTask {
         return tableWriter;
     }
 
+    public AtomicInteger getColumnCounter() {
+        return columnCounter;
+    }
+
     public long getTxn() {
         return txn;
     }
@@ -147,6 +154,7 @@ public class O3PartitionTask {
             long txn,
             long sortedTimestampsAddr,
             TableWriter tableWriter,
+            AtomicInteger columnCounter,
             SOUnboundedCountDownLatch doneLatch
     ) {
         this.pathToTable = path;
@@ -167,6 +175,7 @@ public class O3PartitionTask {
         this.columns = columns;
         this.oooColumns = oooColumns;
         this.tableWriter = tableWriter;
+        this.columnCounter = columnCounter;
         this.doneLatch = doneLatch;
     }
 }

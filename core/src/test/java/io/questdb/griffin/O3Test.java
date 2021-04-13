@@ -928,7 +928,7 @@ public class O3Test extends AbstractO3Test {
                         " rnd_char() t," +
                         " rnd_long256() l256" +
                         " from long_sequence(0)" +
-                        "), index(sym) timestamp (ts) partition by DAY",
+                        "), index(sym) timestamp (ts) partition by MONTH",
                 sqlExecutionContext
         );
 
@@ -948,13 +948,13 @@ public class O3Test extends AbstractO3Test {
                         " rnd_symbol(4,4,4,2) ik," +
                         " rnd_long() j," +
                         // the formula below creates hysteresis-friendly timestamp distribution
-                        " cast(500000000000L + ((x-1)/4) * 100000000L + (4-(x-1)%4)*800009  as timestamp) ts," +
+                        " cast(500000000000L + ((x-1)/4) * 1000000L + (4-(x-1)%4)*80009  as timestamp) ts," +
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
                         " rnd_char() t," +
                         " rnd_long256() l256" +
-                        " from long_sequence(500)" +
+                        " from long_sequence(1000000)" +
                         ")",
                 sqlExecutionContext
         );
@@ -965,7 +965,7 @@ public class O3Test extends AbstractO3Test {
                 compiler,
                 sqlExecutionContext,
                 "create table y as (x union all top)",
-                "insert batch 100 hysteresis 300000000 into x select * from top"
+                "insert batch 100000 hysteresis 300000000 into x select * from top"
         );
 
         assertIndexConsistency(compiler, sqlExecutionContext);

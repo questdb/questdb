@@ -96,22 +96,26 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             long txn,
             long sortedTimestampsAddr,
             TableWriter tableWriter,
+            AtomicInteger columnCounter,
             SOUnboundedCountDownLatch doneLatch
     ) {
-        final Path path = Path.getThreadLocal(pathToTable);
+
+        // is out of order data hitting the last partition?
+        // if so we do not need to re-open files and and write to existing file descriptors
+
         final long oooTimestampLo = getTimestampIndexValue(sortedTimestampsAddr, srcOooLo);
+        final RecordMetadata metadata = tableWriter.getMetadata();
+        final int timestampIndex = metadata.getTimestampIndex();
+
+        final Path path = Path.getThreadLocal(pathToTable);
         TableUtils.setPathForPartition(path, partitionBy, oooTimestampLo, false);
         final int pplen = path.length();
         TableUtils.txnPartitionConditionally(path, srcDataTxn);
-        final RecordMetadata metadata = tableWriter.getMetadata();
-        final int timestampIndex = metadata.getTimestampIndex();
         final int plen = path.length();
         long srcTimestampFd = 0;
         long dataTimestampLo;
         long dataTimestampHi;
 
-        // is out of order data hitting the last partition?
-        // if so we do not need to re-open files and and write to existing file descriptors
 
         if (srcDataMax < 1) {
 
@@ -176,6 +180,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     timestampIndex,
                     sortedTimestampsAddr,
                     tableWriter,
+                    columnCounter,
                     doneLatch
             );
         } else {
@@ -422,7 +427,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     }
                 }
 
-                path.trimTo(plen);
                 if (prefixType == OO_BLOCK_NONE) {
                     // We do not need to create a copy of partition when we simply need to append
                     // existing the one.
@@ -496,6 +500,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     timestampIndex,
                     sortedTimestampsAddr,
                     tableWriter,
+                    columnCounter,
                     doneLatch
             );
         }
@@ -535,6 +540,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         final long txn = task.getTxn();
         final long sortedTimestampsAddr = task.getSortedTimestampsAddr();
         final TableWriter tableWriter = task.getTableWriter();
+        final AtomicInteger columnCounter = task.getColumnCounter();
         final SOUnboundedCountDownLatch doneLatch = task.getDoneLatch();
 
         subSeq.done(cursor);
@@ -566,9 +572,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 txn,
                 sortedTimestampsAddr,
                 tableWriter,
+                columnCounter,
                 doneLatch
         );
-
     }
 
     private static long createMergeIndex(
@@ -733,6 +739,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             int timestampIndex,
             long sortedTimestampsAddr,
             TableWriter tableWriter,
+            AtomicInteger columnCounter,
             SOUnboundedCountDownLatch doneLatch
     ) {
         LOG.debug().$("partition [ts=").$ts(oooTimestampLo).$(']').$();
@@ -753,8 +760,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
         final RecordMetadata metadata = tableWriter.getMetadata();
         final int columnCount = metadata.getColumnCount();
-        // todo: cache
-        final AtomicInteger columnCounter = new AtomicInteger(columnCount);
+        columnCounter.set(columnCount);
         int columnsInFlight = columnCount;
         try {
             for (int i = 0; i < columnCount; i++) {
