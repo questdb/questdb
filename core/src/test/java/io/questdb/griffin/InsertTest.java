@@ -600,88 +600,145 @@ public class InsertTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testInsertDateStringToTimestampColumn() throws Exception {
+    public void testInsertAsSelectISODateStringToDesignatedTimestampColumn() throws Exception {
         final String expected = "seq\tts\n" +
                 "1\t2021-01-03T00:00:00.000000Z\n";
 
+        assertInsertAsSelectTimestamp(expected, "insert into tab select 1, '2021-01-03'");
+    }
+
+    @Test
+    public void testInsertISODateStringToDesignatedTimestampColumn() throws Exception {
+        final String expected = "seq\tts\n" +
+                "1\t2021-01-03T00:00:00.000000Z\n";
+
+        assertInsertTimestamp(expected, "insert into tab values (1, '2021-01-03')");
+    }
+
+    @Test
+    public void testInsertISOSecondsDateStringToDesignatedTimestampColumn() throws Exception {
+        final String expected = "seq\tts\n" +
+                "1\t2021-01-03T00:00:00.000000Z\n";
+
+        assertInsertTimestamp(expected, "insert into tab values (1, '2021-01-03T00:00:00Z')");
+    }
+
+    @Test
+    public void testInsertISOMicroStringToDesignatedTimestampColumn() throws Exception {
+        final String expected = "seq\tts\n" +
+                "1\t2021-01-03T00:00:00.000000Z\n";
+
+        assertInsertTimestamp(expected, "insert into tab values (1, '2021-01-03T00:00:00.000000Z')");
+    }
+
+    @Test
+    public void testInsertInvalidDateStringToDesignatedTimestampColumn() throws Exception {
+        assertInsertTimestampFails("Invalid date", "io.questdb.cairo.CairoException", "insert into tab values (1, '2021-23-03T00:00:00Z')");
+    }
+
+    private void assertInsertTimestampFails(String expected, String exceptionType, String ddl2) {
+        try {
+            // Test as designated timestamp
+            assertInsertQuery(
+                    "seq\tts\n",
+                    "tab",
+                    "create table tab(seq long, ts timestamp) timestamp(ts)",
+                    "ts",
+                    ddl2,
+                    expected,
+                    true,
+                    true,
+                    true
+            );
+            Assert.fail("SqlException expected");
+        } catch (Exception e) {
+            Assert.assertEquals(exceptionType, e.getClass().getName());
+            TestUtils.assertContains(e.getMessage(), expected);
+        }
+
+        tearDownAfterTest();
+        tearDown0();
+        setUp0();
+
+        try {
+            // Test as non-designated timestamp
+            assertInsertQuery(
+                    "seq\tts\n",
+                    "tab",
+                    "create table tab(seq long, ts timestamp)",
+                    null,
+                    ddl2,
+                    expected,
+                    true,
+                    true,
+                    true
+            );
+            Assert.fail("SqlException expected");
+        } catch (Exception e) {
+            Assert.assertEquals(exceptionType, e.getClass().getName());
+            TestUtils.assertContains(e.getMessage(), expected);
+        }
+    }
+
+    private void assertInsertTimestamp(String expected, String ddl2) throws Exception {
+        // Test as designated timestamp
+        assertInsertQuery(
+                "seq\tts\n",
+                "tab",
+                "create table tab(seq long, ts timestamp) timestamp(ts)",
+                "ts",
+                ddl2,
+                expected,
+                true,
+                true,
+                true
+        );
+
+        tearDownAfterTest();
+        tearDown0();
+
+        setUp0();
+
+        // Test as non-designated timestamp
+        assertInsertQuery(
+                "seq\tts\n",
+                "tab",
+                "create table tab(seq long, ts timestamp)",
+                null,
+                ddl2,
+                expected,
+                true,
+                true,
+                true
+        );
+    }
+
+    private void assertInsertAsSelectTimestamp(String expected, String ddl2) throws Exception {
+        // Test as designated timestamp
         assertQuery(
                 "seq\tts\n",
                 "tab",
-                "create table tab(seq long, ts timestamp);",
-                null,
-                "insert into tab select 1, '2021-01-03T00:00:00Z'",
-                expected,
-                true,
-                true,
-                true
-        );
-    }
-
-    @Test
-    public void testInsertMillDateTimeStringToTimestampColumn() throws Exception {
-        final String expected = "seq\tts\n" +
-                "1\t2021-01-03T00:00:00.033000Z\n";
-
-        assertInsertQuery(
-                "seq\tts\n",
-                "tab",
-                "create table tab(seq long, ts timestamp);",
-                null,
-                "insert into tab select 1, '2021-01-03T00:00:00.033Z'",
-                expected,
-                true,
-                true,
-                true
-        );
-    }
-
-    @Test
-    public void testInsertMicroDateTimeStringToTimestampColumn() throws Exception {
-        final String expected = "seq\tts\n" +
-                "1\t2021-01-03T00:00:00.033011Z\n";
-
-        assertInsertQuery(
-                "seq\tts\n",
-                "tab",
-                "create table tab(seq long, ts timestamp);",
-                null,
-                "insert into tab select 1, '2021-01-03T00:00:00.033011Z'",
-                expected,
-                true,
-                true,
-                true
-        );
-    }
-
-    @Test
-    public void testInsertDateStringToDesignatedTimestampColumn() throws Exception {
-        final String expected = "seq\tts\n" +
-                "1\t2021-01-03T00:00:00.000000Z\n";
-
-        assertInsertQuery(
-                "seq\tts\n",
-                "tab",
                 "create table tab(seq long, ts timestamp) timestamp(ts)",
                 "ts",
-                "insert into tab values (1, '2021-01-03T00:00:00Z')",
+                ddl2,
                 expected,
                 true,
                 true,
                 true
         );
-    }
 
-    @Test
-    public void testInsertAsSelectDateStringToDesignatedTimestampColumn() throws Exception {
-        final String expected = "seq\tts\n" +
-                "1\t2021-01-03T00:00:00.000000Z\n";
+        tearDownAfterTest();
+        tearDown0();
 
-        assertInsertQuery(
+        setUp0();
+
+        // Test as non-designated timestamp
+        assertQuery(
                 "seq\tts\n",
                 "tab",
-                "create table tab(seq long, ts timestamp) timestamp(ts)",
-                "ts",
-                "insert into tab select 1, '2021-01-03T00:00:00Z'",
+                "create table tab(seq long, ts timestamp)",
+                null,
+                ddl2,
                 expected,
                 true,
                 true,

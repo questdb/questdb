@@ -25,10 +25,14 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.pool.WriterSource;
 import io.questdb.cairo.sql.*;
+import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.Misc;
+import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 
 public class InsertStatementImpl implements InsertStatement {
@@ -48,7 +52,7 @@ public class InsertStatementImpl implements InsertStatement {
             SqlCompiler.RecordToRowCopier copier,
             Function timestampFunction,
             long structureVersion
-    ) {
+    ) throws SqlException {
         this.engine = engine;
         this.tableName = tableName;
         this.virtualRecord = virtualRecord;
@@ -102,7 +106,26 @@ public class InsertStatementImpl implements InsertStatement {
     }
 
     private TableWriter.Row getRowWithTimestamp(TableWriter tableWriter) {
-        return tableWriter.newRow(timestampFunction.getTimestamp(null));
+        return tableWriter.newRow(getTimestamp(timestampFunction));
+    }
+
+    private long getTimestamp(Function timestampFunction) {
+        if (timestampFunction.getType() == ColumnType.STRING) {
+            try {
+                return preParseTimestampFunction(timestampFunction.getStr(null));
+            } catch (SqlException e) {
+                throw CairoException.instance(0).put(e.getFlyweightMessage());
+            }
+        }
+        return timestampFunction.getTimestamp(null);
+    }
+
+    private long preParseTimestampFunction(CharSequence tsStr) throws SqlException {
+        try {
+            return IntervalUtils.parseFloorPartialDate(tsStr, 0, tsStr.length());
+        } catch (NumericException e) {
+            throw SqlException.invalidDate(timestampFunction.getPosition());
+        }
     }
 
     private TableWriter.Row getRowWithoutTimestamp(TableWriter tableWriter) {

@@ -30,6 +30,7 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.ScalarFunction;
+import io.questdb.griffin.UnsupportedConversionException;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.str.CharSink;
@@ -43,67 +44,70 @@ public abstract class StrFunction implements ScalarFunction {
 
     @Override
     public final BinarySequence getBin(Record rec) {
-        throw new UnsupportedOperationException();
+        throw UnsupportedConversionException.instance().put("cannot convert String to Binary");
     }
 
     @Override
     public long getBinLen(Record rec) {
-        throw new UnsupportedOperationException();
+        throw UnsupportedConversionException.instance().put("cannot convert String to Binary");
     }
 
     @Override
     public final boolean getBool(Record rec) {
-        throw new UnsupportedOperationException();
+        throw UnsupportedConversionException.instance().put("cannot convert String to Bool");
     }
 
     @Override
     public final byte getByte(Record rec) {
-        throw new UnsupportedOperationException();
+        throw UnsupportedConversionException.instance().put("cannot convert String to Byte");
     }
 
     @Override
     public final char getChar(Record rec) {
-        throw new UnsupportedOperationException();
+        CharSequence val = getStr(rec);
+        if (val.length() == 1) return val.charAt(0);
+
+        throw UnsupportedConversionException.instance().put("cannot convert String to Char");
     }
 
     @Override
     public final long getDate(Record rec) {
-        throw new UnsupportedOperationException();
+        throw UnsupportedConversionException.instance().put("cannot convert String to Date");
     }
 
     @Override
     public final double getDouble(Record rec) {
-        throw new UnsupportedOperationException();
+        throw UnsupportedConversionException.instance().put("cannot convert String to Double");
     }
 
     @Override
     public final float getFloat(Record rec) {
-        throw new UnsupportedOperationException();
+        throw UnsupportedConversionException.instance().put("cannot convert String to Float");
     }
 
     @Override
     public final int getInt(Record rec) {
-        throw new UnsupportedOperationException();
+        throw UnsupportedConversionException.instance().put("cannot convert String to Int");
     }
 
     @Override
     public final long getLong(Record rec) {
-        throw new UnsupportedOperationException();
+        throw UnsupportedConversionException.instance().put("cannot convert String to Long");
     }
 
     @Override
     public final void getLong256(Record rec, CharSink sink) {
-        throw new UnsupportedOperationException();
+        throw UnsupportedConversionException.instance().put("cannot convert String to Long256");
     }
 
     @Override
     public final Long256 getLong256A(Record rec) {
-        throw new UnsupportedOperationException();
+        throw UnsupportedConversionException.instance().put("cannot convert String to Long256");
     }
 
     @Override
     public final Long256 getLong256B(Record rec) {
-        throw new UnsupportedOperationException();
+        throw UnsupportedConversionException.instance().put("cannot convert String to Long256");
     }
 
     @Override
@@ -113,12 +117,12 @@ public abstract class StrFunction implements ScalarFunction {
 
     @Override
     public final RecordCursorFactory getRecordCursorFactory() {
-        throw new UnsupportedOperationException();
+        throw UnsupportedConversionException.instance().put("cannot convert String to RecordCursorFactory");
     }
 
     @Override
     public final short getShort(Record rec) {
-        throw new UnsupportedOperationException();
+        throw UnsupportedConversionException.instance().put("cannot convert String to Short");
     }
 
     @Override
@@ -144,7 +148,7 @@ public abstract class StrFunction implements ScalarFunction {
 
     @Override
     public final long getTimestamp(Record rec) {
-        throw new UnsupportedOperationException();
+        throw UnsupportedConversionException.instance().put("cannot convert String to Timestamp");
     }
 
     @Override

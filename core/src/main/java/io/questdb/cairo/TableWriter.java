@@ -31,6 +31,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.RingQueue;
@@ -38,7 +39,6 @@ import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.Sequence;
 import io.questdb.std.*;
 import io.questdb.std.datetime.DateFormat;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.NativeLPSZ;
@@ -4837,25 +4837,14 @@ public class TableWriter implements Closeable {
             putLong(index, value);
         }
 
-        public void putTimestamp(int index, CharSequence value) {
-            // try UTC timestamp first (micro)
-            long l;
+        public void putTimestamp(int index, CharSequence value) throws SqlException {
             try {
-                l = TimestampFormatUtils.parseUTCTimestamp(value);
+                // try UTC timestamp first (micro)
+                long l = IntervalUtils.parseFloorPartialDate(value);
+                putTimestamp(index, l);
             } catch (NumericException e) {
-                try {
-                    // try timestamp mills
-                    l = TimestampFormatUtils.parseTimestamp(value);
-                } catch (NumericException numericException) {
-                    try {
-                        // try all known timestamps
-                        l = TimestampFormatUtils.SEC_UTC_FORMAT.parse(value, 0, value.length(), TimestampFormatUtils.enLocale);
-                    } catch (NumericException numericException2) {
-                        throw CairoException.instance(0).put("could not convert to timestamp [value=").put(value).put(']');
-                    }
-                }
+                throw CairoException.instance(0).put("Invalid date");
             }
-            putTimestamp(index, l);
         }
 
         private BigMem getPrimaryColumn(int columnIndex) {
