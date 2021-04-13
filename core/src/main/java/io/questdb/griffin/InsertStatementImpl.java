@@ -52,7 +52,7 @@ public class InsertStatementImpl implements InsertStatement {
             SqlCompiler.RecordToRowCopier copier,
             Function timestampFunction,
             long structureVersion
-    ) throws SqlException {
+    ) {
         this.engine = engine;
         this.tableName = tableName;
         this.virtualRecord = virtualRecord;
@@ -111,21 +111,14 @@ public class InsertStatementImpl implements InsertStatement {
 
     private long getTimestamp(Function timestampFunction) {
         if (timestampFunction.getType() == ColumnType.STRING) {
+            CharSequence tsStr = timestampFunction.getStr(null);
             try {
-                return preParseTimestampFunction(timestampFunction.getStr(null));
-            } catch (SqlException e) {
-                throw CairoException.instance(0).put(e.getFlyweightMessage());
+                return IntervalUtils.parseFloorPartialDate(tsStr);
+            } catch (NumericException e) {
+                throw CairoException.instance(0).put("Invalid timestamp: ").put(tsStr);
             }
         }
         return timestampFunction.getTimestamp(null);
-    }
-
-    private long preParseTimestampFunction(CharSequence tsStr) throws SqlException {
-        try {
-            return IntervalUtils.parseFloorPartialDate(tsStr, 0, tsStr.length());
-        } catch (NumericException e) {
-            throw SqlException.invalidDate(timestampFunction.getPosition());
-        }
     }
 
     private TableWriter.Row getRowWithoutTimestamp(TableWriter tableWriter) {

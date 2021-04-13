@@ -1346,7 +1346,7 @@ public class SqlCompiler implements Closeable {
                     // It's allowed to insert ISO formatted string to timestamp column
                     timestamp = IntervalUtils.parseFloorPartialDate(str);
                 } catch (NumericException numericException) {
-                    throw CairoException.instance(0).put("Invalid date");
+                    throw CairoException.instance(0).put("Invalid timestamp: ").put(str);
                 }
             }
 

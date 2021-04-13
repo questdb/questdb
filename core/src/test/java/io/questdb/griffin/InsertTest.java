@@ -633,7 +633,7 @@ public class InsertTest extends AbstractGriffinTest {
 
     @Test
     public void testInsertInvalidDateStringToDesignatedTimestampColumn() throws Exception {
-        assertInsertTimestampFails("Invalid date", "io.questdb.cairo.CairoException", "insert into tab values (1, '2021-23-03T00:00:00Z')");
+        assertInsertTimestampFails("Invalid timestamp: 2021-23-03T00:00:00Z", "io.questdb.cairo.CairoException", "insert into tab values (1, '2021-23-03T00:00:00Z')");
     }
 
     private void assertInsertTimestampFails(String expected, String exceptionType, String ddl2) {

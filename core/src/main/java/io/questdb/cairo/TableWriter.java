@@ -4843,7 +4843,7 @@ public class TableWriter implements Closeable {
                 long l = IntervalUtils.parseFloorPartialDate(value);
                 putTimestamp(index, l);
             } catch (NumericException e) {
-                throw CairoException.instance(0).put("Invalid date");
+                throw CairoException.instance(0).put("Invalid timestamp: ").put(value);
             }
         }
 
