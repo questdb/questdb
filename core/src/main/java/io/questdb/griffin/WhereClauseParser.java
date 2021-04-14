@@ -853,7 +853,7 @@ final class WhereClauseParser implements Mutable {
     private long parseFullOrPartialDate(boolean equalsTo, ExpressionNode node, boolean isLo) throws NumericException {
         long ts;
         final int len = node.token.length();
-        if (len - 2 < 20) {
+        try {
             if (isLo) {
                 if (equalsTo) {
                     ts = IntervalUtils.parseFloorPartialDate(node.token, 1, len - 1);
@@ -867,7 +867,7 @@ final class WhereClauseParser implements Mutable {
                     ts = IntervalUtils.parseFloorPartialDate(node.token, 1, len - 1) - 1;
                 }
             }
-        } else {
+        } catch (NumericException e) {
             long inc = equalsTo ? 0 : isLo ? 1 : -1;
             ts = TimestampFormatUtils.tryParse(node.token, 1, node.token.length() - 1) + inc;
         }

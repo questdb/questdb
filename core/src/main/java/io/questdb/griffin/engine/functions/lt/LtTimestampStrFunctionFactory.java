@@ -67,10 +67,10 @@ public class LtTimestampStrFunctionFactory implements FunctionFactory {
     }
 
     private static long parseFullOrPartialTimestamp(CharSequence seq) throws NumericException {
-        if (seq.length() >= TIMESTAMP_FORMAT_MIN_LENGTH) {
-            return TimestampFormatUtils.parseTimestamp(seq);
-        } else {
+        try {
             return IntervalUtils.parseFloorPartialDate(seq);
+        } catch (NumericException e) {
+            return TimestampFormatUtils.parseTimestamp(seq);
         }
     }
 

@@ -24,6 +24,9 @@
 
 package io.questdb.griffin;
 
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableModel;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.Timestamps;
@@ -712,6 +715,33 @@ public class TimestampQueryTest extends AbstractGriffinTest {
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
             query = "SELECT * FROM ob_mem_snapshot where timestamp ='2020-12-31T23:59:59Z'";
             printSqlResult(expected, query, "timestamp", null, null, true, true, true);
+        });
+    }
+
+    @Test
+    public void testTimestampConversion() throws Exception {
+        assertMemoryLeak(() -> {
+            try (TableModel m = new TableModel(configuration, "tt", PartitionBy.DAY)) {
+                m.timestamp("dts")
+                        .col("ts", ColumnType.TIMESTAMP);
+                createPopulateTable(m, 31, "2021-03-14", 31);
+                String expected = "dts\tts\n" +
+                        "2021-04-02T23:59:59.354820Z\t2021-04-02T23:59:59.354820Z\n";
+
+                assertQuery(
+                        expected,
+                        "tt where dts > '2021-04-02T13:45:49.207Z' and dts < '2021-04-03 13:45:49.207'",
+                        "dts",
+                        true,
+                        true);
+
+                assertQuery(
+                        expected,
+                        "tt where ts > '2021-04-02T13:45:49.207Z' and ts < '2021-04-03 13:45:49.207'",
+                        "dts",
+                        true,
+                        false);
+            }
         });
     }
 

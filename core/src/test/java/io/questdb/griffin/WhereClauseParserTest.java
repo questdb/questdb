@@ -328,7 +328,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     public void testComplexNow() throws Exception {
         currentMicros = 24L * 3600 * 1000 * 1000;
         try {
-            runWhereIntervalTest0("timestamp < now() and timestamp > '1970-01-01T00:00:00.000Z'", "[{lo=1970-01-01T00:00:00.000001Z, hi=1970-01-01T23:59:59.999999Z}]");
+            runWhereIntervalTest0("timestamp < now() and timestamp > '1970-01-01T00:00:00.000Z'", "[{lo=1970-01-01T00:00:00.001000Z, hi=1970-01-01T23:59:59.999999Z}]");
         } finally {
             currentMicros = -1;
         }
@@ -735,13 +735,13 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     @Test
     public void testIntervalGreater1() throws Exception {
         runWhereCompareToModelTest("timestamp in ('2014-01-01T12:30:00.000Z', '2014-01-02T12:30:00.000Z') and timestamp > '2014-01-01T15:30:00.000Z'",
-                "[{lo=2014-01-01T15:30:00.000001Z, hi=2014-01-02T12:30:00.000000Z}]");
+                "[{lo=2014-01-01T15:30:00.001000Z, hi=2014-01-02T12:30:00.000000Z}]");
     }
 
     @Test
     public void testIntervalGreater2() throws Exception {
         runWhereCompareToModelTest("timestamp > '2014-01-01T15:30:00.000Z' and timestamp in ('2014-01-01T12:30:00.000Z', '2014-01-02T12:30:00.000Z')",
-                "[{lo=2014-01-01T15:30:00.000001Z, hi=2014-01-02T12:30:00.000000Z}]");
+                "[{lo=2014-01-01T15:30:00.001000Z, hi=2014-01-02T12:30:00.000000Z}]");
     }
 
     @Test
