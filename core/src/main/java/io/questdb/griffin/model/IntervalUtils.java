@@ -198,11 +198,12 @@ public final class IntervalUtils {
                             checkChar(seq, p++, lim, ':');
                             int sec = Numbers.parseInt(seq, p, p += 2);
                             checkRange(sec, 0, 59);
-                            if (lim - p > 3) {
-                                checkChar(seq, p++, lim, '.');
+                            if (lim - p > 3 && seq.charAt(p) == '.') {
+                                p++;
                                 int ms = Numbers.parseInt(seq, p, p += 3);
-                                if (lim - p > 2) {
+                                if (lim - p > 2 && Character.isDigit(seq.charAt(p))) {
                                     // micros
+                                    int micr = Numbers.parseInt(seq, p, p += 3);
                                     ts = Timestamps.yearMicros(year, l)
                                             + Timestamps.monthOfYearMicros(month, l)
                                             + (day - 1) * Timestamps.DAY_MICROS
@@ -210,7 +211,9 @@ public final class IntervalUtils {
                                             + min * Timestamps.MINUTE_MICROS
                                             + sec * Timestamps.SECOND_MICROS
                                             + ms * Timestamps.MILLI_MICROS
-                                            + Numbers.parseInt(seq, p, p + 3) + 1;
+                                            + micr
+                                            + checkTimezoneTail(seq, p, lim)
+                                            + 1;
                                 } else {
                                     // millis
                                     ts = Timestamps.yearMicros(year, l)
@@ -219,7 +222,8 @@ public final class IntervalUtils {
                                             + hour * Timestamps.HOUR_MICROS
                                             + min * Timestamps.MINUTE_MICROS
                                             + sec * Timestamps.SECOND_MICROS
-                                            + (ms + 1) * Timestamps.MILLI_MICROS;
+                                            + (ms + 1) * Timestamps.MILLI_MICROS
+                                            + checkTimezoneTail(seq, p, lim);
                                 }
                             } else {
                                 // seconds
@@ -228,7 +232,8 @@ public final class IntervalUtils {
                                         + (day - 1) * Timestamps.DAY_MICROS
                                         + hour * Timestamps.HOUR_MICROS
                                         + min * Timestamps.MINUTE_MICROS
-                                        + (sec + 1) * Timestamps.SECOND_MICROS;
+                                        + (sec + 1) * Timestamps.SECOND_MICROS
+                                        + checkTimezoneTail(seq, p, lim);
                             }
                         } else {
                             // minute
@@ -299,7 +304,7 @@ public final class IntervalUtils {
                             if (lim - p > 3 && seq.charAt(p) == '.') {
                                 p++;
                                 int ms = Numbers.parseInt(seq, p, p += 3);
-                                if (lim - p > 2) {
+                                if (lim - p > 2 && Character.isDigit(seq.charAt(p))) {
                                     int micr = Numbers.parseInt(seq, p, p += 3);
 
                                     // micros
@@ -382,8 +387,12 @@ public final class IntervalUtils {
             int hour = Numbers.parseInt(seq, p, p += 2);
             checkRange(hour, 0, 23);
 
-            if (checkLenStrict(p, lim)) {
+            if (lim - p == 3) {
+                // Optional : separator between hours and mins in timezone
                 checkChar(seq, p++, lim, ':');
+            }
+
+            if (checkLenStrict(p, lim, 2)) {
                 int min = Numbers.parseInt(seq, p, p + 2);
                 checkRange(min, 0, 59);
                 return tzSign*(hour * Timestamps.HOUR_MICROS + min * Timestamps.MINUTE_MICROS);
@@ -391,7 +400,7 @@ public final class IntervalUtils {
                 return tzSign*(hour * Timestamps.HOUR_MICROS);
             }
         }
-        return 0;
+        throw NumericException.INSTANCE;
     }
 
     private static int parseSign(CharSequence seq, int p) throws NumericException {
@@ -582,8 +591,8 @@ public final class IntervalUtils {
         throw NumericException.INSTANCE;
     }
 
-    private static boolean checkLenStrict(int p, int lim) throws NumericException {
-        if (lim - p == 3) {
+    private static boolean checkLenStrict(int p, int lim, int len) throws NumericException {
+        if (lim - p == len) {
             return true;
         }
         if (lim <= p) {
@@ -595,12 +604,6 @@ public final class IntervalUtils {
 
     private static void checkChar(CharSequence s, int p, int lim, char c) throws NumericException {
         if (p >= lim || s.charAt(p) != c) {
-            throw NumericException.INSTANCE;
-        }
-    }
-
-    private static void checkChar(CharSequence s, int p, int lim, char c1, char c2) throws NumericException {
-        if (p >= lim || (s.charAt(p) != c1 && s.charAt(p) != c2)) {
             throw NumericException.INSTANCE;
         }
     }

@@ -90,6 +90,38 @@ public class IntrinsicModelTest {
         assertDateCeil("2015-02-28T07:21:44.556012Z", "2015-02-28T07:21:44.556011");
     }
 
+    @Test(expected = NumericException.class)
+    public void testDateCeilFails() throws NumericException {
+        assertDateCeil("", "2015-01-01T00:00:00.000000-1");
+    }
+
+    @Test(expected = NumericException.class)
+    public void testDateCeilFailsOnTzSign() throws NumericException {
+        assertDateCeil("", "2015-01-01T00:00:00.000000≠10");
+    }
+
+    @Test
+    public void testDateCeilMicroWithTzHrs() throws NumericException {
+        assertDateCeil("2015-02-28T07:22:44.556012Z", "2015-02-28T08:22:44.556011-01");
+    }
+
+    @Test
+    public void testDateCeilMicroWithTzHrsMins() throws NumericException {
+        assertDateCeil("2015-02-28T07:22:44.556012Z", "2015-02-28T06:00:44.556011+01:22");
+        assertDateCeil("2015-02-28T07:22:44.556012Z", "2015-02-28T06:00:44.556011+0122");
+    }
+
+    @Test
+    public void testDateCeilMilsWithTzHrsMins() throws NumericException {
+        assertDateCeil("2015-02-28T07:00:44.557000Z", "2015-02-28T06:00:44.556+01:00");
+        assertDateCeil("2015-02-28T07:00:44.557000Z", "2015-02-28T06:00:44.556+0100");
+    }
+
+    @Test
+    public void testDateCeilSecsWithTzHrsMins() throws NumericException {
+        assertDateCeil("2015-02-28T07:00:45.000000Z", "2015-02-28T06:00:44+01:00");
+        assertDateCeil("2015-02-28T07:00:45.000000Z", "2015-02-28T06:00:44+0100");
+    }
     //////////////////////////////
 
     @Test
@@ -140,6 +172,39 @@ public class IntrinsicModelTest {
     @Test
     public void testDateFloorYYYYMMDDHmsSU() throws NumericException {
         assertDateFloor("2015-02-28T07:21:44.556011Z", "2015-02-28T07:21:44.556011");
+    }
+
+    @Test(expected = NumericException.class)
+    public void testDateFloorFails() throws NumericException {
+        assertDateFloor("", "2015-01-01T00:00:00.000000-1");
+    }
+
+    @Test(expected = NumericException.class)
+    public void testDateFloorFailsOnTzSign() throws NumericException {
+        assertDateFloor("", "2015-01-01T00:00:00.000000≠10");
+    }
+
+    @Test
+    public void testDateFloorMicroWithTzHrs() throws NumericException {
+        assertDateFloor("2015-02-28T07:22:44.556011Z", "2015-02-28T08:22:44.556011-01");
+    }
+
+    @Test
+    public void testDateFloorMicroWithTzHrsMins() throws NumericException {
+        assertDateFloor("2015-02-28T07:22:44.556011Z", "2015-02-28T06:00:44.556011+01:22");
+        assertDateFloor("2015-02-28T07:22:44.556011Z", "2015-02-28T06:00:44.556011+0122");
+    }
+
+    @Test
+    public void testDateFloorMillsWithTzHrsMins() throws NumericException {
+        assertDateFloor("2015-02-28T05:30:44.555000Z", "2015-02-28T06:00:44.555-00:30");
+        assertDateFloor("2015-02-28T05:30:44.555000Z", "2015-02-28T06:00:44.555-0030");
+    }
+
+    @Test
+    public void testDateFloorSecsWithTzHrsMins() throws NumericException {
+        assertDateFloor("2015-02-28T07:00:44.000000Z", "2015-02-28T06:00:44+01:00");
+        assertDateFloor("2015-02-28T07:00:44.000000Z", "2015-02-28T06:00:44+0100");
     }
 
     @Test
