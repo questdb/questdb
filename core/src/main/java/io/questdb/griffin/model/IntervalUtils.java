@@ -187,7 +187,7 @@ public final class IntervalUtils {
                 int day = Numbers.parseInt(seq, p, p += 2);
                 checkRange(day, 1, Timestamps.getDaysPerMonth(month, l));
                 if (checkLen(p, lim)) {
-                    checkChar(seq, p++, lim, 'T');
+                    checkChar(seq, p++, lim, 'T', ' ');
                     int hour = Numbers.parseInt(seq, p, p += 2);
                     checkRange(hour, 0, 23);
                     if (checkLen(p, lim)) {
@@ -290,7 +290,7 @@ public final class IntervalUtils {
                 int day = Numbers.parseInt(seq, p, p += 2);
                 checkRange(day, 1, Timestamps.getDaysPerMonth(month, l));
                 if (checkLen(p, lim)) {
-                    checkChar(seq, p++, lim, 'T');
+                    checkChar(seq, p++, lim, 'T', ' ');
                     int hour = Numbers.parseInt(seq, p, p += 2);
                     checkRange(hour, 0, 23);
                     if (checkLen(p, lim)) {
@@ -604,6 +604,12 @@ public final class IntervalUtils {
 
     private static void checkChar(CharSequence s, int p, int lim, char c) throws NumericException {
         if (p >= lim || s.charAt(p) != c) {
+            throw NumericException.INSTANCE;
+        }
+    }
+
+    private static void checkChar(CharSequence s, int p, int lim, char c1, char c2) throws NumericException {
+        if (p >= lim || (s.charAt(p) != c1 && s.charAt(p) != c2)) {
             throw NumericException.INSTANCE;
         }
     }
