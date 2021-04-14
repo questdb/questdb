@@ -24,8 +24,24 @@
 
 package io.questdb.cutlass.line.tcp;
 
+import java.io.Closeable;
+import java.util.Arrays;
+import java.util.concurrent.locks.ReadWriteLock;
+
+import org.jetbrains.annotations.NotNull;
+
 import io.questdb.Telemetry;
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.CairoSecurityContext;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.EntryUnavailableException;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableReaderMetadata;
+import io.questdb.cairo.TableStructure;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriter.Row;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.SymbolTable;
@@ -34,23 +50,30 @@ import io.questdb.cutlass.line.LineProtoTimestampAdapter;
 import io.questdb.cutlass.line.tcp.NewLineProtoParser.ProtoEntity;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.mp.*;
+import io.questdb.mp.FanOut;
+import io.questdb.mp.Job;
+import io.questdb.mp.MPSequence;
+import io.questdb.mp.RingQueue;
+import io.questdb.mp.SCSequence;
+import io.questdb.mp.Sequence;
+import io.questdb.mp.WorkerPool;
 import io.questdb.network.IODispatcher;
 import io.questdb.network.IOOperation;
 import io.questdb.network.IORequestProcessor;
-import io.questdb.std.*;
+import io.questdb.std.CharSequenceIntHashMap;
+import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.std.Chars;
+import io.questdb.std.Misc;
+import io.questdb.std.ObjIntHashMap;
+import io.questdb.std.ObjList;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.DirectCharSink;
 import io.questdb.std.str.FloatingDirectCharSink;
 import io.questdb.std.str.Path;
 import io.questdb.tasks.TelemetryTask;
-import org.jetbrains.annotations.NotNull;
-
-import java.io.Closeable;
-import java.io.IOException;
-import java.util.Arrays;
-import java.util.concurrent.locks.ReadWriteLock;
 
 class LineTcpMeasurementScheduler implements Closeable {
     private static final Log LOG = LogFactory.getLog(LineTcpMeasurementScheduler.class);
@@ -73,6 +96,7 @@ class LineTcpMeasurementScheduler implements Closeable {
     private final int maxUncommittedRows;
     private final long maintenanceJobHysteresisInMs;
     private final long minIdleMsBeforeWriterRelease;
+    private final long commitHysteresisInMicros;
     private final int defaultPartitionBy;
     private final NetworkIOJob[] netIoJobs;
     private Sequence pubSeq;
@@ -143,6 +167,7 @@ class LineTcpMeasurementScheduler implements Closeable {
         maintenanceJobHysteresisInMs = lineConfiguration.getMaintenanceJobHysteresisInMs();
         defaultPartitionBy = lineConfiguration.getDefaultPartitionBy();
         minIdleMsBeforeWriterRelease = lineConfiguration.getMinIdleMsBeforeWriterRelease();
+        commitHysteresisInMicros = lineConfiguration.getCommitHysteresisInMicros();
     }
 
     protected NetworkIOJob createNetworkIOJob(IODispatcher<LineTcpConnectionContext> dispatcher, int workerId) {
@@ -749,16 +774,25 @@ class LineTcpMeasurementScheduler implements Closeable {
         void handleRowAppended() {
             nUncommitted++;
             if (nUncommitted >= maxUncommittedRows) {
-                writer.commit();
+                writer.commitWithHysteresis(commitHysteresisInMicros);
                 nUncommitted = 0;
             }
         }
 
         void handleWriterThreadMaintenance() {
-            if (nUncommitted > 0) {
+            if ((nUncommitted > 0 || commitHysteresisInMicros > 0) && null != writer) {
                 writer.commit();
                 nUncommitted = 0;
             }
+        }
+
+        void handleWriterRelease() {
+            if (nUncommitted > 0 || commitHysteresisInMicros > 0) {
+                writer.commit();
+                nUncommitted = 0;
+            }
+            writer.close();
+            writer = null;
         }
 
         TableWriter getWriter() {
@@ -771,7 +805,7 @@ class LineTcpMeasurementScheduler implements Closeable {
         void switchThreads() {
             assignedToJob = false;
             if (null != writer) {
-                if (nUncommitted > 0) {
+                if (nUncommitted > 0 || commitHysteresisInMicros > 0) {
                     writer.commit();
                 }
                 writer.close();
@@ -790,7 +824,7 @@ class LineTcpMeasurementScheduler implements Closeable {
             if (writerThreadId != Integer.MIN_VALUE) {
                 LOG.info().$("closing table [tableName=").$(tableName).$(']').$();
                 if (null != writer) {
-                    if (nUncommitted > 0) {
+                    if (nUncommitted > 0 || commitHysteresisInMicros > 0) {
                         writer.commit();
                     }
                     writer.close();
@@ -1042,9 +1076,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                 LOG.info().$("releasing writer, its been idle since ").$ts(tableUpdateDetails.lastMeasurementReceivedEpochMs *
                         1_000).$("[tableName=").$(tableUpdateDetails.tableName).$(']')
                         .$();
-                tableUpdateDetails.handleWriterThreadMaintenance();
-                tableUpdateDetails.writer.close();
-                tableUpdateDetails.writer = null;
+                tableUpdateDetails.handleWriterRelease();
             } finally {
                 tableUpdateDetailsLock.readLock().unlock();
             }

@@ -74,4 +74,6 @@ public interface LineTcpReceiverConfiguration {
     boolean isIOAggressiveRecv();
 
     long getMinIdleMsBeforeWriterRelease();
+
+    long getCommitHysteresisInMicros();
 }
