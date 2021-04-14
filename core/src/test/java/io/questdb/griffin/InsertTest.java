@@ -649,6 +649,45 @@ public class InsertTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testInsertISOMilliWithTzDateStringTimestampColumn() throws Exception {
+        final String expected = "seq\tts\n" +
+                "1\t2021-01-03T01:00:00.000000Z\n";
+
+        assertInsertTimestamp(
+                expected,
+                "insert into tab values (1, '2021-01-03T00:00:00+01')",
+                null,
+                true
+        );
+    }
+
+    @Test
+    public void testInsertISOMilliWithTzDateStringTimestampColum2() throws Exception {
+        final String expected = "seq\tts\n" +
+                "1\t2021-01-03T00:30:00.000000Z\n";
+
+        assertInsertTimestamp(
+                expected,
+                "insert into tab values (1, '2021-01-03T02:00:00-01:30')",
+                null,
+                true
+        );
+    }
+
+    @Test
+    public void testInsertISOMilliWithTzDateStringTimestampColumFails() throws Exception {
+        final String expected = "seq\tts\n" +
+                "1\t2021-01-03T00:30:00.000000Z\n";
+
+        assertInsertTimestamp(
+                "Invalid timestamp",
+                "insert into tab values (1, '2021-01-03T02:00:00-:30')",
+                "io.questdb.cairo.CairoException",
+                true
+        );
+    }
+
+    @Test
     public void testInsertISOMicroStringTimestampColumn() throws Exception {
         final String expected = "seq\tts\n" +
                 "1\t2021-01-03T00:00:00.000000Z\n";
@@ -656,6 +695,19 @@ public class InsertTest extends AbstractGriffinTest {
         assertInsertTimestamp(
                 expected,
                 "insert into tab values (1, '2021-01-03T00:00:00.000000Z')",
+                null,
+                true
+        );
+    }
+
+    @Test
+    public void testInsertISOMicroStringTimestampColumnNoTimezone() throws Exception {
+        final String expected = "seq\tts\n" +
+                "1\t2021-01-03T00:00:00.000000Z\n";
+
+        assertInsertTimestamp(
+                expected,
+                "insert into tab values (1, '2021-01-03T00:00:00.000000')",
                 null,
                 true
         );
