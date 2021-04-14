@@ -45,7 +45,7 @@ public class CairoLineProtoParserSupport {
      * @param columnType  column type value will be cast to
      * @param value       value characters
      */
-    public static void putValue(TableWriter.Row row, int columnType, int columnIndex, CharSequence value, Log log) throws BadCastException {
+    public static void putValue(TableWriter.Row row, int columnType, int columnIndex, CharSequence value) throws BadCastException {
         try {
             switch (columnType) {
                 case ColumnType.LONG:
@@ -96,7 +96,7 @@ public class CairoLineProtoParserSupport {
                     break;
             }
         } catch (NumericException e) {
-            log.info().$("cast error [value=").$(value).$(", toType=").$(ColumnType.nameOf(columnType)).$(']').$();
+            LOG.info().$("cast error [value=").$(value).$(", toType=").$(ColumnType.nameOf(columnType)).$(']').$();
             throw BadCastException.INSTANCE;
         }
     }

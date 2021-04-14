@@ -205,7 +205,8 @@ const Ace = () => {
       dispatch(actions.query.toggleRunning())
     }
     const ro = new ResizeObserver(() => {
-      const height = editor.renderer.container?.clientHeight
+      editor.resize()
+      const height = editor?.renderer?.container?.clientHeight
       if (height) {
         dispatch(actions.query.changeMaxNotficationHeight(height))
       }

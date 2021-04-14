@@ -2129,7 +2129,7 @@ public class TableWriter implements Closeable {
         final long maxTimestamp = timestampFloorMethod.floor(this.txFile.getMaxTimestamp());
         long timestamp = txFile.getMinTimestamp();
 
-        try (indexer; final ReadOnlyMemory roMem = new ReadOnlyMemory()) {
+        try (final ReadOnlyMemory roMem = new ReadOnlyMemory()) {
 
             while (timestamp < maxTimestamp) {
 
@@ -2167,6 +2167,8 @@ public class TableWriter implements Closeable {
                 }
                 timestamp = timestampAddMethod.calculate(timestamp, 1);
             }
+        } finally {
+            indexer.close();
         }
         return timestamp;
     }
@@ -4513,7 +4515,7 @@ public class TableWriter implements Closeable {
         for (int columnIndex = 0, size = metadata.getColumnCount(); columnIndex < size; columnIndex++) {
             try {
                 int columnType = metadata.getColumnType(columnIndex);
-                var columnName = metadata.getColumnName(columnIndex);
+                String columnName = metadata.getColumnName(columnIndex);
                 path.concat(columnName);
 
                 switch (columnType) {

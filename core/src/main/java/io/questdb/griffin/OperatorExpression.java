@@ -34,7 +34,7 @@ public final class OperatorExpression {
     public static final int SET = 3;
     public static final int DOT_PRECEDENCE = 1;
 
-    static final ObjList<OperatorExpression> operators = new ObjList<>() {{
+    static final ObjList<OperatorExpression> operators = new ObjList<OperatorExpression>() {{
         add(new OperatorExpression(".", DOT_PRECEDENCE, false, BINARY));
         add(new OperatorExpression("::", DOT_PRECEDENCE, false, BINARY));
         add(new OperatorExpression("^", 2, false, BINARY));
@@ -62,7 +62,7 @@ public final class OperatorExpression {
         add(new OperatorExpression("ilike", 7, true, BINARY,false));
     }};
 
-    static final LowerCaseAsciiCharSequenceObjHashMap<OperatorExpression> opMap = new LowerCaseAsciiCharSequenceObjHashMap<>() {{
+    static final LowerCaseAsciiCharSequenceObjHashMap<OperatorExpression> opMap = new LowerCaseAsciiCharSequenceObjHashMap<OperatorExpression>() {{
         for (int i = 0, k = operators.size(); i < k; i++) {
             OperatorExpression op = operators.getQuick(i);
             put(op.token, op);
