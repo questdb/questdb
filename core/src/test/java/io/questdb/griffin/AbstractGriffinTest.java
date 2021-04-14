@@ -794,13 +794,14 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             @Nullable CharSequence expected2,
             boolean supportsRandomAccess,
             boolean checkSameStr,
-            boolean expectSize
+            boolean expectSize,
+            boolean commitInsert
     ) throws Exception {
         assertMemoryLeak(() -> {
             if (ddl != null) {
                 compiler.compile(ddl, sqlExecutionContext);
             }
-            printSqlResult(expected, query, expectedTimestamp, ddl2, expected2, supportsRandomAccess, checkSameStr, expectSize, false, null, true);
+            printSqlResult(expected, query, expectedTimestamp, ddl2, expected2, supportsRandomAccess, checkSameStr, expectSize, false, null, commitInsert);
         });
     }
 
