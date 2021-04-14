@@ -83,6 +83,7 @@ public class FullBwdDataFrameCursorTest extends AbstractCairoTest {
                     timestamp += increment;
                 }
                 w.commit();
+                Assert.assertEquals(N, w.size());
 
                 FullBwdDataFrameCursorFactory factory = new FullBwdDataFrameCursorFactory(engine, "x", 0);
                 final TableReaderRecord record = new TableReaderRecord();

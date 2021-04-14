@@ -31,10 +31,7 @@ import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.test.tools.TestUtils;
-import org.junit.After;
-import org.junit.Before;
-import org.junit.Rule;
-import org.junit.Test;
+import org.junit.*;
 import org.junit.rules.TestName;
 
 import java.net.URISyntaxException;
@@ -605,6 +602,11 @@ public class O3Test extends AbstractO3Test {
     }
 
     @Test
+    public void testVanillaHysteresisSinglePartitionContended() throws Exception {
+        executeWithPool(0, O3Test::testVanillaHysteresisSinglePartition0);
+    }
+
+    @Test
     public void testVanillaHysteresisParallel() throws Exception {
         executeWithPool(4, O3Test::testVanillaHysteresis0);
     }
@@ -965,7 +967,82 @@ public class O3Test extends AbstractO3Test {
                 compiler,
                 sqlExecutionContext,
                 "create table y as (x union all top)",
-                "insert batch 100000 hysteresis 300000000 into x select * from top"
+                "y order by ts",
+                "insert batch 100000 hysteresis 300000000 into x select * from top",
+                "x"
+        );
+
+        assertIndexConsistency(compiler, sqlExecutionContext);
+    }
+
+    private static void testVanillaHysteresisSinglePartition0(
+            CairoEngine engine,
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
+        compiler.compile(
+                "create table x as (" +
+                        "select" +
+                        " cast(x as int) i," +
+                        " rnd_symbol('msft','ibm', 'googl') sym," +
+                        " round(rnd_double(0)*100, 3) amt," +
+                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                        " rnd_boolean() b," +
+                        " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                        " rnd_double(2) d," +
+                        " rnd_float(2) e," +
+                        " rnd_short(10,1024) f," +
+                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                        " rnd_symbol(4,4,4,2) ik," +
+                        " rnd_long() j," +
+                        " timestamp_sequence(500000000000L,1000000L) ts," +
+                        " rnd_byte(2,50) l," +
+                        " rnd_bin(10, 20, 2) m," +
+                        " rnd_str(5,16,2) n," +
+                        " rnd_char() t," +
+                        " rnd_long256() l256" +
+                        " from long_sequence(0)" +
+                        "), index(sym) timestamp (ts) partition by MONTH",
+                sqlExecutionContext
+        );
+
+        compiler.compile(
+                "create table top as (" +
+                        "select" +
+                        " cast(x as int) i," +
+                        " rnd_symbol('msft','ibm', 'googl') sym," +
+                        " round(rnd_double(0)*100, 3) amt," +
+                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                        " rnd_boolean() b," +
+                        " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                        " rnd_double(2) d," +
+                        " rnd_float(2) e," +
+                        " rnd_short(10,1024) f," +
+                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                        " rnd_symbol(4,4,4,2) ik," +
+                        " rnd_long() j," +
+                        // the formula below creates hysteresis-friendly timestamp distribution
+                        " cast(500000000000L + ((x-1)/4) * 1000000L + (4-(x-1)%4)*80009  as timestamp) ts," +
+                        " rnd_byte(2,50) l," +
+                        " rnd_bin(10, 20, 2) m," +
+                        " rnd_str(5,16,2) n," +
+                        " rnd_char() t," +
+                        " rnd_long256() l256" +
+                        " from long_sequence(500)" +
+                        ")",
+                sqlExecutionContext
+        );
+
+        // create third table, which will contain both X and 1AM
+        assertO3DataConsistency(
+                engine,
+                compiler,
+                sqlExecutionContext,
+                "create table y as (x union all top)",
+                // combination of row count in "top" table, batch size and hysteresis value land
+                // rows into single partition, which causes internal state to corrupt
+                // please do not change these values unless you know what you're doing
+                "insert batch 100 hysteresis 300000000 into x select * from top"
         );
 
         assertIndexConsistency(compiler, sqlExecutionContext);

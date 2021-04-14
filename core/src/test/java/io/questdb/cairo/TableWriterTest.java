@@ -1057,7 +1057,10 @@ public class TableWriterTest extends AbstractCairoTest {
 
                 @Override
                 public long read(long fd, long buf, long len, long offset) {
-                    return fail ? -1 : super.read(fd, buf, len, offset);
+                    if (fail) {
+                        return -1;
+                    }
+                    return super.read(fd, buf, len, offset);
                 }
 
                 @Override
@@ -1086,6 +1089,7 @@ public class TableWriterTest extends AbstractCairoTest {
                     int cancelCount = 0;
                     while (i < N) {
                         TableWriter.Row r = writer.newRow(ts += 60 * 60000 * 1000L);
+                        long sz = writer.size();
                         r.putInt(0, rnd.nextPositiveInt());
                         r.putStr(1, rnd.nextString(7));
                         r.putSym(2, rnd.nextString(4));
@@ -1100,6 +1104,7 @@ public class TableWriterTest extends AbstractCairoTest {
                             }
                             ff.fail = false;
                             r.cancel();
+                            Assert.assertEquals(sz - 1, writer.size());
                             cancelCount++;
                         } else {
                             r.append();
@@ -1651,7 +1656,7 @@ public class TableWriterTest extends AbstractCairoTest {
             try (
                     PagedMappedReadWriteMemory mem = new PagedMappedReadWriteMemory();
                     Path path = new Path().of(root).concat("all").concat(TableUtils.TODO_FILE_NAME).$()
-                    ) {
+            ) {
                 mem.of(FilesFacadeImpl.INSTANCE, path, FilesFacadeImpl.INSTANCE.getPageSize());
                 mem.putLong(32, 1);
                 mem.putLong(40, 9990001L);
@@ -1714,6 +1719,21 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testO3AfterReopen() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            CairoTestUtils.createAllTableWithTimestamp(configuration, PartitionBy.NONE);
+            Rnd rnd = new Rnd();
+            long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
+            testAppendNulls(rnd, ts);
+            try {
+                testAppendNulls(rnd, ts);
+                Assert.fail();
+            } catch (CairoException ignore) {
+            }
+        });
+    }
+
+    @Test
     public void testOpenUnsupportedIndex() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)
@@ -1744,21 +1764,6 @@ public class TableWriterTest extends AbstractCairoTest {
                     Assert.fail();
                 } catch (CairoException ignore) {
                 }
-            }
-        });
-    }
-
-    @Test
-    public void testO3AfterReopen() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            CairoTestUtils.createAllTableWithTimestamp(configuration, PartitionBy.NONE);
-            Rnd rnd = new Rnd();
-            long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
-            testAppendNulls(rnd, ts);
-            try {
-                testAppendNulls(rnd, ts);
-                Assert.fail();
-            } catch (CairoException ignore) {
             }
         });
     }
@@ -3245,51 +3250,13 @@ public class TableWriterTest extends AbstractCairoTest {
         });
     }
 
-    private void testOutOfOrderRecords(int N) throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try (TableWriter writer = new TableWriter(configuration, PRODUCT)) {
-
-                long ts;
-                long ts1 = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
-                long ts2 = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
-
-                Rnd rnd = new Rnd();
-                int i = 0;
-                while (i < N) {
-                    TableWriter.Row r;
-                    boolean fail = rnd.nextBoolean();
-                    if (fail) {
-                        ts2 += 60 * 6000L * 1000L;
-                        ts = ts2;
-                    } else {
-                        ts1 += 60 * 6000L * 1000L;
-                        ts = ts1;
-                    }
-                    r = writer.newRow(ts);
-                    r.putInt(0, rnd.nextPositiveInt());
-                    r.putStr(1, rnd.nextString(7));
-                    r.putSym(2, rnd.nextString(4));
-                    r.putSym(3, rnd.nextString(11));
-                    r.putDouble(4, rnd.nextDouble());
-                    r.append();
-                    i++;
-                }
-                writer.commit();
-                Assert.assertEquals(N, writer.size());
-            }
-
-            try (TableWriter writer = new TableWriter(configuration, PRODUCT)) {
-                Assert.assertEquals(N, writer.size());
-            }
-        });
-    }
-
     private void testO3RecordsFail(int N) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (TableWriter writer = new TableWriter(configuration, PRODUCT)) {
 
                 long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
 
+                long size = 0;
                 Rnd rnd = new Rnd();
                 int i = 0;
                 long failureCount = 0;
@@ -3314,6 +3281,8 @@ public class TableWriterTest extends AbstractCairoTest {
                     r.putSym(3, rnd.nextString(11));
                     r.putDouble(4, rnd.nextDouble());
                     r.append();
+                    Assert.assertEquals(size + 1, writer.size());
+                    size = writer.size();
                     i++;
                 }
                 writer.commit();
@@ -3344,6 +3313,45 @@ public class TableWriterTest extends AbstractCairoTest {
                         ts = ts2;
                     } else {
                         ts1 += 60 * 1000L;
+                        ts = ts1;
+                    }
+                    r = writer.newRow(ts);
+                    r.putInt(0, rnd.nextPositiveInt());
+                    r.putStr(1, rnd.nextString(7));
+                    r.putSym(2, rnd.nextString(4));
+                    r.putSym(3, rnd.nextString(11));
+                    r.putDouble(4, rnd.nextDouble());
+                    r.append();
+                    i++;
+                }
+                writer.commit();
+                Assert.assertEquals(N, writer.size());
+            }
+
+            try (TableWriter writer = new TableWriter(configuration, PRODUCT)) {
+                Assert.assertEquals(N, writer.size());
+            }
+        });
+    }
+
+    private void testOutOfOrderRecords(int N) throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (TableWriter writer = new TableWriter(configuration, PRODUCT)) {
+
+                long ts;
+                long ts1 = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
+                long ts2 = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
+
+                Rnd rnd = new Rnd();
+                int i = 0;
+                while (i < N) {
+                    TableWriter.Row r;
+                    boolean fail = rnd.nextBoolean();
+                    if (fail) {
+                        ts2 += 60 * 6000L * 1000L;
+                        ts = ts2;
+                    } else {
+                        ts1 += 60 * 6000L * 1000L;
                         ts = ts1;
                     }
                     r = writer.newRow(ts);

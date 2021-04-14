@@ -455,8 +455,10 @@ public class ContiguousVirtualMemory implements ReadWriteVirtualMemory, Mutable,
     }
 
     public void replacePage(long address, long size) {
+        long appendOffset = getAppendOffset();
         this.baseAddress = this.appendAddress = address;
         this.baseAddressHi = baseAddress + size;
+        jumpTo(appendOffset);
     }
 
     public long resize(long size) {

@@ -214,7 +214,6 @@ public class LongList implements Mutable, LongVec {
      * @return element at the specified position.
      */
     public long getQuick(int index) {
-        assert index < pos : ("index=" + index + ", len=" + pos);
         return buffer[index];
     }
 

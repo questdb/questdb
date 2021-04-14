@@ -40,7 +40,7 @@ public final class TxWriter extends TxReader implements Closeable {
     private int txPartitionCount;
     private long prevMaxTimestamp;
     private long prevMinTimestamp;
-    private long prevTransientRowCount;
+    protected long prevTransientRowCount;
 
     private PagedMappedReadWriteMemory txMem;
 
@@ -325,10 +325,6 @@ public final class TxWriter extends TxReader implements Closeable {
 
     public void writeTransientSymbolCount(int symbolIndex, int symCount) {
         txMem.putInt(getSymbolWriterTransientIndexOffset(symbolIndex), symCount);
-    }
-
-    void append(long nRows) {
-        transientRowCount += nRows;
     }
 
     void bumpPartitionTableVersion() {
