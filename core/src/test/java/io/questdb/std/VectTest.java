@@ -414,9 +414,6 @@ public class VectTest {
         long v = Unsafe.getUnsafe().getLong(indexAddr);
         for (int i = 1; i < count; i++) {
             long next = Unsafe.getUnsafe().getLong(indexAddr + i * 2L * Long.BYTES);
-            if (next < v) {
-                System.out.println("wtf?: " + next + " < " + v);
-            }
             Assert.assertTrue(next >= v);
             v = next;
         }

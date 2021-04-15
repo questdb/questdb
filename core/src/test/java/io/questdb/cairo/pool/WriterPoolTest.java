@@ -90,7 +90,7 @@ public class WriterPoolTest extends AbstractCairoTest {
                 try {
                     barrier.await();
 
-                    for (int i = 0; i < 10000; i++) {
+                    for (int i = 0; i < 1000; i++) {
                         pool.releaseInactive();
                         LockSupport.parkNanos(1L);
                     }

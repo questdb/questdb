@@ -84,7 +84,6 @@ public class TxnScoreboardTest {
                             Assert.assertEquals(0, TxnScoreboard.getCount(p1, i + 134));
                         }
                     }
-                    System.out.println("done");
                 } finally {
                     TxnScoreboard.close(p1);
                 }
