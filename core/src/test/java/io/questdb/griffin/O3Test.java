@@ -31,7 +31,10 @@ import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.test.tools.TestUtils;
-import org.junit.*;
+import org.junit.After;
+import org.junit.Before;
+import org.junit.Rule;
+import org.junit.Test;
 import org.junit.rules.TestName;
 
 import java.net.URISyntaxException;
@@ -604,6 +607,16 @@ public class O3Test extends AbstractO3Test {
     @Test
     public void testVanillaHysteresisSinglePartitionContended() throws Exception {
         executeWithPool(0, O3Test::testVanillaHysteresisSinglePartition0);
+    }
+
+    @Test
+    public void testVanillaHysteresisSinglePartition() throws Exception {
+        executeVanilla(O3Test::testVanillaHysteresisSinglePartition0);
+    }
+
+    @Test
+    public void testVanillaHysteresisSinglePartitionParallel() throws Exception {
+        executeWithPool(4, O3Test::testVanillaHysteresisSinglePartition0);
     }
 
     @Test

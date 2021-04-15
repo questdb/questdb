@@ -134,6 +134,7 @@ public class TableWriter implements Closeable {
     private int columnCount;
     private RowFunction rowFunction = openPartitionFunction;
     private boolean avoidIndexOnCommit = false;
+    private boolean o3errored = false;
     private long partitionTimestampHi;
     private long masterRef = 0;
     private boolean removeDirOnCancelRow = true;
@@ -713,7 +714,7 @@ public class TableWriter implements Closeable {
     }
 
     public boolean inTransaction() {
-        return txFile != null && (txFile.inTransaction() || o3RowCount > 0);
+        return txFile != null && (txFile.inTransaction() || o3RowCount > 0 || o3errored);
     }
 
     public boolean isOpen() {
@@ -982,6 +983,7 @@ public class TableWriter implements Closeable {
                 rollbackIndexes();
                 purgeUnusedPartitions();
                 configureAppendPosition();
+                this.o3errored = false;
                 LOG.info().$("tx rollback complete [name=").$(name).$(']').$();
             } catch (Throwable e) {
                 LOG.error().$("could not perform rollback [name=").$(name).$(", msg=").$(e.getMessage()).$(']').$();
@@ -2731,6 +2733,7 @@ public class TableWriter implements Closeable {
             // We start with ensuring append memory is in ready-to-use state. When max timestamp changes we need to
             // move append memory to new set of files. Otherwise we stay on the same set but advance the append position.
             avoidIndexOnCommit = o3ErrorCount.get() == 0;
+            o3errored = !avoidIndexOnCommit;
             if (o3HysteresisRowCount == 0) {
                 this.o3RowCount = 0;
                 rowFunction = switchPartitionFunction;
@@ -4111,6 +4114,7 @@ public class TableWriter implements Closeable {
                     timestampSetter = mergeTimestampMethodRef;
                     timestampSetter.accept(timestamp);
                     TableWriter.this.rowFunction = o3RowFunction;
+                    o3errored = false;
                     return row;
                 }
                 // we are failing a new row, there will be pending rollback, we have to increment row count
