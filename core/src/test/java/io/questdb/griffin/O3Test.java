@@ -618,7 +618,7 @@ public class O3Test extends AbstractO3Test {
 
     @Test
     public void testVanillaHysteresisParallel() throws Exception {
-        executeWithPool(4, O3Test::testVanillaHysteresis0);
+        executeWithPool(8, O3Test::testVanillaHysteresis0);
     }
 
     @Test

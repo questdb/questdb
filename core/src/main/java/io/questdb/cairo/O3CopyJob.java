@@ -509,11 +509,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
     ) {
         try {
             // todo: create test to ensure this does not regress
-            if (srcTimestampFd < 0) {
-                tableWriter.closeActivePartition();
-            } else if (srcTimestampFd > 0) {
-                ff.close(srcTimestampFd);
-            }
+            O3Utils.close(ff, srcTimestampFd);
         } finally {
             notifyWriter(
                     updPartitionSizeQueue,
@@ -892,7 +888,6 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
 
     @Override
     protected boolean doRun(int workerId, long cursor) {
-        //todo: throttle down worker threads
         copy(queue.get(cursor), cursor, subSeq);
         return true;
     }

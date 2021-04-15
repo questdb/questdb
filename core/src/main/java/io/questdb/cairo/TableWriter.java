@@ -116,7 +116,7 @@ public class TableWriter implements Closeable {
     private final ObjList<O3CallbackTask> o3PendingCallbackTasks = new ObjList<>();
     private final O3ColumnUpdateMethod oooSortVarColumnRef = this::o3SortVarColumn;
     private final O3ColumnUpdateMethod oooSortFixColumnRef = this::o3SortFixColumn;
-    private final SOUnboundedCountDownLatch oooLatch = new SOUnboundedCountDownLatch();
+    private final SOUnboundedCountDownLatch o3DoneLatch = new SOUnboundedCountDownLatch();
     private final AtomicLong o3PartitionUpdRemaining = new AtomicLong();
     private final AtomicInteger o3ErrorCount = new AtomicInteger();
     private final MappedReadWriteMemory todoMem = new PagedMappedReadWriteMemory();
@@ -1550,7 +1550,28 @@ public class TableWriter implements Closeable {
     }
 
     void closeActivePartition() {
-        closeAppendMemoryNoTruncate(false);
+        closeAppendMemoryNoTruncate(true);
+        Misc.freeObjList(denseIndexers);
+        denseIndexers.clear();
+    }
+
+    void closeActivePartition(long size) {
+        for (int i = 0; i < columnCount; i++) {
+            // stop calculating oversize as soon as we find first over-sized column
+            final AppendOnlyVirtualMemory mem1 = getPrimaryColumn(i);
+            final AppendOnlyVirtualMemory mem2 = getSecondaryColumn(i);
+            setColumnSize(
+                    ff,
+                    mem1,
+                    mem2,
+                    getColumnType(metaMem, i),
+                    size - columnTops.getQuick(i),
+                    tempMem16b,
+                    false
+            );
+            Misc.free(mem1);
+            Misc.free(mem2);
+        }
         Misc.freeObjList(denseIndexers);
         denseIndexers.clear();
     }
@@ -2077,9 +2098,6 @@ public class TableWriter implements Closeable {
         this.lastPartitionTimestamp = timestampFloorMethod.floor(partitionTimestampHi);
         try {
             o3MoveUncommitted(timestampIndex);
-            // move uncommitted is liable to change max timestamp
-            // however we need to identify last partition before max timestamp skips to NULL for example
-            long maxTimestamp = txFile.getMaxTimestamp();
 
             // we may need to re-use file descriptors when this partition is the "current" one
             // we cannot open file again due to sharing violation
@@ -2114,9 +2132,7 @@ public class TableWriter implements Closeable {
             final long srcOooMax = o3RowCount;
             final long oooTimestampMin = getTimestampIndexValue(sortedTimestampsAddr, 0);
             final long oooTimestampMax = getTimestampIndexValue(sortedTimestampsAddr, srcOooMax - 1);
-            final RingQueue<O3PartitionTask> oooPartitionQueue = messageBus.getO3PartitionQueue();
-            final Sequence oooPartitionPubSeq = messageBus.getO3PartitionPubSeq();
-            this.oooLatch.reset();
+            this.o3DoneLatch.reset();
             this.o3PartitionUpdRemaining.set(0);
             boolean success = true;
             int latchCount = 0;
@@ -2128,10 +2144,11 @@ public class TableWriter implements Closeable {
                     try {
                         final long srcOooLo = srcOoo;
                         final long srcOooHi;
-                        if (srcOooTimestamp < oooTimestampMax) {
+                        final long srcOooTimestampCeil = timestampCeilMethod.ceil(srcOooTimestamp);
+                        if (srcOooTimestampCeil < oooTimestampMax) {
                             srcOooHi = Vect.boundedBinarySearchIndexT(
                                     sortedTimestampsAddr,
-                                    timestampCeilMethod.ceil(srcOooTimestamp),
+                                    srcOooTimestampCeil,
                                     srcOoo,
                                     srcOooMax - 1,
                                     BinarySearch.SCAN_DOWN
@@ -2163,6 +2180,12 @@ public class TableWriter implements Closeable {
                             srcDataTxn = -1;
                         }
 
+                        // move uncommitted is liable to change max timestamp
+                        // however we need to identify last partition before max timestamp skips to NULL for example
+                        final long maxTimestamp = txFile.getMaxTimestamp();
+                        final RingQueue<O3PartitionTask> oooPartitionQueue = messageBus.getO3PartitionQueue();
+                        final Sequence oooPartitionPubSeq = messageBus.getO3PartitionPubSeq();
+
                         o3PartitionUpdRemaining.incrementAndGet();
                         if (last && (srcDataSize < 0 || getTimestampIndexValue(sortedTimestampsAddr, srcOooLo) >= maxTimestamp)) {
                             AtomicInteger columnCounter = o3ColumnCounters.next();
@@ -2176,13 +2199,16 @@ public class TableWriter implements Closeable {
                                 final int colOffset = TableWriter.getPrimaryColumnIndex(i);
                                 final boolean notTheTimestamp = i != timestampIndex;
                                 final int columnType = metadata.getColumnType(i);
+                                final CharSequence columnName = metadata.getColumnName(i);
+                                final boolean isIndexed = metadata.isColumnIndexed(i);
+                                final BitmapIndexWriter indexWriter = isIndexed ? getBitmapIndexWriter(i) : null;
                                 final ContiguousVirtualMemory oooMem1 = o3Columns.getQuick(colOffset);
                                 final ContiguousVirtualMemory oooMem2 = o3Columns.getQuick(colOffset + 1);
                                 final AppendOnlyVirtualMemory mem1 = columns.getQuick(colOffset);
                                 final AppendOnlyVirtualMemory mem2 = columns.getQuick(colOffset + 1);
                                 final long activeFixFd;
                                 final long activeVarFd;
-                                final long srcDataTop;
+                                final long srcDataTop = getColumnTop(i);
                                 final long srcOooFixAddr;
                                 final long srcOooFixSize;
                                 final long srcOooVarAddr;
@@ -2201,17 +2227,6 @@ public class TableWriter implements Closeable {
                                     srcOooFixSize = oooMem2.getAppendOffset();
                                     srcOooVarAddr = oooMem1.addressOf(0);
                                     srcOooVarSize = oooMem1.getAppendOffset();
-                                }
-
-                                final CharSequence columnName = metadata.getColumnName(i);
-                                final boolean isIndexed = metadata.isColumnIndexed(i);
-                                srcDataTop = getColumnTop(i);
-
-                                final BitmapIndexWriter indexWriter;
-                                if (isIndexed) {
-                                    indexWriter = getBitmapIndexWriter(i);
-                                } else {
-                                    indexWriter = null;
                                 }
 
                                 O3OpenColumnJob.appendLastPartition(
@@ -2248,7 +2263,7 @@ public class TableWriter implements Closeable {
                                         0,
                                         this,
                                         indexWriter,
-                                        oooLatch
+                                        o3DoneLatch
                                 );
                             }
                         } else {
@@ -2285,7 +2300,7 @@ public class TableWriter implements Closeable {
                         oooTimestampMax
                 );
 
-                oooLatch.await(latchCount);
+                o3DoneLatch.await(latchCount);
 
                 if (success && o3ErrorCount.get() > 0) {
                     //noinspection ThrowFromFinallyBlock
@@ -2350,7 +2365,7 @@ public class TableWriter implements Closeable {
                     sortedTimestampsAddr,
                     this,
                     o3ColumnCounters.next(),
-                    this.oooLatch
+                    this.o3DoneLatch
             );
             oooPartitionPubSeq.done(cursor);
         } else {
@@ -2382,7 +2397,7 @@ public class TableWriter implements Closeable {
                     sortedTimestampsAddr,
                     this,
                     o3ColumnCounters.next(),
-                    oooLatch
+                    o3DoneLatch
             );
         }
     }
@@ -2558,7 +2573,7 @@ public class TableWriter implements Closeable {
         final RingQueue<O3CallbackTask> queue = this.messageBus.getO3CallbackQueue();
         final int ignoredAddr = -1;
 
-        oooLatch.reset();
+        o3DoneLatch.reset();
         int queuedCount = 0;
         for (int colIndex = 0; colIndex < columnCount; colIndex++) {
             int columnType = metadata.getColumnType(colIndex);
@@ -2570,7 +2585,7 @@ public class TableWriter implements Closeable {
                 try {
                     final O3CallbackTask task = queue.get(cursor);
                     task.of(
-                            oooLatch,
+                            o3DoneLatch,
                             columnIndex,
                             columnType,
                             ignoredAddr,
@@ -2599,7 +2614,7 @@ public class TableWriter implements Closeable {
             }
         }
 
-        oooLatch.await(queuedCount);
+        o3DoneLatch.await(queuedCount);
     }
 
     private void o3MoveHysteresis0(
@@ -2658,7 +2673,7 @@ public class TableWriter implements Closeable {
             final Sequence pubSeq = this.messageBus.getO3CallbackPubSeq();
             final RingQueue<O3CallbackTask> queue = this.messageBus.getO3CallbackQueue();
 
-            oooLatch.reset();
+            o3DoneLatch.reset();
             int queuedCount = 0;
             for (int colIndex = 0; colIndex < columnCount; colIndex++) {
                 int columnType = metadata.getColumnType(colIndex);
@@ -2671,7 +2686,7 @@ public class TableWriter implements Closeable {
                     try {
                         final O3CallbackTask task = queue.get(cursor);
                         task.of(
-                                oooLatch,
+                                o3DoneLatch,
                                 columnIndex,
                                 columnType,
                                 committedTransientRowCount,
@@ -2700,7 +2715,7 @@ public class TableWriter implements Closeable {
                 }
             }
 
-            oooLatch.await(queuedCount);
+            o3DoneLatch.await(queuedCount);
             txFile.resetToLastPartition(committedTransientRowCount);
             o3RowCount += transientRowsAdded;
         }
@@ -2829,6 +2844,16 @@ public class TableWriter implements Closeable {
             // this is last partition
             this.txFile.transientRowCount = partitionSize;
             this.txFile.maxTimestamp = timestampMax;
+        }
+
+        if (partitionTimestamp == lastPartitionTimestamp) {
+            if (partitionMutates) {
+                closeActivePartition();
+            } else if (rowDelta < -1) {
+                closeActivePartition(partitionSize);
+            } else {
+                setAppendPosition(partitionSize, false);
+            }
         }
 
         final int partitionIndex = txFile.findAttachedPartitionIndexByLoTimestamp(partitionTimestamp);
@@ -2982,7 +3007,7 @@ public class TableWriter implements Closeable {
         final Sequence pubSeq = this.messageBus.getO3CallbackPubSeq();
         final RingQueue<O3CallbackTask> queue = this.messageBus.getO3CallbackQueue();
 
-        oooLatch.reset();
+        o3DoneLatch.reset();
         int queuedCount = 0;
         for (int i = 0; i < columnCount; i++) {
             if (timestampIndex != i) {
@@ -2992,7 +3017,7 @@ public class TableWriter implements Closeable {
                     try {
                         final O3CallbackTask task = queue.get(cursor);
                         task.of(
-                                oooLatch,
+                                o3DoneLatch,
                                 i,
                                 type,
                                 mergedTimestamps,
@@ -3021,7 +3046,7 @@ public class TableWriter implements Closeable {
             }
         }
 
-        oooLatch.await(queuedCount);
+        o3DoneLatch.await(queuedCount);
     }
 
     private void o3SortColumn(long mergedTimestamps, int i, int type) {
