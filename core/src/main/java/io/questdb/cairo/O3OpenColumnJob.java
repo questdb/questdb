@@ -63,6 +63,275 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
         this.updPartitionSizePubSeq = messageBus.getO3PartitionUpdatePubSeq();
     }
 
+    public static void appendLastPartition(
+            int workerId,
+            CairoConfiguration configuration,
+            RingQueue<O3CopyTask> outboundQueue,
+            Sequence outboundPubSeq,
+            RingQueue<O3PartitionUpdateTask> updPartitionSizeTaskQueue,
+            MPSequence updPartitionSizePubSeq,
+            FilesFacade ff,
+            Path path,
+            int plen,
+            CharSequence columnName,
+            @Nullable AtomicInteger partCounter,
+            AtomicInteger columnCounter,
+            int columnType,
+            long srcOooFixAddr,
+            long srcOooFixSize,
+            long srcOooVarAddr,
+            long srcOooVarSize,
+            long srcOooLo,
+            long srcOooHi,
+            long srcOooMax,
+            long timestampMin,
+            long timestampMax,
+            long partitionTimestamp,
+            long srcDataTop,
+            long srcDataMax,
+            boolean isIndexed,
+            long activeFixFd,
+            long activeFixAddr,
+            long activeFixAddrSize,
+            long activeVarFd,
+            long activeVarAddr,
+            long activeVarAddrSize,
+            long srcTimestampFd,
+            long srcTimestampAddr,
+            long srcTimestampSize,
+            TableWriter tableWriter,
+            BitmapIndexWriter indexWriter,
+            SOUnboundedCountDownLatch doneLatch
+    ) {
+        final long dstLen = srcOooHi - srcOooLo + 1 + srcDataMax - srcDataTop;
+        switch (columnType) {
+            case ColumnType.BINARY:
+            case ColumnType.STRING:
+                appendVarColumn(
+                        workerId,
+                        configuration,
+                        outboundQueue,
+                        outboundPubSeq,
+                        updPartitionSizeTaskQueue,
+                        updPartitionSizePubSeq,
+                        ff,
+                        partCounter,
+                        columnCounter,
+                        columnType,
+                        srcOooFixAddr,
+                        srcOooFixSize,
+                        srcOooVarAddr,
+                        srcOooVarSize,
+                        srcOooLo,
+                        srcOooHi,
+                        srcOooMax,
+                        timestampMin,
+                        timestampMax,
+                        partitionTimestamp,
+                        srcDataTop,
+                        srcDataMax,
+                        isIndexed,
+                        srcTimestampFd,
+                        srcTimestampAddr,
+                        srcTimestampSize,
+                        tableWriter,
+                        doneLatch,
+                        -activeFixFd,
+                        -activeVarFd,
+                        dstLen
+                );
+                break;
+            case -ColumnType.TIMESTAMP:
+                appendTimestampColumn(
+                        configuration,
+                        outboundQueue,
+                        outboundPubSeq,
+                        updPartitionSizeTaskQueue,
+                        updPartitionSizePubSeq,
+                        ff,
+                        partCounter,
+                        columnCounter,
+                        columnType,
+                        srcOooFixAddr,
+                        srcOooFixSize,
+                        srcOooVarAddr,
+                        srcOooVarSize,
+                        srcOooLo,
+                        srcOooHi,
+                        srcOooMax,
+                        timestampMin,
+                        timestampMax,
+                        partitionTimestamp,
+                        srcDataMax,
+                        isIndexed,
+                        srcTimestampFd,
+                        srcTimestampAddr,
+                        srcTimestampSize,
+                        tableWriter,
+                        doneLatch,
+                        activeFixAddr,
+                        activeFixAddrSize,
+                        dstLen
+                );
+                break;
+            default:
+                appendFixColumn(
+                        configuration,
+                        outboundQueue,
+                        outboundPubSeq,
+                        updPartitionSizeTaskQueue,
+                        updPartitionSizePubSeq,
+                        ff,
+                        path,
+                        plen,
+                        columnName,
+                        partCounter,
+                        columnCounter,
+                        columnType,
+                        srcOooFixAddr,
+                        srcOooFixSize,
+                        srcOooVarAddr,
+                        srcOooVarSize,
+                        srcOooLo,
+                        srcOooHi,
+                        srcOooMax,
+                        timestampMin,
+                        timestampMax,
+                        partitionTimestamp,
+                        srcDataTop,
+                        srcDataMax,
+                        isIndexed,
+                        srcTimestampFd,
+                        srcTimestampAddr,
+                        srcTimestampSize,
+                        tableWriter,
+                        indexWriter,
+                        doneLatch,
+                        -activeFixFd,
+                        activeFixAddr,
+                        activeFixAddrSize,
+                        dstLen
+                );
+                break;
+        }
+    }
+
+    public static void openColumn(
+            int workerId,
+            CairoConfiguration configuration,
+            RingQueue<O3CopyTask> outboundQueue,
+            Sequence outboundPubSeq,
+            RingQueue<O3PartitionUpdateTask> updPartitionSizeTaskQueue,
+            MPSequence updPartitionSizePubSeq,
+            O3OpenColumnTask task,
+            long cursor,
+            Sequence subSeq
+    ) {
+        final int openColumnMode = task.getOpenColumnMode();
+        final CharSequence pathToTable = task.getPathToTable();
+        final int columnType = task.getColumnType();
+        final CharSequence columnName = task.getColumnName();
+        final FilesFacade ff = task.getFf();
+        final long srcOooLo = task.getSrcOooLo();
+        final long srcOooHi = task.getSrcOooHi();
+        final long srcOooMax = task.getSrcOooMax();
+        final long timestampMin = task.getTimestampMin();
+        final long timestampMax = task.getTimestampMax();
+        final long oooTimestampLo = task.getOooTimestampLo();
+        final long partitionTimestamp = task.getPartitionTimestamp();
+        final long srcDataMax = task.getSrcDataMax();
+        final long srcDataTxn = task.getSrcDataTxn();
+        final long srcTimestampFd = task.getSrcTimestampFd();
+        final long srcTimestampAddr = task.getSrcTimestampAddr();
+        final long srcTimestampSize = task.getSrcTimestampSize();
+        final AtomicInteger columnCounter = task.getColumnCounter();
+        final boolean isIndexed = task.isIndexed();
+        final long srcOooFixAddr = task.getSrcOooFixAddr();
+        final long srcOooFixSize = task.getSrcOooFixSize();
+        final long srcOooVarAddr = task.getSrcOooVarAddr();
+        final long srcOooVarSize = task.getSrcOooVarSize();
+        final long mergeOOOLo = task.getMergeOOOLo();
+        final long mergeOOOHi = task.getMergeOOOHi();
+        final long mergeDataLo = task.getMergeDataLo();
+        final long mergeDataHi = task.getMergeDataHi();
+        final long txn = task.getTxn();
+        final int prefixType = task.getPrefixType();
+        final long prefixLo = task.getPrefixLo();
+        final long prefixHi = task.getPrefixHi();
+        final int suffixType = task.getSuffixType();
+        final long suffixLo = task.getSuffixLo();
+        final long suffixHi = task.getSuffixHi();
+        final int mergeType = task.getMergeType();
+        final long timestampMergeIndexAddr = task.getTimestampMergeIndexAddr();
+        final long activeFixFd = task.getActiveFixFd();
+        final long activeFixAddr = task.getActiveFixAddr();
+        final long activeFixAddrSize = task.getActiveFixAddrSize();
+        final long activeVarFd = task.getActiveVarFd();
+        final long activeVarAddr = task.getActiveVarAddr();
+        final long activeVarAddrSize = task.getActiveVarAddrSize();
+        final long srcDataTop = task.getSrcDataTop();
+        final TableWriter tableWriter = task.getTableWriter();
+        final BitmapIndexWriter indexWriter = task.getIndexWriter();
+        final SOUnboundedCountDownLatch doneLatch = task.getDoneLatch();
+
+        subSeq.done(cursor);
+
+        openColumn(
+                workerId,
+                configuration,
+                outboundQueue,
+                outboundPubSeq,
+                updPartitionSizeTaskQueue,
+                updPartitionSizePubSeq,
+                openColumnMode,
+                ff,
+                pathToTable,
+                columnName,
+                columnCounter,
+                columnType,
+                timestampMergeIndexAddr,
+                srcOooFixAddr,
+                srcOooFixSize,
+                srcOooVarAddr,
+                srcOooVarSize,
+                srcOooLo,
+                srcOooHi,
+                srcOooMax,
+                timestampMin,
+                timestampMax,
+                oooTimestampLo,
+                partitionTimestamp,
+                srcDataTop,
+                srcDataMax,
+                srcDataTxn,
+                txn,
+                prefixType,
+                prefixLo,
+                prefixHi,
+                mergeType,
+                mergeOOOLo,
+                mergeOOOHi,
+                mergeDataLo,
+                mergeDataHi,
+                suffixType,
+                suffixLo,
+                suffixHi,
+                srcTimestampFd,
+                srcTimestampAddr,
+                srcTimestampSize,
+                isIndexed,
+                activeFixFd,
+                activeFixAddr,
+                activeFixAddrSize,
+                activeVarFd,
+                activeVarAddr,
+                activeVarAddrSize,
+                tableWriter,
+                indexWriter,
+                doneLatch
+        );
+    }
+
     public static void openColumn(
             int workerId,
             CairoConfiguration configuration,
@@ -108,7 +377,11 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             long srcTimestampSize,
             boolean isIndexed,
             long activeFixFd,
+            long activeFixAddr,
+            long activeFixAddrSize,
             long activeVarFd,
+            long activeVarAddr,
+            long activeVarAddrSize,
             TableWriter tableWriter,
             BitmapIndexWriter indexWriter,
             SOUnboundedCountDownLatch doneLatch
@@ -187,7 +460,11 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         srcDataMax,
                         isIndexed,
                         activeFixFd,
+                        activeFixAddr,
+                        activeFixAddrSize,
                         activeVarFd,
+                        activeVarAddr,
+                        activeVarAddrSize,
                         srcTimestampFd,
                         srcTimestampAddr,
                         srcTimestampSize,
@@ -333,114 +610,6 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             default:
                 break;
         }
-    }
-
-    public static void openColumn(
-            int workerId,
-            CairoConfiguration configuration,
-            RingQueue<O3CopyTask> outboundQueue,
-            Sequence outboundPubSeq,
-            RingQueue<O3PartitionUpdateTask> updPartitionSizeTaskQueue,
-            MPSequence updPartitionSizePubSeq,
-            O3OpenColumnTask task,
-            long cursor,
-            Sequence subSeq
-    ) {
-        final int openColumnMode = task.getOpenColumnMode();
-        final CharSequence pathToTable = task.getPathToTable();
-        final int columnType = task.getColumnType();
-        final CharSequence columnName = task.getColumnName();
-        final FilesFacade ff = task.getFf();
-        final long srcOooLo = task.getSrcOooLo();
-        final long srcOooHi = task.getSrcOooHi();
-        final long srcOooMax = task.getSrcOooMax();
-        final long timestampMin = task.getTimestampMin();
-        final long timestampMax = task.getTimestampMax();
-        final long oooTimestampLo = task.getOooTimestampLo();
-        final long partitionTimestamp = task.getPartitionTimestamp();
-        final long srcDataMax = task.getSrcDataMax();
-        final long srcDataTxn = task.getSrcDataTxn();
-        final long srcTimestampFd = task.getSrcTimestampFd();
-        final long srcTimestampAddr = task.getSrcTimestampAddr();
-        final long srcTimestampSize = task.getSrcTimestampSize();
-        final AtomicInteger columnCounter = task.getColumnCounter();
-        final boolean isIndexed = task.isIndexed();
-        final long srcOooFixAddr = task.getSrcOooFixAddr();
-        final long srcOooFixSize = task.getSrcOooFixSize();
-        final long srcOooVarAddr = task.getSrcOooVarAddr();
-        final long srcOooVarSize = task.getSrcOooVarSize();
-        final long mergeOOOLo = task.getMergeOOOLo();
-        final long mergeOOOHi = task.getMergeOOOHi();
-        final long mergeDataLo = task.getMergeDataLo();
-        final long mergeDataHi = task.getMergeDataHi();
-        final long txn = task.getTxn();
-        final int prefixType = task.getPrefixType();
-        final long prefixLo = task.getPrefixLo();
-        final long prefixHi = task.getPrefixHi();
-        final int suffixType = task.getSuffixType();
-        final long suffixLo = task.getSuffixLo();
-        final long suffixHi = task.getSuffixHi();
-        final int mergeType = task.getMergeType();
-        final long timestampMergeIndexAddr = task.getTimestampMergeIndexAddr();
-        final long activeFixFd = task.getActiveFixFd();
-        final long activeVarFd = task.getActiveVarFd();
-        final long srcDataTop = task.getSrcDataTop();
-        final TableWriter tableWriter = task.getTableWriter();
-        final BitmapIndexWriter indexWriter = task.getIndexWriter();
-        final SOUnboundedCountDownLatch doneLatch = task.getDoneLatch();
-
-        subSeq.done(cursor);
-
-        openColumn(
-                workerId,
-                configuration,
-                outboundQueue,
-                outboundPubSeq,
-                updPartitionSizeTaskQueue,
-                updPartitionSizePubSeq,
-                openColumnMode,
-                ff,
-                pathToTable,
-                columnName,
-                columnCounter,
-                columnType,
-                timestampMergeIndexAddr,
-                srcOooFixAddr,
-                srcOooFixSize,
-                srcOooVarAddr,
-                srcOooVarSize,
-                srcOooLo,
-                srcOooHi,
-                srcOooMax,
-                timestampMin,
-                timestampMax,
-                oooTimestampLo,
-                partitionTimestamp,
-                srcDataTop,
-                srcDataMax,
-                srcDataTxn,
-                txn,
-                prefixType,
-                prefixLo,
-                prefixHi,
-                mergeType,
-                mergeOOOLo,
-                mergeOOOHi,
-                mergeDataLo,
-                mergeDataHi,
-                suffixType,
-                suffixLo,
-                suffixHi,
-                srcTimestampFd,
-                srcTimestampAddr,
-                srcTimestampSize,
-                isIndexed,
-                activeFixFd,
-                activeVarFd,
-                tableWriter,
-                indexWriter,
-                doneLatch
-        );
     }
 
     private static long getVarColumnSize(FilesFacade ff, int columnType, long dataFd, long lastValueOffset, int workerId) {
@@ -637,7 +806,6 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         timestampMin,
                         timestampMax,
                         partitionTimestamp,
-                        srcDataTop,
                         srcDataMax,
                         isIndexed,
                         srcTimestampFd,
@@ -645,6 +813,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         srcTimestampSize,
                         tableWriter,
                         doneLatch,
+                        0, // cannot reuse memory, new partition
+                        0,
                         dstLen
                 );
                 break;
@@ -713,6 +883,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         null, // mid table column would not have active index writer
                         doneLatch,
                         dstFixFd,
+                        0, // cannot reuse memory, new partition
+                        0,
                         dstLen
                 );
                 break;
@@ -752,21 +924,31 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             BitmapIndexWriter indexWriter,
             SOUnboundedCountDownLatch doneLatch,
             long dstFixFd,
+            long dstFixAddr,
+            long dstFixAddrSize,
             long dstLen
     ) {
         long dstKFd = 0;
         long dstVFd = 0;
         long dstFixOffset;
         long dstIndexOffset;
+        long dstIndexAdjust;
         long dstFixSize = 0;
-        long dstFixAddr = 0;
         final int shl = ColumnType.pow2SizeOf(columnType);
 
         try {
             dstFixSize = dstLen << shl;
-            dstFixOffset = (srcDataMax - srcDataTop) << shl;
-            dstFixAddr = O3Utils.mapRW(ff, Math.abs(dstFixFd), dstFixSize);
-            dstIndexOffset = dstFixOffset;
+            if (dstFixAddr == 0 || dstFixAddrSize < dstFixSize) {
+                dstFixOffset = (srcDataMax - srcDataTop) << shl;
+                dstFixAddr = O3Utils.mapRW(ff, Math.abs(dstFixFd), dstFixSize);
+                dstIndexOffset = dstFixOffset;
+                dstIndexAdjust = 0;
+            } else {
+                dstFixOffset = 0;
+                dstFixSize = -dstFixSize;
+                dstIndexOffset = 0;
+                dstIndexAdjust = srcDataMax - srcDataTop;
+            }
             if (isIndexed && indexWriter == null) {
                 BitmapIndexUtils.keyFileName(path.trimTo(plen), columnName);
                 dstKFd = O3Utils.openRW(ff, path);
@@ -849,6 +1031,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 dstKFd,
                 dstVFd,
                 dstIndexOffset,
+                dstIndexAdjust,
                 isIndexed,
                 srcTimestampFd,
                 srcTimestampAddr,
@@ -880,7 +1063,6 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             long timestampMin,
             long timestampMax,
             long partitionTimestamp,
-            long srcDataTop,
             long srcDataMax,
             boolean isIndexed,
             long srcTimestampFd,
@@ -888,17 +1070,23 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             long srcTimestampSize,
             TableWriter tableWriter,
             SOUnboundedCountDownLatch doneLatch,
+            long dstFixAddr,
+            long dstFixAddrSize,
             long dstLen
     ) {
         long dstFixFd = 0;
         long dstFixOffset;
         long dstFixSize = 0;
-        long dstFixAddr = 0;
         try {
             dstFixSize = dstLen * Long.BYTES;
-            dstFixOffset = srcDataMax * Long.BYTES;
-            dstFixFd = -Math.abs(srcTimestampFd);
-            dstFixAddr = O3Utils.mapRW(ff, -dstFixFd, dstFixSize);
+            if (dstFixAddr == 0 || dstFixAddrSize < dstFixSize) {
+                dstFixOffset = srcDataMax * Long.BYTES;
+                dstFixFd = -Math.abs(srcTimestampFd);
+                dstFixAddr = O3Utils.mapRW(ff, -dstFixFd, dstFixSize);
+            } else {
+                dstFixOffset = 0;
+                dstFixSize = -dstFixSize;
+            }
         } catch (Throwable e) {
             tableWriter.o3BumpErrorCount();
             O3CopyJob.copyIdleQuick(
@@ -948,7 +1136,9 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 0,
                 0,
                 0,
-                srcOooLo, srcOooHi, srcDataTop,
+                srcOooLo,
+                srcOooHi,
+                0, // designated timestamp column cannot be added after table is created
                 srcDataMax,
                 srcOooFixAddr,
                 srcOooFixSize,
@@ -966,6 +1156,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 dstFixAddr,
                 dstFixOffset,
                 dstFixSize,
+                0,
                 0,
                 0,
                 0,
@@ -1117,6 +1308,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 0,
                 0,
                 0,
+                0,
                 isIndexed,
                 srcTimestampFd,
                 srcTimestampAddr,
@@ -1175,6 +1367,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             long dstKFd,
             long dstVFd,
             long dstIndexOffset,
+            long dstIndexAdjust,
             boolean isIndexed,
             long srcTimestampFd,
             long srcTimestampAddr,
@@ -1230,6 +1423,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     dstKFd,
                     dstVFd,
                     dstIndexOffset,
+                    dstIndexAdjust,
                     isIndexed,
                     cursor,
                     srcTimestampFd,
@@ -1288,6 +1482,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     dstKFd,
                     dstVFd,
                     dstIndexOffset,
+                    dstIndexAdjust,
                     isIndexed,
                     srcTimestampFd,
                     srcTimestampAddr,
@@ -1348,6 +1543,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             long dstKFd,
             long dstVFd,
             long dstIndexOffset,
+            long dstIndexAdjust,
             boolean isIndexed,
             long srcTimestampFd,
             long srcTimestampAddr,
@@ -1407,6 +1603,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     dstKFd,
                     dstVFd,
                     dstIndexOffset,
+                    dstIndexAdjust,
                     isIndexed,
                     srcTimestampFd,
                     srcTimestampAddr,
@@ -1459,6 +1656,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     dstKFd,
                     dstVFd,
                     dstIndexOffset,
+                    dstIndexAdjust,
                     isIndexed,
                     cursor,
                     srcTimestampFd,
@@ -1516,6 +1714,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             long dstKFd,
             long dstVFd,
             long dstIndexOffset,
+            long dstIndexAdjust,
             boolean isIndexed,
             long cursor,
             long srcTimestampFd,
@@ -1569,6 +1768,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 dstKFd,
                 dstVFd,
                 dstIndexOffset,
+                dstIndexAdjust,
                 isIndexed,
                 srcTimestampFd,
                 srcTimestampAddr,
@@ -1579,152 +1779,6 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 doneLatch
         );
         outboundPubSeq.done(cursor);
-    }
-
-    public static void appendLastPartition(
-            int workerId,
-            CairoConfiguration configuration,
-            RingQueue<O3CopyTask> outboundQueue,
-            Sequence outboundPubSeq,
-            RingQueue<O3PartitionUpdateTask> updPartitionSizeTaskQueue,
-            MPSequence updPartitionSizePubSeq,
-            FilesFacade ff,
-            Path path,
-            int plen,
-            CharSequence columnName,
-            @Nullable AtomicInteger partCounter,
-            AtomicInteger columnCounter,
-            int columnType,
-            long srcOooFixAddr,
-            long srcOooFixSize,
-            long srcOooVarAddr,
-            long srcOooVarSize,
-            long srcOooLo,
-            long srcOooHi,
-            long srcOooMax,
-            long timestampMin,
-            long timestampMax,
-            long partitionTimestamp,
-            long srcDataTop,
-            long srcDataMax,
-            boolean isIndexed,
-            long activeFixFd,
-            long activeVarFd,
-            long srcTimestampFd,
-            long srcTimestampAddr,
-            long srcTimestampSize,
-            TableWriter tableWriter,
-            BitmapIndexWriter indexWriter,
-            SOUnboundedCountDownLatch doneLatch
-    ) {
-        final long dstLen = srcOooHi - srcOooLo + 1 + srcDataMax - srcDataTop;
-        switch (columnType) {
-            case ColumnType.BINARY:
-            case ColumnType.STRING:
-                appendVarColumn(
-                        workerId,
-                        configuration,
-                        outboundQueue,
-                        outboundPubSeq,
-                        updPartitionSizeTaskQueue,
-                        updPartitionSizePubSeq,
-                        ff,
-                        partCounter,
-                        columnCounter,
-                        columnType,
-                        srcOooFixAddr,
-                        srcOooFixSize,
-                        srcOooVarAddr,
-                        srcOooVarSize,
-                        srcOooLo,
-                        srcOooHi,
-                        srcOooMax,
-                        timestampMin,
-                        timestampMax,
-                        partitionTimestamp,
-                        srcDataTop,
-                        srcDataMax,
-                        isIndexed,
-                        srcTimestampFd,
-                        srcTimestampAddr,
-                        srcTimestampSize,
-                        tableWriter,
-                        doneLatch,
-                        -activeFixFd,
-                        -activeVarFd,
-                        dstLen
-                );
-                break;
-            case -ColumnType.TIMESTAMP:
-                appendTimestampColumn(
-                        configuration,
-                        outboundQueue,
-                        outboundPubSeq,
-                        updPartitionSizeTaskQueue,
-                        updPartitionSizePubSeq,
-                        ff,
-                        partCounter,
-                        columnCounter,
-                        columnType,
-                        srcOooFixAddr,
-                        srcOooFixSize,
-                        srcOooVarAddr,
-                        srcOooVarSize,
-                        srcOooLo,
-                        srcOooHi,
-                        srcOooMax,
-                        timestampMin,
-                        timestampMax,
-                        partitionTimestamp,
-                        srcDataTop,
-                        srcDataMax,
-                        isIndexed,
-                        srcTimestampFd,
-                        srcTimestampAddr,
-                        srcTimestampSize,
-                        tableWriter,
-                        doneLatch,
-                        dstLen
-                );
-                break;
-            default:
-                appendFixColumn(
-                        configuration,
-                        outboundQueue,
-                        outboundPubSeq,
-                        updPartitionSizeTaskQueue,
-                        updPartitionSizePubSeq,
-                        ff,
-                        path,
-                        plen,
-                        columnName,
-                        partCounter,
-                        columnCounter,
-                        columnType,
-                        srcOooFixAddr,
-                        srcOooFixSize,
-                        srcOooVarAddr,
-                        srcOooVarSize,
-                        srcOooLo,
-                        srcOooHi,
-                        srcOooMax,
-                        timestampMin,
-                        timestampMax,
-                        partitionTimestamp,
-                        srcDataTop,
-                        srcDataMax,
-                        isIndexed,
-                        srcTimestampFd,
-                        srcTimestampAddr,
-                        srcTimestampSize,
-                        tableWriter,
-                        indexWriter,
-                        doneLatch,
-                        -activeFixFd,
-                        dstLen
-                );
-                break;
-        }
     }
 
     private static void mergeLastPartition(
@@ -2912,6 +2966,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 dstKFd,
                 dstVFd,
                 0,
+                0,
                 isIndexed,
                 0,
                 0,
@@ -3039,6 +3094,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         dstKFd,
                         dstVFd,
                         0,
+                        0,
                         isIndexed,
                         srcTimestampFd,
                         srcTimestampAddr,
@@ -3094,6 +3150,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         dstVarSize,
                         dstKFd,
                         dstVFd,
+                        0,
                         0,
                         isIndexed,
                         srcTimestampFd,
@@ -3156,6 +3213,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         dstKFd,
                         dstVFd,
                         0,
+                        0,
                         isIndexed,
                         srcTimestampFd,
                         srcTimestampAddr,
@@ -3211,6 +3269,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         dstVarSize,
                         dstKFd,
                         dstVFd,
+                        0,
                         0,
                         isIndexed,
                         srcTimestampFd,
@@ -3268,6 +3327,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         dstKFd,
                         dstVFd,
                         0,
+                        0,
                         isIndexed,
                         srcTimestampFd,
                         srcTimestampAddr,
@@ -3304,7 +3364,9 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         srcDataVarAddr,
                         srcDataVarOffset,
                         srcDataVarSize,
-                        0, 0, srcDataTopOffset,
+                        0,
+                        0,
+                        srcDataTopOffset,
                         srcDataMax,
                         srcOooFixAddr,
                         srcOooFixSize,
@@ -3328,6 +3390,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         dstVarSize,
                         dstKFd,
                         dstVFd,
+                        0,
                         0,
                         isIndexed,
                         srcTimestampFd,
@@ -3360,7 +3423,9 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         srcDataVarAddr,
                         srcDataVarOffset,
                         srcDataVarSize,
-                        suffixLo, suffixHi, srcDataTopOffset,
+                        suffixLo,
+                        suffixHi,
+                        srcDataTopOffset,
                         srcDataMax,
                         0,
                         0,
@@ -3384,6 +3449,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         dstVarSize,
                         dstKFd,
                         dstVFd,
+                        0,
                         0,
                         isIndexed,
                         srcTimestampFd,

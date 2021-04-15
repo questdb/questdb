@@ -111,6 +111,19 @@ public class AppendOnlyVirtualMemory extends PagedVirtualMemory implements Mappe
         throw CairoException.instance(ff.errno()).put("Could not mmap append fd=").put(fd).put(", offset=").put(offset).put(", size=").put(getMapPageSize());
     }
 
+    public long getAppendAddress() {
+        long appendOffset = getAppendOffset();
+        return addressOf(appendOffset);
+    }
+
+    public long getAppendAddressSize() {
+        long appendOffset = getAppendOffset();
+        int p = pageIndex(appendOffset);
+        long o = offsetInPage(appendOffset);
+        long sz = getPageSize(p);
+        return sz - o;
+    }
+
     @Override
     public void of(FilesFacade ff, LPSZ name, long pageSize, long size) {
         // size of file does not mapper for mapping file for append

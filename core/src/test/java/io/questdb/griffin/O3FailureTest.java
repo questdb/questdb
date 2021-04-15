@@ -2325,7 +2325,7 @@ public class O3FailureTest extends AbstractO3Test {
                     return true;
                 }
             };
-            execute1(null, runnable, configuration);
+            execute(null, runnable, configuration);
         });
     }
 }

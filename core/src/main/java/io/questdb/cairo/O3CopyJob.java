@@ -97,6 +97,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             long dstKFd,
             long dstVFd,
             long dstIndexOffset,
+            long dstIndexAdjust,
             boolean isIndexed,
             long srcTimestampFd,
             long srcTimestampAddr,
@@ -160,80 +161,46 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                 break;
         }
         // decrement part counter and if we are the last task - perform final steps
-        if (partCounter == null || partCounter.decrementAndGet() == 0) {
-            // todo: pool indexer
-            if (isIndexed) {
-                // dstKFd & dstVFd are closed by the indexer
-                try {
-                    if (indexWriter != null) {
-                        updateIndex(dstFixAddr, dstFixSize, dstIndexOffset, indexWriter);
-                    } else {
-                        updateIndex(configuration, dstFixAddr, dstFixSize, dstKFd, dstVFd, dstIndexOffset);
-                    }
-                } catch (Throwable e) {
-                    tableWriter.o3BumpErrorCount();
-                    copyIdleQuick(
-                            columnCounter,
-                            ff,
-                            timestampMergeIndexAddr,
-                            srcDataFixFd,
-                            srcDataFixAddr,
-                            srcDataFixSize,
-                            srcDataVarFd,
-                            srcDataVarAddr,
-                            srcDataVarSize,
-                            dstFixFd,
-                            dstFixAddr,
-                            dstFixSize,
-                            dstVarFd,
-                            dstVarAddr,
-                            dstVarSize,
-                            srcTimestampFd,
-                            srcTimestampAddr,
-                            srcTimestampSize,
-                            0,
-                            0,
-                            tableWriter,
-                            doneLatch
-                    );
-                    throw e;
-                }
-            }
-
-            // unmap memory
-            O3Utils.unmapAndClose(ff, srcDataFixFd, srcDataFixAddr, srcDataFixSize);
-            O3Utils.unmapAndClose(ff, srcDataVarFd, srcDataVarAddr, srcDataVarSize);
-            O3Utils.unmapAndClose(ff, dstFixFd, dstFixAddr, dstFixSize);
-            O3Utils.unmapAndClose(ff, dstVarFd, dstVarAddr, dstVarSize);
-
-            final int columnsRemaining = columnCounter.decrementAndGet();
-            LOG.debug().$("organic [columnsRemaining=").$(columnsRemaining).$(']').$();
-            if (columnsRemaining == 0) {
-                O3Utils.unmap(ff, srcTimestampAddr, srcTimestampSize);
-                try {
-                    touchPartition(
-                            ff,
-                            updPartitionSizeTaskQueue,
-                            updPartitionSizePubSeq,
-                            srcOooPartitionLo,
-                            srcOooPartitionHi,
-                            timestampMin,
-                            timestampMax,
-                            partitionTimestamp,
-                            srcOooMax,
-                            srcDataMax,
-                            srcTimestampFd,
-                            partitionMutates,
-                            tableWriter
-                    );
-                } finally {
-                    if (timestampMergeIndexAddr != 0) {
-                        Vect.freeMergedIndex(timestampMergeIndexAddr);
-                    }
-                    doneLatch.countDown();
-                }
-            }
-        }
+        copyTail(
+                configuration,
+                updPartitionSizeTaskQueue,
+                updPartitionSizePubSeq,
+                columnCounter,
+                partCounter,
+                ff,
+                timestampMergeIndexAddr,
+                srcDataFixFd,
+                srcDataFixAddr,
+                srcDataFixSize,
+                srcDataVarFd,
+                srcDataVarAddr,
+                srcDataVarSize,
+                srcDataMax,
+                srcOooMax,
+                srcOooPartitionLo,
+                srcOooPartitionHi,
+                timestampMin,
+                timestampMax,
+                partitionTimestamp,
+                dstFixFd,
+                dstFixAddr,
+                dstFixSize,
+                dstVarFd,
+                dstVarAddr,
+                dstVarSize,
+                dstKFd,
+                dstVFd,
+                dstIndexOffset,
+                dstIndexAdjust,
+                isIndexed,
+                srcTimestampFd,
+                srcTimestampAddr,
+                srcTimestampSize,
+                partitionMutates,
+                tableWriter,
+                indexWriter,
+                doneLatch
+        );
     }
 
     public static void copy(
@@ -285,6 +252,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
         final long dstKFd = task.getDstKFd();
         final long dskVFd = task.getDstVFd();
         final long dstIndexOffset = task.getDstIndexOffset();
+        final long dstIndexAdjust = task.getDstIndexAdjust();
         final boolean isIndexed = task.isIndexed();
         final long srcTimestampFd = task.getSrcTimestampFd();
         final long srcTimestampAddr = task.getSrcTimestampAddr();
@@ -341,6 +309,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                 dstKFd,
                 dskVFd,
                 dstIndexOffset,
+                dstIndexAdjust,
                 isIndexed,
                 srcTimestampFd,
                 srcTimestampAddr,
@@ -350,6 +319,223 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                 indexWriter,
                 doneLatch
         );
+    }
+
+    private static void copyTail(
+            CairoConfiguration configuration,
+            RingQueue<O3PartitionUpdateTask> updPartitionSizeTaskQueue,
+            MPSequence updPartitionSizePubSeq,
+            AtomicInteger columnCounter,
+            @Nullable AtomicInteger partCounter,
+            FilesFacade ff,
+            long timestampMergeIndexAddr,
+            long srcDataFixFd,
+            long srcDataFixAddr,
+            long srcDataFixSize,
+            long srcDataVarFd,
+            long srcDataVarAddr,
+            long srcDataVarSize,
+            long srcDataMax,
+            long srcOooMax,
+            long srcOooPartitionLo,
+            long srcOooPartitionHi,
+            long timestampMin,
+            long timestampMax,
+            long partitionTimestamp,
+            long dstFixFd,
+            long dstFixAddr,
+            long dstFixSize,
+            long dstVarFd,
+            long dstVarAddr,
+            long dstVarSize,
+            long dstKFd,
+            long dstVFd,
+            long dstIndexOffset,
+            long dstIndexAdjust,
+            boolean isIndexed,
+            long srcTimestampFd,
+            long srcTimestampAddr,
+            long srcTimestampSize,
+            boolean partitionMutates,
+            TableWriter tableWriter,
+            BitmapIndexWriter indexWriter,
+            SOUnboundedCountDownLatch doneLatch
+    ) {
+        if (partCounter == null || partCounter.decrementAndGet() == 0) {
+            // todo: pool indexer
+            if (isIndexed) {
+                updateIndex(
+                        configuration,
+                        columnCounter,
+                        ff,
+                        timestampMergeIndexAddr,
+                        srcDataFixFd,
+                        srcDataFixAddr,
+                        srcDataFixSize,
+                        srcDataVarFd,
+                        srcDataVarAddr,
+                        srcDataVarSize,
+                        dstFixFd,
+                        dstFixAddr,
+                        Math.abs(dstFixSize),
+                        dstVarFd,
+                        dstVarAddr,
+                        Math.abs(dstVarSize),
+                        dstKFd,
+                        dstVFd,
+                        dstIndexOffset,
+                        dstIndexAdjust,
+                        srcTimestampFd,
+                        srcTimestampAddr,
+                        srcTimestampSize,
+                        tableWriter,
+                        indexWriter,
+                        doneLatch
+                );
+            }
+
+            // unmap memory
+            O3Utils.unmapAndClose(ff, srcDataFixFd, srcDataFixAddr, srcDataFixSize);
+            O3Utils.unmapAndClose(ff, srcDataVarFd, srcDataVarAddr, srcDataVarSize);
+            O3Utils.unmapAndClose(ff, dstFixFd, dstFixAddr, dstFixSize);
+            O3Utils.unmapAndClose(ff, dstVarFd, dstVarAddr, dstVarSize);
+
+            final int columnsRemaining = columnCounter.decrementAndGet();
+            LOG.debug().$("organic [columnsRemaining=").$(columnsRemaining).$(']').$();
+            if (columnsRemaining == 0) {
+                updatePartition(
+                        updPartitionSizeTaskQueue,
+                        updPartitionSizePubSeq,
+                        ff,
+                        timestampMergeIndexAddr,
+                        srcDataMax,
+                        srcOooMax,
+                        srcOooPartitionLo,
+                        srcOooPartitionHi,
+                        timestampMin,
+                        timestampMax,
+                        partitionTimestamp,
+                        srcTimestampFd,
+                        srcTimestampAddr,
+                        srcTimestampSize,
+                        partitionMutates,
+                        tableWriter,
+                        doneLatch
+                );
+            }
+        }
+    }
+
+    private static void updatePartition(
+            RingQueue<O3PartitionUpdateTask> updPartitionSizeTaskQueue,
+            MPSequence updPartitionSizePubSeq,
+            FilesFacade ff,
+            long timestampMergeIndexAddr,
+            long srcDataMax,
+            long srcOooMax,
+            long srcOooPartitionLo,
+            long srcOooPartitionHi,
+            long timestampMin,
+            long timestampMax,
+            long partitionTimestamp,
+            long srcTimestampFd,
+            long srcTimestampAddr,
+            long srcTimestampSize,
+            boolean partitionMutates,
+            TableWriter tableWriter,
+            SOUnboundedCountDownLatch doneLatch
+    ) {
+        O3Utils.unmap(ff, srcTimestampAddr, srcTimestampSize);
+        try {
+            try {
+                // todo: create test to ensure this does not regress
+                O3Utils.close(ff, srcTimestampFd);
+            } finally {
+                notifyWriter(
+                        updPartitionSizeTaskQueue,
+                        updPartitionSizePubSeq,
+                        srcOooPartitionLo,
+                        srcOooPartitionHi,
+                        timestampMin,
+                        timestampMax,
+                        partitionTimestamp,
+                        srcOooMax,
+                        srcDataMax,
+                        partitionMutates,
+                        tableWriter
+                );
+            }
+        } finally {
+            if (timestampMergeIndexAddr != 0) {
+                Vect.freeMergedIndex(timestampMergeIndexAddr);
+            }
+            doneLatch.countDown();
+        }
+    }
+
+    private static void updateIndex(
+            CairoConfiguration configuration,
+            AtomicInteger columnCounter,
+            FilesFacade ff,
+            long timestampMergeIndexAddr,
+            long srcDataFixFd,
+            long srcDataFixAddr,
+            long srcDataFixSize,
+            long srcDataVarFd,
+            long srcDataVarAddr,
+            long srcDataVarSize,
+            long dstFixFd,
+            long dstFixAddr,
+            long dstFixSize,
+            long dstVarFd,
+            long dstVarAddr,
+            long dstVarSize,
+            long dstKFd,
+            long dstVFd,
+            long dstIndexOffset,
+            long dstIndexAdjust,
+            long srcTimestampFd,
+            long srcTimestampAddr,
+            long srcTimestampSize,
+            TableWriter tableWriter,
+            BitmapIndexWriter indexWriter,
+            SOUnboundedCountDownLatch doneLatch
+    ) {
+        // dstKFd & dstVFd are closed by the indexer
+        try {
+            if (indexWriter != null) {
+                updateIndex(dstFixAddr, dstFixSize, dstIndexOffset, dstIndexAdjust, indexWriter);
+            } else {
+                updateIndex(configuration, dstFixAddr, dstFixSize, dstKFd, dstVFd, dstIndexOffset, dstIndexAdjust);
+            }
+        } catch (Throwable e) {
+            tableWriter.o3BumpErrorCount();
+            copyIdleQuick(
+                    columnCounter,
+                    ff,
+                    timestampMergeIndexAddr,
+                    srcDataFixFd,
+                    srcDataFixAddr,
+                    srcDataFixSize,
+                    srcDataVarFd,
+                    srcDataVarAddr,
+                    srcDataVarSize,
+                    dstFixFd,
+                    dstFixAddr,
+                    dstFixSize,
+                    dstVarFd,
+                    dstVarAddr,
+                    dstVarSize,
+                    srcTimestampFd,
+                    srcTimestampAddr,
+                    srcTimestampSize,
+                    0,
+                    0,
+                    tableWriter,
+                    doneLatch
+            );
+            throw e;
+        }
     }
 
     static void copyIdle(
@@ -492,40 +678,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
         doneLatch.countDown();
     }
 
-    private static void touchPartition(
-            FilesFacade ff,
-            RingQueue<O3PartitionUpdateTask> updPartitionSizeQueue,
-            MPSequence updPartitionPubSeq,
-            long srcOooPartitionLo,
-            long srcOooPartitionHi,
-            long timestampMin,
-            long timestampMax,
-            long partitionTimestamp, // lowest timestamp of partition where data is headed
-            long srcOooMax,
-            long srcDataMax,
-            long srcTimestampFd,
-            boolean partitionMutates,
-            TableWriter tableWriter
-    ) {
-        try {
-            // todo: create test to ensure this does not regress
-            O3Utils.close(ff, srcTimestampFd);
-        } finally {
-            notifyWriter(
-                    updPartitionSizeQueue,
-                    updPartitionPubSeq,
-                    srcOooPartitionLo,
-                    srcOooPartitionHi,
-                    timestampMin,
-                    timestampMax,
-                    partitionTimestamp,
-                    srcOooMax,
-                    srcDataMax,
-                    partitionMutates,
-                    tableWriter
-            );
-        }
-    }
+    // lowest timestamp of partition where data is headed
 
     static void notifyWriter(
             RingQueue<O3PartitionUpdateTask> updPartitionSizeQueue,
@@ -846,33 +999,27 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             long dstFixSize,
             long dstKFd,
             long dskVFd,
-            long dstIndexOffset
+            long dstIndexOffset,
+            long dstIndexAdjust
     ) {
         try (BitmapIndexWriter w = new BitmapIndexWriter()) {
-            long row = dstIndexOffset / Integer.BYTES;
+            final long row = dstIndexOffset / Integer.BYTES;
             w.of(configuration, dstKFd, dskVFd, row == 0);
-            w.rollbackConditionally(row);
-            final long count = dstFixSize / Integer.BYTES;
-            for (; row < count; row++) {
-                w.add(TableUtils.toIndexKey(Unsafe.getUnsafe().getInt(dstFixAddr + row * Integer.BYTES)), row);
-            }
-            w.setMaxValue(count - 1);
+            updateIndex(dstFixAddr, dstFixSize, w, row, dstIndexAdjust);
         }
     }
 
-    private static void updateIndex(
-            long dstFixAddr,
-            long dstFixSize,
-            long dstIndexOffset,
-            BitmapIndexWriter indexWriter
-    ) {
-        long row = dstIndexOffset / Integer.BYTES;
-        indexWriter.rollbackConditionally(row);
-        final long count = dstFixSize / Integer.BYTES;
+    private static void updateIndex(long dstFixAddr, long dstFixSize, BitmapIndexWriter w, long row, long rowAdjust) {
+        w.rollbackConditionally(row + rowAdjust);
+        final long count = dstFixSize / Integer.BYTES - rowAdjust;
         for (; row < count; row++) {
-            indexWriter.add(TableUtils.toIndexKey(Unsafe.getUnsafe().getInt(dstFixAddr + row * Integer.BYTES)), row);
+            w.add(TableUtils.toIndexKey(Unsafe.getUnsafe().getInt(dstFixAddr + row * Integer.BYTES)), row + rowAdjust);
         }
-        indexWriter.setMaxValue(count - 1);
+        w.setMaxValue(count - 1);
+    }
+
+    private static void updateIndex(long dstFixAddr, long dstFixSize, long dstIndexOffset, long dstIndexAdjust, BitmapIndexWriter indexWriter) {
+        updateIndex(dstFixAddr, dstFixSize, indexWriter, dstIndexOffset / Integer.BYTES, dstIndexAdjust);
     }
 
     private void copy(O3CopyTask task, long cursor, Sequence subSeq) {

@@ -2207,7 +2207,11 @@ public class TableWriter implements Closeable {
                                 final AppendOnlyVirtualMemory mem1 = columns.getQuick(colOffset);
                                 final AppendOnlyVirtualMemory mem2 = columns.getQuick(colOffset + 1);
                                 final long activeFixFd;
+                                final long activeFixAddr;
+                                final long activeFixAddrSize;
                                 final long activeVarFd;
+                                final long activeVarAddr;
+                                final long activeVarAddrSize;
                                 final long srcDataTop = getColumnTop(i);
                                 final long srcOooFixAddr;
                                 final long srcOooFixSize;
@@ -2215,14 +2219,22 @@ public class TableWriter implements Closeable {
                                 final long srcOooVarSize;
                                 if (columnType != ColumnType.STRING && columnType != ColumnType.BINARY) {
                                     activeFixFd = mem1.getFd();
+                                    activeFixAddr = mem1.getAppendAddress();
+                                    activeFixAddrSize = mem1.getAppendAddressSize();
                                     activeVarFd = 0;
+                                    activeVarAddr = 0;
+                                    activeVarAddrSize = 0;
                                     srcOooFixAddr = oooMem1.addressOf(0);
                                     srcOooFixSize = oooMem1.getAppendOffset();
                                     srcOooVarAddr = 0;
                                     srcOooVarSize = 0;
                                 } else {
                                     activeFixFd = mem2.getFd();
+                                    activeFixAddr = mem2.getAppendAddress();
+                                    activeFixAddrSize = mem2.getAppendAddressSize();
                                     activeVarFd = mem1.getFd();
+                                    activeVarAddr = mem1.getAppendAddress();
+                                    activeVarAddrSize = mem1.getAppendAddressSize();
                                     srcOooFixAddr = oooMem2.addressOf(0);
                                     srcOooFixSize = oooMem2.getAppendOffset();
                                     srcOooVarAddr = oooMem1.addressOf(0);
@@ -2257,7 +2269,11 @@ public class TableWriter implements Closeable {
                                         Math.max(0, srcDataSize),
                                         isIndexed,
                                         activeFixFd,
+                                        activeFixAddr,
+                                        activeFixAddrSize,
                                         activeVarFd,
+                                        activeVarAddr,
+                                        activeVarAddrSize,
                                         -activeFixFd, // always pass negative FD to close active partition. Any FD will work
                                         0,
                                         0,

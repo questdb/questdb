@@ -268,7 +268,7 @@ public class AbstractO3Test {
                     }
                 };
 
-                execute1(pool, runnable, configuration);
+                execute(pool, runnable, configuration);
             } else {
                 // we need to create entire engine
                 final CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
@@ -312,12 +312,12 @@ public class AbstractO3Test {
                         return true;
                     }
                 };
-                execute1(null, runnable, configuration);
+                execute(null, runnable, configuration);
             }
         });
     }
 
-    protected static void execute1(@Nullable WorkerPool pool, O3Runnable runnable, CairoConfiguration configuration) throws Exception {
+    protected static void execute(@Nullable WorkerPool pool, O3Runnable runnable, CairoConfiguration configuration) throws Exception {
         try (
                 final CairoEngine engine = new CairoEngine(configuration);
                 final SqlCompiler compiler = new SqlCompiler(engine);
@@ -352,7 +352,7 @@ public class AbstractO3Test {
     }
 
     protected static void executeVanilla(O3Runnable code) throws Exception {
-        executeVanilla(() -> execute1(null, code, new DefaultCairoConfiguration(root) {
+        executeVanilla(() -> execute(null, code, new DefaultCairoConfiguration(root) {
             @Override
             public boolean isO3Enabled() {
                 return true;
