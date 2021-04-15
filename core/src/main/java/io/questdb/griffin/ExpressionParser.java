@@ -492,6 +492,11 @@ class ExpressionParser {
                                 processDefaultBranch = true;
                                 break;
                             }
+                            //  check if this is i'<interval-timestamp-string>'
+//                            if (thisChar == 'i' && (tok.length() < 3 || tok.charAt(1) != '\'')) {
+//                                processDefaultBranch = true;
+//                                break;
+//                            }
 
                             thisBranch = BRANCH_CONSTANT;
                             if (prevBranch == BRANCH_DOT) {

@@ -325,6 +325,18 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDesTimestampGreaterAndLessOrEqual() throws Exception {
+        runWhereTest("timestamp >= '2015-02-23' and timestamp <= '2015-02-24'",
+                "[{lo=2015-02-23T00:00:00.000000Z, hi=2015-02-24T23:59:59.999999Z}]");
+    }
+
+    @Test
+    public void testDesTimestampGreaterAndLess() throws Exception {
+        runWhereTest("timestamp > '2015-02-23' and timestamp < '2015-02-24'",
+                "[]");
+    }
+
+    @Test
     public void testComplexNow() throws Exception {
         currentMicros = 24L * 3600 * 1000 * 1000;
         try {
