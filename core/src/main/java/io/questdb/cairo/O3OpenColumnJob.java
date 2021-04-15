@@ -34,6 +34,7 @@ import io.questdb.std.str.Path;
 import io.questdb.tasks.O3CopyTask;
 import io.questdb.tasks.O3OpenColumnTask;
 import io.questdb.tasks.O3PartitionUpdateTask;
+import org.jetbrains.annotations.Nullable;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -991,7 +992,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             RingQueue<O3PartitionUpdateTask> updPartitionSizeTaskQueue,
             MPSequence updPartitionSizePubSeq,
             FilesFacade ff,
-            AtomicInteger partCounter,
+            @Nullable AtomicInteger partCounter,
             AtomicInteger columnCounter,
             int columnType,
             long srcOooFixAddr,
@@ -1134,7 +1135,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             RingQueue<O3PartitionUpdateTask> updPartitionSizeTaskQueue,
             MPSequence updPartitionSizePubSeq,
             AtomicInteger columnCounter,
-            AtomicInteger partCounter,
+            @Nullable AtomicInteger partCounter,
             FilesFacade ff,
             int columnType,
             int blockType,
@@ -1307,7 +1308,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             RingQueue<O3PartitionUpdateTask> updPartitionSizeTaskQueue,
             MPSequence updPartitionSizePubSeq,
             AtomicInteger columnCounter,
-            AtomicInteger partCounter,
+            @Nullable AtomicInteger partCounter,
             FilesFacade ff,
             int columnType,
             int blockType,
@@ -1475,7 +1476,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             RingQueue<O3CopyTask> outboundQueue,
             Sequence outboundPubSeq,
             AtomicInteger columnCounter,
-            AtomicInteger partCounter,
+            @Nullable AtomicInteger partCounter,
             FilesFacade ff,
             int columnType,
             int blockType,
@@ -1580,7 +1581,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
         outboundPubSeq.done(cursor);
     }
 
-    private static void appendLastPartition(
+    public static void appendLastPartition(
             int workerId,
             CairoConfiguration configuration,
             RingQueue<O3CopyTask> outboundQueue,
@@ -1591,7 +1592,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             Path path,
             int plen,
             CharSequence columnName,
-            AtomicInteger partCounter,
+            @Nullable AtomicInteger partCounter,
             AtomicInteger columnCounter,
             int columnType,
             long srcOooFixAddr,

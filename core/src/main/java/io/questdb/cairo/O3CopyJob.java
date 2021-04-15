@@ -33,6 +33,7 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.tasks.O3CopyTask;
 import io.questdb.tasks.O3PartitionUpdateTask;
+import org.jetbrains.annotations.Nullable;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -56,7 +57,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             RingQueue<O3PartitionUpdateTask> updPartitionSizeTaskQueue,
             MPSequence updPartitionSizePubSeq,
             AtomicInteger columnCounter,
-            AtomicInteger partCounter,
+            @Nullable AtomicInteger partCounter,
             FilesFacade ff,
             int columnType,
             int blockType,
@@ -159,7 +160,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                 break;
         }
         // decrement part counter and if we are the last task - perform final steps
-        if (partCounter.decrementAndGet() == 0) {
+        if (partCounter == null || partCounter.decrementAndGet() == 0) {
             // todo: pool indexer
             if (isIndexed) {
                 // dstKFd & dstVFd are closed by the indexer
