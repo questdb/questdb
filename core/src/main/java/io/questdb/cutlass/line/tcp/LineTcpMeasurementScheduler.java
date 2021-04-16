@@ -1002,7 +1002,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                     if (!event.tableUpdateDetails.assignedToJob) {
                         assignedTables.add(event.tableUpdateDetails);
                         event.tableUpdateDetails.assignedToJob = true;
-                        LOG.info().$("assigned table to writer thread [tableName=").$(event.tableUpdateDetails.tableName).$(", threadId=").$(workerId).$();
+                        LOG.info().$("assigned table to writer thread [tableName=").$(event.tableUpdateDetails.tableName).$(", threadId=").$(workerId).$(']').$();
                     }
                     event.processMeasurementEvent(this);
                     eventProcessed = true;
@@ -1185,29 +1185,33 @@ class LineTcpMeasurementScheduler implements Closeable {
             for (int n = 0, sz = localTableUpdateDetailsByTableName.size(); n < sz; n++) {
                 TableUpdateDetails tableUpdateDetails = localTableUpdateDetailsByTableName.get(localTableUpdateDetailsByTableName.keys().get(n));
                 if (millis - tableUpdateDetails.lastMeasurementReceivedEpochMs >= minIdleMsBeforeWriterRelease) {
-                    if (tableUpdateDetails.nNetworkIoWorkers == 1) {
-                        long seq = getNextPublisherEventSequence();
-                        if (seq >= 0) {
-                            tableUpdateDetailsLock.writeLock().lock();
-                            try {
-                                LineTcpMeasurementEvent event = queue.get(seq);
-                                event.createReleaseWriterEvent(tableUpdateDetails);
-                                removeTableUpdateDetails(tableUpdateDetails);
-                                tableUpdateDetailsByTableName.remove(tableUpdateDetails.tableName);
-                                idleTableUpdateDetailsByTableName.put(tableUpdateDetails.tableName, tableUpdateDetails);
-                                return true;
-                            } finally {
-                                tableUpdateDetailsLock.writeLock().unlock();
-                                pubSeq.done(seq);
-                            }
-                        } else {
-                            return true;
-                        }
+                    tableUpdateDetailsLock.writeLock().lock();
+                    try {
+                        if (tableUpdateDetails.nNetworkIoWorkers == 1) {
+                            long seq = getNextPublisherEventSequence();
+                            if (seq >= 0) {
+                                try {
+                                    LineTcpMeasurementEvent event = queue.get(seq);
+                                    event.createReleaseWriterEvent(tableUpdateDetails);
+                                    removeTableUpdateDetails(tableUpdateDetails);
+                                    tableUpdateDetailsByTableName.remove(tableUpdateDetails.tableName);
+                                    idleTableUpdateDetailsByTableName.put(tableUpdateDetails.tableName, tableUpdateDetails);
+                                    return true;
+                                } finally {
 
-                    } else {
-                        removeTableUpdateDetails(tableUpdateDetails);
+                                    pubSeq.done(seq);
+                                }
+                            } else {
+                                return true;
+                            }
+
+                        } else {
+                            removeTableUpdateDetails(tableUpdateDetails);
+                        }
+                        return sz > 1;
+                    } finally {
+                        tableUpdateDetailsLock.writeLock().unlock();
                     }
-                    return sz > 1;
                 }
             }
             return false;

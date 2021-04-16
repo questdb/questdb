@@ -73,6 +73,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Vect;
 import io.questdb.std.datetime.millitime.Dates;
+import io.questdb.std.str.Path;
 import sun.misc.Signal;
 
 public class ServerMain {
@@ -161,6 +162,7 @@ public class ServerMain {
         }
 
         if (configuration.getCairoConfiguration().isO3Enabled()) {
+            workerPool.assignCleaner(Path.CLEANER);
             workerPool.assign(new O3CallbackJob(cairoEngine.getMessageBus()));
             workerPool.assign(new O3PartitionJob(cairoEngine.getMessageBus()));
             workerPool.assign(new O3OpenColumnJob(cairoEngine.getMessageBus()));
