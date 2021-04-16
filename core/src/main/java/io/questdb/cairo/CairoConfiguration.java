@@ -222,7 +222,7 @@ public interface CairoConfiguration {
     BuildInformation getBuildInformation();
 
     default boolean isO3Enabled() {
-        return false;
+        return true;
     }
 
     long getDatabaseIdHi();

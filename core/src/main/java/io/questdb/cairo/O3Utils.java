@@ -84,6 +84,7 @@ public class O3Utils {
             return lo;
         }
 
+        // todo: test on a lot of NULL strings!
         while (++srcLo < srcHi) {
             lo = Unsafe.getUnsafe().getLong(srcFixAddr + srcLo * Long.BYTES);
             if (lo > -1) {

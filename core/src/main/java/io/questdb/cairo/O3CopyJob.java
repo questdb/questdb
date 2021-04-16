@@ -894,7 +894,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                 copyFixedSizeCol(srcOooFixAddr, srcOooLo, srcOooHi, dstFixAddr, 5);
                 break;
             default:
-                copyFixedSizeCol(srcOooFixAddr, srcOooLo, srcOooHi, dstFixAddr, ColumnType.pow2SizeOf(Math.abs(columnType)));
+                // we have exhausted all supported types in "case" clauses
                 break;
         }
     }

@@ -347,7 +347,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
 
                     Assert.assertTrue(writer.inTransaction());
 
-                    // This commits the append before attacheing
+                    // This commits the append before attaching
                     writer.attachPartition(timestamp);
                     Assert.assertEquals(partitionRowCount + 1, writer.size());
 
@@ -445,7 +445,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             }
         };
 
-        testSqlFailedOnFsOperation(ff, false, "Cannot map");
+        testSqlFailedOnFsOperation(ff, "Cannot map");
     }
 
     @Test
@@ -461,7 +461,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             }
         };
 
-        testSqlFailedOnFsOperation(ff, false, "[12] table 'dst' could not be altered: [", "]: Cannot open:");
+        testSqlFailedOnFsOperation(ff, "[12] table 'dst' could not be altered: [", "]: Cannot open:");
     }
 
     @Test
@@ -477,7 +477,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             }
         };
 
-        testSqlFailedOnFsOperation(ff, false, "[12] table 'dst' could not be altered: [0]: Doesn't exist:");
+        testSqlFailedOnFsOperation(ff, "[12] table 'dst' could not be altered: [0]: Doesn't exist:");
     }
 
     @Test
@@ -493,7 +493,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             }
         };
 
-        testSqlFailedOnFsOperation(ff, false, "[12] table 'dst' could not be altered: [", "]: File system error on trying to rename [from=");
+        testSqlFailedOnFsOperation(ff, "[12] table 'dst' could not be altered: [", "]: File system error on trying to rename [from=");
     }
 
     private void assertSchemaMatch(AddColumn tm) throws Exception {
@@ -686,7 +686,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
         }
     }
 
-    private void testSqlFailedOnFsOperation(FilesFacadeImpl ff, boolean reCopy, String... errorContains) throws Exception {
+    private void testSqlFailedOnFsOperation(FilesFacadeImpl ff, String... errorContains) throws Exception {
         assertMemoryLeak(ff, () -> {
             try (
                     TableModel src = new TableModel(configuration, "src", PartitionBy.DAY);
@@ -715,7 +715,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                 }
 
                 // second attempt without FilesFacade override should work ok
-                copyAttachPartition(src, dst, 0, !reCopy, "2020-01-01");
+                copyAttachPartition(src, dst, 0, true, "2020-01-01");
             }
         });
     }
