@@ -36,28 +36,11 @@ import io.questdb.test.tools.TestUtils;
 
 public class LineTcpO3Test extends AbstractCairoTest {
     private final static Log LOG = LogFactory.getLog(LineTcpO3Test.class);
-    private static LineTcpReceiverConfiguration lineConfiguration;
+    private LineTcpReceiverConfiguration lineConfiguration;
+    private WorkerPoolConfiguration sharedWorkerPoolConfiguration;
     private long resourceAddress;
     private int resourceSize;
     private int resourceNLines;
-    private final WorkerPool sharedWorkerPool = new WorkerPool(new WorkerPoolConfiguration() {
-        private final int[] affinity = { -1, -1 };
-
-        @Override
-        public int[] getWorkerAffinity() {
-            return affinity;
-        }
-
-        @Override
-        public int getWorkerCount() {
-            return 2;
-        }
-
-        @Override
-        public boolean haltOnError() {
-            return true;
-        }
-    });
 
     @Test
     public void inOrderTest() throws Exception {
@@ -80,6 +63,7 @@ public class LineTcpO3Test extends AbstractCairoTest {
             long clientFd = Net.socketTcp(true);
             Assert.assertTrue(clientFd >= 0);
             long ilpSockAddr = Net.sockaddr(lineConfiguration.getNetDispatcherConfiguration().getBindIPv4Address(), lineConfiguration.getNetDispatcherConfiguration().getBindPort());
+            WorkerPool sharedWorkerPool = new WorkerPool(sharedWorkerPoolConfiguration);
             try (LineTcpServer ignored = LineTcpServer.create(lineConfiguration, sharedWorkerPool, LOG, engine);
                     SqlCompiler compiler = new SqlCompiler(engine);
                     SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)) {
@@ -181,6 +165,7 @@ public class LineTcpO3Test extends AbstractCairoTest {
         }
         configuration = serverConf.getCairoConfiguration();
         lineConfiguration = serverConf.getLineTcpReceiverConfiguration();
+        sharedWorkerPoolConfiguration = serverConf.getWorkerPoolConfiguration();
         engine = new CairoEngine(configuration);
         messageBus = engine.getMessageBus();
         LOG.info().$("setup engine completed").$();
