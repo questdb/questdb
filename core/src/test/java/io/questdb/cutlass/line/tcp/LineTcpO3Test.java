@@ -18,7 +18,6 @@ import io.questdb.PropServerConfiguration;
 import io.questdb.cairo.AbstractCairoTest;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.griffin.SqlCompiler;
@@ -54,15 +53,10 @@ public class LineTcpO3Test extends AbstractCairoTest {
 
     private void test(String tableName, String ilpResourceName, String selectResourceName) throws Exception {
         assertMemoryLeak(() -> {
-            Path path = new Path();
-            if (TableUtils.TABLE_EXISTS == engine.getStatus(AllowAllCairoSecurityContext.INSTANCE, path, tableName)) {
-                LOG.info().$("removing ").$(tableName).$();
-                engine.remove(AllowAllCairoSecurityContext.INSTANCE, path, tableName);
-            }
-
             long clientFd = Net.socketTcp(true);
             Assert.assertTrue(clientFd >= 0);
-            long ilpSockAddr = Net.sockaddr(lineConfiguration.getNetDispatcherConfiguration().getBindIPv4Address(), lineConfiguration.getNetDispatcherConfiguration().getBindPort());
+            
+            long ilpSockAddr = Net.sockaddr(Net.parseIPv4("127.0.0.1"), lineConfiguration.getNetDispatcherConfiguration().getBindPort());
             WorkerPool sharedWorkerPool = new WorkerPool(sharedWorkerPoolConfiguration);
             try (LineTcpServer ignored = LineTcpServer.create(lineConfiguration, sharedWorkerPool, LOG, engine);
                     SqlCompiler compiler = new SqlCompiler(engine);
@@ -104,8 +98,6 @@ public class LineTcpO3Test extends AbstractCairoTest {
                 Net.close(clientFd);
                 Net.freeSockAddr(ilpSockAddr);
             }
-
-            path.close();
         });
 
     }
