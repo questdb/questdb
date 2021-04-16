@@ -70,17 +70,38 @@ public class O3OpenColumnTask {
     private long suffixLo;
     private long suffixHi;
     private long activeFixFd;
+    private long activeFixAddr;
+    private long activeFixAddrSize;
     private long activeVarFd;
+    private long activeVarAddr;
+    private long activeVarAddrSize;
+    private long activeVarAppendffset;
     private TableWriter tableWriter;
     private BitmapIndexWriter indexWriter;
     private SOUnboundedCountDownLatch doneLatch;
+
+    public long getActiveFixAddr() {
+        return activeFixAddr;
+    }
+
+    public long getActiveFixAddrSize() {
+        return activeFixAddrSize;
+    }
 
     public long getActiveFixFd() {
         return activeFixFd;
     }
 
-    public long getSrcDataTop() {
-        return srcDataTop;
+    public long getActiveVarAddr() {
+        return activeVarAddr;
+    }
+
+    public long getActiveVarAddrSize() {
+        return activeVarAddrSize;
+    }
+
+    public long getActiveVarAppendffset() {
+        return activeVarAppendffset;
     }
 
     public long getActiveVarFd() {
@@ -107,6 +128,10 @@ public class O3OpenColumnTask {
         return ff;
     }
 
+    public BitmapIndexWriter getIndexWriter() {
+        return indexWriter;
+    }
+
     public long getMergeDataHi() {
         return mergeDataHi;
     }
@@ -127,24 +152,16 @@ public class O3OpenColumnTask {
         return mergeType;
     }
 
-    public long getPartitionTimestamp() {
-        return partitionTimestamp;
-    }
-
     public long getOooTimestampLo() {
         return oooTimestampLo;
     }
 
-    public long getTimestampMax() {
-        return timestampMax;
-    }
-
-    public long getTimestampMin() {
-        return timestampMin;
-    }
-
     public int getOpenColumnMode() {
         return openColumnMode;
+    }
+
+    public long getPartitionTimestamp() {
+        return partitionTimestamp;
     }
 
     public CharSequence getPathToTable() {
@@ -165,6 +182,10 @@ public class O3OpenColumnTask {
 
     public long getSrcDataMax() {
         return srcDataMax;
+    }
+
+    public long getSrcDataTop() {
+        return srcDataTop;
     }
 
     public long getSrcDataTxn() {
@@ -227,12 +248,16 @@ public class O3OpenColumnTask {
         return tableWriter;
     }
 
-    public BitmapIndexWriter getIndexWriter() {
-        return indexWriter;
+    public long getTimestampMax() {
+        return timestampMax;
     }
 
     public long getTimestampMergeIndexAddr() {
         return timestampMergeIndexAddr;
+    }
+
+    public long getTimestampMin() {
+        return timestampMin;
     }
 
     public long getTxn() {
@@ -282,7 +307,12 @@ public class O3OpenColumnTask {
             long srcTimestampSize,
             boolean isIndexed,
             long activeFixFd,
+            long activeFixAddr,
+            long activeFixAddrSize,
             long activeVarFd,
+            long activeVarAddr,
+            long activeVarAddrSize,
+            long activeVarAppendOffset,
             TableWriter tableWriter,
             BitmapIndexWriter indexWriter,
             SOUnboundedCountDownLatch doneLatch
@@ -325,7 +355,12 @@ public class O3OpenColumnTask {
         this.srcTimestampSize = srcTimestampSize;
         this.isIndexed = isIndexed;
         this.activeFixFd = activeFixFd;
+        this.activeFixAddr = activeFixAddr;
+        this.activeFixAddrSize = activeFixAddrSize;
         this.activeVarFd = activeVarFd;
+        this.activeVarAddr = activeVarAddr;
+        this.activeVarAddrSize = activeVarAddrSize;
+        this.activeVarAppendffset = activeVarAppendOffset;
         this.tableWriter = tableWriter;
         this.indexWriter = indexWriter;
         this.doneLatch = doneLatch;

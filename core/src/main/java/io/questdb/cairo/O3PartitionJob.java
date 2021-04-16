@@ -645,7 +645,12 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             long srcTimestampAddr,
             long srcTimestampSize,
             long activeFixFd,
+            long activeFixAddr,
+            long activeFixAddrSize,
             long activeVarFd,
+            long activeVarAddr,
+            long activeVarAddrSize,
+            long activeVarAppendOffset,
             TableWriter tableWriter,
             BitmapIndexWriter indexWriter,
             SOUnboundedCountDownLatch doneLatch
@@ -690,7 +695,12 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 srcTimestampSize,
                 isIndexed,
                 activeFixFd,
+                activeFixAddr,
+                activeFixAddrSize,
                 activeVarFd,
+                activeVarAddr,
+                activeVarAddrSize,
+                activeVarAppendOffset,
                 tableWriter,
                 indexWriter,
                 doneLatch
@@ -772,7 +782,12 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 final AppendOnlyVirtualMemory mem1 = columns.getQuick(colOffset);
                 final AppendOnlyVirtualMemory mem2 = columns.getQuick(colOffset + 1);
                 final long activeFixFd;
+                final long activeFixAddr;
+                final long activeFixAddrSize;
                 final long activeVarFd;
+                final long activeVarAddr;
+                final long activeVarAddrSize;
+                final long activeVarAppendOffset;
                 final long srcDataTop;
                 final long srcOooFixAddr;
                 final long srcOooFixSize;
@@ -780,7 +795,18 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 final long srcOooVarSize;
                 if (columnType != ColumnType.STRING && columnType != ColumnType.BINARY) {
                     activeFixFd = mem1.getFd();
+                    if (activeFixFd != -1) {
+                        // mem is open
+                        activeFixAddr = mem1.getAppendAddress();
+                        activeFixAddrSize = mem1.getAppendAddressSize();
+                    } else {
+                        activeFixAddr = 0;
+                        activeFixAddrSize = 0;
+                    }
                     activeVarFd = 0;
+                    activeVarAddr = 0;
+                    activeVarAddrSize = 0;
+                    activeVarAppendOffset = 0;
                     srcOooFixAddr = oooMem1.addressOf(0);
                     srcOooFixSize = oooMem1.getAppendOffset();
                     srcOooVarAddr = 0;
@@ -788,6 +814,19 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 } else {
                     activeFixFd = mem2.getFd();
                     activeVarFd = mem1.getFd();
+                    if (activeFixFd != -1) {
+                        activeFixAddr = mem2.getAppendAddress();
+                        activeFixAddrSize = mem2.getAppendAddressSize();
+                        activeVarAddr = mem1.getAppendAddress();
+                        activeVarAddrSize = mem1.getAppendAddressSize();
+                        activeVarAppendOffset = mem1.getAppendOffset();
+                    } else {
+                        activeFixAddr = 0;
+                        activeFixAddrSize = 0;
+                        activeVarAddr = 0;
+                        activeVarAddrSize = 0;
+                        activeVarAppendOffset = 0;
+                    }
                     srcOooFixAddr = oooMem2.addressOf(0);
                     srcOooFixSize = oooMem2.getAppendOffset();
                     srcOooVarAddr = oooMem1.addressOf(0);
@@ -854,7 +893,12 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                 srcTimestampAddr,
                                 srcTimestampSize,
                                 activeFixFd,
+                                activeFixAddr,
+                                activeFixAddrSize,
                                 activeVarFd,
+                                activeVarAddr,
+                                activeVarAddrSize,
+                                activeVarAppendOffset,
                                 tableWriter,
                                 indexWriter,
                                 doneLatch
@@ -908,7 +952,12 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                 srcTimestampSize,
                                 isIndexed,
                                 activeFixFd,
+                                activeFixAddr,
+                                activeFixAddrSize,
                                 activeVarFd,
+                                activeVarAddr,
+                                activeVarAddrSize,
+                                activeVarAppendOffset,
                                 tableWriter,
                                 indexWriter,
                                 doneLatch
@@ -984,7 +1033,12 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             long srcTimestampSize,
             boolean isIndexed,
             long activeFixFd,
+            long activeFixAddr,
+            long activeFixAddrSize,
             long activeVarFd,
+            long activeVarAddr,
+            long activeVarAddrSize,
+            long activeVarAppendOffset,
             TableWriter tableWriter,
             BitmapIndexWriter indexWriter,
             SOUnboundedCountDownLatch doneLatch
@@ -1036,7 +1090,12 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     srcTimestampAddr,
                     srcTimestampSize,
                     activeFixFd,
+                    activeFixAddr,
+                    activeFixAddrSize,
                     activeVarFd,
+                    activeVarAddr,
+                    activeVarAddrSize,
+                    activeVarAppendOffset,
                     tableWriter,
                     indexWriter,
                     doneLatch
@@ -1087,7 +1146,12 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     srcTimestampSize,
                     isIndexed,
                     activeFixFd,
+                    activeFixAddr,
+                    activeFixAddrSize,
                     activeVarFd,
+                    activeVarAddr,
+                    activeVarAddrSize,
+                    activeVarAppendOffset,
                     tableWriter,
                     indexWriter,
                     doneLatch

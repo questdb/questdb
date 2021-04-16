@@ -70,10 +70,12 @@ public class O3CopyTask extends AbstractLockable {
     private long dstVarFd;
     private long dstVarAddr;
     private long dstVarOffset;
+    private long dstVarAdjust;
     private long dstVarSize;
     private long dstKFd;
     private long dstVFd;
     private long dstIndexOffset;
+    private long dstIndexAdjust;
     private boolean isIndexed;
     private long srcTimestampFd;
     private long srcTimestampAddr;
@@ -115,6 +117,10 @@ public class O3CopyTask extends AbstractLockable {
         return dstFixSize;
     }
 
+    public long getDstIndexAdjust() {
+        return dstIndexAdjust;
+    }
+
     public long getDstIndexOffset() {
         return dstIndexOffset;
     }
@@ -145,6 +151,10 @@ public class O3CopyTask extends AbstractLockable {
 
     public FilesFacade getFf() {
         return ff;
+    }
+
+    public BitmapIndexWriter getIndexWriter() {
+        return indexWriter;
     }
 
     public AtomicInteger getPartCounter() {
@@ -255,10 +265,6 @@ public class O3CopyTask extends AbstractLockable {
         return tableWriter;
     }
 
-    public BitmapIndexWriter getIndexWriter() {
-        return indexWriter;
-    }
-
     public long getTimestampMax() {
         return timestampMax;
     }
@@ -277,6 +283,10 @@ public class O3CopyTask extends AbstractLockable {
 
     public boolean isPartitionMutates() {
         return partitionMutates;
+    }
+
+    public long getDstVarAdjust() {
+        return dstVarAdjust;
     }
 
     public void of(
@@ -317,10 +327,12 @@ public class O3CopyTask extends AbstractLockable {
             long dstVarFd,
             long dstVarAddr,
             long dstVarOffset,
+            long dstVarAdjust,
             long dstVarSize,
             long dstKFd,
             long dstVFd,
             long dstIndexOffset,
+            long dstIndexAdjust,
             boolean isIndexed,
             long srcTimestampFd,
             long srcTimestampAddr,
@@ -367,10 +379,12 @@ public class O3CopyTask extends AbstractLockable {
         this.dstVarFd = dstVarFd;
         this.dstVarAddr = dstVarAddr;
         this.dstVarOffset = dstVarOffset;
+        this.dstVarAdjust = dstVarAdjust;
         this.dstVarSize = dstVarSize;
         this.dstKFd = dstKFd;
         this.dstVFd = dstVFd;
         this.dstIndexOffset = dstIndexOffset;
+        this.dstIndexAdjust = dstIndexAdjust;
         this.isIndexed = isIndexed;
         this.srcTimestampFd = srcTimestampFd;
         this.srcTimestampAddr = srcTimestampAddr;

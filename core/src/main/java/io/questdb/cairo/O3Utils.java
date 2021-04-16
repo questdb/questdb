@@ -119,7 +119,7 @@ public class O3Utils {
     }
 
     static void unmap(FilesFacade ff, long addr, long size) {
-        if (addr != 0 && size != 0) {
+        if (addr != 0 && size > 0) {
             ff.munmap(addr, size);
         }
     }

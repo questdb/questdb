@@ -40,7 +40,6 @@ import io.questdb.std.IntList;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Before;
-import org.junit.Ignore;
 import org.junit.Test;
 
 import java.util.Random;
@@ -571,9 +570,6 @@ public class O3HysteresisTest extends AbstractO3Test {
     }
 
     @Test
-    @Ignore
-    // todo: test passes bit it consumes a lot of disk space, over 16GB
-    //    this is caused by O3 leaving un-truncated data files behind as O3 progresses
     public void testContinuousBatchedCommitContended() throws Exception {
         executeWithPool(0, (engine, compiler, sqlExecutionContext) -> {
             int nTotalRows = 50000;
