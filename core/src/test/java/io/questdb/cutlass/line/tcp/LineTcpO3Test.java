@@ -7,6 +7,7 @@ import java.io.InputStream;
 import java.util.Properties;
 import java.util.zip.GZIPInputStream;
 
+import io.questdb.cairo.*;
 import org.junit.After;
 import org.junit.AfterClass;
 import org.junit.Assert;
@@ -15,10 +16,6 @@ import org.junit.BeforeClass;
 import org.junit.Test;
 
 import io.questdb.PropServerConfiguration;
-import io.questdb.cairo.AbstractCairoTest;
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.CairoException;
-import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContext;
@@ -39,87 +36,6 @@ public class LineTcpO3Test extends AbstractCairoTest {
     private WorkerPoolConfiguration sharedWorkerPoolConfiguration;
     private long resourceAddress;
     private int resourceSize;
-    private int resourceNLines;
-
-    @Test
-    public void inOrderTest() throws Exception {
-        test("cpu", "ilp.inOrder1", "selectAll1");
-    }
-
-    @Test
-    public void o3Test() throws Exception {
-        test("cpu", "ilp.outOfOrder1", "selectAll1");
-    }
-
-    private void test(String tableName, String ilpResourceName, String selectResourceName) throws Exception {
-        assertMemoryLeak(() -> {
-            long clientFd = Net.socketTcp(true);
-            Assert.assertTrue(clientFd >= 0);
-            
-            long ilpSockAddr = Net.sockaddr(Net.parseIPv4("127.0.0.1"), lineConfiguration.getNetDispatcherConfiguration().getBindPort());
-            WorkerPool sharedWorkerPool = new WorkerPool(sharedWorkerPoolConfiguration);
-            try (LineTcpServer ignored = LineTcpServer.create(lineConfiguration, sharedWorkerPool, LOG, engine);
-                    SqlCompiler compiler = new SqlCompiler(engine);
-                    SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)) {
-                sharedWorkerPool.assignCleaner(Path.CLEANER);
-                sharedWorkerPool.start(LOG);
-                long rc = Net.connect(clientFd, ilpSockAddr);
-                Assert.assertEquals(0, rc);
-
-                readGzResource(ilpResourceName);
-                rc = Net.send(clientFd, resourceAddress, resourceSize);
-                Unsafe.free(resourceAddress, resourceSize);
-
-                int maxIter = 50;
-                while (true) {
-                    try {
-                        TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName);
-                        writer.close();
-                        break;
-                    } catch (CairoException ex) {
-                        maxIter--;
-                        Assert.assertTrue(maxIter > 0);
-                        Thread.sleep(200);
-                    }
-                }
-
-                TestUtils.printSql(compiler, sqlExecutionContext, "select * from " + tableName, sink);
-                // try (OutputStreamWriter oow = new OutputStreamWriter(new FileOutputStream(new File("/tmp/1")))) {
-                // oow.append(sink);
-                // }
-                readGzResource(selectResourceName);
-                DirectUnboundedByteSink expectedSink = new DirectUnboundedByteSink(resourceAddress);
-                expectedSink.clear(resourceSize);
-                TestUtils.assertEquals(expectedSink.toString(), sink);
-                Unsafe.free(resourceAddress, resourceSize);
-
-                sharedWorkerPool.halt();
-            } finally {
-                Net.close(clientFd);
-                Net.freeSockAddr(ilpSockAddr);
-            }
-        });
-
-    }
-
-    private void readGzResource(String rname) {
-        try (InputStream is = new GZIPInputStream(getClass().getResourceAsStream(getClass().getSimpleName() + "." + rname + ".gz"))) {
-            byte[] bytes = is.readAllBytes();
-            resourceSize = bytes.length;
-            resourceAddress = Unsafe.malloc(resourceSize);
-            resourceNLines = 0;
-            for (int i = 0; i < resourceSize; i++) {
-                byte b = bytes[i];
-                Unsafe.getUnsafe().putByte(resourceAddress + i, b);
-                if (b == '\n') {
-                    resourceNLines++;
-                }
-            }
-        } catch (IOException ex) {
-            throw new RuntimeException(ex);
-        }
-        LOG.info().$("read ").$(rname).$(", found ").$(resourceNLines).$(" lines in ").$(resourceSize).$(" bytes").$();
-    }
 
     @BeforeClass
     public static void setUpStatic() {
@@ -128,6 +44,16 @@ public class LineTcpO3Test extends AbstractCairoTest {
 
     @AfterClass
     public static void tearDownStatic() {
+    }
+
+    @Test
+    public void testInOrder() throws Exception {
+        test("ilp.inOrder1");
+    }
+
+    @Test
+    public void testO3() throws Exception {
+        test("ilp.outOfOrder1");
     }
 
     @Override
@@ -169,5 +95,79 @@ public class LineTcpO3Test extends AbstractCairoTest {
         engine.close();
         engine = null;
         TestUtils.removeTestPath(root);
+    }
+
+    private void readGzResource(String rname) {
+        int resourceNLines;
+        try (InputStream is = new GZIPInputStream(getClass().getResourceAsStream(getClass().getSimpleName() + "." + rname + ".gz"))) {
+            byte[] bytes = is.readAllBytes();
+            resourceSize = bytes.length;
+            resourceAddress = Unsafe.malloc(resourceSize);
+            resourceNLines = 0;
+            for (int i = 0; i < resourceSize; i++) {
+                byte b = bytes[i];
+                Unsafe.getUnsafe().putByte(resourceAddress + i, b);
+                if (b == '\n') {
+                    resourceNLines++;
+                }
+            }
+        } catch (IOException ex) {
+            throw new RuntimeException(ex);
+        }
+        LOG.info().$("read ").$(rname).$(", found ").$(resourceNLines).$(" lines in ").$(resourceSize).$(" bytes").$();
+    }
+
+    private void test(String ilpResourceName) throws Exception {
+        assertMemoryLeak(() -> {
+            long clientFd = Net.socketTcp(true);
+            Assert.assertTrue(clientFd >= 0);
+
+            long ilpSockAddr = Net.sockaddr(Net.parseIPv4("127.0.0.1"), lineConfiguration.getNetDispatcherConfiguration().getBindPort());
+            WorkerPool sharedWorkerPool = new WorkerPool(sharedWorkerPoolConfiguration);
+            try (
+                    LineTcpServer ignored = LineTcpServer.create(lineConfiguration, sharedWorkerPool, LOG, engine);
+                    SqlCompiler compiler = new SqlCompiler(engine);
+                    SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1);
+                    O3PurgeCleaner ignored2 = new O3PurgeCleaner(engine.getMessageBus())
+            ) {
+                sharedWorkerPool.assignCleaner(Path.CLEANER);
+                sharedWorkerPool.start(LOG);
+                long rc = Net.connect(clientFd, ilpSockAddr);
+                Assert.assertEquals(0, rc);
+
+                readGzResource(ilpResourceName);
+                Net.send(clientFd, resourceAddress, resourceSize);
+                Unsafe.free(resourceAddress, resourceSize);
+
+                int maxIter = 50;
+                while (true) {
+                    try {
+                        TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "cpu");
+                        writer.close();
+                        break;
+                    } catch (CairoException ex) {
+                        maxIter--;
+                        Assert.assertTrue(maxIter > 0);
+                        Thread.sleep(200);
+                    }
+                }
+
+                TestUtils.printSql(compiler, sqlExecutionContext, "select * from " + "cpu", sink);
+                // try (OutputStreamWriter oow = new OutputStreamWriter(new FileOutputStream(new File("/tmp/1")))) {
+                // oow.append(sink);
+                // }
+                readGzResource("selectAll1");
+                DirectUnboundedByteSink expectedSink = new DirectUnboundedByteSink(resourceAddress);
+                expectedSink.clear(resourceSize);
+                TestUtils.assertEquals(expectedSink.toString(), sink);
+                Unsafe.free(resourceAddress, resourceSize);
+
+                sharedWorkerPool.halt();
+            } finally {
+                Net.close(clientFd);
+                Net.freeSockAddr(ilpSockAddr);
+            }
+        });
+
     }
 }
