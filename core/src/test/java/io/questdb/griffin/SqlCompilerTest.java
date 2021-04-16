@@ -1799,11 +1799,11 @@ public class SqlCompilerTest extends AbstractGriffinTest {
             }
 
             @Override
-            public long mmap(long fd, long len, long offset, int mode) {
+            public long mmap(long fd, long len, long offset, int flags) {
                 if (mapCount++ > 5) {
                     return -1;
                 }
-                return super.mmap(fd, len, offset, mode);
+                return super.mmap(fd, len, offset, flags);
             }
         };
         assertFailure(
@@ -1828,14 +1828,14 @@ public class SqlCompilerTest extends AbstractGriffinTest {
             }
 
             @Override
-            public long mmap(long fd, long len, long offset, int mode) {
+            public long mmap(long fd, long len, long offset, int flags) {
                 // this is very specific failure
                 // it fails to open table writer metadata
                 // and then fails to close txMem
                 if (mapCount++ > 2) {
                     return -1;
                 }
-                return super.mmap(fd, len, offset, mode);
+                return super.mmap(fd, len, offset, flags);
             }
         };
 
@@ -2167,9 +2167,9 @@ public class SqlCompilerTest extends AbstractGriffinTest {
 
             // number of rows we are appending
             @Override
-            public long mmap(long fd, long len, long offset, int mode) {
+            public long mmap(long fd, long len, long offset, int flags) {
                 if (count-- > 0) {
-                    return super.mmap(fd, len, offset, mode);
+                    return super.mmap(fd, len, offset, flags);
                 }
                 return -1;
             }
@@ -2799,11 +2799,11 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                 }
 
                 @Override
-                public long mmap(long fd, long len, long offset, int mode) {
+                public long mmap(long fd, long len, long offset, int flags) {
                     if (inError.get() && pageCount++ > 12) {
                         return -1;
                     }
-                    return super.mmap(fd, len, offset, mode);
+                    return super.mmap(fd, len, offset, flags);
                 }
             };
 
@@ -2897,11 +2897,11 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                 }
 
                 @Override
-                public long mmap(long fd, long len, long offset, int mode) {
+                public long mmap(long fd, long len, long offset, int flags) {
                     if (inError.get() && pageCount++ == 13) {
                         return -1;
                     }
-                    return super.mmap(fd, len, offset, mode);
+                    return super.mmap(fd, len, offset, flags);
                 }
             };
 

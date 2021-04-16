@@ -519,12 +519,12 @@ public class TableWriterTest extends AbstractCairoTest {
             long fd = -1;
 
             @Override
-            public long mmap(long fd, long len, long offset, int mode) {
+            public long mmap(long fd, long len, long offset, int flags) {
                 if (fd == this.fd) {
                     this.fd = -1;
                     return -1;
                 }
-                return super.mmap(fd, len, offset, mode);
+                return super.mmap(fd, len, offset, flags);
             }
 
             @Override
@@ -1252,12 +1252,12 @@ public class TableWriterTest extends AbstractCairoTest {
             long fd = -1;
 
             @Override
-            public long mmap(long fd, long len, long offset, int mode) {
+            public long mmap(long fd, long len, long offset, int flags) {
                 if (fd == this.fd) {
                     this.fd = -1;
                     return -1;
                 }
-                return super.mmap(fd, len, offset, mode);
+                return super.mmap(fd, len, offset, flags);
             }
 
             @Override
@@ -1336,11 +1336,11 @@ public class TableWriterTest extends AbstractCairoTest {
             long fd;
 
             @Override
-            public long mmap(long fd, long len, long offset, int mode) {
+            public long mmap(long fd, long len, long offset, int flags) {
                 if (fd == this.fd) {
                     return -1;
                 }
-                return super.mmap(fd, len, offset, mode);
+                return super.mmap(fd, len, offset, flags);
             }
 
             @Override
@@ -1818,13 +1818,13 @@ public class TableWriterTest extends AbstractCairoTest {
             boolean hit = false;
 
             @Override
-            public long mmap(long fd, long len, long offset, int mode) {
+            public long mmap(long fd, long len, long offset, int flags) {
                 if (fd == this.fd) {
                     this.fd = -1;
                     this.hit = true;
                     return -1;
                 }
-                return super.mmap(fd, len, offset, mode);
+                return super.mmap(fd, len, offset, flags);
             }
 
             @Override
@@ -2109,13 +2109,13 @@ public class TableWriterTest extends AbstractCairoTest {
             boolean hit = false;
 
             @Override
-            public long mmap(long fd, long len, long offset, int mode) {
+            public long mmap(long fd, long len, long offset, int flags) {
                 if (fd == this.fd) {
                     this.fd = -1;
                     this.hit = true;
                     return -1;
                 }
-                return super.mmap(fd, len, offset, mode);
+                return super.mmap(fd, len, offset, flags);
             }
 
             @Override
@@ -2625,9 +2625,9 @@ public class TableWriterTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             class X extends CountingFilesFacade {
                 @Override
-                public long mmap(long fd, long len, long offset, int mode) {
+                public long mmap(long fd, long len, long offset, int flags) {
                     if (--count > 0) {
-                        return super.mmap(fd, len, offset, mode);
+                        return super.mmap(fd, len, offset, flags);
                     }
                     return -1;
                 }

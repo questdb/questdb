@@ -47,7 +47,7 @@ public class O3PartitionTask {
     private long partitionTimestamp;
     private long maxTimestamp; // table's max timestamp
     private long srcDataMax;
-    private long srcDataTxn;
+    private long srcNameTxn;
     private boolean last;
     private long txn;
     private long sortedTimestampsAddr;
@@ -103,8 +103,8 @@ public class O3PartitionTask {
         return srcDataMax;
     }
 
-    public long getSrcDataTxn() {
-        return srcDataTxn;
+    public long getSrcNameTxn() {
+        return srcNameTxn;
     }
 
     public long getSrcOooHi() {
@@ -149,7 +149,7 @@ public class O3PartitionTask {
             long partitionTimestamp,
             long maxTimestamp,
             long srcDataMax,
-            long srcDataTxn,
+            long srcNameTxn,
             boolean last,
             long txn,
             long sortedTimestampsAddr,
@@ -167,7 +167,7 @@ public class O3PartitionTask {
         this.partitionTimestamp = partitionTimestamp;
         this.maxTimestamp = maxTimestamp;
         this.srcDataMax = srcDataMax;
-        this.srcDataTxn = srcDataTxn;
+        this.srcNameTxn = srcNameTxn;
         this.last = last;
         this.sortedTimestampsAddr = sortedTimestampsAddr;
         this.ff = ff;

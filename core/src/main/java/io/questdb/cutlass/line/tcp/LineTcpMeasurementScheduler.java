@@ -48,7 +48,6 @@ import io.questdb.tasks.TelemetryTask;
 import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
-import java.io.IOException;
 import java.util.Arrays;
 import java.util.concurrent.locks.ReadWriteLock;
 
@@ -589,7 +588,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                             if (TableUtils.isValidInfluxColumnName(job.charSink)) {
                                 writer.addColumn(job.charSink, colType);
                             } else {
-                                throw CairoException.instance(0).put("invalid column name [table=").put(writer.getName())
+                                throw CairoException.instance(0).put("invalid column name [table=").put(writer.getTableName())
                                         .put(", columnName=").put(job.charSink).put(']');
                             }
                             // Reset to begining of entities

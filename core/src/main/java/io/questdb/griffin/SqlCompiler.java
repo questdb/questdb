@@ -968,7 +968,7 @@ public class SqlCompiler implements Closeable {
                         false
                 );
             } catch (CairoException e) {
-                LOG.error().$("Cannot add column '").$(writer.getName()).$('.').$(columnName).$("'. Exception: ").$((Sinkable) e).$();
+                LOG.error().$("Cannot add column '").$(writer.getTableName()).$('.').$(columnName).$("'. Exception: ").$((Sinkable) e).$();
                 throw SqlException.$(tableNamePosition, "could add column [error=").put(e.getFlyweightMessage())
                         .put(", errno=").put(e.getErrno())
                         .put(']');
@@ -1030,7 +1030,7 @@ public class SqlCompiler implements Closeable {
             try {
                 writer.removeColumn(tok);
             } catch (CairoException e) {
-                LOG.error().$("cannot drop column '").$(writer.getName()).$('.').$(tok).$("'. Exception: ").$((Sinkable) e).$();
+                LOG.error().$("cannot drop column '").$(writer.getTableName()).$('.').$(tok).$("'. Exception: ").$((Sinkable) e).$();
                 throw SqlException.$(tableNamePosition, "cannot drop column. Try again later [errno=").put(e.getErrno()).put(']');
             }
 
@@ -1159,7 +1159,7 @@ public class SqlCompiler implements Closeable {
             try {
                 writer.renameColumn(existingName, newName);
             } catch (CairoException e) {
-                LOG.error().$("cannot rename column '").$(writer.getName()).$('.').$(tok).$("'. Exception: ").$((Sinkable) e).$();
+                LOG.error().$("cannot rename column '").$(writer.getTableName()).$('.').$(tok).$("'. Exception: ").$((Sinkable) e).$();
                 throw SqlException.$(tableNamePosition, "cannot rename column. Try again later [errno=").put(e.getErrno()).put(']');
             }
 
@@ -2124,17 +2124,17 @@ public class SqlCompiler implements Closeable {
             for (int i = 0, n = tableWriters.size(); i < n; i++) {
                 try (TableWriter writer = tableWriters.getQuick(i)) {
                     try {
-                        if (engine.lockReaders(writer.getName())) {
+                        if (engine.lockReaders(writer.getTableName())) {
                             try {
                                 writer.truncate();
                             } finally {
-                                engine.unlockReaders(writer.getName());
+                                engine.unlockReaders(writer.getTableName());
                             }
                         } else {
-                            throw SqlException.$(0, "there is an active query against '").put(writer.getName()).put("'. Try again.");
+                            throw SqlException.$(0, "there is an active query against '").put(writer.getTableName()).put("'. Try again.");
                         }
                     } catch (CairoException | CairoError e) {
-                        LOG.error().$("could truncate [table=").$(writer.getName()).$(", e=").$((Sinkable) e).$(']').$();
+                        LOG.error().$("could truncate [table=").$(writer.getTableName()).$(", e=").$((Sinkable) e).$(']').$();
                         throw e;
                     }
                 }

@@ -160,12 +160,12 @@ public class O3FailureTest extends AbstractO3Test {
         private long theFd = 0;
 
         @Override
-        public long mmap(long fd, long len, long offset, int mode) {
+        public long mmap(long fd, long len, long offset, int flags) {
             if (theFd == fd) {
                 theFd = 0;
                 return -1;
             }
-            return super.mmap(fd, len, offset, mode);
+            return super.mmap(fd, len, offset, flags);
         }
 
         @Override
@@ -208,12 +208,12 @@ public class O3FailureTest extends AbstractO3Test {
             long theFd = 0;
 
             @Override
-            public long mmap(long fd, long len, long offset, int mode) {
-                if (fd == theFd && mode == Files.MAP_RO) {
+            public long mmap(long fd, long len, long offset, int flags) {
+                if (fd == theFd && flags == Files.MAP_RO) {
                     theFd = 0;
                     return -1;
                 }
-                return super.mmap(fd, len, offset, mode);
+                return super.mmap(fd, len, offset, flags);
             }
 
             @Override
@@ -235,12 +235,12 @@ public class O3FailureTest extends AbstractO3Test {
             long theFd = 0;
 
             @Override
-            public long mmap(long fd, long len, long offset, int mode) {
-                if (fd == theFd && mode == Files.MAP_RO) {
+            public long mmap(long fd, long len, long offset, int flags) {
+                if (fd == theFd && flags == Files.MAP_RO) {
                     theFd = 0;
                     return -1;
                 }
-                return super.mmap(fd, len, offset, mode);
+                return super.mmap(fd, len, offset, flags);
             }
 
             @Override
@@ -470,9 +470,9 @@ public class O3FailureTest extends AbstractO3Test {
             long theFd = 0;
 
             @Override
-            public long mmap(long fd, long len, long offset, int mode) {
+            public long mmap(long fd, long len, long offset, int flags) {
                 if (fd != theFd) {
-                    return super.mmap(fd, len, offset, mode);
+                    return super.mmap(fd, len, offset, flags);
                 }
 
                 theFd = 0;
@@ -498,9 +498,9 @@ public class O3FailureTest extends AbstractO3Test {
             long theFd = 0;
 
             @Override
-            public long mmap(long fd, long len, long offset, int mode) {
+            public long mmap(long fd, long len, long offset, int flags) {
                 if (fd != theFd) {
-                    return super.mmap(fd, len, offset, mode);
+                    return super.mmap(fd, len, offset, flags);
                 }
 
                 theFd = 0;
@@ -681,12 +681,12 @@ public class O3FailureTest extends AbstractO3Test {
             private long theFd = 0;
 
             @Override
-            public long mmap(long fd, long len, long offset, int mode) {
+            public long mmap(long fd, long len, long offset, int flags) {
                 if (theFd == fd && mapCounter.decrementAndGet() == 0) {
                     theFd = 0;
                     return -1;
                 }
-                return super.mmap(fd, len, offset, mode);
+                return super.mmap(fd, len, offset, flags);
             }
 
             @Override
@@ -709,12 +709,12 @@ public class O3FailureTest extends AbstractO3Test {
             private long theFd = 0;
 
             @Override
-            public long mmap(long fd, long len, long offset, int mode) {
+            public long mmap(long fd, long len, long offset, int flags) {
                 if (theFd == fd && mapCounter.decrementAndGet() == 0) {
                     theFd = 0;
                     return -1;
                 }
-                return super.mmap(fd, len, offset, mode);
+                return super.mmap(fd, len, offset, flags);
             }
 
             @Override
@@ -812,12 +812,12 @@ public class O3FailureTest extends AbstractO3Test {
             private long theFd = 0;
 
             @Override
-            public long mmap(long fd, long len, long offset, int mode) {
+            public long mmap(long fd, long len, long offset, int flags) {
                 if (theFd == fd) {
                     theFd = 0;
                     return -1;
                 }
-                return super.mmap(fd, len, offset, mode);
+                return super.mmap(fd, len, offset, flags);
             }
 
             @Override
@@ -839,12 +839,12 @@ public class O3FailureTest extends AbstractO3Test {
             private long theFd = 0;
 
             @Override
-            public long mmap(long fd, long len, long offset, int mode) {
+            public long mmap(long fd, long len, long offset, int flags) {
                 if (theFd == fd) {
                     theFd = 0;
                     return -1;
                 }
-                return super.mmap(fd, len, offset, mode);
+                return super.mmap(fd, len, offset, flags);
             }
 
             @Override

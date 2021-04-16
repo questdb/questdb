@@ -78,7 +78,9 @@ public interface FilesFacade {
 
     int mkdirs(LPSZ path, int mode);
 
-    long mmap(long fd, long size, long offset, int mode);
+    long mmap(long fd, long len, long offset, int flags);
+    
+    long mmap(long fd, long len, long offset, int flags, long baseAddress);
 
     long mremap(long fd, long addr, long previousSize, long newSize, long offset, int mode);
 

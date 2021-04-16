@@ -535,7 +535,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         final long partitionTimestamp = task.getPartitionTimestamp();
         final long maxTimestamp = task.getMaxTimestamp();
         final long srcDataMax = task.getSrcDataMax();
-        final long srcDataTxn = task.getSrcDataTxn();
+        final long srcDataTxn = task.getSrcNameTxn();
         final boolean last = task.isLast();
         final long txn = task.getTxn();
         final long sortedTimestampsAddr = task.getSortedTimestampsAddr();

@@ -343,7 +343,7 @@ public class WriterPool extends AbstractPool implements ResourcePool<TableWriter
     private void closeWriter(long thread, Entry e, short ev, int reason) {
         TableWriter w = e.writer;
         if (w != null) {
-            CharSequence name = e.writer.getName();
+            CharSequence name = e.writer.getTableName();
             w.setLifecycleManager(DefaultLifecycleManager.INSTANCE);
             w.close();
             e.writer = null;
@@ -358,7 +358,7 @@ public class WriterPool extends AbstractPool implements ResourcePool<TableWriter
             if (e.owner == UNALLOCATED) {
                 count++;
             } else {
-                LOG.info().$("'").utf8(e.writer.getName()).$("' is still busy [owner=").$(e.owner).$(']').$();
+                LOG.info().$("'").utf8(e.writer.getTableName()).$("' is still busy [owner=").$(e.owner).$(']').$();
             }
         }
 
@@ -399,14 +399,14 @@ public class WriterPool extends AbstractPool implements ResourcePool<TableWriter
     }
 
     private TableWriter logAndReturn(Entry e, short event) {
-        LOG.info().$(">> [table=`").utf8(e.writer.getName()).$("`, thread=").$(e.owner).$(']').$();
-        notifyListener(e.owner, e.writer.getName(), event);
+        LOG.info().$(">> [table=`").utf8(e.writer.getTableName()).$("`, thread=").$(e.owner).$(']').$();
+        notifyListener(e.owner, e.writer.getTableName(), event);
         return e.writer;
     }
 
     private boolean returnToPool(Entry e) {
         final long thread = Thread.currentThread().getId();
-        final CharSequence name = e.writer.getName();
+        final CharSequence name = e.writer.getTableName();
         try {
             e.writer.rollback();
         } catch (CairoException | CairoError ex) {

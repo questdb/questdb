@@ -59,10 +59,10 @@ public class CairoMemoryTest {
             boolean force = true;
 
             @Override
-            public long mmap(long fd, long len, long offset, int mode) {
+            public long mmap(long fd, long len, long offset, int flags) {
                 if (force || rnd.nextBoolean()) {
                     force = false;
-                    return super.mmap(fd, len, offset, mode);
+                    return super.mmap(fd, len, offset, flags);
                 } else {
                     return -1;
                 }
@@ -358,11 +358,11 @@ public class CairoMemoryTest {
                     int counter = 2;
 
                     @Override
-                    public long mmap(long fd, long len, long offset, int mode) {
-                        if (mode == Files.MAP_RO && --counter == 0) {
+                    public long mmap(long fd, long len, long offset, int flags) {
+                        if (flags == Files.MAP_RO && --counter == 0) {
                             return -1;
                         }
-                        return super.mmap(fd, len, offset, mode);
+                        return super.mmap(fd, len, offset, flags);
                     }
                 };
                 try (AppendOnlyVirtualMemory mem = new AppendOnlyVirtualMemory()) {
@@ -444,11 +444,11 @@ public class CairoMemoryTest {
         Rnd rnd = new Rnd();
         class X extends FilesFacadeImpl {
             @Override
-            public long mmap(long fd, long len, long offset, int mode) {
+            public long mmap(long fd, long len, long offset, int flags) {
                 if (rnd.nextBoolean()) {
                     return -1;
                 }
-                return super.mmap(fd, len, offset, mode);
+                return super.mmap(fd, len, offset, flags);
             }
         }
 

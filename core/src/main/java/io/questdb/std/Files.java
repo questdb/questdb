@@ -37,26 +37,12 @@ public final class Files {
     public static final Charset UTF_8;
     public static final long PAGE_SIZE;
     public static final int DT_DIR = 4;
-    public static final int DT_REG = 8;
-
     public static final int MAP_RO = 1;
     public static final int MAP_RW = 2;
     public static final char SEPARATOR;
 
     static final AtomicLong OPEN_FILE_COUNT = new AtomicLong();
-
-    public static native int copy(long from, long to);
-
-    public static int copy(LPSZ from, LPSZ to) {
-        return copy(from.address(), to.address());
-    }
-
-    static {
-        Os.init();
-        UTF_8 = StandardCharsets.UTF_8;
-        PAGE_SIZE = getPageSize();
-        SEPARATOR = Os.type == Os.WINDOWS ? '\\' : '/';
-    }
+    private static LongHashSet openFds;
 
     private Files() {
     } // Prevent construction.
@@ -64,6 +50,30 @@ public final class Files {
     public native static boolean allocate(long fd, long size);
 
     public native static long append(long fd, long address, long len);
+
+    public static synchronized boolean auditClose(long fd) {
+        if (fd < 0) {
+            throw new IllegalStateException("Invalid fd " + fd);
+        }
+        if (openFds.remove(fd) == -1) {
+            throw new IllegalStateException("fd " + fd + " is already closed!");
+        }
+        return true;
+    }
+
+    public static synchronized boolean auditOpen(long fd) {
+        if (null == openFds) {
+            openFds = new LongHashSet();
+        }
+        if (fd < 0) {
+            throw new IllegalStateException("Invalid fd " + fd);
+        }
+        if (openFds.contains(fd)) {
+            throw new IllegalStateException("fd " + fd + " is already open");
+        }
+        openFds.add(fd);
+        return true;
+    }
 
     public static long bumpFileCount(long fd) {
         if (fd != -1) {
@@ -81,6 +91,12 @@ public final class Files {
             OPEN_FILE_COUNT.decrementAndGet();
         }
         return res;
+    }
+
+    public static native int copy(long from, long to);
+
+    public static int copy(LPSZ from, LPSZ to) {
+        return copy(from.address(), to.address());
     }
 
     public static native boolean exists(long fd);
@@ -156,7 +172,11 @@ public final class Files {
     }
 
     public static long mmap(long fd, long len, long offset, int flags) {
-        long address = mmap0(fd, len, offset, flags);
+        return mmap(fd, len, offset, flags, 0);
+    }
+
+    public static long mmap(long fd, long len, long offset, int flags, long baseAddress) {
+        long address = mmap0(fd, len, offset, flags, baseAddress);
         if (address != -1) {
             Unsafe.recordMemAlloc(len);
         }
@@ -274,7 +294,7 @@ public final class Files {
 
     private static native long mremap0(long fd, long address, long previousSize, long newSize, long offset, int flags);
 
-    private static native long mmap0(long fd, long len, long offset, int flags);
+    private static native long mmap0(long fd, long len, long offset, int flags, long baseAddress);
 
     private native static long getPageSize();
 
@@ -300,29 +320,10 @@ public final class Files {
 
     private static native boolean rename(long lpszOld, long lpszNew);
 
-    private static LongHashSet openFds;
-
-    public static synchronized boolean auditOpen(long fd) {
-        if (null == openFds) {
-            openFds = new LongHashSet();
-        }
-        if (fd < 0) {
-            throw new IllegalStateException("Invalid fd " + fd);
-        }
-        if (openFds.contains(fd)) {
-            throw new IllegalStateException("fd " + fd + " is already open");
-        }
-        openFds.add(fd);
-        return true;
-    }
-
-    public static synchronized boolean auditClose(long fd) {
-        if (fd < 0) {
-            throw new IllegalStateException("Invalid fd " + fd);
-        }
-        if (openFds.remove(fd) == -1) {
-            throw new IllegalStateException("fd " + fd + " is already closed!");
-        }
-        return true;
+    static {
+        Os.init();
+        UTF_8 = StandardCharsets.UTF_8;
+        PAGE_SIZE = getPageSize();
+        SEPARATOR = Os.type == Os.WINDOWS ? '\\' : '/';
     }
 }

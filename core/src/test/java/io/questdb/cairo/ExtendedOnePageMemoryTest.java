@@ -68,11 +68,11 @@ public class ExtendedOnePageMemoryTest {
     public static void beforeClass() {
         ff = new FilesFacadeImpl() {
             @Override
-            public long mmap(long fd, long len, long offset, int mode) {
+            public long mmap(long fd, long len, long offset, int flags) {
                 if (FILE_MAP_FAIL.compareAndSet(true, false)) {
                     return FilesFacade.MAP_FAILED;
                 }
-                return super.mmap(fd, len, offset, mode);
+                return super.mmap(fd, len, offset, flags);
             }
 
             @Override

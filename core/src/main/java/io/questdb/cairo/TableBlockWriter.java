@@ -85,7 +85,7 @@ public class TableBlockWriter implements Closeable {
     }
 
     public void appendPageFrameColumn(int columnIndex, long pageFrameSize, long sourceAddress) {
-        LOG.info().$("appending data").$(" [tableName=").$(writer.getName()).$(", columnIndex=").$(columnIndex).$(", pageFrameSize=").$(pageFrameSize).$(']').$();
+        LOG.info().$("appending data").$(" [tableName=").$(writer.getTableName()).$(", columnIndex=").$(columnIndex).$(", pageFrameSize=").$(pageFrameSize).$(']').$();
         if (columnIndex == timestampColumnIndex) {
             long firstBlockTimestamp = Unsafe.getUnsafe().getLong(sourceAddress);
             if (firstBlockTimestamp < firstTimestamp) {
@@ -107,7 +107,7 @@ public class TableBlockWriter implements Closeable {
             partitionBlockWriters.getQuick(n).cancel();
         }
         writer.purgeUnusedPartitions();
-        LOG.info().$("cancelled new block [table=").$(writer.getName()).$(']').$();
+        LOG.info().$("cancelled new block [table=").$(writer.getTableName()).$(']').$();
         clear();
     }
 
@@ -119,7 +119,7 @@ public class TableBlockWriter implements Closeable {
     }
 
     public void commit() {
-        LOG.info().$("committing block write").$(" [tableName=").$(writer.getName()).$(", firstTimestamp=").$ts(firstTimestamp).$(", lastTimestamp=").$ts(lastTimestamp).$(']').$();
+        LOG.info().$("committing block write").$(" [tableName=").$(writer.getTableName()).$(", firstTimestamp=").$ts(firstTimestamp).$(", lastTimestamp=").$ts(lastTimestamp).$(']').$();
         // Need to complete all data tasks before we can start index tasks
         completePendingConcurrentTasks(false);
         for (int n = 0; n < nextPartitionBlockWriterIndex; n++) {
@@ -130,7 +130,7 @@ public class TableBlockWriter implements Closeable {
             partitionBlockWriters.getQuick(n).completeCommitAppendedBlock();
         }
         writer.commitBlock(firstTimestamp);
-        LOG.info().$("committed new block [table=").$(writer.getName()).$(']').$();
+        LOG.info().$("committed new block [table=").$(writer.getTableName()).$(']').$();
         clear();
     }
 
@@ -169,7 +169,7 @@ public class TableBlockWriter implements Closeable {
 
     void clear() {
         if (nCompletedConcurrentTasks.get() < nEnqueuedConcurrentTasks) {
-            LOG.error().$("new block should have been either committed or cancelled [table=").$(writer.getName()).$(']').$();
+            LOG.error().$("new block should have been either committed or cancelled [table=").$(writer.getTableName()).$(']').$();
             completePendingConcurrentTasks(true);
         }
         metadata = null;
@@ -275,7 +275,7 @@ public class TableBlockWriter implements Closeable {
                 timestampFloorMethod = NO_PARTITIONING_FLOOR;
                 break;
         }
-        LOG.info().$("started new block [table=").$(writer.getName()).$(']').$();
+        LOG.info().$("started new block [table=").$(writer.getTableName()).$(']').$();
     }
 
     private enum TaskType {
@@ -439,7 +439,7 @@ public class TableBlockWriter implements Closeable {
         private void openPartition() {
             assert !opened;
             partitionStruct.of(columnCount);
-            path.of(root).concat(writer.getName());
+            path.of(root).concat(writer.getTableName());
             timestampHi = TableUtils.setPathForPartition(path, partitionBy, timestampLo, true);
             int plen = path.length();
             try {
