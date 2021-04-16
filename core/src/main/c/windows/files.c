@@ -336,7 +336,7 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_munmap0
 }
 
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_mmap0
-        (JNIEnv *e, jclass cl, jlong fd, jlong len, jlong offset, jint flags) {
+        (JNIEnv *e, jclass cl, jlong fd, jlong len, jlong offset, jint flags, jlong baseAddress) {
     jlong maxsize = offset + len;
     DWORD flProtect;
     DWORD dwDesiredAccess;
@@ -357,7 +357,13 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_mmap0
         return -1;
     }
 
-    address = MapViewOfFile(hMapping, dwDesiredAccess, (DWORD) (offset >> 32), (DWORD) offset, (SIZE_T) len);
+    address = MapViewOfFileEx(
+            hMapping, dwDesiredAccess,
+            (DWORD) (offset >> 32),
+            (DWORD) offset,
+            (SIZE_T) len,
+            (LPVOID) baseAddress
+    );
 
     SaveLastError();
 
@@ -378,7 +384,7 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_mmap0
 
 inline jlong _io_questdb_std_Files_mremap0
         (jlong fd, jlong address, jlong previousLen, jlong newLen, jlong offset, jint flags) {
-    jlong newAddress = Java_io_questdb_std_Files_mmap0((JNIEnv *) NULL, (jclass) NULL, fd, newLen, offset, flags);
+    jlong newAddress = Java_io_questdb_std_Files_mmap0((JNIEnv *) NULL, (jclass) NULL, fd, newLen, offset, flags, 0);
     // Note that unmapping will not flush dirty pages because the mapping to address is shared with newAddress
     Java_io_questdb_std_Files_munmap0((JNIEnv *) NULL, (jclass) NULL, address, previousLen);
     return newAddress;
@@ -537,7 +543,7 @@ JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_rename(JNIEnv *e, jclass cl
     return FALSE;
 }
 
-void* openShm0(const char* name, size_t len, int64_t * pMapping) {
+void *openShm0(const char *name, size_t len, int64_t *pMapping) {
     LPCVOID address;
 
     HANDLE hMapping = CreateFileMapping(
@@ -573,7 +579,7 @@ void* openShm0(const char* name, size_t len, int64_t * pMapping) {
     return (void *) address;
 }
 
-jint closeShm0(const char* name, void *mem, size_t len, int64_t hMapping) {
+jint closeShm0(const char *name, void *mem, size_t len, int64_t hMapping) {
     if (UnmapViewOfFile(mem)) {
         CloseHandle((HANDLE) hMapping);
         return 0;

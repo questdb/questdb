@@ -978,7 +978,7 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext,
                 "create table y as (x union all top)",
                 "y order by ts",
-                "insert batch 100000 hysteresis 300000000 into x select * from top",
+                "insert batch 100000 hysteresis 180000000 into x select * from top",
                 "x"
         );
 

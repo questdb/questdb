@@ -74,6 +74,11 @@ import io.questdb.std.str.DirectCharSink;
 import io.questdb.std.str.FloatingDirectCharSink;
 import io.questdb.std.str.Path;
 import io.questdb.tasks.TelemetryTask;
+import org.jetbrains.annotations.NotNull;
+
+import java.io.Closeable;
+import java.util.Arrays;
+import java.util.concurrent.locks.ReadWriteLock;
 
 class LineTcpMeasurementScheduler implements Closeable {
     private static final Log LOG = LogFactory.getLog(LineTcpMeasurementScheduler.class);
@@ -614,7 +619,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                             if (TableUtils.isValidInfluxColumnName(job.charSink)) {
                                 writer.addColumn(job.charSink, colType);
                             } else {
-                                throw CairoException.instance(0).put("invalid column name [table=").put(writer.getName())
+                                throw CairoException.instance(0).put("invalid column name [table=").put(writer.getTableName())
                                         .put(", columnName=").put(job.charSink).put(']');
                             }
                             // Reset to begining of entities

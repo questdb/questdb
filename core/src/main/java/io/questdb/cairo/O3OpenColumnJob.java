@@ -1227,7 +1227,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             long activeVarFd,
             long activeVarAddr,
             long activeVarAddrSize,
-            long activeVarAppenOffset,
+            long activeVarAppendOffset,
             long dstLen
     ) {
         long dstVarOffset;
@@ -1262,7 +1262,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 dstFixSize = -dstFixSize;
                 dstVarOffset = 0;
                 dstVarSize = -l;
-                dstVarAdjust = activeVarAppenOffset;
+                dstVarAdjust = activeVarAppendOffset;
             }
         } catch (Throwable e) {
             tableWriter.o3BumpErrorCount();

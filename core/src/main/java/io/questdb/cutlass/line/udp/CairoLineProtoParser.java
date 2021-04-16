@@ -374,7 +374,7 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
                 columnIndexAndType.add(Numbers.encodeLowHighInts(columnIndex, columnType));
                 columnValues.add(value.getCacheAddress());
             } else {
-                LOG.error().$("mismatched column and value types [table=").$(writer.getName())
+                LOG.error().$("mismatched column and value types [table=").$(writer.getTableName())
                         .$(", column=").$(metadata.getColumnName(columnIndex))
                         .$(", columnType=").$(ColumnType.nameOf(columnType))
                         .$(", valueType=").$(ColumnType.nameOf(valueType))
@@ -389,7 +389,7 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
                 columnIndexAndType.add(Numbers.encodeLowHighInts(columnCount++, valueType));
                 columnValues.add(value.getCacheAddress());
             } else {
-                LOG.error().$("invalid column name [table=").$(writer.getName())
+                LOG.error().$("invalid column name [table=").$(writer.getTableName())
                         .$(", columnName=").$(colNameAsChars)
                         .$(']').$();
                 switchModeToSkipLine();
@@ -430,7 +430,7 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
             // add previous writer to commit list
             CacheEntry e = writerCache.valueAtQuick(cacheEntryIndex);
             if (e.writer != null) {
-                commitList.put(e.writer.getName(), e.writer);
+                commitList.put(e.writer.getTableName(), e.writer);
             }
         }
 

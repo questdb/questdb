@@ -427,9 +427,9 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             private long tsdFd;
 
             @Override
-            public long mmap(long fd, long len, long offset, int mode) {
+            public long mmap(long fd, long len, long offset, int flags) {
                 if (tsdFd != fd) {
-                    return super.mmap(fd, len, offset, mode);
+                    return super.mmap(fd, len, offset, flags);
                 }
                 tsdFd = 0;
                 return -1;
@@ -634,7 +634,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
     private void copyDirectory(Path from, Path to) throws IOException {
         LOG.info().$("copying folder [from=").$(from).$(", to=").$(to).$(']').$();
         if (Files.mkdir(to, DIR_MODE) != 0) {
-            Assert.fail("Cannot create " + to.toString() + ". Error: " + Os.errno());
+            Assert.fail("Cannot create " + to + ". Error: " + Os.errno());
         }
 
         java.nio.file.Path dest = FileSystems.getDefault().getPath(to.toString() + Files.SEPARATOR);

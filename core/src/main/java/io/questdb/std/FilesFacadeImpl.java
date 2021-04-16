@@ -175,8 +175,13 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
-    public long mmap(long fd, long len, long offset, int mode) {
-        return Files.mmap(fd, len, offset, mode);
+    public long mmap(long fd, long len, long offset, int flags) {
+        return Files.mmap(fd, len, offset, flags);
+    }
+
+    @Override
+    public long mmap(long fd, long len, long flags, int mode, long baseAddress) {
+        return Files.mmap(fd, len, flags, mode);
     }
 
     @Override
