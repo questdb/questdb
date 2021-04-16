@@ -90,7 +90,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
             // test where ts ='2020-12'
             expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
-            query = "SELECT * FROM ob_mem_snapshot where timestamp ='2020-12'";
+            query = "SELECT * FROM ob_mem_snapshot where timestamp IN '2020-12'";
             printSqlResult(expected, query, "timestamp", null, null, true, true, true);
         });
     }
@@ -129,7 +129,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
             // test where ts ='2020'
             expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
-            query = "SELECT * FROM ob_mem_snapshot where timestamp ='2020'";
+            query = "SELECT * FROM ob_mem_snapshot where timestamp IN '2020'";
             printSqlResult(expected, query, "timestamp", null, null, true, true, true);
         });
     }
@@ -149,7 +149,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
             // test
             expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
-            query = "SELECT * FROM ob_mem_snapshot where timestamp = '2020-12-31'";
+            query = "SELECT * FROM ob_mem_snapshot where timestamp IN '2020-12-31'";
             printSqlResult(expected, query, "timestamp", null, null, true, true, true);
         });
     }
@@ -169,7 +169,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
             // test
             expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
-            query = "SELECT * FROM ob_mem_snapshot where timestamp = '2020-12-31T23'";
+            query = "SELECT * FROM ob_mem_snapshot where timestamp IN '2020-12-31T23'";
             printSqlResult(expected, query, "timestamp", null, null, true, true, true);
         });
     }
@@ -189,7 +189,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
             // test
             expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
-            query = "SELECT * FROM ob_mem_snapshot where timestamp = '2020-12-31T23:59'";
+            query = "SELECT * FROM ob_mem_snapshot where timestamp IN '2020-12-31T23:59'";
             printSqlResult(expected, query, "timestamp", null, null, true, true, true);
         });
     }
@@ -327,7 +327,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
             // test
             expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
-            query = "SELECT * FROM ob_mem_snapshot where timestamp <= '2020'";
+            query = "SELECT * FROM ob_mem_snapshot where timestamp <= '2021'";
             printSqlResult(expected, query, "timestamp", null, null, true, true, true);
         });
     }
@@ -483,7 +483,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
             // test
             expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
-            query = "SELECT * FROM ob_mem_snapshot where '2020' >=  timestamp";
+            query = "SELECT * FROM ob_mem_snapshot where '2021-01-01' >=  timestamp";
             printSqlResult(expected, query, "timestamp", null, null, true, true, true);
         });
     }
@@ -502,7 +502,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
             printSqlResult(expected, query, "timestamp", null, null, true, true, true);
             // test
             expected = "symbol\tme_seq_num\ttimestamp\n";
-            query = "SELECT * FROM ob_mem_snapshot where timestamp > '2020'";
+            query = "SELECT * FROM ob_mem_snapshot where timestamp >= '2021'";
             printSqlResult(expected, query, "timestamp", null, null, true, true, true);
         });
     }
@@ -689,12 +689,12 @@ public class TimestampQueryTest extends AbstractGriffinTest {
             //2 millisec characters
             expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
-            query = "SELECT * FROM ob_mem_snapshot where timestamp = '2020-12-31T23:59:59.00Z'";
+            query = "SELECT * FROM ob_mem_snapshot where timestamp IN '2020-12-31T23:59:59.00Z'";
             printSqlResult(expected, query, "timestamp", null, null, true, true, true);
             //1 millisec character
             expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
-            query = "SELECT * FROM ob_mem_snapshot where timestamp = '2020-12-31T23:59:59.0Z'";
+            query = "SELECT * FROM ob_mem_snapshot where timestamp IN '2020-12-31T23:59:59.0Z'";
             printSqlResult(expected, query, "timestamp", null, null, true, true, true);
             printSqlResult(expected, query, "timestamp", null, null, true, true, true);
         });
@@ -744,6 +744,42 @@ public class TimestampQueryTest extends AbstractGriffinTest {
                         false);
             }
         });
+    }
+
+    @Test
+    public void testTimestampInDay1orDay2() throws Exception {
+        assertQuery(
+                "min\tmax\n",
+                "select min(nts), max(nts) from tt where nts IN '2020-01-01' or nts IN '2020-01-02'",
+                "create table tt (dts timestamp, nts timestamp) timestamp(dts)",
+                null,
+                "insert into tt " +
+                        "select timestamp_sequence(1577836800000000L, 60*60*1000000L), timestamp_sequence(1577836800000000L, 60*60*1000000L) " +
+                        "from long_sequence(48L)",
+                "min\tmax\n" +
+                        "2020-01-01T00:00:00.000000Z\t2020-01-02T23:00:00.000000Z\n",
+                false,
+                false,
+                true
+        );
+    }
+
+    @Test
+    public void testTimestampStringComparison() throws Exception {
+        assertQuery(
+                "min\tmax\n",
+                "select min(nts), max(nts) from tt where nts = '2020-01-01'",
+                "create table tt (dts timestamp, nts timestamp) timestamp(dts)",
+                null,
+                "insert into tt " +
+                        "select timestamp_sequence(1577836800000000L, 60*60*1000000L), timestamp_sequence(1577836800000000L, 60*60*1000000L) " +
+                        "from long_sequence(48L)",
+                "min\tmax\n" +
+                        "2020-01-01T00:00:00.000000Z\t2020-01-02T23:00:00.000000Z\n",
+                false,
+                false,
+                true
+        );
     }
 
     @Test

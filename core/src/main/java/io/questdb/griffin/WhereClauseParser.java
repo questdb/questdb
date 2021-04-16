@@ -118,7 +118,7 @@ final class WhereClauseParser implements Mutable {
                 || b.type == ExpressionNode.OPERATION)) {
             if (isTimestamp(a)) {
                 if (b.type == ExpressionNode.CONSTANT) {
-                    model.intersectIntervals(b.token, 1, b.token.length() - 1, b.position);
+                    model.intersectTimestamp(b.token, 1, b.token.length() - 1, b.position);
                     node.intrinsicValue = IntrinsicModel.TRUE;
                     return true;
                 }
@@ -319,36 +319,45 @@ final class WhereClauseParser implements Mutable {
             throw SqlException.$(in.args.getQuick(0).position, "Too many args");
         }
 
-        if (in.paramCount < 3) {
+        if (in.paramCount < 2) {
             throw SqlException.$(in.position, "Too few args");
         }
 
-        ExpressionNode lo = in.args.getQuick(1);
-        ExpressionNode hi = in.args.getQuick(0);
-
-        if (lo.type == ExpressionNode.CONSTANT && hi.type == ExpressionNode.CONSTANT) {
-            long loMillis;
-            long hiMillis;
-
-            try {
-                loMillis = TimestampFormatUtils.tryParse(lo.token, 1, lo.token.length() - 1);
-            } catch (NumericException ignore) {
-                throw SqlException.invalidDate(lo.position);
+        if (in.paramCount == 2) {
+            ExpressionNode lo = in.rhs;
+            if (lo.type == ExpressionNode.CONSTANT) {
+                model.intersectIntervals(lo.token, 1, lo.token.length() - 1, lo.position);
+                in.intrinsicValue = IntrinsicModel.TRUE;
+                return true;
             }
+        } else {
+            ExpressionNode lo = in.args.getQuick(1);
+            ExpressionNode hi = in.args.getQuick(0);
 
-            try {
-                hiMillis = TimestampFormatUtils.tryParse(hi.token, 1, hi.token.length() - 1);
-            } catch (NumericException ignore) {
-                throw SqlException.invalidDate(hi.position);
-            }
+            if (lo.type == ExpressionNode.CONSTANT && hi.type == ExpressionNode.CONSTANT) {
+                long loMillis;
+                long hiMillis;
 
-            if (isNegated) {
-                model.subtractIntervals(loMillis, hiMillis);
-            } else {
-                model.intersectIntervals(loMillis, hiMillis);
+                try {
+                    loMillis = TimestampFormatUtils.tryParse(lo.token, 1, lo.token.length() - 1);
+                } catch (NumericException ignore) {
+                    throw SqlException.invalidDate(lo.position);
+                }
+
+                try {
+                    hiMillis = TimestampFormatUtils.tryParse(hi.token, 1, hi.token.length() - 1);
+                } catch (NumericException ignore) {
+                    throw SqlException.invalidDate(hi.position);
+                }
+
+                if (isNegated) {
+                    model.subtractIntervals(loMillis, hiMillis);
+                } else {
+                    model.intersectIntervals(loMillis, hiMillis);
+                }
+                in.intrinsicValue = IntrinsicModel.TRUE;
+                return true;
             }
-            in.intrinsicValue = IntrinsicModel.TRUE;
-            return true;
         }
         return false;
     }
@@ -854,18 +863,10 @@ final class WhereClauseParser implements Mutable {
         long ts;
         final int len = node.token.length();
         try {
-            if (isLo) {
-                if (equalsTo) {
-                    ts = IntervalUtils.parseFloorPartialDate(node.token, 1, len - 1);
-                } else {
-                    ts = IntervalUtils.parseCCPartialDate(node.token, 1, len - 1);
-                }
-            } else {
-                if (equalsTo) {
-                    ts = IntervalUtils.parseCCPartialDate(node.token, 1, len - 1) - 1;
-                } else {
-                    ts = IntervalUtils.parseFloorPartialDate(node.token, 1, len - 1) - 1;
-                }
+            // Timestamp string
+            ts = IntervalUtils.parseFloorPartialDate(node.token, 1, len - 1);
+            if (!equalsTo) {
+                ts += isLo ? 1 : -1;
             }
         } catch (NumericException e) {
             long inc = equalsTo ? 0 : isLo ? 1 : -1;

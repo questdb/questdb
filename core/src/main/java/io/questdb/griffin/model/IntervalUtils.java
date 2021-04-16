@@ -301,33 +301,33 @@ public final class IntervalUtils {
                             checkChar(seq, p++, lim, ':');
                             int sec = Numbers.parseInt(seq, p, p += 2);
                             checkRange(sec, 0, 59);
-                            if (lim - p > 3 && seq.charAt(p) == '.') {
-                                p++;
-                                int ms = Numbers.parseInt(seq, p, p += 3);
-                                if (lim - p > 2 && Character.isDigit(seq.charAt(p))) {
-                                    int micr = Numbers.parseInt(seq, p, p += 3);
+                            if (p < lim && seq.charAt(p) == '.') {
 
-                                    // micros
-                                    ts = Timestamps.yearMicros(year, l)
-                                            + Timestamps.monthOfYearMicros(month, l)
-                                            + (day - 1) * Timestamps.DAY_MICROS
-                                            + hour * Timestamps.HOUR_MICROS
-                                            + min * Timestamps.MINUTE_MICROS
-                                            + sec * Timestamps.SECOND_MICROS
-                                            + ms * Timestamps.MILLI_MICROS
-                                            + micr
-                                            + checkTimezoneTail(seq, p, lim);
-                                } else {
-                                    // millis
-                                    ts = Timestamps.yearMicros(year, l)
-                                            + Timestamps.monthOfYearMicros(month, l)
-                                            + (day - 1) * Timestamps.DAY_MICROS
-                                            + hour * Timestamps.HOUR_MICROS
-                                            + min * Timestamps.MINUTE_MICROS
-                                            + sec * Timestamps.SECOND_MICROS
-                                            + ms * Timestamps.MILLI_MICROS
-                                            + checkTimezoneTail(seq, p, lim);
+                                p++;
+                                // varlen milli and micros
+                                int micrLim = p + 6;
+                                int mlim = Math.min(lim, micrLim);
+                                int micr = 0;
+                                for(;p < mlim; p++) {
+                                    char c = seq.charAt(p);
+                                    if (c < '0' || c > '9') {
+                                        // Timezone
+                                        break;
+                                    }
+                                    micr *= 10;
+                                    micr += c - '0';
                                 }
+                                micr *= tenPow(micrLim - p);
+
+                                // micros
+                                ts = Timestamps.yearMicros(year, l)
+                                        + Timestamps.monthOfYearMicros(month, l)
+                                        + (day - 1) * Timestamps.DAY_MICROS
+                                        + hour * Timestamps.HOUR_MICROS
+                                        + min * Timestamps.MINUTE_MICROS
+                                        + sec * Timestamps.SECOND_MICROS
+                                        + micr
+                                        + checkTimezoneTail(seq, p, lim);
                             } else {
                                 // seconds
                                 ts = Timestamps.yearMicros(year, l)
@@ -370,6 +370,18 @@ public final class IntervalUtils {
             ts = (Timestamps.yearMicros(year, l) + Timestamps.monthOfYearMicros(1, l));
         }
         return ts;
+    }
+
+    private static int tenPow(int i) throws NumericException {
+        switch (i) {
+            case 0: return 1;
+            case 1: return 10;
+            case 2: return 100;
+            case 3: return 1000;
+            case 4: return 10000;
+            case 5: return 100000;
+            default: throw NumericException.INSTANCE;
+        }
     }
 
     private static long checkTimezoneTail(CharSequence seq, int p, int lim) throws NumericException {
@@ -701,7 +713,7 @@ public final class IntervalUtils {
                 }
 
                 try {
-                    long millis = TimestampFormatUtils.tryParse(seq, lo, lim);
+                    long millis = parseFloorPartialDate(seq, lo, lim);
                     addHiLoInterval(millis, millis, operation, out);
                     break;
                 } catch (NumericException e) {
@@ -747,6 +759,20 @@ public final class IntervalUtils {
                 break;
             default:
                 throw SqlException.$(position, "Invalid interval format");
+        }
+    }
+
+    public static void parseTimestampIntervalEx(CharSequence seq, int lo, int lim, int position, LongList out, short operation) throws SqlException {
+        try {
+            long millis = parseFloorPartialDate(seq, lo, lim);
+            addHiLoInterval(millis, millis, operation, out);
+        } catch (NumericException e) {
+            for (int i = lo; i < lim; i++) {
+                if (seq.charAt(i) == ';') {
+                    throw SqlException.$(position, "Not a date, use IN keyword with intervals");
+                }
+            }
+            throw SqlException.$(position, "Not a date");
         }
     }
 

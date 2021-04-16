@@ -3575,7 +3575,7 @@ public class JoinTest extends AbstractGriffinTest {
                             "1970-01-01T00:00:00.000004Z\t0.299199045961845\t0.3491070363730514\t1904508147\n" +
                             "1970-01-01T00:00:00.000005Z\t0.20447441837877756\t0.7611029514995744\t1125579207\n",
                     "SELECT pickup_datetime, fare_amount, tempF, windDir \n" +
-                            "FROM (trips WHERE pickup_datetime = '1970-01-01') \n" +
+                            "FROM (trips WHERE pickup_datetime IN '1970-01-01') \n" +
                             "ASOF JOIN weather",
                     "pickup_datetime", false, false, true);
         });

@@ -109,7 +109,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.eq.EqSymCharFunctionFactory,
             io.questdb.griffin.engine.functions.eq.EqCharCharFunctionFactory,
             io.questdb.griffin.engine.functions.eq.EqIntStrCFunctionFactory,
-            io.questdb.griffin.engine.functions.eq.EqTimestampStrFunctionFactory,
+//            io.questdb.griffin.engine.functions.eq.EqTimestampStrFunctionFactory,
             io.questdb.griffin.engine.functions.eq.EqTimestampFunctionFactory,
 
             //nullif
@@ -411,6 +411,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.bool.InStrFunctionFactory,
             io.questdb.griffin.engine.functions.bool.InCharFunctionFactory,
             io.questdb.griffin.engine.functions.bool.InSymbolFunctionFactory,
+            io.questdb.griffin.engine.functions.bool.InTimestampStringFunctionFactory,
 //                  'all'
             io.questdb.griffin.engine.functions.bool.AllNotEqStrFunctionFactory,
 //                  'agg' group by function

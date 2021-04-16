@@ -112,6 +112,22 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         intervalApplied = true;
     }
 
+    public void intersectTimestamp(CharSequence seq, int lo, int lim, int position) throws SqlException {
+        if (isEmptySet()) return;
+        int size = staticIntervals.size();
+        IntervalUtils.parseTimestampIntervalEx(seq, lo, lim, position, staticIntervals, IntervalOperation.INTERSECT);
+        if (dynamicRangeList.size() == 0) {
+            IntervalUtils.applyLastEncodedIntervalEx(staticIntervals);
+            if (intervalApplied) {
+                IntervalUtils.intersectInplace(staticIntervals, size);
+            }
+        } else {
+            // else - nothing to do, interval already encoded in staticPeriods as 4 longs
+            dynamicRangeList.add(null);
+        }
+        intervalApplied = true;
+    }
+
     public void intersectIntervals(CharSequence seq, int lo, int lim, int position) throws SqlException {
         if (isEmptySet()) return;
         int size = staticIntervals.size();
