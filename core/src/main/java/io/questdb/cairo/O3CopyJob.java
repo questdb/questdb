@@ -93,6 +93,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             long dstVarFd,
             long dstVarAddr,
             long dstVarOffset,
+            long dstVarAdjust,
             long dstVarSize,
             long dstKFd,
             long dstVFd,
@@ -140,7 +141,8 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                         srcOooHi,
                         dstFixAddr + dstFixOffset,
                         dstVarAddr,
-                        dstVarOffset
+                        dstVarOffset,
+                        dstVarAdjust
                 );
                 break;
             case OO_BLOCK_DATA:
@@ -154,7 +156,8 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                         srcDataHi,
                         dstFixAddr + dstFixOffset,
                         dstVarAddr,
-                        dstVarOffset
+                        dstVarOffset,
+                        dstVarAdjust
                 );
                 break;
             default:
@@ -248,6 +251,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
         final long dstVarFd = task.getDstVarFd();
         final long dstVarAddr = task.getDstVarAddr();
         final long dstVarOffset = task.getDstVarOffset();
+        final long dstVarAdjust = task.getDstVarAdjust();
         final long dstVarSize = task.getDstVarSize();
         final long dstKFd = task.getDstKFd();
         final long dskVFd = task.getDstVFd();
@@ -305,6 +309,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                 dstVarFd,
                 dstVarAddr,
                 dstVarOffset,
+                dstVarAdjust,
                 dstVarSize,
                 dstKFd,
                 dskVFd,
@@ -796,7 +801,8 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             long srcHi,
             long dstFixAddr,
             long dstVarAddr,
-            long dstVarOffset
+            long dstVarOffset,
+            long dstVarAdjust
     ) {
         switch (columnType) {
             case ColumnType.STRING:
@@ -810,7 +816,8 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                         srcHi,
                         dstFixAddr,
                         dstVarAddr,
-                        dstVarOffset
+                        dstVarOffset,
+                        dstVarAdjust
                 );
                 break;
             default:
@@ -839,7 +846,8 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             long srcOooHi,
             long dstFixAddr,
             long dstVarAddr,
-            long dstVarOffset
+            long dstVarOffset,
+            long dstVarAdjust
     ) {
         switch (columnType) {
             case ColumnType.STRING:
@@ -856,7 +864,8 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                         srcOooHi,
                         dstFixAddr,
                         dstVarAddr,
-                        dstVarOffset
+                        dstVarOffset,
+                        dstVarAdjust
                 );
                 break;
             case ColumnType.BOOLEAN:
@@ -899,7 +908,8 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             long srcHi,
             long dstFixAddr,
             long dstVarAddr,
-            long dstVarOffset
+            long dstVarOffset,
+            long dstVarAdjust
 
     ) {
         final long lo = O3Utils.findVarOffset(srcFixAddr, srcLo, srcHi, srcVarSize);
@@ -913,10 +923,11 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
         final long dest = dstVarAddr + dstVarOffset;
         final long len = hi - lo;
         Vect.memcpy(srcVarAddr + lo, dest, len);
-        if (lo == dstVarOffset) {
+        long offset = dstVarOffset + dstVarAdjust;
+        if (lo == offset) {
             copyFixedSizeCol(srcFixAddr, srcLo, srcHi, dstFixAddr, 3);
         } else {
-            O3Utils.shiftCopyFixedSizeColumnData(lo - dstVarOffset, srcFixAddr, srcLo, srcHi, dstFixAddr);
+            O3Utils.shiftCopyFixedSizeColumnData(lo - offset, srcFixAddr, srcLo, srcHi, dstFixAddr);
         }
     }
 

@@ -2212,6 +2212,7 @@ public class TableWriter implements Closeable {
                                 final long activeVarFd;
                                 final long activeVarAddr;
                                 final long activeVarAddrSize;
+                                final long activeVarAppendOffset;
                                 final long srcDataTop = getColumnTop(i);
                                 final long srcOooFixAddr;
                                 final long srcOooFixSize;
@@ -2224,6 +2225,7 @@ public class TableWriter implements Closeable {
                                     activeVarFd = 0;
                                     activeVarAddr = 0;
                                     activeVarAddrSize = 0;
+                                    activeVarAppendOffset = 0;
                                     srcOooFixAddr = oooMem1.addressOf(0);
                                     srcOooFixSize = oooMem1.getAppendOffset();
                                     srcOooVarAddr = 0;
@@ -2235,6 +2237,7 @@ public class TableWriter implements Closeable {
                                     activeVarFd = mem1.getFd();
                                     activeVarAddr = mem1.getAppendAddress();
                                     activeVarAddrSize = mem1.getAppendAddressSize();
+                                    activeVarAppendOffset = mem1.getAppendOffset();
                                     srcOooFixAddr = oooMem2.addressOf(0);
                                     srcOooFixSize = oooMem2.getAppendOffset();
                                     srcOooVarAddr = oooMem1.addressOf(0);
@@ -2274,6 +2277,7 @@ public class TableWriter implements Closeable {
                                         activeVarFd,
                                         activeVarAddr,
                                         activeVarAddrSize,
+                                        activeVarAppendOffset,
                                         -activeFixFd, // always pass negative FD to close active partition. Any FD will work
                                         0,
                                         0,

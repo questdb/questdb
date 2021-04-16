@@ -650,6 +650,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             long activeVarFd,
             long activeVarAddr,
             long activeVarAddrSize,
+            long activeVarAppendOffset,
             TableWriter tableWriter,
             BitmapIndexWriter indexWriter,
             SOUnboundedCountDownLatch doneLatch
@@ -699,6 +700,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 activeVarFd,
                 activeVarAddr,
                 activeVarAddrSize,
+                activeVarAppendOffset,
                 tableWriter,
                 indexWriter,
                 doneLatch
@@ -785,6 +787,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 final long activeVarFd;
                 final long activeVarAddr;
                 final long activeVarAddrSize;
+                final long activeVarAppendOffset;
                 final long srcDataTop;
                 final long srcOooFixAddr;
                 final long srcOooFixSize;
@@ -803,6 +806,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     activeVarFd = 0;
                     activeVarAddr = 0;
                     activeVarAddrSize = 0;
+                    activeVarAppendOffset = 0;
                     srcOooFixAddr = oooMem1.addressOf(0);
                     srcOooFixSize = oooMem1.getAppendOffset();
                     srcOooVarAddr = 0;
@@ -815,11 +819,13 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         activeFixAddrSize = mem2.getAppendAddressSize();
                         activeVarAddr = mem1.getAppendAddress();
                         activeVarAddrSize = mem1.getAppendAddressSize();
+                        activeVarAppendOffset = mem1.getAppendOffset();
                     } else {
                         activeFixAddr = 0;
                         activeFixAddrSize = 0;
                         activeVarAddr = 0;
                         activeVarAddrSize = 0;
+                        activeVarAppendOffset = 0;
                     }
                     srcOooFixAddr = oooMem2.addressOf(0);
                     srcOooFixSize = oooMem2.getAppendOffset();
@@ -892,6 +898,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                 activeVarFd,
                                 activeVarAddr,
                                 activeVarAddrSize,
+                                activeVarAppendOffset,
                                 tableWriter,
                                 indexWriter,
                                 doneLatch
@@ -950,6 +957,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                 activeVarFd,
                                 activeVarAddr,
                                 activeVarAddrSize,
+                                activeVarAppendOffset,
                                 tableWriter,
                                 indexWriter,
                                 doneLatch
@@ -1030,6 +1038,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             long activeVarFd,
             long activeVarAddr,
             long activeVarAddrSize,
+            long activeVarAppendOffset,
             TableWriter tableWriter,
             BitmapIndexWriter indexWriter,
             SOUnboundedCountDownLatch doneLatch
@@ -1086,6 +1095,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     activeVarFd,
                     activeVarAddr,
                     activeVarAddrSize,
+                    activeVarAppendOffset,
                     tableWriter,
                     indexWriter,
                     doneLatch
@@ -1141,6 +1151,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     activeVarFd,
                     activeVarAddr,
                     activeVarAddrSize,
+                    activeVarAppendOffset,
                     tableWriter,
                     indexWriter,
                     doneLatch

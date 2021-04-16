@@ -96,6 +96,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             long activeVarFd,
             long activeVarAddr,
             long activeVarAddrSize,
+            long activeVarAppendOffset,
             long srcTimestampFd,
             long srcTimestampAddr,
             long srcTimestampSize,
@@ -137,7 +138,12 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         tableWriter,
                         doneLatch,
                         -activeFixFd,
+                        activeFixAddr,
+                        activeFixAddrSize,
                         -activeVarFd,
+                        activeVarAddr,
+                        activeVarAddrSize,
+                        activeVarAppendOffset,
                         dstLen
                 );
                 break;
@@ -269,6 +275,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
         final long activeVarFd = task.getActiveVarFd();
         final long activeVarAddr = task.getActiveVarAddr();
         final long activeVarAddrSize = task.getActiveVarAddrSize();
+        final long activeVarAppendOffset = task.getActiveVarAppendffset();
         final long srcDataTop = task.getSrcDataTop();
         final TableWriter tableWriter = task.getTableWriter();
         final BitmapIndexWriter indexWriter = task.getIndexWriter();
@@ -326,6 +333,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 activeVarFd,
                 activeVarAddr,
                 activeVarAddrSize,
+                activeVarAppendOffset,
                 tableWriter,
                 indexWriter,
                 doneLatch
@@ -382,6 +390,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             long activeVarFd,
             long activeVarAddr,
             long activeVarAddrSize,
+            long activeVarAppendOffset,
             TableWriter tableWriter,
             BitmapIndexWriter indexWriter,
             SOUnboundedCountDownLatch doneLatch
@@ -465,6 +474,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         activeVarFd,
                         activeVarAddr,
                         activeVarAddrSize,
+                        activeVarAppendOffset,
                         srcTimestampFd,
                         srcTimestampAddr,
                         srcTimestampSize,
@@ -781,7 +791,12 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         tableWriter,
                         doneLatch,
                         dstFixFd,
+                        0,
+                        0,
                         dstVarFd,
+                        0,
+                        0,
+                        0,
                         dstLen
                 );
                 break;
@@ -1028,6 +1043,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 0,
                 0,
                 0,
+                0,
                 dstKFd,
                 dstVFd,
                 dstIndexOffset,
@@ -1164,6 +1180,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 0,
                 0,
                 0,
+                0,
                 isIndexed,
                 srcTimestampFd,
                 srcTimestampAddr,
@@ -1204,35 +1221,49 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             long srcTimestampSize,
             TableWriter tableWriter,
             SOUnboundedCountDownLatch doneLatch,
-            long dstFixFd,
-            long dstVarFd,
+            long activeFixFd,
+            long activeFixAddr,
+            long activeFixAddrSize,
+            long activeVarFd,
+            long activeVarAddr,
+            long activeVarAddrSize,
+            long activeVarAppenOffset,
             long dstLen
     ) {
-        long dstVarAddr = 0;
         long dstVarOffset;
         long dstFixOffset;
+        long dstVarAdjust;
         long dstVarSize = 0;
         long dstFixSize = 0;
-        long dstFixAddr = 0;
         try {
+            long l = O3Utils.getVarColumnLength(srcOooLo, srcOooHi, srcOooFixAddr, srcOooFixSize, srcOooVarSize);
             dstFixSize = dstLen * Long.BYTES;
-            dstFixAddr = O3Utils.mapRW(ff, Math.abs(dstFixFd), dstFixSize);
-            dstFixOffset = (srcDataMax - srcDataTop) * Long.BYTES;
-            if (dstFixOffset > 0) {
-                dstVarOffset = getVarColumnSize(
-                        ff,
-                        columnType,
-                        Math.abs(dstVarFd),
-                        Unsafe.getUnsafe().getLong(dstFixAddr + dstFixOffset - Long.BYTES),
-                        workerId
-                );
+            if (activeFixAddr == 0 || activeFixAddrSize < dstFixSize || activeVarAddrSize < l) {
+                dstFixOffset = (srcDataMax - srcDataTop) * Long.BYTES;
+                activeFixAddr = O3Utils.mapRW(ff, Math.abs(activeFixFd), dstFixSize);
+
+                if (dstFixOffset > 0) {
+                    dstVarOffset = getVarColumnSize(
+                            ff,
+                            columnType,
+                            Math.abs(activeVarFd),
+                            Unsafe.getUnsafe().getLong(activeFixAddr + dstFixOffset - Long.BYTES),
+                            workerId
+                    );
+                } else {
+                    dstVarOffset = 0;
+                }
+
+                dstVarSize = l + dstVarOffset;
+                activeVarAddr = O3Utils.mapRW(ff, Math.abs(activeVarFd), dstVarSize);
+                dstVarAdjust = 0;
             } else {
+                dstFixOffset = 0;
+                dstFixSize = -dstFixSize;
                 dstVarOffset = 0;
+                dstVarSize = -l;
+                dstVarAdjust = activeVarAppenOffset;
             }
-
-            dstVarSize = O3Utils.getVarColumnLength(srcOooLo, srcOooHi, srcOooFixAddr, srcOooFixSize, srcOooVarSize) + dstVarOffset;
-            dstVarAddr = O3Utils.mapRW(ff, Math.abs(dstVarFd), dstVarSize);
-
         } catch (Throwable e) {
             tableWriter.o3BumpErrorCount();
             O3CopyJob.copyIdleQuick(
@@ -1245,11 +1276,11 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     0,
                     0,
                     0,
-                    dstFixFd,
-                    dstFixAddr,
+                    activeFixFd,
+                    activeFixAddr,
                     dstFixSize,
-                    dstVarFd,
-                    dstVarAddr,
+                    activeVarFd,
+                    activeVarAddr,
                     dstVarSize,
                     srcTimestampFd,
                     srcTimestampAddr,
@@ -1297,13 +1328,14 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 timestampMin,
                 timestampMax,
                 partitionTimestamp, // <-- pass thru
-                dstFixFd,
-                dstFixAddr,
+                activeFixFd,
+                activeFixAddr,
                 dstFixOffset,
                 dstFixSize,
-                dstVarFd,
-                dstVarAddr,
+                activeVarFd,
+                activeVarAddr,
                 dstVarOffset,
+                dstVarAdjust,
                 dstVarSize,
                 0,
                 0,
@@ -1363,6 +1395,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             long dstVarFd,
             long dstVarAddr,
             long dstVarOffset,
+            long dstVarAdjust,
             long dstVarSize,
             long dstKFd,
             long dstVFd,
@@ -1419,6 +1452,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     dstVarFd,
                     dstVarAddr,
                     dstVarOffset,
+                    dstVarAdjust,
                     dstVarSize,
                     dstKFd,
                     dstVFd,
@@ -1478,6 +1512,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     dstVarFd,
                     dstVarAddr,
                     dstVarOffset,
+                    dstVarAdjust,
                     dstVarSize,
                     dstKFd,
                     dstVFd,
@@ -1539,6 +1574,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             long dstVarFd,
             long dstVarAddr,
             long dstVarOffset,
+            long dstVarAdjust,
             long dstVarSize,
             long dstKFd,
             long dstVFd,
@@ -1599,6 +1635,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     dstVarFd,
                     dstVarAddr,
                     dstVarOffset,
+                    dstVarAdjust,
                     dstVarSize,
                     dstKFd,
                     dstVFd,
@@ -1652,6 +1689,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     dstVarFd,
                     dstVarAddr,
                     dstVarOffset,
+                    dstVarAdjust,
                     dstVarSize,
                     dstKFd,
                     dstVFd,
@@ -1710,6 +1748,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             long dstVarFd,
             long dstVarAddr,
             long dstVarOffset,
+            long dstVarAdjust,
             long dstVarSize,
             long dstKFd,
             long dstVFd,
@@ -1764,6 +1803,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 dstVarFd,
                 dstVarAddr,
                 dstVarOffset,
+                dstVarAdjust,
                 dstVarSize,
                 dstKFd,
                 dstVFd,
@@ -2962,6 +3002,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 dstVarFd,
                 dstVarAddr,
                 0,
+                0,
                 dstVarSize,
                 dstKFd,
                 dstVFd,
@@ -3069,7 +3110,9 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         srcDataVarAddr,
                         srcDataVarOffset,
                         srcDataVarSize,
-                        0, 0, srcDataTopOffset,
+                        0,
+                        0,
+                        srcDataTopOffset,
                         srcDataMax,
                         srcOooFixAddr,
                         srcOooFixSize,
@@ -3089,6 +3132,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         dstFixSize,
                         dstVarFd,
                         dstVarAddr,
+                        0,
                         0,
                         dstVarSize,
                         dstKFd,
@@ -3146,6 +3190,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         dstFixSize,
                         dstVarFd,
                         dstVarAddr,
+                        0,
                         0,
                         dstVarSize,
                         dstKFd,
@@ -3209,6 +3254,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         dstVarFd,
                         dstVarAddr,
                         dstVarAppendOffset1,
+                        0,
                         dstVarSize,
                         dstKFd,
                         dstVFd,
@@ -3266,6 +3312,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         dstVarFd,
                         dstVarAddr,
                         dstVarAppendOffset1,
+                        0,
                         dstVarSize,
                         dstKFd,
                         dstVFd,
@@ -3302,7 +3349,9 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         srcDataVarAddr,
                         srcDataVarOffset,
                         srcDataVarSize,
-                        mergeDataLo, mergeDataHi, srcDataTopOffset,
+                        mergeDataLo,
+                        mergeDataHi,
+                        srcDataTopOffset,
                         srcDataMax,
                         srcOooFixAddr,
                         srcOooFixSize,
@@ -3323,6 +3372,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         dstVarFd,
                         dstVarAddr,
                         dstVarAppendOffset1,
+                        0,
                         dstVarSize,
                         dstKFd,
                         dstVFd,
@@ -3387,6 +3437,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         dstVarFd,
                         dstVarAddr,
                         dstVarAppendOffset2,
+                        0,
                         dstVarSize,
                         dstKFd,
                         dstVFd,
@@ -3446,6 +3497,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         dstVarFd,
                         dstVarAddr,
                         dstVarAppendOffset2,
+                        0,
                         dstVarSize,
                         dstKFd,
                         dstVFd,

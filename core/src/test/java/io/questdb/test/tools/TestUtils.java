@@ -479,7 +479,7 @@ public final class TestUtils {
 
     public static void removeTestPath(CharSequence root) {
         Path path = Path.getThreadLocal(root);
-        Files.rmdir(path.$());
+        Files.rmdir(path.$$dir());
     }
 
     @FunctionalInterface

@@ -70,6 +70,7 @@ public class O3CopyTask extends AbstractLockable {
     private long dstVarFd;
     private long dstVarAddr;
     private long dstVarOffset;
+    private long dstVarAdjust;
     private long dstVarSize;
     private long dstKFd;
     private long dstVFd;
@@ -284,6 +285,10 @@ public class O3CopyTask extends AbstractLockable {
         return partitionMutates;
     }
 
+    public long getDstVarAdjust() {
+        return dstVarAdjust;
+    }
+
     public void of(
             AtomicInteger columnCounter,
             AtomicInteger partCounter,
@@ -322,6 +327,7 @@ public class O3CopyTask extends AbstractLockable {
             long dstVarFd,
             long dstVarAddr,
             long dstVarOffset,
+            long dstVarAdjust,
             long dstVarSize,
             long dstKFd,
             long dstVFd,
@@ -373,6 +379,7 @@ public class O3CopyTask extends AbstractLockable {
         this.dstVarFd = dstVarFd;
         this.dstVarAddr = dstVarAddr;
         this.dstVarOffset = dstVarOffset;
+        this.dstVarAdjust = dstVarAdjust;
         this.dstVarSize = dstVarSize;
         this.dstKFd = dstKFd;
         this.dstVFd = dstVFd;

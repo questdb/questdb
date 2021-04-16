@@ -75,6 +75,7 @@ public class O3OpenColumnTask {
     private long activeVarFd;
     private long activeVarAddr;
     private long activeVarAddrSize;
+    private long activeVarAppendffset;
     private TableWriter tableWriter;
     private BitmapIndexWriter indexWriter;
     private SOUnboundedCountDownLatch doneLatch;
@@ -97,6 +98,10 @@ public class O3OpenColumnTask {
 
     public long getActiveVarAddrSize() {
         return activeVarAddrSize;
+    }
+
+    public long getActiveVarAppendffset() {
+        return activeVarAppendffset;
     }
 
     public long getActiveVarFd() {
@@ -307,6 +312,7 @@ public class O3OpenColumnTask {
             long activeVarFd,
             long activeVarAddr,
             long activeVarAddrSize,
+            long activeVarAppendOffset,
             TableWriter tableWriter,
             BitmapIndexWriter indexWriter,
             SOUnboundedCountDownLatch doneLatch
@@ -354,6 +360,7 @@ public class O3OpenColumnTask {
         this.activeVarFd = activeVarFd;
         this.activeVarAddr = activeVarAddr;
         this.activeVarAddrSize = activeVarAddrSize;
+        this.activeVarAppendffset = activeVarAppendOffset;
         this.tableWriter = tableWriter;
         this.indexWriter = indexWriter;
         this.doneLatch = doneLatch;

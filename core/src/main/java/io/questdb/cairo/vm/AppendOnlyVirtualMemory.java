@@ -113,15 +113,13 @@ public class AppendOnlyVirtualMemory extends PagedVirtualMemory implements Mappe
 
     public long getAppendAddress() {
         long appendOffset = getAppendOffset();
-        return addressOf(appendOffset);
+        return getPageAddress(pageIndex(appendOffset)) + offsetInPage(appendOffset);
     }
 
     public long getAppendAddressSize() {
         long appendOffset = getAppendOffset();
-        int p = pageIndex(appendOffset);
-        long o = offsetInPage(appendOffset);
-        long sz = getPageSize(p);
-        return sz - o;
+        long sz = getPageSize(pageIndex(appendOffset));
+        return sz - offsetInPage(appendOffset);
     }
 
     @Override
