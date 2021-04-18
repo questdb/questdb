@@ -38,8 +38,8 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import java.io.IOException;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.nio.file.FileSystems;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static java.nio.file.StandardCopyOption.REPLACE_EXISTING;
 
@@ -90,13 +90,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                         .col("l", ColumnType.LONG));
 
                 copyAttachPartition(src, dst, 0, "2020-01-10");
-                try {
-                    copyAttachPartition(src, dst, 1001, "2020-01-09");
-                    Assert.fail();
-                } catch (CairoException e) {
-                    // Insert row attempt expected to fail.
-                    TestUtils.assertContains(e.getMessage(), "Cannot insert rows out of order");
-                }
+                copyAttachPartition(src, dst, 1001, "2020-01-09");
             }
         });
     }
@@ -620,7 +614,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
 
             TestUtils.assertEquals(
                     "cnt\n" +
-                            "-1\n",
+                            (-1 - countAjdustment) + "\n",
                     executeSql("with " +
                             "t2 as (select 1 as id, count() as cnt from dst)\n" +
                             withClause +
