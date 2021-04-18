@@ -143,8 +143,8 @@ void radix_sort_long_index_asc_in_place(index_t *array, uint64_t size) {
     rscounts_t counts;
     memset(&counts, 0, 256 * 8 * sizeof(uint64_t));
     auto *cpy = (index_t *) malloc(size * sizeof(index_t));
-    int64_t o8 = 0, o7 = 0, o6 = 0, o5 = 0, o4 = 0, o3 = 0, o2 = 0, o1 = 0;
-    int64_t t8, t7, t6, t5, t4, t3, t2, t1;
+    uint64_t o8 = 0, o7 = 0, o6 = 0, o5 = 0, o4 = 0, o3 = 0, o2 = 0, o1 = 0;
+    uint64_t t8, t7, t6, t5, t4, t3, t2, t1;
     int64_t x;
 
     // calculate counts
@@ -170,7 +170,7 @@ void radix_sort_long_index_asc_in_place(index_t *array, uint64_t size) {
     }
 
     // convert counts to offsets
-    MM_PREFETCH_NTA(&counts);
+    MM_PREFETCH_T0(&counts);
     for (x = 0; x < 256; x++) {
         t8 = o8 + counts.c8[x];
         t7 = o7 + counts.c7[x];

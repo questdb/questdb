@@ -38,7 +38,7 @@ public class O3PartitionTask {
     private CharSequence pathToTable;
     private int partitionBy;
     private ObjList<AppendOnlyVirtualMemory> columns;
-    private ObjList<ContiguousVirtualMemory> oooColumns;
+    private ObjList<ContiguousVirtualMemory> o3Columns;
     private long srcOooLo;
     private long srcOooHi;
     private long srcOooMax;
@@ -71,8 +71,8 @@ public class O3PartitionTask {
         return maxTimestamp;
     }
 
-    public ObjList<ContiguousVirtualMemory> getOooColumns() {
-        return oooColumns;
+    public ObjList<ContiguousVirtualMemory> getO3Columns() {
+        return o3Columns;
     }
 
     public long getOooTimestampMax() {
@@ -140,7 +140,7 @@ public class O3PartitionTask {
             CharSequence path,
             int partitionBy,
             ObjList<AppendOnlyVirtualMemory> columns,
-            ObjList<ContiguousVirtualMemory> oooColumns,
+            ObjList<ContiguousVirtualMemory> o3Columns,
             long srcOooLo,
             long srcOooHi,
             long srcOooMax,
@@ -173,7 +173,7 @@ public class O3PartitionTask {
         this.ff = ff;
         this.partitionBy = partitionBy;
         this.columns = columns;
-        this.oooColumns = oooColumns;
+        this.o3Columns = o3Columns;
         this.tableWriter = tableWriter;
         this.columnCounter = columnCounter;
         this.doneLatch = doneLatch;
