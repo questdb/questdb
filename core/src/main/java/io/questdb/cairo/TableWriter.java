@@ -133,9 +133,9 @@ public class TableWriter implements Closeable {
     private int columnCount;
     private RowFunction rowFunction = openPartitionFunction;
     private boolean avoidIndexOnCommit = false;
-    private boolean o3errored = false;
     private long partitionTimestampHi;
     private long masterRef = 0;
+    private long o3MasterRef = -1;
     private boolean removeDirOnCancelRow = true;
     private long tempMem16b = Unsafe.malloc(16);
     private int metaSwapIndex;
@@ -153,7 +153,6 @@ public class TableWriter implements Closeable {
     private final O3ColumnUpdateMethod o3MoveHysteresisRef = this::o3MoveHysteresis0;
     private final O3ColumnUpdateMethod o3MoveUncommittedRef = this::o3MoveUncommitted0;
     private long lastPartitionTimestamp;
-    private long o3HysteresisRowCount;
 
     public TableWriter(CairoConfiguration configuration, CharSequence tableName) {
         this(configuration, tableName, new MessageBusImpl(configuration));
@@ -712,7 +711,7 @@ public class TableWriter implements Closeable {
     }
 
     public boolean inTransaction() {
-        return txFile != null && (txFile.inTransaction() || o3RowCount > 0 || o3errored);
+        return txFile != null && (txFile.inTransaction() || hasO3());
     }
 
     public boolean isOpen() {
@@ -981,7 +980,6 @@ public class TableWriter implements Closeable {
                 rollbackIndexes();
                 purgeUnusedPartitions();
                 configureAppendPosition();
-                this.o3errored = false;
                 LOG.info().$("tx rollback complete [name=").$(tableName).$(']').$();
             } catch (Throwable e) {
                 LOG.error().$("could not perform rollback [name=").$(tableName).$(", msg=").$(e.getMessage()).$(']').$();
@@ -1602,7 +1600,7 @@ public class TableWriter implements Closeable {
 
         if (inTransaction()) {
 
-            if (o3RowCount > 0 && o3Commit(lastTimestampHysteresisInMicros)) {
+            if (hasO3() && o3Commit(lastTimestampHysteresisInMicros)) {
                 return;
             }
 
@@ -1614,6 +1612,10 @@ public class TableWriter implements Closeable {
             txFile.commit(commitMode, this.denseSymbolMapWriters);
             o3ProcessPartitionRemoveCandidates();
         }
+    }
+
+    private long getO3RowCount() {
+        return (masterRef - o3MasterRef + 1) / 2;
     }
 
     void commitBlock(long firstTimestamp) {
@@ -2056,6 +2058,18 @@ public class TableWriter implements Closeable {
         }
     }
 
+    private boolean hasO3() {
+        return o3MasterRef > -1 && getO3RowCount() > 0;
+    }
+
+    void o3BumpErrorCount() {
+        o3ErrorCount.incrementAndGet();
+    }
+
+    void o3ClockDownPartitionUpdateCount() {
+        o3PartitionUpdRemaining.decrementAndGet();
+    }
+
     /**
      * Commits O3 data. Hysteresis is optional. When 0 is specified the entire O3 segment is committed.
      *
@@ -2065,6 +2079,7 @@ public class TableWriter implements Closeable {
      * @return <i>true</i> when commit has is a NOOP, e.g. no data has been committed to disk. <i>false</i> otherwise.
      */
     private boolean o3Commit(long hysteresis) {
+        o3RowCount = getO3RowCount();
         o3PartitionRemoveCandidates.clear();
         o3ErrorCount.set(0);
         o3ColumnCounters.clear();
@@ -2077,10 +2092,11 @@ public class TableWriter implements Closeable {
             workerId = 0;
         }
 
+        long o3HysteresisRowCount = 0;
         final int timestampIndex = metadata.getTimestampIndex();
         this.lastPartitionTimestamp = timestampFloorMethod.floor(partitionTimestampHi);
         try {
-            o3MoveUncommitted(timestampIndex);
+            o3RowCount += o3MoveUncommitted(timestampIndex);
 
             // we may need to re-use file descriptors when this partition is the "current" one
             // we cannot open file again due to sharing violation
@@ -2097,6 +2113,7 @@ public class TableWriter implements Closeable {
             // partition actual data "lo" and "hi" (dataLo, dataHi)
             // out of order "lo" and "hi" (indexLo, indexHi)
 
+            final long srcOooMax;
             final long o3TimestampMin = getTimestampIndexValue(sortedTimestampsAddr, 0);
             if (hysteresis > 0) {
                 final long o3max = getTimestampIndexValue(sortedTimestampsAddr, o3RowCount - 1);
@@ -2104,39 +2121,37 @@ public class TableWriter implements Closeable {
                 if (hysteresisThresholdTimestamp >= o3TimestampMin) {
                     long hysteresisThresholdRow = Vect.boundedBinarySearchIndexT(sortedTimestampsAddr, hysteresisThresholdTimestamp, 0, o3RowCount - 1, BinarySearch.SCAN_DOWN);
                     o3HysteresisRowCount = o3RowCount - hysteresisThresholdRow - 1;
-                    o3RowCount = hysteresisThresholdRow + 1;
+                    srcOooMax = hysteresisThresholdRow + 1;
                 } else {
                     o3HysteresisRowCount = o3RowCount;
-                    o3RowCount = 0;
+                    srcOooMax = 0;
                 }
                 LOG.debug().$("o3 hysteresis [table=").$(tableName)
                         .$(", o3max=").$ts(o3max)
                         .$(", hysteresisThresholdTimestamp=").$ts(hysteresisThresholdTimestamp)
                         .$(", o3HysteresisRowCount=").$(o3HysteresisRowCount)
+                        .$(", srcOooMax=").$(srcOooMax)
                         .$(", o3RowCount=").$(o3RowCount)
                         .I$();
             } else {
-                o3HysteresisRowCount = 0;
                 LOG.debug()
                         .$("o3 no hysteresis [table=").$(tableName)
                         .$(", o3RowCount=").$(o3RowCount)
                         .I$();
+                srcOooMax = o3RowCount;
             }
 
-            if (o3RowCount == 0) {
+            if (srcOooMax == 0) {
                 return true;
             }
 
-            // reshuffle all variable length columns
-            o3Sort(sortedTimestampsAddr, timestampIndex, o3RowCount + o3HysteresisRowCount);
-
-            final long srcOooMax = o3RowCount;
+            // reshuffle all columns according to timestamp index
+            o3Sort(sortedTimestampsAddr, timestampIndex, o3RowCount);
             final long o3TimestampMax = getTimestampIndexValue(sortedTimestampsAddr, srcOooMax - 1);
             this.o3DoneLatch.reset();
             this.o3PartitionUpdRemaining.set(0);
             boolean success = true;
             int latchCount = 0;
-
             long srcOoo = 0;
             boolean flattenTimestamp = true;
             try {
@@ -2276,7 +2291,7 @@ public class TableWriter implements Closeable {
                             }
                         } else {
                             if (flattenTimestamp) {
-                                Vect.flattenIndex(sortedTimestampsAddr, o3HysteresisRowCount + o3RowCount);
+                                Vect.flattenIndex(sortedTimestampsAddr, o3RowCount);
                                 flattenTimestamp = false;
                             }
                             o3CommitPartitionAsync(
@@ -2325,7 +2340,7 @@ public class TableWriter implements Closeable {
             }
 
             if (o3HysteresisRowCount > 0) {
-                o3MoveHysteresis(timestampIndex);
+                o3ShiftHysteresisUp(timestampIndex, o3HysteresisRowCount, srcOooMax);
             }
         } finally {
             if (denseIndexers.size() == 0) {
@@ -2338,15 +2353,14 @@ public class TableWriter implements Closeable {
             // We start with ensuring append memory is in ready-to-use state. When max timestamp changes we need to
             // move append memory to new set of files. Otherwise we stay on the same set but advance the append position.
             avoidIndexOnCommit = o3ErrorCount.get() == 0;
-            o3errored = !avoidIndexOnCommit;
             if (o3HysteresisRowCount == 0) {
-                this.o3RowCount = 0;
+                this.o3MasterRef = -1;
                 rowFunction = switchPartitionFunction;
                 row.activeColumns = columns;
                 row.activeNullSetters = nullSetters;
             } else {
-                this.o3RowCount = o3HysteresisRowCount;
-                o3HysteresisRowCount = 0;
+                // adjust O3 master ref so that virtual row count becomes equal to value of "o3HysteresisRowCount"
+                this.o3MasterRef = this.masterRef - o3HysteresisRowCount * 2 + 1;
             }
         }
         if (columns.getQuick(0).isClosed() || partitionTimestampHi < txFile.getMaxTimestamp()) {
@@ -2354,57 +2368,6 @@ public class TableWriter implements Closeable {
         }
         setAppendPosition(txFile.getTransientRowCount(), true);
         return false;
-    }
-
-    void o3BumpErrorCount() {
-        o3ErrorCount.incrementAndGet();
-    }
-
-    void o3ClockDownPartitionUpdateCount() {
-        o3PartitionUpdRemaining.decrementAndGet();
-    }
-
-    private void o3MoveHysteresis0(
-            int columnIndex,
-            final int columnType,
-            long ignore1,
-            long valueCount
-    ) {
-        if (columnIndex > -1) {
-            ContiguousVirtualMemory o3DataMem = o3Columns.get(getPrimaryColumnIndex(columnIndex));
-            ContiguousVirtualMemory o3IndexMem = o3Columns.get(getSecondaryColumnIndex(columnIndex));
-
-            long size;
-            long sourceOffset;
-            final int shl = ColumnType.pow2SizeOf(columnType);
-            if (null == o3IndexMem) {
-                // Fixed size column
-                sourceOffset = o3RowCount << shl;
-                size = valueCount << shl;
-            } else {
-                // Var size column
-                sourceOffset = o3IndexMem.getLong(o3RowCount * 8);
-                size = o3DataMem.getAppendOffset() - sourceOffset;
-                O3Utils.shiftCopyFixedSizeColumnData(
-                        sourceOffset,
-                        o3IndexMem.addressOf(o3RowCount * 8),
-                        0,
-                        valueCount * 8,
-                        o3IndexMem.addressOf(0)
-                );
-                o3IndexMem.jumpTo(valueCount * 8);
-            }
-
-            o3DataMem.jumpTo(size);
-            Vect.memmove(o3DataMem.addressOf(0), o3DataMem.addressOf(sourceOffset), size);
-        } else {
-            // Special case, designated timestamp column
-            // Move values and set index to  0..valueCount
-            final long sourceOffset = o3RowCount * 16;
-            final long mergeMemAddr = o3TimestampMem.addressOf(0);
-            Vect.shiftTimestampIndex(mergeMemAddr + sourceOffset, valueCount, mergeMemAddr);
-            o3TimestampMem.jumpTo(valueCount * 16);
-        }
     }
 
     private void o3CommitPartitionAsync(
@@ -2647,55 +2610,47 @@ public class TableWriter implements Closeable {
         }
     }
 
-    private void o3MoveHysteresis(int timestampIndex) {
-        o3PendingCallbackTasks.clear();
+    private void o3MoveHysteresis0(
+            int columnIndex,
+            final int columnType,
+            long o3HysteresisRowCount,
+            long o3RowCount
+    ) {
+        if (columnIndex > -1) {
+            ContiguousVirtualMemory o3DataMem = o3Columns.get(getPrimaryColumnIndex(columnIndex));
+            ContiguousVirtualMemory o3IndexMem = o3Columns.get(getSecondaryColumnIndex(columnIndex));
 
-        final Sequence pubSeq = this.messageBus.getO3CallbackPubSeq();
-        final RingQueue<O3CallbackTask> queue = this.messageBus.getO3CallbackQueue();
-        final int ignoredAddr = -1;
-
-        o3DoneLatch.reset();
-        int queuedCount = 0;
-        for (int colIndex = 0; colIndex < columnCount; colIndex++) {
-            int columnType = metadata.getColumnType(colIndex);
-            long cursor = pubSeq.next();
-
-            // Pass column index as -1 when it's designated timestamp column to o3 move method
-            int columnIndex = colIndex != timestampIndex ? colIndex : -colIndex - 1;
-            if (cursor > -1) {
-                try {
-                    final O3CallbackTask task = queue.get(cursor);
-                    task.of(
-                            o3DoneLatch,
-                            columnIndex,
-                            columnType,
-                            ignoredAddr,
-                            o3HysteresisRowCount,
-                            this.o3MoveHysteresisRef
-                    );
-
-                    o3PendingCallbackTasks.add(task);
-                } finally {
-                    queuedCount++;
-                    pubSeq.done(cursor);
-                }
+            long size;
+            long sourceOffset;
+            final int shl = ColumnType.pow2SizeOf(columnType);
+            if (null == o3IndexMem) {
+                // Fixed size column
+                sourceOffset = o3RowCount << shl;
+                size = o3HysteresisRowCount << shl;
             } else {
-                o3MoveHysteresis0(columnIndex, columnType, ignoredAddr, o3HysteresisRowCount);
-            }
-        }
-
-        for (int n = o3PendingCallbackTasks.size() - 1; n > -1; n--) {
-            final O3CallbackTask task = o3PendingCallbackTasks.getQuick(n);
-            if (task.tryLock()) {
-                O3CallbackJob.runCallbackWithCol(
-                        task,
-                        -1,
-                        null
+                // Var size column
+                sourceOffset = o3IndexMem.getLong(o3RowCount * 8);
+                size = o3DataMem.getAppendOffset() - sourceOffset;
+                O3Utils.shiftCopyFixedSizeColumnData(
+                        sourceOffset,
+                        o3IndexMem.addressOf(o3RowCount * 8),
+                        0,
+                        o3HysteresisRowCount * 8,
+                        o3IndexMem.addressOf(0)
                 );
+                o3IndexMem.jumpTo(o3HysteresisRowCount * 8);
             }
-        }
 
-        o3DoneLatch.await(queuedCount);
+            o3DataMem.jumpTo(size);
+            Vect.memmove(o3DataMem.addressOf(0), o3DataMem.addressOf(sourceOffset), size);
+        } else {
+            // Special case, designated timestamp column
+            // Move values and set index to  0..o3HysteresisRowCount
+            final long sourceOffset = o3RowCount * 16;
+            final long mergeMemAddr = o3TimestampMem.addressOf(0);
+            Vect.shiftTimestampIndex(mergeMemAddr + sourceOffset, o3HysteresisRowCount, mergeMemAddr);
+            o3TimestampMem.jumpTo(o3HysteresisRowCount * 16);
+        }
     }
 
     private void o3MoveUncommitted0(
@@ -2758,7 +2713,7 @@ public class TableWriter implements Closeable {
         }
     }
 
-    private void o3MoveUncommitted(final int timestampIndex) {
+    private long o3MoveUncommitted(final int timestampIndex) {
         final long committedRowCount = txFile.getCommittedFixedRowCount() + txFile.getCommittedTransientRowCount();
         final long rowsAdded = txFile.getRowCount() - committedRowCount;
         final long transientRowsAdded = Math.min(txFile.getTransientRowCount(), rowsAdded);
@@ -2770,6 +2725,7 @@ public class TableWriter implements Closeable {
                     .I$();
             o3MoveUncommitted0(timestampIndex, transientRowsAdded, committedTransientRowCount);
         }
+        return transientRowsAdded;
     }
 
     private void o3MoveUncommitted0(int timestampIndex, long transientRowsAdded, long committedTransientRowCount) {
@@ -2822,7 +2778,6 @@ public class TableWriter implements Closeable {
 
         o3DoneLatch.await(queuedCount);
         txFile.resetToLastPartition(committedTransientRowCount);
-        o3RowCount += transientRowsAdded;
     }
 
     private void o3Sort(long mergedTimestamps, int timestampIndex, long rowCount) {
@@ -3142,8 +3097,58 @@ public class TableWriter implements Closeable {
         mem2.replacePage(src, srcSize);
     }
 
+    private void o3ShiftHysteresisUp(int timestampIndex, long o3HysteresisRowCount, long o3RowCount) {
+        o3PendingCallbackTasks.clear();
+
+        final Sequence pubSeq = this.messageBus.getO3CallbackPubSeq();
+        final RingQueue<O3CallbackTask> queue = this.messageBus.getO3CallbackQueue();
+
+        o3DoneLatch.reset();
+        int queuedCount = 0;
+        for (int colIndex = 0; colIndex < columnCount; colIndex++) {
+            int columnType = metadata.getColumnType(colIndex);
+            long cursor = pubSeq.next();
+
+            // Pass column index as -1 when it's designated timestamp column to o3 move method
+            int columnIndex = colIndex != timestampIndex ? colIndex : -colIndex - 1;
+            if (cursor > -1) {
+                try {
+                    final O3CallbackTask task = queue.get(cursor);
+                    task.of(
+                            o3DoneLatch,
+                            columnIndex,
+                            columnType,
+                            o3HysteresisRowCount,
+                            o3RowCount,
+                            this.o3MoveHysteresisRef
+                    );
+
+                    o3PendingCallbackTasks.add(task);
+                } finally {
+                    queuedCount++;
+                    pubSeq.done(cursor);
+                }
+            } else {
+                o3MoveHysteresis0(columnIndex, columnType, o3HysteresisRowCount, o3RowCount);
+            }
+        }
+
+        for (int n = o3PendingCallbackTasks.size() - 1; n > -1; n--) {
+            final O3CallbackTask task = o3PendingCallbackTasks.getQuick(n);
+            if (task.tryLock()) {
+                O3CallbackJob.runCallbackWithCol(
+                        task,
+                        -1,
+                        null
+                );
+            }
+        }
+
+        o3DoneLatch.await(queuedCount);
+    }
+
     private void o3TimestampSetter(long timestamp) {
-        o3TimestampMem.putLong128(timestamp, o3RowCount++);
+        o3TimestampMem.putLong128(timestamp, getO3RowCount());
     }
 
     private void o3SortVarColumn(
@@ -4298,10 +4303,9 @@ public class TableWriter implements Closeable {
                     LOG.info().$("switched to o3 [table=").utf8(tableName).$(']').$();
                     txFile.beginPartitionSizeUpdate();
                     openMergePartition();
-                    o3RowCount = 0;
+                    o3MasterRef = masterRef;
                     o3TimestampSetter(timestamp);
                     rowFunction = o3RowFunction;
-                    o3errored = false;
                     return row;
                 }
                 // we are failing a new row, there will be pending rollback, we have to increment row count
