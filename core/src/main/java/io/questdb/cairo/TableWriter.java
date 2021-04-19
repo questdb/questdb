@@ -1315,7 +1315,7 @@ public class TableWriter implements Closeable {
         for (int columnIndex = 0, size = metadata.getColumnCount(); columnIndex < size; columnIndex++) {
             try {
                 int columnType = metadata.getColumnType(columnIndex);
-                var columnName = metadata.getColumnName(columnIndex);
+                final CharSequence columnName = metadata.getColumnName(columnIndex);
                 path.concat(columnName);
 
                 switch (columnType) {

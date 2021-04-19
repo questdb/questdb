@@ -336,20 +336,22 @@ JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_exists0
     return access((const char *) lpsz, F_OK) == 0;
 }
 
+#ifdef __APPLE__
+
 void *openShm0(const char *name, size_t len, int64_t *hMapping) {
     // create shm memory in exclusive mode, make sure
-    int shm_fd = shm_open(name, O_CREAT | O_RDWR, 0666);
+    int shm_fd = shm_open(name, O_CREAT | O_RDWR | O_EXCL, 0666);
     if (shm_fd == -1) {
         // if the memory exist, open in non-exclusive mode and
         // not truncate
-//        if (errno == EEXIST) {
-//            shm_fd = shm_open(name, O_CREAT | O_RDWR, 0666);
-//            if (shm_fd == -1) {
-//                return NULL;
-//            }
-//        } else {
+        if (errno == EEXIST) {
+            shm_fd = shm_open(name, O_CREAT | O_RDWR, 0666);
+            if (shm_fd == -1) {
+                return NULL;
+            }
+        } else {
             return NULL;
-//        }
+        }
     } else {
         if (ftruncate(shm_fd, len) != 0) {
             close(shm_fd);
@@ -360,9 +362,39 @@ void *openShm0(const char *name, size_t len, int64_t *hMapping) {
     void *p = mmap(NULL, len, PROT_WRITE | PROT_READ, MAP_SHARED, shm_fd, 0);
     if (p != NULL && ((jlong) p) != -1) {
         *hMapping = shm_fd;
+    } else {
+        close(shm_fd);
     }
     return p;
 }
+
+//jint closeShm0(const char *name, void *mem, size_t len, int64_t hMapping) {
+//    close((int) hMapping);
+//    munmap(mem, len);
+//    return shm_unlink(name);
+//}
+
+#else
+
+void *openShm0(const char *name, size_t len, int64_t *hMapping) {
+    // create shm memory in exclusive mode, make sure
+    int shm_fd = shm_open(name, O_CREAT | O_RDWR, 0666);
+    if (shm_fd == -1) {
+        return NULL;
+    }
+    if (ftruncate(shm_fd, len) != 0) {
+        close(shm_fd);
+        return NULL;
+    }
+
+    void *p = mmap(NULL, len, PROT_WRITE | PROT_READ, MAP_SHARED, shm_fd, 0);
+    if (p != NULL && ((jlong) p) != -1) {
+        *hMapping = shm_fd;
+    }
+    return p;
+}
+
+#endif
 
 jint closeShm0(const char *name, void *mem, size_t len, int64_t hMapping) {
     munmap(mem, len);

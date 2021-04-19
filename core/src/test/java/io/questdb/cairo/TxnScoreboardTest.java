@@ -101,9 +101,10 @@ public class TxnScoreboardTest {
     }
 
     @Test
-    @Ignore
     public void testNameLimit() {
-        if (Os.type != Os.OSX) {
+        // on linux and OSX we use table ID as shm name
+        // table name is not relevant there
+        if (Os.type == Os.WINDOWS) {
             try (final Path shmPath = new Path()) {
                 StringSink name = new StringSink();
                 for (int i = 0; i < 255; i++) {
@@ -146,6 +147,7 @@ public class TxnScoreboardTest {
 
                     barrier.await();
                     long val;
+                    //noinspection StatementWithEmptyBody
                     while ((val = ref.get()) == 0) ;
                     TxnScoreboard.close(val);
                     haltLatch.await();
