@@ -43,7 +43,7 @@ import static io.questdb.cairo.TxnScoreboard.*;
 public class TxnScoreboardTest {
 
     @BeforeClass
-    public static void setUp() throws Exception {
+    public static void setUp() {
         Os.init();
     }
 
@@ -51,9 +51,9 @@ public class TxnScoreboardTest {
     public void testLimits() {
         try (final Path shmPath = new Path()) {
             int expect = 4096;
-            long p2 = TxnScoreboard.create(shmPath, 4, 5, "hello");
+            long p2 = TxnScoreboard.create(shmPath, 4, 5, "hello", 0);
             try {
-                long p1 = TxnScoreboard.create(shmPath, 4, 5, "hello");
+                long p1 = TxnScoreboard.create(shmPath, 4, 5, "hello", 0);
                 try {
                     init(p1, 125);
                     // we should successfully acquire expected number of entries
@@ -102,13 +102,15 @@ public class TxnScoreboardTest {
 
     @Test
     public void testNameLimit() {
-        try (final Path shmPath = new Path()) {
-            StringSink name = new StringSink();
-            for (int i = 0; i < 255; i++) {
-                name.put('a');
+        if (Os.type != Os.OSX) {
+            try (final Path shmPath = new Path()) {
+                StringSink name = new StringSink();
+                for (int i = 0; i < 255; i++) {
+                    name.put('a');
+                }
+                final long p = TxnScoreboard.create(shmPath, 4, 5, name, 1);
+                Assert.assertEquals(0, p);
             }
-            final long p = TxnScoreboard.create(shmPath, 4, 5, name);
-            Assert.assertEquals(0, p);
         }
     }
 
@@ -125,7 +127,7 @@ public class TxnScoreboardTest {
                     new Thread(() -> {
                         try {
                             barrier.await();
-                            long p = TxnScoreboard.create(path, 0, 0, "test");
+                            long p = TxnScoreboard.create(path, 0, 0, "test", 0);
                             ref.set(p);
                             long val = TxnScoreboard.newRef(p);
                             if (val != 0) {
@@ -150,7 +152,7 @@ public class TxnScoreboardTest {
     @Test
     public void testUtf8Name() {
         try (final Path shmPath = new Path()) {
-            long p = TxnScoreboard.create(shmPath, 4, 5, "бункера");
+            long p = TxnScoreboard.create(shmPath, 4, 5, "бункера", 0);
             Assert.assertNotEquals(0, p);
             TxnScoreboard.close(p);
         }
@@ -159,9 +161,11 @@ public class TxnScoreboardTest {
     @Test
     public void testVanilla() {
         try (final Path shmPath = new Path()) {
-            long p2 = TxnScoreboard.create(shmPath, 4, 5, "tab1");
+            long p2 = TxnScoreboard.create(shmPath, 4, 5, "tab1", 0);
+            Assert.assertNotEquals(0, p2);
             try {
-                long p1 = TxnScoreboard.create(shmPath, 4, 5, "tab1");
+                long p1 = TxnScoreboard.create(shmPath, 4, 5, "tab1", 0);
+                Assert.assertNotEquals(0, p1);
                 try {
                     init(p1, 55);
                     Assert.assertTrue(acquire(p1, 67));

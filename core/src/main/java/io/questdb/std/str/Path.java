@@ -233,6 +233,12 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
     }
 
     @Override
+    public Path put(int value) {
+        super.put(value);
+        return this;
+    }
+
+    @Override
     protected void putUtf8Special(char c) {
         if (c == '/' && Os.type == Os.WINDOWS) {
             put('\\');

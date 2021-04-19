@@ -42,27 +42,45 @@ public class TxnScoreboard {
     }
 
     public static void close(long pTxnScoreboard) {
-        long x;
-        if ((x = close0(pTxnScoreboard)) == 0) {
-            LOG.info().$("close [p=").$(pTxnScoreboard).$(']').$();
-            Unsafe.recordMemAlloc(-getScoreboardSize());
-        } else {
-            LOG.info().$("close called [p=").$(pTxnScoreboard).$(", remaining=").$(x)
-                    .$(']').$();
+        if (pTxnScoreboard != 0) {
+            long x;
+            LOG.debug().$("closing [p=").$(pTxnScoreboard).$(']').$();
+            if ((x = close0(pTxnScoreboard)) == 0) {
+                LOG.debug().$("closed [p=").$(pTxnScoreboard).$(']').$();
+                Unsafe.recordMemAlloc(-getScoreboardSize());
+            } else {
+                LOG.debug().$("close called [p=").$(pTxnScoreboard).$(", remaining=").$(x)
+                        .$(']').$();
+            }
         }
     }
 
-    public static long create(Path shmPath, long databaseIdLo, long databaseIdHi, CharSequence tableName) {
-        setShmName(shmPath, databaseIdLo, databaseIdHi, tableName);
+    public static long create(
+            Path shmPath,
+            long databaseIdLo,
+            long databaseIdHi,
+            CharSequence tableName,
+            int tableId
+    ) {
+        setShmName(shmPath, databaseIdLo, databaseIdHi, tableName, tableId);
         Unsafe.recordMemAlloc(getScoreboardSize());
         final long p = create0(shmPath.address());
-        LOG.info().$("open [name=").$(tableName).$(", p=").$(p).$(']').$();
-        return p;
+        if (p != 0) {
+            LOG.info()
+                    .$("open [table=").$(tableName)
+                    .$(", p=").$(p)
+                    .$(", shm=").$(shmPath)
+                    .$(']').$();
+            return p;
+        }
+        throw CairoException.instance(Os.errno()).put("could not open scoreboard [table=").put(tableName)
+                .put(", shm=").put(shmPath)
+                .put(']');
     }
 
     public static long newRef(long pTxnScoreboard) {
         if (pTxnScoreboard > 0) {
-            LOG.info().$("new ref [p=").$(pTxnScoreboard).$(']').$();
+            LOG.debug().$("new ref [p=").$(pTxnScoreboard).$(']').$();
             return newRef0(pTxnScoreboard);
         }
         return pTxnScoreboard;
@@ -74,13 +92,22 @@ public class TxnScoreboard {
         release0(pTxnScoreboard, txn);
     }
 
-    private static void setShmName(Path shmPath, long databaseIdLo, long databaseIdHi, CharSequence name) {
+    private static void setShmName(
+            Path shmPath,
+            long databaseIdLo,
+            long databaseIdHi,
+            CharSequence tableName,
+            int tableId
+    ) {
         if (Os.type == Os.WINDOWS) {
             shmPath.of("Local\\");
-        } else {
+            shmPath.put(databaseIdLo).put('-').put(databaseIdHi).put('-').put(tableName).$();
+        } else if (Os.type != Os.OSX) {
             shmPath.of("/");
+            shmPath.put(databaseIdLo).put('-').put(databaseIdHi).put('-').put(tableName).$();
+        } else {
+            shmPath.of("").put(databaseIdLo).put('-').put(tableId).$();
         }
-        shmPath.put(databaseIdLo).put('-').put(databaseIdHi).put('-').put(name).$();
     }
 
     private native static boolean acquire0(long pTxnScoreboard, long txn);
@@ -101,7 +128,7 @@ public class TxnScoreboard {
 
     private static native long getScoreboardSize();
 
-    static boolean isTxnUnused(long nameTxn, long readerTxn, long countAtTxn, long txnScoreboard) {
+    static boolean isTxnUnused(long nameTxn, long readerTxn, long txnScoreboard) {
         return
                 // readers had last partition open but they are inactive
                 // (e.g. they are guaranteed to reload when they go active

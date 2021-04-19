@@ -192,7 +192,6 @@ public class TableWriter implements Closeable {
         this.fileOperationRetryCount = configuration.getFileOperationRetryCount();
         this.tableName = Chars.toString(tableName);
         this.path = new Path();
-        this.txnScoreboard = TxnScoreboard.create(this.path, configuration.getDatabaseIdLo(), configuration.getDatabaseIdHi(), this.tableName);
         this.path.of(root).concat(tableName);
         this.other = new Path().of(root).concat(tableName);
         this.rootLen = path.length();
@@ -219,6 +218,17 @@ public class TableWriter implements Closeable {
             this.metadata = new TableWriterMetadata(ff, metaMem);
             this.partitionBy = metaMem.getInt(META_OFFSET_PARTITION_BY);
             this.txFile = new TxWriter(ff, path, partitionBy);
+
+            this.txnScoreboard = TxnScoreboard.create(
+                    this.path,
+                    configuration.getDatabaseIdLo(),
+                    configuration.getDatabaseIdHi(),
+                    this.tableName,
+                    this.metadata.getId()
+            );
+
+            // have to reset path
+            this.path.of(root).concat(tableName);
 
             // we have to do truncate repair at this stage of constructor
             // because this operation requires metadata
@@ -2945,7 +2955,7 @@ public class TableWriter implements Closeable {
         try {
             final long readerTxn = TxnScoreboard.getMin(txnScoreboard);
             final long readerTxnCount = TxnScoreboard.getCount(txnScoreboard, readerTxn);
-            if (TxnScoreboard.isTxnUnused(txFile.getTxn() - 1, readerTxn, readerTxnCount, txnScoreboard)) {
+            if (TxnScoreboard.isTxnUnused(txFile.getTxn() - 1, readerTxn, txnScoreboard)) {
                 for (int i = 0, n = o3PartitionRemoveCandidates.size(); i < n; i += 2) {
                     final long timestamp = o3PartitionRemoveCandidates.getQuick(i);
                     final long txn = o3PartitionRemoveCandidates.getQuick(i + 1);

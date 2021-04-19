@@ -25,7 +25,6 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.vm.MappedReadOnlyMemory;
-import io.questdb.cairo.vm.ReadOnlyVirtualMemory;
 import io.questdb.cairo.vm.VmUtils;
 import io.questdb.std.CharSequenceIntHashMap;
 import io.questdb.std.Chars;
@@ -35,11 +34,13 @@ import io.questdb.std.ObjList;
 public class TableWriterMetadata extends BaseRecordMetadata {
     private int symbolMapCount;
     private int version;
+    private final int id;
 
     public TableWriterMetadata(FilesFacade ff, MappedReadOnlyMemory metaMem) {
         this.columnCount = metaMem.getInt(TableUtils.META_OFFSET_COUNT);
         this.columnNameIndexMap = new CharSequenceIntHashMap(columnCount);
         this.version = metaMem.getInt(TableUtils.META_OFFSET_VERSION);
+        this.id = metaMem.getInt(TableUtils.META_OFFSET_TABLE_ID);
         TableUtils.validate(ff, metaMem, columnNameIndexMap);
         this.timestampIndex = metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX);
         this.columnMetadata = new ObjList<>(this.columnCount);
@@ -127,5 +128,9 @@ public class TableWriterMetadata extends BaseRecordMetadata {
 
     public void setTableVersion() {
         version = ColumnType.VERSION;
+    }
+
+    public int getId() {
+        return id;
     }
 }
