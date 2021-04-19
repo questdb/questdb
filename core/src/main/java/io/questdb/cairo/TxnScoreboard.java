@@ -104,7 +104,7 @@ public class TxnScoreboard {
             shmPath.put(databaseIdLo).put('-').put(databaseIdHi).put('-').put(tableName).$();
         } else if (Os.type != Os.OSX) {
             shmPath.of("/");
-            shmPath.put(databaseIdLo).put('-').put(databaseIdHi).put('-').put(tableName).$();
+            shmPath.put(databaseIdLo).put('-').put(databaseIdHi).put('-').put(tableId).$();
         } else {
             shmPath.of("").put(databaseIdLo).put('-').put(tableId).$();
         }
