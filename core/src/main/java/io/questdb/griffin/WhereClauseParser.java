@@ -48,6 +48,7 @@ final class WhereClauseParser implements Mutable {
     private static final int INTRINSIC_OP_EQUAL = 6;
     private static final int INTRINSIC_OP_NOT_EQ = 7;
     private static final int INTRINSIC_OP_NOT = 8;
+    private static final int INTRINSIC_OP_BETWEEN = 9;
     private static final CharSequenceIntHashMap intrinsicOps = new CharSequenceIntHashMap();
     private final ArrayDeque<ExpressionNode> stack = new ArrayDeque<>();
     private final ObjList<ExpressionNode> keyNodes = new ObjList<>();
@@ -288,6 +289,24 @@ final class WhereClauseParser implements Mutable {
         }
     }
 
+    private boolean analyzeBetween(AliasTranslator translator, IntrinsicModel model, ExpressionNode node, RecordMetadata metadata) throws SqlException {
+
+        if (node.paramCount != 3) {
+            throw SqlException.$(node.position, "Too few arguments for 'between'");
+        }
+
+        ExpressionNode col = node.args.getLast();
+        if (col.type != ExpressionNode.LITERAL) {
+            return false;
+        }
+        CharSequence column = translator.translateAlias(col.token);
+
+        if (metadata.getColumnIndexQuiet(column) == -1) {
+            throw SqlException.invalidColumn(col.position, col.token);
+        }
+        return analyzeBetweenInternal(model, col, node, false);
+    }
+
     private boolean analyzeIn(AliasTranslator translator, IntrinsicModel model, ExpressionNode node, RecordMetadata metadata) throws SqlException {
 
         if (node.paramCount < 2) {
@@ -310,13 +329,45 @@ final class WhereClauseParser implements Mutable {
                 || analyzeInLambda(model, column, metadata, node);
     }
 
-    private boolean analyzeInInterval(IntrinsicModel model, ExpressionNode col, ExpressionNode in, boolean isNegated) throws SqlException {
+    private boolean analyzeBetweenInternal(IntrinsicModel model, ExpressionNode col, ExpressionNode in, boolean isNegated) throws SqlException {
         if (!isTimestamp(col)) {
             return false;
         }
 
-        if (in.paramCount > 3) {
-            throw SqlException.$(in.args.getQuick(0).position, "Too many args");
+        ExpressionNode lo = in.args.getQuick(1);
+        ExpressionNode hi = in.args.getQuick(0);
+
+        if (lo.type == ExpressionNode.CONSTANT && hi.type == ExpressionNode.CONSTANT) {
+            long val1 = parseTokenAsTimestamp(lo);
+            long val2 = parseTokenAsTimestamp(hi);
+            long loMillis = Math.min(val1, val2);
+            long hiMillis = Math.max(val1, val2);
+
+            if (isNegated) {
+                model.subtractIntervals(loMillis, hiMillis);
+            } else {
+                model.intersectIntervals(loMillis, hiMillis);
+            }
+            in.intrinsicValue = IntrinsicModel.TRUE;
+            return true;
+        }
+
+        return false;
+    }
+
+    private long parseTokenAsTimestamp(ExpressionNode lo) throws SqlException {
+        long loMillis;
+        try {
+            loMillis = IntervalUtils.parseFloorPartialDate(lo.token, 1, lo.token.length() - 1);
+        } catch (NumericException ignore) {
+            throw SqlException.invalidDate(lo.position);
+        }
+        return loMillis;
+    }
+
+    private boolean analyzeInInterval(IntrinsicModel model, ExpressionNode col, ExpressionNode in, boolean isNegated) throws SqlException {
+        if (!isTimestamp(col)) {
+            return false;
         }
 
         if (in.paramCount < 2) {
@@ -324,40 +375,38 @@ final class WhereClauseParser implements Mutable {
         }
 
         if (in.paramCount == 2) {
+            // Single value ts in '2010-01-01' - treat string literal as an interval, not single Timestamp point
             ExpressionNode lo = in.rhs;
             if (lo.type == ExpressionNode.CONSTANT) {
-                model.intersectIntervals(lo.token, 1, lo.token.length() - 1, lo.position);
+                if (!isNegated) {
+                    model.intersectIntervals(lo.token, 1, lo.token.length() - 1, lo.position);
+                } else {
+                    model.subtractIntervals(lo.token, 1, lo.token.length() - 1, lo.position);
+                }
                 in.intrinsicValue = IntrinsicModel.TRUE;
                 return true;
             }
         } else {
-            ExpressionNode lo = in.args.getQuick(1);
-            ExpressionNode hi = in.args.getQuick(0);
-
-            if (lo.type == ExpressionNode.CONSTANT && hi.type == ExpressionNode.CONSTANT) {
-                long loMillis;
-                long hiMillis;
-
-                try {
-                    loMillis = TimestampFormatUtils.tryParse(lo.token, 1, lo.token.length() - 1);
-                } catch (NumericException ignore) {
-                    throw SqlException.invalidDate(lo.position);
+            // Multiple values treat as multiple Timestamp points
+            int n = in.args.size() - 1;
+            for (int i = 0; i < n; i++) {
+                ExpressionNode inListItem = in.args.getQuick(i);
+                if (inListItem.type != ExpressionNode.CONSTANT) {
+                    return false;
                 }
-
-                try {
-                    hiMillis = TimestampFormatUtils.tryParse(hi.token, 1, hi.token.length() - 1);
-                } catch (NumericException ignore) {
-                    throw SqlException.invalidDate(hi.position);
-                }
-
-                if (isNegated) {
-                    model.subtractIntervals(loMillis, hiMillis);
-                } else {
-                    model.intersectIntervals(loMillis, hiMillis);
-                }
-                in.intrinsicValue = IntrinsicModel.TRUE;
-                return true;
             }
+
+            for (int i = 0; i < n; i++) {
+                ExpressionNode inListItem = in.args.getQuick(i);
+                long ts = parseTokenAsTimestamp(inListItem);
+                if (!isNegated) {
+                    model.intersectIntervals(ts, ts);
+                } else {
+                    model.subtractIntervals(ts, ts);
+                }
+            }
+            in.intrinsicValue = IntrinsicModel.TRUE;
+            return true;
         }
         return false;
     }
@@ -666,6 +715,33 @@ final class WhereClauseParser implements Mutable {
         return ok;
     }
 
+    private boolean analyzeNotBetween(AliasTranslator translator, IntrinsicModel model, ExpressionNode notNode, RecordMetadata m) throws SqlException {
+
+        ExpressionNode node = notNode.rhs;
+
+        if (node.paramCount != 3) {
+            throw SqlException.$(node.position, "Too few arguments for 'between'");
+        }
+        ExpressionNode col = node.args.getLast();
+        if (col.type != ExpressionNode.LITERAL) {
+            throw SqlException.$(col.position, "Column name expected");
+        }
+        CharSequence column = translator.translateAlias(col.token);
+        if (m.getColumnIndexQuiet(column) == -1) {
+            throw SqlException.invalidColumn(col.position, col.token);
+        }
+
+        boolean ok = analyzeBetweenInternal(model, col, node, true);
+        if (ok) {
+            notNode.intrinsicValue = IntrinsicModel.TRUE;
+        } else {
+            analyzeNotListOfValues(model, column, m, node, notNode);
+        }
+
+        return ok;
+    }
+
+
     private void analyzeNotListOfValues(IntrinsicModel model, CharSequence columnName, RecordMetadata meta, ExpressionNode node, ExpressionNode notNode) {
         final int columnIndex = meta.getColumnIndex(columnName);
         boolean newColumn = true;
@@ -892,7 +968,10 @@ final class WhereClauseParser implements Mutable {
             case INTRINSIC_OP_NOT_EQ:
                 return analyzeNotEquals(translator, model, node, m);
             case INTRINSIC_OP_NOT:
-                return isInKeyword(node.rhs.token) && analyzeNotIn(translator, model, node, m);
+                return (isInKeyword(node.rhs.token) && analyzeNotIn(translator, model, node, m))
+                        || (isBetweenKeyword(node.rhs.token) && analyzeNotBetween(translator, model, node, m));
+            case INTRINSIC_OP_BETWEEN:
+                return analyzeBetween(translator, model, node, m);
             default:
                 return false;
         }
@@ -984,6 +1063,6 @@ final class WhereClauseParser implements Mutable {
         intrinsicOps.put("=", INTRINSIC_OP_EQUAL);
         intrinsicOps.put("!=", INTRINSIC_OP_NOT_EQ);
         intrinsicOps.put("not", INTRINSIC_OP_NOT);
-        intrinsicOps.put("between", INTRINSIC_OP_IN);
+        intrinsicOps.put("between", INTRINSIC_OP_BETWEEN);
     }
 }

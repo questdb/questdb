@@ -762,7 +762,7 @@ public final class IntervalUtils {
         }
     }
 
-    public static void parseTimestampIntervalEx(CharSequence seq, int lo, int lim, int position, LongList out, short operation) throws SqlException {
+    public static void parseSingleTimestamp(CharSequence seq, int lo, int lim, int position, LongList out, short operation) throws SqlException {
         try {
             long millis = parseFloorPartialDate(seq, lo, lim);
             addHiLoInterval(millis, millis, operation, out);

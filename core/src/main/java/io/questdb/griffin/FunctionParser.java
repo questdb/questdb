@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.*;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.griffin.engine.functions.bind.IndexedParameterLinkFunction;
 import io.questdb.griffin.engine.functions.bind.NamedParameterLinkFunction;
+import io.questdb.griffin.engine.functions.cast.CastStrToTimestampFunctionFactory;
 import io.questdb.griffin.engine.functions.columns.*;
 import io.questdb.griffin.engine.functions.constants.*;
 import io.questdb.griffin.model.ExpressionNode;
@@ -661,8 +662,12 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
             final Function arg = args.getQuick(k);
             final int sigArgType = FunctionFactoryDescriptor.toType(candidateDescriptor.getArgTypeMask(k));
             if (arg.getType() == ColumnType.STRING && sigArgType == ColumnType.TIMESTAMP) {
+                int position = arg.getPosition();
                 if (arg.isConstant()) {
-                    args.set(k, convertToTimestamp(arg.getStr(null)));
+                    long timestamp = convertToTimestamp(arg.getStr(null), position);
+                    args.set(k, new TimestampConstant(position, timestamp));
+                } else {
+                    args.set(k, new CastStrToTimestampFunctionFactory.Func(position, arg));
                 }
             }
         }
@@ -671,8 +676,12 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
         return checkAndCreateFunction(candidate, args, node.position, configuration);
     }
 
-    private Object convertToTimestamp(CharSequence str) throws SqlException {
-        return null;
+    private long convertToTimestamp(CharSequence str, int position) throws SqlException {
+        try {
+            return IntervalUtils.parseFloorPartialDate(str);
+        } catch (NumericException e) {
+            throw SqlException.invalidDate(position);
+        }
     }
 
     private Function functionToConstant(Function function) {

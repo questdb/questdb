@@ -50,6 +50,11 @@ public interface TernaryFunction extends Function {
     }
 
     @Override
+    default boolean isRuntimeConstant() {
+        return getLeft().isRuntimeConstant() && getCenter().isRuntimeConstant() && getRight().isRuntimeConstant();
+    }
+
+    @Override
     default void toTop() {
         getLeft().toTop();
         getCenter().toTop();

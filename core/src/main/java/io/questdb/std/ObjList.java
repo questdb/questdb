@@ -251,6 +251,11 @@ public class ObjList<T> implements Mutable, Sinkable {
         Arrays.fill(buffer, from, Math.min(buffer.length, to), value);
     }
 
+    public void set(int index, T value) {
+        buffer[index] = value;
+    }
+
+
     public void setAll(int capacity, T value) {
         ensureCapacity(capacity);
         pos = capacity;

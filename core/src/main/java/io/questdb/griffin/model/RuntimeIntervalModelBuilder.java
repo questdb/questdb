@@ -99,6 +99,21 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         intervalApplied = true;
     }
 
+    public void union(long lo, long hi) {
+        if (isEmptySet()) return;
+        if (dynamicRangeList.size() == 0) {
+            staticIntervals.add(lo);
+            staticIntervals.add(hi);
+            if (intervalApplied) {
+                IntervalUtils.intersectInplace(staticIntervals, staticIntervals.size() - 2);
+            }
+        } else {
+            IntervalUtils.addHiLoInterval(lo, hi, IntervalOperation.UNION, staticIntervals);
+            dynamicRangeList.add(null);
+        }
+        intervalApplied = true;
+    }
+
     public void intersectEmpty() {
         clear();
         intervalApplied = true;
@@ -115,7 +130,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
     public void intersectTimestamp(CharSequence seq, int lo, int lim, int position) throws SqlException {
         if (isEmptySet()) return;
         int size = staticIntervals.size();
-        IntervalUtils.parseTimestampIntervalEx(seq, lo, lim, position, staticIntervals, IntervalOperation.INTERSECT);
+        IntervalUtils.parseSingleTimestamp(seq, lo, lim, position, staticIntervals, IntervalOperation.INTERSECT);
         if (dynamicRangeList.size() == 0) {
             IntervalUtils.applyLastEncodedIntervalEx(staticIntervals);
             if (intervalApplied) {
