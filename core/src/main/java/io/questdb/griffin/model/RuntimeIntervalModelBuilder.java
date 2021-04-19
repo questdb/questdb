@@ -105,7 +105,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
             staticIntervals.add(lo);
             staticIntervals.add(hi);
             if (intervalApplied) {
-                IntervalUtils.intersectInplace(staticIntervals, staticIntervals.size() - 2);
+                IntervalUtils.unionInplace(staticIntervals, staticIntervals.size() - 2);
             }
         } else {
             IntervalUtils.addHiLoInterval(lo, hi, IntervalOperation.UNION, staticIntervals);

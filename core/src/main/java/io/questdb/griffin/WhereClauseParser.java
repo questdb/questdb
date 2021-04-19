@@ -400,9 +400,9 @@ final class WhereClauseParser implements Mutable {
                 ExpressionNode inListItem = in.args.getQuick(i);
                 long ts = parseTokenAsTimestamp(inListItem);
                 if (!isNegated) {
-                    model.intersectIntervals(ts, ts);
+                    model.unionIntervals(ts, ts);
                 } else {
-                    model.subtractIntervals(ts, ts);
+                    model.unionIntervals(ts, ts);
                 }
             }
             in.intrinsicValue = IntrinsicModel.TRUE;

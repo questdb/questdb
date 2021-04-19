@@ -440,6 +440,94 @@ public final class IntervalUtils {
     }
 
     /**
+     * Unions two lists of intervals compacted in one list in place.
+     * Intervals to be chronologically ordered and result list will be ordered as well.
+     * <p>
+     * Treat a as 2 lists,
+     * a: first from 0 to divider
+     * b: from divider to the end of list
+     *
+     * @param intervals 2 lists of intervals concatenated in 1
+     */
+    static void unionInplace(LongList intervals, int dividerIndex) {
+        final int sizeA = dividerIndex;
+        final int sizeB = sizeA + (intervals.size() - dividerIndex);
+        int aLower = 0;
+
+        int intervalB = sizeA;
+        int writePoint = 0;
+
+        int aUpperSize = sizeB;
+        int aUpper = sizeB;
+        long aLo = 0, aHi = 0, bLo = 0, bHi = 0;
+
+        while (aLower < sizeA || aUpper < aUpperSize || intervalB < sizeB) {
+
+            // This tries to get either interval from A or from B
+            // where it's available
+            // and union with last interval in writePoint position
+            boolean hasA = aLower < sizeA || aUpper < aUpperSize;
+            if (hasA) {
+                int intervalA = aUpper < aUpperSize ? aUpper : aLower;
+                aLo = intervals.getQuick(intervalA);
+                aHi = intervals.getQuick(intervalA + 1);
+            }
+
+            boolean hasB = intervalB < sizeB;
+            if (hasB) {
+                bLo = intervals.getQuick(intervalB);
+                bHi = intervals.getQuick(intervalB + 1);
+            }
+
+            long nextLo, nextHi;
+
+            if (hasA) {
+                if (hasB && bLo < aLo) {
+                    nextLo = bLo;
+                    nextHi = bHi;
+                    intervalB += 2;
+                } else {
+                    nextLo = aLo;
+                    nextHi = aHi;
+                    if (aUpper < aUpperSize) {
+                        aUpper += 2;
+                    } else {
+                        aLower += 2;
+                    }
+                }
+            } else {
+                nextLo = bLo;
+                nextHi = bHi;
+                intervalB += 2;
+            }
+
+            if (writePoint > 0) {
+                long prevHi = intervals.getQuick(writePoint - 1);
+                if (nextLo <= prevHi) {
+                    // Intersection with previously safed interval
+                    intervals.setQuick(writePoint - 1, Math.max(nextHi, prevHi));
+                    continue;
+                }
+            }
+
+            // new interval to save
+            assert writePoint <= aLower || writePoint >= sizeA;
+            if (writePoint == aLower && aLower < sizeA) {
+                // We cannot keep A position, it will be overwritten
+                // Copy a point to A area instead
+                intervals.add(intervals.getQuick(writePoint));
+                intervals.add(intervals.getQuick(writePoint + 1));
+                aUpperSize = intervals.size();
+                aLower += 2;
+            }
+            intervals.setQuick(writePoint++, nextLo);
+            intervals.setQuick(writePoint++, nextHi);
+        }
+
+        intervals.setPos(writePoint);
+    }
+
+    /**
      * Intersects two lists of intervals compacted in one list in place.
      * Intervals to be chronologically ordered and result list will be ordered as well.
      * <p>
