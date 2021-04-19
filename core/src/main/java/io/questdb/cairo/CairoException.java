@@ -58,7 +58,7 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
 
     @Override
     public String getMessage() {
-        return "[" + errno + "] " + message.toString();
+        return "[" + errno + "] " + message;
     }
 
     @Override

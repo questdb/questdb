@@ -98,8 +98,6 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractGriff
                 lonDegree += 1;
                 ts += 10_000_000_000L;
             }
-//            r = w.newRow();
-//            r.append();
             w.commit();
         }
         try (RecordCursorFactory factory = compiler.compile("select haversine_dist_deg(lat, lon, k) from tab", sqlExecutionContext).getRecordCursorFactory()) {
@@ -298,18 +296,6 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractGriff
             r.append();
             w.commit();
         }
-
-//        assertQuery("s\tlat\tlon\tp\tk\n" +
-//                        "AAA\t-5.0\t10.0\t1000.0\t1970-01-01T00:30:00.000000Z\n" +
-//                        "AAA\t-4.0\t11.0\t1000.0\t1970-01-01T01:30:00.000000Z\n" +
-//                        "AAA\t-3.0\t12.0\t1000.0\t1970-01-01T01:40:00.000000Z\n" +
-//                        "AAA\t-2.0\t13.0\t1000.0\t1970-01-01T03:30:00.000000Z\n" +
-//                        "AAA\t-1.0\t14.0\t1000.0\t1970-01-01T04:30:00.000000Z\n",
-//                "tab",
-//                null,
-//                "k",
-//                true, true, true);
-
 
         try (RecordCursorFactory factory = compiler.compile("select s, haversine_dist_deg(lat, lon, k), sum(p) from tab sample by 1h fill(linear)", sqlExecutionContext).getRecordCursorFactory()) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {

@@ -62,9 +62,7 @@ public class LtTimestampFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return negated
-                    ? left.getTimestamp(rec) >= right.getTimestamp(rec)
-                    : left.getTimestamp(rec) < right.getTimestamp(rec);
+            return negated == (left.getTimestamp(rec) >= right.getTimestamp(rec));
         }
 
         @Override

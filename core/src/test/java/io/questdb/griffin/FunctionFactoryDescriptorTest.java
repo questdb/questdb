@@ -41,11 +41,11 @@ public class FunctionFactoryDescriptorTest {
         // S[]
         Assert.assertTrue(isArray(descriptor, 0));
         Assert.assertFalse(isConstant(descriptor, 0));
-        assertType(descriptor, 0, ColumnType.STRING);
+        assertType(descriptor, 0);
         // S
         Assert.assertFalse(isArray(descriptor, 1));
         Assert.assertFalse(isConstant(descriptor, 1));
-        assertType(descriptor, 1, ColumnType.STRING);
+        assertType(descriptor, 1);
     }
 
     @Test
@@ -56,11 +56,11 @@ public class FunctionFactoryDescriptorTest {
         // S
         Assert.assertFalse(isArray(descriptor, 0));
         Assert.assertFalse(isConstant(descriptor, 0));
-        assertType(descriptor, 0, ColumnType.STRING);
+        assertType(descriptor, 0);
         // S[]
         Assert.assertTrue(isArray(descriptor, 1));
         Assert.assertFalse(isConstant(descriptor, 1));
-        assertType(descriptor, 1, ColumnType.STRING);
+        assertType(descriptor, 1);
     }
 
     @Test
@@ -71,11 +71,11 @@ public class FunctionFactoryDescriptorTest {
         // s[]
         Assert.assertTrue(isArray(descriptor, 0));
         Assert.assertTrue(isConstant(descriptor, 0));
-        assertType(descriptor, 0, ColumnType.STRING);
+        assertType(descriptor, 0);
         // S
         Assert.assertFalse(isArray(descriptor, 1));
         Assert.assertFalse(isConstant(descriptor, 1));
-        assertType(descriptor, 1, ColumnType.STRING);
+        assertType(descriptor, 1);
     }
 
     @Test
@@ -86,11 +86,11 @@ public class FunctionFactoryDescriptorTest {
         // S
         Assert.assertFalse(isArray(descriptor, 0));
         Assert.assertFalse(isConstant(descriptor, 0));
-        assertType(descriptor, 0, ColumnType.STRING);
+        assertType(descriptor, 0);
         // s[]
         Assert.assertTrue(isArray(descriptor, 1));
         Assert.assertTrue(isConstant(descriptor, 1));
-        assertType(descriptor, 1, ColumnType.STRING);
+        assertType(descriptor, 1);
     }
 
     private static boolean isArray(FunctionFactoryDescriptor descriptor, int argIndex) {
@@ -101,8 +101,8 @@ public class FunctionFactoryDescriptorTest {
         return FunctionFactoryDescriptor.isConstant(descriptor.getArgTypeMask(argIndex));
     }
 
-    private static void assertType(FunctionFactoryDescriptor descriptor, int argIndex, int type) {
-        Assert.assertEquals(type, FunctionFactoryDescriptor.toType(descriptor.getArgTypeMask(argIndex)));
+    private static void assertType(FunctionFactoryDescriptor descriptor, int argIndex) {
+        Assert.assertEquals(ColumnType.STRING, FunctionFactoryDescriptor.toType(descriptor.getArgTypeMask(argIndex)));
     }
 
     private static FunctionFactoryDescriptor descriptorOf(String signature) throws SqlException {

@@ -279,7 +279,8 @@ public abstract class AbstractClassCatalogueFunctionFactory implements FunctionF
             @Override
             public int getStrLen(int col) {
                 if (col == 0) {
-                    return getStr(col).length();
+                    CharSequence cs = getStr(col);
+                    return cs != null ? cs.length() : -1;
                 }
                 return -1;
             }
