@@ -145,9 +145,10 @@ public class O3PurgeDiscoveryJob extends AbstractQueueConsumerJob<O3PurgeDiscove
                             // todo:  decide what to do here? we cannot remove file and neither we can queue
                             //    we call this from cleaner
                             LOG.error()
-                                    .$("queuing [table=").$(tableName)
+                                    .$("could not purge [table=").$(tableName)
                                     .$(", ts=").$ts(partitionTimestamp)
                                     .$(", txn=").$(nameTxnToRemove)
+                                    .$(", errno=").$(ff.errno())
                                     .$(']').$();
                         }
                     }
