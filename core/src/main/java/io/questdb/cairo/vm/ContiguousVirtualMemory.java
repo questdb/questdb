@@ -343,8 +343,10 @@ public class ContiguousVirtualMemory implements ReadWriteVirtualMemory, Mutable,
     }
 
     public final void putLong128(long l1, long l2) {
-        putLong(l1);
-        putLong(l2);
+        checkLimits(16);
+        Unsafe.getUnsafe().putLong(appendAddress, l1);
+        Unsafe.getUnsafe().putLong(appendAddress + 8, l2);
+        appendAddress += 16;
     }
 
     public void putLong256(long offset, Long256 value) {

@@ -718,13 +718,6 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testAppendO3Partitioned() throws Exception {
-        int N = 10000;
-        create(FF, PartitionBy.DAY, N);
-        testO3RecordsFail(N);
-    }
-
-    @Test
     public void testAppendO3PartitionedNewerFirst() throws Exception {
         O3Utils.initBuf();
         int N = 10000;

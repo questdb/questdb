@@ -237,6 +237,8 @@ endif (AARCH64)
 
 if (WIN32)
     target_link_libraries(questdb wsock32 ws2_32 secur32 shlwapi)
+elseif (APPLE)
+    target_link_libraries(questdb)
 else ()
     target_link_libraries(questdb rt)
 endif (WIN32)

@@ -82,7 +82,6 @@ public class TableReader implements Closeable, SymbolTableSource {
         this.ff = configuration.getFilesFacade();
         this.tableName = Chars.toString(tableName);
         this.path = new Path();
-        this.txnScoreboard = TxnScoreboard.create(path, configuration.getDatabaseIdLo(), configuration.getDatabaseIdHi(), tableName);
         this.path.of(configuration.getRoot()).concat(tableName);
         this.rootLen = path.length();
         try {
@@ -91,6 +90,18 @@ public class TableReader implements Closeable, SymbolTableSource {
             this.columnCount = this.metadata.getColumnCount();
             this.columnCountBits = getColumnBits(columnCount);
             int partitionBy = this.metadata.getPartitionBy();
+            this.txnScoreboard = TxnScoreboard.create(
+                    path,
+                    configuration.getDatabaseIdLo(),
+                    configuration.getDatabaseIdHi(),
+                    tableName,
+                    metadata.getId()
+            );
+            LOG.info().$("table [id=").$(metadata.getId()).$(']').$();
+            assert this.txnScoreboard != 0;
+            // reset path
+            this.path.of(configuration.getRoot()).concat(tableName);
+
             this.txFile = new TxReader(ff, path, partitionBy);
             TxnScoreboard.init(this.txnScoreboard, txFile.readTxn());
             readTxnSlow();

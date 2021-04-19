@@ -109,7 +109,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             SOUnboundedCountDownLatch doneLatch
     ) {
         switch (blockType) {
-            case OO_BLOCK_MERGE:
+            case O3_BLOCK_MERGE:
                 mergeCopy(
                         columnType,
                         timestampMergeIndexAddr,
@@ -130,7 +130,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                         dstVarOffset
                 );
                 break;
-            case OO_BLOCK_OO:
+            case O3_BLOCK_O3:
                 copyO3(
                         columnType,
                         srcOooFixAddr,
@@ -145,7 +145,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                         dstVarAdjust
                 );
                 break;
-            case OO_BLOCK_DATA:
+            case O3_BLOCK_DATA:
                 copyData(
                         columnType,
                         srcDataFixAddr + srcDataFixOffset,
@@ -568,7 +568,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             TableWriter tableWriter,
             SOUnboundedCountDownLatch doneLatch
     ) {
-        if (partCounter.decrementAndGet() == 0) {
+        if (partCounter == null || partCounter.decrementAndGet() == 0) {
             // unmap memory
             copyIdleQuick(
                     columnCounter,
@@ -894,7 +894,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                 copyFixedSizeCol(srcOooFixAddr, srcOooLo, srcOooHi, dstFixAddr, 5);
                 break;
             default:
-                copyFixedSizeCol(srcOooFixAddr, srcOooLo, srcOooHi, dstFixAddr, ColumnType.pow2SizeOf(Math.abs(columnType)));
+                // we have exhausted all supported types in "case" clauses
                 break;
         }
     }
