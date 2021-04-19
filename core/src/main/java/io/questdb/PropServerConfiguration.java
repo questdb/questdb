@@ -187,6 +187,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final BuildInformation buildInformation;
     private final int columnIndexerQueueCapacity;
     private final int vectorAggregateQueueCapacity;
+    private final boolean o3Enabled;
     private final int o3CallbackQueueCapacity;
     private final int o3PartitionQueueCapacity;
     private final int o3OpenColumnQueueCapacity;
@@ -315,6 +316,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int lineDefaultPartitionBy;
     private boolean lineTcpAggressiveRecv;
     private long minIdleMsBeforeWriterRelease;
+    private long lineTcpCommitHystersisInMicros;
     private String httpVersion;
     private int httpMinWorkerCount;
     private boolean httpMinWorkerHaltOnError;
@@ -629,6 +631,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.tableBlockWriterQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.table.block.writer.queue.capacity", 4096));
             this.columnIndexerQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.column.indexer.queue.capacity", 1024));
             this.vectorAggregateQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.vector.aggregate.queue.capacity", 1024));
+            this.o3Enabled = getBoolean(properties, env, "cairo.o3.enabled", false);
             this.o3CallbackQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.o3.callback.queue.capacity", 1024));
             this.o3PartitionQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.o3.partition.queue.capacity", 1024));
             this.o3OpenColumnQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.o3.open.column.queue.capacity", 1024));
@@ -712,6 +715,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                 }
                 this.lineTcpAggressiveRecv = getBoolean(properties, env, "line.tcp.io.aggressive.recv", false);
                 this.minIdleMsBeforeWriterRelease = getLong(properties, env, "line.tcp.min.idle.ms.before.writer.release", 30_000);
+                this.lineTcpCommitHystersisInMicros = getLong(properties, env, "line.tcp.commit.hysteresis.in.ms", 0) * 1_000;
             }
 
             this.buildInformation = buildInformation;
@@ -1791,6 +1795,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public boolean isO3Enabled() {
+            return o3Enabled;
+        }
+
+        @Override
         public int getO3CallbackQueueCapacity() {
             return o3CallbackQueueCapacity;
         }
@@ -2169,6 +2178,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getMinIdleMsBeforeWriterRelease() {
             return minIdleMsBeforeWriterRelease;
+        }
+
+        @Override
+        public long getCommitHysteresisInMicros() {
+            return lineTcpCommitHystersisInMicros;
         }
     }
 

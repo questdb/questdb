@@ -38,6 +38,7 @@ import io.questdb.std.*;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
+import io.questdb.std.str.Path;
 
 public class LineTcpServer implements Closeable {
     private static final Log LOG = LogFactory.getLog(LineTcpServer.class);
@@ -84,9 +85,11 @@ public class LineTcpServer implements Closeable {
         WorkerPool ioWorkerPool = WorkerPoolAwareConfiguration.configureWorkerPool(lineConfiguration.getIOWorkerPoolConfiguration(), sharedWorkerPool);
         WorkerPool writerWorkerPool = WorkerPoolAwareConfiguration.configureWorkerPool(lineConfiguration.getWriterWorkerPoolConfiguration(), sharedWorkerPool);
         if (ioWorkerPool != sharedWorkerPool) {
+            ioWorkerPool.assignCleaner(Path.CLEANER);
             dedicatedPools.add(ioWorkerPool);
         }
         if (writerWorkerPool != sharedWorkerPool) {
+            writerWorkerPool.assignCleaner(Path.CLEANER);
             dedicatedPools.add(writerWorkerPool);
         }
         LineTcpServer lineTcpServer = new LineTcpServer(lineConfiguration, cairoEngine, ioWorkerPool, writerWorkerPool, dedicatedPools);
