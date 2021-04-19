@@ -222,11 +222,10 @@ public final class Files {
         return rename(oldName.address(), newName.address());
     }
 
-    public static boolean rmdir(Path path) {
+    public static int rmdir(Path path) {
         long p = findFirst(path.address());
         int len = path.length();
-        boolean clean = true;
-
+        int errno = -1;
         if (p > 0) {
             try {
                 do {
@@ -237,25 +236,28 @@ public final class Files {
                             continue;
                         }
 
-                        if (rmdir(path)) {
+                        if ((errno = rmdir(path)) == 0) {
                             continue;
                         }
 
                     } else {
-                        if (remove(path.address())) {
+                        if ((remove(path.address()))) {
                             continue;
                         }
-
+                        errno = Os.errno();
                     }
-                    clean = false;
+                    return errno;
                 } while (findNext(p) > 0);
             } finally {
                 findClose(p);
             }
-            return rmdir(path.trimTo(len).$().address()) && clean;
+            if (rmdir(path.trimTo(len).$().address())) {
+                return 0;
+            }
+            return Os.errno();
         }
 
-        return false;
+        return errno;
     }
 
     public static boolean setLastModified(LPSZ lpsz, long millis) {

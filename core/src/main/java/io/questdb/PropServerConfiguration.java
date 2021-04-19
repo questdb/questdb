@@ -1795,11 +1795,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public boolean isO3Enabled() {
-            return o3Enabled;
-        }
-
-        @Override
         public int getO3CallbackQueueCapacity() {
             return o3CallbackQueueCapacity;
         }

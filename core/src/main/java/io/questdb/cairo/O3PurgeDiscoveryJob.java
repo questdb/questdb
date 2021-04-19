@@ -106,7 +106,8 @@ public class O3PurgeDiscoveryJob extends AbstractQueueConsumerJob<O3PurgeDiscove
                 for (int i = 0, n = txnList.size() - 1; i < n; i++) {
                     final long nameTxnToRemove = txnList.getQuick(i);
                     final long minTxnToExpect = txnList.getQuick(i + 1);
-                    if (!O3PurgeJob.purgePartitionDir(
+                    int errno;
+                    if ((errno = O3PurgeJob.purgePartitionDir(
                             ff,
                             path.of(root).concat(tableName),
                             partitionBy,
@@ -114,7 +115,7 @@ public class O3PurgeDiscoveryJob extends AbstractQueueConsumerJob<O3PurgeDiscove
                             txnScoreboard,
                             nameTxnToRemove,
                             minTxnToExpect
-                    )) {
+                    )) != 0) {
                         // queue the job
                         if (purgePubSeq != null) {
                             long cursor = purgePubSeq.next();
@@ -123,6 +124,7 @@ public class O3PurgeDiscoveryJob extends AbstractQueueConsumerJob<O3PurgeDiscove
                                         .$("queuing [table=").$(tableName)
                                         .$(", ts=").$ts(partitionTimestamp)
                                         .$(", txn=").$(nameTxnToRemove)
+                                        .$(", errno=").$(errno)
                                         .$(']').$();
                                 O3PurgeTask task = purgeQueue.get(cursor);
                                 task.of(
@@ -139,6 +141,7 @@ public class O3PurgeDiscoveryJob extends AbstractQueueConsumerJob<O3PurgeDiscove
                                         .$("purge queue is full [table=").$(tableName)
                                         .$(", ts=").$ts(partitionTimestamp)
                                         .$(", txn=").$(nameTxnToRemove)
+                                        .$(", errno=").$(errno)
                                         .$(']').$();
                             }
                         } else {
@@ -148,7 +151,7 @@ public class O3PurgeDiscoveryJob extends AbstractQueueConsumerJob<O3PurgeDiscove
                                     .$("could not purge [table=").$(tableName)
                                     .$(", ts=").$ts(partitionTimestamp)
                                     .$(", txn=").$(nameTxnToRemove)
-                                    .$(", errno=").$(ff.errno())
+                                    .$(", errno=").$(errno)
                                     .$(']').$();
                         }
                     }

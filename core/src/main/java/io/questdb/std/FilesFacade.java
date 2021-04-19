@@ -98,7 +98,7 @@ public interface FilesFacade {
 
     boolean rename(LPSZ from, LPSZ to);
 
-    boolean rmdir(Path name);
+    int rmdir(Path name);
 
     boolean touch(LPSZ path);
 

@@ -329,10 +329,10 @@ public class CairoEngine implements Closeable, WriterSource {
         if (lock(securityContext, tableName)) {
             try {
                 path.of(configuration.getRoot()).concat(tableName).$();
-                if (!configuration.getFilesFacade().rmdir(path)) {
-                    int error = configuration.getFilesFacade().errno();
-                    LOG.error().$("remove failed [tableName='").utf8(tableName).$("', error=").$(error).$(']').$();
-                    throw CairoException.instance(error).put("Table remove failed");
+                int errno;
+                if ((errno = configuration.getFilesFacade().rmdir(path)) != 0) {
+                    LOG.error().$("remove failed [tableName='").utf8(tableName).$("', error=").$(errno).$(']').$();
+                    throw CairoException.instance(errno).put("Table remove failed");
                 }
                 return;
             } finally {
@@ -342,7 +342,7 @@ public class CairoEngine implements Closeable, WriterSource {
         throw CairoException.instance(configuration.getFilesFacade().errno()).put("Could not lock '").put(tableName).put('\'');
     }
 
-    public boolean removeDirectory(@Transient Path path, CharSequence dir) {
+    public int removeDirectory(@Transient Path path, CharSequence dir) {
         path.of(configuration.getRoot()).concat(dir);
         final FilesFacade ff = configuration.getFilesFacade();
         return ff.rmdir(path.$$dir());

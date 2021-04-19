@@ -225,7 +225,7 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
-    public boolean rmdir(Path name) {
+    public int rmdir(Path name) {
         return Files.rmdir(name);
     }
 

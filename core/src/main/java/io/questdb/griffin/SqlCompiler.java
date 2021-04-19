@@ -1221,8 +1221,9 @@ public class SqlCompiler implements Closeable {
                     .$(", errno=").$(ex.getErrno())
                     .$(']').$();
             path.of(cachedTmpBackupRoot).concat(tableName).$$dir();
-            if (!ff.rmdir(path)) {
-                LOG.error().$("coult not delete directory [path=").$(path).$(", errno=").$(ff.errno()).$(']').$();
+            int errno;
+            if ((errno = ff.rmdir(path)) != 0) {
+                LOG.error().$("could not delete directory [path=").$(path).$(", errno=").$(errno).$(']').$();
             }
             throw ex;
         }
@@ -1844,12 +1845,13 @@ public class SqlCompiler implements Closeable {
     }
 
     private boolean removeTableDirectory(CreateTableModel model) {
-        if (engine.removeDirectory(path, model.getName().token)) {
+        int errno;
+        if ((errno = engine.removeDirectory(path, model.getName().token)) == 0) {
             return true;
         }
         LOG.error()
                 .$("could not clean up after create table failure [path=").$(path)
-                .$(", errno=").$(configuration.getFilesFacade().errno())
+                .$(", errno=").$(errno)
                 .$(']').$();
         return false;
     }

@@ -2373,9 +2373,9 @@ public class TableReaderTest extends AbstractCairoTest {
 
             FilesFacade ff = new FilesFacadeImpl() {
                 @Override
-                public boolean rmdir(Path name) {
+                public int rmdir(Path name) {
                     if (Chars.endsWith(name, "2017-12-14" + Files.SEPARATOR)) {
-                        return false;
+                        return 1;
                     }
                     return super.rmdir(name);
                 }

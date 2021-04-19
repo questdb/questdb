@@ -221,10 +221,6 @@ public interface CairoConfiguration {
 
     BuildInformation getBuildInformation();
 
-    default boolean isO3Enabled() {
-        return true;
-    }
-
     long getDatabaseIdHi();
 
     long getDatabaseIdLo();

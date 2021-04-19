@@ -161,16 +161,14 @@ public class ServerMain {
             workerPool.assign(telemetryJob);
         }
 
-        if (configuration.getCairoConfiguration().isO3Enabled()) {
-            workerPool.assignCleaner(Path.CLEANER);
-            workerPool.assign(new O3CallbackJob(cairoEngine.getMessageBus()));
-            workerPool.assign(new O3PartitionJob(cairoEngine.getMessageBus()));
-            workerPool.assign(new O3OpenColumnJob(cairoEngine.getMessageBus()));
-            workerPool.assign(new O3CopyJob(cairoEngine.getMessageBus()));
-            workerPool.assign(new O3PurgeDiscoveryJob(cairoEngine.getMessageBus(), workerPool.getWorkerCount()));
-            workerPool.assign(new O3PurgeJob(cairoEngine.getMessageBus()));
-            O3Utils.initBuf(workerPool.getWorkerCount() + 1);
-        }
+        workerPool.assignCleaner(Path.CLEANER);
+        workerPool.assign(new O3CallbackJob(cairoEngine.getMessageBus()));
+        workerPool.assign(new O3PartitionJob(cairoEngine.getMessageBus()));
+        workerPool.assign(new O3OpenColumnJob(cairoEngine.getMessageBus()));
+        workerPool.assign(new O3CopyJob(cairoEngine.getMessageBus()));
+        workerPool.assign(new O3PurgeDiscoveryJob(cairoEngine.getMessageBus(), workerPool.getWorkerCount()));
+        workerPool.assign(new O3PurgeJob(cairoEngine.getMessageBus()));
+        O3Utils.initBuf(workerPool.getWorkerCount() + 1);
 
         try {
             initQuestDb(workerPool, cairoEngine, log);
@@ -435,6 +433,47 @@ public class ServerMain {
         Misc.freeObjList(instancesToClean);
     }
 
+    private static CharSequence getQuestDbVersion(final Attributes manifestAttributes) {
+        final CharSequence version = manifestAttributes.getValue("Implementation-Version");
+        return version != null ? version : "[DEVELOPMENT]";
+    }
+
+    private static CharSequence getJdkVersion(final Attributes manifestAttributes) {
+        final CharSequence version = manifestAttributes.getValue("Build-Jdk");
+        return version != null ? version : "Unknown Version";
+    }
+
+    private static CharSequence getCommitHash(final Attributes manifestAttributes) {
+        final CharSequence version = manifestAttributes.getValue("Build-Commit-Hash");
+        return version != null ? version : "Unknown Version";
+    }
+
+    private static BuildInformation fetchBuildInformation() throws IOException {
+        final Attributes manifestAttributes = getManifestAttributes();
+
+        return new BuildInformationHolder(
+                getQuestDbVersion(manifestAttributes),
+                getJdkVersion(manifestAttributes),
+                getCommitHash(manifestAttributes)
+        );
+    }
+
+    private static Attributes getManifestAttributes() throws IOException {
+        final Enumeration<URL> resources = ServerMain.class.getClassLoader()
+                .getResources("META-INF/MANIFEST.MF");
+        while (resources.hasMoreElements()) {
+            try (InputStream is = resources.nextElement().openStream()) {
+                final Manifest manifest = new Manifest(is);
+                final Attributes attributes = manifest.getMainAttributes();
+                if ("org.questdb".equals(attributes.getValue("Implementation-Vendor-Id"))) {
+                    return manifest.getMainAttributes();
+                }
+            }
+        }
+
+        return new Attributes();
+    }
+
     protected HttpServer createHttpServer(final WorkerPool workerPool, final Log log, final CairoEngine cairoEngine, FunctionFactoryCache functionFactoryCache) {
         return HttpServer.create(
                 configuration.getHttpServerConfiguration(),
@@ -476,46 +515,5 @@ public class ServerMain {
             final Log log
     ) {
         workerPool.start(log);
-    }
-
-    private static CharSequence getQuestDbVersion(final Attributes manifestAttributes) {
-        final CharSequence version = manifestAttributes.getValue("Implementation-Version");
-        return version != null ? version : "[DEVELOPMENT]";
-    }
-
-    private static CharSequence getJdkVersion(final Attributes manifestAttributes) {
-        final CharSequence version = manifestAttributes.getValue("Build-Jdk");
-        return version != null ? version : "Unknown Version";
-    }
-
-    private static CharSequence getCommitHash(final Attributes manifestAttributes) {
-        final CharSequence version = manifestAttributes.getValue("Build-Commit-Hash");
-        return version != null ? version : "Unknown Version";
-    }
-
-    private static BuildInformation fetchBuildInformation() throws IOException {
-        final Attributes manifestAttributes = getManifestAttributes();
-
-        return new BuildInformationHolder(
-                getQuestDbVersion(manifestAttributes),
-                getJdkVersion(manifestAttributes),
-                getCommitHash(manifestAttributes)
-        );
-    }
-
-    private static Attributes getManifestAttributes() throws IOException {
-        final Enumeration<URL> resources = ServerMain.class.getClassLoader()
-                                                           .getResources("META-INF/MANIFEST.MF");
-        while (resources.hasMoreElements()) {
-            try (InputStream is = resources.nextElement().openStream()) {
-                final Manifest manifest = new Manifest(is);
-                final Attributes attributes = manifest.getMainAttributes();
-                if ("org.questdb".equals(attributes.getValue("Implementation-Vendor-Id"))) {
-                    return manifest.getMainAttributes();
-                }
-            }
-        }
-
-        return new Attributes();
     }
 }

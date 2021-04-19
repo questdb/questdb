@@ -406,7 +406,15 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             O3Utils.unmapAndClose(ff, dstVarFd, dstVarAddr, dstVarSize);
 
             final int columnsRemaining = columnCounter.decrementAndGet();
-            LOG.debug().$("organic [columnsRemaining=").$(columnsRemaining).$(']').$();
+            long wid = -1;
+            if (Thread.currentThread() instanceof Worker) {
+                wid = ((Worker) Thread.currentThread()).getWorkerId();
+            }
+            LOG.debug()
+                    .$("organic [columnsRemaining=").$(columnsRemaining)
+                    .$(", workerId=").$(wid)
+                    .$(']').$();
+
             if (columnsRemaining == 0) {
                 updatePartition(
                         updPartitionSizeTaskQueue,

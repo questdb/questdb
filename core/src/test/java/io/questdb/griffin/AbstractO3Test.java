@@ -261,11 +261,6 @@ public class AbstractO3Test {
                     public FilesFacade getFilesFacade() {
                         return ff;
                     }
-
-                    @Override
-                    public boolean isO3Enabled() {
-                        return true;
-                    }
                 };
 
                 execute(pool, runnable, configuration);
@@ -305,11 +300,6 @@ public class AbstractO3Test {
                     @Override
                     public int getO3PurgeQueueCapacity() {
                         return 0;
-                    }
-
-                    @Override
-                    public boolean isO3Enabled() {
-                        return true;
                     }
                 };
                 execute(null, runnable, configuration);
@@ -352,12 +342,7 @@ public class AbstractO3Test {
     }
 
     protected static void executeVanilla(O3Runnable code) throws Exception {
-        executeVanilla(() -> execute(null, code, new DefaultCairoConfiguration(root) {
-            @Override
-            public boolean isO3Enabled() {
-                return true;
-            }
-        }));
+        executeVanilla(() -> execute(null, code, new DefaultCairoConfiguration(root)));
     }
 
     static void assertO3DataConsistency(

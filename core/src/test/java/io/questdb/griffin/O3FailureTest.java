@@ -2320,11 +2320,6 @@ public class O3FailureTest extends AbstractO3Test {
                 public FilesFacade getFilesFacade() {
                     return ff;
                 }
-
-                @Override
-                public boolean isO3Enabled() {
-                    return true;
-                }
             };
             execute(null, runnable, configuration);
         });

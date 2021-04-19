@@ -5315,7 +5315,7 @@ public class SqlParserTest extends AbstractGriffinTest {
                     for (int i = 0, n = tableModels.length; i < n; i++) {
                         TableModel tableModel = tableModels[i];
                         Path path = tableModel.getPath().of(tableModel.getCairoCfg().getRoot()).concat(tableModel.getName()).$$dir();
-                        Assert.assertTrue(configuration.getFilesFacade().rmdir(path));
+                        Assert.assertEquals(0, configuration.getFilesFacade().rmdir(path));
                         tableModel.close();
                     }
                 }
@@ -5353,7 +5353,7 @@ public class SqlParserTest extends AbstractGriffinTest {
                     for (int i = 0, n = tableModels.length; i < n; i++) {
                         TableModel tableModel = tableModels[i];
                         Path path = tableModel.getPath().of(tableModel.getCairoCfg().getRoot()).concat(tableModel.getName()).$$dir();
-                        Assert.assertTrue(configuration.getFilesFacade().rmdir(path));
+                        Assert.assertEquals(0, configuration.getFilesFacade().rmdir(path));
                         tableModel.close();
                     }
                 }
@@ -5834,7 +5834,7 @@ public class SqlParserTest extends AbstractGriffinTest {
             for (int i = 0, n = tableModels.length; i < n; i++) {
                 TableModel tableModel = tableModels[i];
                 Path path = tableModel.getPath().of(tableModel.getCairoCfg().getRoot()).concat(tableModel.getName()).$$dir();
-                Assert.assertTrue(configuration.getFilesFacade().rmdir(path));
+                Assert.assertEquals(0, configuration.getFilesFacade().rmdir(path));
                 tableModel.close();
             }
         }
@@ -5932,7 +5932,7 @@ public class SqlParserTest extends AbstractGriffinTest {
             for (int i = 0, n = tableModels.length; i < n; i++) {
                 TableModel tableModel = tableModels[i];
                 Path path = tableModel.getPath().of(tableModel.getCairoCfg().getRoot()).concat(tableModel.getName()).$$dir();
-                Assert.assertTrue(configuration.getFilesFacade().rmdir(path));
+                Assert.assertEquals(0, configuration.getFilesFacade().rmdir(path));
                 tableModel.close();
             }
         }

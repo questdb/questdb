@@ -722,12 +722,7 @@ public class TableWriterTest extends AbstractCairoTest {
         O3Utils.initBuf();
         int N = 10000;
         create(FF, PartitionBy.DAY, N);
-        testO3RecordsNewerThanOlder(N, new DefaultCairoConfiguration(root) {
-            @Override
-            public boolean isO3Enabled() {
-                return true;
-            }
-        });
+        testO3RecordsNewerThanOlder(N, configuration);
     }
 
     @Test
@@ -1057,8 +1052,11 @@ public class TableWriterTest extends AbstractCairoTest {
                 }
 
                 @Override
-                public boolean rmdir(Path name) {
-                    return !fail && super.rmdir(name);
+                public int rmdir(Path name) {
+                    if (fail) {
+                        return 1;
+                    }
+                    return super.rmdir(name);
                 }
             }
 
@@ -2365,10 +2363,10 @@ public class TableWriterTest extends AbstractCairoTest {
             boolean removeAttempted = false;
 
             @Override
-            public boolean rmdir(Path from) {
+            public int rmdir(Path from) {
                 if (Chars.endsWith(from, "2013-03-12")) {
                     removeAttempted = true;
-                    return false;
+                    return 1;
                 }
                 return super.rmdir(from);
             }
@@ -2420,10 +2418,10 @@ public class TableWriterTest extends AbstractCairoTest {
             boolean removeAttempted = false;
 
             @Override
-            public boolean rmdir(Path path) {
+            public int rmdir(Path path) {
                 if (Chars.endsWith(path, "2013-03-12")) {
                     removeAttempted = true;
-                    return false;
+                    return 1;
                 }
                 return super.rmdir(path);
             }
