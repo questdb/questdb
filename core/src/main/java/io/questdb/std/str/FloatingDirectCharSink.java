@@ -88,7 +88,7 @@ public class FloatingDirectCharSink extends AbstractCharSink implements CharSequ
         assert checkCapacity(l);
         int l2 = l * 2;
         for (int i = 0; i < l; i++) {
-            Unsafe.getUnsafe().putChar(lo + i * 2, cs.charAt(i));
+            Unsafe.getUnsafe().putChar(lo + i * 2L, cs.charAt(i));
         }
         this.lo += l2;
         return this;
@@ -99,7 +99,7 @@ public class FloatingDirectCharSink extends AbstractCharSink implements CharSequ
         assert checkCapacity(len);
         int l2 = len * 2;
         for (int i = 0; i < len; i++) {
-            Unsafe.getUnsafe().putChar(lo + i * 2, chars[i + start]);
+            Unsafe.getUnsafe().putChar(lo + i * 2L, chars[i + start]);
         }
 
         this.lo += l2;
@@ -115,7 +115,7 @@ public class FloatingDirectCharSink extends AbstractCharSink implements CharSequ
     }
 
     private boolean checkCapacity(int nChars) {
-        return lo + (2 * nChars) <= hi;
+        return lo + (2L * nChars) <= hi;
     }
 
     @Override

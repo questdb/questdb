@@ -127,7 +127,7 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
     @Test
     public void testDropPartitionWhereTimestampColumnNameIsOtherThanTimestamp() throws Exception {
         assertMemoryLeak(() -> {
-                    createXWithDifferentTimestampName("YEAR", 3 * 72000000000L);
+                    createXWithDifferentTimestampName();
 
                     assertPartitionResultForTimestampColumnNameTs("count\n" +
                                     "145\n",
@@ -313,7 +313,7 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
     @Test
     public void testDropPartitionsUsingWhereClauseForTableWithoutDesignatedTimestamp() throws Exception {
         assertMemoryLeak(() -> {
-                    createXWithoutDesignatedColumn(720000000);
+                    createXWithoutDesignatedColumn();
 
                     try {
                         compiler.compile("alter table x drop partition " +
@@ -562,14 +562,14 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
         );
     }
 
-    private void createXWithDifferentTimestampName(String partitionBy, long increment) throws SqlException {
+    private void createXWithDifferentTimestampName() throws SqlException {
         compiler.compile(
                 "create table x as (" +
                         "select" +
                         " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
                         " round(rnd_double(0)*100, 3) amt," +
-                        " to_timestamp('2018-01', 'yyyy-MM') + x * " + increment + " ts," +
+                        " to_timestamp('2018-01', 'yyyy-MM') + x * " + 216000000000L + " ts," +
                         " rnd_boolean() b," +
                         " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
                         " rnd_double(2) d," +
@@ -584,19 +584,19 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
                         " rnd_str(5,16,2) n" +
                         " from long_sequence(1000)" +
                         ") timestamp (ts)" +
-                        "partition by " + partitionBy,
+                        "partition by " + "YEAR",
                 sqlExecutionContext
         );
     }
 
-    private void createXWithoutDesignatedColumn(long increment) throws SqlException {
+    private void createXWithoutDesignatedColumn() throws SqlException {
         compiler.compile(
                 "create table x as (" +
                         "select" +
                         " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
                         " round(rnd_double(0)*100, 3) amt," +
-                        " to_timestamp('2018-01', 'yyyy-MM') + x * " + increment + " ts," +
+                        " to_timestamp('2018-01', 'yyyy-MM') + x * " + 720000000L + " ts," +
                         " rnd_boolean() b," +
                         " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
                         " rnd_double(2) d," +

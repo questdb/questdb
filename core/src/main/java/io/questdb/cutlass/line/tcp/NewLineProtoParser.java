@@ -33,15 +33,15 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectByteCharSequence;
 
 public class NewLineProtoParser implements Closeable {
-    public static long NULL_TIMESTAMP = Long.MIN_VALUE;
+    public static final long NULL_TIMESTAMP = Long.MIN_VALUE;
 
     public enum ParseResult {
         MEASUREMENT_COMPLETE, BUFFER_UNDERFLOW, ERROR
-    };
+    }
 
     public enum ErrorCode {
         EMPTY_LINE, NO_FIELDS, INCOMPLETE_TAG, INCOMPLETE_FIELD, INVALID_FIELD_SEPERATOR, INVALID_TIMESTAMP, INVALID_FIELD_VALUE
-    };
+    }
 
     private static final byte ENTITY_TYPE_NONE = (byte) 0xff;
     public static final byte ENTITY_TYPE_TAG = 0;
@@ -55,7 +55,7 @@ public class NewLineProtoParser implements Closeable {
 
     private final DirectByteCharSequence measurementName = new DirectByteCharSequence();
     private final DirectByteCharSequence charSeq = new DirectByteCharSequence();
-    private ObjList<ProtoEntity> entityCache = new ObjList<>();
+    private final ObjList<ProtoEntity> entityCache = new ObjList<>();
     private long bufAt;
     private long entityLo;
     private boolean tagsComplete;
@@ -304,7 +304,7 @@ public class NewLineProtoParser implements Closeable {
         private byte type = ENTITY_TYPE_NONE;
         private long integerValue;
         private boolean booleanValue;
-        private double floatValue;;
+        private double floatValue;
 
         private void setName() {
             name.of(entityLo, bufAt - nEscapedChars);

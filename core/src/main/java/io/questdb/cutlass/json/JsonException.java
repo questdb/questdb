@@ -53,7 +53,7 @@ public class JsonException extends Exception implements Sinkable, FlyweightMessa
 
     @Override
     public String getMessage() {
-        return "[" + position + "] " + message.toString();
+        return "[" + position + "] " + message;
     }
 
     public int getPosition() {

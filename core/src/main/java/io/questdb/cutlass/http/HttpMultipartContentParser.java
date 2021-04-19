@@ -221,7 +221,14 @@ public class HttpMultipartContentParser implements Closeable, Mutable {
         return false;
     }
 
-    private long onChunkWithRetryHandle(HttpMultipartContentListener listener, long lo, long hi, int state, long resumePtr, boolean handleIncomplete) throws PeerIsSlowToReadException, PeerDisconnectedException, ServerDisconnectException {
+    private long onChunkWithRetryHandle(
+            HttpMultipartContentListener listener,
+            long lo,
+            long hi,
+            int state,
+            long resumePtr,
+            boolean handleIncomplete
+    ) throws PeerIsSlowToReadException, PeerDisconnectedException, ServerDisconnectException {
         RetryOperationException needsRetry = null;
         try {
             listener.onChunk(lo, hi);

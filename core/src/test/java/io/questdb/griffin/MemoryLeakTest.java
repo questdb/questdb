@@ -35,7 +35,6 @@ import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.StringSink;
-import org.junit.Assert;
 import org.junit.Test;
 
 public class MemoryLeakTest extends AbstractGriffinTest {
@@ -102,9 +101,5 @@ public class MemoryLeakTest extends AbstractGriffinTest {
                 Unsafe.free(buffer, 1024);
             }
         }
-    }
-
-    private interface RunnableCode {
-        void run() throws Exception;
     }
 }

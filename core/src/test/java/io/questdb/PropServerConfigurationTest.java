@@ -58,7 +58,7 @@ public class PropServerConfigurationTest {
     private static String root;
 
     @AfterClass
-    public static void afterClass() throws Exception {
+    public static void afterClass() {
         TestUtils.removeTestPath(root);
     }
 

@@ -86,9 +86,7 @@ public class LtTimestampStrFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return negated
-                    ? left.getTimestamp(rec) >= right
-                    : left.getTimestamp(rec) < right;
+            return negated == (left.getTimestamp(rec) >= right);
         }
 
         @Override
@@ -112,9 +110,7 @@ public class LtTimestampStrFunctionFactory implements FunctionFactory {
             CharSequence timestampAsString = right.getStr(rec);
             try {
                 long rightTimestamp = parseFullOrPartialTimestamp(timestampAsString);
-                return negated
-                        ? left.getTimestamp(rec) >= rightTimestamp
-                        : left.getTimestamp(rec) < rightTimestamp;
+                return negated == (left.getTimestamp(rec) >= rightTimestamp);
             } catch (NumericException e) {
                 return false;
             }

@@ -2093,11 +2093,11 @@ nodejs code:
                     try (PreparedStatement statement = connection.prepareStatement(createDatesTblStmt)) {
                         statement.execute();
                     }
-                    queryTimestampsInRange(connection, 7);
+                    queryTimestampsInRange(connection);
                 }
 
                 try (final Connection connection = getConnection(false, false)) {
-                    queryTimestampsInRange(connection, 7);
+                    queryTimestampsInRange(connection);
                     try (PreparedStatement statement = connection.prepareStatement("drop table xts")) {
                         statement.execute();
                     }
@@ -2115,7 +2115,7 @@ nodejs code:
                     try (PreparedStatement statement = connection.prepareStatement(createDatesTblStmt)) {
                         statement.execute();
                     }
-                    queryTimestampsInRange(connection, 7);
+                    queryTimestampsInRange(connection);
                 }
 
                 boolean caught = false;
@@ -2129,9 +2129,6 @@ nodejs code:
                         caught = true;
                         Assert.assertEquals("ERROR: could not parse [value='abcd', as=TIMESTAMP, index=0]\n  Position: 1", ex.getMessage());
                     }
-//                    try(PreparedStatement statement = connection.prepareStatement("drop table xts")) {
-//                        statement.execute();
-//                    }
                 }
 
                 try (final Connection connection = getConnection(false, false);
@@ -2154,7 +2151,7 @@ nodejs code:
                     statement.execute();
                 }
 
-                queryTimestampsInRange(connection, 7);
+                queryTimestampsInRange(connection);
 
                 try (PreparedStatement statement = connection.prepareStatement("drop table xts")) {
                     statement.execute();
@@ -2179,7 +2176,7 @@ nodejs code:
                         }
                     }
 
-                    queryTimestampsInRange(connection, 7);
+                    queryTimestampsInRange(connection);
 
                     try (PreparedStatement statement = connection.prepareStatement("drop table xts")) {
                         statement.execute();
@@ -3098,10 +3095,10 @@ nodejs code:
         };
     }
 
-    private void queryTimestampsInRange(Connection connection, int hoursInterval) throws SQLException, IOException {
+    private void queryTimestampsInRange(Connection connection) throws SQLException, IOException {
         try (PreparedStatement statement = connection.prepareStatement("select ts FROM xts WHERE ts <= dateadd('d', -1, ?) and ts >= dateadd('d', -2, ?)")) {
             ResultSet rs = null;
-            for (long micros = 0; micros < count * Timestamps.HOUR_MICROS; micros += Timestamps.HOUR_MICROS * hoursInterval) {
+            for (long micros = 0; micros < count * Timestamps.HOUR_MICROS; micros += Timestamps.HOUR_MICROS * 7) {
                 sink.clear();
                 statement.setTimestamp(1, new Timestamp(micros));
                 statement.setTimestamp(2, new Timestamp(micros));

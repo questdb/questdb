@@ -51,7 +51,7 @@ public class AbstractCairoTest {
     protected static CairoConfiguration configuration;
     protected static MessageBus messageBus;
     protected static long currentMicros = -1;
-    protected static MicrosecondClock testMicrosClock =
+    protected final static MicrosecondClock testMicrosClock =
             () -> currentMicros >= 0 ? currentMicros : MicrosecondClockImpl.INSTANCE.getTicks();
     protected static CairoEngine engine;
     protected static String inputRoot = null;
@@ -133,9 +133,9 @@ public class AbstractCairoTest {
         TestUtils.assertCursor(expected, cursor, metadata, header, sink);
     }
 
-    protected void assertCursorTwoPass(CharSequence expected, RecordCursor cursor, RecordMetadata metadata, boolean header) {
-        assertCursor(expected, cursor, metadata, header);
+    protected void assertCursorTwoPass(CharSequence expected, RecordCursor cursor, RecordMetadata metadata) {
+        assertCursor(expected, cursor, metadata, true);
         cursor.toTop();
-        assertCursor(expected, cursor, metadata, header);
+        assertCursor(expected, cursor, metadata, true);
     }
 }

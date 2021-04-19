@@ -484,7 +484,7 @@ public class LineTcpAuthConnectionContextTest extends AbstractCairoTest {
 
     private void assertTable(CharSequence expected) {
         try (TableReader reader = new TableReader(configuration, "weather")) {
-            assertCursorTwoPass(expected, reader.getCursor(), reader.getMetadata(), true);
+            assertCursorTwoPass(expected, reader.getCursor(), reader.getMetadata());
         }
     }
 

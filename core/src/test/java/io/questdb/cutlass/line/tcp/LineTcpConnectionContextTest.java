@@ -1075,7 +1075,7 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
 
     private void assertTable(CharSequence expected, CharSequence tableName) {
         try (TableReader reader = new TableReader(configuration, tableName)) {
-            assertCursorTwoPass(expected, reader.getCursor(), reader.getMetadata(), true);
+            assertCursorTwoPass(expected, reader.getCursor(), reader.getMetadata());
         }
     }
 
@@ -1328,8 +1328,6 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
                 break;
             case NEEDS_WRITE:
                 context.getDispatcher().registerChannel(context, IOOperation.WRITE);
-                break;
-            case QUEUE_FULL:
                 break;
             case NEEDS_DISCONNECT:
                 context.getDispatcher().disconnect(context);

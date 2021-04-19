@@ -82,7 +82,7 @@ public class O3Test extends AbstractO3Test {
 
     @Test
     public void testBench2Parallel() throws Exception {
-        executeWithPool(8, this::bench20);
+        executeWithPool(4, this::bench20);
     }
 
     @Test
@@ -97,7 +97,7 @@ public class O3Test extends AbstractO3Test {
     public void testBenchParallel() throws Exception {
         // On OSX it's not trivial to increase open file limit per process
         if (Os.type != Os.OSX) {
-            executeWithPool(8, O3Test::testBench0);
+            executeWithPool(4, O3Test::testBench0);
         }
     }
 
@@ -618,7 +618,7 @@ public class O3Test extends AbstractO3Test {
 
     @Test
     public void testVanillaHysteresisParallel() throws Exception {
-        executeWithPool(8, O3Test::testVanillaHysteresis0);
+        executeWithPool(4, O3Test::testVanillaHysteresis0);
     }
 
     @Test

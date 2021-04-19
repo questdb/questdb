@@ -131,7 +131,7 @@ public class TimeZoneRulesMillisTest {
         long expected = zdt.getOffset().getTotalSeconds();
 
         // find out how much algo added to datetime itself
-        long changed = Dates.toMillis(zdt.getYear(), zdt.getMonthValue(), zdt.getDayOfMonth(), zdt.getHour(), zdt.getMinute()) + zdt.getSecond() * 1000;
+        long changed = Dates.toMillis(zdt.getYear(), zdt.getMonthValue(), zdt.getDayOfMonth(), zdt.getHour(), zdt.getMinute()) + zdt.getSecond() * 1000L;
         // add any extra time
         expected += (changed - millis) / 1000;
         long offset = rules.getOffset(millis, y, Dates.isLeapYear(y));

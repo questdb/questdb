@@ -4887,23 +4887,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
         }
     }
 
-    //NOTE Kahan should fail this  - Neumaier should pass
-    //    @Test
-//    public void testSumDoubleColumnWithNeumaierMethodVectorised1() throws Exception {
-//        String ddl = "create table x (ds double) partition by NONE";
-//        compiler.compile(ddl, sqlExecutionContext);
-//
-//        double tenTo100 = Math.pow(10, 100);
-//        executeInsertStatement(tenTo100);
-//        executeInsertStatement(1.0);
-//        executeInsertStatement(1.0);
-//        executeInsertStatement(-tenTo100);
-//
-//        try (TableReader r = new TableReader(configuration, "x")) {
-//            Assert.assertEquals(2, r.sumDouble(0), 0.0000001);
-//        }
-//    }
-
     @Test
     public void testVectorSumAvgDoubleRndColumnWithNulls() throws Exception {
         assertQuery("avg\tsum\n" +

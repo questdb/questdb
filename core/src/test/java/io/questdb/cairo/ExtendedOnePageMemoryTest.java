@@ -25,7 +25,7 @@ public class ExtendedOnePageMemoryTest {
 
     @Test
     public void testFailOnInitialMap() throws IOException {
-        createFile(FILE_SIZE);
+        createFile();
         try (SinglePageMappedReadOnlyPageMemory mem = new SinglePageMappedReadOnlyPageMemory()) {
             FILE_MAP_FAIL.set(true);
             try {
@@ -39,7 +39,7 @@ public class ExtendedOnePageMemoryTest {
 
     @Test
     public void testFailOnGrow() throws IOException {
-        createFile(FILE_SIZE);
+        createFile();
         try (SinglePageMappedReadOnlyPageMemory mem = new SinglePageMappedReadOnlyPageMemory()) {
             int sz = FILE_SIZE / 2;
             mem.of(ff, path, sz, sz);
@@ -54,10 +54,10 @@ public class ExtendedOnePageMemoryTest {
         }
     }
 
-    private void createFile(int size) throws IOException {
+    private void createFile() throws IOException {
         File f = temp.newFile();
         try (FileOutputStream fos = new FileOutputStream(f)) {
-            for (int i = 0; i < size; i++) {
+            for (int i = 0; i < ExtendedOnePageMemoryTest.FILE_SIZE; i++) {
                 fos.write(0);
             }
         }

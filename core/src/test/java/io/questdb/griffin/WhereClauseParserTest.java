@@ -52,11 +52,10 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     private final PostOrderTreeTraversalAlgo traversalAlgo = new PostOrderTreeTraversalAlgo();
     private final PostOrderTreeTraversalAlgo.Visitor rpnBuilderVisitor = rpn::onNode;
     private final QueryModel queryModel = QueryModel.FACTORY.newInstance();
+    private final FunctionParser functionParser = new FunctionParser(configuration, new FunctionFactoryCache(configuration, ServiceLoader.load(FunctionFactory.class)));
     protected BindVariableService bindVariableService = new BindVariableServiceImpl(configuration);
     private SqlCompiler compiler;
-    private final FunctionParser functionParser = new FunctionParser(configuration, new FunctionFactoryCache(configuration, ServiceLoader.load(FunctionFactory.class)));
     private SqlExecutionContext sqlExecutionContext;
-    private CairoEngine engine;
 
     @BeforeClass
     public static void setUp2() {
@@ -115,7 +114,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
 
     @Before
     public void setUp1() {
-        engine = new CairoEngine(configuration);
+        CairoEngine engine = new CairoEngine(configuration);
         bindVariableService = new BindVariableServiceImpl(configuration);
         compiler = new SqlCompiler(new CairoEngine(configuration));
         sqlExecutionContext = new SqlExecutionContextImpl(
@@ -343,19 +342,6 @@ public class WhereClauseParserTest extends AbstractCairoTest {
             currentMicros = -1;
         }
     }
-
-    @Test
-    public void testNowWithNotIn() throws Exception {
-        currentMicros = 24L * 3600 * 1000 * 1000;
-        try {
-            runWhereIntervalTest0("timestamp not in ('2020-01-01T00:00:00.000000Z', '2020-01-31T23:59:59.999999Z') and now() <= timestamp",
-                    "[{lo=1970-01-02T00:00:00.000000Z, hi=2019-12-31T23:59:59.999999Z}," +
-                            "{lo=2020-02-01T00:00:00.000000Z, hi=294247-01-10T04:00:54.775807Z}]");
-        } finally {
-            currentMicros = -1;
-        }
-    }
-
 
     @Test
     public void testConstVsLambda() throws Exception {
@@ -1219,6 +1205,18 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNowWithNotIn() throws Exception {
+        currentMicros = 24L * 3600 * 1000 * 1000;
+        try {
+            runWhereIntervalTest0("timestamp not in ('2020-01-01T00:00:00.000000Z', '2020-01-31T23:59:59.999999Z') and now() <= timestamp",
+                    "[{lo=1970-01-02T00:00:00.000000Z, hi=2019-12-31T23:59:59.999999Z}," +
+                            "{lo=2020-02-01T00:00:00.000000Z, hi=294247-01-10T04:00:54.775807Z}]");
+        } finally {
+            currentMicros = -1;
+        }
+    }
+
+    @Test
     public void testOr() throws Exception {
         IntrinsicModel m = modelOf("(sym = 'X' or sym = 'Y') and bid > 10");
         Assert.assertEquals(IntrinsicModel.UNDEFINED, m.intrinsicValue);
@@ -1402,8 +1400,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
 
     @Test
     public void testTimestampWithBindNullVariable() throws SqlException {
-        IntrinsicModel m = runWhereIntervalTest0("timestamp >= $1", "[]",
-                bv -> bv.setTimestamp(0, Numbers.LONG_NaN));
+        runWhereIntervalTest0("timestamp >= $1", "[]", bv -> bv.setTimestamp(0, Numbers.LONG_NaN));
     }
 
     @Test
@@ -1602,7 +1599,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     @Test
     public void testWrongTypeConstFunctionDateGreater() {
         try {
-            IntrinsicModel m = modelOf("timestamp > abs(1)");
+            modelOf("timestamp > abs(1)");
             Assert.fail();
         } catch (SqlException e) {
             Assert.assertEquals(12, e.getPosition());
@@ -1612,7 +1609,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     @Test
     public void testWrongTypeConstFunctionDateLess() {
         try {
-            IntrinsicModel m = modelOf("timestamp <= abs(1)");
+            modelOf("timestamp <= abs(1)");
             Assert.fail();
         } catch (SqlException e) {
             Assert.assertEquals(13, e.getPosition());

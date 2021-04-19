@@ -44,7 +44,7 @@ public class AllNotEqStrFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         Function arrayFunction = args.getQuick(1);
         int arraySize = arrayFunction.getArrayLength();
         if (arraySize == 0) {

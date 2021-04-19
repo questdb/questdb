@@ -185,13 +185,6 @@ public class SendAndReceiveRequestBuilder {
             receivedBytes[i] = (byte) receivedByteList.getQuick(i);
         }
 
-        // // TODO
-        // try (BufferedOutputStream os = new BufferedOutputStream(new FileOutputStream(new File("/tmp/test")))) {
-        // os.write(receivedBytes);
-        // } catch (IOException ex) {
-        //
-        // }
-
         String actual = new String(receivedBytes, StandardCharsets.UTF_8);
         if (!printOnly) {
             if (expectedResponse instanceof ByteSequence) {

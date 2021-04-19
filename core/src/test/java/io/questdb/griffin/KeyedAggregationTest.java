@@ -25,7 +25,6 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.std.Rnd;
@@ -143,7 +142,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
             compiler.compile("insert into tab select rnd_symbol('s1','s2','s3', null), rnd_double(2), rnd_symbol('a1','a2','a3', null) s2 from long_sequence(1000000)", sqlExecutionContext);
 
             try (
-                    RecordCursorFactory factory = compiler.compile("select s2, sum(val) from tab order by s2", sqlExecutionContext).getRecordCursorFactory();
+                    RecordCursorFactory factory = compiler.compile("select s2, sum(val) from tab order by s2", sqlExecutionContext).getRecordCursorFactory()
             ) {
                 Record[] expected = new Record[] {
                         new Record() {
@@ -679,7 +678,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
 
             // test with key falling within null columns
             try (
-                    RecordCursorFactory factory = compiler.compile("select s2, sum(val) from tab where t > '1970-01-04T12:00' and t < '1970-01-07T11:00' order by s2", sqlExecutionContext).getRecordCursorFactory();
+                    RecordCursorFactory factory = compiler.compile("select s2, sum(val) from tab where t > '1970-01-04T12:00' and t < '1970-01-07T11:00' order by s2", sqlExecutionContext).getRecordCursorFactory()
             ) {
                 Record[] expected = new Record[] {
                         new Record() {
@@ -698,7 +697,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
 
             /// test key on overlap
             try (
-                    RecordCursorFactory factory = compiler.compile("select s2, sum(val) from tab where t > '1970-01-12T12:00' and t < '1970-01-14T11:00' order by s2", sqlExecutionContext).getRecordCursorFactory();
+                    RecordCursorFactory factory = compiler.compile("select s2, sum(val) from tab where t > '1970-01-12T12:00' and t < '1970-01-14T11:00' order by s2", sqlExecutionContext).getRecordCursorFactory()
             ) {
                 Record[] expected = new Record[] {
                         new Record() {
@@ -785,7 +784,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
 
             // test with key falling within null columns
             try (
-                    RecordCursorFactory factory = compiler.compile("select s2, sum(val) from tab order by s2", sqlExecutionContext).getRecordCursorFactory();
+                    RecordCursorFactory factory = compiler.compile("select s2, sum(val) from tab order by s2", sqlExecutionContext).getRecordCursorFactory()
             ) {
                 Record[] expected = new Record[] {
                         new Record() {
