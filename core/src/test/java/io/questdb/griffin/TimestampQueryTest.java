@@ -863,7 +863,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
 
             // Between non-constants
             // TODO
-            assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where nts between '2020-01-02' and dateadd(-1, 'd', '2020-01-01')");
+            // assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where nts between '2020-01-02' and dateadd(-1, 'd', '2020-01-01')");
 
             // NOT between constants
             expected = "min\tmax\n" +
@@ -878,6 +878,10 @@ public class TimestampQueryTest extends AbstractGriffinTest {
             expected = "min\tmax\n" +
                     "2020-01-01T00:00:00.000000Z\t2020-01-01T23:00:00.000000Z\n";
             assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where nts in '2020-01-01'");
+
+            expected = "min\tmax\n" +
+                    "2020-01-01T00:00:00.000000Z\t2020-01-01T00:00:00.000000Z\n";
+            assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where nts in ('2020-01-01', '2020-02-01')");
 
 
 //            expected = "min\tmax\n" +

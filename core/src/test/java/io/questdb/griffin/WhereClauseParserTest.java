@@ -375,7 +375,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     public void testNowWithNotIn() throws Exception {
         currentMicros = 24L * 3600 * 1000 * 1000;
         try {
-            runWhereIntervalTest0("timestamp not in ('2020-01-01T00:00:00.000000Z', '2020-01-31T23:59:59.999999Z') and now() <= timestamp",
+            runWhereIntervalTest0("timestamp not between '2020-01-01T00:00:00.000000Z' and '2020-01-31T23:59:59.999999Z' and now() <= timestamp",
                     "[{lo=1970-01-02T00:00:00.000000Z, hi=2019-12-31T23:59:59.999999Z}," +
                             "{lo=2020-02-01T00:00:00.000000Z, hi=294247-01-10T04:00:54.775807Z}]");
         } finally {
@@ -1028,7 +1028,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
 
     @Test
     public void testLiteralInListOfValues() throws Exception {
-        IntrinsicModel m = modelOf("sym in ('a', z) and timestamp in ('2014-01-01T12:30:00.000Z', '2014-01-02T12:30:00.000Z')");
+        IntrinsicModel m = modelOf("sym in ('a', z) and timestamp between '2014-01-01T12:30:00.000Z' and '2014-01-02T12:30:00.000Z'");
         TestUtils.assertEquals("[{lo=2014-01-01T12:30:00.000000Z, hi=2014-01-02T12:30:00.000000Z}]", intervalToString(m));
         Assert.assertNull(m.keyColumn);
         assertFilter(m, "z'a'symin");
