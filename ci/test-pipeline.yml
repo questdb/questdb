@@ -42,7 +42,7 @@ stages:
             lfs: false
             submodules: false
           - bash: sudo sysctl -w fs.file-max=500000
-            condition: eq('${{ os }}', Linux)
+            condition: eq($(os), Linux)
           - task: Maven@3
             displayName: "Compile with Maven"
             inputs:
