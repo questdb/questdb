@@ -183,9 +183,10 @@ public class IntervalFwdDataFrameCursorTest extends AbstractCairoTest {
         intervals.add(TimestampFormatUtils.parseTimestamp("1983-01-01T00:00:00.000Z"));
         intervals.add(TimestampFormatUtils.parseTimestamp("1983-01-02T00:00:00.000Z"));
 
-        final String expected = "1983-01-01T00:00:00.000000Z\n".repeat(N);
+        sink.clear();
+        sink.repeat( "1983-01-01T00:00:00.000000Z\n", N);
 
-        testIntervals(PartitionBy.NONE, 0, N, expected, N);
+        testIntervals(PartitionBy.NONE, 0, N, sink, N);
     }
 
     @Test

@@ -58,6 +58,7 @@ import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 
 import java.io.BufferedInputStream;
+import java.io.InputStream;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -1758,186 +1759,6 @@ public class IODispatcherTest {
     }
 
     @Test
-    public void testJsonQueryWithCompressedResults1() throws Exception {
-        Zip.init();
-        assertMemoryLeak(() -> {
-            final NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
-            final String baseDir = temp.getRoot().getAbsolutePath();
-            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(nf, baseDir, 256, false, true);
-            final WorkerPool workerPool = new WorkerPool(new WorkerPoolConfiguration() {
-                @Override
-                public int[] getWorkerAffinity() {
-                    return new int[] { -1, -1 };
-                }
-
-                @Override
-                public int getWorkerCount() {
-                    return 2;
-                }
-
-                @Override
-                public boolean haltOnError() {
-                    return false;
-                }
-            });
-            try (
-                    CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir));
-                    HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, false)) {
-                httpServer.bind(new HttpRequestProcessorFactory() {
-                    @Override
-                    public HttpRequestProcessor newInstance() {
-                        return new StaticContentProcessor(httpConfiguration);
-                    }
-
-                    @Override
-                    public String getUrl() {
-                        return HttpServerConfiguration.DEFAULT_PROCESSOR_URL;
-                    }
-                });
-
-                httpServer.bind(new HttpRequestProcessorFactory() {
-                    @Override
-                    public HttpRequestProcessor newInstance() {
-                        return new JsonQueryProcessor(
-                                httpConfiguration.getJsonQueryProcessorConfiguration(),
-                                engine,
-                                null,
-                                workerPool.getWorkerCount());
-                    }
-
-                    @Override
-                    public String getUrl() {
-                        return "/query";
-                    }
-                });
-
-                workerPool.start(LOG);
-
-                try {
-                    // create table with all column types
-                    CairoTestUtils.createTestTable(
-                            engine.getConfiguration(),
-                            30,
-                            new Rnd(),
-                            new TestRecord.ArrayBinarySequence());
-
-                    // send multipart request to server
-                    final String request = "GET /query?query=x HTTP/1.1\r\n" +
-                            "Host: localhost:9001\r\n" +
-                            "Connection: keep-alive\r\n" +
-                            "Cache-Control: max-age=0\r\n" +
-                            "Upgrade-Insecure-Requests: 1\r\n" +
-                            "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
-                            "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n" +
-                            "Accept-Encoding: gzip, deflate, br\r\n" +
-                            "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
-                            "\r\n";
-
-                    ByteArrayResponse expectedResponse;
-                    try (BufferedInputStream is = new BufferedInputStream(getClass().getResourceAsStream(getClass().getSimpleName() + ".testJsonQueryWithCompressedResults1.bin"))) {
-                        byte[] bytes = new byte[20 * 1024];
-                        int len = is.read(bytes);
-                        expectedResponse = new ByteArrayResponse(bytes, len);
-                    }
-                    sendAndReceive(nf, request, expectedResponse, 10, 100L, false);
-                } finally {
-                    workerPool.halt();
-                }
-            }
-        });
-    }
-
-    @Test
-    public void testJsonQueryWithCompressedResults2() throws Exception {
-        Zip.init();
-        assertMemoryLeak(() -> {
-            final NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
-            final String baseDir = temp.getRoot().getAbsolutePath();
-            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(nf, baseDir, 4096, false, true);
-            final WorkerPool workerPool = new WorkerPool(new WorkerPoolConfiguration() {
-                @Override
-                public int[] getWorkerAffinity() {
-                    return new int[] { -1, -1 };
-                }
-
-                @Override
-                public int getWorkerCount() {
-                    return 2;
-                }
-
-                @Override
-                public boolean haltOnError() {
-                    return false;
-                }
-            });
-            try (
-                    CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir));
-                    HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, false)) {
-                httpServer.bind(new HttpRequestProcessorFactory() {
-                    @Override
-                    public HttpRequestProcessor newInstance() {
-                        return new StaticContentProcessor(httpConfiguration);
-                    }
-
-                    @Override
-                    public String getUrl() {
-                        return HttpServerConfiguration.DEFAULT_PROCESSOR_URL;
-                    }
-                });
-
-                httpServer.bind(new HttpRequestProcessorFactory() {
-                    @Override
-                    public HttpRequestProcessor newInstance() {
-                        return new JsonQueryProcessor(
-                                httpConfiguration.getJsonQueryProcessorConfiguration(),
-                                engine,
-                                null,
-                                workerPool.getWorkerCount());
-                    }
-
-                    @Override
-                    public String getUrl() {
-                        return "/query";
-                    }
-                });
-
-                workerPool.start(LOG);
-
-                try {
-                    // create table with all column types
-                    CairoTestUtils.createTestTable(
-                            engine.getConfiguration(),
-                            1000,
-                            new Rnd(),
-                            new TestRecord.ArrayBinarySequence());
-
-                    // send multipart request to server
-                    final String request = "GET /query?query=x HTTP/1.1\r\n" +
-                            "Host: localhost:9001\r\n" +
-                            "Connection: keep-alive\r\n" +
-                            "Cache-Control: max-age=0\r\n" +
-                            "Upgrade-Insecure-Requests: 1\r\n" +
-                            "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
-                            "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n" +
-                            "Accept-Encoding: gzip, deflate, br\r\n" +
-                            "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
-                            "\r\n";
-
-                    ByteArrayResponse expectedResponse;
-                    try (BufferedInputStream is = new BufferedInputStream(getClass().getResourceAsStream(getClass().getSimpleName() + ".testJsonQueryWithCompressedResults2.bin"))) {
-                        byte[] bytes = new byte[100 * 1024];
-                        int len = is.read(bytes);
-                        expectedResponse = new ByteArrayResponse(bytes, len);
-                    }
-                    sendAndReceive(nf, request, expectedResponse, 10, 100L, false);
-                } finally {
-                    workerPool.halt();
-                }
-            }
-        });
-    }
-
-    @Test
     public void testJsonQueryBadUtf8() throws Exception {
         testJsonQuery(
                 20,
@@ -3620,6 +3441,188 @@ public class IODispatcherTest {
                     );
                 }, false,
                 true);
+    }
+
+    @Test
+    public void testJsonQueryWithCompressedResults1() throws Exception {
+        Zip.init();
+        assertMemoryLeak(() -> {
+            final NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
+            final String baseDir = temp.getRoot().getAbsolutePath();
+            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(nf, baseDir, 256, false, true);
+            final WorkerPool workerPool = new WorkerPool(new WorkerPoolConfiguration() {
+                @Override
+                public int[] getWorkerAffinity() {
+                    return new int[]{-1, -1};
+                }
+
+                @Override
+                public int getWorkerCount() {
+                    return 2;
+                }
+
+                @Override
+                public boolean haltOnError() {
+                    return false;
+                }
+            });
+            try (
+                    CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir));
+                    HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, false)) {
+                httpServer.bind(new HttpRequestProcessorFactory() {
+                    @Override
+                    public HttpRequestProcessor newInstance() {
+                        return new StaticContentProcessor(httpConfiguration);
+                    }
+
+                    @Override
+                    public String getUrl() {
+                        return HttpServerConfiguration.DEFAULT_PROCESSOR_URL;
+                    }
+                });
+
+                httpServer.bind(new HttpRequestProcessorFactory() {
+                    @Override
+                    public HttpRequestProcessor newInstance() {
+                        return new JsonQueryProcessor(
+                                httpConfiguration.getJsonQueryProcessorConfiguration(),
+                                engine,
+                                null,
+                                workerPool.getWorkerCount());
+                    }
+
+                    @Override
+                    public String getUrl() {
+                        return "/query";
+                    }
+                });
+
+                workerPool.start(LOG);
+
+                try {
+                    // create table with all column types
+                    CairoTestUtils.createTestTable(
+                            engine.getConfiguration(),
+                            30,
+                            new Rnd(),
+                            new TestRecord.ArrayBinarySequence());
+
+                    // send multipart request to server
+                    final String request = "GET /query?query=x HTTP/1.1\r\n" +
+                            "Host: localhost:9001\r\n" +
+                            "Connection: keep-alive\r\n" +
+                            "Cache-Control: max-age=0\r\n" +
+                            "Upgrade-Insecure-Requests: 1\r\n" +
+                            "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
+                            "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n" +
+                            "Accept-Encoding: gzip, deflate, br\r\n" +
+                            "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                            "\r\n";
+
+                    ByteArrayResponse expectedResponse;
+                    try (InputStream is = getClass().getResourceAsStream(getClass().getSimpleName() + ".testJsonQueryWithCompressedResults1.bin")) {
+                        Assert.assertNotNull(is);
+                        byte[] bytes = new byte[20 * 1024];
+                        int len = is.read(bytes);
+                        expectedResponse = new ByteArrayResponse(bytes, len);
+                    }
+                    sendAndReceive(nf, request, expectedResponse, 10, 100L, false);
+                } finally {
+                    workerPool.halt();
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testJsonQueryWithCompressedResults2() throws Exception {
+        Zip.init();
+        assertMemoryLeak(() -> {
+            final NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
+            final String baseDir = temp.getRoot().getAbsolutePath();
+            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(nf, baseDir, 4096, false, true);
+            final WorkerPool workerPool = new WorkerPool(new WorkerPoolConfiguration() {
+                @Override
+                public int[] getWorkerAffinity() {
+                    return new int[]{-1, -1};
+                }
+
+                @Override
+                public int getWorkerCount() {
+                    return 2;
+                }
+
+                @Override
+                public boolean haltOnError() {
+                    return false;
+                }
+            });
+            try (
+                    CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir));
+                    HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, false)) {
+                httpServer.bind(new HttpRequestProcessorFactory() {
+                    @Override
+                    public HttpRequestProcessor newInstance() {
+                        return new StaticContentProcessor(httpConfiguration);
+                    }
+
+                    @Override
+                    public String getUrl() {
+                        return HttpServerConfiguration.DEFAULT_PROCESSOR_URL;
+                    }
+                });
+
+                httpServer.bind(new HttpRequestProcessorFactory() {
+                    @Override
+                    public HttpRequestProcessor newInstance() {
+                        return new JsonQueryProcessor(
+                                httpConfiguration.getJsonQueryProcessorConfiguration(),
+                                engine,
+                                null,
+                                workerPool.getWorkerCount());
+                    }
+
+                    @Override
+                    public String getUrl() {
+                        return "/query";
+                    }
+                });
+
+                workerPool.start(LOG);
+
+                try {
+                    // create table with all column types
+                    CairoTestUtils.createTestTable(
+                            engine.getConfiguration(),
+                            1000,
+                            new Rnd(),
+                            new TestRecord.ArrayBinarySequence());
+
+                    // send multipart request to server
+                    final String request = "GET /query?query=x HTTP/1.1\r\n" +
+                            "Host: localhost:9001\r\n" +
+                            "Connection: keep-alive\r\n" +
+                            "Cache-Control: max-age=0\r\n" +
+                            "Upgrade-Insecure-Requests: 1\r\n" +
+                            "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
+                            "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n" +
+                            "Accept-Encoding: gzip, deflate, br\r\n" +
+                            "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                            "\r\n";
+
+                    ByteArrayResponse expectedResponse;
+                    try (InputStream is = getClass().getResourceAsStream(getClass().getSimpleName() + ".testJsonQueryWithCompressedResults2.bin")) {
+                        Assert.assertNotNull(is);
+                        byte[] bytes = new byte[100 * 1024];
+                        int len = is.read(bytes);
+                        expectedResponse = new ByteArrayResponse(bytes, len);
+                    }
+                    sendAndReceive(nf, request, expectedResponse, 10, 100L, false);
+                } finally {
+                    workerPool.halt();
+                }
+            }
+        });
     }
 
     @Test
