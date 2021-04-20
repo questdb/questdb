@@ -408,8 +408,16 @@ public class LineTcpAuthConnectionContextTest extends AbstractCairoTest {
     @Test
     public void testGoodAuthenticationP1363() throws Exception {
         runInContext(() -> {
-            boolean authSequenceCompleted = authenticate(AUTH_KEY_ID1, AUTH_PRIVATE_KEY1, false, false, false, true, null);
-            Assert.assertTrue(authSequenceCompleted);
+            try {
+                boolean authSequenceCompleted = authenticate(AUTH_KEY_ID1, AUTH_PRIVATE_KEY1, false, false, false, true, null);
+                Assert.assertTrue(authSequenceCompleted);
+            } catch (RuntimeException ex) {
+                // Expected that Java 8 does not have SHA256withECDSAinP1363
+                if (ex.getCause() instanceof NoSuchAlgorithmException && TestUtils.getJavaVersion() <= 8) {
+                    return;
+                }
+                throw ex;
+            }
             Assert.assertFalse(disconnected);
             recvBuffer = "weather,location=us-midwest temperature=82 1465839830100400200\n";
             handleContextIO();
