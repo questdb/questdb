@@ -1201,7 +1201,7 @@ public class SqlCompiler implements Closeable {
                     }
 
                     RecordCursor cursor = reader.getCursor();
-                    copyTableData(cursor, backupWriter, writerMetadata, recordToRowCopier);
+                    copyTableData(cursor, reader.getMetadata(), backupWriter, writerMetadata, recordToRowCopier);
                     backupWriter.commit();
                 }
             }
@@ -1334,13 +1334,13 @@ public class SqlCompiler implements Closeable {
         }
     }
 
-    private void copyOrdered(TableWriter writer, RecordCursor cursor, RecordToRowCopier copier, int cursorTimestampIndex) {
+    private void copyOrdered(TableWriter writer, RecordMetadata metadata, RecordCursor cursor, RecordToRowCopier copier, int cursorTimestampIndex) {
         final Record record = cursor.getRecord();
+        int timestampType = metadata.getColumnType(cursorTimestampIndex);
+
         while (cursor.hasNext()) {
             long timestamp;
-            try {
-                timestamp = record.getTimestamp(cursorTimestampIndex);
-            } catch (UnsupportedConversionException e) {
+            if (timestampType == ColumnType.STRING || timestampType == ColumnType.SYMBOL) {
                 CharSequence str = record.getStr(cursorTimestampIndex);
                 try {
                     // It's allowed to insert ISO formatted string to timestamp column
@@ -1348,6 +1348,8 @@ public class SqlCompiler implements Closeable {
                 } catch (NumericException numericException) {
                     throw CairoException.instance(0).put("Invalid timestamp: ").put(str);
                 }
+            } else {
+                timestamp = record.getTimestamp(cursorTimestampIndex);
             }
 
             TableWriter.Row row = writer.newRow(timestamp);
@@ -1407,7 +1409,7 @@ public class SqlCompiler implements Closeable {
             RecordMetadata writerMetadata = writer.getMetadata();
             entityColumnFilter.of(writerMetadata.getColumnCount());
             RecordToRowCopier recordToRowCopier = assembleRecordToRowCopier(asm, cursorMetadata, writerMetadata, entityColumnFilter);
-            copyTableData(cursor, writer, writerMetadata, recordToRowCopier);
+            copyTableData(cursor, cursorMetadata, writer, writerMetadata, recordToRowCopier);
             return writer;
         } catch (CairoException e) {
             writer.close();
@@ -1415,12 +1417,12 @@ public class SqlCompiler implements Closeable {
         }
     }
 
-    private void copyTableData(RecordCursor cursor, TableWriter writer, RecordMetadata writerMetadata, RecordToRowCopier recordToRowCopier) {
+    private void copyTableData(RecordCursor cursor, RecordMetadata metadata, TableWriter writer, RecordMetadata writerMetadata, RecordToRowCopier recordToRowCopier) {
         int timestampIndex = writerMetadata.getTimestampIndex();
         if (timestampIndex == -1) {
             copyUnordered(cursor, writer, recordToRowCopier);
         } else {
-            copyOrdered(writer, cursor, recordToRowCopier, timestampIndex);
+            copyOrdered(writer, metadata, cursor, recordToRowCopier, timestampIndex);
         }
     }
 
@@ -1795,7 +1797,7 @@ public class SqlCompiler implements Closeable {
                     if (writerTimestampIndex == -1) {
                         copyUnordered(cursor, writer, copier);
                     } else {
-                        copyOrdered(writer, cursor, copier, writerTimestampIndex);
+                        copyOrdered(writer, factory.getMetadata(), cursor, copier, writerTimestampIndex);
                     }
                 } catch (CairoException e) {
                     // rollback data when system error occurs

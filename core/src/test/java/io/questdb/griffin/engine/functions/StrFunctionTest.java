@@ -25,7 +25,6 @@
 package io.questdb.griffin.engine.functions;
 
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.UnsupportedConversionException;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -45,47 +44,47 @@ public class StrFunctionTest {
         }
     };
 
-    @Test(expected = UnsupportedConversionException.class)
+    @Test(expected = UnsupportedOperationException.class)
     public void testGetBin() {
         function.getBin(null);
     }
 
-    @Test(expected = UnsupportedConversionException.class)
+    @Test(expected = UnsupportedOperationException.class)
     public void testGetBinLen() {
         function.getBinLen(null);
     }
 
-    @Test(expected = UnsupportedConversionException.class)
+    @Test(expected = UnsupportedOperationException.class)
     public void testGetBool() {
         function.getBool(null);
     }
 
-    @Test(expected = UnsupportedConversionException.class)
+    @Test(expected = UnsupportedOperationException.class)
     public void testGetByte() {
         function.getByte(null);
     }
 
-    @Test(expected = UnsupportedConversionException.class)
+    @Test(expected = UnsupportedOperationException.class)
     public void testGetDate() {
         function.getDate(null);
     }
 
-    @Test(expected = UnsupportedConversionException.class)
+    @Test(expected = UnsupportedOperationException.class)
     public void testGetDouble() {
         function.getDouble(null);
     }
 
-    @Test(expected = UnsupportedConversionException.class)
+    @Test(expected = UnsupportedOperationException.class)
     public void testGetFloat() {
         function.getFloat(null);
     }
 
-    @Test(expected = UnsupportedConversionException.class)
+    @Test(expected = UnsupportedOperationException.class)
     public void testGetInt() {
         function.getInt(null);
     }
 
-    @Test(expected = UnsupportedConversionException.class)
+    @Test(expected = UnsupportedOperationException.class)
     public void testGetLong() {
         function.getLong(null);
     }
@@ -95,12 +94,12 @@ public class StrFunctionTest {
         Assert.assertEquals(25, function.getPosition());
     }
 
-    @Test(expected = UnsupportedConversionException.class)
+    @Test(expected = UnsupportedOperationException.class)
     public void testGetRecordCursorFactory() {
         function.getRecordCursorFactory();
     }
 
-    @Test(expected = UnsupportedConversionException.class)
+    @Test(expected = UnsupportedOperationException.class)
     public void testGetShort() {
         function.getShort(null);
     }
@@ -115,7 +114,7 @@ public class StrFunctionTest {
         TestUtils.assertEquals("a", function.getSymbol(null));
     }
 
-    @Test(expected = UnsupportedConversionException.class)
+    @Test(expected = UnsupportedOperationException.class)
     public void testGetTimestamp() {
         function.getTimestamp(null);
     }
@@ -124,17 +123,17 @@ public class StrFunctionTest {
         Assert.assertEquals('a', function.getChar(null));
     }
 
-    @Test(expected = UnsupportedConversionException.class)
+    @Test(expected = UnsupportedOperationException.class)
     public void testLong256() {
         function.getLong256(null, null);
     }
 
-    @Test(expected = UnsupportedConversionException.class)
+    @Test(expected = UnsupportedOperationException.class)
     public void testLong256A() {
         function.getLong256A(null);
     }
 
-    @Test(expected = UnsupportedConversionException.class)
+    @Test(expected = UnsupportedOperationException.class)
     public void testLong256B() {
         function.getLong256B(null);
     }
