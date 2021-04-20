@@ -331,9 +331,6 @@ public final class TestUtils {
         long fileCount = Files.getOpenFileCount();
         runnable.run();
         Path.clearThreadLocals();
-        if (fileCount != Files.getOpenFileCount()) {
-            System.out.println("ok");
-        }
         Assert.assertEquals(fileCount, Files.getOpenFileCount());
         Assert.assertEquals(mem, Unsafe.getMemUsed());
     }

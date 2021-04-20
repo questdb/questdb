@@ -770,6 +770,45 @@ public class O3FailureTest extends AbstractO3Test {
     }
 
     @Test
+    public void testFailOnResizingIndexContended() throws Exception {
+        // this places break point on resize of key file
+        counter.set(107);
+        executeWithPool(0, O3FailureTest::testPartitionedDataAppendOODataNotNullStrTailFailRetry0, ffAllocateFailure);
+    }
+
+    @Test
+    public void testFailOnTruncateKeyIndexContended() throws Exception {
+        counter.set(81);
+        executeWithPool(0, O3FailureTest::testColumnTopLastOOOPrefixFailRetry0, new FilesFacadeImpl() {
+
+            @Override
+            public boolean truncate(long fd, long size) {
+                if (counter.decrementAndGet() == 0) {
+                    new Exception().printStackTrace();
+                    return false;
+                }
+                return super.truncate(fd, size);
+            }
+        });
+    }
+
+    @Test
+    public void testFailOnTruncateKeyValueContended() throws Exception {
+        counter.set(82);
+        executeWithPool(0, O3FailureTest::testColumnTopLastOOOPrefixFailRetry0, new FilesFacadeImpl() {
+
+            @Override
+            public boolean truncate(long fd, long size) {
+                if (counter.decrementAndGet() == 0) {
+                    new Exception().printStackTrace();
+                    return false;
+                }
+                return super.truncate(fd, size);
+            }
+        });
+    }
+
+    @Test
     public void testPartitionedDataAppendOODataNotNullStrTailIndexAllocateFail() throws Exception {
         counter.set(2);
         executeWithoutPool(O3FailureTest::testPartitionedDataAppendOODataNotNullStrTailFailRetry0, ffIndexAllocateFailure);

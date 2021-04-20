@@ -166,14 +166,20 @@ public class BitmapIndexWriter implements Closeable, Mutable {
         close();
         final FilesFacade ff = configuration.getFilesFacade();
         long pageSize = ff.getMapPageSize();
-
+        boolean kFdUnassigned = true;
+        boolean vFdUnassigned = true;
         try {
             if (init) {
                 // todo: copy from source
-                ff.truncate(keyFd, 0);
-                this.keyMem.of(ff, keyFd, pageSize);
-                initKeyMemory(this.keyMem, TableUtils.MIN_INDEX_VALUE_BLOCK_SIZE);
+                if (ff.truncate(keyFd, 0)) {
+                    kFdUnassigned = false;
+                    this.keyMem.of(ff, keyFd, pageSize);
+                    initKeyMemory(this.keyMem, TableUtils.MIN_INDEX_VALUE_BLOCK_SIZE);
+                } else {
+                    throw CairoException.instance(ff.errno()).put("Could not truncate [fd=").put(keyFd).put(']');
+                }
             } else {
+                kFdUnassigned = false;
                 this.keyMem.of(ff, keyFd, pageSize);
             }
             long keyMemSize = this.keyMem.getAppendOffset();
@@ -203,10 +209,15 @@ public class BitmapIndexWriter implements Closeable, Mutable {
             }
 
             if (init) {
-                ff.truncate(valueFd, 0);
-                this.valueMem.of(ff, valueFd, pageSize);
-                this.valueMem.jumpTo(0);
+                if (ff.truncate(valueFd, 0)) {
+                    vFdUnassigned = false;
+                    this.valueMem.of(ff, valueFd, pageSize);
+                    this.valueMem.jumpTo(0);
+                } else {
+                    throw CairoException.instance(ff.errno()).put("Could not truncate [fd=").put(valueFd).put(']');
+                }
             } else {
+                vFdUnassigned = false;
                 this.valueMem.of(ff, valueFd, pageSize);
             }
             this.valueMemSize = this.keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_VALUE_MEM_SIZE);
@@ -223,6 +234,12 @@ public class BitmapIndexWriter implements Closeable, Mutable {
             this.blockCapacity = (this.blockValueCountMod + 1) * 8 + BitmapIndexUtils.VALUE_BLOCK_FILE_RESERVED;
         } catch (CairoException e) {
             this.close();
+            if (kFdUnassigned) {
+                ff.close(keyFd);
+            }
+            if (vFdUnassigned) {
+                ff.close(valueFd);
+            }
             throw e;
         }
     }
