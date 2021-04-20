@@ -759,6 +759,7 @@ class LineTcpMeasurementScheduler implements Closeable {
         private final ThreadLocalDetails[] localDetailsArray;
         private boolean assignedToJob = false;
         private long lastMeasurementReceivedEpochMs = Long.MAX_VALUE;
+        private long lastCommitEpochMs;
         private int nNetworkIoWorkers = 0;
 
         private TableUpdateDetails(String tableName, int writerThreadId, NetworkIOJob[] netIoJobs) {
@@ -769,19 +770,25 @@ class LineTcpMeasurementScheduler implements Closeable {
             for (int n = 0; n < netIoJobs.length; n++) {
                 localDetailsArray[n] = new ThreadLocalDetails(netIoJobs[n].getUnusedSymbolCaches());
             }
+            lastCommitEpochMs = milliClock.getTicks();
         }
 
         void handleRowAppended() {
             nUncommitted++;
             if (nUncommitted >= maxUncommittedRows) {
                 writer.commitWithHysteresis(commitHysteresisInMicros);
+                lastCommitEpochMs = milliClock.getTicks();
                 nUncommitted = 0;
             }
         }
 
         void handleWriterThreadMaintenance() {
+            if ((milliClock.getTicks() - lastCommitEpochMs) < maintenanceJobHysteresisInMs) {
+                return;
+            }
             if ((nUncommitted > 0 || commitHysteresisInMicros > 0) && null != writer) {
                 writer.commit();
+                lastCommitEpochMs = milliClock.getTicks();
                 nUncommitted = 0;
             }
         }
@@ -789,6 +796,7 @@ class LineTcpMeasurementScheduler implements Closeable {
         void handleWriterRelease() {
             if (nUncommitted > 0 || commitHysteresisInMicros > 0) {
                 writer.commit();
+                lastCommitEpochMs = milliClock.getTicks();
                 nUncommitted = 0;
             }
             writer.close();
@@ -807,6 +815,7 @@ class LineTcpMeasurementScheduler implements Closeable {
             if (null != writer) {
                 if (nUncommitted > 0 || commitHysteresisInMicros > 0) {
                     writer.commit();
+                    lastCommitEpochMs = milliClock.getTicks();
                 }
                 writer.close();
                 writer = null;
@@ -826,6 +835,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                 if (null != writer) {
                     if (nUncommitted > 0 || commitHysteresisInMicros > 0) {
                         writer.commit();
+                        lastCommitEpochMs = milliClock.getTicks();
                     }
                     writer.close();
                     writer = null;
