@@ -41,6 +41,8 @@ stages:
             fetchDepth: 1
             lfs: false
             submodules: false
+          - bash: sudo sysctl -w fs.file-max=500000
+            condition: eq(variables['Agent.OS'], 'Linux')
           - task: Maven@3
             displayName: "Compile with Maven"
             inputs:
