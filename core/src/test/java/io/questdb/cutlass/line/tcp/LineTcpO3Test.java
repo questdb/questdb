@@ -100,8 +100,24 @@ public class LineTcpO3Test extends AbstractCairoTest {
     private void readGzResource(String rname) {
         int resourceNLines;
         try (InputStream is = new GZIPInputStream(getClass().getResourceAsStream(getClass().getSimpleName() + "." + rname + ".gz"))) {
-            byte[] bytes = is.readAllBytes();
-            resourceSize = bytes.length;
+            final int bufSz = 10_000_000;
+            byte[] bytes = new byte[bufSz];
+            resourceSize = 0;
+            while (true) {
+                int off = resourceSize;
+                int len = bytes.length - off;
+                int rc = is.read(bytes, off, len);
+                if (rc > 0) {
+                    resourceSize += rc;
+                    if (resourceSize >= bytes.length) {
+                        byte[] newBytes = new byte[bytes.length + bufSz];
+                        System.arraycopy(bytes, 0, newBytes, 0, bytes.length);
+                        bytes = newBytes;
+                    }
+                    continue;
+                }
+                break;
+            }
             resourceAddress = Unsafe.malloc(resourceSize);
             resourceNLines = 0;
             for (int i = 0; i < resourceSize; i++) {
