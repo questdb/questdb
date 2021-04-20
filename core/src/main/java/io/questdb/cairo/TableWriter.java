@@ -124,7 +124,7 @@ public class TableWriter implements Closeable {
     private final long txnScoreboard;
     private final LongList o3PartitionRemoveCandidates = new LongList();
     private final LongConsumer appendTimestampSetter;
-    private final ObjectPool<MutableAtomicInteger> o3ColumnCounters = new ObjectPool<MutableAtomicInteger>(MutableAtomicInteger::new, 64);
+    private final ObjectPool<O3MutableAtomicInteger> o3ColumnCounters = new ObjectPool<O3MutableAtomicInteger>(O3MutableAtomicInteger::new, 64);
     private long todoTxn;
     private ContiguousVirtualMemory o3TimestampMem;
     private final O3ColumnUpdateMethod o3MoveHysteresisRef = this::o3MoveHysteresis0;
@@ -152,6 +152,7 @@ public class TableWriter implements Closeable {
     private long o3RowCount;
     private final O3ColumnUpdateMethod o3MoveUncommittedRef = this::o3MoveUncommitted0;
     private long lastPartitionTimestamp;
+    private final ObjectPool<O3Basket> o3BasketPool = new ObjectPool<O3Basket>(O3Basket::new, 64);
 
     public TableWriter(CairoConfiguration configuration, CharSequence tableName) {
         this(configuration, tableName, new MessageBusImpl(configuration));
@@ -2095,6 +2096,7 @@ public class TableWriter implements Closeable {
         o3PartitionRemoveCandidates.clear();
         o3ErrorCount.set(0);
         o3ColumnCounters.clear();
+        o3BasketPool.clear();
 
         final int workerId;
         final Thread thread = Thread.currentThread();
@@ -2226,6 +2228,9 @@ public class TableWriter implements Closeable {
                                 .I$();
 
                         o3PartitionUpdRemaining.incrementAndGet();
+                        final O3Basket o3Basket = o3BasketPool.next();
+                        o3Basket.ensureCapacity(columnCount, indexCount);
+
                         if (last && (srcDataSize < 0 || o3Timestamp >= maxTimestamp)) {
                             AtomicInteger columnCounter = o3ColumnCounters.next();
                             columnCounter.set(columnCount);
@@ -2320,7 +2325,8 @@ public class TableWriter implements Closeable {
                                     partitionTimestamp,
                                     last,
                                     srcDataSize,
-                                    srcNameTxn
+                                    srcNameTxn,
+                                    o3Basket
                             );
                         }
                         latchCount++;
@@ -2396,7 +2402,8 @@ public class TableWriter implements Closeable {
             long partitionTimestamp,
             boolean last,
             long srcDataSize,
-            long srcNameTxn
+            long srcNameTxn,
+            O3Basket o3Basket
     ) {
         long cursor = oooPartitionPubSeq.next();
         if (cursor > -1) {
@@ -2421,6 +2428,7 @@ public class TableWriter implements Closeable {
                     sortedTimestampsAddr,
                     this,
                     o3ColumnCounters.next(),
+                    o3Basket,
                     this.o3DoneLatch
             );
             oooPartitionPubSeq.done(cursor);
@@ -2453,6 +2461,7 @@ public class TableWriter implements Closeable {
                     sortedTimestampsAddr,
                     this,
                     o3ColumnCounters.next(),
+                    o3Basket,
                     o3DoneLatch
             );
         }
@@ -4249,13 +4258,6 @@ public class TableWriter implements Closeable {
 
         public void setTimestamp(long value) {
             this.value = value;
-        }
-    }
-
-    private static class MutableAtomicInteger extends AtomicInteger implements Mutable {
-        @Override
-        public void clear() {
-            set(0);
         }
     }
 

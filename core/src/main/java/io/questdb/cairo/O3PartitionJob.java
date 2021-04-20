@@ -97,6 +97,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             long sortedTimestampsAddr,
             TableWriter tableWriter,
             AtomicInteger columnCounter,
+            O3Basket o3Basket,
             SOUnboundedCountDownLatch doneLatch
     ) {
 
@@ -180,6 +181,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     sortedTimestampsAddr,
                     tableWriter,
                     columnCounter,
+                    o3Basket,
                     doneLatch
             );
         } else {
@@ -500,6 +502,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     sortedTimestampsAddr,
                     tableWriter,
                     columnCounter,
+                    o3Basket,
                     doneLatch
             );
         }
@@ -540,6 +543,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         final long sortedTimestampsAddr = task.getSortedTimestampsAddr();
         final TableWriter tableWriter = task.getTableWriter();
         final AtomicInteger columnCounter = task.getColumnCounter();
+        final O3Basket o3Basket = task.getO3Basket();
         final SOUnboundedCountDownLatch doneLatch = task.getDoneLatch();
 
         subSeq.done(cursor);
@@ -572,6 +576,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 sortedTimestampsAddr,
                 tableWriter,
                 columnCounter,
+                o3Basket,
                 doneLatch
         );
     }
@@ -610,6 +615,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             CharSequence pathToTable,
             CharSequence columnName,
             AtomicInteger columnCounter,
+            AtomicInteger partCounter,
             int columnType,
             long timestampMergeIndexAddr,
             long srcOooFixAddr,
@@ -655,6 +661,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 pathToTable,
                 columnName,
                 columnCounter,
+                partCounter,
                 columnType,
                 timestampMergeIndexAddr,
                 srcOooFixAddr,
@@ -738,6 +745,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             long sortedTimestampsAddr,
             TableWriter tableWriter,
             AtomicInteger columnCounter,
+            O3Basket o3Basket,
             SOUnboundedCountDownLatch doneLatch
     ) {
         LOG.debug().$("partition [ts=").$ts(oooTimestampLo).$(']').$();
@@ -801,8 +809,12 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 }
 
                 final BitmapIndexWriter indexWriter;
-                if (isIndexed && openColumnMode == OPEN_LAST_PARTITION_FOR_APPEND) {
-                    indexWriter = tableWriter.getBitmapIndexWriter(i);
+                if (isIndexed) {
+                    if (openColumnMode == OPEN_LAST_PARTITION_FOR_APPEND) {
+                        indexWriter = tableWriter.getBitmapIndexWriter(i);
+                    } else {
+                        indexWriter = o3Basket.nextIndexer();
+                    }
                 } else {
                     indexWriter = null;
                 }
@@ -819,6 +831,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                 pathToTable,
                                 columnName,
                                 columnCounter,
+                                o3Basket.nextPartCounter(),
                                 notTheTimestamp ? columnType : -columnType,
                                 timestampMergeIndexAddr,
                                 srcOooFixAddr,
@@ -873,6 +886,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                 pathToTable,
                                 columnName,
                                 columnCounter,
+                                o3Basket.nextPartCounter(),
                                 notTheTimestamp ? columnType : -columnType,
                                 timestampMergeIndexAddr,
                                 srcOooFixAddr,
@@ -949,6 +963,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             CharSequence pathToTable,
             CharSequence columnName,
             AtomicInteger columnCounter,
+            AtomicInteger partCounter,
             int columnType,
             long timestampMergeIndexAddr,
             long srcOooFixAddr,
@@ -1001,6 +1016,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     pathToTable,
                     columnName,
                     columnCounter,
+                    partCounter,
                     columnType,
                     timestampMergeIndexAddr,
                     srcOooFixAddr,
@@ -1052,6 +1068,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     pathToTable,
                     columnName,
                     columnCounter,
+                    partCounter,
                     columnType,
                     timestampMergeIndexAddr,
                     srcOooFixAddr,

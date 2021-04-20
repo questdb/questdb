@@ -35,6 +35,7 @@ public class O3OpenColumnTask {
     private CharSequence pathToTable;
     private FilesFacade ff;
     private AtomicInteger columnCounter;
+    private AtomicInteger partCounter;
     private long txn;
     private int openColumnMode;
     private CharSequence columnName;
@@ -85,6 +86,10 @@ public class O3OpenColumnTask {
 
     public AtomicInteger getColumnCounter() {
         return columnCounter;
+    }
+
+    public AtomicInteger getPartCounter() {
+        return partCounter;
     }
 
     public CharSequence getColumnName() {
@@ -249,6 +254,7 @@ public class O3OpenColumnTask {
             CharSequence pathToTable,
             CharSequence columnName,
             AtomicInteger columnCounter,
+            AtomicInteger partCounter,
             int columnType,
             long timestampMergeIndexAddr,
             long srcOooFixAddr,
@@ -291,6 +297,7 @@ public class O3OpenColumnTask {
         this.ff = ff;
         this.pathToTable = pathToTable;
         this.columnCounter = columnCounter;
+        this.partCounter = partCounter;
         this.columnName = columnName;
         this.columnType = columnType;
         this.timestampMergeIndexAddr = timestampMergeIndexAddr;

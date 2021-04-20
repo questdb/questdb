@@ -29,6 +29,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.*;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.Misc;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.tasks.O3CopyTask;
@@ -163,7 +164,6 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             default:
                 break;
         }
-        // decrement part counter and if we are the last task - perform final steps
         copyTail(
                 configuration,
                 updPartitionSizeTaskQueue,
@@ -367,7 +367,6 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             SOUnboundedCountDownLatch doneLatch
     ) {
         if (partCounter == null || partCounter.decrementAndGet() == 0) {
-            // todo: pool indexer
             if (isIndexed) {
                 updateIndex(
                         configuration,
@@ -406,14 +405,9 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             O3Utils.unmapAndClose(ff, dstVarFd, dstVarAddr, dstVarSize);
 
             final int columnsRemaining = columnCounter.decrementAndGet();
-            long wid = -1;
-            if (Thread.currentThread() instanceof Worker) {
-                wid = ((Worker) Thread.currentThread()).getWorkerId();
-            }
             LOG.debug()
                     .$("organic [columnsRemaining=").$(columnsRemaining)
-                    .$(", workerId=").$(wid)
-                    .$(']').$();
+                    .I$();
 
             if (columnsRemaining == 0) {
                 updatePartition(
@@ -516,10 +510,17 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
     ) {
         // dstKFd & dstVFd are closed by the indexer
         try {
-            if (indexWriter != null) {
-                updateIndex(dstFixAddr, dstFixSize, dstIndexOffset, dstIndexAdjust, indexWriter);
-            } else {
-                updateIndex(configuration, dstFixAddr, dstFixSize, dstKFd, dstVFd, dstIndexOffset, dstIndexAdjust);
+            long row = dstIndexOffset / Integer.BYTES;
+            boolean closed = !indexWriter.isOpen();
+            if (closed) {
+                indexWriter.of(configuration, dstKFd, dstVFd, row == 0);
+            }
+            try {
+                updateIndex(dstFixAddr, dstFixSize, indexWriter, dstIndexOffset / Integer.BYTES, dstIndexAdjust);
+            } finally {
+                if (closed) {
+                    Misc.free(indexWriter);
+                }
             }
         } catch (Throwable e) {
             tableWriter.o3BumpErrorCount();
@@ -1012,22 +1013,6 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
         }
     }
 
-    private static void updateIndex(
-            CairoConfiguration configuration,
-            long dstFixAddr,
-            long dstFixSize,
-            long dstKFd,
-            long dskVFd,
-            long dstIndexOffset,
-            long dstIndexAdjust
-    ) {
-        try (BitmapIndexWriter w = new BitmapIndexWriter()) {
-            final long row = dstIndexOffset / Integer.BYTES;
-            w.of(configuration, dstKFd, dskVFd, row == 0);
-            updateIndex(dstFixAddr, dstFixSize, w, row, dstIndexAdjust);
-        }
-    }
-
     private static void updateIndex(long dstFixAddr, long dstFixSize, BitmapIndexWriter w, long row, long rowAdjust) {
         w.rollbackConditionally(row + rowAdjust);
         final long count = dstFixSize / Integer.BYTES - rowAdjust;
@@ -1035,10 +1020,6 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             w.add(TableUtils.toIndexKey(Unsafe.getUnsafe().getInt(dstFixAddr + row * Integer.BYTES)), row + rowAdjust);
         }
         w.setMaxValue(count - 1);
-    }
-
-    private static void updateIndex(long dstFixAddr, long dstFixSize, long dstIndexOffset, long dstIndexAdjust, BitmapIndexWriter indexWriter) {
-        updateIndex(dstFixAddr, dstFixSize, indexWriter, dstIndexOffset / Integer.BYTES, dstIndexAdjust);
     }
 
     private void copy(O3CopyTask task, long cursor, Sequence subSeq) {

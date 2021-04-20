@@ -24,6 +24,7 @@
 
 package io.questdb.tasks;
 
+import io.questdb.cairo.O3Basket;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.vm.AppendOnlyVirtualMemory;
 import io.questdb.cairo.vm.ContiguousVirtualMemory;
@@ -53,6 +54,7 @@ public class O3PartitionTask {
     private long sortedTimestampsAddr;
     private TableWriter tableWriter;
     private AtomicInteger columnCounter;
+    private O3Basket o3Basket;
     private SOUnboundedCountDownLatch doneLatch;
 
     public ObjList<AppendOnlyVirtualMemory> getColumns() {
@@ -135,6 +137,10 @@ public class O3PartitionTask {
         return last;
     }
 
+    public O3Basket getO3Basket() {
+        return o3Basket;
+    }
+
     public void of(
             FilesFacade ff,
             CharSequence path,
@@ -155,6 +161,7 @@ public class O3PartitionTask {
             long sortedTimestampsAddr,
             TableWriter tableWriter,
             AtomicInteger columnCounter,
+            O3Basket o3Basket,
             SOUnboundedCountDownLatch doneLatch
     ) {
         this.pathToTable = path;
@@ -176,6 +183,7 @@ public class O3PartitionTask {
         this.o3Columns = o3Columns;
         this.tableWriter = tableWriter;
         this.columnCounter = columnCounter;
+        this.o3Basket = o3Basket;
         this.doneLatch = doneLatch;
     }
 }

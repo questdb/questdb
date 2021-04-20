@@ -235,6 +235,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
         final long srcTimestampAddr = task.getSrcTimestampAddr();
         final long srcTimestampSize = task.getSrcTimestampSize();
         final AtomicInteger columnCounter = task.getColumnCounter();
+        final AtomicInteger partCounter = task.getPartCounter();
         final boolean isIndexed = task.isIndexed();
         final long srcOooFixAddr = task.getSrcOooFixAddr();
         final long srcOooFixSize = task.getSrcOooFixSize();
@@ -274,6 +275,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 pathToTable,
                 columnName,
                 columnCounter,
+                partCounter,
                 columnType,
                 timestampMergeIndexAddr,
                 srcOooFixAddr,
@@ -326,6 +328,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             CharSequence pathToTable,
             CharSequence columnName,
             AtomicInteger columnCounter,
+            AtomicInteger partCounter,
             int columnType,
             long timestampMergeIndexAddr,
             long srcOooFixAddr,
@@ -403,6 +406,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         srcTimestampAddr,
                         srcTimestampSize,
                         tableWriter,
+                        indexWriter,
                         doneLatch
                 );
                 break;
@@ -420,6 +424,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         pplen,
                         columnName,
                         columnCounter,
+                        partCounter,
                         columnType,
                         timestampMergeIndexAddr,
                         srcOooFixAddr,
@@ -452,6 +457,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         srcTimestampAddr,
                         srcTimestampSize,
                         tableWriter,
+                        indexWriter,
                         doneLatch
                 );
                 break;
@@ -468,6 +474,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         pplen,
                         columnName,
                         columnCounter,
+                        partCounter,
                         columnType,
                         timestampMergeIndexAddr,
                         srcOooFixAddr,
@@ -600,6 +607,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             long srcTimestampAddr,
             long srcTimestampSize,
             TableWriter tableWriter,
+            BitmapIndexWriter indexWriter,
             SOUnboundedCountDownLatch doneLatch
     ) {
         long dstFixFd = 0;
@@ -807,7 +815,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         srcTimestampAddr,
                         srcTimestampSize,
                         tableWriter,
-                        null, // mid table column would not have active index writer
+                        indexWriter,
                         doneLatch,
                         dstFixFd,
                         null,
@@ -875,7 +883,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 dstIndexOffset = 0;
                 dstIndexAdjust = srcDataMax - srcDataTop;
             }
-            if (isIndexed && indexWriter == null) {
+            if (isIndexed && !indexWriter.isOpen()) {
                 BitmapIndexUtils.keyFileName(path.trimTo(plen), columnName);
                 dstKFd = O3Utils.openRW(ff, path);
                 BitmapIndexUtils.valueFileName(path.trimTo(plen), columnName);
@@ -1744,6 +1752,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             int pplen,
             CharSequence columnName,
             AtomicInteger columnCounter,
+            AtomicInteger partCounter,
             int columnType,
             long timestampMergeIndexAddr,
             long srcOooFixAddr,
@@ -1801,6 +1810,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         pplen,
                         columnName,
                         columnCounter,
+                        partCounter,
                         columnType,
                         timestampMergeIndexAddr,
                         srcOooFixAddr,
@@ -1852,6 +1862,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         pplen,
                         columnName,
                         columnCounter,
+                        partCounter,
                         columnType,
                         timestampMergeIndexAddr,
                         srcOooFixAddr,
@@ -1905,6 +1916,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             int pplen,
             CharSequence columnName,
             AtomicInteger columnCounter,
+            AtomicInteger partCounter,
             int columnType,
             long timestampMergeIndexAddr,
             long srcOooFixAddr,
@@ -1937,6 +1949,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             long srcTimestampAddr,
             long srcTimestampSize,
             TableWriter tableWriter,
+            BitmapIndexWriter indexWriter,
             SOUnboundedCountDownLatch doneLatch
     ) {
 
@@ -2025,6 +2038,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         pplen,
                         columnName,
                         columnCounter,
+                        partCounter,
                         columnType,
                         timestampMergeIndexAddr,
                         srcOooFixAddr,
@@ -2111,6 +2125,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         pplen,
                         columnName,
                         columnCounter,
+                        partCounter,
                         columnType,
                         timestampMergeIndexAddr,
                         srcOooFixAddr,
@@ -2143,7 +2158,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         srcTimestampAddr,
                         srcTimestampSize,
                         tableWriter,
-                        null, // mid table partition would not have active index writer
+                        indexWriter,
                         doneLatch,
                         srcDataFixFd
                 );
@@ -2191,6 +2206,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             int pplen,
             CharSequence columnName,
             AtomicInteger columnCounter,
+            AtomicInteger partCounter,
             int columnType,
             long timestampMergeIndexAddr,
             long srcOooFixAddr,
@@ -2345,6 +2361,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             throw e;
         }
 
+        partCounter.set(partCount);
         publishMultiCopyTasks(
                 configuration,
                 outboundQueue,
@@ -2352,7 +2369,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 updPartitionSizeTaskQueue,
                 updPartitionSizePubSeq,
                 columnCounter,
-                new AtomicInteger(partCount),
+                partCounter,
                 ff,
                 columnType,
                 timestampMergeIndexAddr,
@@ -2421,6 +2438,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             int pplen,
             CharSequence columnName,
             AtomicInteger columnCounter,
+            AtomicInteger partCounter,
             int columnType,
             long timestampMergeIndexAddr,
             long srcOooFixAddr,
@@ -2654,6 +2672,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             throw e;
         }
 
+        partCounter.set(partCount);
         publishMultiCopyTasks(
                 configuration,
                 outboundQueue,
@@ -2661,7 +2680,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 updPartitionSizeTaskQueue,
                 updPartitionSizePubSeq,
                 columnCounter,
-                new AtomicInteger(partCount),
+                partCounter,
                 ff,
                 columnType,
                 timestampMergeIndexAddr,

@@ -29,15 +29,12 @@ import io.questdb.cairo.vm.PagedMappedReadWriteMemory;
 import io.questdb.cairo.vm.PagedVirtualMemory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.Misc;
-import io.questdb.std.Numbers;
-import io.questdb.std.Unsafe;
+import io.questdb.std.*;
 import io.questdb.std.str.Path;
 
 import java.io.Closeable;
 
-public class BitmapIndexWriter implements Closeable {
+public class BitmapIndexWriter implements Closeable, Mutable {
     private static final Log LOG = LogFactory.getLog(BitmapIndexWriter.class);
     private final PagedMappedReadWriteMemory keyMem = new PagedMappedReadWriteMemory();
     private final PagedMappedReadWriteMemory valueMem = new PagedMappedReadWriteMemory();
@@ -55,6 +52,11 @@ public class BitmapIndexWriter implements Closeable {
     }
 
     public BitmapIndexWriter() {
+    }
+
+    @Override
+    public void clear() {
+        close();
     }
 
     public static void initKeyMemory(PagedVirtualMemory keyMem, int blockValueCount) {
@@ -134,6 +136,10 @@ public class BitmapIndexWriter implements Closeable {
             valueMem.jumpTo(valueMemSize);
         }
         Misc.free(valueMem);
+    }
+
+    public boolean isOpen() {
+        return keyMem.isOpen();
     }
 
     public RowCursor getCursor(int key) {
