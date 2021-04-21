@@ -31,6 +31,8 @@
 #ifdef __APPLE__
 
 #include <sys/time.h>
+#include <sys/ipc.h>
+#include <sys/shm.h>
 
 #else
 
@@ -338,41 +340,42 @@ JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_exists0
 
 #ifdef __APPLE__
 
-void *openShm0(const char *name, size_t len, int64_t *hMapping) {
-    // create shm memory in exclusive mode, make sure
-    int shm_fd = shm_open(name, O_CREAT | O_RDWR | O_EXCL, 0666);
-    if (shm_fd == -1) {
-        // if the memory exist, open in non-exclusive mode and
-        // not truncate
-        if (errno == EEXIST) {
-            shm_fd = shm_open(name, O_CREAT | O_RDWR, 0666);
-            if (shm_fd == -1) {
-                return NULL;
-            }
-        } else {
-            return NULL;
-        }
-    } else {
-        if (ftruncate(shm_fd, len) != 0) {
-            close(shm_fd);
-            return NULL;
-        }
+void *openShm0(const char *name, size_t len, int64_t *hMapping, int id) {
+
+    int fd = creat(name, S_IWUSR | S_IWGRP | S_IWOTH);
+    if (fd == -1) {
+        return NULL;
     }
 
-    void *p = mmap(NULL, len, PROT_WRITE | PROT_READ, MAP_SHARED, shm_fd, 0);
-    if (p != NULL && ((jlong) p) != -1) {
-        *hMapping = shm_fd;
-    } else {
-        close(shm_fd);
+    // close file descriptor, we do not need it
+    close(fd);
+
+    // create shm key, which will use iNode and id to generate unique hash
+    // this is why we created the file just above
+    const key_t shm_key = ftok(name, id);
+
+    // we no longer need the file
+    remove(name);
+
+    const int shm_id = shmget(shm_key, len, IPC_CREAT | SHM_R | SHM_W);
+    if (shm_id == -1) {
+        return NULL;
     }
-    return p;
+
+    *hMapping = shm_id;
+    void *shm_addr = shmat(shm_id, NULL, 0);
+
+    if (((jlong) shm_addr) == -1) {
+        shmctl(shm_id, IPC_RMID, NULL);
+        return NULL;
+    }
+    return shm_addr;
 }
 
-//jint closeShm0(const char *name, void *mem, size_t len, int64_t hMapping) {
-//    close((int) hMapping);
-//    munmap(mem, len);
-//    return shm_unlink(name);
-//}
+jint closeShm0(const char *name, void *mem, size_t len, int64_t hMapping) {
+    shmdt(mem);
+    return shmctl((int)hMapping, IPC_RMID, NULL);
+}
 
 #else
 
@@ -394,10 +397,11 @@ void *openShm0(const char *name, size_t len, int64_t *hMapping) {
     return p;
 }
 
-#endif
-
 jint closeShm0(const char *name, void *mem, size_t len, int64_t hMapping) {
     munmap(mem, len);
-    close((int)hMapping);
-    return shm_unlink(name);
+    shm_unlink(name);
+    close((int) hMapping);
+    return 0;
 }
+#endif
+

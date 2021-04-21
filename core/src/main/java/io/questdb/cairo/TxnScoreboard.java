@@ -26,6 +26,7 @@ package io.questdb.cairo;
 
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.Files;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
@@ -34,6 +35,7 @@ public class TxnScoreboard {
 
     public static final long READER_NOT_YET_ACTIVE = -1;
     private static final Log LOG = LogFactory.getLog(TxnScoreboard.class);
+    private final static String TMP_DIR = System.getProperty("java.io.tmpdir");
 
     public static boolean acquire(long pTxnScoreboard, long txn) {
         assert pTxnScoreboard > 0;
@@ -64,7 +66,7 @@ public class TxnScoreboard {
     ) {
         setShmName(shmPath, databaseIdLo, databaseIdHi, tableName, tableId);
         Unsafe.recordMemAlloc(getScoreboardSize());
-        final long p = create0(shmPath.address());
+        final long p = create0(shmPath.address(), tableId);
         if (p != 0) {
             LOG.info()
                     .$("open [table=").$(tableName)
@@ -106,7 +108,7 @@ public class TxnScoreboard {
             shmPath.of("/");
             shmPath.put(databaseIdLo).put('-').put(databaseIdHi).put('-').put(tableId).$();
         } else {
-            shmPath.of("").put(databaseIdLo).put('-').put(tableId).$();
+            shmPath.of(TMP_DIR).put(Files.SEPARATOR).put(databaseIdLo).put('-').put(tableId).$();
         }
     }
 
@@ -116,7 +118,7 @@ public class TxnScoreboard {
 
     private native static long newRef0(long pTxnScoreboard);
 
-    private static native long create0(long lpszName);
+    private static native long create0(long lpszName, long tableId);
 
     static native long getCount(long pTxnScoreboard, long txn);
 

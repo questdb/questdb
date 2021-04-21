@@ -28,10 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.DefaultCairoConfiguration;
-import io.questdb.std.Chars;
-import io.questdb.std.Files;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.*;
 import io.questdb.std.str.LPSZ;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -794,7 +791,9 @@ public class O3FailureTest extends AbstractO3Test {
 
     @Test
     public void testFailOnTruncateKeyValueContended() throws Exception {
-        counter.set(82);
+        // different number of calls to "truncate" on Windows and *Nix
+        // the number targets truncate of key file in BitmapIndexWriter
+        counter.set(Os.type == Os.WINDOWS ? 82 : 79);
         executeWithPool(0, O3FailureTest::testColumnTopLastOOOPrefixFailRetry0, new FilesFacadeImpl() {
 
             @Override

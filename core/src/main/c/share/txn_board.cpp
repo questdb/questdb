@@ -35,6 +35,7 @@
 #define INITIAL_LO (-1)
 
 typedef struct txn_scoreboard_t {
+    int64_t table_id = 0;
     int64_t base = INITIAL_LO;
     int64_t max = 0;
     // 1-based min txn that is in-use
@@ -197,16 +198,25 @@ JNIEXPORT jlong JNICALL Java_io_questdb_cairo_TxnScoreboard_getMax
 }
 
 JNIEXPORT jlong JNICALL Java_io_questdb_cairo_TxnScoreboard_create0
-        (JNIEnv *e, jclass cl, jlong lpszName) {
+        (JNIEnv *e, jclass cl, jlong lpszName, jlong tableId) {
     uint64_t size = sizeof(txn_scoreboard_t);
     int64_t hMapping;
     auto name = reinterpret_cast<char *>(lpszName);
     // check name length
     if (strlen(name) < MAX_LEN) {
-        auto *pBoard = reinterpret_cast<txn_scoreboard_t *>(openShm0(name, size, &hMapping));
+        auto *pBoard = reinterpret_cast<txn_scoreboard_t *>(openShm0(name, size, &hMapping, (int) tableId));
         if (pBoard == nullptr || reinterpret_cast<int64_t>(pBoard) == -1) {
             return 0;
         }
+
+        // attempt to establish if shm we just created belongs to the same table
+        // as this request
+        int64_t shm_table_id = __sync_val_compare_and_swap(&(pBoard->table_id), 0, tableId);
+        if (shm_table_id != tableId && shm_table_id != 0) {
+            closeShm0(name, pBoard, size, hMapping);
+            return 0;
+        }
+
         auto *pTxnLocal = reinterpret_cast<txn_local_t *>(malloc(sizeof(txn_local_t)));
         pTxnLocal->p_txn_scoreboard = pBoard;
         pTxnLocal->hMapping = hMapping;

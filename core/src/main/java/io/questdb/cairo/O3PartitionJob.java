@@ -927,6 +927,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         );
                     }
                 } catch (Throwable e) {
+                    tableWriter.o3BumpErrorCount();
                     columnsInFlight = i + 1;
                     throw e;
                 }
