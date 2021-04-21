@@ -43,6 +43,8 @@ stages:
             submodules: false
           - bash: sudo sysctl -w fs.file-max=500000
             condition: eq(variables['Agent.OS'], 'Linux')
+          - bash: sudo sysctl -w kern.sysv.shmseg=4096 & sudo sysctl -w kern.sysv.shmall=2560
+            condition: eq(variables['Agent.OS'], 'macOS')
           - task: Maven@3
             displayName: "Compile with Maven"
             inputs:
