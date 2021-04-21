@@ -47,6 +47,27 @@ public class SimulatedDeleteTest extends AbstractGriffinTest {
         });
     }
 
+    @Test
+    public void testNotSelectDeletedByLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table state_table(time timestamp, id int, state symbol);", sqlExecutionContext);
+            execInsert(compiler.compile("insert into state_table values(systimestamp(), 12345, 'OFF');", sqlExecutionContext).getInsertStatement());
+            execInsert(compiler.compile("insert into state_table values(systimestamp(), 12345, 'OFF');", sqlExecutionContext).getInsertStatement());
+            execInsert(compiler.compile("insert into state_table values(systimestamp(), 12345, 'OFF');", sqlExecutionContext).getInsertStatement());
+            execInsert(compiler.compile("insert into state_table values(systimestamp(), 12345, 'OFF');", sqlExecutionContext).getInsertStatement());
+            execInsert(compiler.compile("insert into state_table values(systimestamp(), 12345, 'ON');", sqlExecutionContext).getInsertStatement());
+
+            CompiledQuery cc = compiler.compile("(select state from state_table latest by state limit -1) where state != 'ON';", sqlExecutionContext);
+            Assert.assertNotNull(cc.getRecordCursorFactory());
+
+            try (RecordCursorFactory factory = cc.getRecordCursorFactory()) {
+                sink.clear();
+                printer.print(factory.getCursor(sqlExecutionContext), factory.getMetadata(), true);
+                TestUtils.assertEquals("state\n", sink);
+            }
+        });
+    }
+
     private static void execInsert(InsertStatement statement) {
         try (InsertMethod m = statement.createMethod(sqlExecutionContext)) {
             m.execute();

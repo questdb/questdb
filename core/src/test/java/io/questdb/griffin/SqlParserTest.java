@@ -5245,7 +5245,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testSubQueryLimitLoHi() throws Exception {
         assertQuery(
-                "select-choose x, y from (select-choose [x, y] x, y from (select [x, y, z] from tab where x > z and x = y) limit 100,200) limit 150",
+                "select-choose x, y from (select [x, y] from (select-choose [y, x] x, y from (select [y, x, z] from tab where x > z) limit 100,200) _xQdbA1 where x = y) limit 150",
                 "(select x x, y y from tab where x > z limit 100,200) where x = y limit 150",
                 modelOf("tab").col("x", ColumnType.INT).col("y", ColumnType.INT).col("z", ColumnType.INT)
         );
