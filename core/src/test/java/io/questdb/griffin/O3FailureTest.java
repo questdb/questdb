@@ -24,10 +24,7 @@
 
 package io.questdb.griffin;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.CairoException;
-import io.questdb.cairo.DefaultCairoConfiguration;
+import io.questdb.cairo.*;
 import io.questdb.std.*;
 import io.questdb.std.str.LPSZ;
 import io.questdb.test.tools.TestUtils;
@@ -183,6 +180,27 @@ public class O3FailureTest extends AbstractO3Test {
                 return -1;
             }
             return super.openRW(name);
+        }
+    };
+
+    private static final FilesFacade ffFailToAllocateIndex = new FilesFacadeImpl() {
+        long theFd;
+
+        @Override
+        public long openRW(LPSZ name) {
+            long fd = super.openRW(name);
+            if (Chars.endsWith(name, "x" + Files.SEPARATOR + "1970-01-07" + Files.SEPARATOR + "m.i")) {
+                theFd = fd;
+            }
+            return fd;
+        }
+
+        @Override
+        public boolean allocate(long fd, long size) {
+            if (fd == theFd && counter.decrementAndGet() == 0) {
+                return false;
+            }
+            return super.allocate(fd, size);
         }
     };
 
@@ -585,6 +603,47 @@ public class O3FailureTest extends AbstractO3Test {
     }
 
     @Test
+    public void testFailOnResizingIndexContended() throws Exception {
+        // this places break point on resize of key file
+        counter.set(107);
+        executeWithPool(0, O3FailureTest::testPartitionedDataAppendOODataNotNullStrTailFailRetry0, ffAllocateFailure);
+    }
+
+    @Test
+    public void testFailOnTruncateKeyIndexContended() throws Exception {
+        counter.set(Os.type == Os.LINUX_AMD64 || Os.type == Os.LINUX_ARM64 ? 79 : 81);
+        executeWithPool(0, O3FailureTest::testColumnTopLastOOOPrefixFailRetry0, new FilesFacadeImpl() {
+
+            @Override
+            public boolean truncate(long fd, long size) {
+                if (counter.decrementAndGet() == 0) {
+                    new Exception().printStackTrace();
+                    return false;
+                }
+                return super.truncate(fd, size);
+            }
+        });
+    }
+
+    @Test
+    public void testFailOnTruncateKeyValueContended() throws Exception {
+        // different number of calls to "truncate" on Windows and *Nix
+        // the number targets truncate of key file in BitmapIndexWriter
+        counter.set(Os.type == Os.WINDOWS ? 82 : 79);
+        executeWithPool(0, O3FailureTest::testColumnTopLastOOOPrefixFailRetry0, new FilesFacadeImpl() {
+
+            @Override
+            public boolean truncate(long fd, long size) {
+                if (counter.decrementAndGet() == 0) {
+                    new Exception().printStackTrace();
+                    return false;
+                }
+                return super.truncate(fd, size);
+            }
+        });
+    }
+
+    @Test
     public void testOOOFollowedByAnotherOOO() throws Exception {
         counter.set(1);
         final AtomicBoolean restoreDiskSpace = new AtomicBoolean(false);
@@ -636,26 +695,13 @@ public class O3FailureTest extends AbstractO3Test {
     @Test
     public void testPartitionedAllocateLastPartitionFail() throws Exception {
         counter.set(2);
-        executeWithoutPool(O3FailureTest::testPartitionedDataAppendOOPrependOODataFailRetry0, new FilesFacadeImpl() {
-            long theFd;
+        executeWithoutPool(O3FailureTest::testPartitionedDataAppendOOPrependOODataFailRetry0, ffFailToAllocateIndex);
+    }
 
-            @Override
-            public long openRW(LPSZ name) {
-                long fd = super.openRW(name);
-                if (Chars.endsWith(name, "x" + Files.SEPARATOR + "1970-01-07" + Files.SEPARATOR + "m.i")) {
-                    theFd = fd;
-                }
-                return fd;
-            }
-
-            @Override
-            public boolean allocate(long fd, long size) {
-                if (fd == theFd && counter.decrementAndGet() == 0) {
-                    return false;
-                }
-                return super.allocate(fd, size);
-            }
-        });
+    @Test
+    public void testPartitionedAllocateLastPartitionFailNoReopen() throws Exception {
+        counter.set(2);
+        executeWithoutPool(O3FailureTest::testPartitionedDataAppendOOPrependOODataFailRetryNoReopen, ffFailToAllocateIndex);
     }
 
     @Test
@@ -767,47 +813,6 @@ public class O3FailureTest extends AbstractO3Test {
     }
 
     @Test
-    public void testFailOnResizingIndexContended() throws Exception {
-        // this places break point on resize of key file
-        counter.set(107);
-        executeWithPool(0, O3FailureTest::testPartitionedDataAppendOODataNotNullStrTailFailRetry0, ffAllocateFailure);
-    }
-
-    @Test
-    public void testFailOnTruncateKeyIndexContended() throws Exception {
-        counter.set(Os.type == Os.LINUX_AMD64 || Os.type == Os.LINUX_ARM64 ? 79 : 81);
-        executeWithPool(0, O3FailureTest::testColumnTopLastOOOPrefixFailRetry0, new FilesFacadeImpl() {
-
-            @Override
-            public boolean truncate(long fd, long size) {
-                if (counter.decrementAndGet() == 0) {
-                    new Exception().printStackTrace();
-                    return false;
-                }
-                return super.truncate(fd, size);
-            }
-        });
-    }
-
-    @Test
-    public void testFailOnTruncateKeyValueContended() throws Exception {
-        // different number of calls to "truncate" on Windows and *Nix
-        // the number targets truncate of key file in BitmapIndexWriter
-        counter.set(Os.type == Os.WINDOWS ? 82 : 79);
-        executeWithPool(0, O3FailureTest::testColumnTopLastOOOPrefixFailRetry0, new FilesFacadeImpl() {
-
-            @Override
-            public boolean truncate(long fd, long size) {
-                if (counter.decrementAndGet() == 0) {
-                    new Exception().printStackTrace();
-                    return false;
-                }
-                return super.truncate(fd, size);
-            }
-        });
-    }
-
-    @Test
     public void testPartitionedDataAppendOODataNotNullStrTailIndexAllocateFail() throws Exception {
         counter.set(2);
         executeWithoutPool(O3FailureTest::testPartitionedDataAppendOODataNotNullStrTailFailRetry0, ffIndexAllocateFailure);
@@ -901,6 +906,12 @@ public class O3FailureTest extends AbstractO3Test {
     public void testPartitionedDataAppendOOPrependOODataParallel() throws Exception {
         counter.set(170);
         executeWithPool(4, O3FailureTest::testPartitionedDataAppendOOPrependOODataFailRetry0, ffAllocateFailure);
+    }
+
+    @Test
+    public void testPartitionedDataAppendOOPrependOODataParallelNoReopen() throws Exception {
+        counter.set(170);
+        executeWithPool(4, O3FailureTest::testPartitionedDataAppendOOPrependOODataFailRetryNoReopen, ffAllocateFailure);
     }
 
     @Test
@@ -2036,10 +2047,37 @@ public class O3FailureTest extends AbstractO3Test {
         assertIndexConsistency(compiler, sqlExecutionContext);
     }
 
+    private static void testPartitionedDataAppendOOPrependOODataFailRetryNoReopen(
+            CairoEngine engine,
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
+        testPartitionedDataAppendOOPrependOODataFailRetry0(
+                engine,
+                compiler,
+                sqlExecutionContext,
+                false
+        );
+    }
+
     private static void testPartitionedDataAppendOOPrependOODataFailRetry0(
             CairoEngine engine,
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
+        testPartitionedDataAppendOOPrependOODataFailRetry0(
+                engine,
+                compiler,
+                sqlExecutionContext,
+                true
+        );
+    }
+
+    private static void testPartitionedDataAppendOOPrependOODataFailRetry0(
+            CairoEngine engine,
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext,
+            boolean reopenTableWriter
     ) throws SqlException {
         // create table with roughly 2AM data
         compiler.compile(
@@ -2098,6 +2136,10 @@ public class O3FailureTest extends AbstractO3Test {
             compiler.compile("insert into x select * from append", sqlExecutionContext);
             Assert.fail();
         } catch (CairoException ignored) {
+        }
+
+        if (reopenTableWriter) {
+            engine.releaseAllWriters();
         }
 
         // create third table, which will contain both X and 1AM

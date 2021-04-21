@@ -125,6 +125,7 @@ public class TableWriter implements Closeable {
     private final LongList o3PartitionRemoveCandidates = new LongList();
     private final LongConsumer appendTimestampSetter;
     private final ObjectPool<O3MutableAtomicInteger> o3ColumnCounters = new ObjectPool<O3MutableAtomicInteger>(O3MutableAtomicInteger::new, 64);
+    private final ObjectPool<O3Basket> o3BasketPool = new ObjectPool<O3Basket>(O3Basket::new, 64);
     private long todoTxn;
     private ContiguousVirtualMemory o3TimestampMem;
     private final O3ColumnUpdateMethod o3MoveHysteresisRef = this::o3MoveHysteresis0;
@@ -152,7 +153,7 @@ public class TableWriter implements Closeable {
     private long o3RowCount;
     private final O3ColumnUpdateMethod o3MoveUncommittedRef = this::o3MoveUncommitted0;
     private long lastPartitionTimestamp;
-    private final ObjectPool<O3Basket> o3BasketPool = new ObjectPool<O3Basket>(O3Basket::new, 64);
+    private boolean o3InError = false;
 
     public TableWriter(CairoConfiguration configuration, CharSequence tableName) {
         this(configuration, tableName, new MessageBusImpl(configuration));
@@ -981,7 +982,7 @@ public class TableWriter implements Closeable {
 
     public void rollback() {
         checkDistressed();
-        if (inTransaction()) {
+        if (o3InError || inTransaction()) {
             try {
                 LOG.info().$("tx rollback [name=").$(tableName).$(']').$();
                 if ((masterRef & 1) != 0) {
@@ -990,8 +991,10 @@ public class TableWriter implements Closeable {
                 freeColumns(false);
                 this.txFile.readUnchecked();
                 rollbackIndexes();
+                rollbackSymbolTables();
                 purgeUnusedPartitions();
                 configureAppendPosition();
+                o3InError = false;
                 LOG.info().$("tx rollback complete [name=").$(tableName).$(']').$();
             } catch (Throwable e) {
                 LOG.error().$("could not perform rollback [name=").$(tableName).$(", msg=").$(e.getMessage()).$(']').$();
@@ -1606,6 +1609,11 @@ public class TableWriter implements Closeable {
     private void commit(int commitMode, long lastTimestampHysteresisInMicros) {
 
         checkDistressed();
+
+        if (o3InError) {
+            rollback();
+            return;
+        }
 
         if ((masterRef & 1) != 0) {
             cancelRow();
@@ -2351,6 +2359,8 @@ public class TableWriter implements Closeable {
 
                 o3DoneLatch.await(latchCount);
 
+
+                o3InError = !success || o3ErrorCount.get() > 0;
                 if (success && o3ErrorCount.get() > 0) {
                     //noinspection ThrowFromFinallyBlock
                     throw CairoException.instance(0).put("bulk update failed and will be rolled back");
@@ -2830,6 +2840,20 @@ public class TableWriter implements Closeable {
         }
     }
 
+    private void o3OpenColumns() {
+        for (int i = 0; i < columnCount; i++) {
+            ContiguousVirtualMemory mem1 = o3Columns.getQuick(getPrimaryColumnIndex(i));
+            mem1.jumpTo(0);
+            ContiguousVirtualMemory mem2 = o3Columns.getQuick(getSecondaryColumnIndex(i));
+            if (mem2 != null) {
+                mem2.jumpTo(0);
+            }
+        }
+        row.activeColumns = o3Columns;
+        row.activeNullSetters = o3NullSetters;
+        LOG.debug().$("switched partition to memory").$();
+    }
+
     private void o3PartitionUpdate(
             long timestampMin,
             long timestampMax,
@@ -3244,20 +3268,6 @@ public class TableWriter implements Closeable {
         txFile.openFirstPartition(timestamp);
     }
 
-    private void openMergePartition() {
-        for (int i = 0; i < columnCount; i++) {
-            ContiguousVirtualMemory mem1 = o3Columns.getQuick(getPrimaryColumnIndex(i));
-            mem1.jumpTo(0);
-            ContiguousVirtualMemory mem2 = o3Columns.getQuick(getSecondaryColumnIndex(i));
-            if (mem2 != null) {
-                mem2.jumpTo(0);
-            }
-        }
-        row.activeColumns = o3Columns;
-        row.activeNullSetters = o3NullSetters;
-        LOG.debug().$("switched partition to memory").$();
-    }
-
     private void openNewColumnFiles(CharSequence name, boolean indexFlag, int indexValueBlockCapacity) {
         try {
             // open column files
@@ -3589,7 +3599,7 @@ public class TableWriter implements Closeable {
         path.concat(name).$();
         nativeLPSZ.of(name);
         int errno;
-        if (IGNORED_FILES.excludes(nativeLPSZ) && type == Files.DT_DIR && (errno = ff.rmdir(path)) !=0) {
+        if (IGNORED_FILES.excludes(nativeLPSZ) && type == Files.DT_DIR && (errno = ff.rmdir(path)) != 0) {
             LOG.info().$("could not remove [path=").$(path).$(", errno=").$(errno).$(']').$();
         }
     }
@@ -4338,7 +4348,8 @@ public class TableWriter implements Closeable {
         private Row newRowO3(long timestamp) {
             LOG.info().$("switched to o3 [table=").utf8(tableName).$(']').$();
             txFile.beginPartitionSizeUpdate();
-            openMergePartition();
+            o3OpenColumns();
+            o3InError = false;
             o3MasterRef = masterRef;
             o3TimestampSetter(timestamp);
             rowFunction = o3RowFunction;

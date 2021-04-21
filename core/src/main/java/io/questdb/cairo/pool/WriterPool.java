@@ -413,8 +413,8 @@ public class WriterPool extends AbstractPool implements ResourcePool<TableWriter
             // We are here because of a systemic issues of some kind
             // one of the known issues is "disk is full" so we could not rollback properly.
             // In this case we just close TableWriter
-            closeWriter(thread, e, PoolListener.EV_LOCK_CLOSE, PoolConstants.CR_DISTRESSED);
             entries.remove(name);
+            closeWriter(thread, e, PoolListener.EV_LOCK_CLOSE, PoolConstants.CR_DISTRESSED);
             return true;
         }
         if (e.owner != UNALLOCATED) {
