@@ -775,7 +775,7 @@ public class O3FailureTest extends AbstractO3Test {
 
     @Test
     public void testFailOnTruncateKeyIndexContended() throws Exception {
-        counter.set(81);
+        counter.set(Os.type == Os.LINUX_AMD64 || Os.type == Os.LINUX_ARM64 ? 79 : 81);
         executeWithPool(0, O3FailureTest::testColumnTopLastOOOPrefixFailRetry0, new FilesFacadeImpl() {
 
             @Override
