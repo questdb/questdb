@@ -5296,7 +5296,7 @@ public class IODispatcherTest {
 
             final NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
             final AtomicInteger requestsReceived = new AtomicInteger();
-
+            final AtomicBoolean finished = new AtomicBoolean(false);
             try (IODispatcher<HttpConnectionContext> dispatcher = IODispatchers.create(
                     new DefaultIODispatcherConfiguration(),
                     (fd, dispatcher1) -> new HttpConnectionContext(httpServerConfiguration.getHttpContextConfiguration()).of(fd, dispatcher1)
@@ -5391,7 +5391,7 @@ public class IODispatcherTest {
                     new Thread(() -> {
                         long sockAddr = Net.sockaddr("127.0.0.1", 9001);
                         try {
-                            for (int i = 0; i < N; i++) {
+                            for (int i = 0; i < N && !finished.get(); i++) {
                                 long fd = Net.socketTcp(true);
                                 try {
                                     Assert.assertTrue(fd > -1);
@@ -5437,6 +5437,8 @@ public class IODispatcherTest {
 
                 serverRunning.set(false);
                 serverHaltLatch.await();
+            } finally {
+                finished.set(true);
             }
             Assert.assertEquals(N * senderCount, requestsReceived.get());
         });
