@@ -82,6 +82,7 @@ class LineTcpMeasurementScheduler implements Closeable {
     // not able to populate it for some reason, the event needs to be committed to the
     // queue incomplete
     private static final int RELEASE_WRITER_EVENT_ID = -3;
+    private static final long WAIT_FOR_TABLE_CREATION_TIMOUT_IN_MS = 2000;
     private final CairoEngine engine;
     private final CairoSecurityContext securityContext;
     private final CairoConfiguration cairoConfiguration;
@@ -282,6 +283,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                 String tableName = protoParser.getMeasurementName().toString();
                 int status = engine.getStatus(securityContext, path, tableName, 0, tableName.length());
                 if (status != TableUtils.TABLE_EXISTS) {
+                    LOG.info().$("creating table [tableName=").$(tableName).$(']').$();
                     engine.createTable(securityContext, mem, path, tableStructureAdapter.of(tableName, protoParser));
                 }
 
@@ -805,7 +807,20 @@ class LineTcpMeasurementScheduler implements Closeable {
 
         TableWriter getWriter() {
             if (null == writer) {
-                writer = engine.getWriter(securityContext, tableName);
+                // Tables are created in ILP IO threads, writers are owned by ILP writer threads
+                // Even though it is guaranteed that a table is created in an ILP IO thread before the measurement is put onto the queue
+                // and processed by an ILP writer thread. It seems that in some OS's (at least windows) files are not immediately visible in
+                // all threads,
+                // hence the need to check if the file exists
+                long startEpochMs = milliClock.getTicks();
+                do {
+                    int status = engine.getStatus(securityContext, path, tableName, 0, tableName.length());
+                    if (status == TableUtils.TABLE_EXISTS) {
+                        writer = engine.getWriter(securityContext, tableName);
+                        return writer;
+                    }
+                    Thread.yield();
+                } while ((milliClock.getTicks() - startEpochMs) > WAIT_FOR_TABLE_CREATION_TIMOUT_IN_MS);
             }
             return writer;
         }

@@ -7,7 +7,6 @@ import java.io.InputStream;
 import java.util.Properties;
 import java.util.zip.GZIPInputStream;
 
-import io.questdb.cairo.*;
 import org.junit.After;
 import org.junit.AfterClass;
 import org.junit.Assert;
@@ -16,6 +15,11 @@ import org.junit.BeforeClass;
 import org.junit.Test;
 
 import io.questdb.PropServerConfiguration;
+import io.questdb.cairo.AbstractCairoTest;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.O3PurgeCleaner;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContext;
@@ -144,8 +148,7 @@ public class LineTcpO3Test extends AbstractCairoTest {
                     LineTcpServer ignored = LineTcpServer.create(lineConfiguration, sharedWorkerPool, LOG, engine);
                     SqlCompiler compiler = new SqlCompiler(engine);
                     SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1);
-                    O3PurgeCleaner ignored2 = new O3PurgeCleaner(engine.getMessageBus())
-            ) {
+                    O3PurgeCleaner ignored2 = new O3PurgeCleaner(engine.getMessageBus())) {
                 sharedWorkerPool.assignCleaner(Path.CLEANER);
                 sharedWorkerPool.start(LOG);
                 long rc = Net.connect(clientFd, ilpSockAddr);
@@ -166,6 +169,7 @@ public class LineTcpO3Test extends AbstractCairoTest {
                         Assert.assertTrue(maxIter > 0);
                         Thread.sleep(200);
                     }
+                    LOG.info().$("Failed to get writer after ").$(maxIter).$(" iterations").$();
                 }
 
                 TestUtils.printSql(compiler, sqlExecutionContext, "select * from " + "cpu", sink);
