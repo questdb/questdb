@@ -1453,21 +1453,19 @@ public class SqlCompiler implements Closeable {
         final CreateTableModel createTableModel = (CreateTableModel) model;
         final ExpressionNode name = createTableModel.getName();
 
-        if (engine.getStatus(
-                executionContext.getCairoSecurityContext(),
-                path,
-                name.token
-        ) != TableUtils.TABLE_DOES_NOT_EXIST) {
-            if (createTableModel.isIgnoreIfExists()) {
-                return compiledQuery.ofCreateTable();
-            }
-            throw SqlException.$(name.position, "table already exists");
-        }
-
         if (engine.lock(executionContext.getCairoSecurityContext(), name.token)) {
             TableWriter writer = null;
             boolean newTable = false;
             try {
+                if (engine.getStatusUnsafe(
+                        executionContext.getCairoSecurityContext(),
+                        path,
+                        name.token, 0, name.token.length()) != TableUtils.TABLE_DOES_NOT_EXIST) {
+                    if (createTableModel.isIgnoreIfExists()) {
+                        return compiledQuery.ofCreateTable();
+                    }
+                    throw SqlException.$(name.position, "table already exists");
+                }
                 try {
                     if (createTableModel.getQueryModel() == null) {
                         engine.createTableUnsafe(executionContext.getCairoSecurityContext(), mem, path, createTableModel);

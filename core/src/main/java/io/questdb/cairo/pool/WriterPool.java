@@ -150,6 +150,12 @@ public class WriterPool extends AbstractPool implements ResourcePool<TableWriter
         }
     }
 
+    public boolean exists(CharSequence tableName) {
+        checkClosed();
+        Entry e = entries.get(tableName);
+        return null != e && null != e.writer;
+    }
+
     /**
      * Locks writer. Locking operation is always non-blocking. Lock is usually successful
      * when writer is in pool or owned by calling thread, in which case
