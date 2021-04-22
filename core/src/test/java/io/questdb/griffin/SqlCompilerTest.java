@@ -2237,6 +2237,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                         "partition by MONTH",
                 sqlExecutionContext
         );
+        engine.releaseAllWriters();
 
         assertFailure(13, "table already exists",
                 "create table x (" +
@@ -3289,6 +3290,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                 "create table X (a int, b int, t timestamp) timestamp(t)",
                 sqlExecutionContext
         );
+        engine.releaseAllWriters();
 
         try (CairoEngine engine = new CairoEngine(configuration) {
             @Override

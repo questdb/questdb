@@ -170,6 +170,7 @@ public class AttributeCatalogueFunctionFactoryTest extends AbstractGriffinTest {
     public void testKafkaQuery3() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table y (a int, b short, c byte, d long, e char, f string, g boolean, h long256, i float, j double, k date, l timestamp)", sqlExecutionContext);
+            engine.releaseAllWriters();
 
             assertQuery(
                     "nspname\trelname\tattname\tatttypid\tattnotnull\tatttypmod\tattlen\ttyptypmod\tattnum\tattidentity\tadsrc\tdescription\ttypbasetype\ttyptype\n" +
@@ -233,6 +234,7 @@ public class AttributeCatalogueFunctionFactoryTest extends AbstractGriffinTest {
     public void testKafkaQuery31() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table y (a int, b short, c byte, d long, e char, f string, g boolean, h long256, i float, j double, k date, l timestamp)", sqlExecutionContext);
+            engine.releaseAllWriters();
 
             assertQuery(
                     "nspname\trelname\tattname\tatttypid\tattnotnull\tatttypmod\tattlen\ttyptypmod\tattnum\tattidentity\tadsrc\tdescription\ttypbasetype\ttyptype\n" +
