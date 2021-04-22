@@ -270,7 +270,6 @@ public class WriterPool extends AbstractPool implements ResourcePool<TableWriter
 
             if (writer == null) {
                 // unlock must remove entry because pool does not deal with null writer
-                entries.remove(name);
 
                 if (e.lockFd != -1) {
                     ff.close(e.lockFd);
@@ -279,6 +278,7 @@ public class WriterPool extends AbstractPool implements ResourcePool<TableWriter
                         LOG.error().$("could not remove [file=").$(path).$(']').$();
                     }
                 }
+                entries.remove(name);
             } else {
                 e.writer = writer;
                 writer.setLifecycleManager(e);
