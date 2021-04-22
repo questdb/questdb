@@ -652,22 +652,36 @@ public class ReaderPoolTest extends AbstractCairoTest {
     public void testLockMultipleReaders() throws Exception {
         assertWithPool(pool -> {
             ObjHashSet<TableReader> readers = new ObjHashSet<>();
-            for (int i = 0; i < 64; i++) {
-                Assert.assertTrue(readers.add(pool.get("u")));
-            }
-            Assert.assertEquals(64, pool.getBusyCount());
+            try {
+                for (int i = 0; i < 64; i++) {
+                    Assert.assertTrue(readers.add(pool.get("u")));
+                    LOG.debug().$("==================== ").$(i).$(" ================").$();
+                }
+                Assert.assertEquals(64, pool.getBusyCount());
 
-            for (int i = 0, n = readers.size(); i < n; i++) {
-                TableReader reader = readers.get(i);
-                Assert.assertTrue(reader.isOpen());
-                reader.close();
+                for (int i = 0, n = readers.size(); i < n; i++) {
+                    TableReader reader = readers.get(i);
+                    Assert.assertTrue(reader.isOpen());
+                    reader.close();
+                }
+
+                Assert.assertTrue(pool.lock("u"));
+                Assert.assertEquals(0, pool.getBusyCount());
+                for (int i = 0, n = readers.size(); i < n; i++) {
+                    Assert.assertFalse(readers.get(i).isOpen());
+                }
+                pool.unlock("u");
+            } finally {
+                // Release readers on failure
+                // In OSX the number of shared memory system wide can be quite small
+                // close readers to release shared memory
+                for (int i = 0, n = readers.size(); i < n; i++) {
+                    TableReader reader = readers.get(i);
+                    if(reader.isOpen()) {
+                        reader.close();
+                    }
+                }
             }
-            Assert.assertTrue(pool.lock("u"));
-            Assert.assertEquals(0, pool.getBusyCount());
-            for (int i = 0, n = readers.size(); i < n; i++) {
-                Assert.assertFalse(readers.get(i).isOpen());
-            }
-            pool.unlock("u");
         });
     }
 
