@@ -209,6 +209,7 @@ JNIEXPORT jlong JNICALL Java_io_questdb_cairo_TxnScoreboard_create0
             return 0;
         }
 
+
         // attempt to establish if shm we just created belongs to the same table
         // as this request
         int64_t shm_table_id = __sync_val_compare_and_swap(&(pBoard->table_id), 0, tableId);

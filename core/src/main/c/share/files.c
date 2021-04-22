@@ -341,21 +341,16 @@ JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_exists0
 #ifdef __APPLE__
 
 void *openShm0(const char *name, size_t len, int64_t *hMapping, int id) {
+    // create shm key, which will use iNode of _txn file
 
-    int fd = creat(name, S_IWUSR | S_IWGRP | S_IWOTH);
-    if (fd == -1) {
-        return NULL;
-    }
+    // If shared memory leaks on mac use
+    // > ipcs
+    // command to list the memory
+    // and
+    // > for n in `ipcs -b -m | egrep ^m | awk '{ print $2; }'`; do ipcrm -m $n; done
+    // to clear all of them while testing
 
-    // close file descriptor, we do not need it
-    close(fd);
-
-    // create shm key, which will use iNode and id to generate unique hash
-    // this is why we created the file just above
-    const key_t shm_key = ftok(name, id);
-
-    // we no longer need the file
-    remove(name);
+    const key_t shm_key = ftok(name, 0);
 
     const int shm_id = shmget(shm_key, len, IPC_CREAT | SHM_R | SHM_W);
     if (shm_id == -1) {

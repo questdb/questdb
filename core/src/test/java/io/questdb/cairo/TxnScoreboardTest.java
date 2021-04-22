@@ -25,35 +25,57 @@
 package io.questdb.cairo;
 
 import io.questdb.mp.SOCountDownLatch;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Os;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
-import org.junit.Assert;
-import org.junit.BeforeClass;
-import org.junit.Ignore;
-import org.junit.Test;
+import org.junit.*;
 
 import java.util.concurrent.BrokenBarrierException;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicLong;
 
+import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
 import static io.questdb.cairo.TxnScoreboard.*;
+import static io.questdb.test.tools.TestUtils.createTestPath;
 
 public class TxnScoreboardTest {
+
+    private final static String TMP_DIR = System.getProperty("java.io.tmpdir");
 
     @BeforeClass
     public static void setUp() {
         Os.init();
     }
 
+    public void createTxnFile(CharSequence tableName) {
+        if (Os.type == Os.OSX) {
+            FilesFacade ff = new FilesFacadeImpl();
+            // Create _txn files, scoreboard on Mac relies that _txn file exists for the table
+            try (Path path = new Path()) {
+                path.of(TMP_DIR).concat(tableName).$();
+                createTestPath(path);
+                path.chopZ().concat(TXN_FILE_NAME).$();
+
+                if (!ff.exists(path)) {
+                    ff.touch(path);
+                }
+            }
+        }
+    }
+
     @Test
     public void testLimits() {
+        String tableName = "hello";
+        createTxnFile(tableName);
+
         try (final Path shmPath = new Path()) {
             int expect = 4096;
-            long p2 = TxnScoreboard.create(shmPath, 4, 5, "hello", 0);
+            long p2 = TxnScoreboard.create(shmPath, 4, 5, TMP_DIR, tableName, 0);
             try {
-                long p1 = TxnScoreboard.create(shmPath, 4, 5, "hello", 0);
+                long p1 = TxnScoreboard.create(shmPath, 4, 5, TMP_DIR, tableName, 0);
                 try {
                     init(p1, 125);
                     // we should successfully acquire expected number of entries
@@ -111,7 +133,7 @@ public class TxnScoreboardTest {
                     name.put('a');
                 }
                 try {
-                    TxnScoreboard.create(shmPath, 4, 5, name, 1);
+                    TxnScoreboard.create(shmPath, 4, 5, TMP_DIR, name, 1);
                     Assert.fail();
                 } catch (CairoException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "could not open");
@@ -124,6 +146,7 @@ public class TxnScoreboardTest {
     @Ignore
     public void testNewRefBetweenFastOpenClose() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
+            createTxnFile("test");
             AtomicLong ref = new AtomicLong();
             try (Path path = new Path()) {
                 for (int i = 0; i < 100; i++) {
@@ -133,7 +156,7 @@ public class TxnScoreboardTest {
                     new Thread(() -> {
                         try {
                             barrier.await();
-                            long p = TxnScoreboard.create(path, 0, 0, "test", 0);
+                            long p = TxnScoreboard.create(path, 0, 0, TMP_DIR, "test", 0);
                             ref.set(p);
                             long val = TxnScoreboard.newRef(p);
                             if (val != 0) {
@@ -159,7 +182,8 @@ public class TxnScoreboardTest {
     @Test
     public void testUtf8Name() {
         try (final Path shmPath = new Path()) {
-            long p = TxnScoreboard.create(shmPath, 4, 5, "бункера", 0);
+            createTxnFile("бункера");
+            long p = TxnScoreboard.create(shmPath, 4, 5, TMP_DIR, "бункера", 0);
             Assert.assertNotEquals(0, p);
             TxnScoreboard.close(p);
         }
@@ -168,10 +192,11 @@ public class TxnScoreboardTest {
     @Test
     public void testVanilla() {
         try (final Path shmPath = new Path()) {
-            long p2 = TxnScoreboard.create(shmPath, 4, 5, "tab1", 0);
+            createTxnFile("tab1");
+            long p2 = TxnScoreboard.create(shmPath, 4, 5, TMP_DIR, "tab1", 0);
             Assert.assertNotEquals(0, p2);
             try {
-                long p1 = TxnScoreboard.create(shmPath, 4, 5, "tab1", 0);
+                long p1 = TxnScoreboard.create(shmPath, 4, 5, TMP_DIR, "tab1", 0);
                 Assert.assertNotEquals(0, p1);
                 try {
                     init(p1, 55);

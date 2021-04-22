@@ -219,10 +219,13 @@ public class TableWriter implements Closeable {
             this.partitionBy = metaMem.getInt(META_OFFSET_PARTITION_BY);
             this.txFile = new TxWriter(ff, path, partitionBy);
 
+            // Create scoreboard after _txn file
+            // OSX scoreboard shared mem implementation relies that _txn file exist
             this.txnScoreboard = TxnScoreboard.create(
                     this.path,
                     configuration.getDatabaseIdLo(),
                     configuration.getDatabaseIdHi(),
+                    root,
                     this.tableName,
                     this.metadata.getId()
             );

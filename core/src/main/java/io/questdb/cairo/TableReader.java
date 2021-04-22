@@ -94,6 +94,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                     path,
                     configuration.getDatabaseIdLo(),
                     configuration.getDatabaseIdHi(),
+                    configuration.getRoot(),
                     tableName,
                     metadata.getId()
             );
