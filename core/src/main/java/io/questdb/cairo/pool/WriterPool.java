@@ -152,8 +152,7 @@ public class WriterPool extends AbstractPool implements ResourcePool<TableWriter
 
     public boolean exists(CharSequence tableName) {
         checkClosed();
-        Entry e = entries.get(tableName);
-        return null != e && null != e.writer;
+        return entries.contains(tableName);
     }
 
     /**

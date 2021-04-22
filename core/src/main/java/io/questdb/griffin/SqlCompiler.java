@@ -1457,7 +1457,7 @@ public class SqlCompiler implements Closeable {
             TableWriter writer = null;
             boolean newTable = false;
             try {
-                if (engine.getStatusUnsafe(
+                if (engine.getStatus(
                         executionContext.getCairoSecurityContext(),
                         path,
                         name.token, 0, name.token.length()) != TableUtils.TABLE_DOES_NOT_EXIST) {
