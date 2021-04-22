@@ -655,7 +655,6 @@ public class ReaderPoolTest extends AbstractCairoTest {
             try {
                 for (int i = 0; i < 64; i++) {
                     Assert.assertTrue(readers.add(pool.get("u")));
-                    LOG.debug().$("==================== ").$(i).$(" ================").$();
                 }
                 Assert.assertEquals(64, pool.getBusyCount());
 

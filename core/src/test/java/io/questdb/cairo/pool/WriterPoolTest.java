@@ -538,6 +538,7 @@ public class WriterPoolTest extends AbstractCairoTest {
                     new Thread(() -> {
                         try {
                             barrier.await();
+                            //------------- thread 1
                             try (TableWriter w = pool.get("z")) {
                                 writerCount.incrementAndGet();
                                 populate(w);

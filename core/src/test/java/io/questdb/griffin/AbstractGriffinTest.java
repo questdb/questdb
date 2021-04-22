@@ -39,9 +39,9 @@ import org.junit.Assert;
 import org.junit.BeforeClass;
 
 public class AbstractGriffinTest extends AbstractCairoTest {
-    protected static BindVariableService bindVariableService;
     private static final LongList rows = new LongList();
     private final static double EPSILON = 0.000001;
+    protected static BindVariableService bindVariableService;
     protected static SqlExecutionContext sqlExecutionContext;
     protected static SqlCompiler compiler;
 
@@ -97,13 +97,8 @@ public class AbstractGriffinTest extends AbstractCairoTest {
         return a == b || Math.abs(a - b) < epsilon;
     }
 
-    public static void executeInsert(String ddl) throws SqlException {
-        CompiledQuery compiledQuery = compiler.compile(ddl, sqlExecutionContext);
-        final InsertStatement insertStatement = compiledQuery.getInsertStatement();
-        try (InsertMethod insertMethod = insertStatement.createMethod(sqlExecutionContext)) {
-            insertMethod.execute();
-            insertMethod.commit();
-        }
+    public static void executeInsert(String insertSql) throws SqlException {
+        TestUtils.insert(compiler, sqlExecutionContext, insertSql);
     }
 
     @BeforeClass
