@@ -162,7 +162,7 @@ public class MetadataMigration400 {
                     nativeLPSZ.of(name);
                     if (!Chars.equals(nativeLPSZ, '.') && !Chars.equals(nativeLPSZ, "..")) {
                         int plen = path1.length();
-                        path1.chopZ().concat(nativeLPSZ);
+                        path1.chop$().concat(nativeLPSZ);
                         path2.of(path1);
                         convert(ff, path1, path2, appendMem, roMem);
                         path1.trimTo(plen);

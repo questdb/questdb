@@ -57,7 +57,7 @@ public class TxnScoreboardTest {
             try (Path path = new Path()) {
                 path.of(TMP_DIR).concat(tableName).$();
                 createTestPath(path);
-                path.chopZ().concat(TXN_FILE_NAME).$();
+                path.chop$().concat(TXN_FILE_NAME).$();
 
                 if (!ff.exists(path)) {
                     ff.touch(path);

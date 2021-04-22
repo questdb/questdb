@@ -1181,7 +1181,7 @@ public class SqlCompiler implements Closeable {
             if (null == configuration.getBackupRoot()) {
                 throw CairoException.instance(0).put("Backup is disabled, no backup root directory is configured in the server configuration ['cairo.sql.backup.root' property]");
             }
-            path.of(configuration.getBackupRoot()).concat(configuration.getBackupTempDirName()).$$dir();
+            path.of(configuration.getBackupRoot()).concat(configuration.getBackupTempDirName()).slash$();
             cachedTmpBackupRoot = Chars.toString(path);
         }
 
@@ -1192,7 +1192,7 @@ public class SqlCompiler implements Closeable {
                 cloneMetaData(tableName, cachedTmpBackupRoot, configuration.getBackupMkDirMode(), reader);
                 try (TableWriter backupWriter = engine.getBackupWriter(securityContext, tableName, cachedTmpBackupRoot)) {
                     RecordMetadata writerMetadata = backupWriter.getMetadata();
-                    path.of(tableName).put(Files.SEPARATOR).put(reader.getVersion()).$();
+                    path.of(tableName).slash().put(reader.getVersion()).$();
                     RecordToRowCopier recordToRowCopier = tableBackupRowCopieCache.get(path);
                     if (null == recordToRowCopier) {
                         entityColumnFilter.of(writerMetadata.getColumnCount());
@@ -1220,7 +1220,7 @@ public class SqlCompiler implements Closeable {
                     .$(", ex=").$(ex.getFlyweightMessage())
                     .$(", errno=").$(ex.getErrno())
                     .$(']').$();
-            path.of(cachedTmpBackupRoot).concat(tableName).$$dir();
+            path.of(cachedTmpBackupRoot).concat(tableName).slash$();
             int errno;
             if ((errno = ff.rmdir(path)) != 0) {
                 LOG.error().$("could not delete directory [path=").$(path).$(", errno=").$(errno).$(']').$();
@@ -1239,7 +1239,7 @@ public class SqlCompiler implements Closeable {
     }
 
     private void cloneMetaData(CharSequence tableName, CharSequence backupRoot, int mkDirMode, TableReader reader) {
-        path.of(backupRoot).concat(tableName).$$dir();
+        path.of(backupRoot).concat(tableName).slash$();
 
         if (ff.exists(path)) {
             throw CairoException.instance(0).put("Backup dir for table \"").put(tableName).put("\" already exists [dir=").put(path).put(']');
@@ -1898,7 +1898,7 @@ public class SqlCompiler implements Closeable {
         int n = 0;
         // There is a race here, two threads could try and create the same renamePath, only one will succeed the other will throw
         // a CairoException. Maybe it should be serialised
-        renamePath.of(configuration.getBackupRoot()).put(Files.SEPARATOR);
+        renamePath.of(configuration.getBackupRoot()).slash();
         int plen = renamePath.length();
         do {
             renamePath.trimTo(plen);
@@ -1906,7 +1906,7 @@ public class SqlCompiler implements Closeable {
             if (n > 0) {
                 renamePath.put('.').put(n);
             }
-            renamePath.$$dir();
+            renamePath.slash$();
             n++;
         } while (ff.exists(renamePath));
         if (ff.mkdirs(renamePath, configuration.getBackupMkDirMode()) != 0) {

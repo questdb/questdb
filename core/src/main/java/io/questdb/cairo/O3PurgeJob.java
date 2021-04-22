@@ -58,7 +58,7 @@ public class O3PurgeJob extends AbstractQueueConsumerJob<O3PurgeTask> {
         if (TxnScoreboard.isTxnUnused(minTxnToExpect, readerTxn, txnScoreboard)) {
             TableUtils.setPathForPartition(path, partitionBy, partitionTimestamp, false);
             TableUtils.txnPartitionConditionally(path, nameTxnToRemove);
-            path.$$dir();
+            path.slash$();
             if ((errno = ff.rmdir(path)) == 0) {
                 LOG.info().
                         $("purged [path=").$(path)

@@ -908,7 +908,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             TableUtils.txnPartitionConditionally(path, partitionNameTxn);
 
             if (ff.exists(path.$())) {
-                path.chopZ();
+                path.chop$();
 
                 final boolean lastPartition = partitionIndex == partitionCount - 1;
                 final long partitionSize = txFile.getPartitionSize(partitionIndex);
@@ -982,7 +982,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     private Path pathGenPartitioned(int partitionIndex) {
-        formatPartitionDirName(partitionIndex, path.put(Files.SEPARATOR));
+        formatPartitionDirName(partitionIndex, path.slash());
         return path;
     }
 

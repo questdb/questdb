@@ -30,7 +30,6 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
-import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Misc;
@@ -421,7 +420,7 @@ public class TableBackupTest {
             // @formatter:on
 
             try (Path path = new Path()) {
-                path.of(mainConfiguration.getBackupRoot()).concat("tmp").concat(tableName).$$dir();
+                path.of(mainConfiguration.getBackupRoot()).concat("tmp").concat(tableName).slash$();
                 int rc = FilesFacadeImpl.INSTANCE.mkdirs(path, mainConfiguration.getBackupMkDirMode());
                 Assert.assertEquals(0, rc);
             }
@@ -505,13 +504,13 @@ public class TableBackupTest {
 
     private void setFinalBackupPath(int n) {
         DateFormat timestampFormat = mainConfiguration.getBackupDirTimestampFormat();
-        finalBackupPath.of(mainConfiguration.getBackupRoot()).put(Files.SEPARATOR);
+        finalBackupPath.of(mainConfiguration.getBackupRoot()).slash();
         timestampFormat.format(mainConfiguration.getMicrosecondClock().getTicks(), mainConfiguration.getDefaultDateLocale(), null, finalBackupPath);
         if (n > 0) {
             finalBackupPath.put('.');
             finalBackupPath.put(n);
         }
-        finalBackupPath.$$dir();
+        finalBackupPath.slash$();
     }
 
     private void setFinalBackupPath() {

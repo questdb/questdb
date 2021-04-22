@@ -473,13 +473,13 @@ public final class TestUtils {
             if (Files.exists(path)) {
                 return;
             }
-            Files.mkdirs(path.of(root).$$dir(), 509);
+            Files.mkdirs(path.of(root).slash$(), 509);
         }
     }
 
     public static void removeTestPath(CharSequence root) {
         Path path = Path.getThreadLocal(root);
-        Files.rmdir(path.$$dir());
+        Files.rmdir(path.slash$());
     }
 
     @FunctionalInterface
