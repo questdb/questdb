@@ -350,7 +350,7 @@ void *openShm0(const char *name, size_t len, int64_t *hMapping, int id) {
     // > for n in `ipcs -b -m | egrep ^m | awk '{ print $2; }'`; do ipcrm -m $n; done
     // to clear all of them while testing
 
-    const key_t shm_key = ftok(name, 0);
+    const key_t shm_key = ftok(name, id);
 
     const int shm_id = shmget(shm_key, len, IPC_CREAT | SHM_R | SHM_W);
     if (shm_id == -1) {
