@@ -230,10 +230,10 @@ public class WriterPool extends AbstractPool implements ResourcePool<TableWriter
     }
 
     public void unlock(CharSequence name) {
-        unlock(name, null);
+        unlock(name, null, false);
     }
 
-    public void unlock(CharSequence name, @Nullable TableWriter writer) {
+    public void unlock(CharSequence name, @Nullable TableWriter writer, boolean newTable) {
         long thread = Thread.currentThread().getId();
 
         Entry e = entries.get(name);
@@ -250,6 +250,17 @@ public class WriterPool extends AbstractPool implements ResourcePool<TableWriter
             if (e.writer != null) {
                 notifyListener(thread, name, PoolListener.EV_NOT_LOCKED);
                 throw CairoException.instance(0).put("Writer ").put(name).put(" is not locked");
+            }
+
+            if (newTable) {
+                // Note that the TableUtils.createTable method will create files, but on some OS's these files will not immediately become
+                // visible on all threads,
+                // only in this thread will they definitely be visible. To prevent spurious file system errors (or even allowing the same
+                // table to be created twice),
+                // we cache the writer in the writerPool whose access via the engine is thread safe
+                assert writer == null && e.writer == null && e.lockFd != -1;
+                LOG.info().$("created [table=`").utf8(name).$("`, thread=").$(thread).$(']').$();
+                writer = new TableWriter(configuration, name, messageBus, false, e, root);
             }
 
             if (writer == null) {

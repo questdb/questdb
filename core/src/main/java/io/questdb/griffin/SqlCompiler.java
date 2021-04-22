@@ -1466,20 +1466,22 @@ public class SqlCompiler implements Closeable {
 
         if (engine.lock(executionContext.getCairoSecurityContext(), name.token)) {
             TableWriter writer = null;
+            boolean newTable = false;
             try {
-
                 try {
                     if (createTableModel.getQueryModel() == null) {
                         engine.createTableUnsafe(executionContext.getCairoSecurityContext(), mem, path, createTableModel);
+                        newTable = true;
                     } else {
                         writer = createTableFromCursor(createTableModel, executionContext);
                     }
                 } catch (CairoException e) {
+                    newTable = false;
                     LOG.error().$("could not create table [error=").$((Sinkable) e).$(']').$();
                     throw SqlException.$(name.position, "Could not create table. See log for details.");
                 }
             } finally {
-                engine.unlock(executionContext.getCairoSecurityContext(), name.token, writer);
+                engine.unlock(executionContext.getCairoSecurityContext(), name.token, writer, newTable);
             }
         } else {
             throw SqlException.$(name.position, "cannot acquire table lock");
