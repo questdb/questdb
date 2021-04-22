@@ -42,8 +42,10 @@ stages:
             lfs: false
             submodules: false
           - bash: sudo sysctl -w fs.file-max=500000
+            displayName: "Increase file count on Linux"
             condition: eq(variables['Agent.OS'], 'Linux')
           - bash: sudo sysctl -w kern.sysv.shmseg=4096 && sudo sysctl -w kern.sysv.shmall=5120 && sysctl -A | grep shm
+            displayName: "Increase shared mem size on Darwin"
             condition: eq(variables['Agent.OS'], 'Darwin')
           - task: Maven@3
             displayName: "Compile with Maven"
@@ -57,11 +59,11 @@ stages:
             inputs:
               mavenPomFile: "core/pom.xml"
               mavenOptions: "-Xmx3072m"
-              options: "--batch-mode --quiet -DquestdbLog=$(Build.SourcesDirectory)/ci/qlog.conf"
+              options: "--batch-mode --quiet -Dout=$(Build.SourcesDirectory)/ci/qlog.conf"
               jdkVersionOption: $(jdk)
           - task: ArchiveFiles@2
             displayName: "Tests failed -- Compress logs"
-            condition: failed()
+            condition: not(succeeded())
             inputs:
               rootFolderOrFile: $(QDB_LOG_W_FILE_LOCATION)
               includeRootFolder: false
@@ -69,7 +71,7 @@ stages:
               quiet: true
           - task: PublishBuildArtifacts@1
             displayName: "Tests failed -- Upload logs"
-            condition: failed()
+            condition: not(succeeded())
             inputs:
               pathToPublish: $(ARCHIVED_LOGS)
               artifactName: MavenFailedTestsLogs
