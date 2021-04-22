@@ -26,6 +26,7 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.sql.InsertMethod;
 import io.questdb.cairo.sql.InsertStatement;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
 public class SimulatedDeleteTest extends AbstractGriffinTest {
@@ -56,15 +57,14 @@ public class SimulatedDeleteTest extends AbstractGriffinTest {
             execInsert(compiler.compile("insert into state_table values(systimestamp(), 12345, 'OFF');", sqlExecutionContext).getInsertStatement());
             execInsert(compiler.compile("insert into state_table values(systimestamp(), 12345, 'OFF');", sqlExecutionContext).getInsertStatement());
             execInsert(compiler.compile("insert into state_table values(systimestamp(), 12345, 'ON');", sqlExecutionContext).getInsertStatement());
+            TestUtils.assertSql(
+                    compiler,
+                    sqlExecutionContext,
+                    "(select state from state_table latest by state limit -1) where state != 'ON';",
+                    sink,
+                    "state\n"
+            );
 
-            CompiledQuery cc = compiler.compile("(select state from state_table latest by state limit -1) where state != 'ON';", sqlExecutionContext);
-            Assert.assertNotNull(cc.getRecordCursorFactory());
-
-            try (RecordCursorFactory factory = cc.getRecordCursorFactory()) {
-                sink.clear();
-                printer.print(factory.getCursor(sqlExecutionContext), factory.getMetadata(), true);
-                TestUtils.assertEquals("state\n", sink);
-            }
         });
     }
 
