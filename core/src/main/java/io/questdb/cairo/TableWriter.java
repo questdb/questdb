@@ -219,10 +219,13 @@ public class TableWriter implements Closeable {
             this.partitionBy = metaMem.getInt(META_OFFSET_PARTITION_BY);
             this.txFile = new TxWriter(ff, path, partitionBy);
 
+            // Create scoreboard after _txn file
+            // OSX scoreboard shared mem implementation relies that _txn file exist
             this.txnScoreboard = TxnScoreboard.create(
                     this.path,
                     configuration.getDatabaseIdLo(),
                     configuration.getDatabaseIdHi(),
+                    root,
                     this.tableName,
                     this.metadata.getId()
             );
@@ -894,7 +897,7 @@ public class TableWriter implements Closeable {
 
             if (ff.exists(path.$())) {
                 int errno;
-                if ((errno = ff.rmdir(path.chopZ().$$dir())) != 0) {
+                if ((errno = ff.rmdir(path.chop$().slash$())) != 0) {
                     LOG.info().$("partition directory delete is postponed [path=").$(path)
                             .$(", errno=").$(errno)
                             .$(']').$();
@@ -2964,7 +2967,7 @@ public class TableWriter implements Closeable {
                             false
                     );
                     TableUtils.txnPartitionConditionally(other, txn);
-                    other.$$dir();
+                    other.slash$();
                     int errno;
                     if ((errno = ff.rmdir(other)) == 0) {
                         LOG.info().$(
@@ -3302,7 +3305,7 @@ public class TableWriter implements Closeable {
         try {
             setStateForTimestamp(path, timestamp, true);
             int plen = path.length();
-            if (ff.mkdirs(path.$$dir(), mkDirMode) != 0) {
+            if (ff.mkdirs(path.slash$(), mkDirMode) != 0) {
                 throw CairoException.instance(ff.errno()).put("Cannot create directory: ").put(path);
             }
 

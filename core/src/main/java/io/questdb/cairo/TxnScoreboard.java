@@ -31,11 +31,12 @@ import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 
+import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
+
 public class TxnScoreboard {
 
     public static final long READER_NOT_YET_ACTIVE = -1;
     private static final Log LOG = LogFactory.getLog(TxnScoreboard.class);
-    private final static String TMP_DIR = System.getProperty("java.io.tmpdir");
 
     public static boolean acquire(long pTxnScoreboard, long txn) {
         assert pTxnScoreboard > 0;
@@ -61,10 +62,11 @@ public class TxnScoreboard {
             Path shmPath,
             long databaseIdLo,
             long databaseIdHi,
+            CharSequence root,
             CharSequence tableName,
             int tableId
     ) {
-        setShmName(shmPath, databaseIdLo, databaseIdHi, tableName, tableId);
+        setShmName(shmPath, databaseIdLo, databaseIdHi, root, tableName, tableId);
         Unsafe.recordMemAlloc(getScoreboardSize());
         final long p = create0(shmPath.address(), tableId);
         if (p != 0) {
@@ -98,6 +100,7 @@ public class TxnScoreboard {
             Path shmPath,
             long databaseIdLo,
             long databaseIdHi,
+            CharSequence root,
             CharSequence tableName,
             int tableId
     ) {
@@ -108,7 +111,8 @@ public class TxnScoreboard {
             shmPath.of("/");
             shmPath.put(databaseIdLo).put('-').put(databaseIdHi).put('-').put(tableId).$();
         } else {
-            shmPath.of(TMP_DIR).put(Files.SEPARATOR).put(databaseIdLo).put('-').put(tableId).$();
+            // for OSX it's name of _txn file of the table
+            shmPath.of(root).concat(tableName).concat(TXN_FILE_NAME).$();
         }
     }
 

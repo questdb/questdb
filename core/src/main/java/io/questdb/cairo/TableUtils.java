@@ -140,7 +140,7 @@ public final class TableUtils {
         LOG.debug().$("create table [name=").$(structure.getTableName()).$(']').$();
         path.of(root).concat(structure.getTableName());
 
-        if (ff.mkdirs(path.$$dir(), mkDirMode) != 0) {
+        if (ff.mkdirs(path.slash$(), mkDirMode) != 0) {
             throw CairoException.instance(ff.errno()).put("could not create [dir=").put(path).put(']');
         }
 
@@ -220,7 +220,7 @@ public final class TableUtils {
         path.of(root).concat(name, lo, hi).$();
         if (ff.exists(path)) {
             // prepare to replace trailing \0
-            if (ff.exists(path.chopZ().concat(TXN_FILE_NAME).$())) {
+            if (ff.exists(path.chop$().concat(TXN_FILE_NAME).$())) {
                 return TABLE_EXISTS;
             } else {
                 return TABLE_RESERVED;
@@ -443,16 +443,13 @@ public final class TableUtils {
      * @param calculatePartitionMax flag when caller is going to use the return value of this method
      * @return The last timestamp in the partition
      */
-    public static long setPathForPartition(CharSink path, int partitionBy, long timestamp, boolean calculatePartitionMax) {
-        return setPathForPartition(path, partitionBy, timestamp, calculatePartitionMax, true);
+    public static long setPathForPartition(Path path, int partitionBy, long timestamp, boolean calculatePartitionMax) {
+        return setSinkForPartition(path.slash(), partitionBy, timestamp, calculatePartitionMax);
     }
 
-    public static long setPathForPartition(CharSink path, int partitionBy, long timestamp, boolean calculatePartitionMax, boolean prefix) {
+    public static long setSinkForPartition(CharSink path, int partitionBy, long timestamp, boolean calculatePartitionMax) {
         int y, m, d;
         boolean leap;
-        if (prefix) {
-            path.put(Files.SEPARATOR);
-        }
         switch (partitionBy) {
             case PartitionBy.DAY:
                 y = Timestamps.getYear(timestamp);
@@ -645,7 +642,7 @@ public final class TableUtils {
      */
     static long readColumnTop(FilesFacade ff, Path path, CharSequence name, int plen, long buf) {
         try {
-            if (ff.exists(topFile(path.chopZ(), name))) {
+            if (ff.exists(topFile(path.chop$(), name))) {
                 long fd = ff.openRO(path);
                 try {
                     if (ff.read(fd, buf, 8, 0) != 8) {
@@ -802,7 +799,7 @@ public final class TableUtils {
     // of timestamp longs read from 0 offset to the end of the file
     // It also writes min and max values found in tempMem16b
     static long readPartitionSizeMinMax(FilesFacade ff, Path path, CharSequence columnName, long tempMem16b, long timestamp) {
-        int plen = path.chopZ().length();
+        int plen = path.chop$().length();
         try {
             if (ff.exists(path.concat(columnName).put(FILE_SUFFIX_D).$())) {
                 long fd = ff.openRO(path);

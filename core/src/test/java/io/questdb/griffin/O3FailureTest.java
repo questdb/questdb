@@ -24,7 +24,10 @@
 
 package io.questdb.griffin;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.std.*;
 import io.questdb.std.str.LPSZ;
 import io.questdb.test.tools.TestUtils;
@@ -611,7 +614,18 @@ public class O3FailureTest extends AbstractO3Test {
 
     @Test
     public void testFailOnTruncateKeyIndexContended() throws Exception {
-        counter.set(Os.type == Os.LINUX_AMD64 || Os.type == Os.LINUX_ARM64 ? 79 : 81);
+        int cnt;
+        switch (Os.type) {
+            case Os.LINUX_AMD64:
+            case Os.LINUX_ARM64:
+            case Os.OSX:
+                cnt = 79;
+                break;
+            default:
+                cnt = 81;
+                break;
+        }
+        counter.set(cnt);
         executeWithPool(0, O3FailureTest::testColumnTopLastOOOPrefixFailRetry0, new FilesFacadeImpl() {
 
             @Override

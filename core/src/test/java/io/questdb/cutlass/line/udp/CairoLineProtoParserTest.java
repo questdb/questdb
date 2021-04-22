@@ -401,7 +401,7 @@ public class CairoLineProtoParserTest extends AbstractCairoTest {
         };
 
         try (Path path = new Path()) {
-            Files.mkdirs(path.of(root).concat("x").$$dir(), configuration.getMkDirMode());
+            Files.mkdirs(path.of(root).concat("x").slash$(), configuration.getMkDirMode());
             assertThat(expected, lines, "y", configuration);
             Assert.assertEquals(TableUtils.TABLE_RESERVED, TableUtils.exists(configuration.getFilesFacade(), path, root, "x"));
         }

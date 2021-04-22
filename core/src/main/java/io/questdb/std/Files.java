@@ -163,7 +163,7 @@ public final class Files {
                             return r;
                         }
                     }
-                    pp.chopZ();
+                    pp.chop$();
                 }
                 pp.put(c);
             }

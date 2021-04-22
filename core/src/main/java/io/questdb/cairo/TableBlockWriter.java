@@ -443,7 +443,7 @@ public class TableBlockWriter implements Closeable {
             timestampHi = TableUtils.setPathForPartition(path, partitionBy, timestampLo, true);
             int plen = path.length();
             try {
-                if (ff.mkdirs(path.$$dir(), mkDirMode) != 0) {
+                if (ff.mkdirs(path.slash$(), mkDirMode) != 0) {
                     throw CairoException.instance(ff.errno()).put("Could not create directory: ").put(path);
                 }
 

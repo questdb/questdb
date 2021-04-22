@@ -127,7 +127,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
             if (!last) {
                 try {
-                    LOG.debug().$("would create [path=").$(path.chopZ().$$dir()).$(']').$();
+                    LOG.debug().$("would create [path=").$(path.chop$().slash$()).$(']').$();
                     createDirsOrFail(ff, path, configuration.getMkDirMode());
                 } catch (Throwable e) {
                     LOG.debug().$("idle new").$();
@@ -438,7 +438,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     }
                 } else {
                     txnPartition(path.trimTo(pplen), txn);
-                    createDirsOrFail(ff, path.$$dir(), configuration.getMkDirMode());
+                    createDirsOrFail(ff, path.slash$(), configuration.getMkDirMode());
                     if (last) {
                         openColumnMode = OPEN_LAST_PARTITION_FOR_MERGE;
                     } else {

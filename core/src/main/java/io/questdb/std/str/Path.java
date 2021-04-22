@@ -82,7 +82,7 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
         return this;
     }
 
-    public Path $$dir() {
+    public Path slash$() {
         ensureSeparator();
         return $();
     }
@@ -97,7 +97,7 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
      *
      * @return instance of this
      */
-    public Path chopZ() {
+    public Path chop$() {
         trimTo(this.length());
         return this;
     }
@@ -245,6 +245,11 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
         } else {
             put(c);
         }
+    }
+
+    public Path slash() {
+        ensureSeparator();
+        return this;
     }
 
     @Override

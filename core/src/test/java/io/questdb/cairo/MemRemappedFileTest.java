@@ -46,7 +46,7 @@ public class MemRemappedFileTest {
         long nanos = 0;
         try (AppendOnlyVirtualMemory appMem = new AppendOnlyVirtualMemory()) {
             for (int cycle = 0; cycle < NCYCLES; cycle++) {
-                path.trimTo(0).concat(root).put(Files.SEPARATOR).concat("file" + nFile).$();
+                path.trimTo(0).concat(root).concat("file" + nFile).$();
                 nFile++;
                 Random rand = new Random(0);
                 long expectedTotal = 0;
