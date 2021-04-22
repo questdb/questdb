@@ -4488,7 +4488,7 @@ public class TableWriter implements Closeable {
             // try UTC timestamp first (micro)
             long l;
             try {
-                l = TimestampFormatUtils.parseUTCTimestamp(value);
+                l = value != null ? TimestampFormatUtils.parseUTCTimestamp(value) : Numbers.LONG_NaN;
             } catch (NumericException e) {
                 try {
                     l = TimestampFormatUtils.parseTimestamp(value);

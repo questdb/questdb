@@ -2922,7 +2922,8 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     public void testInsertTimestampAsStr() throws Exception {
         final String expected = "ts\n" +
                 "2020-01-10T15:00:01.000143Z\n" +
-                "2020-01-10T18:00:01.800000Z\n";
+                "2020-01-10T18:00:01.800000Z\n" +
+                "\n";
 
         assertMemoryLeak(() -> {
             compiler.compile("create table xy (ts timestamp)", sqlExecutionContext);
@@ -2931,6 +2932,9 @@ public class SqlCompilerTest extends AbstractGriffinTest {
 
             // execute insert with millis
             executeInsert("insert into xy(ts) values ('2020-01-10T18:00:01.800Z')");
+
+            // insert null
+            executeInsert("insert into xy(ts) values (null)");
 
             // test bad format
             try {
