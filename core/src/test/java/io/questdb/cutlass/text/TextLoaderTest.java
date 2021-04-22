@@ -2676,6 +2676,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
 
             try (SqlCompiler compiler = new SqlCompiler(engine)) {
                 compiler.compile("create table test(StrSym symbol, ts timestamp) " + nominatedTimestamp, sqlExecutionContext);
+                engine.releaseAllWriters();
             }
 
             assertNoLeak(

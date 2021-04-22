@@ -131,6 +131,7 @@ public class CairoEngine implements Closeable, WriterSource {
             TableStructure struct
     ) {
         if (lock(securityContext, struct.getTableName())) {
+            boolean newTable = false;
             try {
                 createTableUnsafe(
                         securityContext,
@@ -138,8 +139,9 @@ public class CairoEngine implements Closeable, WriterSource {
                         path,
                         struct
                 );
+                newTable = true;
             } finally {
-                unlock(securityContext, struct.getTableName(), null, true);
+                unlock(securityContext, struct.getTableName(), null, newTable);
             }
         } else {
             throw EntryUnavailableException.INSTANCE;
