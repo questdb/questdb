@@ -599,6 +599,184 @@ public class InsertTest extends AbstractGriffinTest {
         });
     }
 
+    @Test
+    public void testInsertAsSelectISODateStringToDesignatedTimestampColumn() throws Exception {
+        final String expected = "seq\tts\n" +
+                "1\t2021-01-03T00:00:00.000000Z\n";
+
+        assertInsertTimestamp(
+                expected,
+                "insert into tab select 1, '2021-01-03'",
+                null,
+                false
+        );
+    }
+
+    @Test
+    public void testInsertAsSelectNumberStringToDesignatedTimestampColumn() throws Exception {
+        assertInsertTimestamp(
+                "Invalid timestamp: 123456",
+                "insert into tab select 1, '123456'",
+                "io.questdb.cairo.CairoException",
+                false
+        );
+    }
+
+    @Test
+    public void testInsertISODateStringToDesignatedTimestampColumn() throws Exception {
+        final String expected = "seq\tts\n" +
+                "1\t2021-01-03T00:00:00.000000Z\n";
+
+        assertInsertTimestamp(
+                expected,
+                "insert into tab values (1, '2021-01-03')",
+                null,
+                true
+        );
+    }
+
+    @Test
+    public void testInsertISOSecondsDateStringTimestampColumn() throws Exception {
+        final String expected = "seq\tts\n" +
+                "1\t2021-01-03T00:00:00.000000Z\n";
+
+        assertInsertTimestamp(
+                expected,
+                "insert into tab values (1, '2021-01-03T00:00:00Z')",
+                null,
+                true
+        );
+    }
+
+    @Test
+    public void testInsertISOMilliWithTzDateStringTimestampColumn() throws Exception {
+        final String expected = "seq\tts\n" +
+                "1\t2021-01-03T01:00:00.000000Z\n";
+
+        assertInsertTimestamp(
+                expected,
+                "insert into tab values (1, '2021-01-03T00:00:00+01')",
+                null,
+                true
+        );
+    }
+
+    @Test
+    public void testInsertISOMilliWithTzDateStringTimestampColum2() throws Exception {
+        final String expected = "seq\tts\n" +
+                "1\t2021-01-03T00:30:00.000000Z\n";
+
+        assertInsertTimestamp(
+                expected,
+                "insert into tab values (1, '2021-01-03T02:00:00-01:30')",
+                null,
+                true
+        );
+    }
+
+    @Test
+    public void testInsertISOMilliWithTzDateStringTimestampColumFails() throws Exception {
+        final String expected = "seq\tts\n" +
+                "1\t2021-01-03T00:30:00.000000Z\n";
+
+        assertInsertTimestamp(
+                "Invalid timestamp",
+                "insert into tab values (1, '2021-01-03T02:00:00-:30')",
+                "io.questdb.cairo.CairoException",
+                true
+        );
+    }
+
+    @Test
+    public void testInsertISOMicroStringTimestampColumn() throws Exception {
+        final String expected = "seq\tts\n" +
+                "1\t2021-01-03T00:00:00.000000Z\n";
+
+        assertInsertTimestamp(
+                expected,
+                "insert into tab values (1, '2021-01-03T00:00:00.000000Z')",
+                null,
+                true
+        );
+    }
+
+    @Test
+    public void testInsertISOMicroStringTimestampColumnNoTimezone() throws Exception {
+        final String expected = "seq\tts\n" +
+                "1\t2021-01-03T00:00:00.000000Z\n";
+
+        assertInsertTimestamp(
+                expected,
+                "insert into tab values (1, '2021-01-03T00:00:00.000000')",
+                null,
+                true
+        );
+    }
+
+    @Test
+    public void testInsertInvalidDateStringTimestampColumn() throws Exception {
+        assertInsertTimestamp(
+                "Invalid timestamp: 2021-23-03T00:00:00Z",
+                "insert into tab values (1, '2021-23-03T00:00:00Z')",
+                "io.questdb.cairo.CairoException",
+                true
+        );
+    }
+
+    private void assertInsertTimestamp(String expected, String ddl2, String exceptionType, boolean commitInsert) throws Exception {
+        try {
+            // Test as designated timestamp
+            assertInsertQuery(
+                    "seq\tts\n",
+                    "tab",
+                    "create table tab(seq long, ts timestamp) timestamp(ts)",
+                    "ts",
+                    ddl2,
+                    expected,
+                    true,
+                    true,
+                    true,
+                    commitInsert
+            );
+            if (exceptionType != null) {
+                Assert.fail("SqlException expected");
+            }
+        } catch (Exception e) {
+            if (exceptionType == null) throw e;
+
+            Assert.assertEquals(exceptionType, e.getClass().getName());
+            TestUtils.assertContains(e.getMessage(), expected);
+        }
+
+        tearDownAfterTest();
+        tearDown0();
+        setUp0();
+
+        try {
+            // Test as non-designated timestamp
+            assertInsertQuery(
+                    "seq\tts\n",
+                    "tab",
+                    "create table tab(seq long, ts timestamp)",
+                    null,
+                    ddl2,
+                    expected,
+                    true,
+                    true,
+                    true,
+                    commitInsert
+            );
+            if (exceptionType != null) {
+                Assert.fail("SqlException expected");
+            }
+        } catch (Exception e) {
+            if (exceptionType == null) throw e;
+
+            Assert.assertEquals(exceptionType, e.getClass().getName());
+            TestUtils.assertContains(e.getMessage(), expected);
+        }
+    }
+
     private void testBindVariableInsert(
             int partitionBy,
             TimestampFunction timestampFunction,

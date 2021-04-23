@@ -872,6 +872,55 @@ public class PGJobContextTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testInsertTimestampAsString() throws Exception {
+        assertMemoryLeak(() -> {
+            String expectedAll = "count[BIGINT]\n" +
+                    "10\n";
+
+            try (
+                    final PGWireServer ignored = createPGServer(3);
+                    final Connection connection = getConnection(false, true)
+            ) {
+
+                connection.setAutoCommit(false);
+                //
+                // test methods of inserting QuestDB's DATA and TIMESTAMP values
+                //
+                final PreparedStatement statement = connection.prepareStatement("create table x (a int, t timestamp, t1 timestamp) timestamp(t)");
+                statement.execute();
+
+                // exercise parameters on select statement
+                PreparedStatement select = connection.prepareStatement("x where a = ?");
+                execSelectWithParam(select, 9);
+
+
+                final PreparedStatement insert = connection.prepareStatement("insert into x values (?, ?, ?)");
+                for (int i = 0; i < 10; i++) {
+                    insert.setInt(1, i);
+                    // TIMESTAMP as ISO string to designated and non-designated timestamp
+                    insert.setString(2, "2011-04-1" + i + "T14:40:54.998821Z");
+                    insert.setString(3, "2011-04-11T1" + i + ":40:54.998821Z");
+
+                    insert.execute();
+                    Assert.assertEquals(1, insert.getUpdateCount());
+                }
+                connection.commit();
+
+                try (ResultSet resultSet = connection.prepareStatement("select count() from x").executeQuery()) {
+                    sink.clear();
+                    assertResultSet(expectedAll, sink, resultSet);
+                }
+
+                TestUtils.assertEquals(expectedAll, sink);
+
+                // exercise parameters on select statement
+                execSelectWithParam(select, 9);
+                TestUtils.assertEquals("9\n", sink);
+            }
+        });
+    }
+
+    @Test
     public void testInsertExtendedText() throws Exception {
         testInsert0(false, false);
     }

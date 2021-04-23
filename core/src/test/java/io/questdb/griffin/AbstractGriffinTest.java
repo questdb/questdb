@@ -240,7 +240,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
         }
     }
 
-    public static void executeInsert(String ddl) throws SqlException {
+    public static void executeInsert(CharSequence ddl) throws SqlException {
         CompiledQuery compiledQuery = compiler.compile(ddl, sqlExecutionContext);
         final InsertStatement insertStatement = compiledQuery.getInsertStatement();
         try (InsertMethod insertMethod = insertStatement.createMethod(sqlExecutionContext)) {
@@ -617,7 +617,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             boolean checkSameStr,
             boolean expectSize
     ) throws SqlException {
-        printSqlResult(expected, query, expectedTimestamp, ddl2, expected2, supportsRandomAccess, checkSameStr, expectSize, false, null);
+        printSqlResult(expected, query, expectedTimestamp, ddl2, expected2, supportsRandomAccess, checkSameStr, expectSize, false, null, false);
     }
 
     protected static void printSqlResult(
@@ -630,7 +630,8 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             boolean checkSameStr,
             boolean expectSize,
             boolean sizeCanBeVariable,
-            CharSequence expectedPlan
+            CharSequence expectedPlan,
+            boolean commitInsert
     ) throws SqlException {
         CompiledQuery cc = compiler.compile(query, sqlExecutionContext);
         RecordCursorFactory factory = cc.getRecordCursorFactory();
@@ -648,7 +649,11 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             assertVariableColumns(factory, checkSameStr);
 
             if (ddl2 != null) {
-                compiler.compile(ddl2, sqlExecutionContext);
+                if (commitInsert) {
+                    executeInsert(ddl2);
+                } else {
+                    compiler.compile(ddl2, sqlExecutionContext);
+                }
 
                 int count = 3;
                 while (count > 0) {
@@ -687,9 +692,9 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                 compiler.compile(ddl, sqlExecutionContext);
             }
             if (verify != null) {
-                printSqlResult(null, verify, expectedTimestamp, ddl2, expected2, supportsRandomAccess, checkSameStr, expectSize, sizeCanBeVariable, null);
+                printSqlResult(null, verify, expectedTimestamp, ddl2, expected2, supportsRandomAccess, checkSameStr, expectSize, sizeCanBeVariable, null, false);
             }
-            printSqlResult(expected, query, expectedTimestamp, ddl2, expected2, supportsRandomAccess, checkSameStr, expectSize, sizeCanBeVariable, null);
+            printSqlResult(expected, query, expectedTimestamp, ddl2, expected2, supportsRandomAccess, checkSameStr, expectSize, sizeCanBeVariable, null, false);
         });
     }
 
@@ -778,6 +783,26 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             boolean expectSize
     ) throws Exception {
         assertQuery(expected, query, ddl, null, expectedTimestamp, ddl2, expected2, supportsRandomAccess, checkSameStr, expectSize, false);
+    }
+
+    protected static void assertInsertQuery(
+            CharSequence expected,
+            CharSequence query,
+            CharSequence ddl,
+            @Nullable CharSequence expectedTimestamp,
+            @Nullable CharSequence ddl2,
+            @Nullable CharSequence expected2,
+            boolean supportsRandomAccess,
+            boolean checkSameStr,
+            boolean expectSize,
+            boolean commitInsert
+    ) throws Exception {
+        assertMemoryLeak(() -> {
+            if (ddl != null) {
+                compiler.compile(ddl, sqlExecutionContext);
+            }
+            printSqlResult(expected, query, expectedTimestamp, ddl2, expected2, supportsRandomAccess, checkSameStr, expectSize, false, null, commitInsert);
+        });
     }
 
     protected static void assertQuery(
