@@ -131,6 +131,10 @@ public class CairoEngine implements Closeable, WriterSource {
             TableStructure struct
     ) {
         if (lock(securityContext, struct.getTableName())) {
+            if (writerPool.exists(struct.getTableName())) {
+                throw EntryUnavailableException.INSTANCE;
+            }
+            boolean newTable = false;
             try {
                 createTableUnsafe(
                         securityContext,
@@ -138,8 +142,9 @@ public class CairoEngine implements Closeable, WriterSource {
                         path,
                         struct
                 );
+                newTable = true;
             } finally {
-                unlock(securityContext, struct.getTableName(), null);
+                unlock(securityContext, struct.getTableName(), null, newTable);
             }
         } else {
             throw EntryUnavailableException.INSTANCE;
@@ -218,6 +223,9 @@ public class CairoEngine implements Closeable, WriterSource {
             int lo,
             int hi
     ) {
+        if (writerPool.exists(tableName)) {
+            return TableUtils.TABLE_EXISTS;
+        }
         return TableUtils.exists(configuration.getFilesFacade(), path, configuration.getRoot(), tableName, lo, hi);
     }
 
@@ -336,7 +344,7 @@ public class CairoEngine implements Closeable, WriterSource {
                 }
                 return;
             } finally {
-                unlock(securityContext, tableName, null);
+                unlock(securityContext, tableName, null, false);
             }
         }
         throw CairoException.instance(configuration.getFilesFacade().errno()).put("Could not lock '").put(tableName).put('\'');
@@ -360,7 +368,7 @@ public class CairoEngine implements Closeable, WriterSource {
             try {
                 rename0(path, tableName, otherPath, newName);
             } finally {
-                unlock(securityContext, tableName, null);
+                unlock(securityContext, tableName, null, false);
             }
         } else {
             LOG.error().$("cannot lock and rename [from='").$(tableName).$("', to='").$(newName).$("']").$();
@@ -377,10 +385,11 @@ public class CairoEngine implements Closeable, WriterSource {
     public void unlock(
             CairoSecurityContext securityContext,
             CharSequence tableName,
-            @Nullable TableWriter writer
+            @Nullable TableWriter writer,
+            boolean newTable
     ) {
         readerPool.unlock(tableName);
-        writerPool.unlock(tableName, writer);
+        writerPool.unlock(tableName, writer, newTable);
         LOG.info().$("unlocked [table=`").$(tableName).$(']').$();
     }
 

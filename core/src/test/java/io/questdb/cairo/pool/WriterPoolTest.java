@@ -461,7 +461,7 @@ public class WriterPoolTest extends AbstractCairoTest {
             }
             writer.commit();
 
-            pool.unlock("x", writer);
+            pool.unlock("x", writer, false);
 
             // make sure our writer stays in pool and close() doesn't destroy it
             Assert.assertSame(writer, pool.get("x"));

@@ -5358,7 +5358,7 @@ public class SqlParserTest extends AbstractGriffinTest {
                     }
                 }
             } finally {
-                engine.unlock(AllowAllCairoSecurityContext.INSTANCE, "tab", null);
+                engine.unlock(AllowAllCairoSecurityContext.INSTANCE, "tab", null, false);
             }
         });
     }

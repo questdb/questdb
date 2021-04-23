@@ -19,6 +19,7 @@ import io.questdb.cairo.AbstractCairoTest;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.O3PurgeCleaner;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.griffin.SqlCompiler;
@@ -158,8 +159,21 @@ public class LineTcpO3Test extends AbstractCairoTest {
                 Net.send(clientFd, resourceAddress, resourceSize);
                 Unsafe.free(resourceAddress, resourceSize);
 
+                boolean tableExists = false;
                 int maxIter = 50;
                 while (true) {
+                    if (!tableExists) {
+                        try (Path path = new Path()) {
+                            if (engine.getStatus(AllowAllCairoSecurityContext.INSTANCE, path, "cpu") != TableUtils.TABLE_EXISTS) {
+                                maxIter--;
+                                Assert.assertTrue(maxIter > 0);
+                                Thread.sleep(200);
+                                continue;
+                            }
+                        }
+                        tableExists = true;
+                    }
+
                     try {
                         TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "cpu");
                         writer.close();

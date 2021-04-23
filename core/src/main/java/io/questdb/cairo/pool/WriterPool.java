@@ -150,6 +150,11 @@ public class WriterPool extends AbstractPool implements ResourcePool<TableWriter
         }
     }
 
+    public boolean exists(CharSequence tableName) {
+        checkClosed();
+        return entries.contains(tableName);
+    }
+
     /**
      * Locks writer. Locking operation is always non-blocking. Lock is usually successful
      * when writer is in pool or owned by calling thread, in which case
@@ -230,10 +235,10 @@ public class WriterPool extends AbstractPool implements ResourcePool<TableWriter
     }
 
     public void unlock(CharSequence name) {
-        unlock(name, null);
+        unlock(name, null, false);
     }
 
-    public void unlock(CharSequence name, @Nullable TableWriter writer) {
+    public void unlock(CharSequence name, @Nullable TableWriter writer, boolean newTable) {
         long thread = Thread.currentThread().getId();
 
         Entry e = entries.get(name);
@@ -252,9 +257,19 @@ public class WriterPool extends AbstractPool implements ResourcePool<TableWriter
                 throw CairoException.instance(0).put("Writer ").put(name).put(" is not locked");
             }
 
+            if (newTable) {
+                // Note that the TableUtils.createTable method will create files, but on some OS's these files will not immediately become
+                // visible on all threads,
+                // only in this thread will they definitely be visible. To prevent spurious file system errors (or even allowing the same
+                // table to be created twice),
+                // we cache the writer in the writerPool whose access via the engine is thread safe
+                assert writer == null && e.writer == null && e.lockFd != -1;
+                LOG.info().$("created [table=`").utf8(name).$("`, thread=").$(thread).$(']').$();
+                writer = new TableWriter(configuration, name, messageBus, false, e, root);
+            }
+
             if (writer == null) {
                 // unlock must remove entry because pool does not deal with null writer
-                entries.remove(name);
 
                 if (e.lockFd != -1) {
                     ff.close(e.lockFd);
@@ -263,6 +278,7 @@ public class WriterPool extends AbstractPool implements ResourcePool<TableWriter
                         LOG.error().$("could not remove [file=").$(path).$(']').$();
                     }
                 }
+                entries.remove(name);
             } else {
                 e.writer = writer;
                 writer.setLifecycleManager(e);

@@ -1453,33 +1453,33 @@ public class SqlCompiler implements Closeable {
         final CreateTableModel createTableModel = (CreateTableModel) model;
         final ExpressionNode name = createTableModel.getName();
 
-        if (engine.getStatus(
-                executionContext.getCairoSecurityContext(),
-                path,
-                name.token
-        ) != TableUtils.TABLE_DOES_NOT_EXIST) {
-            if (createTableModel.isIgnoreIfExists()) {
-                return compiledQuery.ofCreateTable();
-            }
-            throw SqlException.$(name.position, "table already exists");
-        }
-
         if (engine.lock(executionContext.getCairoSecurityContext(), name.token)) {
             TableWriter writer = null;
+            boolean newTable = false;
             try {
-
+                if (engine.getStatus(
+                        executionContext.getCairoSecurityContext(),
+                        path,
+                        name.token, 0, name.token.length()) != TableUtils.TABLE_DOES_NOT_EXIST) {
+                    if (createTableModel.isIgnoreIfExists()) {
+                        return compiledQuery.ofCreateTable();
+                    }
+                    throw SqlException.$(name.position, "table already exists");
+                }
                 try {
                     if (createTableModel.getQueryModel() == null) {
                         engine.createTableUnsafe(executionContext.getCairoSecurityContext(), mem, path, createTableModel);
+                        newTable = true;
                     } else {
                         writer = createTableFromCursor(createTableModel, executionContext);
                     }
                 } catch (CairoException e) {
+                    newTable = false;
                     LOG.error().$("could not create table [error=").$((Sinkable) e).$(']').$();
                     throw SqlException.$(name.position, "Could not create table. See log for details.");
                 }
             } finally {
-                engine.unlock(executionContext.getCairoSecurityContext(), name.token, writer);
+                engine.unlock(executionContext.getCairoSecurityContext(), name.token, writer, newTable);
             }
         } else {
             throw SqlException.$(name.position, "cannot acquire table lock");
