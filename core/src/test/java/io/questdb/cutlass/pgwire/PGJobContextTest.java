@@ -2625,6 +2625,14 @@ nodejs code:
                                     rs
                             );
                         }
+                        // The next iteration of the loop will create a new connection which may be in a different thread than the current
+                        // connection
+                        // The new connection will execute a "create table if not exists " statement which requires a full table lock
+                        // This connection has just execute a read query on the table and hence has a temporary read lock which will be
+                        // released shortly after we receive the query response
+                        // In order to guarantee that the temporary read lock is released before the next iteration of this loop we execute
+                        // a new query, with this connection, which does not lock the table.
+                        connection.prepareStatement("select 1").execute();
                     }
                 }
             }
