@@ -853,10 +853,11 @@ public class TableReader implements Closeable, SymbolTableSource {
         final int columnSlotSize = getColumnBase(1);
         final int topBase = columnBase / 2;
         final int topSlotSize = columnSlotSize / 2;
-        columns.insert(columnBase, columnSlotSize);
-        columns.set(columnBase, columnBase + columnSlotSize, NullColumn.INSTANCE);
-        bitmapIndexes.insert(columnBase, columnSlotSize);
-        bitmapIndexes.set(columnBase, columnBase + columnSlotSize, null);
+        final int idx = getPrimaryColumnIndex(columnBase, 0);
+        columns.insert(idx, columnSlotSize);
+        columns.set(idx, columnBase + columnSlotSize, NullColumn.INSTANCE);
+        bitmapIndexes.insert(idx, columnSlotSize);
+        bitmapIndexes.set(idx, columnBase + columnSlotSize, null);
         columnTops.insert(topBase, topSlotSize);
         columnTops.seed(topBase, topSlotSize, 0);
 

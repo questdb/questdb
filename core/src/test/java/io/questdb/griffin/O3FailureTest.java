@@ -980,6 +980,11 @@ public class O3FailureTest extends AbstractO3Test {
         executeWithPool(0, O3FailureTest::testPartitionedDataAppendOOPrependOODataFailRetry0, ffOpenFailure);
     }
 
+    @Test
+    public void testTwoRowsConsistency() throws Exception {
+        executeWithPool(0, O3FailureTest::testTwoRowsConsistency0);
+    }
+
     private static void testPartitionedOOPrefixesExistingPartitionsFailRetry0(
             CairoEngine engine,
             SqlCompiler compiler,
@@ -2397,14 +2402,63 @@ public class O3FailureTest extends AbstractO3Test {
         TestUtils.assertEquals(sink, sink2);
 
         // now perform two OOO inserts
-//        engine.releaseAllWriters();
-
         compiler.compile("insert into x select * from 1am", sqlExecutionContext);
         compiler.compile("insert into x select * from tail", sqlExecutionContext);
 
         printSqlResult(compiler, sqlExecutionContext, "y order by ts");
         TestUtils.printSql(compiler, sqlExecutionContext, "x", sink2);
         TestUtils.assertEquals(sink, sink2);
+    }
+
+    private static void testTwoRowsConsistency0(
+            CairoEngine engine,
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
+        compiler.compile(
+                "create table x (ts timestamp, block_nr long) timestamp (ts) partition by DAY",
+                sqlExecutionContext
+        );
+
+        TestUtils.assertSql(
+                compiler,
+                sqlExecutionContext,
+                "x",
+                sink,
+                "ts\tblock_nr\n"
+        );
+
+        TestUtils.insert(
+                compiler,
+                sqlExecutionContext,
+                "insert into x values(cast('2010-02-04T21:43:14.000000Z' as timestamp), 38304)"
+        );
+
+        TestUtils.assertSql(
+                compiler,
+                sqlExecutionContext,
+                "x",
+                sink,
+                "ts\tblock_nr\n" +
+                        "2010-02-04T21:43:14.000000Z\t38304\n"
+        );
+
+        TestUtils.insert(
+                compiler,
+                sqlExecutionContext,
+                "insert into x values(cast('2010-02-14T23:52:59.000000Z' as timestamp), 40320)"
+        );
+
+        TestUtils.assertSql(
+                compiler,
+                sqlExecutionContext,
+                "x",
+                sink,
+                "ts\tblock_nr\n" +
+                        "2010-02-04T21:43:14.000000Z\t38304\n" +
+                        "2010-02-14T23:52:59.000000Z\t40320\n"
+        );
+
     }
 
     private void executeWithoutPool(O3Runnable runnable, FilesFacade ff) throws Exception {

@@ -27,10 +27,8 @@ package io.questdb.test.tools;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.RecordCursorPrinter;
 import io.questdb.cairo.TableReader;
-import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.*;
+import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -384,6 +382,16 @@ public final class TestUtils {
     public static void assertCursor(CharSequence expected, RecordCursor cursor, RecordMetadata metadata, boolean header, MutableCharSink sink) {
         printCursor(cursor, metadata, header, sink);
         assertEquals(expected, sink);
+    }
+
+    public static void insert(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, CharSequence insertSql) throws SqlException {
+        CompiledQuery compiledQuery = compiler.compile(insertSql, sqlExecutionContext);
+        Assert.assertNotNull(compiledQuery.getInsertStatement());
+        final InsertStatement insertStatement = compiledQuery.getInsertStatement();
+        try (InsertMethod insertMethod = insertStatement.createMethod(sqlExecutionContext)) {
+            insertMethod.execute();
+            insertMethod.commit();
+        }
     }
 
     public static void assertSql(
