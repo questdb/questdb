@@ -41,6 +41,7 @@ import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
 import static io.questdb.cairo.TxnScoreboard.*;
 import static io.questdb.test.tools.TestUtils.createTestPath;
 
+@Ignore
 public class TxnScoreboardTest {
 
     private final static String TMP_DIR = System.getProperty("java.io.tmpdir");

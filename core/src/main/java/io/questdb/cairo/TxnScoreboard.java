@@ -43,6 +43,12 @@ public class TxnScoreboard {
         return acquire0(pTxnScoreboard, txn);
     }
 
+    public static boolean acquireTxn(long pTxnScoreboard, long txn) {
+        assert pTxnScoreboard > 0;
+        LOG.debug().$("acquire [p=").$(pTxnScoreboard).$(", txn=").$(txn).$(']').$();
+        return acquireTxn0(pTxnScoreboard, txn);
+    }
+
     public static void close(long pTxnScoreboard) {
         if (pTxnScoreboard != 0) {
             long x;
@@ -95,6 +101,12 @@ public class TxnScoreboard {
         release0(pTxnScoreboard, txn);
     }
 
+    public static void releaseTxn(long pTxnScoreboard, long txn) {
+        assert pTxnScoreboard > 0;
+        LOG.debug().$("release  [p=").$(pTxnScoreboard).$(", txn=").$(txn).$(']').$();
+        releaseTxn0(pTxnScoreboard, txn);
+    }
+
     private static void setShmName(
             Path shmPath,
             long databaseIdLo,
@@ -117,7 +129,11 @@ public class TxnScoreboard {
 
     private native static boolean acquire0(long pTxnScoreboard, long txn);
 
+    private native static boolean acquireTxn0(long pTxnScoreboard, long txn);
+
     private native static long release0(long pTxnScoreboard, long txn);
+
+    private native static long releaseTxn0(long pTxnScoreboard, long txn);
 
     private native static long newRef0(long pTxnScoreboard);
 
@@ -131,7 +147,7 @@ public class TxnScoreboard {
 
     private static native long close0(long pTxnScoreboard);
 
-    private static native long getScoreboardSize();
+    public static native long getScoreboardSize();
 
     static boolean isTxnUnused(long nameTxn, long readerTxn, long txnScoreboard) {
         return

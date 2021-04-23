@@ -155,15 +155,6 @@ public class O3Utils {
         throw CairoException.instance(ff.errno()).put("could not mmap column [fd=").put(fd).put(", size=").put(size).put(']');
     }
 
-    static long openRW(FilesFacade ff, Path path) {
-        final long fd = ff.openRW(path);
-        if (fd > -1) {
-            LOG.debug().$("open [file=").$(path).$(", fd=").$(fd).$(']').$();
-            return fd;
-        }
-        throw CairoException.instance(ff.errno()).put("could not open read-write [file=").put(path).put(", fd=").put(fd).put(']');
-    }
-
     static void allocateDiskSpace(FilesFacade ff, long fd, long size) {
         if (!ff.allocate(fd, size)) {
             throw CairoException.instance(ff.errno()).put("No space left [size=").put(size).put(", fd=").put(fd).put(']');

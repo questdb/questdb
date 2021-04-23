@@ -263,7 +263,7 @@ public class WriterPool extends AbstractPool implements ResourcePool<TableWriter
                 // only in this thread will they definitely be visible. To prevent spurious file system errors (or even allowing the same
                 // table to be created twice),
                 // we cache the writer in the writerPool whose access via the engine is thread safe
-                assert writer == null && e.writer == null && e.lockFd != -1;
+                assert writer == null && e.lockFd != -1;
                 LOG.info().$("created [table=`").utf8(name).$("`, thread=").$(thread).$(']').$();
                 writer = new TableWriter(configuration, name, messageBus, false, e, root);
             }

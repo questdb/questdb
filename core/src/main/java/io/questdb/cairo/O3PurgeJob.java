@@ -96,7 +96,6 @@ public class O3PurgeJob extends AbstractQueueConsumerJob<O3PurgeTask> {
                 return false;
             }
         } finally {
-            TxnScoreboard.close(task.getTxnScoreboard());
             subSeq.done(cursor);
         }
     }

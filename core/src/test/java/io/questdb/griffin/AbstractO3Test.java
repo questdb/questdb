@@ -313,7 +313,7 @@ public class AbstractO3Test {
                 final SqlCompiler compiler = new SqlCompiler(engine);
                 final SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
         ) {
-            try (O3PurgeCleaner ignored = new O3PurgeCleaner(engine.getMessageBus())) {
+            try {
                 if (pool != null) {
                     pool.assignCleaner(Path.CLEANER);
                     pool.assign(new O3CallbackJob(engine.getMessageBus()));

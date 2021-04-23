@@ -385,7 +385,7 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
                         replicateTable("source", "dest", 0, true, Long.MAX_VALUE, false, false, 0);
                         Assert.fail();
                     } catch (CairoException ex) {
-                        Assert.assertTrue(ex.getFlyweightMessage().toString().contains("Could not open"));
+                        Assert.assertTrue(ex.getFlyweightMessage().toString().contains("could not open"));
                     }
                     CharSequence actual = select("SELECT * FROM dest");
                     TestUtils.assertEquals(expected, actual);

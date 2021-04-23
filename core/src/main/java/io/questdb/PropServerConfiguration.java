@@ -187,7 +187,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final BuildInformation buildInformation;
     private final int columnIndexerQueueCapacity;
     private final int vectorAggregateQueueCapacity;
-    private final boolean o3Enabled;
     private final int o3CallbackQueueCapacity;
     private final int o3PartitionQueueCapacity;
     private final int o3OpenColumnQueueCapacity;
@@ -368,12 +367,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                 }
             }
 
-            long tableIndexMem = ff.mmap(tableIndexFd, Files.PAGE_SIZE, 0, Files.MAP_RW);
-            if (tableIndexMem == -1) {
-                ff.close(tableIndexFd);
-                throw CairoException.instance(ff.errno()).put("Could not mmap [file=").put(path).put(']');
-            }
-
+            final long tableIndexMem = TableUtils.mapRWOrClose(ff, path, tableIndexFd, Files.PAGE_SIZE);
             Rnd rnd = new Rnd(getCairoConfiguration().getMicrosecondClock().getTicks(), getCairoConfiguration().getMillisecondClock().getTicks());
             if (Os.compareAndSwap(tableIndexMem + Long.BYTES, 0, rnd.nextLong()) == 0) {
                 Unsafe.getUnsafe().putLong(tableIndexMem + Long.BYTES * 2, rnd.nextLong());
@@ -631,7 +625,6 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.tableBlockWriterQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.table.block.writer.queue.capacity", 4096));
             this.columnIndexerQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.column.indexer.queue.capacity", 1024));
             this.vectorAggregateQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.vector.aggregate.queue.capacity", 1024));
-            this.o3Enabled = getBoolean(properties, env, "cairo.o3.enabled", false);
             this.o3CallbackQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.o3.callback.queue.capacity", 1024));
             this.o3PartitionQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.o3.partition.queue.capacity", 1024));
             this.o3OpenColumnQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.o3.open.column.queue.capacity", 1024));

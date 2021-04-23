@@ -219,7 +219,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     dFile(path.trimTo(plen), metadata.getColumnName(timestampIndex));
 
                     // also track the fd that we need to eventually close
-                    srcTimestampFd = O3Utils.openRW(ff, path);
+                    srcTimestampFd = openRW(ff, path, LOG);
                     srcTimestampAddr = O3Utils.mapRW(ff, srcTimestampFd, srcTimestampSize);
                     dataTimestampHi = Unsafe.getUnsafe().getLong(srcTimestampAddr + srcTimestampSize - Long.BYTES);
                 }

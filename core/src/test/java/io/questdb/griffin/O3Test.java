@@ -4520,9 +4520,9 @@ public class O3Test extends AbstractO3Test {
                 ts += step;
 
                 long txn = w.getTxn();
-                TxnScoreboard.acquire(txnScoreboard, txn);
+                TxnScoreboard.acquireTxn(txnScoreboard, txn);
                 w.commit();
-                TxnScoreboard.release(txnScoreboard, txn);
+                TxnScoreboard.releaseTxn(txnScoreboard, txn);
             }
         }
     }

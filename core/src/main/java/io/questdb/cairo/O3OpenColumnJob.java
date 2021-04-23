@@ -26,6 +26,8 @@ package io.questdb.cairo;
 
 import io.questdb.MessageBus;
 import io.questdb.cairo.vm.AppendOnlyVirtualMemory;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.mp.*;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Numbers;
@@ -49,6 +51,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
     public static final int OPEN_MID_PARTITION_FOR_MERGE = 3;
     public static final int OPEN_LAST_PARTITION_FOR_MERGE = 4;
     public static final int OPEN_NEW_PARTITION_FOR_APPEND = 5;
+    private final static Log LOG = LogFactory.getLog(O3OpenColumnJob.class);
     private final CairoConfiguration configuration;
     private final RingQueue<O3CopyTask> outboundQueue;
     private final Sequence outboundPubSeq;
@@ -656,10 +659,10 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 try {
                     // index files are opened as normal
                     iFile(path.trimTo(plen), columnName);
-                    dstFixFd = O3Utils.openRW(ff, path);
+                    dstFixFd = openRW(ff, path, LOG);
                     // open data file now
                     dFile(path.trimTo(plen), columnName);
-                    dstVarFd = O3Utils.openRW(ff, path);
+                    dstVarFd = openRW(ff, path, LOG);
                 } catch (Throwable e) {
                     tableWriter.o3BumpErrorCount();
                     O3CopyJob.copyIdleQuick(
@@ -757,7 +760,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             default:
                 try {
                     dFile(path.trimTo(plen), columnName);
-                    dstFixFd = O3Utils.openRW(ff, path);
+                    dstFixFd = openRW(ff, path, LOG);
                 } catch (Throwable e) {
                     tableWriter.o3BumpErrorCount();
                     O3CopyJob.copyIdleQuick(
@@ -885,9 +888,9 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             }
             if (isIndexed && !indexWriter.isOpen()) {
                 BitmapIndexUtils.keyFileName(path.trimTo(plen), columnName);
-                dstKFd = O3Utils.openRW(ff, path);
+                dstKFd = openRW(ff, path, LOG);
                 BitmapIndexUtils.valueFileName(path.trimTo(plen), columnName);
-                dstVFd = O3Utils.openRW(ff, path);
+                dstVFd = openRW(ff, path, LOG);
             }
         } catch (Throwable e) {
             tableWriter.o3BumpErrorCount();
@@ -1994,9 +1997,9 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             case ColumnType.STRING:
                 try {
                     iFile(path.trimTo(plen), columnName);
-                    srcDataFixFd = O3Utils.openRW(ff, path);
+                    srcDataFixFd = openRW(ff, path, LOG);
                     dFile(path.trimTo(plen), columnName);
-                    srcDataVarFd = O3Utils.openRW(ff, path);
+                    srcDataVarFd = openRW(ff, path, LOG);
                 } catch (Throwable e) {
                     tableWriter.o3BumpErrorCount();
                     O3CopyJob.copyIdleQuick(
@@ -2083,7 +2086,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         srcDataFixFd = -srcTimestampFd;
                     } else {
                         dFile(path.trimTo(plen), columnName);
-                        srcDataFixFd = O3Utils.openRW(ff, path);
+                        srcDataFixFd = openRW(ff, path, LOG);
                     }
                 } catch (Throwable e) {
                     tableWriter.o3BumpErrorCount();
@@ -2178,7 +2181,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
         topFile(path.trimTo(plen), columnName);
         if (dFileExists && ff.exists(path)) {
             long buf = get8ByteBuf(workerId);
-            long topFd = O3Utils.openRW(ff, path);
+            long topFd = openRW(ff, path, LOG);
             try {
                 if (ff.read(topFd, buf, Long.BYTES, 0) == Long.BYTES) {
                     return Unsafe.getUnsafe().getLong(buf);
@@ -2291,7 +2294,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             srcDataTopOffset = srcDataTop << shl;
 
             path.trimTo(pDirNameLen).concat(columnName).put(FILE_SUFFIX_D).$();
-            dstFixFd = O3Utils.openRW(ff, path);
+            dstFixFd = openRW(ff, path, LOG);
             dstFixSize = ((srcOooHi - srcOooLo + 1) + srcDataMax - srcDataTop) << shl;
             dstFixAddr = O3Utils.mapRW(ff, dstFixFd, dstFixSize);
 
@@ -2316,9 +2319,9 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
 
             if (isIndexed) {
                 BitmapIndexUtils.keyFileName(path.trimTo(pDirNameLen), columnName);
-                dstKFd = O3Utils.openRW(ff, path);
+                dstKFd = openRW(ff, path, LOG);
                 BitmapIndexUtils.valueFileName(path.trimTo(pDirNameLen), columnName);
-                dstVFd = O3Utils.openRW(ff, path);
+                dstVFd = openRW(ff, path, LOG);
             }
 
             if (prefixType != O3_BLOCK_NONE) {
@@ -2589,13 +2592,13 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             path.trimTo(pDirNameLen).concat(columnName);
             int pColNameLen = path.length();
             path.put(FILE_SUFFIX_I).$();
-            dstFixFd = O3Utils.openRW(ff, path);
+            dstFixFd = openRW(ff, path, LOG);
             dstFixSize = (srcOooHi - srcOooLo + 1 + srcDataMax - srcDataTop) * Long.BYTES;
             dstFixAddr = O3Utils.mapRW(ff, dstFixFd, dstFixSize);
 
             path.trimTo(pColNameLen);
             path.put(FILE_SUFFIX_D).$();
-            dstVarFd = O3Utils.openRW(ff, path);
+            dstVarFd = openRW(ff, path, LOG);
             dstVarSize = srcDataVarSize - srcDataVarOffset + O3Utils.getVarColumnLength(srcOooLo, srcOooHi, srcOooFixAddr, srcOooFixSize, srcOooVarSize);
             dstVarAddr = O3Utils.mapRW(ff, dstVarFd, dstVarSize);
 
@@ -2827,25 +2830,25 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 case ColumnType.BINARY:
                 case ColumnType.STRING:
                     setPath(path.trimTo(plen), columnName, FILE_SUFFIX_I);
-                    dstFixFd = O3Utils.openRW(ff, path);
+                    dstFixFd = openRW(ff, path, LOG);
                     dstFixSize = (srcOooHi - srcOooLo + 1) * Long.BYTES;
                     dstFixAddr = O3Utils.mapRW(ff, dstFixFd, dstFixSize);
 
                     setPath(path.trimTo(plen), columnName, FILE_SUFFIX_D);
-                    dstVarFd = O3Utils.openRW(ff, path);
+                    dstVarFd = openRW(ff, path, LOG);
                     dstVarSize = O3Utils.getVarColumnLength(srcOooLo, srcOooHi, srcOooFixAddr, srcOooFixSize, srcOooVarSize);
                     dstVarAddr = O3Utils.mapRW(ff, dstVarFd, dstVarSize);
                     break;
                 default:
                     setPath(path.trimTo(plen), columnName, FILE_SUFFIX_D);
-                    dstFixFd = O3Utils.openRW(ff, path);
+                    dstFixFd = openRW(ff, path, LOG);
                     dstFixSize = (srcOooHi - srcOooLo + 1) << ColumnType.pow2SizeOf(Math.abs(columnType));
                     dstFixAddr = O3Utils.mapRW(ff, dstFixFd, dstFixSize);
                     if (isIndexed) {
                         BitmapIndexUtils.keyFileName(path.trimTo(plen), columnName);
-                        dstKFd = O3Utils.openRW(ff, path);
+                        dstKFd = openRW(ff, path, LOG);
                         BitmapIndexUtils.valueFileName(path.trimTo(plen), columnName);
-                        dstVFd = O3Utils.openRW(ff, path);
+                        dstVFd = openRW(ff, path, LOG);
                     }
                     break;
             }

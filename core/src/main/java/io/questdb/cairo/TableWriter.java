@@ -43,6 +43,7 @@ import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.NativeLPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import io.questdb.tasks.*;
 import org.jetbrains.annotations.NotNull;
 
@@ -121,15 +122,18 @@ public class TableWriter implements Closeable {
     private final MappedReadWriteMemory todoMem = new PagedMappedReadWriteMemory();
     private final TxWriter txFile;
     private final FindVisitor removePartitionDirsNotAttached = this::removePartitionDirsNotAttached;
-    private final long txnScoreboard;
     private final LongList o3PartitionRemoveCandidates = new LongList();
     private final LongConsumer appendTimestampSetter;
     private final ObjectPool<O3MutableAtomicInteger> o3ColumnCounters = new ObjectPool<O3MutableAtomicInteger>(O3MutableAtomicInteger::new, 64);
     private final ObjectPool<O3Basket> o3BasketPool = new ObjectPool<O3Basket>(O3Basket::new, 64);
+    private final long txnScoreboardFd;
+    private final long txnScoreboardMem;
+    private final StringSink o3Sink = new StringSink();
+    private final NativeLPSZ o3NativeLPSZ = new NativeLPSZ();
     private long todoTxn;
     private ContiguousVirtualMemory o3TimestampMem;
     private final O3ColumnUpdateMethod o3MoveHysteresisRef = this::o3MoveHysteresis0;
-    private long lockFd;
+    private long lockFd = -1;
     private LongConsumer timestampSetter;
     private int columnCount;
     private RowFunction rowFunction = openPartitionFunction;
@@ -218,21 +222,13 @@ public class TableWriter implements Closeable {
             this.metadata = new TableWriterMetadata(ff, metaMem);
             this.partitionBy = metaMem.getInt(META_OFFSET_PARTITION_BY);
             this.txFile = new TxWriter(ff, path, partitionBy);
-
-            // Create scoreboard after _txn file
-            // OSX scoreboard shared mem implementation relies that _txn file exist
-            this.txnScoreboard = TxnScoreboard.create(
-                    this.path,
-                    configuration.getDatabaseIdLo(),
-                    configuration.getDatabaseIdHi(),
-                    root,
-                    this.tableName,
-                    this.metadata.getId()
-            );
-
-            // have to reset path
-            this.path.of(root).concat(tableName);
-
+            path.trimTo(rootLen).concat(TXN_SCOREBOARD_FILE_NAME).$();
+            this.txnScoreboardFd = TableUtils.openRW(ff, path, LOG);
+            this.txnScoreboardMem = ff.mmap(txnScoreboardFd, TxnScoreboard.getScoreboardSize(), 0, Files.MAP_RW);
+            if (txnScoreboardMem == -1) {
+                throw CairoException.instance(ff.errno()).put("could not mmap column [fd=").put(txnScoreboardFd).put(", size=").put(TxnScoreboard.getScoreboardSize()).put(']');
+            }
+            path.trimTo(rootLen);
             // we have to do truncate repair at this stage of constructor
             // because this operation requires metadata
             switch (todo) {
@@ -720,7 +716,7 @@ public class TableWriter implements Closeable {
     }
 
     public long getTxnScoreboard() {
-        return txnScoreboard;
+        return txnScoreboardMem;
     }
 
     public boolean inTransaction() {
@@ -1600,6 +1596,15 @@ public class TableWriter implements Closeable {
         }
     }
 
+    private void closeTxnScoreboard() {
+        if (txnScoreboardMem != 0) {
+            ff.munmap(txnScoreboardMem, TxnScoreboard.getScoreboardSize());
+        }
+        if (txnScoreboardFd > 0) {
+            ff.close(txnScoreboardFd);
+        }
+    }
+
     /**
      * Commits newly added rows of data. This method updates transaction file with pointers to end of appended data.
      * <p>
@@ -1749,6 +1754,60 @@ public class TableWriter implements Closeable {
         }
     }
 
+    private void consumeO3PartitionRemoveTasks() {
+        // consume discovery jobs
+        final RingQueue<O3PurgeDiscoveryTask> discoveryQueue = messageBus.getO3PurgeDiscoveryQueue();
+        final Sequence discoverySubSeq = messageBus.getO3PurgeDiscoverySubSeq();
+        final RingQueue<O3PurgeTask> purgeQueue = messageBus.getO3PurgeQueue();
+        final Sequence purgePubSeq = messageBus.getO3PurgePubSeq();
+        final Sequence purgeSubSeq = messageBus.getO3PurgeSubSeq();
+
+        if (discoverySubSeq != null) {
+            while (true) {
+                long cursor = discoverySubSeq.next();
+                if (cursor > -1) {
+                    O3PurgeDiscoveryTask task = discoveryQueue.get(cursor);
+                    O3PurgeDiscoveryJob.discoverPartitions(
+                            ff,
+                            o3Sink,
+                            o3NativeLPSZ,
+                            refs, // reuse, this is only called from writer close
+                            purgeQueue,
+                            purgePubSeq,
+                            path,
+                            tableName,
+                            task.getPartitionBy(),
+                            task.getTimestamp(),
+                            txnScoreboardMem
+                    );
+                } else if (cursor == -1) {
+                    break;
+                }
+            }
+        }
+
+        // consume purge jobs
+        if (purgeSubSeq != null) {
+            while (true) {
+                long cursor = purgeSubSeq.next();
+                if (cursor > -1) {
+                    O3PurgeTask task = purgeQueue.get(cursor);
+                    O3PurgeJob.purgePartitionDir(
+                            ff,
+                            other,
+                            task.getPartitionBy(),
+                            task.getTimestamp(),
+                            txnScoreboardMem,
+                            task.getNameTxnToRemove(),
+                            task.getMinTxnToExpect()
+                    );
+                } else if (cursor == -1) {
+                    break;
+                }
+            }
+        }
+    }
+
     private int copyMetadataAndSetIndexed(int columnIndex, int indexValueBlockSize) {
         try {
             int index = openMetaSwapFile(ff, ddlMem, path, rootLen, configuration.getMaxSwapFileCount());
@@ -1870,6 +1929,7 @@ public class TableWriter implements Closeable {
     }
 
     private void doClose(boolean truncate) {
+        consumeO3PartitionRemoveTasks();
         boolean tx = inTransaction();
         freeColumns(truncate & !distressed);
         freeSymbolMapWriters();
@@ -1883,9 +1943,7 @@ public class TableWriter implements Closeable {
         try {
             releaseLock(!truncate | tx | performRecovery | distressed);
         } finally {
-            if (txnScoreboard != 0) {
-                TxnScoreboard.close(this.txnScoreboard);
-            }
+            closeTxnScoreboard();
             Misc.free(path);
             freeTempMem();
             LOG.info().$("closed '").utf8(tableName).$('\'').$();
@@ -2953,9 +3011,9 @@ public class TableWriter implements Closeable {
     }
 
     private void o3ProcessPartitionRemoveCandidates0(int n) {
-        final long readerTxn = TxnScoreboard.getMin(txnScoreboard);
-        final long readerTxnCount = TxnScoreboard.getCount(txnScoreboard, readerTxn);
-        if (TxnScoreboard.isTxnUnused(txFile.getTxn() - 1, readerTxn, txnScoreboard)) {
+        final long readerTxn = TxnScoreboard.getMin(txnScoreboardMem);
+        final long readerTxnCount = TxnScoreboard.getCount(txnScoreboardMem, readerTxn);
+        if (TxnScoreboard.isTxnUnused(txFile.getTxn() - 1, readerTxn, txnScoreboardMem)) {
             for (int i = 0; i < n; i += 2) {
                 final long timestamp = o3PartitionRemoveCandidates.getQuick(i);
                 final long txn = o3PartitionRemoveCandidates.getQuick(i + 1);
@@ -3039,7 +3097,7 @@ public class TableWriter implements Closeable {
             task.of(
                     tableName,
                     partitionBy,
-                    TxnScoreboard.newRef(txnScoreboard),
+                    txnScoreboardMem,
                     timestamp,
                     txn
             );

@@ -53,12 +53,6 @@ import static io.questdb.griffin.SqlKeywords.*;
 
 
 public class SqlCompiler implements Closeable {
-    public final static class PartitionAction {
-        public static final int NONE = 0;
-        public static final int DROP = 1;
-        public static final int ATTACH = 2;
-    }
-
     public static final ObjList<String> sqlControlSymbols = new ObjList<>(8);
     private final static Log LOG = LogFactory.getLog(SqlCompiler.class);
     private static final IntList castGroups = new IntList();
@@ -108,7 +102,6 @@ public class SqlCompiler implements Closeable {
             }
         }
     };
-
     public SqlCompiler(CairoEngine engine) {
         this(engine, engine.getMessageBus(), null);
     }
@@ -192,69 +185,6 @@ public class SqlCompiler implements Closeable {
                 postOrderTreeTraversalAlgo
         );
         this.textLoader = new TextLoader(engine);
-    }
-
-    public static void configureLexer(GenericLexer lexer) {
-        for (int i = 0, k = sqlControlSymbols.size(); i < k; i++) {
-            lexer.defineSymbol(sqlControlSymbols.getQuick(i));
-        }
-        for (int i = 0, k = OperatorExpression.operators.size(); i < k; i++) {
-            OperatorExpression op = OperatorExpression.operators.getQuick(i);
-            if (op.symbol) {
-                lexer.defineSymbol(op.token);
-            }
-        }
-    }
-
-    public static boolean isAssignableFrom(int to, int from) {
-        return to == from
-                || (from >= ColumnType.BYTE
-                && to >= ColumnType.BYTE
-                && to <= ColumnType.DOUBLE
-                && from < to)
-                || (from == ColumnType.STRING && to == ColumnType.SYMBOL)
-                || (from == ColumnType.SYMBOL && to == ColumnType.STRING)
-                || (from == ColumnType.CHAR && to == ColumnType.SYMBOL)
-                || (from == ColumnType.CHAR && to == ColumnType.STRING)
-                || (from == ColumnType.STRING && to == ColumnType.TIMESTAMP);
-    }
-
-    @Override
-    public void close() {
-        assert null == currentExecutionContext;
-        assert tableNames.isEmpty();
-        Misc.free(path);
-        Misc.free(renamePath);
-        Misc.free(textLoader);
-    }
-
-    @NotNull
-    public CompiledQuery compile(@NotNull CharSequence query, @NotNull SqlExecutionContext executionContext) throws SqlException {
-        clear();
-        //
-        // these are quick executions that do not require building of a model
-        //
-        lexer.of(query);
-
-        final CharSequence tok = SqlUtil.fetchNext(lexer);
-
-        if (tok == null) {
-            throw SqlException.$(0, "empty query");
-        }
-
-        final KeywordBasedExecutor executor = keywordBasedExecutors.get(tok);
-        if (executor == null) {
-            return compileUsingModel(executionContext);
-        }
-        return executor.execute(executionContext);
-    }
-
-    public CairoEngine getEngine() {
-        return engine;
-    }
-
-    public FunctionFactoryCache getFunctionFactoryCache() {
-        return functionParser.getFunctionFactoryCache();
     }
 
     // Creates data type converter.
@@ -692,6 +622,69 @@ public class SqlCompiler implements Closeable {
         asm.putShort(0);
 
         return asm.newInstance();
+    }
+
+    public static void configureLexer(GenericLexer lexer) {
+        for (int i = 0, k = sqlControlSymbols.size(); i < k; i++) {
+            lexer.defineSymbol(sqlControlSymbols.getQuick(i));
+        }
+        for (int i = 0, k = OperatorExpression.operators.size(); i < k; i++) {
+            OperatorExpression op = OperatorExpression.operators.getQuick(i);
+            if (op.symbol) {
+                lexer.defineSymbol(op.token);
+            }
+        }
+    }
+
+    public static boolean isAssignableFrom(int to, int from) {
+        return to == from
+                || (from >= ColumnType.BYTE
+                && to >= ColumnType.BYTE
+                && to <= ColumnType.DOUBLE
+                && from < to)
+                || (from == ColumnType.STRING && to == ColumnType.SYMBOL)
+                || (from == ColumnType.SYMBOL && to == ColumnType.STRING)
+                || (from == ColumnType.CHAR && to == ColumnType.SYMBOL)
+                || (from == ColumnType.CHAR && to == ColumnType.STRING)
+                || (from == ColumnType.STRING && to == ColumnType.TIMESTAMP);
+    }
+
+    @Override
+    public void close() {
+        assert null == currentExecutionContext;
+        assert tableNames.isEmpty();
+        Misc.free(path);
+        Misc.free(renamePath);
+        Misc.free(textLoader);
+    }
+
+    @NotNull
+    public CompiledQuery compile(@NotNull CharSequence query, @NotNull SqlExecutionContext executionContext) throws SqlException {
+        clear();
+        //
+        // these are quick executions that do not require building of a model
+        //
+        lexer.of(query);
+
+        final CharSequence tok = SqlUtil.fetchNext(lexer);
+
+        if (tok == null) {
+            throw SqlException.$(0, "empty query");
+        }
+
+        final KeywordBasedExecutor executor = keywordBasedExecutors.get(tok);
+        if (executor == null) {
+            return compileUsingModel(executionContext);
+        }
+        return executor.execute(executionContext);
+    }
+
+    public CairoEngine getEngine() {
+        return engine;
+    }
+
+    public FunctionFactoryCache getFunctionFactoryCache() {
+        return functionParser.getFunctionFactoryCache();
     }
 
     private static boolean isCompatibleCase(int from, int to) {
@@ -1268,6 +1261,8 @@ public class SqlCompiler implements Closeable {
             }
             mem.of(ff, path.trimTo(rootLen).concat(TableUtils.TXN_FILE_NAME).$(), ff.getPageSize());
             TableUtils.resetTxn(mem, symbolMapCount, 0L, TableUtils.INITIAL_TXN, 0L);
+            path.trimTo(rootLen).concat(TableUtils.TXN_SCOREBOARD_FILE_NAME).$();
+            TableUtils.createTxnScoreboard(ff, path);
         } finally {
             mem.close();
         }
@@ -1474,7 +1469,6 @@ public class SqlCompiler implements Closeable {
                         writer = createTableFromCursor(createTableModel, executionContext);
                     }
                 } catch (CairoException e) {
-                    newTable = false;
                     LOG.error().$("could not create table [error=").$((Sinkable) e).$(']').$();
                     throw SqlException.$(name.position, "Could not create table. See log for details.");
                 }
@@ -1584,41 +1578,6 @@ public class SqlCompiler implements Closeable {
         } while (attemptsLeft > 0);
 
         throw SqlException.position(0).put("underlying cursor is extremely volatile");
-    }
-
-    private void validateAndConsume(
-            InsertModel model,
-            ObjList<Function> valueFunctions,
-            RecordMetadata metadata,
-            int writerTimestampIndex,
-            int bottomUpColumnIndex,
-            int metadataColumnIndex,
-            Function function,
-            BindVariableService bindVariableService
-    ) throws SqlException {
-
-        final int columnType = metadata.getColumnType(metadataColumnIndex);
-
-        if (function.isUndefined()) {
-            function.assignType(columnType, bindVariableService);
-        }
-
-        if (isAssignableFrom(columnType, function.getType())) {
-            if (metadataColumnIndex == writerTimestampIndex) {
-                return;
-            }
-            valueFunctions.add(function);
-            listColumnFilter.add(metadataColumnIndex + 1);
-            return;
-        }
-
-        throw SqlException.inconvertibleTypes(
-                function.getPosition(),
-                function.getType(),
-                model.getColumnValues().getQuick(bottomUpColumnIndex).token,
-                metadata.getColumnType(metadataColumnIndex),
-                metadata.getColumnName(metadataColumnIndex)
-        );
     }
 
     RecordCursorFactory generate(QueryModel queryModel, SqlExecutionContext executionContext) throws SqlException {
@@ -2147,6 +2106,41 @@ public class SqlCompiler implements Closeable {
         return compiledQuery.ofTruncate();
     }
 
+    private void validateAndConsume(
+            InsertModel model,
+            ObjList<Function> valueFunctions,
+            RecordMetadata metadata,
+            int writerTimestampIndex,
+            int bottomUpColumnIndex,
+            int metadataColumnIndex,
+            Function function,
+            BindVariableService bindVariableService
+    ) throws SqlException {
+
+        final int columnType = metadata.getColumnType(metadataColumnIndex);
+
+        if (function.isUndefined()) {
+            function.assignType(columnType, bindVariableService);
+        }
+
+        if (isAssignableFrom(columnType, function.getType())) {
+            if (metadataColumnIndex == writerTimestampIndex) {
+                return;
+            }
+            valueFunctions.add(function);
+            listColumnFilter.add(metadataColumnIndex + 1);
+            return;
+        }
+
+        throw SqlException.inconvertibleTypes(
+                function.getPosition(),
+                function.getType(),
+                model.getColumnValues().getQuick(bottomUpColumnIndex).token,
+                metadata.getColumnType(metadataColumnIndex),
+                metadata.getColumnName(metadataColumnIndex)
+        );
+    }
+
     private InsertModel validateAndOptimiseInsertAsSelect(
             InsertModel model,
             SqlExecutionContext executionContext
@@ -2212,6 +2206,12 @@ public class SqlCompiler implements Closeable {
 
     public interface RecordToRowCopier {
         void copy(Record record, TableWriter.Row row);
+    }
+
+    public final static class PartitionAction {
+        public static final int NONE = 0;
+        public static final int DROP = 1;
+        public static final int ATTACH = 2;
     }
 
     private static class TableStructureAdapter implements TableStructure {

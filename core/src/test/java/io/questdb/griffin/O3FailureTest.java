@@ -620,10 +620,10 @@ public class O3FailureTest extends AbstractO3Test {
             case Os.LINUX_ARM64:
             case Os.OSX_AMD64:
             case Os.OSX_ARM64:
-                cnt = 79;
+                cnt = 81;
                 break;
             default:
-                cnt = 81;
+                cnt = 83;
                 break;
         }
         counter.set(cnt);
@@ -644,7 +644,7 @@ public class O3FailureTest extends AbstractO3Test {
     public void testFailOnTruncateKeyValueContended() throws Exception {
         // different number of calls to "truncate" on Windows and *Nix
         // the number targets truncate of key file in BitmapIndexWriter
-        counter.set(Os.type == Os.WINDOWS ? 82 : 79);
+        counter.set(Os.type == Os.WINDOWS ? 83 : 80);
         executeWithPool(0, O3FailureTest::testColumnTopLastOOOPrefixFailRetry0, new FilesFacadeImpl() {
 
             @Override

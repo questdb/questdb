@@ -80,88 +80,84 @@ public class O3PurgeDiscoveryJob extends AbstractQueueConsumerJob<O3PurgeDiscove
         LOG.info().$("processing [table=").$(tableName)
                 .$(", ts=").$ts(partitionTimestamp)
                 .I$();
-        try {
-            Path path = Path.getThreadLocal(root);
-            path.concat(tableName).slash$();
-            sink.clear();
-            TableUtils.setSinkForPartition(sink, partitionBy, partitionTimestamp, false);
-            path.slash$();
+        Path path = Path.getThreadLocal(root);
+        path.concat(tableName).slash$();
+        sink.clear();
+        TableUtils.setSinkForPartition(sink, partitionBy, partitionTimestamp, false);
+        path.slash$();
 
-            txnList.clear();
+        txnList.clear();
 
-            long p = ff.findFirst(path);
-            if (p > 0) {
-                try {
-                    do {
-                        processDir(sink, nativeLPSZ, tableName, txnList, ff.findName(p), ff.findType(p));
-                    } while (ff.findNext(p) > 0);
-                } finally {
-                    ff.findClose(p);
-                }
+        long p = ff.findFirst(path);
+        if (p > 0) {
+            try {
+                do {
+                    processDir(sink, nativeLPSZ, tableName, txnList, ff.findName(p), ff.findType(p));
+                } while (ff.findNext(p) > 0);
+            } finally {
+                ff.findClose(p);
             }
+        }
 
-            if (txnList.size() > 1) {
-                txnList.sort();
+        if (txnList.size() > 1) {
+            txnList.sort();
 
-                for (int i = 0, n = txnList.size() - 1; i < n; i++) {
-                    final long nameTxnToRemove = txnList.getQuick(i);
-                    final long minTxnToExpect = txnList.getQuick(i + 1);
-                    int errno;
-                    if ((errno = O3PurgeJob.purgePartitionDir(
-                            ff,
-                            path.of(root).concat(tableName),
-                            partitionBy,
-                            partitionTimestamp,
-                            txnScoreboard,
-                            nameTxnToRemove,
-                            minTxnToExpect
-                    )) != 0) {
-                        // queue the job
-                        if (purgePubSeq != null) {
-                            long cursor = purgePubSeq.next();
-                            if (cursor > -1) {
-                                LOG.error()
-                                        .$("queuing [table=").$(tableName)
-                                        .$(", ts=").$ts(partitionTimestamp)
-                                        .$(", txn=").$(nameTxnToRemove)
-                                        .$(", errno=").$(errno)
-                                        .$(']').$();
-                                O3PurgeTask task = purgeQueue.get(cursor);
-                                task.of(
-                                        tableName,
-                                        partitionBy,
-                                        TxnScoreboard.newRef(txnScoreboard),
-                                        partitionTimestamp,
-                                        nameTxnToRemove,
-                                        minTxnToExpect
-                                );
-                                purgePubSeq.done(cursor);
-                            } else {
-                                LOG.error()
-                                        .$("purge queue is full [table=").$(tableName)
-                                        .$(", ts=").$ts(partitionTimestamp)
-                                        .$(", txn=").$(nameTxnToRemove)
-                                        .$(", errno=").$(errno)
-                                        .$(']').$();
-                            }
-                        } else {
-                            // todo:  decide what to do here? we cannot remove file and neither we can queue
-                            //    we call this from cleaner
+            for (int i = 0, n = txnList.size() - 1; i < n; i++) {
+                final long nameTxnToRemove = txnList.getQuick(i);
+                final long minTxnToExpect = txnList.getQuick(i + 1);
+                int errno;
+                if ((errno = O3PurgeJob.purgePartitionDir(
+                        ff,
+                        path.of(root).concat(tableName),
+                        partitionBy,
+                        partitionTimestamp,
+                        txnScoreboard,
+                        nameTxnToRemove,
+                        minTxnToExpect
+                )) != 0) {
+                    // queue the job
+                    if (purgePubSeq != null) {
+                        long cursor = purgePubSeq.next();
+                        if (cursor > -1) {
                             LOG.error()
-                                    .$("could not purge [table=").$(tableName)
+                                    .$("queuing [table=").$(tableName)
+                                    .$(", ts=").$ts(partitionTimestamp)
+                                    .$(", txn=").$(nameTxnToRemove)
+                                    .$(", errno=").$(errno)
+                                    .$(']').$();
+                            O3PurgeTask task = purgeQueue.get(cursor);
+                            task.of(
+                                    tableName,
+                                    partitionBy,
+                                    txnScoreboard,
+                                    partitionTimestamp,
+                                    nameTxnToRemove,
+                                    minTxnToExpect
+                            );
+                            purgePubSeq.done(cursor);
+                        } else {
+                            LOG.error()
+                                    .$("purge queue is full [table=").$(tableName)
                                     .$(", ts=").$ts(partitionTimestamp)
                                     .$(", txn=").$(nameTxnToRemove)
                                     .$(", errno=").$(errno)
                                     .$(']').$();
                         }
+                    } else {
+                        // todo:  decide what to do here? we cannot remove file and neither we can queue
+                        //    we call this from cleaner
+                        LOG.error()
+                                .$("could not purge [table=").$(tableName)
+                                .$(", ts=").$ts(partitionTimestamp)
+                                .$(", txn=").$(nameTxnToRemove)
+                                .$(", errno=").$(errno)
+                                .$(']').$();
                     }
                 }
-                return true;
             }
-            return false;
-        } finally {
-            TxnScoreboard.close(txnScoreboard);
+            return true;
         }
+        return false;
     }
 
     private static void processDir(

@@ -64,7 +64,8 @@ public class TableReader implements Closeable, SymbolTableSource {
     private final IntList symbolCountSnapshot = new IntList();
     private final TxReader txFile;
     private final MappedReadOnlyMemory todoMem = new SinglePageMappedReadOnlyPageMemory();
-    private final long txnScoreboard;
+    private final long txnScoreboardFd;
+    private final long txnScoreboardMem;
     private int partitionCount;
     private LongList columnTops;
     private ObjList<MappedReadOnlyMemory> columns;
@@ -90,21 +91,15 @@ public class TableReader implements Closeable, SymbolTableSource {
             this.columnCount = this.metadata.getColumnCount();
             this.columnCountBits = getColumnBits(columnCount);
             int partitionBy = this.metadata.getPartitionBy();
-            this.txnScoreboard = TxnScoreboard.create(
-                    path,
-                    configuration.getDatabaseIdLo(),
-                    configuration.getDatabaseIdHi(),
-                    configuration.getRoot(),
-                    tableName,
-                    metadata.getId()
-            );
+            path.trimTo(rootLen).concat(TableUtils.TXN_SCOREBOARD_FILE_NAME).$();
+            this.txnScoreboardFd = TableUtils.openRW(ff, path, LOG);
+            this.txnScoreboardMem = ff.mmap(txnScoreboardFd, TxnScoreboard.getScoreboardSize(), 0, Files.MAP_RW);
+            if (txnScoreboardMem == -1) {
+                throw CairoException.instance(ff.errno()).put("could not mmap column [fd=").put(txnScoreboardFd).put(", size=").put(TxnScoreboard.getScoreboardSize()).put(']');
+            }
+            path.trimTo(rootLen);
             LOG.info().$("table [id=").$(metadata.getId()).$(']').$();
-            assert this.txnScoreboard != 0;
-            // reset path
-            this.path.of(configuration.getRoot()).concat(tableName);
-
             this.txFile = new TxReader(ff, path, partitionBy);
-            TxnScoreboard.init(this.txnScoreboard, txFile.readTxn());
             readTxnSlow();
             openSymbolMaps();
             partitionCount = txFile.getPartitionCount();
@@ -177,7 +172,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             Misc.free(todoMem);
             freeColumns();
             freeTempMem();
-            TxnScoreboard.close(txnScoreboard);
+            closeTxnScoreboard();
             Misc.free(path);
             LOG.debug().$("closed '").utf8(tableName).$('\'').$();
         }
@@ -305,7 +300,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         // check for double-close
         if (active) {
             active = false;
-            TxnScoreboard.release(txnScoreboard, txn);
+            TxnScoreboard.releaseTxn(txnScoreboardMem, txn);
         }
     }
 
@@ -589,6 +584,15 @@ public class TableReader implements Closeable, SymbolTableSource {
         Misc.free(bitmapIndexes.getAndSetQuick(index + 1, null));
     }
 
+    private void closeTxnScoreboard() {
+        if (txnScoreboardMem != 0) {
+            ff.munmap(txnScoreboardMem, TxnScoreboard.getScoreboardSize());
+        }
+        if (txnScoreboardFd > 0) {
+            ff.close(txnScoreboardFd);
+        }
+    }
+
     private void copyColumnsTo(
             ObjList<MappedReadOnlyMemory> columns,
             LongList columnTops,
@@ -826,7 +830,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     long getTxnScoreboard() {
-        return txnScoreboard;
+        return txnScoreboardMem;
     }
 
     boolean hasNull(int columnIndex) {
@@ -995,7 +999,7 @@ public class TableReader implements Closeable, SymbolTableSource {
 
             // exit if this is the same as we already have
             if (txn == this.txn) {
-                TxnScoreboard.acquire(txnScoreboard, txn);
+                TxnScoreboard.acquireTxn(txnScoreboardMem, txn);
                 return false;
             }
 
@@ -1018,10 +1022,10 @@ public class TableReader implements Closeable, SymbolTableSource {
                 if (txn == txFile.getTxn()) {
                     // good, very stable, congrats
                     if (active) {
-                        TxnScoreboard.release(txnScoreboard, this.txn);
+                        TxnScoreboard.releaseTxn(txnScoreboardMem, this.txn);
                     }
                     this.txn = txn;
-                    TxnScoreboard.acquire(txnScoreboard, txn);
+                    TxnScoreboard.acquireTxn(txnScoreboardMem, txn);
                     this.rowCount = txFile.getFixedRowCount() + txFile.getTransientRowCount();
                     LOG.debug()
                             .$("new transaction [txn=").$(txn)
@@ -1090,7 +1094,8 @@ public class TableReader implements Closeable, SymbolTableSource {
     private boolean reload(boolean activation) {
         if (this.txn == txFile.readTxn()) {
             if (activation) {
-                TxnScoreboard.acquire(txnScoreboard, txn);
+                // todo: this might fail, test
+                TxnScoreboard.acquireTxn(txnScoreboardMem, txn);
             }
             return false;
         }

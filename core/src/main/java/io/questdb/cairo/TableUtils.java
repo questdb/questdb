@@ -45,6 +45,7 @@ public final class TableUtils {
     public static final int TABLE_RESERVED = 2;
     public static final String META_FILE_NAME = "_meta";
     public static final String TXN_FILE_NAME = "_txn";
+    public static final String TXN_SCOREBOARD_FILE_NAME = "_txn_scoreboard";
     public static final String UPGRADE_FILE_NAME = "_upgrade.d";
     public static final String DETACHED_DIR_MARKER = ".detached";
     public static final String TAB_INDEX_FILE_NAME = "_tab_index.d";
@@ -196,6 +197,9 @@ public final class TableUtils {
                 mem.of(ff, path.trimTo(rootLen).concat(TXN_FILE_NAME).$(), ff.getPageSize());
                 TableUtils.resetTxn(mem, symbolMapCount, 0L, INITIAL_TXN, 0L);
                 resetTodoLog(ff, path, rootLen, mem);
+                // allocate txn scoreboard
+                path.trimTo(rootLen).concat(TXN_SCOREBOARD_FILE_NAME).$();
+                createTxnScoreboard(ff, path);
             } finally {
                 if (dirFd > 0) {
                     if (ff.fsync(dirFd) != 0) {
@@ -209,6 +213,17 @@ public final class TableUtils {
             }
         } else {
             throw CairoException.instance(ff.errno()).put("Could not open dir [path=").put(path).put(']');
+        }
+    }
+
+    public static void createTxnScoreboard(FilesFacade ff, Path path) {
+        final long fd = ff.openRW(path);
+        try {
+            final long len = TxnScoreboard.getScoreboardSize();
+            ff.allocate(fd, len);
+            ff.truncate(fd, len);
+        } finally {
+            ff.close(fd);
         }
     }
 
@@ -363,17 +378,21 @@ public final class TableUtils {
         path.put(".lock").$();
     }
 
+    public static long mapRWOrClose(FilesFacade ff, LPSZ path, long fd, long size) {
+        final long mem = ff.mmap(fd, size, 0, Files.MAP_RW);
+        if (mem == -1) {
+            ff.close(fd);
+            throw CairoException.instance(ff.errno()).put("Could not mmap [file=").put(path).put(']');
+        }
+        return mem;
+    }
+
     public static void oldPartitionName(Path path, long txn) {
         path.put("-x-").put(txn);
     }
 
     public static long openFileRWOrFail(FilesFacade ff, LPSZ path) {
-        long fd = ff.openRW(path);
-        if (fd > 0) {
-            return fd;
-        }
-
-        throw CairoException.instance(ff.errno()).put("Could not open file [path=").put(path).put(']');
+        return openRW(ff, path, LOG);
     }
 
     public static void renameOrFail(FilesFacade ff, Path src, Path dst) {
@@ -606,7 +625,7 @@ public final class TableUtils {
             long tempBuf
     ) {
         topFile(path, columnName);
-        final long fd = O3Utils.openRW(ff, path);
+        final long fd = openRW(ff, path, LOG);
         try {
             //noinspection SuspiciousNameCombination
             Unsafe.getUnsafe().putLong(tempBuf, columnTop);
@@ -850,6 +869,15 @@ public final class TableUtils {
         if (ff.mkdirs(path, mkDirMode) != 0) {
             throw CairoException.instance(ff.errno()).put("could not create directories [file=").put(path).put(']');
         }
+    }
+
+    static long openRW(FilesFacade ff, LPSZ path, Log log) {
+        final long fd = ff.openRW(path);
+        if (fd > -1) {
+            log.debug().$("open [file=").$(path).$(", fd=").$(fd).$(']').$();
+            return fd;
+        }
+        throw CairoException.instance(ff.errno()).put("could not open read-write [file=").put(path).put(", fd=").put(fd).put(']');
     }
 
     static {

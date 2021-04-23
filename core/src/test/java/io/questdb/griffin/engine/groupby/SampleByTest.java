@@ -1436,7 +1436,7 @@ public class SampleByTest extends AbstractGriffinTest {
             );
 
             FilesFacade ff = new FilesFacadeImpl() {
-                int count = 3;
+                int count = 4;
 
                 @Override
                 public long mmap(long fd, long len, long offset, int flags) {
