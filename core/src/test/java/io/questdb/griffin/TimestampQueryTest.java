@@ -855,21 +855,6 @@ public class TimestampQueryTest extends AbstractGriffinTest {
                     "from long_sequence(48L)", sqlExecutionContext);
 
             String expected;
-            // between constants
-            expected = "min\tmax\n" +
-                    "2020-01-01T00:00:00.000000Z\t2020-01-02T00:00:00.000000Z\n";
-            assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where nts between '2020-01-01' and '2020-01-02' ");
-            assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where nts between '2020-01-02' and '2020-01-01' ");
-
-            // Between non-constants
-            // TODO
-            // assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where nts between '2020-01-02' and dateadd(-1, 'd', '2020-01-01')");
-
-            // NOT between constants
-            expected = "min\tmax\n" +
-                    "2020-01-02T01:00:00.000000Z\t2020-01-02T23:00:00.000000Z\n";
-            assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where nts not between '2020-01-01' and '2020-01-02' ");
-
             // not in period
             expected = "min\tmax\n" +
                     "2020-01-02T00:00:00.000000Z\t2020-01-02T23:00:00.000000Z\n";
@@ -886,6 +871,42 @@ public class TimestampQueryTest extends AbstractGriffinTest {
             expected = "min\tmax\n" +
                     "2020-01-01T00:00:00.000000Z\t2020-01-01T00:00:00.000000Z\n";
             assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where dts in ('2020-01-01', '2020-01-03') ");
+        });
+    }
+
+    @Test
+    public void testTimestampStringComparisonBetween() throws Exception {
+        assertMemoryLeak(() -> {
+            // create table
+            String createStmt = "create table tt (dts timestamp, nts timestamp) timestamp(dts)";
+            compiler.compile(createStmt, sqlExecutionContext);
+
+            // insert same values to dts (designated) as nts (non-designated) timestamp
+            compiler.compile("insert into tt " +
+                    "select timestamp_sequence(1577836800000000L, 60*60*1000000L), timestamp_sequence(1577836800000000L, 60*60*1000000L) " +
+                    "from long_sequence(48L)", sqlExecutionContext);
+
+            String expected;
+            // between constants
+            expected = "min\tmax\n" +
+                    "2020-01-01T00:00:00.000000Z\t2020-01-02T00:00:00.000000Z\n";
+            assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where nts between '2020-01-01' and '2020-01-02' ");
+            assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where nts between '2020-01-02' and '2020-01-01' ");
+
+            // Between non-constants
+            expected = "min\tmax\n" +
+                    "2020-01-01T12:00:00.000000Z\t2020-01-02T00:00:00.000000Z\n";
+            assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where nts between '2020-01-02' and dateadd('d', -1, '2020-01-01') and nts >= '2020-01-01T12:00'");
+
+            // NOT between constants
+            expected = "min\tmax\n" +
+                    "2020-01-02T01:00:00.000000Z\t2020-01-02T23:00:00.000000Z\n";
+            assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where nts not between '2020-01-01' and '2020-01-02' ");
+
+            // NOT between non-constants
+            expected = "min\tmax\n" +
+                    "2020-01-01T01:00:00.000000Z\t2020-01-02T23:00:00.000000Z\n";
+            assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where nts not between dateadd('d', -1, '2020-01-01') and '2020-01-01'");
         });
     }
 
