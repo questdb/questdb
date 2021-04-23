@@ -24,6 +24,19 @@
 
 package io.questdb.cairo;
 
+import java.io.IOException;
+
+import org.jetbrains.annotations.Nullable;
+import org.junit.After;
+import org.junit.AfterClass;
+import org.junit.Assert;
+import org.junit.Before;
+import org.junit.BeforeClass;
+import org.junit.ClassRule;
+import org.junit.Rule;
+import org.junit.rules.TemporaryFolder;
+import org.junit.rules.TestName;
+
 import io.questdb.MessageBus;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -34,11 +47,6 @@ import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
-import org.jetbrains.annotations.Nullable;
-import org.junit.*;
-import org.junit.rules.TemporaryFolder;
-
-import java.io.IOException;
 
 public class AbstractCairoTest {
 
@@ -56,6 +64,9 @@ public class AbstractCairoTest {
     protected static CairoEngine engine;
     protected static String inputRoot = null;
     protected static FilesFacade ff;
+
+    @Rule
+    public TestName testName = new TestName();
 
     @BeforeClass
     public static void setUpStatic() {
@@ -99,11 +110,13 @@ public class AbstractCairoTest {
 
     @Before
     public void setUp() {
+        LOG.info().$("Starting test ").$(getClass().getSimpleName()).$('#').$(testName.getMethodName()).$();
         TestUtils.createTestPath(root);
     }
 
     @After
     public void tearDown() {
+        LOG.info().$("Tearing down test ").$(getClass().getSimpleName()).$('#').$(testName.getMethodName()).$();
         engine.resetTableId();
         engine.clear();
         TestUtils.removeTestPath(root);
