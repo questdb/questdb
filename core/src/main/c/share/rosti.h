@@ -46,7 +46,7 @@
         return r;
     }
     static inline uint32_t bit_scan_forward(uint64_t a) {
-#if __has_builtin(__builtin_ffsll)
+#ifdef __APPLE__
         return __builtin_ffsll(a) - 1;
 #else
         uint64_t r;
