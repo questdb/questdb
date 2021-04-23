@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.AbstractFunctionFactoryTest;
+import io.questdb.griffin.engine.functions.bool.InTimestampStrFunctionFactory;
 import io.questdb.griffin.engine.functions.columns.StrColumn;
 import io.questdb.griffin.engine.functions.columns.TimestampColumn;
 import io.questdb.std.NumericException;
@@ -42,17 +43,17 @@ public class EqTimestampStrFunctionFactoryTest extends AbstractFunctionFactoryTe
 
     @Test
     public void testTimestampEqualsString() throws SqlException, NumericException {
-        testTimestampAsString("=(NS)");
+        testTimestampAsString("in(NS)");
     }
 
     @Test
     public void testTimestampEqualsStringWithPeriod() throws SqlException, NumericException {
-        testTimestampAsStringWithPeriod("=(NS)");
+        testTimestampAsStringWithPeriod("in(NS)");
     }
 
     @Test
     public void testTimestampEqualsStringWithPeriodAndCount() throws SqlException, NumericException {
-        testTimestampAsStringWithPeriodAndCount("=(NS)");
+        testTimestampAsStringWithPeriodAndCount("in(NS)");
     }
 
     @Test
@@ -129,7 +130,7 @@ public class EqTimestampStrFunctionFactoryTest extends AbstractFunctionFactoryTe
 
     @Override
     protected FunctionFactory getFunctionFactory() {
-        return new EqTimestampStrFunctionFactory();
+        return new InTimestampStrFunctionFactory();
     }
 
     private void testTimestampAsString(String signature) throws NumericException, SqlException {
@@ -167,7 +168,7 @@ public class EqTimestampStrFunctionFactoryTest extends AbstractFunctionFactoryTe
 
     private void callAndAssert(String signature, long arg1, String arg2, boolean expectedIfEquals) throws SqlException {
         boolean rightArgIsString = signature.contains("(NS)");
-        boolean equalsOperator = signature.startsWith("=");
+        boolean equalsOperator = signature.startsWith("in");
         if (rightArgIsString) {
             callBySignature(signature, arg1, arg2).andAssert(equalsOperator == expectedIfEquals);
         } else {

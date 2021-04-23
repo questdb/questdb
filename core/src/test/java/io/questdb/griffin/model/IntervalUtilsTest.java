@@ -49,6 +49,84 @@ public class IntervalUtilsTest {
     }
 
     @Test
+    public void testUnionInplaceSimple1() {
+        LongList intervals = new LongList();
+        // A
+        add(intervals, -1, 10);
+
+        // B
+        add(intervals, 1, 2);
+        add(intervals, 3, 4);
+        add(intervals, 15, 16);
+
+        runTestUnionInplace(intervals, 2, "[-1,10], [15,16]");
+    }
+
+    @Test
+    public void testUnionInplaceSimple2() {
+        LongList intervals = new LongList();
+        // A
+        add(intervals, -1, 1);
+        add(intervals, 2, 3);
+
+        // B
+        add(intervals, 1, 2);
+        add(intervals, 3, 4);
+        add(intervals, 6, 7);
+
+        runTestUnionInplace(intervals, 4, "[-1,4], [6,7]");
+    }
+
+    @Test
+    public void testUnionEmpty1() {
+        LongList intervals = new LongList();
+        // A
+        add(intervals, -1, 1);
+        add(intervals, 2, 3);
+
+        runTestUnionInplace(intervals, 4, "[-1,1], [2,3]");
+    }
+
+    @Test
+    public void testUnionEmpty2() {
+        LongList intervals = new LongList();
+        // A
+        runTestUnionInplace(intervals, 0, "");
+    }
+
+    @Test
+    public void testUnionAllAfterB() {
+        LongList intervals = new LongList();
+        // A
+        add(intervals, 100, 101);
+        add(intervals, 200, 201);
+        add(intervals, 205, 206);
+
+        // B
+        add(intervals, 1, 2);
+        add(intervals, 3, 4);
+        add(intervals, 6, 7);
+
+        runTestUnionInplace(intervals, 6, "[1,2], [3,4], [6,7], [100,101], [200,201], [205,206]");
+    }
+
+    @Test
+    public void testLastAContainsWhoelBUnionAllAfterB() {
+        LongList intervals = new LongList();
+        // A
+        add(intervals, 1, 2);
+        add(intervals, 3, 4);
+        add(intervals, 50, 250);
+
+        // B
+        add(intervals, 100, 101);
+        add(intervals, 200, 201);
+        add(intervals, 205, 206);
+
+        runTestUnionInplace(intervals, 6, "[1,2], [3,4], [50,250]");
+    }
+
+    @Test
     public void testIntersectInplace2() {
         LongList intervals = new LongList();
         // A
@@ -250,6 +328,18 @@ public class IntervalUtilsTest {
         TestUtils.assertEquals(expected, toIntervalString(intervals, 0));
 
         IntervalUtils.intersectInplace(copy, copy.size() - divider);
+        TestUtils.assertEquals(expected, toIntervalString(copy, 0));
+    }
+
+    private void runTestUnionInplace(LongList intervals, int divider, String expected) {
+        LongList copy = new LongList();
+        copy.add(intervals, divider, intervals.size());
+        copy.add(intervals, 0, divider);
+
+        IntervalUtils.unionInplace(intervals, divider);
+        TestUtils.assertEquals(expected, toIntervalString(intervals, 0));
+
+        IntervalUtils.unionInplace(copy, copy.size() - divider);
         TestUtils.assertEquals(expected, toIntervalString(copy, 0));
     }
 

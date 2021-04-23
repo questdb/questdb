@@ -779,8 +779,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             compiler.compile("create table tab as (select rnd_symbol('s1','s2','s3', null) s1, rnd_double(2) val, timestamp_sequence(0, 1000000) t from long_sequence(1000000)) timestamp(t) partition by DAY", sqlExecutionContext);
             try (
-                    RecordCursorFactory factory = compiler.compile("select s1, sum(val) from tab where t > '1970-01-04T12:00' and t < '1970-01-07T11:00' order by s1", sqlExecutionContext).getRecordCursorFactory();
-                    RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+                    RecordCursorFactory factory = compiler.compile("select s1, sum(val) from tab where t >= '1970-01-04T12:01' and t < '1970-01-07T11:00' order by s1", sqlExecutionContext).getRecordCursorFactory();                    RecordCursor cursor = factory.getCursor(sqlExecutionContext)
             ) {
                 String expected = "s1\tsum\n" +
                         "\t26636.385784265905\n" +
@@ -804,7 +803,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
 
             // test with key falling within null columns
             try (
-                    RecordCursorFactory factory = compiler.compile("select s2, sum(val) from tab where t > '1970-01-04T12:00' and t < '1970-01-07T11:00' order by s2", sqlExecutionContext).getRecordCursorFactory();
+                    RecordCursorFactory factory = compiler.compile("select s2, sum(val) from tab where t >= '1970-01-04T12:01' and t < '1970-01-07T11:00' order by s2", sqlExecutionContext).getRecordCursorFactory();
             ) {
                 Record[] expected = new Record[] {
                         new Record() {
@@ -823,7 +822,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
 
             /// test key on overlap
             try (
-                    RecordCursorFactory factory = compiler.compile("select s2, sum(val) from tab where t > '1970-01-12T12:00' and t < '1970-01-14T11:00' order by s2", sqlExecutionContext).getRecordCursorFactory();
+                    RecordCursorFactory factory = compiler.compile("select s2, sum(val) from tab where t >= '1970-01-12T12:01' and t < '1970-01-14T11:00' order by s2", sqlExecutionContext).getRecordCursorFactory();
             ) {
                 Record[] expected = new Record[] {
                         new Record() {
