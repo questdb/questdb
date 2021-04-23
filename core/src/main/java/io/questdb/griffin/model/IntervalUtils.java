@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.model;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
@@ -390,7 +391,7 @@ public final class IntervalUtils {
         }
 
         if (lim - p < 2) {
-            checkChar(seq, p++, lim, 'Z');
+            checkChar(seq, p, lim, 'Z');
             return 0;
         }
 

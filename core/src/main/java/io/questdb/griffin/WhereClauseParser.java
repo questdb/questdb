@@ -32,7 +32,6 @@ import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.griffin.model.IntrinsicModel;
 import io.questdb.std.*;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.FlyweightCharSequence;
 
 import java.util.ArrayDeque;
@@ -936,17 +935,10 @@ final class WhereClauseParser implements Mutable {
     }
 
     private long parseFullOrPartialDate(boolean equalsTo, ExpressionNode node, boolean isLo) throws NumericException {
-        long ts;
-        final int len = node.token.length();
-        try {
-            // Timestamp string
-            ts = IntervalUtils.parseFloorPartialDate(node.token, 1, len - 1);
-            if (!equalsTo) {
-                ts += isLo ? 1 : -1;
-            }
-        } catch (NumericException e) {
-            long inc = equalsTo ? 0 : isLo ? 1 : -1;
-            ts = TimestampFormatUtils.tryParse(node.token, 1, node.token.length() - 1) + inc;
+        // Timestamp string
+        long ts = IntervalUtils.parseFloorPartialDate(node.token, 1, node.token.length() - 1);
+        if (!equalsTo) {
+            ts += isLo ? 1 : -1;
         }
         return ts;
     }
