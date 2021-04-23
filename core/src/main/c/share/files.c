@@ -64,7 +64,6 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_mmap0
     } else if (flags == com_questdb_std_Files_MAP_RW) {
         prot = PROT_READ | PROT_WRITE;
     }
-
     return (jlong) mmap((void *) baseAddress, (size_t) len, prot, MAP_SHARED, (int) fd, offset);
 }
 

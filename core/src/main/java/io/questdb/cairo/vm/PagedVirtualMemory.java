@@ -667,7 +667,7 @@ public class PagedVirtualMemory implements ReadWriteVirtualMemory, Closeable {
     }
 
     protected long allocateNextPage(int page) {
-        LOG.info().$("new page [size=").$(getMapPageSize()).$(']').$();
+        LOG.debug().$("new page [size=").$(getMapPageSize()).I$();
         if (page >= maxPages) {
             throw LimitOverflowException.instance().put("Maximum number of pages (").put(maxPages).put(") breached in VirtualMemory");
         }
@@ -838,13 +838,6 @@ public class PagedVirtualMemory implements ReadWriteVirtualMemory, Closeable {
 
     public long getPageSize(int page) {
         return getMapPageSize();
-    }
-
-    public long getPageUsedSize(int page) {
-        if (page < pages.size() - 1) {
-            return getPageSize(page);
-        }
-        return appendPointer - pages.getQuick(page);
     }
 
     private short getShort0(long offset) {

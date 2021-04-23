@@ -70,7 +70,7 @@ public class O3Test extends AbstractO3Test {
     @Test
     public void testBench() throws Exception {
         // On OSX it's not trivial to increase open file limit per process
-        if (Os.type != Os.OSX) {
+        if (Os.type != Os.OSX_AMD64 && Os.type != Os.OSX_ARM64) {
             executeVanilla(O3Test::testBench0);
         }
     }
@@ -88,7 +88,7 @@ public class O3Test extends AbstractO3Test {
     @Test
     public void testBenchContended() throws Exception {
         // On OSX it's not trivial to increase open file limit per process
-        if (Os.type != Os.OSX) {
+        if (Os.type != Os.OSX_AMD64 && Os.type != Os.OSX_ARM64) {
             executeWithPool(0, O3Test::testBench0);
         }
     }
@@ -96,7 +96,7 @@ public class O3Test extends AbstractO3Test {
     @Test
     public void testBenchParallel() throws Exception {
         // On OSX it's not trivial to increase open file limit per process
-        if (Os.type != Os.OSX) {
+        if (Os.type != Os.OSX_AMD64 && Os.type != Os.OSX_ARM64) {
             executeWithPool(4, O3Test::testBench0);
         }
     }

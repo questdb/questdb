@@ -26,7 +26,6 @@ package io.questdb.cairo;
 
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.Files;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
@@ -107,7 +106,7 @@ public class TxnScoreboard {
         if (Os.type == Os.WINDOWS) {
             shmPath.of("Local\\");
             shmPath.put(databaseIdLo).put('-').put(databaseIdHi).put('-').put(tableName).$();
-        } else if (Os.type != Os.OSX) {
+        } else if (Os.type != Os.OSX_AMD64 && Os.type != Os.OSX_ARM64) {
             shmPath.of("/");
             shmPath.put(databaseIdLo).put('-').put(databaseIdHi).put('-').put(tableId).$();
         } else {

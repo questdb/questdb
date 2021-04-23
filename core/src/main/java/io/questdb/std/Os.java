@@ -38,10 +38,11 @@ public final class Os {
     public static final int WINDOWS = 3;
     public static final int _32Bit = -2;
     public static final int type;
-    public static final int OSX = 1;
+    public static final int OSX_AMD64 = 1;
     public static final int LINUX_AMD64 = 2;
     public static final int LINUX_ARM64 = 4;
     public static final int FREEBSD = 5;
+    public static final int OSX_ARM64 = 6;
 
     private Os() {
     }
@@ -178,8 +179,13 @@ public final class Os {
                     loadLib("/io/questdb/bin/linux/libquestdb.so");
                 }
             } else if (osName.contains("Mac")) {
-                type = OSX; // darwin
-                loadLib("/io/questdb/bin/osx/libquestdb.dylib");
+                if ("aarch64".equals(System.getProperty("os.arch"))) {
+                    type = OSX_ARM64;
+                    loadLib("/io/questdb/bin/armosx/libquestdb.dylib");
+                } else {
+                    type = OSX_AMD64; // darwin
+                    loadLib("/io/questdb/bin/osx/libquestdb.dylib");
+                }
             } else if (osName.contains("Windows")) {
                 type = WINDOWS;
                 loadLib("/io/questdb/bin/windows/libquestdb.dll");

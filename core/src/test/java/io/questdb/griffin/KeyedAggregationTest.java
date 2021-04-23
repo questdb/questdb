@@ -27,6 +27,7 @@ package io.questdb.griffin;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
+import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import org.junit.Before;
 import org.junit.Test;
@@ -144,12 +145,13 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
             try (
                     RecordCursorFactory factory = compiler.compile("select s2, sum(val) from tab order by s2", sqlExecutionContext).getRecordCursorFactory()
             ) {
-                Record[] expected = new Record[] {
+                Record[] expected = new Record[]{
                         new Record() {
                             @Override
                             public CharSequence getSym(int col) {
                                 return null;
                             }
+
                             @Override
                             public double getDouble(int col) {
                                 return 520447.6629968713;
@@ -160,6 +162,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
                             public CharSequence getSym(int col) {
                                 return "a1";
                             }
+
                             @Override
                             public double getDouble(int col) {
                                 return 104308.65839619507;
@@ -170,6 +173,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
                             public CharSequence getSym(int col) {
                                 return "a2";
                             }
+
                             @Override
                             public double getDouble(int col) {
                                 return 104559.2867475151;
@@ -180,6 +184,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
                             public CharSequence getSym(int col) {
                                 return "a3";
                             }
+
                             @Override
                             public double getDouble(int col) {
                                 return 104044.11326997809;
@@ -657,15 +662,23 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
             compiler.compile("alter table tab add column s2 symbol cache", sqlExecutionContext);
             compiler.compile("insert into tab select rnd_symbol('s1','s2','s3', null), rnd_double(2), timestamp_sequence(cast('1970-01-13T00:00:00.000000Z' as timestamp), 1000000), rnd_symbol('a1','a2','a3', null) s2 from long_sequence(1000000)", sqlExecutionContext);
 
+            final String expected;
+            if (Os.type == Os.OSX_ARM64) {
+                expected = "s2\tsum\n" +
+                        "\t520447.66299686837\n" +
+                        "a1\t104308.65839619662\n" +
+                        "a2\t104559.28674751727\n" +
+                        "a3\t104044.11326997768\n";
+            } else {
+                expected = "s2\tsum\n" +
+                        "\t520447.6629968692\n" +
+                        "a1\t104308.65839619662\n" +
+                        "a2\t104559.28674751727\n" +
+                        "a3\t104044.11326997768\n";
+            }
+
             // test with key falling within null columns
-            assertSql(
-                    "select s2, sum(val) from tab order by s2",
-                    "s2\tsum\n" +
-                            "\t520447.6629968692\n" +
-                            "a1\t104308.65839619662\n" +
-                            "a2\t104559.28674751727\n" +
-                            "a3\t104044.11326997768\n"
-            );
+            assertSql("select s2, sum(val) from tab order by s2", expected);
         });
     }
 
@@ -680,12 +693,13 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
             try (
                     RecordCursorFactory factory = compiler.compile("select s2, sum(val) from tab where t > '1970-01-04T12:00' and t < '1970-01-07T11:00' order by s2", sqlExecutionContext).getRecordCursorFactory()
             ) {
-                Record[] expected = new Record[] {
+                Record[] expected = new Record[]{
                         new Record() {
                             @Override
                             public CharSequence getSym(int col) {
                                 return null;
                             }
+
                             @Override
                             public double getDouble(int col) {
                                 return 106413.99769604905;
@@ -699,12 +713,13 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
             try (
                     RecordCursorFactory factory = compiler.compile("select s2, sum(val) from tab where t > '1970-01-12T12:00' and t < '1970-01-14T11:00' order by s2", sqlExecutionContext).getRecordCursorFactory()
             ) {
-                Record[] expected = new Record[] {
+                Record[] expected = new Record[]{
                         new Record() {
                             @Override
                             public CharSequence getSym(int col) {
                                 return null;
                             }
+
                             @Override
                             public double getDouble(int col) {
                                 return 15636.977658744854;
@@ -715,6 +730,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
                             public CharSequence getSym(int col) {
                                 return "a1";
                             }
+
                             @Override
                             public double getDouble(int col) {
                                 return 13073.816187889399;
@@ -725,6 +741,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
                             public CharSequence getSym(int col) {
                                 return "a2";
                             }
+
                             @Override
                             public double getDouble(int col) {
                                 return 13240.269899560482;
@@ -735,6 +752,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
                             public CharSequence getSym(int col) {
                                 return "a3";
                             }
+
                             @Override
                             public double getDouble(int col) {
                                 return 13223.021189180576;
@@ -786,12 +804,13 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
             try (
                     RecordCursorFactory factory = compiler.compile("select s2, sum(val) from tab order by s2", sqlExecutionContext).getRecordCursorFactory()
             ) {
-                Record[] expected = new Record[] {
+                Record[] expected = new Record[]{
                         new Record() {
                             @Override
                             public CharSequence getSym(int col) {
                                 return null;
                             }
+
                             @Override
                             public double getDouble(int col) {
                                 return 520447.6629968692;
@@ -802,6 +821,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
                             public CharSequence getSym(int col) {
                                 return "a1";
                             }
+
                             @Override
                             public double getDouble(int col) {
                                 return 104308.65839619662;
@@ -812,6 +832,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
                             public CharSequence getSym(int col) {
                                 return "a2";
                             }
+
                             @Override
                             public double getDouble(int col) {
                                 return 104559.28674751727;
@@ -822,6 +843,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
                             public CharSequence getSym(int col) {
                                 return "a3";
                             }
+
                             @Override
                             public double getDouble(int col) {
                                 return 104044.11326997768;

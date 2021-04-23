@@ -182,7 +182,7 @@ public class ContiguousVirtualMemory implements ReadWriteVirtualMemory, Mutable,
         }
         final long newBaseAddress = reallocateMemory(baseAddress, getMemorySize(), size);
         if (oldSize > 0) {
-            LOG.info().$("extended [oldBase=").$(baseAddress).$(", newBase=").$(newBaseAddress).$(", oldSize=").$(oldSize).$(", newSize=").$(size).$(']').$();
+            LOG.debug().$("extended [oldBase=").$(baseAddress).$(", newBase=").$(newBaseAddress).$(", oldSize=").$(oldSize).$(", newSize=").$(size).$(']').$();
         }
         handleMemoryReallocation(newBaseAddress, size);
     }

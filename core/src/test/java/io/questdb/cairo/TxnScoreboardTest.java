@@ -51,7 +51,7 @@ public class TxnScoreboardTest {
     }
 
     public void createTxnFile(CharSequence tableName) {
-        if (Os.type == Os.OSX) {
+        if (Os.type == Os.OSX_AMD64 || Os.type == Os.OSX_ARM64) {
             FilesFacade ff = new FilesFacadeImpl();
             // Create _txn files, scoreboard on Mac relies that _txn file exists for the table
             try (Path path = new Path()) {

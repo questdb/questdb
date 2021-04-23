@@ -618,7 +618,8 @@ public class O3FailureTest extends AbstractO3Test {
         switch (Os.type) {
             case Os.LINUX_AMD64:
             case Os.LINUX_ARM64:
-            case Os.OSX:
+            case Os.OSX_AMD64:
+            case Os.OSX_ARM64:
                 cnt = 79;
                 break;
             default:

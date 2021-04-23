@@ -129,8 +129,11 @@ public class ServerMain {
             case Os.LINUX_AMD64:
                 log.info().$("OS: linux-amd64").$(Vect.getSupportedInstructionSetName()).$();
                 break;
-            case Os.OSX:
+            case Os.OSX_AMD64:
                 log.info().$("OS: apple-amd64").$(Vect.getSupportedInstructionSetName()).$();
+                break;
+            case Os.OSX_ARM64:
+                log.info().$("OS: apple-silicon").$(Vect.getSupportedInstructionSetName()).$();
                 break;
             case Os.LINUX_ARM64:
                 log.info().$("OS: linux-arm64").$(Vect.getSupportedInstructionSetName()).$();
