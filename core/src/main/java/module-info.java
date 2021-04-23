@@ -409,6 +409,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.bool.InCharFunctionFactory,
             io.questdb.griffin.engine.functions.bool.InSymbolFunctionFactory,
             io.questdb.griffin.engine.functions.bool.InTimestampStrFunctionFactory,
+            io.questdb.griffin.engine.functions.bool.InTimestampTimestampFunctionFactory,
             io.questdb.griffin.engine.functions.bool.BetweenTimestampFunctionFactory,
 //                  'all'
             io.questdb.griffin.engine.functions.bool.AllNotEqStrFunctionFactory,

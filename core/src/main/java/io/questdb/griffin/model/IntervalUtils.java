@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.model;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
@@ -429,6 +430,15 @@ public final class IntervalUtils {
         }
         return tzSign;
     }
+
+    public static long tryParseTimestamp(CharSequence seq) throws CairoException {
+        try {
+            return parseFloorPartialDate(seq, 0, seq.length());
+        } catch (NumericException e) {
+            throw CairoException.instance(0).put("Invalid timestamp: ").put(seq);
+        }
+    }
+
 
     public static long parseFloorPartialDate(CharSequence seq) throws NumericException {
         return parseFloorPartialDate(seq, 0, seq.length());
