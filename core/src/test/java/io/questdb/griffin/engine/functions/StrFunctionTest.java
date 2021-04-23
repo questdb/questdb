@@ -119,6 +119,7 @@ public class StrFunctionTest {
         function.getTimestamp(null);
     }
 
+    @Test(expected = UnsupportedOperationException.class)
     public void testChar() {
         Assert.assertEquals('a', function.getChar(null));
     }

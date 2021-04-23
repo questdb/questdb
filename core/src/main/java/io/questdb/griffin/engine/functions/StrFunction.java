@@ -63,9 +63,6 @@ public abstract class StrFunction implements ScalarFunction {
 
     @Override
     public final char getChar(Record rec) {
-        CharSequence val = getStr(rec);
-        if (val != null && val.length() == 1) return val.charAt(0);
-
         throw new UnsupportedOperationException();
     }
 
