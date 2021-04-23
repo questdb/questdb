@@ -663,7 +663,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
             compiler.compile("insert into tab select rnd_symbol('s1','s2','s3', null), rnd_double(2), timestamp_sequence(cast('1970-01-13T00:00:00.000000Z' as timestamp), 1000000), rnd_symbol('a1','a2','a3', null) s2 from long_sequence(1000000)", sqlExecutionContext);
 
             final String expected;
-            if (Os.type == Os.OSX_ARM64) {
+            if (Os.type == Os.OSX_ARM64 || Os.type == Os.LINUX_ARM64) {
                 expected = "s2\tsum\n" +
                         "\t520447.66299686837\n" +
                         "a1\t104308.65839619662\n" +
