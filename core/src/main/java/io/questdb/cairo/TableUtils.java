@@ -199,7 +199,6 @@ public final class TableUtils {
                 resetTodoLog(ff, path, rootLen, mem);
                 // allocate txn scoreboard
                 path.trimTo(rootLen).concat(TXN_SCOREBOARD_FILE_NAME).$();
-                createTxnScoreboard(ff, path);
             } finally {
                 if (dirFd > 0) {
                     if (ff.fsync(dirFd) != 0) {
@@ -213,17 +212,6 @@ public final class TableUtils {
             }
         } else {
             throw CairoException.instance(ff.errno()).put("Could not open dir [path=").put(path).put(']');
-        }
-    }
-
-    public static void createTxnScoreboard(FilesFacade ff, Path path) {
-        final long fd = ff.openRW(path);
-        try {
-            final long len = TxnScoreboard.getScoreboardSize();
-            ff.allocate(fd, len);
-            ff.truncate(fd, len);
-        } finally {
-            ff.close(fd);
         }
     }
 

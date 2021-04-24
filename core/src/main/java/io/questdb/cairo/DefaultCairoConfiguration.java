@@ -515,4 +515,9 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     public int getO3PurgeQueueCapacity() {
         return 1024;
     }
+
+    @Override
+    public int getTxnScoreboardEntryCount() {
+        return 8192;
+    }
 }

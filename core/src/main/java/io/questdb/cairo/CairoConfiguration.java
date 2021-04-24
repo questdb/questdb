@@ -224,4 +224,6 @@ public interface CairoConfiguration {
     long getDatabaseIdHi();
 
     long getDatabaseIdLo();
+
+    int getTxnScoreboardEntryCount();
 }

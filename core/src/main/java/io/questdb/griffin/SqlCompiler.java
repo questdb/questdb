@@ -1262,7 +1262,6 @@ public class SqlCompiler implements Closeable {
             mem.of(ff, path.trimTo(rootLen).concat(TableUtils.TXN_FILE_NAME).$(), ff.getPageSize());
             TableUtils.resetTxn(mem, symbolMapCount, 0L, TableUtils.INITIAL_TXN, 0L);
             path.trimTo(rootLen).concat(TableUtils.TXN_SCOREBOARD_FILE_NAME).$();
-            TableUtils.createTxnScoreboard(ff, path);
         } finally {
             mem.close();
         }

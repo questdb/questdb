@@ -155,8 +155,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final DateFormat backupDirTimestampFormat;
     private final CharSequence backupTempDirName;
     private final int backupMkdirMode;
-    private final int floatToStrCastScale;
-    private final int doubleToStrCastScale;
+    private final int sqlFloatToStrCastScale;
+    private final int sqlDoubleToStrCastScale;
     private final PropPGWireDispatcherConfiguration propPGWireDispatcherConfiguration = new PropPGWireDispatcherConfiguration();
     private final boolean pgEnabled;
     private final boolean telemetryEnabled;
@@ -196,6 +196,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int o3PurgeQueueCapacity;
     private final long instanceHashLo;
     private final long instanceHashHi;
+    private final int sqlTxnScoreboardEntryCount;
     private boolean httpAllowDeflateBeforeSend;
     private int[] httpWorkerAffinity;
     private int[] httpMinWorkerAffinity;
@@ -593,8 +594,8 @@ public class PropServerConfiguration implements ServerConfiguration {
             } else {
                 this.sqlAppendPageSize = (sqlAppendPageSize / osPageSize + 1) * osPageSize;
             }
-            this.doubleToStrCastScale = getInt(properties, env, "cairo.sql.double.cast.scale", 12);
-            this.floatToStrCastScale = getInt(properties, env, "cairo.sql.float.cast.scale", 4);
+            this.sqlDoubleToStrCastScale = getInt(properties, env, "cairo.sql.double.cast.scale", 12);
+            this.sqlFloatToStrCastScale = getInt(properties, env, "cairo.sql.float.cast.scale", 4);
             this.sqlGroupByMapCapacity = getInt(properties, env, "cairo.sql.groupby.map.capacity", 1024);
             this.sqlGroupByPoolCapacity = getInt(properties, env, "cairo.sql.groupby.pool.capacity", 1024);
             this.sqlMaxSymbolNotEqualsCount = getInt(properties, env, "cairo.sql.max.symbol.not.equals.count", 100);
@@ -638,6 +639,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlAnalyticRowIdMaxPages = Numbers.ceilPow2(getInt(properties, env, "cairo.sql.analytic.rowid.max.pages", Integer.MAX_VALUE));
             this.sqlAnalyticTreeKeyPageSize = Numbers.ceilPow2(getIntSize(properties, env, "cairo.sql.analytic.tree.page.size", 512 * 1024));
             this.sqlAnalyticTreeKeyMaxPages = Numbers.ceilPow2(getInt(properties, env, "cairo.sql.analytic.tree.max.pages", Integer.MAX_VALUE));
+            this.sqlTxnScoreboardEntryCount = Numbers.ceilPow2(getInt(properties, env, "cairo.o3.txn.scoreboard.entry.count", 16384));
 
             this.telemetryEnabled = getBoolean(properties, env, "telemetry.enabled", true);
             this.telemetryQueueCapacity = getInt(properties, env, "telemetry.queue.capacity", 512);
@@ -1372,6 +1374,11 @@ public class PropServerConfiguration implements ServerConfiguration {
     private class PropCairoConfiguration implements CairoConfiguration {
 
         @Override
+        public int getTxnScoreboardEntryCount() {
+            return sqlTxnScoreboardEntryCount;
+        }
+
+        @Override
         public int getBindVariablePoolSize() {
             return sqlBindVariablePoolSize;
         }
@@ -1448,12 +1455,12 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         @Override
         public int getDoubleToStrCastScale() {
-            return doubleToStrCastScale;
+            return sqlDoubleToStrCastScale;
         }
 
         @Override
         public int getFloatToStrCastScale() {
-            return floatToStrCastScale;
+            return sqlFloatToStrCastScale;
         }
 
         @Override

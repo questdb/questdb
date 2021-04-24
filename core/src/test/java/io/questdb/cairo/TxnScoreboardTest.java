@@ -32,12 +32,11 @@ import org.junit.Test;
 public class TxnScoreboardTest extends AbstractCairoTest {
     @Test
     public void testLimits() {
-        int expect = 4096;
+        int expect = 2048;
 
         try (final Path shmPath = new Path()) {
-            TableUtils.createTxnScoreboard(FilesFacadeImpl.INSTANCE, shmPath.of(root).concat(TableUtils.TXN_SCOREBOARD_FILE_NAME).$());
-            try (TxnScoreboard scoreboard2 = new TxnScoreboard(FilesFacadeImpl.INSTANCE, shmPath.of(root))) {
-                try (TxnScoreboard scoreboard1 = new TxnScoreboard(FilesFacadeImpl.INSTANCE, shmPath.of(root))) {
+            try (TxnScoreboard scoreboard2 = new TxnScoreboard(FilesFacadeImpl.INSTANCE, shmPath.of(root), expect)) {
+                try (TxnScoreboard scoreboard1 = new TxnScoreboard(FilesFacadeImpl.INSTANCE, shmPath.of(root), expect)) {
                     // we should successfully acquire expected number of entries
                     for (int i = 0; i < expect; i++) {
                         scoreboard1.acquireTxn(i + 134);
@@ -89,48 +88,75 @@ public class TxnScoreboardTest extends AbstractCairoTest {
 
     @Test
     public void testWideRange() {
+        try (
+                final Path shmPath = new Path();
+                final TxnScoreboard scoreboard = new TxnScoreboard(FilesFacadeImpl.INSTANCE, shmPath.of(root), 1024)
+        ) {
+            scoreboard.acquireTxn(15);
+            scoreboard.releaseTxn(15);
+            scoreboard.acquireTxn(900992);
+        }
+    }
+
+    @Test
+    public void testCrawl() {
         try (final Path shmPath = new Path()) {
-            TableUtils.createTxnScoreboard(FilesFacadeImpl.INSTANCE, shmPath.of(root).concat(TableUtils.TXN_SCOREBOARD_FILE_NAME).$());
-            try (final TxnScoreboard scoreboard = new TxnScoreboard(FilesFacadeImpl.INSTANCE, shmPath.of(root))) {
-                scoreboard.acquireTxn(15);
-                scoreboard.releaseTxn(15);
-                scoreboard.acquireTxn(900992);
+            try (
+                    final TxnScoreboard scoreboard = new TxnScoreboard(FilesFacadeImpl.INSTANCE, shmPath.of(root), 1024)
+            ) {
+                for (int i = 0; i < 1500; i++) {
+                    scoreboard.acquireTxn(i);
+                    scoreboard.releaseTxn(i);
+                }
+                Assert.assertEquals(1499, scoreboard.getMin());
+            }
+
+            // increase scoreboard size
+            try (
+                    final TxnScoreboard scoreboard = new TxnScoreboard(FilesFacadeImpl.INSTANCE, shmPath.of(root), 2048)
+            ) {
+                Assert.assertEquals(1499, scoreboard.getMin());
+                for (int i = 1500; i < 3000; i++) {
+                    scoreboard.acquireTxn(i);
+                    scoreboard.releaseTxn(i);
+                }
+                Assert.assertEquals(2999, scoreboard.getMin());
             }
         }
     }
 
     @Test
     public void testVanilla() {
-        try (final Path shmPath = new Path()) {
-            TableUtils.createTxnScoreboard(FilesFacadeImpl.INSTANCE, shmPath.of(root).concat(TableUtils.TXN_SCOREBOARD_FILE_NAME).$());
-            try (final TxnScoreboard scoreboard2 = new TxnScoreboard(FilesFacadeImpl.INSTANCE, shmPath.of(root))) {
-                try (TxnScoreboard scoreboard1 = new TxnScoreboard(FilesFacadeImpl.INSTANCE, shmPath.of(root))) {
-                    scoreboard1.acquireTxn(67);
-                    scoreboard1.acquireTxn(68);
-                    scoreboard1.acquireTxn(68);
-                    scoreboard1.acquireTxn(69);
-                    scoreboard1.acquireTxn(70);
-                    scoreboard1.acquireTxn(71);
+        try (
+                final Path shmPath = new Path();
+                final TxnScoreboard scoreboard2 = new TxnScoreboard(FilesFacadeImpl.INSTANCE, shmPath.of(root), 1024)
+        ) {
+            try (TxnScoreboard scoreboard1 = new TxnScoreboard(FilesFacadeImpl.INSTANCE, shmPath.of(root), 1024)) {
+                scoreboard1.acquireTxn(67);
+                scoreboard1.acquireTxn(68);
+                scoreboard1.acquireTxn(68);
+                scoreboard1.acquireTxn(69);
+                scoreboard1.acquireTxn(70);
+                scoreboard1.acquireTxn(71);
 
-                    scoreboard1.releaseTxn(68);
-                    Assert.assertEquals(67, scoreboard1.getMin());
-                    scoreboard1.releaseTxn(68);
-                    Assert.assertEquals(67, scoreboard1.getMin());
-                    scoreboard1.releaseTxn(67);
-                    Assert.assertEquals(69, scoreboard1.getMin());
+                scoreboard1.releaseTxn(68);
+                Assert.assertEquals(67, scoreboard1.getMin());
+                scoreboard1.releaseTxn(68);
+                Assert.assertEquals(67, scoreboard1.getMin());
+                scoreboard1.releaseTxn(67);
+                Assert.assertEquals(69, scoreboard1.getMin());
 
-                    scoreboard1.releaseTxn(69);
-                    Assert.assertEquals(70, scoreboard1.getMin());
-                    scoreboard1.releaseTxn(71);
-                    Assert.assertEquals(70, scoreboard1.getMin());
-                    scoreboard1.releaseTxn(70);
-                    Assert.assertEquals(71, scoreboard1.getMin());
+                scoreboard1.releaseTxn(69);
+                Assert.assertEquals(70, scoreboard1.getMin());
+                scoreboard1.releaseTxn(71);
+                Assert.assertEquals(70, scoreboard1.getMin());
+                scoreboard1.releaseTxn(70);
+                Assert.assertEquals(71, scoreboard1.getMin());
 
-                    scoreboard1.acquireTxn(72);
-                }
-                scoreboard2.acquireTxn(72);
-                Assert.assertEquals(2, scoreboard2.getActiveReaderCount(72));
+                scoreboard1.acquireTxn(72);
             }
+            scoreboard2.acquireTxn(72);
+            Assert.assertEquals(2, scoreboard2.getActiveReaderCount(72));
         }
     }
 }

@@ -28,6 +28,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.Numbers;
 import io.questdb.std.Transient;
 import io.questdb.std.str.Path;
 
@@ -40,25 +41,36 @@ public class TxnScoreboard implements Closeable {
 
     private final long fd;
     private final long mem;
+    private final long size;
     private final FilesFacade ff;
 
-    public TxnScoreboard(FilesFacade ff, @Transient Path root) {
+    public TxnScoreboard(FilesFacade ff, @Transient Path root, int entryCount) {
         this.ff = ff;
         root.concat(TableUtils.TXN_SCOREBOARD_FILE_NAME).$();
         this.fd = TableUtils.openRW(ff, root, LOG);
-        this.mem = ff.mmap(fd, TxnScoreboard.getScoreboardSize(), 0, Files.MAP_RW);
+        int pow2EntryCount = Numbers.ceilPow2(entryCount);
+        this.size = TxnScoreboard.getScoreboardSize(pow2EntryCount);
+        if (!ff.allocate(fd, this.size)) {
+            ff.close(fd);
+            throw CairoException.instance(ff.errno()).put("not enough space on disk? [name=").put(root).put(", size=").put(this.size).put(']') ;
+        }
+        // truncate is required to give file a size
+        // the allocate above does not seem to update file system's size entry
+        ff.truncate(fd, this.size);
+        this.mem = ff.mmap(fd, this.size, 0, Files.MAP_RW);
         if (mem == -1) {
             ff.close(fd);
             throw CairoException.instance(ff.errno())
                     .put("could not mmap column [fd=").put(fd)
-                    .put(", size=").put(TxnScoreboard.getScoreboardSize())
+                    .put(", size=").put(this.size)
                     .put(']');
         }
+        init(mem, pow2EntryCount);
     }
 
     @Override
     public void close() {
-        ff.munmap(mem, TxnScoreboard.getScoreboardSize());
+        ff.munmap(mem, size);
         ff.close(fd);
     }
 
@@ -105,7 +117,7 @@ public class TxnScoreboard implements Closeable {
 
     private static native long getMin(long pTxnScoreboard);
 
-    public static native long getScoreboardSize();
+    public static native long getScoreboardSize(int entryCount);
 
     private static boolean isTxnUnused(long nameTxn, long readerTxn, long txnScoreboard) {
         return
@@ -117,4 +129,6 @@ public class TxnScoreboard implements Closeable {
                         // reader has more recent data in their view
                         || readerTxn > nameTxn;
     }
+
+    private static native void init(long pTxnScoreboard, int entryCount);
 }
