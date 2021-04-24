@@ -4498,7 +4498,7 @@ public class O3Test extends AbstractO3Test {
         try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x")) {
             long ts = 0;
             long step = 1000000;
-            long txnScoreboard = w.getTxnScoreboard();
+            TxnScoreboard txnScoreboard = w.getTxnScoreboard();
             for (int i = 0; i < 1000; i++) {
                 TableWriter.Row r;
                 // todo: we need to truncate last partition when we close it, otherwise we're leaving massive files behind
@@ -4520,9 +4520,9 @@ public class O3Test extends AbstractO3Test {
                 ts += step;
 
                 long txn = w.getTxn();
-                TxnScoreboard.acquireTxn(txnScoreboard, txn);
+                txnScoreboard.acquireTxn(txn);
                 w.commit();
-                TxnScoreboard.releaseTxn(txnScoreboard, txn);
+                txnScoreboard.releaseTxn(txn);
             }
         }
     }

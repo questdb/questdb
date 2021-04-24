@@ -24,10 +24,12 @@
 
 package io.questdb.tasks;
 
+import io.questdb.cairo.TxnScoreboard;
+
 public class O3PurgeDiscoveryTask {
     private CharSequence tableName;
     private int partitionBy;
-    private long txnScoreboard;
+    private TxnScoreboard txnScoreboard;
     private long timestamp;
     private long mostRecentTxn;
 
@@ -47,11 +49,11 @@ public class O3PurgeDiscoveryTask {
         return timestamp;
     }
 
-    public long getTxnScoreboard() {
+    public TxnScoreboard getTxnScoreboard() {
         return txnScoreboard;
     }
 
-    public void of(CharSequence tableName, int partitionBy, long txnScoreboard, long timestamp, long mostRecentTxn) {
+    public void of(CharSequence tableName, int partitionBy, TxnScoreboard txnScoreboard, long timestamp, long mostRecentTxn) {
         this.tableName = tableName;
         this.partitionBy = partitionBy;
         this.txnScoreboard = txnScoreboard;

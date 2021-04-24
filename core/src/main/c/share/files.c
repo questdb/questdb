@@ -31,8 +31,6 @@
 #ifdef __APPLE__
 
 #include <sys/time.h>
-#include <sys/ipc.h>
-#include <sys/shm.h>
 
 #else
 
@@ -336,66 +334,3 @@ JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_exists0
         (JNIEnv *e, jclass cls, jlong lpsz) {
     return access((const char *) lpsz, F_OK) == 0;
 }
-
-#ifdef __APPLE__
-
-void *openShm0(const char *name, size_t len, int64_t *hMapping, int id) {
-    // create shm key, which will use iNode of _txn file
-
-    // If shared memory leaks on mac use
-    // > ipcs
-    // command to list the memory
-    // and
-    // > for n in `ipcs -b -m | egrep ^m | awk '{ print $2; }'`; do ipcrm -m $n; done
-    // to clear all of them while testing
-
-    const key_t shm_key = ftok(name, id);
-
-    const int shm_id = shmget(shm_key, len, IPC_CREAT | SHM_R | SHM_W);
-    if (shm_id == -1) {
-        return NULL;
-    }
-
-    *hMapping = shm_id;
-    void *shm_addr = shmat(shm_id, NULL, 0);
-
-    if (((jlong) shm_addr) == -1) {
-        shmctl(shm_id, IPC_RMID, NULL);
-        return NULL;
-    }
-    return shm_addr;
-}
-
-jint closeShm0(const char *name, void *mem, size_t len, int64_t hMapping) {
-    shmdt(mem);
-    return shmctl((int)hMapping, IPC_RMID, NULL);
-}
-
-#else
-
-void *openShm0(const char *name, size_t len, int64_t *hMapping, int id) {
-    // create shm memory in exclusive mode, make sure
-    int shm_fd = shm_open(name, O_CREAT | O_RDWR, 0666);
-    if (shm_fd == -1) {
-        return NULL;
-    }
-    if (ftruncate(shm_fd, len) != 0) {
-        close(shm_fd);
-        return NULL;
-    }
-
-    void *p = mmap(NULL, len, PROT_WRITE | PROT_READ, MAP_SHARED, shm_fd, 0);
-    if (p != NULL && ((jlong) p) != -1) {
-        *hMapping = shm_fd;
-    }
-    return p;
-}
-
-jint closeShm0(const char *name, void *mem, size_t len, int64_t hMapping) {
-    munmap(mem, len);
-    shm_unlink(name);
-    close((int) hMapping);
-    return 0;
-}
-#endif
-

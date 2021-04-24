@@ -126,8 +126,7 @@ public class TableWriter implements Closeable {
     private final LongConsumer appendTimestampSetter;
     private final ObjectPool<O3MutableAtomicInteger> o3ColumnCounters = new ObjectPool<O3MutableAtomicInteger>(O3MutableAtomicInteger::new, 64);
     private final ObjectPool<O3Basket> o3BasketPool = new ObjectPool<O3Basket>(O3Basket::new, 64);
-    private final long txnScoreboardFd;
-    private final long txnScoreboardMem;
+    private final TxnScoreboard txnScoreboard;
     private final StringSink o3Sink = new StringSink();
     private final NativeLPSZ o3NativeLPSZ = new NativeLPSZ();
     private long todoTxn;
@@ -222,12 +221,7 @@ public class TableWriter implements Closeable {
             this.metadata = new TableWriterMetadata(ff, metaMem);
             this.partitionBy = metaMem.getInt(META_OFFSET_PARTITION_BY);
             this.txFile = new TxWriter(ff, path, partitionBy);
-            path.trimTo(rootLen).concat(TXN_SCOREBOARD_FILE_NAME).$();
-            this.txnScoreboardFd = TableUtils.openRW(ff, path, LOG);
-            this.txnScoreboardMem = ff.mmap(txnScoreboardFd, TxnScoreboard.getScoreboardSize(), 0, Files.MAP_RW);
-            if (txnScoreboardMem == -1) {
-                throw CairoException.instance(ff.errno()).put("could not mmap column [fd=").put(txnScoreboardFd).put(", size=").put(TxnScoreboard.getScoreboardSize()).put(']');
-            }
+            this.txnScoreboard = new TxnScoreboard(ff, path.trimTo(rootLen));
             path.trimTo(rootLen);
             // we have to do truncate repair at this stage of constructor
             // because this operation requires metadata
@@ -715,8 +709,8 @@ public class TableWriter implements Closeable {
         return txFile.getTxn();
     }
 
-    public long getTxnScoreboard() {
-        return txnScoreboardMem;
+    public TxnScoreboard getTxnScoreboard() {
+        return txnScoreboard;
     }
 
     public boolean inTransaction() {
@@ -1596,15 +1590,6 @@ public class TableWriter implements Closeable {
         }
     }
 
-    private void closeTxnScoreboard() {
-        if (txnScoreboardMem != 0) {
-            ff.munmap(txnScoreboardMem, TxnScoreboard.getScoreboardSize());
-        }
-        if (txnScoreboardFd > 0) {
-            ff.close(txnScoreboardFd);
-        }
-    }
-
     /**
      * Commits newly added rows of data. This method updates transaction file with pointers to end of appended data.
      * <p>
@@ -1778,7 +1763,7 @@ public class TableWriter implements Closeable {
                             tableName,
                             task.getPartitionBy(),
                             task.getTimestamp(),
-                            txnScoreboardMem
+                            txnScoreboard
                     );
                 } else if (cursor == -1) {
                     break;
@@ -1797,7 +1782,7 @@ public class TableWriter implements Closeable {
                             other,
                             task.getPartitionBy(),
                             task.getTimestamp(),
-                            txnScoreboardMem,
+                            txnScoreboard,
                             task.getNameTxnToRemove(),
                             task.getMinTxnToExpect()
                     );
@@ -1943,7 +1928,7 @@ public class TableWriter implements Closeable {
         try {
             releaseLock(!truncate | tx | performRecovery | distressed);
         } finally {
-            closeTxnScoreboard();
+            Misc.free(txnScoreboard);
             Misc.free(path);
             freeTempMem();
             LOG.info().$("closed '").utf8(tableName).$('\'').$();
@@ -3011,9 +2996,9 @@ public class TableWriter implements Closeable {
     }
 
     private void o3ProcessPartitionRemoveCandidates0(int n) {
-        final long readerTxn = TxnScoreboard.getMin(txnScoreboardMem);
-        final long readerTxnCount = TxnScoreboard.getCount(txnScoreboardMem, readerTxn);
-        if (TxnScoreboard.isTxnUnused(txFile.getTxn() - 1, readerTxn, txnScoreboardMem)) {
+        final long readerTxn = txnScoreboard.getMin();
+        final long readerTxnCount = txnScoreboard.getActiveReaderCount(readerTxn);
+        if (txnScoreboard.isTxnUnused(txFile.getTxn() - 1, readerTxn)) {
             for (int i = 0; i < n; i += 2) {
                 final long timestamp = o3PartitionRemoveCandidates.getQuick(i);
                 final long txn = o3PartitionRemoveCandidates.getQuick(i + 1);
@@ -3097,7 +3082,7 @@ public class TableWriter implements Closeable {
             task.of(
                     tableName,
                     partitionBy,
-                    txnScoreboardMem,
+                    txnScoreboard,
                     timestamp,
                     txn
             );

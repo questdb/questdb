@@ -75,7 +75,7 @@ public class O3PurgeDiscoveryJob extends AbstractQueueConsumerJob<O3PurgeDiscove
             CharSequence tableName,
             int partitionBy,
             long partitionTimestamp,
-            long txnScoreboard
+            TxnScoreboard txnScoreboard
     ) {
         LOG.info().$("processing [table=").$(tableName)
                 .$(", ts=").$ts(partitionTimestamp)

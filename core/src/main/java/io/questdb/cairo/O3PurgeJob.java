@@ -48,14 +48,14 @@ public class O3PurgeJob extends AbstractQueueConsumerJob<O3PurgeTask> {
             Path path,
             int partitionBy,
             long partitionTimestamp,
-            long txnScoreboard,
+            TxnScoreboard txnScoreboard,
             long nameTxnToRemove,
             long minTxnToExpect
     ) {
-        final long readerTxn = TxnScoreboard.getMin(txnScoreboard);
-        final long readerTxnCount = TxnScoreboard.getCount(txnScoreboard, readerTxn);
+        final long readerTxn = txnScoreboard.getMin();
+        final long readerTxnCount = txnScoreboard.getActiveReaderCount(readerTxn);
         int errno = -1;
-        if (TxnScoreboard.isTxnUnused(minTxnToExpect, readerTxn, txnScoreboard)) {
+        if (txnScoreboard.isTxnUnused(minTxnToExpect, readerTxn)) {
             TableUtils.setPathForPartition(path, partitionBy, partitionTimestamp, false);
             TableUtils.txnPartitionConditionally(path, nameTxnToRemove);
             path.slash$();

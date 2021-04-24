@@ -26,79 +26,69 @@ package io.questdb.cairo;
 
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.Os;
-import io.questdb.std.Unsafe;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.Transient;
 import io.questdb.std.str.Path;
 
-import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
+import java.io.Closeable;
 
-public class TxnScoreboard {
+public class TxnScoreboard implements Closeable {
 
     public static final long READER_NOT_YET_ACTIVE = -1;
     private static final Log LOG = LogFactory.getLog(TxnScoreboard.class);
 
-    public static boolean acquire(long pTxnScoreboard, long txn) {
-        assert pTxnScoreboard > 0;
-        LOG.debug().$("acquire [p=").$(pTxnScoreboard).$(", txn=").$(txn).$(']').$();
-        return acquire0(pTxnScoreboard, txn);
+    private final long fd;
+    private final long mem;
+    private final FilesFacade ff;
+
+    public TxnScoreboard(FilesFacade ff, @Transient Path root) {
+        this.ff = ff;
+        root.concat(TableUtils.TXN_SCOREBOARD_FILE_NAME).$();
+        this.fd = TableUtils.openRW(ff, root, LOG);
+        this.mem = ff.mmap(fd, TxnScoreboard.getScoreboardSize(), 0, Files.MAP_RW);
+        if (mem == -1) {
+            ff.close(fd);
+            throw CairoException.instance(ff.errno())
+                    .put("could not mmap column [fd=").put(fd)
+                    .put(", size=").put(TxnScoreboard.getScoreboardSize())
+                    .put(']');
+        }
     }
 
-    public static boolean acquireTxn(long pTxnScoreboard, long txn) {
+    @Override
+    public void close() {
+        ff.munmap(mem, TxnScoreboard.getScoreboardSize());
+        ff.close(fd);
+    }
+
+    public void releaseTxn(long txn) {
+        releaseTxn(mem, txn);
+    }
+
+    public void acquireTxn(long txn) {
+        if (acquireTxn(mem, txn)) {
+            return;
+        }
+        throw CairoException.instance(0).put("max txn-txn-inflight limit reached [txn=").put(txn).put(", min=").put(getMin()).put(']');
+    }
+
+    public long getMin() {
+        return getMin(mem);
+    }
+
+    public boolean isTxnUnused(long nameTxn, long readerTxn) {
+        return isTxnUnused(nameTxn, readerTxn, mem);
+    }
+
+    public long getActiveReaderCount(long txn) {
+        return getCount(mem, txn);
+    }
+
+    private static boolean acquireTxn(long pTxnScoreboard, long txn) {
         assert pTxnScoreboard > 0;
         LOG.debug().$("acquire [p=").$(pTxnScoreboard).$(", txn=").$(txn).$(']').$();
         return acquireTxn0(pTxnScoreboard, txn);
-    }
-
-    public static void close(long pTxnScoreboard) {
-        if (pTxnScoreboard != 0) {
-            long x;
-            LOG.debug().$("closing [p=").$(pTxnScoreboard).$(']').$();
-            if ((x = close0(pTxnScoreboard)) == 0) {
-                LOG.debug().$("closed [p=").$(pTxnScoreboard).$(']').$();
-                Unsafe.recordMemAlloc(-getScoreboardSize());
-            } else {
-                LOG.debug().$("close called [p=").$(pTxnScoreboard).$(", remaining=").$(x)
-                        .$(']').$();
-            }
-        }
-    }
-
-    public static long create(
-            Path shmPath,
-            long databaseIdLo,
-            long databaseIdHi,
-            CharSequence root,
-            CharSequence tableName,
-            int tableId
-    ) {
-        setShmName(shmPath, databaseIdLo, databaseIdHi, root, tableName, tableId);
-        Unsafe.recordMemAlloc(getScoreboardSize());
-        final long p = create0(shmPath.address(), tableId);
-        if (p != 0) {
-            LOG.info()
-                    .$("open [table=").$(tableName)
-                    .$(", p=").$(p)
-                    .$(", shm=").$(shmPath)
-                    .$(']').$();
-            return p;
-        }
-        throw CairoException.instance(Os.errno()).put("could not open scoreboard [table=").put(tableName)
-                .put(", shm=").put(shmPath)
-                .put(']');
-    }
-
-    public static long newRef(long pTxnScoreboard) {
-        if (pTxnScoreboard > 0) {
-            LOG.debug().$("new ref [p=").$(pTxnScoreboard).$(']').$();
-            return newRef0(pTxnScoreboard);
-        }
-        return pTxnScoreboard;
-    }
-
-    public static void release(long pTxnScoreboard, long txn) {
-        assert pTxnScoreboard > 0;
-        LOG.debug().$("release  [p=").$(pTxnScoreboard).$(", txn=").$(txn).$(']').$();
-        release0(pTxnScoreboard, txn);
     }
 
     public static void releaseTxn(long pTxnScoreboard, long txn) {
@@ -107,49 +97,17 @@ public class TxnScoreboard {
         releaseTxn0(pTxnScoreboard, txn);
     }
 
-    private static void setShmName(
-            Path shmPath,
-            long databaseIdLo,
-            long databaseIdHi,
-            CharSequence root,
-            CharSequence tableName,
-            int tableId
-    ) {
-        if (Os.type == Os.WINDOWS) {
-            shmPath.of("Local\\");
-            shmPath.put(databaseIdLo).put('-').put(databaseIdHi).put('-').put(tableName).$();
-        } else if (Os.type != Os.OSX_AMD64 && Os.type != Os.OSX_ARM64) {
-            shmPath.of("/");
-            shmPath.put(databaseIdLo).put('-').put(databaseIdHi).put('-').put(tableId).$();
-        } else {
-            // for OSX it's name of _txn file of the table
-            shmPath.of(root).concat(tableName).concat(TXN_FILE_NAME).$();
-        }
-    }
-
-    private native static boolean acquire0(long pTxnScoreboard, long txn);
-
     private native static boolean acquireTxn0(long pTxnScoreboard, long txn);
-
-    private native static long release0(long pTxnScoreboard, long txn);
 
     private native static long releaseTxn0(long pTxnScoreboard, long txn);
 
-    private native static long newRef0(long pTxnScoreboard);
+    private static native long getCount(long pTxnScoreboard, long txn);
 
-    private static native long create0(long lpszName, long tableId);
-
-    static native long getCount(long pTxnScoreboard, long txn);
-
-    static native long init(long pTxnScoreboard, long txn);
-
-    static native long getMin(long pTxnScoreboard);
-
-    private static native long close0(long pTxnScoreboard);
+    private static native long getMin(long pTxnScoreboard);
 
     public static native long getScoreboardSize();
 
-    static boolean isTxnUnused(long nameTxn, long readerTxn, long txnScoreboard) {
+    private static boolean isTxnUnused(long nameTxn, long readerTxn, long txnScoreboard) {
         return
                 // readers had last partition open but they are inactive
                 // (e.g. they are guaranteed to reload when they go active

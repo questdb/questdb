@@ -117,6 +117,8 @@ inline int64_t binary_search(T *data, V value, int64_t low, int64_t high, int32_
     return -(low + 1) - 1;
 }
 
+#define JAVA_STATIC JNIEnv *e, jclass cl
+
 #if __GNUC__
     // Fetch into all levels of the cache hierarchy.
     #define MM_PREFETCH_T0(address)  __builtin_prefetch((address), 0, 3)
