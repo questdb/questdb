@@ -115,6 +115,8 @@ public final class Vect {
 
     public static native long mergeLongIndexesAsc(long pIndexStructArray, int count);
 
+    public static native long mergeTwoLongIndexesAsc(long pIndex1, long index1Count, long pIndex2, long index2Count);
+
     public static native void mergeShuffle16Bit(long pSrc1, long pSrc2, long pDest, long pIndex, long count);
 
     public static native void mergeShuffle32Bit(long pSrc1, long pSrc2, long pDest, long pIndex, long count);

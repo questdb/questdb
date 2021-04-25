@@ -327,7 +327,6 @@ void k_way_merge_long_index(
         sentinels_left--;
     }
 
-
     // full run
     while (sentinels_left > 0) {
 
@@ -480,7 +479,7 @@ Java_io_questdb_std_Vect_sortLongIndexAscInPlace(JNIEnv *env, jclass cl, jlong p
 }
 
 JNIEXPORT jlong JNICALL
-Java_io_questdb_std_Vect_mergeLongIndexesAsc(JNIEnv *env, jclass cl, jlong pIndexStructArray, jint count) {
+Java_io_questdb_std_Vect_mergeLongIndexesAsc(JAVA_STATIC, jlong pIndexStructArray, jint count) {
     // prepare merge entries
     // they need to have mutable current position "pos" in index
 
@@ -513,6 +512,22 @@ Java_io_questdb_std_Vect_mergeLongIndexesAsc(JNIEnv *env, jclass cl, jlong pInde
 
     auto *merged_index = reinterpret_cast<index_t *>(malloc(merged_index_size * sizeof(index_t)));
     k_way_merge_long_index(entries, size, size - count, merged_index);
+    return reinterpret_cast<jlong>(merged_index);
+}
+
+JNIEXPORT jlong JNICALL
+Java_io_questdb_std_Vect_mergeTwoLongIndexesAsc(
+        JAVA_STATIC, jlong pIndex1, jlong index1Count, jlong pIndex2, jlong index2Count) {
+    index_entry_t entries[2];
+    uint64_t merged_index_size = index1Count + index2Count;
+    entries[0].index = reinterpret_cast<index_t *> (pIndex1);
+    entries[0].pos = 0;
+    entries[0].size = index1Count;
+    entries[1].index = reinterpret_cast<index_t *>(pIndex2);
+    entries[1].pos = 0;
+    entries[1].size = index2Count;
+    auto *merged_index = reinterpret_cast<index_t *>(malloc(merged_index_size * sizeof(index_t)));
+    k_way_merge_long_index(entries, 2, 0, merged_index);
     return reinterpret_cast<jlong>(merged_index);
 }
 

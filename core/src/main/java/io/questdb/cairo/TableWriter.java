@@ -1394,6 +1394,28 @@ public class TableWriter implements Closeable {
         throw CairoException.instance(0).put("Column file does not exist [path=").put(path).put(']');
     }
 
+    //todo: move to c++
+    private static long o3SortVarColumn0(
+            long mergedTimestampsAddr,
+            long valueCount,
+            long srcDataAddr,
+            long srcIndxAddr,
+            long tgtDataAddr,
+            long tgtIndxAddr
+    ) {
+        long offset = 0;
+        for (long l = 0; l < valueCount; l++) {
+            final long row = getTimestampIndexRow(mergedTimestampsAddr, l);
+            final long o1 = Unsafe.getUnsafe().getLong(srcIndxAddr + row * Long.BYTES);
+            final long o2 = Unsafe.getUnsafe().getLong(srcIndxAddr + row * Long.BYTES + Long.BYTES);
+            final long len = o2 - o1;
+            Vect.memcpy(srcDataAddr + o1, tgtDataAddr + offset, len);
+            Unsafe.getUnsafe().putLong(tgtIndxAddr + l * Long.BYTES, offset);
+            offset += len;
+        }
+        return offset;
+    }
+
     private int addColumnToMeta(
             CharSequence name,
             int type,
@@ -3186,16 +3208,14 @@ public class TableWriter implements Closeable {
         final long tgtIndxSize = indexMem2.size();
         // add max offset so that we do not have conditionals inside loop
         indexMem.putLong(valueCount * Long.BYTES, dataSize);
-        long offset = 0;
-        for (long l = 0; l < valueCount; l++) {
-            final long row = getTimestampIndexRow(mergedTimestampsAddr, l);
-            final long o1 = Unsafe.getUnsafe().getLong(srcIndxAddr + row * Long.BYTES);
-            final long o2 = Unsafe.getUnsafe().getLong(srcIndxAddr + row * Long.BYTES + Long.BYTES);
-            final long len = o2 - o1;
-            Vect.memcpy(srcDataAddr + o1, tgtDataAddr + offset, len);
-            Unsafe.getUnsafe().putLong(tgtIndxAddr + l * Long.BYTES, offset);
-            offset += len;
-        }
+        final long offset = o3SortVarColumn0(
+                mergedTimestampsAddr,
+                valueCount,
+                srcDataAddr,
+                srcIndxAddr,
+                tgtDataAddr,
+                tgtIndxAddr
+        );
         dataMem.replacePage(tgtDataAddr, tgtDataSize);
         indexMem.replacePage(tgtIndxAddr, tgtIndxSize);
         dataMem2.replacePage(srcDataAddr, srcDataSize);

@@ -533,16 +533,15 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         // have to go back and find data rows we need to move accordingly
         final long indexSize = (mergeDataHi - mergeDataLo + 1) * TIMESTAMP_MERGE_ENTRY_BYTES;
         assert indexSize > 0; // avoid SIGSEGV
-        final long indexStruct = Unsafe.malloc(TIMESTAMP_MERGE_ENTRY_BYTES * 2);
         final long index = Unsafe.malloc(indexSize);
         Vect.makeTimestampIndex(srcDataTimestampAddr, mergeDataLo, mergeDataHi, index);
-        Unsafe.getUnsafe().putLong(indexStruct, index);
-        Unsafe.getUnsafe().putLong(indexStruct + Long.BYTES, mergeDataHi - mergeDataLo + 1);
-        Unsafe.getUnsafe().putLong(indexStruct + 2 * Long.BYTES, sortedTimestampsAddr + mergeOOOLo * 16);
-        Unsafe.getUnsafe().putLong(indexStruct + 3 * Long.BYTES, mergeOOOHi - mergeOOOLo + 1);
-        final long result = Vect.mergeLongIndexesAsc(indexStruct, 2);
+        final long result = Vect.mergeTwoLongIndexesAsc(
+                index,
+                mergeDataHi - mergeDataLo + 1,
+                sortedTimestampsAddr + mergeOOOLo * 16,
+                mergeOOOHi - mergeOOOLo + 1
+        );
         Unsafe.free(index, indexSize);
-        Unsafe.free(indexStruct, TIMESTAMP_MERGE_ENTRY_BYTES * 2);
         return result;
     }
 
