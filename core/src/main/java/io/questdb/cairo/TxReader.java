@@ -100,6 +100,10 @@ public class TxReader implements Closeable {
         return minTimestamp;
     }
 
+    public int getPartitionCount() {
+        return attachedPartitions.size() / LONGS_PER_TX_ATTACHED_PARTITION;
+    }
+
     public long getPartitionDataTxn(int i) {
         return getPartitionDataTxnByIndex(i * LONGS_PER_TX_ATTACHED_PARTITION);
     }
@@ -146,10 +150,6 @@ public class TxReader implements Closeable {
 
     public long getPartitionTimestamp(int i) {
         return attachedPartitions.getQuick(i * LONGS_PER_TX_ATTACHED_PARTITION + PARTITION_TS_OFFSET);
-    }
-
-    public int getPartitionCount() {
-        return attachedPartitions.size() / LONGS_PER_TX_ATTACHED_PARTITION;
     }
 
     public long getRowCount() {
@@ -251,6 +251,10 @@ public class TxReader implements Closeable {
             }
         }
         return attachedPartitions.binarySearchBlock(0, attachedPartitions.size(), LONGS_PER_TX_ATTACHED_PARTITION_MSB, ts);
+    }
+
+    int getLastPartitionIndex() {
+        return attachedPartitions.size() - LONGS_PER_TX_ATTACHED_PARTITION;
     }
 
     long getPartitionTimestampLo(long timestamp) {

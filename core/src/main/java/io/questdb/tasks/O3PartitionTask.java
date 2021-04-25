@@ -28,14 +28,11 @@ import io.questdb.cairo.O3Basket;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.vm.AppendOnlyVirtualMemory;
 import io.questdb.cairo.vm.ContiguousVirtualMemory;
-import io.questdb.mp.SOUnboundedCountDownLatch;
-import io.questdb.std.FilesFacade;
 import io.questdb.std.ObjList;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class O3PartitionTask {
-    private FilesFacade ff;
     private CharSequence pathToTable;
     private int partitionBy;
     private ObjList<AppendOnlyVirtualMemory> columns;
@@ -55,18 +52,9 @@ public class O3PartitionTask {
     private TableWriter tableWriter;
     private AtomicInteger columnCounter;
     private O3Basket o3Basket;
-    private SOUnboundedCountDownLatch doneLatch;
 
     public ObjList<AppendOnlyVirtualMemory> getColumns() {
         return columns;
-    }
-
-    public SOUnboundedCountDownLatch getDoneLatch() {
-        return doneLatch;
-    }
-
-    public FilesFacade getFf() {
-        return ff;
     }
 
     public long getMaxTimestamp() {
@@ -142,7 +130,6 @@ public class O3PartitionTask {
     }
 
     public void of(
-            FilesFacade ff,
             CharSequence path,
             int partitionBy,
             ObjList<AppendOnlyVirtualMemory> columns,
@@ -161,8 +148,7 @@ public class O3PartitionTask {
             long sortedTimestampsAddr,
             TableWriter tableWriter,
             AtomicInteger columnCounter,
-            O3Basket o3Basket,
-            SOUnboundedCountDownLatch doneLatch
+            O3Basket o3Basket
     ) {
         this.pathToTable = path;
         this.txn = txn;
@@ -177,13 +163,11 @@ public class O3PartitionTask {
         this.srcNameTxn = srcNameTxn;
         this.last = last;
         this.sortedTimestampsAddr = sortedTimestampsAddr;
-        this.ff = ff;
         this.partitionBy = partitionBy;
         this.columns = columns;
         this.o3Columns = o3Columns;
         this.tableWriter = tableWriter;
         this.columnCounter = columnCounter;
         this.o3Basket = o3Basket;
-        this.doneLatch = doneLatch;
     }
 }

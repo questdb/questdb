@@ -97,7 +97,7 @@ public class MemoryPages implements Closeable, Mutable {
 
         if (index >= pages.size()) {
             pages.extendAndSet((int) index, Unsafe.malloc(pageSize));
-            LOG.info().$("new page [size=").$(pageSize).$(']').$();
+            LOG.debug().$("new page [size=").$(pageSize).$(']').$();
         }
 
         cachePageLo = index << bits;

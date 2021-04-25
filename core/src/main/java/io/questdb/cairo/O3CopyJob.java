@@ -59,7 +59,6 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             MPSequence updPartitionSizePubSeq,
             AtomicInteger columnCounter,
             @Nullable AtomicInteger partCounter,
-            FilesFacade ff,
             int columnType,
             int blockType,
             long timestampMergeIndexAddr,
@@ -106,8 +105,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             long srcTimestampSize,
             boolean partitionMutates,
             TableWriter tableWriter,
-            BitmapIndexWriter indexWriter,
-            SOUnboundedCountDownLatch doneLatch
+            BitmapIndexWriter indexWriter
     ) {
         switch (blockType) {
             case O3_BLOCK_MERGE:
@@ -170,7 +168,6 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                 updPartitionSizePubSeq,
                 columnCounter,
                 partCounter,
-                ff,
                 timestampMergeIndexAddr,
                 srcDataFixFd,
                 srcDataFixAddr,
@@ -201,8 +198,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                 srcTimestampSize,
                 partitionMutates,
                 tableWriter,
-                indexWriter,
-                doneLatch
+                indexWriter
         );
     }
 
@@ -216,7 +212,6 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
     ) {
         final AtomicInteger columnCounter = task.getColumnCounter();
         final AtomicInteger partCounter = task.getPartCounter();
-        final FilesFacade ff = task.getFf();
         final int columnType = task.getColumnType();
         final int blockType = task.getBlockType();
         final long timestampMergeIndexAddr = task.getTimestampMergeIndexAddr();
@@ -264,7 +259,6 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
         final boolean partitionMutates = task.isPartitionMutates();
         final TableWriter tableWriter = task.getTableWriter();
         final BitmapIndexWriter indexWriter = task.getIndexWriter();
-        final SOUnboundedCountDownLatch doneLatch = task.getDoneLatch();
 
         subSeq.done(cursor);
 
@@ -274,7 +268,6 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                 updPartitionSizePubSeq,
                 columnCounter,
                 partCounter,
-                ff,
                 columnType,
                 blockType,
                 timestampMergeIndexAddr,
@@ -321,8 +314,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                 srcTimestampSize,
                 partitionMutates,
                 tableWriter,
-                indexWriter,
-                doneLatch
+                indexWriter
         );
     }
 
@@ -332,7 +324,6 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             MPSequence updPartitionSizePubSeq,
             AtomicInteger columnCounter,
             @Nullable AtomicInteger partCounter,
-            FilesFacade ff,
             long timestampMergeIndexAddr,
             long srcDataFixFd,
             long srcDataFixAddr,
@@ -363,15 +354,14 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             long srcTimestampSize,
             boolean partitionMutates,
             TableWriter tableWriter,
-            BitmapIndexWriter indexWriter,
-            SOUnboundedCountDownLatch doneLatch
+            BitmapIndexWriter indexWriter
     ) {
         if (partCounter == null || partCounter.decrementAndGet() == 0) {
+            final FilesFacade ff = tableWriter.getFilesFacade();
             if (isIndexed) {
                 updateIndex(
                         configuration,
                         columnCounter,
-                        ff,
                         timestampMergeIndexAddr,
                         srcDataFixFd,
                         srcDataFixAddr,
@@ -393,8 +383,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                         srcTimestampAddr,
                         srcTimestampSize,
                         tableWriter,
-                        indexWriter,
-                        doneLatch
+                        indexWriter
                 );
             }
 
@@ -413,7 +402,6 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                 updatePartition(
                         updPartitionSizeTaskQueue,
                         updPartitionSizePubSeq,
-                        ff,
                         timestampMergeIndexAddr,
                         srcDataMax,
                         srcOooMax,
@@ -426,8 +414,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                         srcTimestampAddr,
                         srcTimestampSize,
                         partitionMutates,
-                        tableWriter,
-                        doneLatch
+                        tableWriter
                 );
             }
         }
@@ -436,7 +423,6 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
     private static void updatePartition(
             RingQueue<O3PartitionUpdateTask> updPartitionSizeTaskQueue,
             MPSequence updPartitionSizePubSeq,
-            FilesFacade ff,
             long timestampMergeIndexAddr,
             long srcDataMax,
             long srcOooMax,
@@ -449,13 +435,12 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             long srcTimestampAddr,
             long srcTimestampSize,
             boolean partitionMutates,
-            TableWriter tableWriter,
-            SOUnboundedCountDownLatch doneLatch
+            TableWriter tableWriter
     ) {
+        final FilesFacade ff = tableWriter.getFilesFacade();
         O3Utils.unmap(ff, srcTimestampAddr, srcTimestampSize);
         try {
             try {
-                // todo: create test to ensure this does not regress
                 O3Utils.close(ff, srcTimestampFd);
             } finally {
                 notifyWriter(
@@ -476,14 +461,13 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             if (timestampMergeIndexAddr != 0) {
                 Vect.freeMergedIndex(timestampMergeIndexAddr);
             }
-            doneLatch.countDown();
+            tableWriter.o3CountDownDoneLatch();
         }
     }
 
     private static void updateIndex(
             CairoConfiguration configuration,
             AtomicInteger columnCounter,
-            FilesFacade ff,
             long timestampMergeIndexAddr,
             long srcDataFixFd,
             long srcDataFixAddr,
@@ -505,8 +489,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             long srcTimestampAddr,
             long srcTimestampSize,
             TableWriter tableWriter,
-            BitmapIndexWriter indexWriter,
-            SOUnboundedCountDownLatch doneLatch
+            BitmapIndexWriter indexWriter
     ) {
         // dstKFd & dstVFd are closed by the indexer
         try {
@@ -526,7 +509,6 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             tableWriter.o3BumpErrorCount();
             copyIdleQuick(
                     columnCounter,
-                    ff,
                     timestampMergeIndexAddr,
                     srcDataFixFd,
                     srcDataFixAddr,
@@ -534,19 +516,18 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                     srcDataVarFd,
                     srcDataVarAddr,
                     srcDataVarSize,
+                    srcTimestampFd,
+                    srcTimestampAddr,
+                    srcTimestampSize,
                     dstFixFd,
                     dstFixAddr,
                     dstFixSize,
                     dstVarFd,
                     dstVarAddr,
                     dstVarSize,
-                    srcTimestampFd,
-                    srcTimestampAddr,
-                    srcTimestampSize,
                     0,
                     0,
-                    tableWriter,
-                    doneLatch
+                    tableWriter
             );
             throw e;
         }
@@ -555,7 +536,6 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
     static void copyIdle(
             AtomicInteger columnCounter,
             AtomicInteger partCounter,
-            FilesFacade ff,
             long timestampMergeIndexAddr,
             long srcDataFixFd,
             long srcDataFixAddr,
@@ -574,14 +554,12 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             long srcTimestampSize,
             long dstKFd,
             long dstVFd,
-            TableWriter tableWriter,
-            SOUnboundedCountDownLatch doneLatch
+            TableWriter tableWriter
     ) {
         if (partCounter == null || partCounter.decrementAndGet() == 0) {
             // unmap memory
             copyIdleQuick(
                     columnCounter,
-                    ff,
                     timestampMergeIndexAddr,
                     srcDataFixFd,
                     srcDataFixAddr,
@@ -589,26 +567,24 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                     srcDataVarFd,
                     srcDataVarAddr,
                     srcDataVarSize,
+                    srcTimestampFd,
+                    srcTimestampAddr,
+                    srcTimestampSize,
                     dstFixFd,
                     dstFixAddr,
                     dstFixSize,
                     dstVarFd,
                     dstVarAddr,
                     dstVarSize,
-                    srcTimestampFd,
-                    srcTimestampAddr,
-                    srcTimestampSize,
                     dstKFd,
                     dstVFd,
-                    tableWriter,
-                    doneLatch
+                    tableWriter
             );
         }
     }
 
     static void copyIdleQuick(
             AtomicInteger columnCounter,
-            FilesFacade ff,
             long timestampMergeIndexAddr,
             long srcDataFixFd,
             long srcDataFixAddr,
@@ -616,20 +592,20 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             long srcDataVarFd,
             long srcDataVarAddr,
             long srcDataVarSize,
+            long srcTimestampFd,
+            long srcTimestampAddr,
+            long srcTimestampSize,
             long dstFixFd,
             long dstFixAddr,
             long dstFixSize,
             long dstVarFd,
             long dstVarAddr,
             long dstVarSize,
-            long srcTimestampFd,
-            long srcTimestampAddr,
-            long srcTimestampSize,
             long dstKFd,
             long dstVFd,
-            TableWriter tableWriter,
-            SOUnboundedCountDownLatch doneLatch
+            TableWriter tableWriter
     ) {
+        final FilesFacade ff = tableWriter.getFilesFacade();
         O3Utils.unmapAndClose(ff, srcDataFixFd, srcDataFixAddr, srcDataFixSize);
         O3Utils.unmapAndClose(ff, srcDataVarFd, srcDataVarAddr, srcDataVarSize);
         O3Utils.unmapAndClose(ff, dstFixFd, dstFixAddr, dstFixSize);
@@ -639,57 +615,50 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
 
         closeColumnIdle(
                 columnCounter,
-                ff,
                 timestampMergeIndexAddr,
                 srcTimestampFd,
                 srcTimestampAddr,
                 srcTimestampSize,
-                tableWriter,
-                doneLatch
+                tableWriter
         );
     }
 
     static void closeColumnIdle(
             AtomicInteger columnCounter,
-            FilesFacade ff,
             long timestampMergeIndexAddr,
             long srcTimestampFd,
             long srcTimestampAddr,
             long srcTimestampSize,
-            TableWriter tableWriter,
-            SOUnboundedCountDownLatch doneLatch
+            TableWriter tableWriter
     ) {
         final int columnsRemaining = columnCounter.decrementAndGet();
         LOG.debug().$("idle [columnsRemaining=").$(columnsRemaining).$(']').$();
         if (columnsRemaining == 0) {
             closeColumnIdleQuick(
-                    ff,
                     timestampMergeIndexAddr,
                     srcTimestampFd,
                     srcTimestampAddr,
                     srcTimestampSize,
-                    tableWriter,
-                    doneLatch
+                    tableWriter
             );
         }
     }
 
     static void closeColumnIdleQuick(
-            FilesFacade ff,
             long timestampMergeIndexAddr,
             long srcTimestampFd,
             long srcTimestampAddr,
             long srcTimestampSize,
-            TableWriter tableWriter,
-            SOUnboundedCountDownLatch doneLatch
+            TableWriter tableWriter
     ) {
+        final FilesFacade ff = tableWriter.getFilesFacade();
         O3Utils.unmap(ff, srcTimestampAddr, srcTimestampSize);
         O3Utils.close(ff, srcTimestampFd);
         if (timestampMergeIndexAddr != 0) {
             Vect.freeMergedIndex(timestampMergeIndexAddr);
         }
         tableWriter.o3ClockDownPartitionUpdateCount();
-        doneLatch.countDown();
+        tableWriter.o3CountDownDoneLatch();
     }
 
     // lowest timestamp of partition where data is headed

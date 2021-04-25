@@ -35,7 +35,6 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class O3CopyTask extends AbstractLockable {
     private AtomicInteger columnCounter;
     private AtomicInteger partCounter;
-    private FilesFacade ff;
     private int columnType;
     private int blockType;
     private long timestampMergeIndexAddr;
@@ -83,7 +82,6 @@ public class O3CopyTask extends AbstractLockable {
     private boolean partitionMutates;
     private TableWriter tableWriter;
     private BitmapIndexWriter indexWriter;
-    private SOUnboundedCountDownLatch doneLatch;
 
     public int getBlockType() {
         return blockType;
@@ -95,10 +93,6 @@ public class O3CopyTask extends AbstractLockable {
 
     public int getColumnType() {
         return columnType;
-    }
-
-    public SOUnboundedCountDownLatch getDoneLatch() {
-        return doneLatch;
     }
 
     public long getDstFixAddr() {
@@ -147,10 +141,6 @@ public class O3CopyTask extends AbstractLockable {
 
     public long getDstVarSize() {
         return dstVarSize;
-    }
-
-    public FilesFacade getFf() {
-        return ff;
     }
 
     public BitmapIndexWriter getIndexWriter() {
@@ -292,7 +282,6 @@ public class O3CopyTask extends AbstractLockable {
     public void of(
             AtomicInteger columnCounter,
             AtomicInteger partCounter,
-            FilesFacade ff,
             int columnType,
             int blockType,
             long timestampMergeIndexAddr,
@@ -339,12 +328,10 @@ public class O3CopyTask extends AbstractLockable {
             long srcTimestampSize,
             boolean partitionMutates,
             TableWriter tableWriter,
-            BitmapIndexWriter indexWriter,
-            SOUnboundedCountDownLatch doneLatch
+            BitmapIndexWriter indexWriter
     ) {
         this.columnCounter = columnCounter;
         this.partCounter = partCounter;
-        this.ff = ff;
         this.columnType = columnType;
         this.blockType = blockType;
         this.timestampMergeIndexAddr = timestampMergeIndexAddr;
@@ -392,6 +379,5 @@ public class O3CopyTask extends AbstractLockable {
         this.partitionMutates = partitionMutates;
         this.tableWriter = tableWriter;
         this.indexWriter = indexWriter;
-        this.doneLatch = doneLatch;
     }
 }

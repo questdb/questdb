@@ -48,7 +48,6 @@ public class O3FailureTest extends AbstractO3Test {
         @Override
         public boolean allocate(long fd, long size) {
             if (counter.decrementAndGet() == 0) {
-                new Exception().printStackTrace();
                 return false;
             }
             return super.allocate(fd, size);
@@ -632,7 +631,6 @@ public class O3FailureTest extends AbstractO3Test {
             @Override
             public boolean truncate(long fd, long size) {
                 if (counter.decrementAndGet() == 0) {
-                    new Exception().printStackTrace();
                     return false;
                 }
                 return super.truncate(fd, size);

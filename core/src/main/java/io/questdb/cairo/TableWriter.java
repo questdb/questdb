@@ -677,6 +677,10 @@ public class TableWriter implements Closeable {
         return designatedTimestampColumnName;
     }
 
+    public FilesFacade getFilesFacade() {
+        return ff;
+    }
+
     public long getMaxTimestamp() {
         return txFile.getMaxTimestamp();
     }
@@ -2152,14 +2156,6 @@ public class TableWriter implements Closeable {
         o3ColumnCounters.clear();
         o3BasketPool.clear();
 
-        final int workerId;
-        final Thread thread = Thread.currentThread();
-        if (thread instanceof Worker) {
-            workerId = ((Worker) thread).getWorkerId();
-        } else {
-            workerId = 0;
-        }
-
         long o3HysteresisRowCount = 0;
         final int timestampIndex = metadata.getTimestampIndex();
         this.lastPartitionTimestamp = timestampFloorMethod.floor(partitionTimestampHi);
@@ -2328,13 +2324,11 @@ public class TableWriter implements Closeable {
                                 }
 
                                 O3OpenColumnJob.appendLastPartition(
-                                        workerId,
                                         configuration,
                                         messageBus.getO3CopyQueue(),
                                         messageBus.getO3CopyPubSeq(),
                                         messageBus.getO3PartitionUpdateQueue(),
                                         messageBus.getO3PartitionPubSeq(),
-                                        ff,
                                         path,
                                         plen,
                                         columnName,
@@ -2357,7 +2351,7 @@ public class TableWriter implements Closeable {
                                         dstVarMem,
                                         this,
                                         indexWriter,
-                                        o3DoneLatch
+                                        tempMem16b
                                 );
                             }
                         } else {
@@ -2366,7 +2360,6 @@ public class TableWriter implements Closeable {
                                 flattenTimestamp = false;
                             }
                             o3CommitPartitionAsync(
-                                    workerId,
                                     maxTimestamp,
                                     sortedTimestampsAddr,
                                     srcOooMax,
@@ -2397,7 +2390,6 @@ public class TableWriter implements Closeable {
                         .$(", updateCount=").$(o3PartitionUpdRemaining.get())
                         .I$();
                 o3ConsumePartitionUpdates(
-                        workerId,
                         srcOooMax,
                         o3TimestampMin,
                         o3TimestampMax
@@ -2445,7 +2437,6 @@ public class TableWriter implements Closeable {
     }
 
     private void o3CommitPartitionAsync(
-            int workerId,
             long maxTimestamp,
             long sortedTimestampsAddr,
             long srcOooMax,
@@ -2465,7 +2456,6 @@ public class TableWriter implements Closeable {
         if (cursor > -1) {
             O3PartitionTask task = oooPartitionQueue.get(cursor);
             task.of(
-                    ff,
                     path,
                     partitionBy,
                     columns,
@@ -2484,13 +2474,11 @@ public class TableWriter implements Closeable {
                     sortedTimestampsAddr,
                     this,
                     o3ColumnCounters.next(),
-                    o3Basket,
-                    this.o3DoneLatch
+                    o3Basket
             );
             oooPartitionPubSeq.done(cursor);
         } else {
             O3PartitionJob.processPartition(
-                    workerId,
                     configuration,
                     messageBus.getO3OpenColumnQueue(),
                     messageBus.getO3OpenColumnPubSeq(),
@@ -2498,7 +2486,6 @@ public class TableWriter implements Closeable {
                     messageBus.getO3CopyPubSeq(),
                     messageBus.getO3PartitionUpdateQueue(),
                     messageBus.getO3PartitionUpdatePubSeq(),
-                    ff,
                     path,
                     partitionBy,
                     columns,
@@ -2518,13 +2505,12 @@ public class TableWriter implements Closeable {
                     this,
                     o3ColumnCounters.next(),
                     o3Basket,
-                    o3DoneLatch
+                    tempMem16b
             );
         }
     }
 
     private void o3ConsumePartitionUpdates(
-            int workerId,
             long srcOooMax,
             long timestampMin,
             long timestampMax
@@ -2572,12 +2558,11 @@ public class TableWriter implements Closeable {
                     final O3PartitionTask partitionTask = partitionQueue.get(cursor);
                     if (o3ErrorCount.get() > 0) {
                         // do we need to free anything on the task?
-                        o3ClockDownPartitionUpdateCount();
                         partitionSubSeq.done(cursor);
-                        partitionTask.getDoneLatch().countDown();
+                        o3ClockDownPartitionUpdateCount();
+                        o3CountDownDoneLatch();
                     } else {
                         o3ProcessPartitionSafe(
-                                workerId,
                                 updSizePubSeq,
                                 updSizeQueue,
                                 partitionSubSeq,
@@ -2595,18 +2580,15 @@ public class TableWriter implements Closeable {
                         if (o3ErrorCount.get() > 0) {
                             O3CopyJob.closeColumnIdle(
                                     openColumnTask.getColumnCounter(),
-                                    ff,
                                     openColumnTask.getTimestampMergeIndexAddr(),
                                     openColumnTask.getSrcTimestampFd(),
                                     openColumnTask.getSrcTimestampAddr(),
                                     openColumnTask.getSrcTimestampSize(),
-                                    this,
-                                    openColumnTask.getDoneLatch()
+                                    this
                             );
                             openColumnSubSeq.done(cursor);
                         } else {
                             o3OpenColumnSafe(
-                                    workerId,
                                     updSizePubSeq,
                                     updSizeQueue,
                                     openColumnSubSeq,
@@ -2624,7 +2606,6 @@ public class TableWriter implements Closeable {
                                 O3CopyJob.copyIdle(
                                         copyTask.getColumnCounter(),
                                         copyTask.getPartCounter(),
-                                        ff,
                                         copyTask.getTimestampMergeIndexAddr(),
                                         copyTask.getSrcDataFixFd(),
                                         copyTask.getSrcDataFixAddr(),
@@ -2643,8 +2624,7 @@ public class TableWriter implements Closeable {
                                         copyTask.getSrcTimestampSize(),
                                         copyTask.getDstKFd(),
                                         copyTask.getDstVFd(),
-                                        this,
-                                        copyTask.getDoneLatch()
+                                        this
                                 );
                                 copySubSeq.done(cursor);
                             } else {
@@ -2685,6 +2665,10 @@ public class TableWriter implements Closeable {
         } catch (Throwable e) {
             LOG.error().$(e).$();
         }
+    }
+
+    void o3CountDownDoneLatch() {
+        o3DoneLatch.countDown();
     }
 
     private void o3MoveHysteresis0(
@@ -2858,7 +2842,6 @@ public class TableWriter implements Closeable {
     }
 
     private void o3OpenColumnSafe(
-            int workerId,
             MPSequence updSizePubSeq,
             RingQueue<O3PartitionUpdateTask> updSizeQueue,
             Sequence openColumnSubSeq,
@@ -2869,7 +2852,6 @@ public class TableWriter implements Closeable {
     ) {
         try {
             O3OpenColumnJob.openColumn(
-                    workerId,
                     configuration,
                     copyQueue,
                     copyPubSeq,
@@ -2877,7 +2859,8 @@ public class TableWriter implements Closeable {
                     updSizePubSeq,
                     openColumnTask,
                     cursor,
-                    openColumnSubSeq
+                    openColumnSubSeq,
+                    tempMem16b
             );
         } catch (CairoException | CairoError e) {
             LOG.error().$((Sinkable) e).$();
@@ -2914,26 +2897,19 @@ public class TableWriter implements Closeable {
 
         final long partitionSize = srcDataMax + srcOooPartitionHi - srcOooPartitionLo + 1;
         final long rowDelta = srcOooPartitionHi - srcOooMax;
-        if (rowDelta < -1 || partitionTimestamp < lastPartitionTimestamp) {
-            if (partitionTimestamp < lastPartitionTimestamp) {
-                this.txFile.fixedRowCount += partitionSize - srcDataMax;
-                // when we exit here we need to rollback transientRowCount we've been incrementing
-                // while adding out-of-order data
-            } else {
-                this.txFile.fixedRowCount += partitionSize;
-            }
-            // We just updated non-last partition. It is possible that this partition
-            // has already been updated by transaction or out of order logic was the only
-            // code that updated it. To resolve this fork we need to check if "txPendingPartitionSizes"
-            // contains timestamp of this partition. If it does - we don't increment "txPartitionCount"
-            // (it has been incremented before out-of-order logic kicked in) and
-            // we use partition size from "txPendingPartitionSizes" to subtract from "txPartitionCount"
+        if (partitionTimestamp < lastPartitionTimestamp) {
+            this.txFile.fixedRowCount += partitionSize - srcDataMax;
+            // when we exit here we need to rollback transientRowCount we've been incrementing
+            // while adding out-of-order data
+        } else if (rowDelta < -1) {
+            this.txFile.fixedRowCount += partitionSize;
         } else {
             // this is last partition
             this.txFile.transientRowCount = partitionSize;
             this.txFile.maxTimestamp = timestampMax;
         }
 
+        final int partitionIndex = txFile.findAttachedPartitionIndexByLoTimestamp(partitionTimestamp);
         if (partitionTimestamp == lastPartitionTimestamp) {
             if (partitionMutates) {
                 closeActivePartition();
@@ -2944,7 +2920,6 @@ public class TableWriter implements Closeable {
             }
         }
 
-        final int partitionIndex = txFile.findAttachedPartitionIndexByLoTimestamp(partitionTimestamp);
         if (partitionMutates) {
             final long srcDataTxn = txFile.getPartitionNameTxnByIndex(partitionIndex);
             LOG.info()
@@ -2954,10 +2929,13 @@ public class TableWriter implements Closeable {
             txFile.updatePartitionSizeByIndexAndTxn(partitionIndex, partitionSize);
             o3PartitionRemoveCandidates.add(partitionTimestamp);
             o3PartitionRemoveCandidates.add(srcDataTxn);
+            txFile.bumpPartitionTableVersion();
         } else {
+            if (partitionTimestamp != lastPartitionTimestamp) {
+                txFile.bumpPartitionTableVersion();
+            }
             txFile.updatePartitionSizeByIndex(partitionIndex, partitionTimestamp, partitionSize);
         }
-        txFile.bumpPartitionTableVersion();
     }
 
     synchronized void o3PartitionUpdateSynchronized(
@@ -3043,7 +3021,6 @@ public class TableWriter implements Closeable {
     }
 
     private void o3ProcessPartitionSafe(
-            int workerId,
             MPSequence updSizePubSeq,
             RingQueue<O3PartitionUpdateTask> updSizeQueue,
             Sequence partitionSubSeq,
@@ -3055,7 +3032,7 @@ public class TableWriter implements Closeable {
     ) {
         try {
             O3PartitionJob.processPartition(
-                    workerId,
+                    tempMem16b,
                     configuration,
                     openColumnQueue,
                     messageBus.getO3OpenColumnPubSeq(),

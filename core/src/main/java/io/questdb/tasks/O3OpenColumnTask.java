@@ -26,14 +26,11 @@ package io.questdb.tasks;
 
 import io.questdb.cairo.BitmapIndexWriter;
 import io.questdb.cairo.TableWriter;
-import io.questdb.mp.SOUnboundedCountDownLatch;
-import io.questdb.std.FilesFacade;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class O3OpenColumnTask {
     private CharSequence pathToTable;
-    private FilesFacade ff;
     private AtomicInteger columnCounter;
     private AtomicInteger partCounter;
     private long txn;
@@ -74,7 +71,6 @@ public class O3OpenColumnTask {
     private long activeVarFd;
     private TableWriter tableWriter;
     private BitmapIndexWriter indexWriter;
-    private SOUnboundedCountDownLatch doneLatch;
 
     public long getActiveFixFd() {
         return activeFixFd;
@@ -88,24 +84,12 @@ public class O3OpenColumnTask {
         return columnCounter;
     }
 
-    public AtomicInteger getPartCounter() {
-        return partCounter;
-    }
-
     public CharSequence getColumnName() {
         return columnName;
     }
 
     public int getColumnType() {
         return columnType;
-    }
-
-    public SOUnboundedCountDownLatch getDoneLatch() {
-        return doneLatch;
-    }
-
-    public FilesFacade getFf() {
-        return ff;
     }
 
     public BitmapIndexWriter getIndexWriter() {
@@ -138,6 +122,10 @@ public class O3OpenColumnTask {
 
     public int getOpenColumnMode() {
         return openColumnMode;
+    }
+
+    public AtomicInteger getPartCounter() {
+        return partCounter;
     }
 
     public long getPartitionTimestamp() {
@@ -250,7 +238,6 @@ public class O3OpenColumnTask {
 
     public void of(
             int openColumnMode,
-            FilesFacade ff,
             CharSequence pathToTable,
             CharSequence columnName,
             AtomicInteger columnCounter,
@@ -290,11 +277,9 @@ public class O3OpenColumnTask {
             long activeFixFd,
             long activeVarFd,
             TableWriter tableWriter,
-            BitmapIndexWriter indexWriter,
-            SOUnboundedCountDownLatch doneLatch
+            BitmapIndexWriter indexWriter
     ) {
         this.openColumnMode = openColumnMode;
-        this.ff = ff;
         this.pathToTable = pathToTable;
         this.columnCounter = columnCounter;
         this.partCounter = partCounter;
@@ -335,6 +320,5 @@ public class O3OpenColumnTask {
         this.activeVarFd = activeVarFd;
         this.tableWriter = tableWriter;
         this.indexWriter = indexWriter;
-        this.doneLatch = doneLatch;
     }
 }
