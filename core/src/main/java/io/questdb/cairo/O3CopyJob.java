@@ -27,7 +27,8 @@ package io.questdb.cairo;
 import io.questdb.MessageBus;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.mp.*;
+import io.questdb.mp.AbstractQueueConsumerJob;
+import io.questdb.mp.Sequence;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
 import io.questdb.std.Unsafe;
@@ -42,21 +43,12 @@ import static io.questdb.cairo.TableWriter.*;
 
 public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
     private static final Log LOG = LogFactory.getLog(O3CopyJob.class);
-    private final CairoConfiguration configuration;
-    private final RingQueue<O3PartitionUpdateTask> updPartitionSizeQueue;
-    private final MPSequence updPartitionSizePubSeq;
 
     public O3CopyJob(MessageBus messageBus) {
         super(messageBus.getO3CopyQueue(), messageBus.getO3CopySubSeq());
-        this.configuration = messageBus.getConfiguration();
-        this.updPartitionSizeQueue = messageBus.getO3PartitionUpdateQueue();
-        this.updPartitionSizePubSeq = messageBus.getO3PartitionUpdatePubSeq();
     }
 
     public static void copy(
-            CairoConfiguration configuration,
-            RingQueue<O3PartitionUpdateTask> updPartitionSizeTaskQueue,
-            MPSequence updPartitionSizePubSeq,
             AtomicInteger columnCounter,
             @Nullable AtomicInteger partCounter,
             int columnType,
@@ -163,9 +155,6 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                 break;
         }
         copyTail(
-                configuration,
-                updPartitionSizeTaskQueue,
-                updPartitionSizePubSeq,
                 columnCounter,
                 partCounter,
                 timestampMergeIndexAddr,
@@ -202,14 +191,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
         );
     }
 
-    public static void copy(
-            CairoConfiguration configuration,
-            RingQueue<O3PartitionUpdateTask> updPartitionSizeQueue,
-            MPSequence updPartitionSizePubSeq,
-            O3CopyTask task,
-            long cursor,
-            Sequence subSeq
-    ) {
+    public static void copy(O3CopyTask task, long cursor, Sequence subSeq) {
         final AtomicInteger columnCounter = task.getColumnCounter();
         final AtomicInteger partCounter = task.getPartCounter();
         final int columnType = task.getColumnType();
@@ -263,9 +245,6 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
         subSeq.done(cursor);
 
         copy(
-                configuration,
-                updPartitionSizeQueue,
-                updPartitionSizePubSeq,
                 columnCounter,
                 partCounter,
                 columnType,
@@ -319,9 +298,6 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
     }
 
     private static void copyTail(
-            CairoConfiguration configuration,
-            RingQueue<O3PartitionUpdateTask> updPartitionSizeTaskQueue,
-            MPSequence updPartitionSizePubSeq,
             AtomicInteger columnCounter,
             @Nullable AtomicInteger partCounter,
             long timestampMergeIndexAddr,
@@ -360,7 +336,6 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             final FilesFacade ff = tableWriter.getFilesFacade();
             if (isIndexed) {
                 updateIndex(
-                        configuration,
                         columnCounter,
                         timestampMergeIndexAddr,
                         srcDataFixFd,
@@ -400,8 +375,6 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
 
             if (columnsRemaining == 0) {
                 updatePartition(
-                        updPartitionSizeTaskQueue,
-                        updPartitionSizePubSeq,
                         timestampMergeIndexAddr,
                         srcDataMax,
                         srcOooMax,
@@ -421,8 +394,6 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
     }
 
     private static void updatePartition(
-            RingQueue<O3PartitionUpdateTask> updPartitionSizeTaskQueue,
-            MPSequence updPartitionSizePubSeq,
             long timestampMergeIndexAddr,
             long srcDataMax,
             long srcOooMax,
@@ -444,8 +415,6 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                 O3Utils.close(ff, srcTimestampFd);
             } finally {
                 notifyWriter(
-                        updPartitionSizeTaskQueue,
-                        updPartitionSizePubSeq,
                         srcOooPartitionLo,
                         srcOooPartitionHi,
                         timestampMin,
@@ -466,7 +435,6 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
     }
 
     private static void updateIndex(
-            CairoConfiguration configuration,
             AtomicInteger columnCounter,
             long timestampMergeIndexAddr,
             long srcDataFixFd,
@@ -496,7 +464,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             long row = dstIndexOffset / Integer.BYTES;
             boolean closed = !indexWriter.isOpen();
             if (closed) {
-                indexWriter.of(configuration, dstKFd, dstVFd, row == 0);
+                indexWriter.of(tableWriter.getConfiguration(), dstKFd, dstVFd, row == 0);
             }
             try {
                 updateIndex(dstFixAddr, dstFixSize, indexWriter, dstIndexOffset / Integer.BYTES, dstIndexAdjust);
@@ -612,7 +580,6 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
         O3Utils.unmapAndClose(ff, dstVarFd, dstVarAddr, dstVarSize);
         O3Utils.close(ff, dstKFd);
         O3Utils.close(ff, dstVFd);
-
         closeColumnIdle(
                 columnCounter,
                 timestampMergeIndexAddr,
@@ -664,8 +631,6 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
     // lowest timestamp of partition where data is headed
 
     static void notifyWriter(
-            RingQueue<O3PartitionUpdateTask> updPartitionSizeQueue,
-            MPSequence updPartitionPubSeq,
             long srcOooPartitionLo,
             long srcOooPartitionHi,
             long timestampMin,
@@ -676,22 +641,19 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             boolean partitionMutates,
             TableWriter tableWriter
     ) {
-        final long cursor = updPartitionPubSeq.next();
+        final long cursor = tableWriter.getO3PartitionUpdatePubSeq().next();
         if (cursor > -1) {
             publishUpdPartitionSizeTaskHarmonized(
-                    updPartitionSizeQueue,
-                    updPartitionPubSeq,
                     cursor,
                     srcOooPartitionLo,
                     srcOooPartitionHi,
                     partitionTimestamp,
                     srcDataMax,
-                    partitionMutates
+                    partitionMutates,
+                    tableWriter
             );
         } else {
             publishUpdPartitionSizeTaskContended(
-                    updPartitionSizeQueue,
-                    updPartitionPubSeq,
                     cursor,
                     srcOooPartitionLo,
                     srcOooPartitionHi,
@@ -707,8 +669,6 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
     }
 
     private static void publishUpdPartitionSizeTaskContended(
-            RingQueue<O3PartitionUpdateTask> updPartitionSizeQueue,
-            MPSequence updPartitionPubSeq,
             long cursor,
             long srcOooPartitionLo,
             long srcOooPartitionHi,
@@ -721,19 +681,18 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             TableWriter tableWriter
     ) {
         while (cursor == -2) {
-            cursor = updPartitionPubSeq.next();
+            cursor = tableWriter.getO3PartitionUpdatePubSeq().next();
         }
 
         if (cursor > -1) {
             publishUpdPartitionSizeTaskHarmonized(
-                    updPartitionSizeQueue,
-                    updPartitionPubSeq,
                     cursor,
                     srcOooPartitionLo,
                     srcOooPartitionHi,
                     partitionTimestamp,
                     srcDataMax,
-                    partitionMutates
+                    partitionMutates,
+                    tableWriter
             );
         } else {
             tableWriter.o3PartitionUpdateSynchronized(
@@ -750,15 +709,15 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
     }
 
     private static void publishUpdPartitionSizeTaskHarmonized(
-            RingQueue<O3PartitionUpdateTask> updPartitionSizeQueue,
-            MPSequence updPartitionPubSeq, long cursor,
+            long cursor,
             long srcOooPartitionLo,
             long srcOooPartitionHi,
             long partitionTimestamp,
             long srcDataMax,
-            boolean partitionMutates
+            boolean partitionMutates,
+            TableWriter tableWriter
     ) {
-        final O3PartitionUpdateTask task = updPartitionSizeQueue.get(cursor);
+        final O3PartitionUpdateTask task = tableWriter.getO3PartitionUpdateQueue().get(cursor);
         task.of(
                 partitionTimestamp,
                 srcOooPartitionLo,
@@ -766,7 +725,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                 srcDataMax,
                 partitionMutates
         );
-        updPartitionPubSeq.done(cursor);
+        tableWriter.getO3PartitionUpdatePubSeq().done(cursor);
     }
 
     private static void copyData(
@@ -989,17 +948,6 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             w.add(TableUtils.toIndexKey(Unsafe.getUnsafe().getInt(dstFixAddr + row * Integer.BYTES)), row + rowAdjust);
         }
         w.setMaxValue(count - 1);
-    }
-
-    private void copy(O3CopyTask task, long cursor, Sequence subSeq) {
-        copy(
-                configuration,
-                updPartitionSizeQueue,
-                updPartitionSizePubSeq,
-                task,
-                cursor,
-                subSeq
-        );
     }
 
     @Override

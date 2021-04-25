@@ -30,16 +30,15 @@ import io.questdb.cairo.vm.AppendOnlyVirtualMemory;
 import io.questdb.cairo.vm.ContiguousVirtualMemory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.mp.*;
+import io.questdb.mp.AbstractQueueConsumerJob;
+import io.questdb.mp.Sequence;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.std.str.Path;
-import io.questdb.tasks.O3CopyTask;
 import io.questdb.tasks.O3OpenColumnTask;
 import io.questdb.tasks.O3PartitionTask;
-import io.questdb.tasks.O3PartitionUpdateTask;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -51,33 +50,11 @@ import static io.questdb.cairo.TableWriter.*;
 public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
     private static final Log LOG = LogFactory.getLog(O3PartitionJob.class);
-    private final CairoConfiguration configuration;
-    private final RingQueue<O3OpenColumnTask> openColumnTaskOutboundQueue;
-    private final Sequence openColumnPubSeq;
-    private final RingQueue<O3CopyTask> copyTaskOutboundQueue;
-    private final Sequence copyTaskPubSeq;
-    private final RingQueue<O3PartitionUpdateTask> updPartitionSizeQueue;
-    private final MPSequence updPartitionSizePubSeq;
-
     public O3PartitionJob(MessageBus messageBus) {
         super(messageBus.getO3PartitionQueue(), messageBus.getO3PartitionSubSeq());
-        this.configuration = messageBus.getConfiguration();
-        this.openColumnTaskOutboundQueue = messageBus.getO3OpenColumnQueue();
-        this.openColumnPubSeq = messageBus.getO3OpenColumnPubSeq();
-        this.copyTaskOutboundQueue = messageBus.getO3CopyQueue();
-        this.copyTaskPubSeq = messageBus.getO3CopyPubSeq();
-        this.updPartitionSizeQueue = messageBus.getO3PartitionUpdateQueue();
-        this.updPartitionSizePubSeq = messageBus.getO3PartitionUpdatePubSeq();
     }
 
     public static void processPartition(
-            CairoConfiguration configuration,
-            RingQueue<O3OpenColumnTask> openColumnTaskOutboundQueue,
-            Sequence openColumnPubSeq,
-            RingQueue<O3CopyTask> copyTaskOutboundQueue,
-            Sequence copyTaskPubSeq,
-            RingQueue<O3PartitionUpdateTask> updPartitionSizeTaskQueue,
-            MPSequence updPartitionSizePubSeq,
             CharSequence pathToTable,
             int partitionBy,
             ObjList<AppendOnlyVirtualMemory> columns,
@@ -106,7 +83,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         final long oooTimestampLo = getTimestampIndexValue(sortedTimestampsAddr, srcOooLo);
         final RecordMetadata metadata = tableWriter.getMetadata();
         final int timestampIndex = metadata.getTimestampIndex();
-
         final Path path = Path.getThreadLocal(pathToTable);
         TableUtils.setPathForPartition(path, partitionBy, oooTimestampLo, false);
         final int pplen = path.length();
@@ -128,7 +104,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             if (!last) {
                 try {
                     LOG.debug().$("would create [path=").$(path.chop$().slash$()).$(']').$();
-                    createDirsOrFail(ff, path, configuration.getMkDirMode());
+                    createDirsOrFail(ff, path, tableWriter.getConfiguration().getMkDirMode());
                 } catch (Throwable e) {
                     LOG.debug().$("idle new").$();
                     tableWriter.o3BumpErrorCount();
@@ -139,14 +115,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             }
 
             publishOpenColumnTasks(
-                    tmpBuf,
-                    configuration,
-                    openColumnTaskOutboundQueue,
-                    openColumnPubSeq,
-                    copyTaskOutboundQueue,
-                    copyTaskPubSeq,
-                    updPartitionSizeTaskQueue,
-                    updPartitionSizePubSeq,
                     txn,
                     columns,
                     oooColumns,
@@ -180,7 +148,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     sortedTimestampsAddr,
                     tableWriter,
                     columnCounter,
-                    o3Basket
+                    o3Basket,
+                    tmpBuf
             );
         } else {
             long srcTimestampAddr = 0;
@@ -436,7 +405,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     }
                 } else {
                     txnPartition(path.trimTo(pplen), txn);
-                    createDirsOrFail(ff, path.slash$(), configuration.getMkDirMode());
+                    createDirsOrFail(ff, path.slash$(), tableWriter.getConfiguration().getMkDirMode());
                     if (last) {
                         openColumnMode = OPEN_LAST_PARTITION_FOR_MERGE;
                     } else {
@@ -459,14 +428,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             final long timestampMax = Math.max(oooTimestampMax, dataTimestampHi);
 
             publishOpenColumnTasks(
-                    tmpBuf,
-                    configuration,
-                    openColumnTaskOutboundQueue,
-                    openColumnPubSeq,
-                    copyTaskOutboundQueue,
-                    copyTaskPubSeq,
-                    updPartitionSizeTaskQueue,
-                    updPartitionSizePubSeq,
                     txn,
                     columns,
                     oooColumns,
@@ -499,20 +460,14 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     sortedTimestampsAddr,
                     tableWriter,
                     columnCounter,
-                    o3Basket
+                    o3Basket,
+                    tmpBuf
             );
         }
     }
 
     public static void processPartition(
             long tmpBuf,
-            CairoConfiguration configuration,
-            RingQueue<O3OpenColumnTask> openColumnTaskOutboundQueue,
-            Sequence openColumnPubSeq,
-            RingQueue<O3CopyTask> copyTaskOutboundQueue,
-            Sequence copyTaskPubSeq,
-            RingQueue<O3PartitionUpdateTask> updPartitionSizeQueue,
-            MPSequence updPartitionSizePubSeq,
             O3PartitionTask task,
             long cursor,
             Sequence subSeq
@@ -543,13 +498,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         subSeq.done(cursor);
 
         processPartition(
-                configuration,
-                openColumnTaskOutboundQueue,
-                openColumnPubSeq,
-                copyTaskOutboundQueue,
-                copyTaskPubSeq,
-                updPartitionSizeQueue,
-                updPartitionSizePubSeq,
                 pathToTable,
                 partitionBy,
                 columns,
@@ -599,8 +547,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
     }
 
     private static void publishOpenColumnTaskHarmonized(
-            RingQueue<O3OpenColumnTask> openColumnTaskOutboundQueue,
-            Sequence openColumnPubSeq,
             long cursor,
             int openColumnMode,
             CharSequence pathToTable,
@@ -644,7 +590,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             TableWriter tableWriter,
             BitmapIndexWriter indexWriter
     ) {
-        final O3OpenColumnTask openColumnTask = openColumnTaskOutboundQueue.get(cursor);
+        final O3OpenColumnTask openColumnTask = tableWriter.getO3OpenColumnQueue().get(cursor);
         openColumnTask.of(
                 openColumnMode,
                 pathToTable,
@@ -688,18 +634,10 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 tableWriter,
                 indexWriter
         );
-        openColumnPubSeq.done(cursor);
+        tableWriter.getO3OpenColumnPubSeq().done(cursor);
     }
 
     private static void publishOpenColumnTasks(
-            long tmpBuf,
-            CairoConfiguration configuration,
-            RingQueue<O3OpenColumnTask> openColumnTaskOutboundQueue,
-            Sequence openColumnPubSeq,
-            RingQueue<O3CopyTask> copyTaskOutboundQueue,
-            Sequence copyTaskPubSeq,
-            RingQueue<O3PartitionUpdateTask> updPartitionSizeTaskQueue,
-            MPSequence updPartitionSizePubSeq,
             long txn,
             ObjList<AppendOnlyVirtualMemory> columns,
             ObjList<ContiguousVirtualMemory> oooColumns,
@@ -732,7 +670,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             long sortedTimestampsAddr,
             TableWriter tableWriter,
             AtomicInteger columnCounter,
-            O3Basket o3Basket
+            O3Basket o3Basket,
+            long tmpBuf
     ) {
         LOG.debug().$("partition [ts=").$ts(oooTimestampLo).$(']').$();
 
@@ -806,11 +745,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 }
 
                 try {
-                    final long cursor = openColumnPubSeq.next();
+                    final long cursor = tableWriter.getO3OpenColumnPubSeq().next();
                     if (cursor > -1) {
                         publishOpenColumnTaskHarmonized(
-                                openColumnTaskOutboundQueue,
-                                openColumnPubSeq,
                                 cursor,
                                 openColumnMode,
                                 pathToTable,
@@ -857,14 +794,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     } else {
                         publishOpenColumnTaskContended(
                                 tmpBuf,
-                                configuration,
-                                openColumnTaskOutboundQueue,
-                                openColumnPubSeq,
                                 cursor,
-                                copyTaskOutboundQueue,
-                                copyTaskPubSeq,
-                                updPartitionSizeTaskQueue,
-                                updPartitionSizePubSeq,
                                 openColumnMode,
                                 pathToTable,
                                 columnName,
@@ -931,14 +861,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
     private static void publishOpenColumnTaskContended(
             long tmpBuf,
-            CairoConfiguration configuration,
-            RingQueue<O3OpenColumnTask> openColumnTaskOutboundQueue,
-            Sequence openColumnPubSeq,
             long cursor,
-            RingQueue<O3CopyTask> copyTaskOutboundQueue,
-            Sequence copyTaskPubSeq,
-            RingQueue<O3PartitionUpdateTask> updPartitionSizeTaskQueue,
-            MPSequence updPartitionSizePubSeq,
             int openColumnMode,
             CharSequence pathToTable,
             CharSequence columnName,
@@ -982,13 +905,11 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             BitmapIndexWriter indexWriter
     ) {
         while (cursor == -2) {
-            cursor = openColumnPubSeq.next();
+            cursor = tableWriter.getO3OpenColumnPubSeq().next();
         }
 
         if (cursor > -1) {
             publishOpenColumnTaskHarmonized(
-                    openColumnTaskOutboundQueue,
-                    openColumnPubSeq,
                     cursor,
                     openColumnMode,
                     pathToTable,
@@ -1034,11 +955,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             );
         } else {
             O3OpenColumnJob.openColumn(
-                    configuration,
-                    copyTaskOutboundQueue,
-                    copyTaskPubSeq,
-                    updPartitionSizeTaskQueue,
-                    updPartitionSizePubSeq,
                     openColumnMode,
                     pathToTable,
                     columnName,
@@ -1092,18 +1008,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
     }
 
     private void processPartition(int workerId, O3PartitionTask task, long cursor, Sequence subSeq) {
-        processPartition(
-                get8ByteBuf(workerId),
-                configuration,
-                openColumnTaskOutboundQueue,
-                openColumnPubSeq,
-                copyTaskOutboundQueue,
-                copyTaskPubSeq,
-                updPartitionSizeQueue,
-                updPartitionSizePubSeq,
-                task,
-                cursor,
-                subSeq
-        );
+        processPartition(get8ByteBuf(workerId), task, cursor, subSeq);
     }
 }
