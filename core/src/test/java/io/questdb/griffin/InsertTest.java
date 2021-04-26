@@ -35,7 +35,6 @@ import io.questdb.std.Long256;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.test.tools.TestUtils;
-import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -636,9 +635,6 @@ public class InsertTest extends AbstractGriffinTest {
 
     @Test
     public void testInsertISOMilliWithTzDateStringTimestampColumFails() throws Exception {
-        final String expected = "seq\tts\n" +
-                "1\t2021-01-03T00:30:00.000000Z\n";
-
         assertInsertTimestamp(
                 "Invalid timestamp",
                 "insert into tab values (1, '2021-01-03T02:00:00-:30')",
@@ -741,83 +737,7 @@ public class InsertTest extends AbstractGriffinTest {
                 TestUtils.assertContains(e.getMessage(), expected);
             }
         }
-
-/*
-        try {
-            // Test as designated timestamp
-            assertInsertQuery(
-                    "seq\tts\n",
-                    "tab",
-                    "create table tab(seq long, ts timestamp) timestamp(ts)",
-                    "ts",
-                    ddl2,
-                    expected,
-                    true,
-                    true,
-                    true,
-                    commitInsert
-            );
-            if (exceptionType != null) {
-                Assert.fail("SqlException expected");
-            }
-        } catch (Exception e) {
-            if (exceptionType == null) throw e;
-
-            Assert.assertEquals(exceptionType, e.getClass().getName());
-            TestUtils.assertContains(e.getMessage(), expected);
-        }
-
-        tearDownAfterTest();
-        tearDown0();
-        setUp0();
-
-        try {
-            // Test as non-designated timestamp
-            assertInsertQuery(
-                    "seq\tts\n",
-                    "tab",
-                    "create table tab(seq long, ts timestamp)",
-                    null,
-                    ddl2,
-                    expected,
-                    true,
-                    true,
-                    true,
-                    commitInsert
-            );
-            if (exceptionType != null) {
-                Assert.fail("SqlException expected");
-            }
-        } catch (Exception e) {
-            if (exceptionType == null) throw e;
-
-            Assert.assertEquals(exceptionType, e.getClass().getName());
-            TestUtils.assertContains(e.getMessage(), expected);
-        }
-*/
     }
-
-/*
-    protected static void assertInsertQuery(
-            CharSequence expected,
-            CharSequence query,
-            CharSequence ddl,
-            @Nullable CharSequence expectedTimestamp,
-            @Nullable CharSequence ddl2,
-            @Nullable CharSequence expected2,
-            boolean supportsRandomAccess,
-            boolean checkSameStr,
-            boolean expectSize,
-            boolean commitInsert
-    ) throws Exception {
-        assertMemoryLeak(() -> {
-            if (ddl != null) {
-                compiler.compile(ddl, sqlExecutionContext);
-            }
-            printSqlResult(expected, query, expectedTimestamp, ddl2, expected2, supportsRandomAccess, checkSameStr, expectSize, false, null, commitInsert);
-        });
-    }
-*/
 
     private void testBindVariableInsert(
             int partitionBy,
