@@ -121,7 +121,7 @@ public class StrFunctionTest {
 
     @Test(expected = UnsupportedOperationException.class)
     public void testChar() {
-        function.getChar(null);
+        Assert.assertEquals('a', function.getChar(null));
     }
 
     @Test(expected = UnsupportedOperationException.class)

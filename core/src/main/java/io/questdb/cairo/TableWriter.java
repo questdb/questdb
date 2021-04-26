@@ -33,12 +33,12 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.*;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.*;
 import io.questdb.std.*;
 import io.questdb.std.datetime.DateFormat;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.NativeLPSZ;
@@ -4472,11 +4472,7 @@ public class TableWriter implements Closeable {
             try {
                 l = value != null ? TimestampFormatUtils.parseUTCTimestamp(value) : Numbers.LONG_NaN;
             } catch (NumericException e) {
-                try {
-                    l = TimestampFormatUtils.parseTimestamp(value);
-                } catch (NumericException numericException) {
-                    throw CairoException.instance(0).put("could not convert to timestamp [value=").put(value).put(']');
-                }
+                throw CairoException.instance(0).put("Invalid timestamp: ").put(value);
             }
             putTimestamp(index, l);
         }
