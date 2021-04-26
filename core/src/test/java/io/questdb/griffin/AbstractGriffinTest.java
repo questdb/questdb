@@ -547,8 +547,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             boolean checkSameStr,
             boolean expectSize,
             boolean sizeCanBeVariable,
-            CharSequence expectedPlan,
-            boolean commitInsert
+            CharSequence expectedPlan
     ) throws SqlException {
         CompiledQuery cc = compiler.compile(query, sqlExecutionContext);
         RecordCursorFactory factory = cc.getRecordCursorFactory();
@@ -566,11 +565,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             assertVariableColumns(factory, checkSameStr);
 
             if (ddl2 != null) {
-                if (commitInsert) {
-                    executeInsert(ddl2);
-                } else {
-                    compiler.compile(ddl2, sqlExecutionContext);
-                }
+                compiler.compile(ddl2, sqlExecutionContext);
 
                 int count = 3;
                 while (count > 0) {
@@ -696,26 +691,6 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             boolean expectSize
     ) throws Exception {
         assertQueryNoVerify(expected, query, ddl, expectedTimestamp, ddl2, expected2, supportsRandomAccess, checkSameStr, expectSize, false);
-    }
-
-    protected static void assertInsertQuery(
-            CharSequence expected,
-            CharSequence query,
-            CharSequence ddl,
-            @Nullable CharSequence expectedTimestamp,
-            @Nullable CharSequence ddl2,
-            @Nullable CharSequence expected2,
-            boolean supportsRandomAccess,
-            boolean checkSameStr,
-            boolean expectSize,
-            boolean commitInsert
-    ) throws Exception {
-        assertMemoryLeak(() -> {
-            if (ddl != null) {
-                compiler.compile(ddl, sqlExecutionContext);
-            }
-            printSqlResult(expected, query, expectedTimestamp, ddl2, expected2, supportsRandomAccess, checkSameStr, expectSize, false, null, commitInsert);
-        });
     }
 
     protected static void assertQuery(

@@ -679,65 +679,65 @@ public class InsertTest extends AbstractGriffinTest {
         );
     }
 
-       private void assertInsertTimestamp(String expected, String ddl2, String exceptionType, boolean commitInsert) throws Exception {
-           if (commitInsert) {
-               compiler.compile("create table tab(seq long, ts timestamp) timestamp(ts)", sqlExecutionContext);
-               try {
-                   executeInsert(ddl2);
-                   if (exceptionType != null) {
-                       Assert.fail("SqlException expected");
-                   }
-                   assertSql("tab", expected);
-               } catch (CairoException e) {
-                   if (exceptionType == null) throw e;
-                   Assert.assertEquals(exceptionType, e.getClass().getName());
-                   TestUtils.assertContains(e.getFlyweightMessage(), expected);
-               }
-           } else {
-               compiler.compile("create table tab(seq long, ts timestamp) timestamp(ts)", sqlExecutionContext);
-               try {
-                   compiler.compile(ddl2, sqlExecutionContext);
-                   if (exceptionType != null) {
-                       Assert.fail("SqlException expected");
-                   }
-                   assertSql("tab", expected);
-               } catch (CairoException e) {
-                   if (exceptionType == null) throw e;
-                   Assert.assertEquals(exceptionType, e.getClass().getName());
-                   TestUtils.assertContains(e.getFlyweightMessage(), expected);
-               }
-           }
+    private void assertInsertTimestamp(String expected, String ddl2, String exceptionType, boolean commitInsert) throws Exception {
+        if (commitInsert) {
+            compiler.compile("create table tab(seq long, ts timestamp) timestamp(ts)", sqlExecutionContext);
+            try {
+                executeInsert(ddl2);
+                if (exceptionType != null) {
+                    Assert.fail("SqlException expected");
+                }
+                assertSql("tab", expected);
+            } catch (CairoException e) {
+                if (exceptionType == null) throw e;
+                Assert.assertEquals(exceptionType, e.getClass().getName());
+                TestUtils.assertContains(e.getFlyweightMessage(), expected);
+            }
+        } else {
+            compiler.compile("create table tab(seq long, ts timestamp) timestamp(ts)", sqlExecutionContext);
+            try {
+                compiler.compile(ddl2, sqlExecutionContext);
+                if (exceptionType != null) {
+                    Assert.fail("SqlException expected");
+                }
+                assertSql("tab", expected);
+            } catch (CairoException e) {
+                if (exceptionType == null) throw e;
+                Assert.assertEquals(exceptionType, e.getClass().getName());
+                TestUtils.assertContains(e.getFlyweightMessage(), expected);
+            }
+        }
 
-           compiler.compile("drop table tab", sqlExecutionContext);
+        compiler.compile("drop table tab", sqlExecutionContext);
 
-           if (commitInsert) {
-               compiler.compile("create table tab(seq long, ts timestamp)", sqlExecutionContext);
-               try {
-                   executeInsert(ddl2);
-                   if (exceptionType != null) {
-                       Assert.fail("SqlException expected");
-                   }
-                   assertSql("tab", expected);
-               } catch (Throwable e) {
-                   if (exceptionType == null) throw e;
-                   Assert.assertEquals(exceptionType, e.getClass().getName());
-                   TestUtils.assertContains(e.getMessage(), expected);
-               }
-           } else {
-               compiler.compile("create table tab(seq long, ts timestamp)", sqlExecutionContext);
-               try {
-                   compiler.compile(ddl2, sqlExecutionContext);
-                   if (exceptionType != null) {
-                       Assert.fail("SqlException expected");
-                   }
-                   assertSql("tab", expected);
-               } catch (Throwable e) {
-                   if (exceptionType == null) throw e;
-                   Assert.assertEquals(exceptionType, e.getClass().getName());
-                   TestUtils.assertContains(e.getMessage(), expected);
-               }
-           }
-       }
+        if (commitInsert) {
+            compiler.compile("create table tab(seq long, ts timestamp)", sqlExecutionContext);
+            try {
+                executeInsert(ddl2);
+                if (exceptionType != null) {
+                    Assert.fail("SqlException expected");
+                }
+                assertSql("tab", expected);
+            } catch (Throwable e) {
+                if (exceptionType == null) throw e;
+                Assert.assertEquals(exceptionType, e.getClass().getName());
+                TestUtils.assertContains(e.getMessage(), expected);
+            }
+        } else {
+            compiler.compile("create table tab(seq long, ts timestamp)", sqlExecutionContext);
+            try {
+                compiler.compile(ddl2, sqlExecutionContext);
+                if (exceptionType != null) {
+                    Assert.fail("SqlException expected");
+                }
+                assertSql("tab", expected);
+            } catch (Throwable e) {
+                if (exceptionType == null) throw e;
+                Assert.assertEquals(exceptionType, e.getClass().getName());
+                TestUtils.assertContains(e.getMessage(), expected);
+            }
+        }
+    }
 
     private void testBindVariableInsert(
             int partitionBy,

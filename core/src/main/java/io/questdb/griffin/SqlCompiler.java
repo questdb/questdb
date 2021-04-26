@@ -1341,23 +1341,8 @@ public class SqlCompiler implements Closeable {
 
     private void copyOrdered0(TableWriter writer, RecordCursor cursor, RecordToRowCopier copier, int cursorTimestampIndex) {
         final Record record = cursor.getRecord();
-        int timestampType = metadata.getColumnType(cursorTimestampIndex);
-
         while (cursor.hasNext()) {
-            long timestamp;
-            if (timestampType == ColumnType.STRING || timestampType == ColumnType.SYMBOL) {
-                CharSequence str = record.getStr(cursorTimestampIndex);
-                try {
-                    // It's allowed to insert ISO formatted string to timestamp column
-                    timestamp = IntervalUtils.parseFloorPartialDate(str);
-                } catch (NumericException numericException) {
-                    throw CairoException.instance(0).put("Invalid timestamp: ").put(str);
-                }
-            } else {
-                timestamp = record.getTimestamp(cursorTimestampIndex);
-            }
-
-            TableWriter.Row row = writer.newRow(timestamp);
+            TableWriter.Row row = writer.newRow(record.getTimestamp(cursorTimestampIndex));
             copier.copy(record, row);
             row.append();
         }

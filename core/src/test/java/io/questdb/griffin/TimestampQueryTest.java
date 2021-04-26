@@ -63,15 +63,15 @@ public class TimestampQueryTest extends AbstractGriffinTest {
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
             String query = "select * from ob_mem_snapshot";
-            printSqlResult(expected, query, "timestamp", true, true);
+            assertSql(query, expected);
             // test where ts ='2021-01'
             expected = "symbol\tme_seq_num\ttimestamp\n";
             query = "SELECT * FROM ob_mem_snapshot where timestamp ='2021-01'";
-            printSqlResult(expected, query, "timestamp", true, true);
+            assertSql(query, expected);
             // test where ts ='2020-11'
             expected = "symbol\tme_seq_num\ttimestamp\n";
             query = "SELECT * FROM ob_mem_snapshot where timestamp ='2020-11'";
-            printSqlResult(expected, query, "timestamp", true, true);
+            assertSql(query, expected);
         });
     }
 
@@ -86,12 +86,13 @@ public class TimestampQueryTest extends AbstractGriffinTest {
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
             String query = "select * from ob_mem_snapshot";
-            printSqlResult(expected, query, "timestamp", true, true);
+            assertSql(query, expected);
             // test where ts ='2020-12'
             expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
             query = "SELECT * FROM ob_mem_snapshot where timestamp IN '2020-12'";
-            printSqlResult(expected, query, "timestamp", true, true);
+            assertSql(query, expected);
+        });
     }
 
     @Test
@@ -105,11 +106,11 @@ public class TimestampQueryTest extends AbstractGriffinTest {
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
             String query = "select * from ob_mem_snapshot";
-            printSqlResult(expected, query, "timestamp", true, true);
+            assertSql(query, expected);
             // test where ts ='2021'
             expected = "symbol\tme_seq_num\ttimestamp\n";
             query = "SELECT * FROM ob_mem_snapshot where timestamp ='2021'";
-            printSqlResult(expected, query, "timestamp", true, true);
+            assertSql(query, expected);
         });
     }
 
@@ -910,9 +911,9 @@ public class TimestampQueryTest extends AbstractGriffinTest {
     }
 
     private void assertTimestampTtQuery(String expected, String query) throws SqlException {
-        printSqlResult(expected, query, null, null, null, false, true, true);
+        assertSql(query, expected);
         String dtsQuery = query.replace("nts", "dts");
-        printSqlResult(expected, dtsQuery, null, null, null, false, true, true);
+        assertSql(dtsQuery, expected);
     }
 
     @Test
@@ -961,7 +962,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
                 + dates.stream().filter(arr -> filter.test((long) arr[0]))
                 .map(arr -> arr[1] + "\n")
                 .collect(Collectors.joining());
-        printSqlResult(expected, query, "ts", null, null, true, true, expectSize, false, queryPlan, false);
+        printSqlResult(expected, query, "ts", null, null, true, true, expectSize, false, queryPlan);
         return (int) expectedCount;
     }
 }
