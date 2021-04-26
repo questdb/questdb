@@ -146,4 +146,9 @@ public class DefaultLineTcpReceiverConfiguration implements LineTcpReceiverConfi
     public long getMinIdleMsBeforeWriterRelease() {
         return 30_000;
     }
+
+    @Override
+    public long getCommitHysteresisInMicros() {
+        return 0;
+    }
 }

@@ -30,10 +30,7 @@ import io.questdb.cutlass.http.ex.*;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.*;
-import io.questdb.std.Chars;
-import io.questdb.std.Mutable;
-import io.questdb.std.ObjectPool;
-import io.questdb.std.Unsafe;
+import io.questdb.std.*;
 import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.str.StdoutSink;
 
@@ -383,7 +380,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
     private void shiftReceiveBufferUnprocessedBytes(long start, int receivedBytes) {
         // Shift to start
         this.receivedBytes = receivedBytes;
-        Unsafe.getUnsafe().copyMemory(start, recvBuffer, receivedBytes);
+        Vect.memcpy(start, recvBuffer, receivedBytes);
         LOG.debug().$("peer is slow, waiting for bigger part to parse [multipart]").$();
     }
 

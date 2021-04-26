@@ -26,7 +26,6 @@ package io.questdb.std;
 
 import java.util.Arrays;
 
-
 public class CharSequenceHashSet extends AbstractCharSequenceHashSet {
 
     private static final int MIN_INITIAL_CAPACITY = 16;
@@ -185,8 +184,6 @@ public class CharSequenceHashSet extends AbstractCharSequenceHashSet {
         int len = Numbers.ceilPow2((int) (newCapacity / loadFactor));
         this.keys = new CharSequence[len];
         mask = len - 1;
-        // todo: this is new instance, its already null initialized
-        Arrays.fill(keys, null);
         int n = list.size();
         free -= n;
         for (int i = 0; i < n; i++) {

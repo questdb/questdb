@@ -32,11 +32,14 @@ import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.griffin.engine.analytic.AnalyticContext;
+import io.questdb.std.Misc;
 import io.questdb.std.Rnd;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.Nullable;
 
-public interface SqlExecutionContext {
+import java.io.Closeable;
+
+public interface SqlExecutionContext extends Closeable {
 
     BindVariableService getBindVariableService();
 
@@ -77,4 +80,9 @@ public interface SqlExecutionContext {
     void initNow();
 
     long getNow();
+
+    @Override
+    default void close(){
+        Misc.free(getMessageBus());
+    }
 }

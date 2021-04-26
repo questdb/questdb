@@ -1,0 +1,290 @@
+; ----------------------------- RANDOMAH.ASI ---------------------------
+;
+;  Author:           Agner Fog
+;  Date created:     1998
+;  Last modified:    2013-09-09
+;  Description:
+;  Assembly include file containing
+;  structure/class definitions for random number generators
+;
+; Copyright (c) 1998-2013 GNU General Public License www.gnu.org/licenses
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+; Definitions for Mersenne Twister:
+
+TEMPERING EQU 1              ; set to 0 if no tempering (improves speed by 25%)
+
+%if 0
+; define constants for MT11213A:
+MERS_N    EQU 351
+MERS_M    EQU 175
+MERS_R    EQU 19
+MERS_A    EQU 0E4BD75F5H
+MERS_U    EQU 11
+MERS_S    EQU 7
+MERS_T    EQU 15
+MERS_L    EQU 17
+MERS_B    EQU 655E5280H
+MERS_C    EQU 0FFD58000H
+
+%ELSE
+; or constants for MT19937:
+MERS_N    EQU 624
+MERS_M    EQU 397
+MERS_R    EQU 31
+MERS_A    EQU 09908B0DFH
+MERS_U    EQU 11
+MERS_S    EQU 7
+MERS_T    EQU 15
+MERS_L    EQU 18
+MERS_B    EQU 9D2C5680H
+MERS_C    EQU 0EFC60000H
+
+%ENDIF
+
+LOWER_MASK EQU (1 << MERS_R) - 1             ; lower MERS_R bits
+UPPER_MASK EQU -1 << MERS_R                  ; upper 32-MERS_R bits
+
+; Define class CRandomMersenneA member data
+; Must be aligned by 16.
+
+STRUC CRandomMersenneA
+.Fill1    RESD      4        ; Alignment filler
+.PreInt:  RESD      4        ; premade tempered integer numbers, ready to use
+.PreFlt:  RESQ      4        ; premade floating point numbers, ready to use (subtract 1.0)
+          RESQ      1        ; last PreFlt unaligned overrun if MERS_N mod 4 = 1
+.TmpFlt:  RESQ      1        ; temporary storage of floating point random number
+.PreInx:  RESD      1        ; index to next PreInt and PreFlt number
+.Instset: RESD      1        ; Instruction set
+.LastInterval: RESD 1        ; Last interval length for IRandomX
+.RLimit:  RESD      1        ; Rejection limit used by IRandomX
+.TMB:     RESD      4        ; 4 copies of MERS_B constant
+.TMC:     RESD      4        ; 4 copies of MERS_C constant
+.one:     RESQ      2        ; 2 copies of 1.0 constant
+.MTI:     RESD      1        ; index into MT buffer
+.UMASK:   RESD      1        ; UPPER_MASK
+.LMASK:   RESD      1        ; LOWER_MASK             ; constants
+.MATA:    RESD      1        ; MERS_A
+.wrap1:   RESD      4        ; MT buffer km wraparound
+.MT:      RESD      MERS_N   ; MT history buffer (aligned by 16)
+.wrap2:   RESD      4        ; MT buffer kk wraparound
+%if MERS_N & 3
+         ; MERS_N not divisible by 4. align by 4
+          RESD      (4 - (MERS_N & 3))
+%ENDIF        
+endstruc ; CRandomMersenneA
+
+
+; Definitions for Mother-of-all generator:
+
+; Define class CRandomMotherA member data
+; Must be aligned by 16. Preferably aligned by 64 to fit a cache line
+STRUC   CRandomMotherA 
+.Fill2   RESD      4         ; Alignment filler
+.one     RESQ      1         ; 1.0
+.Instset RESD      1         ; Instruction set
+.M4      RESD      1         ; x[n-4]
+.M3      RESD      1         ; x[n-3] (aligned)
+.M2      RESD      1         ; x[n-2]
+.M1      RESD      1         ; x[n-1]
+.M0      RESD      1         ; x[n]
+.MC      RESD      1         ; Carry (aligned)
+.zero    RESD      1         ; Zero-extension of carry
+.RanP1   RESQ      1         ; Double random number in interval [1,2)
+.MF3     RESD      1         ; 2111111111 (aligned)
+.MF2     RESD      1         ; 1492
+.MF1     RESD      1         ; 1776
+.MF0     RESD      1         ; 5115
+endstruc ; CRandomMotherA
+
+MOTHERF0 EQU 5115            ; factor 0
+MOTHERF1 EQU 1776            ; factor 1
+MOTHERF2 EQU 1492            ; factor 2
+MOTHERF3 EQU 2111111111      ; factor 3
+
+
+; ***************************************************************************
+; Definitions for SFMT generator
+; ***************************************************************************
+
+; Choose Mersenne exponent.
+; Higher values give longer cycle length and use more memory:
+; MEXP equ    607
+; MEXP equ   1279
+; MEXP equ   2281
+; MEXP equ   4253
+  MEXP equ  11213
+; MEXP equ  19937
+; MEXP equ  44497
+
+%if MEXP == 44497
+SFMT_N      equ  348         ; Size of state vector
+SFMT_M      equ  330         ; Position of intermediate feedback
+SFMT_SL1    equ    5         ; Left shift of W[N-1], 32-bit words
+SFMT_SL2    equ    3         ; Left shift of W[0], *8, 128-bit words
+SFMT_SR1    equ    9         ; Right shift of W[M], 32-bit words
+SFMT_SR2    equ	   3         ; Right shift of W[N-2], *8, 128-bit words
+SFMT_MASK1  equ  0effffffbH  ;first DWORD of AND mask
+; AND mask:
+%define SFMT_MASK   0effffffbH,0dfbebfffH,0bfbf7befH,09ffd7bffH
+; Period certification vector
+%define 1,0,0a3ac4000H,0ecc1327aH
+
+%elif MEXP == 19937
+SFMT_N      equ  156         ; Size of state vector
+SFMT_M      equ  122         ; Position of intermediate feedback
+SFMT_SL1    equ   18         ; Left shift of W[N-1], 32-bit words
+SFMT_SL2    equ    1         ; Left shift of W[0], *8, 128-bit words
+SFMT_SR1    equ   11         ; Right shift of W[M], 32-bit words
+SFMT_SR2    equ	   1         ; Right shift of W[N-2], *8, 128-bit words
+SFMT_MASK1  equ  0dfffffefH  ;first DWORD of AND mask
+%define SFMT_MASK   0dfffffefH,0ddfecb7fH,0bffaffffH,0bffffff6H
+%define SFMT_PARITY 1,0,0,013c9e684H
+
+%elif MEXP == 11213
+SFMT_N      equ  88          ; Size of state vector
+SFMT_M      equ  68          ; Position of intermediate feedback
+SFMT_SL1	equ  14          ; Left shift of W[N-1], 32-bit words
+SFMT_SL2	equ   3          ; Left shift of W[0], *8, 128-bit words
+SFMT_SR1	equ   7          ; Right shift of W[M], 32-bit words
+SFMT_SR2	equ   3          ; Right shift of W[N-2], *8, 128-bit words
+SFMT_MASK1  equ  0effff7fbH  ;first DWORD of AND mask
+%define SFMT_MASK	0effff7fbH,0ffffffefH,0dfdfbfffH,07fffdbfdH
+%define SFMT_PARITY 1,0,0e8148000H,0d0c7afa3H
+
+%elif MEXP == 4253
+SFMT_N      equ  34          ; Size of state vector
+SFMT_M      equ  17          ; Position of intermediate feedback
+SFMT_SL1	equ  20          ; Left shift of W[N-1], 32-bit words
+SFMT_SL2	equ  1           ; Left shift of W[0], *8, 128-bit words
+SFMT_SR1	equ  7           ; Right shift of W[M], 32-bit words
+SFMT_SR2	equ  1           ; Right shift of W[N-2], *8, 128-bit words
+SFMT_MASK1  equ  09f7bffffH  ;first DWORD of AND mask
+%define SFMT_MASK	09f7bffffH,09fffff5fH,03efffffbH,0fffff7bbH
+%define SFMT_PARITY 0a8000001H,0af5390a3H,0b740b3f8H,06c11486dH
+
+%elif MEXP == 2281
+SFMT_N      equ  18          ; Size of state vector
+SFMT_M      equ  12          ; Position of intermediate feedback
+SFMT_SL1	equ  19          ; Left shift of W[N-1], 32-bit words
+SFMT_SL2	equ   1          ; Left shift of W[0], *8, 128-bit words
+SFMT_SR1	equ   5          ; Right shift of W[M], 32-bit words
+SFMT_SR2	equ   1          ; Right shift of W[N-2], *8, 128-bit words
+SFMT_MASK1  equ   0bff7ffbfH ;first DWORD of AND mask
+%define SFMT_MASK	0bff7ffbfH,0fdfffffeH,0f7ffef7fH,0f2f7cbbfH
+%define SFMT_PARITY 1,0,0,041dfa600H
+
+%elif MEXP == 1279
+SFMT_N      equ  10          ; Size of state vector
+SFMT_M      equ   7          ; Position of intermediate feedback
+SFMT_SL1	equ  14          ; Left shift of W[N-1], 32-bit words
+SFMT_SL2	equ   3          ; Left shift of W[0], *8, 128-bit words
+SFMT_SR1	equ   5          ; Right shift of W[M], 32-bit words
+SFMT_SR2	equ   1          ; Right shift of W[N-2], *8, 128-bit words
+SFMT_MASK1  equ   0f7fefffdH ;first DWORD of AND mask
+%define SFMT_MASK	0f7fefffdH,07fefcfffH,0aff3ef3fH,0b5ffff7fH
+%define SFMT_PARITY 1,0,0,020000000H
+
+%elif MEXP == 607
+SFMT_N      equ   5          ; Size of state vector
+SFMT_M      equ   2          ; Position of intermediate feedback
+SFMT_SL1	equ  15          ; Left shift of W[N-1], 32-bit words
+SFMT_SL2	equ   3          ; Left shift of W[0], *8, 128-bit words
+SFMT_SR1	equ  13          ; Right shift of W[M], 32-bit words
+SFMT_SR2	equ   3          ; Right shift of W[N-2], *8, 128-bit words
+SFMT_MASK1  equ   0fdff37ffH ;first DWORD of AND mask
+%define SFMT_MASK	0fdff37ffH,0ef7f3f7dH,0ff777b7dH,07ff7fb2fH
+%define SFMT_PARITY 1,0,0,05986f054H
+
+%ELSE
+%error MEXP must have one of the predefined values
+%ENDIF
+
+STRUC CRandomSFMTA 
+.Fill3         RESD     4    ; Alignment filler
+
+; Parameters for Mother-Of-All generator:
+.M3:           RESD     1    ; x[n-3] (aligned)
+               RESD     1    ; unused filler to fit the pmuludq instruction
+.M2:           RESD     1    ; x[n-2]
+               RESD     1    ; unused filler to fit the pmuludq instruction
+.M1:           RESD     1    ; x[n-1]
+               RESD     1    ; unused filler to fit the pmuludq instruction
+.M0:           RESD     1    ; x[n]
+.MC:           RESD     1    ; Carry (zero-extends into one)
+.one:          RESQ     1    ; 1.0 (low dword = zero-extension of carry) (aligned)
+.TempRan:      RESQ     1    ; Temporary random number
+.MF3:          RESD     1    ; 2111111111 (aligned)
+.Instset:      RESD     1    ; Instruction set
+.MF2:          RESD     1    ; 1492 (MF3,MF2,MF1,MF0 interleaved with other variables to fit the pmuludq instruction)
+               RESD     1    ; Filler (may be used for read-only parameter, but not for read/write parameter)
+.MF1:          RESD     1    ; 1776
+               RESD     1    ; Filler (may be used for read-only parameter, but not for read/write parameter)
+.MF0:          RESD     1    ; 5115
+               RESD     1    ; Filler (may be used for read-only parameter, but not for read/write parameter)
+
+; Parameters for IRandomX:
+.LASTINTERVAL: RESD     1    ; Last interval length for IRandomX
+.RLIMIT:       RESD     1    ; Rejection limit used by IRandomX
+
+; Parameters for SFMT generator:
+.USEMOTHER:    RESD     1    ; 1 if combine with Mother-Of-All generator
+.IX:           RESD     1    ; Index into state buffer for SFMT
+
+.AMASK:        RESD     4    ; AND mask (aligned)
+.STATE:        RESD SFMT_N*4 ; State vector (aligned)
+endstruc ; CRandomSFMTA 
+
+
+; Load offset of TARGET into ecx. Use position-independent method if necessary
+%macro LOADOFFSET2ECX 1
+%IFNDEF  POSITIONINDEPENDENT
+        mov     ecx, %1
+%ELSE
+        ; get position-independent address of TARGET
+        call    get_thunk_ecx
+        add ecx, %1 - $
+%ENDIF
+%endmacro
+
+; Load offset of TARGET into edi. Use position-independent method if necessary
+%macro LOADOFFSET2EDI 1
+%IFNDEF  POSITIONINDEPENDENT
+        mov     edi, %1
+%ELSE
+        ; get position-independent address of TARGET
+        call    get_thunk_edi
+        add edi, %1 - $
+%ENDIF
+%endmacro
+
+
+; ***************************************************************************
+; Define registers used for function parameters, used in 64-bit mode only
+; ***************************************************************************
+ 
+%IFDEF WINDOWS
+  %define par1     rcx
+  %define par2     rdx
+  %define par3     r8
+  %define par4     r9
+  %define par5     qword [rsp+32+8]   ; stack offset including shadow space
+  %define par1d    ecx
+  %define par2d    edx
+  %define par3d    r8d
+  %define par4d    r9d
+  %define par5d    dword [rsp+32+8]
+%ENDIF
+  
+%IFDEF UNIX
+  %define par1     rdi
+  %define par2     rsi
+  %define par3     rdx
+  %define par4     rcx
+  %define par5     r8
+  %define par1d    edi
+  %define par2d    esi
+  %define par3d    edx
+  %define par4d    ecx
+  %define par5d    r8d
+%ENDIF 

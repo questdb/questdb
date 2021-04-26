@@ -729,8 +729,13 @@ public class BindVariableServiceImplTest {
     @Test
     public void testSetTimestampToStr() throws SqlException {
         bindVariableService.define(0, ColumnType.TIMESTAMP, 0);
-        bindVariableService.setStr(0, "21");
-        Assert.assertEquals(21, bindVariableService.getFunction(0).getTimestamp(null));
+        try {
+            bindVariableService.setStr(0, "21");
+            Assert.fail();
+        } catch (SqlException e) {
+            // Number string is not allowed to be set as timestamp
+            // ISO formatted timestamp string is OK, but not number
+        }
         bindVariableService.setStr(0, null);
         Assert.assertEquals(Numbers.LONG_NaN, bindVariableService.getFunction(0).getTimestamp(null));
         bindVariableService.setStr(0, "2019-10-31 15:05:22+08:00");

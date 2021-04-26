@@ -133,8 +133,9 @@ public class SymbolFunctionTest {
         Assert.assertEquals("XYZ", function.getStrB(null));
     }
 
+    @Test(expected = UnsupportedOperationException.class)
     public void testGetStrLen() {
-        Assert.assertEquals(3, function.getStrLen(null));
+        function.getStrLen(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)

@@ -45,7 +45,7 @@ public class ZipTest {
     public void testGzip() throws Exception {
         try (Path path = new Path()) {
             File outFile = temp.newFile("x");
-            File expected = new File(ZipTest.class.getResource("/large.csv").getFile());
+            File expected = new File(ZipTest.class.getResource("/zip-test/large.csv").getFile());
 
             final int available = 64 * 1024;
             long in = Unsafe.malloc(available);

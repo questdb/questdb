@@ -38,6 +38,10 @@ public interface CairoConfiguration {
 
     int getBindVariablePoolSize();
 
+    int getO3PurgeDiscoveryQueueCapacity();
+
+    int getO3PurgeQueueCapacity();
+
     int getSqlCopyBufferSize();
 
     int getCopyPoolCapacity();
@@ -199,11 +203,27 @@ public interface CairoConfiguration {
 
     long getAppendPageSize();
 
-    int getTableBlockWriterQueueSize();
+    int getTableBlockWriterQueueCapacity();
+
+    int getColumnIndexerQueueCapacity();
+
+    int getVectorAggregateQueueCapacity();
+
+    int getO3CallbackQueueCapacity();
+
+    int getO3PartitionQueueCapacity();
+
+    int getO3OpenColumnQueueCapacity();
+
+    int getO3CopyQueueCapacity();
+
+    int getO3UpdPartitionSizeQueueCapacity();
 
     BuildInformation getBuildInformation();
 
-    default boolean isOutOfOrderEnabled() {
-        return false;
-    }
+    long getDatabaseIdHi();
+
+    long getDatabaseIdLo();
+
+    int getTxnScoreboardEntryCount();
 }

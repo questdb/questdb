@@ -173,7 +173,7 @@ public class TextMetadataParser implements JsonParser, Mutable, Closeable {
 
     private static void strcpyw(final CharSequence value, final int len, final long address) {
         for (int i = 0; i < len; i++) {
-            Unsafe.getUnsafe().putChar(address + (i << 1), value.charAt(i));
+            Unsafe.getUnsafe().putChar(address + ((long) i << 1), value.charAt(i));
         }
     }
 
@@ -201,7 +201,7 @@ public class TextMetadataParser implements JsonParser, Mutable, Closeable {
         final long n = bufSize + l;
         if (n > bufCapacity) {
             long ptr = Unsafe.malloc(n * 2);
-            Unsafe.getUnsafe().copyMemory(buf, ptr, bufSize);
+            Vect.memcpy(buf, ptr, bufSize);
             if (bufCapacity > 0) {
                 Unsafe.free(buf, bufCapacity);
             }
@@ -277,7 +277,7 @@ public class TextMetadataParser implements JsonParser, Mutable, Closeable {
 
         @Override
         public char charAt(int index) {
-            return Unsafe.getUnsafe().getChar(buf + offset + index * 2);
+            return Unsafe.getUnsafe().getChar(buf + offset + index * 2L);
         }
 
         CharSequence of(int lo, int len) {

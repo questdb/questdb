@@ -34,7 +34,7 @@ public final class Rosti {
 
     public static long alloc(ColumnTypes types, long capacity) {
         final int columnCount = types.getColumnCount();
-        final long mem = Unsafe.malloc(Integer.BYTES * columnCount);
+        final long mem = Unsafe.malloc(4L * columnCount);
         try {
             long p = mem;
             for (int i = 0; i < columnCount; i++) {
@@ -46,7 +46,7 @@ public final class Rosti {
             Unsafe.recordMemAlloc(FAKE_ALLOC_SIZE);
             return alloc(mem, columnCount, Numbers.ceilPow2(capacity) - 1);
         } finally {
-            Unsafe.free(mem, Integer.BYTES * columnCount);
+            Unsafe.free(mem, 4L * columnCount);
         }
     }
 
@@ -205,10 +205,7 @@ public final class Rosti {
             byte b = Unsafe.getUnsafe().getByte(ctrl);
             if ((b & 0x80) == 0) {
                 long p = slots + ((ctrl - start) << shift);
-
-//                System.out.println("offset = " + (((ctrl - start) << shift)));
                 System.out.println(Unsafe.getUnsafe().getInt(p) + " -> " + Unsafe.getUnsafe().getDouble(p + 12));
-//                System.out.println(b + " at " + (ctrl-start));
                 count--;
             }
             ctrl++;
@@ -216,6 +213,6 @@ public final class Rosti {
     }
 
     public static long getInitialValueSlot(long pRosti, int columnIndex) {
-        return getInitialValuesSlot(pRosti) + Unsafe.getUnsafe().getInt(getValueOffsets(pRosti) + columnIndex * Integer.BYTES);
+        return getInitialValuesSlot(pRosti) + Unsafe.getUnsafe().getInt(getValueOffsets(pRosti) + columnIndex * 4L);
     }
 }

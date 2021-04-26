@@ -33,6 +33,7 @@ import io.questdb.network.IODispatcher;
 import io.questdb.network.NetworkFacade;
 import io.questdb.std.Mutable;
 import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.str.FloatingDirectCharSink;
@@ -116,7 +117,7 @@ class LineTcpConnectionContext implements IOContext, Mutable {
         if (recvBufNewStart > recvBufStart) {
             final int len = (int) (recvBufPos - recvBufNewStart);
             if (len > 0) {
-                Unsafe.getUnsafe().copyMemory(recvBufNewStart, recvBufStart, len);
+                Vect.memcpy(recvBufNewStart, recvBufStart, len);
             }
             recvBufPos = recvBufStart + len;
             return true;

@@ -316,7 +316,7 @@ final public class Dates {
 
         long aResidual = a - yearMillis(aYear, aLeap) - monthOfYearMillis(aMonth, aLeap);
         long bResidual = b - yearMillis(bYear, bLeap) - monthOfYearMillis(bMonth, bLeap);
-        long months = 12 * (bYear - aYear) + (bMonth - aMonth);
+        long months = 12L * (bYear - aYear) + (bMonth - aMonth);
 
         if (aResidual > bResidual) {
             return months - 1;

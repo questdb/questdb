@@ -378,10 +378,7 @@ public class LineProtoLexer implements Mutable, Closeable {
                 // can't realistically reach this in test :(
                 throw LineProtoException.INSTANCE;
             }
-            long buf = Unsafe.malloc(capacity);
-            Unsafe.getUnsafe().copyMemory(buffer, buf, (dstPos - buffer));
-            Unsafe.free(buffer, bufferHi - buffer);
-
+            long buf = Unsafe.realloc(buffer, bufferHi - buffer, capacity);
             long offset = dstTop - buffer;
             bufferHi = buf + capacity;
             buffer = buf;

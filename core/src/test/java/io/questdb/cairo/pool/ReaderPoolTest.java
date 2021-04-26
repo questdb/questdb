@@ -26,7 +26,6 @@ package io.questdb.cairo.pool;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.pool.ex.EntryLockedException;
-import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.pool.ex.PoolClosedException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -36,6 +35,7 @@ import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import java.util.concurrent.CountDownLatch;
@@ -262,7 +262,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
 
             sink.clear();
             try (TableReader r = new TableReader(configuration, names[i])) {
-                printer.print(r.getCursor(), r.getMetadata(), true);
+                printer.print(r.getCursor(), r.getMetadata(), true, sink);
             }
             expectedRows[i] = sink.toString();
             expectedRowMap.put(names[i], expectedRows[i]);
@@ -278,7 +278,6 @@ public class ReaderPoolTest extends AbstractCairoTest {
 
                     final ObjHashSet<TableReader> readers = new ObjHashSet<>();
                     final StringSink sink = new StringSink();
-                    final RecordCursorPrinter printer = new RecordCursorPrinter(sink);
 
                     @Override
                     public void run() {
@@ -312,9 +311,11 @@ public class ReaderPoolTest extends AbstractCairoTest {
                                 Assert.assertTrue(reader.isOpen());
 
                                 // read rows
-                                sink.clear();
-                                printer.print(reader.getCursor(), reader.getMetadata(), true);
-                                TestUtils.assertEquals(expectedRowMap.get(reader.getTableName()), sink);
+                                TestUtils.assertReader(
+                                        expectedRowMap.get(reader.getTableName()),
+                                        reader,
+                                        sink
+                                );
 
                                 Thread.yield();
 
@@ -528,10 +529,9 @@ public class ReaderPoolTest extends AbstractCairoTest {
     public void testLockBusyReader() throws Exception {
         final int readerCount = 5;
         int threadCount = 2;
-        final int iterations = 10000;
+        final int iterations = 1000;
         Rnd dataRnd = new Rnd();
         StringSink sink = new StringSink();
-        RecordCursorPrinter printer = new RecordCursorPrinter(sink);
 
 
         final String[] names = new String[readerCount];
@@ -554,7 +554,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
 
             sink.clear();
             try (TableReader r = new TableReader(configuration, names[i])) {
-                printer.print(r.getCursor(), r.getMetadata(), true);
+                printer.print(r.getCursor(), r.getMetadata(), true, sink);
             }
             expectedRows[i] = sink.toString();
         }
@@ -578,7 +578,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
                         while (true) {
                             if (pool.lock(name)) {
                                 lockTimes.add(System.currentTimeMillis());
-                                LockSupport.parkNanos(10L);
+                                LockSupport.parkNanos(1L);
                                 pool.unlock(name);
                                 break;
                             }
@@ -601,10 +601,11 @@ public class ReaderPoolTest extends AbstractCairoTest {
                         int index = rnd.nextPositiveInt() % readerCount;
                         String name = names[index];
                         try (TableReader r = pool.get(name)) {
-                            sink.clear();
-                            printer.print(r.getCursor(), r.getMetadata(), true);
-                            TestUtils.assertEquals(expectedRows[index], sink);
-
+                            TestUtils.assertReader(
+                                    expectedRows[index],
+                                    r,
+                                    sink
+                            );
                             if (name.equals(names[readerCount - 1]) && barrier.getNumberWaiting() > 0) {
                                 barrier.await();
                             }
@@ -652,22 +653,35 @@ public class ReaderPoolTest extends AbstractCairoTest {
     public void testLockMultipleReaders() throws Exception {
         assertWithPool(pool -> {
             ObjHashSet<TableReader> readers = new ObjHashSet<>();
-            for (int i = 0; i < 64; i++) {
-                Assert.assertTrue(readers.add(pool.get("u")));
-            }
-            Assert.assertEquals(64, pool.getBusyCount());
+            try {
+                for (int i = 0; i < 64; i++) {
+                    Assert.assertTrue(readers.add(pool.get("u")));
+                }
+                Assert.assertEquals(64, pool.getBusyCount());
 
-            for (int i = 0, n = readers.size(); i < n; i++) {
-                TableReader reader = readers.get(i);
-                Assert.assertTrue(reader.isOpen());
-                reader.close();
+                for (int i = 0, n = readers.size(); i < n; i++) {
+                    TableReader reader = readers.get(i);
+                    Assert.assertTrue(reader.isOpen());
+                    reader.close();
+                }
+
+                Assert.assertTrue(pool.lock("u"));
+                Assert.assertEquals(0, pool.getBusyCount());
+                for (int i = 0, n = readers.size(); i < n; i++) {
+                    Assert.assertFalse(readers.get(i).isOpen());
+                }
+                pool.unlock("u");
+            } finally {
+                // Release readers on failure
+                // In OSX the number of shared memory system wide can be quite small
+                // close readers to release shared memory
+                for (int i = 0, n = readers.size(); i < n; i++) {
+                    TableReader reader = readers.get(i);
+                    if(reader.isOpen()) {
+                        reader.close();
+                    }
+                }
             }
-            Assert.assertTrue(pool.lock("u"));
-            Assert.assertEquals(0, pool.getBusyCount());
-            for (int i = 0, n = readers.size(); i < n; i++) {
-                Assert.assertFalse(readers.get(i).isOpen());
-            }
-            pool.unlock("u");
         });
     }
 

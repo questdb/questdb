@@ -81,7 +81,7 @@ public class AuthDb {
     AuthDb(LineTcpReceiverConfiguration configuration) {
         int nLine = 0;
         String[] tokens = new String[4];
-        try (BufferedReader r = new BufferedReader(new InputStreamReader(new BufferedInputStream(new FileInputStream(new File(configuration.getAuthDbPath())))))) {
+        try (BufferedReader r = new BufferedReader(new InputStreamReader(new BufferedInputStream(new FileInputStream(configuration.getAuthDbPath()))))) {
             String line;
             do {
                 int nTokens = 0;

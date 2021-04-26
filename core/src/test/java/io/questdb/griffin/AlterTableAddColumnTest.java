@@ -89,9 +89,7 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
                         e.printStackTrace();
                         errorCounter.incrementAndGet();
                     } finally {
-                        engine.releaseAllReaders();
-                        engine.releaseAllWriters();
-
+                        engine.clear();
                         allHaltLatch.countDown();
                     }
                 }).start();
@@ -108,7 +106,7 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
                 TestUtils.assertContains(e.getFlyweightMessage(), "table 'x' could not be altered: [0]: table busy");
             }
 
-            allHaltLatch.await(2, TimeUnit.SECONDS);
+            Assert.assertTrue(allHaltLatch.await(2, TimeUnit.SECONDS));
         });
     }
 
@@ -341,8 +339,7 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
                 () -> {
                     createX();
 
-                    engine.releaseAllWriters();
-                    engine.releaseAllReaders();
+                    engine.clear();
 
                     // create default configuration with nocache
 
@@ -502,8 +499,7 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
                 () -> {
                     createX();
 
-                    engine.releaseAllWriters();
-                    engine.releaseAllReaders();
+                    engine.clear();
 
                     CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
                         @Override
@@ -541,8 +537,7 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
                 () -> {
                     createX();
 
-                    engine.releaseAllWriters();
-                    engine.releaseAllReaders();
+                    engine.clear();
 
                     CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
                         @Override

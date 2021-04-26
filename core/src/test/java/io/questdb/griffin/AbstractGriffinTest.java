@@ -35,27 +35,94 @@ import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
-import org.junit.After;
 import org.junit.AfterClass;
 import org.junit.Assert;
 import org.junit.BeforeClass;
 
 public class AbstractGriffinTest extends AbstractCairoTest {
-    protected static final BindVariableService bindVariableService = new BindVariableServiceImpl(configuration);
     private static final LongList rows = new LongList();
+    private final static double EPSILON = 0.000001;
+    protected static BindVariableService bindVariableService;
     protected static SqlExecutionContext sqlExecutionContext;
-    protected static CairoEngine engine;
     protected static SqlCompiler compiler;
     protected static Metrics metrics = Metrics.enabled();
 
-    private final static double EPSILON = 0.000001;
-
-    public static boolean doubleEquals(double a, double b){
-        return a == b || Math.abs(a - b) < EPSILON;
+    public static void assertReader(String expected, CharSequence tableName) {
+        try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+            TestUtils.assertReader(expected, reader, sink);
+        }
     }
 
-    public static boolean doubleEquals(double a, double b, double epsilon){
+    public static void assertVariableColumns(RecordCursorFactory factory, boolean checkSameStr) {
+        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+            RecordMetadata metadata = factory.getMetadata();
+            final int columnCount = metadata.getColumnCount();
+            final Record record = cursor.getRecord();
+            while (cursor.hasNext()) {
+                for (int i = 0; i < columnCount; i++) {
+                    switch (metadata.getColumnType(i)) {
+                        case ColumnType.STRING:
+                            CharSequence a = record.getStr(i);
+                            CharSequence b = record.getStrB(i);
+                            if (a == null) {
+                                Assert.assertNull(b);
+                                Assert.assertEquals(TableUtils.NULL_LEN, record.getStrLen(i));
+                            } else {
+                                if (checkSameStr) {
+                                    Assert.assertNotSame(a, b);
+                                }
+                                TestUtils.assertEquals(a, b);
+                                Assert.assertEquals(a.length(), record.getStrLen(i));
+                            }
+                            break;
+                        case ColumnType.BINARY:
+                            BinarySequence s = record.getBin(i);
+                            if (s == null) {
+                                Assert.assertEquals(TableUtils.NULL_LEN, record.getBinLen(i));
+                            } else {
+                                Assert.assertEquals(s.length(), record.getBinLen(i));
+                            }
+                            break;
+                        default:
+                            break;
+                    }
+                }
+            }
+        }
+    }
+
+    public static boolean doubleEquals(double a, double b) {
+        return doubleEquals(a, b, EPSILON);
+    }
+
+    public static boolean doubleEquals(double a, double b, double epsilon) {
         return a == b || Math.abs(a - b) < epsilon;
+    }
+
+    public static void executeInsert(String insertSql) throws SqlException {
+        TestUtils.insert(compiler, sqlExecutionContext, insertSql);
+    }
+
+    @BeforeClass
+    public static void setUpStatic() {
+        AbstractCairoTest.setUpStatic();
+        compiler = new SqlCompiler(engine);
+        bindVariableService = new BindVariableServiceImpl(configuration);
+        sqlExecutionContext = new SqlExecutionContextImpl(
+                engine, 1, engine.getMessageBus())
+                .with(
+                        AllowAllCairoSecurityContext.INSTANCE,
+                        bindVariableService,
+                        null,
+                        -1,
+                        null);
+        bindVariableService.clear();
+    }
+
+    @AfterClass
+    public static void tearDownStatic() {
+        AbstractCairoTest.tearDownStatic();
+        compiler.close();
     }
 
     protected static void assertQuery(
@@ -204,160 +271,6 @@ public class AbstractGriffinTest extends AbstractCairoTest {
         }
     }
 
-    public static void assertVariableColumns(RecordCursorFactory factory, boolean checkSameStr) {
-        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-            RecordMetadata metadata = factory.getMetadata();
-            final int columnCount = metadata.getColumnCount();
-            final Record record = cursor.getRecord();
-            while (cursor.hasNext()) {
-                for (int i = 0; i < columnCount; i++) {
-                    switch (metadata.getColumnType(i)) {
-                        case ColumnType.STRING:
-                            CharSequence a = record.getStr(i);
-                            CharSequence b = record.getStrB(i);
-                            if (a == null) {
-                                Assert.assertNull(b);
-                                Assert.assertEquals(TableUtils.NULL_LEN, record.getStrLen(i));
-                            } else {
-                                if (checkSameStr) {
-                                    Assert.assertNotSame(a, b);
-                                }
-                                TestUtils.assertEquals(a, b);
-                                Assert.assertEquals(a.length(), record.getStrLen(i));
-                            }
-                            break;
-                        case ColumnType.BINARY:
-                            BinarySequence s = record.getBin(i);
-                            if (s == null) {
-                                Assert.assertEquals(TableUtils.NULL_LEN, record.getBinLen(i));
-                            } else {
-                                Assert.assertEquals(s.length(), record.getBinLen(i));
-                            }
-                            break;
-                        default:
-                            break;
-                    }
-                }
-            }
-        }
-    }
-
-    public static void executeInsert(String ddl) throws SqlException {
-        CompiledQuery compiledQuery = compiler.compile(ddl, sqlExecutionContext);
-        final InsertStatement insertStatement = compiledQuery.getInsertStatement();
-        try (InsertMethod insertMethod = insertStatement.createMethod(sqlExecutionContext)) {
-            insertMethod.execute();
-            insertMethod.commit();
-        }
-    }
-
-    @BeforeClass
-    public static void setUp2() {
-        engine = new CairoEngine(configuration);
-        compiler = new SqlCompiler(engine);
-        sqlExecutionContext = new SqlExecutionContextImpl(
-                engine, 1)
-                .with(
-                        AllowAllCairoSecurityContext.INSTANCE,
-                        bindVariableService,
-                        null,
-                        -1,
-                        null);
-        bindVariableService.clear();
-    }
-
-    @AfterClass
-    public static void tearDown() {
-        engine.close();
-        compiler.close();
-    }
-
-    @After
-    public void tearDownAfterTest() {
-        engine.resetTableId();
-        engine.releaseAllReaders();
-        engine.releaseAllWriters();
-    }
-
-    protected void createPopulateTable(
-            TableModel tableModel,
-            int totalRows,
-            String startDate,
-            int partitionCount) throws NumericException, SqlException {
-        long fromTimestamp = TimestampFormatUtils.parseTimestamp(startDate + "T00:00:00.000Z");
-
-        long increment = 0;
-        if (tableModel.getPartitionBy() != PartitionBy.NONE) {
-            Timestamps.TimestampAddMethod partitionAdd = TableUtils.getPartitionAdd(tableModel.getPartitionBy());
-            long toTs = partitionAdd.calculate(fromTimestamp, partitionCount) - fromTimestamp - Timestamps.SECOND_MICROS;
-            increment = totalRows > 0 ? Math.max(toTs / totalRows, 1) : 0;
-        }
-
-        StringBuilder sql = new StringBuilder();
-        sql.append("create table ").append(tableModel.getName()).append(" as (").append(Misc.EOL).append("select").append(Misc.EOL);
-        for (int i = 0; i < tableModel.getColumnCount(); i++) {
-            int colType = tableModel.getColumnType(i);
-            CharSequence colName = tableModel.getColumnName(i);
-            switch (colType) {
-                case ColumnType.INT:
-                    sql.append("cast(x as int) ").append(colName);
-                    break;
-                case ColumnType.STRING:
-                    sql.append("CAST(x as STRING) ").append(colName);
-                    break;
-                case ColumnType.LONG:
-                    sql.append("x ").append(colName);
-                    break;
-                case ColumnType.DOUBLE:
-                    sql.append("x / 1000.0 ").append(colName);
-                    break;
-                case ColumnType.TIMESTAMP:
-                    sql.append("CAST(").append(fromTimestamp).append("L AS TIMESTAMP) + x * ").append(increment).append("  ").append(colName);
-                    break;
-                case ColumnType.SYMBOL:
-                    sql.append("rnd_symbol(4,4,4,2) ").append(colName);
-                    break;
-                case ColumnType.BOOLEAN:
-                    sql.append("rnd_boolean() ").append(colName);
-                    break;
-                case ColumnType.FLOAT:
-                    sql.append("CAST(x / 1000.0 AS FLOAT) ").append(colName);
-                    break;
-                case ColumnType.DATE:
-                    sql.append("CAST(").append(fromTimestamp).append("L AS DATE) ").append(colName);
-                    break;
-                case ColumnType.LONG256:
-                    sql.append("CAST(x AS LONG256) ").append(colName);
-                    break;
-                case ColumnType.BYTE:
-                    sql.append("CAST(x AS BYTE) ").append(colName);
-                    break;
-                case ColumnType.CHAR:
-                    sql.append("CAST(x AS CHAR) ").append(colName);
-                    break;
-                case ColumnType.SHORT:
-                    sql.append("CAST(x AS SHORT) ").append(colName);
-                    break;
-                default:
-                    throw new UnsupportedOperationException();
-            }
-            if (i < tableModel.getColumnCount() - 1) {
-                sql.append("," + Misc.EOL);
-            }
-        }
-
-        sql.append(Misc.EOL + "from long_sequence(").append(totalRows).append(")");
-        sql.append(")" + Misc.EOL);
-        if (tableModel.getTimestampIndex() != -1) {
-            CharSequence timestampCol = tableModel.getColumnName(tableModel.getTimestampIndex());
-            sql.append(" timestamp(").append(timestampCol).append(")");
-        }
-        if (tableModel.getPartitionBy() != PartitionBy.NONE) {
-            sql.append(" Partition By ").append(PartitionBy.toString(tableModel.getPartitionBy()));
-        }
-        compiler.compile(sql.toString(), sqlExecutionContext);
-    }
-
     protected static void assertCursor(
             CharSequence expected,
             RecordCursorFactory factory,
@@ -396,10 +309,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                 return;
             }
 
-            sink.clear();
-            printer.print(cursor, factory.getMetadata(), true);
-
-            TestUtils.assertEquals(expected, sink);
+            TestUtils.assertCursor(expected, cursor, factory.getMetadata(), true, sink);
 
             final RecordMetadata metadata = factory.getMetadata();
 
@@ -412,11 +322,11 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             Record record = cursor.getRecord();
             Assert.assertNotNull(record);
             sink.clear();
-            printer.printHeader(metadata);
+            printer.printHeader(metadata, sink);
             long count = 0;
             long cursorSize = cursor.size();
             while (cursor.hasNext()) {
-                printer.print(record, metadata);
+                printer.print(record, metadata, sink);
                 count++;
             }
 
@@ -440,10 +350,10 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                 }
 
                 final Record rec = cursor.getRecordB();
-                printer.printHeader(metadata);
+                printer.printHeader(metadata, sink);
                 for (int i = 0, n = rows.size(); i < n; i++) {
                     cursor.recordAt(rec, rows.getQuick(i));
-                    printer.print(rec, metadata);
+                    printer.print(rec, metadata, sink);
                 }
 
                 TestUtils.assertEquals(expected, sink);
@@ -451,10 +361,10 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                 sink.clear();
 
                 final Record factRec = cursor.getRecordB();
-                printer.printHeader(metadata);
+                printer.printHeader(metadata, sink);
                 for (int i = 0, n = rows.size(); i < n; i++) {
                     cursor.recordAt(factRec, rows.getQuick(i));
-                    printer.print(factRec, metadata);
+                    printer.print(factRec, metadata, sink);
                 }
 
                 TestUtils.assertEquals(expected, sink);
@@ -465,9 +375,9 @@ public class AbstractGriffinTest extends AbstractCairoTest {
 
                     cursor.toTop();
                     int target = rows.size() / 2;
-                    printer.printHeader(metadata);
+                    printer.printHeader(metadata, sink);
                     while (target-- > 0 && cursor.hasNext()) {
-                        printer.print(record, metadata);
+                        printer.print(record, metadata, sink);
                     }
 
                     // no obliterate record with absolute positioning
@@ -477,11 +387,10 @@ public class AbstractGriffinTest extends AbstractCairoTest {
 
                     // not continue normal fetch
                     while (cursor.hasNext()) {
-                        printer.print(record, metadata);
+                        printer.print(record, metadata, sink);
                     }
 
                     TestUtils.assertEquals(expected, sink);
-
                 }
             } else {
                 Assert.assertFalse(factory.recordCursorSupportsRandomAccess());
@@ -613,13 +522,21 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             CharSequence expected,
             CharSequence query,
             CharSequence expectedTimestamp,
-            CharSequence ddl2,
-            CharSequence expected2,
             boolean supportsRandomAccess,
-            boolean checkSameStr,
             boolean expectSize
     ) throws SqlException {
-        printSqlResult(expected, query, expectedTimestamp, ddl2, expected2, supportsRandomAccess, checkSameStr, expectSize, false, null);
+        printSqlResult(
+                expected,
+                query,
+                expectedTimestamp,
+                null,
+                null,
+                supportsRandomAccess,
+                true,
+                expectSize,
+                false,
+                null
+        );
     }
 
     protected static void printSqlResult(
@@ -671,11 +588,10 @@ public class AbstractGriffinTest extends AbstractCairoTest {
         }
     }
 
-    private static void assertQuery(
+    private static void assertQueryNoVerify(
             CharSequence expected,
             CharSequence query,
             @Nullable CharSequence ddl,
-            @Nullable CharSequence verify,
             @Nullable CharSequence expectedTimestamp,
             @Nullable CharSequence ddl2,
             @Nullable CharSequence expected2,
@@ -688,9 +604,6 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             if (ddl != null) {
                 compiler.compile(ddl, sqlExecutionContext);
             }
-            if (verify != null) {
-                printSqlResult(null, verify, expectedTimestamp, ddl2, expected2, supportsRandomAccess, checkSameStr, expectSize, sizeCanBeVariable, null);
-            }
             printSqlResult(expected, query, expectedTimestamp, ddl2, expected2, supportsRandomAccess, checkSameStr, expectSize, sizeCanBeVariable, null);
         });
     }
@@ -701,7 +614,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             CharSequence ddl,
             @Nullable CharSequence expectedTimestamp
     ) throws Exception {
-        assertQuery(expected, query, ddl, null, expectedTimestamp, null, null, true, true, false, false);
+        assertQueryNoVerify(expected, query, ddl, expectedTimestamp, null, null, true, true, false, false);
     }
 
     protected static void assertQuery(
@@ -711,7 +624,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             @Nullable CharSequence expectedTimestamp,
             boolean supportsRandomAccess
     ) throws Exception {
-        assertQuery(expected, query, ddl, null, expectedTimestamp, null, null, supportsRandomAccess, true, false, false);
+        assertQueryNoVerify(expected, query, ddl, expectedTimestamp, null, null, supportsRandomAccess, true, false, false);
     }
 
     protected static void assertQueryExpectSize(
@@ -719,7 +632,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             CharSequence query,
             CharSequence ddl
     ) throws Exception {
-        assertQuery(expected, query, ddl, null, null, null, null, true, true, true, false);
+        assertQueryNoVerify(expected, query, ddl, null, null, null, true, true, true, false);
     }
 
     protected static void assertQuery(
@@ -730,7 +643,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             boolean supportsRandomAccess,
             boolean checkSameStr
     ) throws Exception {
-        assertQuery(expected, query, ddl, null, expectedTimestamp, null, null, supportsRandomAccess, checkSameStr, false, false);
+        assertQueryNoVerify(expected, query, ddl, expectedTimestamp, null, null, supportsRandomAccess, checkSameStr, false, false);
     }
 
     protected static void assertQuery(
@@ -742,7 +655,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             boolean checkSameStr,
             boolean expectSize
     ) throws Exception {
-        assertQuery(expected, query, ddl, null, expectedTimestamp, null, null, supportsRandomAccess, checkSameStr, expectSize, false);
+        assertQueryNoVerify(expected, query, ddl, expectedTimestamp, null, null, supportsRandomAccess, checkSameStr, expectSize, false);
     }
 
     protected static void assertQuery(
@@ -753,7 +666,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             @Nullable CharSequence ddl2,
             @Nullable CharSequence expected2
     ) throws Exception {
-        assertQuery(expected, query, ddl, null, expectedTimestamp, ddl2, expected2, true, true, false, false);
+        assertQueryNoVerify(expected, query, ddl, expectedTimestamp, ddl2, expected2, true, true, false, false);
     }
 
     protected static void assertQuery(
@@ -765,7 +678,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             @Nullable CharSequence expected2,
             boolean supportsRandomAccess
     ) throws Exception {
-        assertQuery(expected, query, ddl, null, expectedTimestamp, ddl2, expected2, supportsRandomAccess, true, false, false);
+        assertQueryNoVerify(expected, query, ddl, expectedTimestamp, ddl2, expected2, supportsRandomAccess, true, false, false);
     }
 
     protected static void assertQuery(
@@ -779,7 +692,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             boolean checkSameStr,
             boolean expectSize
     ) throws Exception {
-        assertQuery(expected, query, ddl, null, expectedTimestamp, ddl2, expected2, supportsRandomAccess, checkSameStr, expectSize, false);
+        assertQueryNoVerify(expected, query, ddl, expectedTimestamp, ddl2, expected2, supportsRandomAccess, checkSameStr, expectSize, false);
     }
 
     protected static void assertQuery(
@@ -794,7 +707,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             boolean expectSize,
             boolean sizeCanBeVariable
     ) throws Exception {
-        assertQuery(expected, query, ddl, null, expectedTimestamp, ddl2, expected2, supportsRandomAccess, checkSameStr, expectSize, sizeCanBeVariable);
+        assertQueryNoVerify(expected, query, ddl, expectedTimestamp, ddl2, expected2, supportsRandomAccess, checkSameStr, expectSize, sizeCanBeVariable);
     }
 
     protected static void assertTimestamp(CharSequence expectedTimestamp, RecordCursorFactory factory) {
@@ -810,20 +723,6 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             Assert.assertEquals(index, factory.getMetadata().getTimestampIndex());
             assertTimestampColumnValues(factory, sqlExecutionContext);
         }
-    }
-
-    protected static void assertMemoryLeak(TestUtils.LeakProneCode code) throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try {
-                code.run();
-                engine.releaseInactive();
-                Assert.assertEquals(0, engine.getBusyWriterCount());
-                Assert.assertEquals(0, engine.getBusyReaderCount());
-            } finally {
-                engine.releaseAllReaders();
-                engine.releaseAllWriters();
-            }
-        });
     }
 
     void assertFactoryCursor(
@@ -877,8 +776,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                 Assert.assertEquals(0, engine.getBusyReaderCount());
                 Assert.assertEquals(0, engine.getBusyWriterCount());
             } finally {
-                engine.releaseAllWriters();
-                engine.releaseAllReaders();
+                engine.clear();
             }
         });
     }
@@ -977,5 +875,94 @@ public class AbstractGriffinTest extends AbstractCairoTest {
         try (final RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
             assertFactoryCursor(expected, null, factory, true, sqlExecutionContext, true, true);
         }
+    }
+
+    protected void assertSql(CharSequence sql, CharSequence expected) throws SqlException {
+        TestUtils.assertSql(
+                compiler,
+                sqlExecutionContext,
+                sql,
+                sink,
+                expected
+        );
+    }
+
+    protected void createPopulateTable(
+            TableModel tableModel,
+            int totalRows,
+            String startDate,
+            int partitionCount) throws NumericException, SqlException {
+        long fromTimestamp = TimestampFormatUtils.parseTimestamp(startDate + "T00:00:00.000Z");
+
+        long increment = 0;
+        if (tableModel.getPartitionBy() != PartitionBy.NONE) {
+            Timestamps.TimestampAddMethod partitionAdd = TableUtils.getPartitionAdd(tableModel.getPartitionBy());
+            long toTs = partitionAdd.calculate(fromTimestamp, partitionCount) - fromTimestamp - Timestamps.SECOND_MICROS;
+            increment = totalRows > 0 ? Math.max(toTs / totalRows, 1) : 0;
+        }
+
+        StringBuilder sql = new StringBuilder();
+        sql.append("create table ").append(tableModel.getName()).append(" as (").append(Misc.EOL).append("select").append(Misc.EOL);
+        for (int i = 0; i < tableModel.getColumnCount(); i++) {
+            int colType = tableModel.getColumnType(i);
+            CharSequence colName = tableModel.getColumnName(i);
+            switch (colType) {
+                case ColumnType.INT:
+                    sql.append("cast(x as int) ").append(colName);
+                    break;
+                case ColumnType.STRING:
+                    sql.append("CAST(x as STRING) ").append(colName);
+                    break;
+                case ColumnType.LONG:
+                    sql.append("x ").append(colName);
+                    break;
+                case ColumnType.DOUBLE:
+                    sql.append("x / 1000.0 ").append(colName);
+                    break;
+                case ColumnType.TIMESTAMP:
+                    sql.append("CAST(").append(fromTimestamp).append("L AS TIMESTAMP) + x * ").append(increment).append("  ").append(colName);
+                    break;
+                case ColumnType.SYMBOL:
+                    sql.append("rnd_symbol(4,4,4,2) ").append(colName);
+                    break;
+                case ColumnType.BOOLEAN:
+                    sql.append("rnd_boolean() ").append(colName);
+                    break;
+                case ColumnType.FLOAT:
+                    sql.append("CAST(x / 1000.0 AS FLOAT) ").append(colName);
+                    break;
+                case ColumnType.DATE:
+                    sql.append("CAST(").append(fromTimestamp).append("L AS DATE) ").append(colName);
+                    break;
+                case ColumnType.LONG256:
+                    sql.append("CAST(x AS LONG256) ").append(colName);
+                    break;
+                case ColumnType.BYTE:
+                    sql.append("CAST(x AS BYTE) ").append(colName);
+                    break;
+                case ColumnType.CHAR:
+                    sql.append("CAST(x AS CHAR) ").append(colName);
+                    break;
+                case ColumnType.SHORT:
+                    sql.append("CAST(x AS SHORT) ").append(colName);
+                    break;
+                default:
+                    throw new UnsupportedOperationException();
+            }
+            if (i < tableModel.getColumnCount() - 1) {
+                sql.append("," + Misc.EOL);
+            }
+        }
+
+        sql.append(Misc.EOL + "from long_sequence(").append(totalRows).append(")");
+        sql.append(")" + Misc.EOL);
+        if (tableModel.getTimestampIndex() != -1) {
+            CharSequence timestampCol = tableModel.getColumnName(tableModel.getTimestampIndex());
+            sql.append(" timestamp(").append(timestampCol).append(")");
+        }
+        if (tableModel.getPartitionBy() != PartitionBy.NONE) {
+            sql.append(" Partition By ").append(PartitionBy.toString(tableModel.getPartitionBy()));
+        }
+        compiler.compile(sql.toString(), sqlExecutionContext);
     }
 }

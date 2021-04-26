@@ -371,7 +371,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
                 .$(", len=").$(len)
                 .$(']').$();
 
-        Unsafe.getUnsafe().copyMemory(
+        Vect.memcpy(
                 recvBuffer + readOffsetBeforeParse,
                 recvBuffer,
                 len
@@ -1121,7 +1121,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
                     try {
                         rowCount = m.execute();
                         w = m.popWriter();
-                        pendingWriters.put(w.getName(), w);
+                        pendingWriters.put(w.getTableName(), w);
                     } catch (CairoException e) {
                         Misc.free(m);
                         throw e;

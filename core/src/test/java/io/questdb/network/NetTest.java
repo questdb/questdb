@@ -125,7 +125,7 @@ public class NetTest {
         long clientFd = Net.socketTcp(true);
         long sockAddr = Net.sockaddr("127.0.0.1", port);
         Assert.assertEquals(0, Net.connect(clientFd, sockAddr));
-        haltLatch.await(10, TimeUnit.SECONDS);
+        Assert.assertTrue(haltLatch.await(10, TimeUnit.SECONDS));
         Net.close(clientFd);
         Net.close(fd);
 
@@ -191,7 +191,7 @@ public class NetTest {
         ipCollectedLatch.await();
         Net.close(clientFd);
         Net.close(fd);
-        haltLatch.await(10, TimeUnit.SECONDS);
+        Assert.assertTrue(haltLatch.await(10, TimeUnit.SECONDS));
 
         TestUtils.assertEquals("127.0.0.1", sink);
         Assert.assertFalse(threadFailed.get());

@@ -1,5 +1,6 @@
 package io.questdb.cairo;
 
+import io.questdb.cairo.vm.SinglePageMappedReadOnlyPageMemory;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.str.Path;
@@ -24,8 +25,8 @@ public class ExtendedOnePageMemoryTest {
 
     @Test
     public void testFailOnInitialMap() throws IOException {
-        createFile(FILE_SIZE);
-        try (ExtendableOnePageMemory mem = new ExtendableOnePageMemory()) {
+        createFile();
+        try (SinglePageMappedReadOnlyPageMemory mem = new SinglePageMappedReadOnlyPageMemory()) {
             FILE_MAP_FAIL.set(true);
             try {
                 mem.of(ff, path, FILE_SIZE, FILE_SIZE);
@@ -38,8 +39,8 @@ public class ExtendedOnePageMemoryTest {
 
     @Test
     public void testFailOnGrow() throws IOException {
-        createFile(FILE_SIZE);
-        try (ExtendableOnePageMemory mem = new ExtendableOnePageMemory()) {
+        createFile();
+        try (SinglePageMappedReadOnlyPageMemory mem = new SinglePageMappedReadOnlyPageMemory()) {
             int sz = FILE_SIZE / 2;
             mem.of(ff, path, sz, sz);
             FILE_MAP_FAIL.set(true);
@@ -53,10 +54,10 @@ public class ExtendedOnePageMemoryTest {
         }
     }
 
-    private void createFile(int size) throws IOException {
+    private void createFile() throws IOException {
         File f = temp.newFile();
         try (FileOutputStream fos = new FileOutputStream(f)) {
-            for (int i = 0; i < size; i++) {
+            for (int i = 0; i < ExtendedOnePageMemoryTest.FILE_SIZE; i++) {
                 fos.write(0);
             }
         }
@@ -67,11 +68,11 @@ public class ExtendedOnePageMemoryTest {
     public static void beforeClass() {
         ff = new FilesFacadeImpl() {
             @Override
-            public long mmap(long fd, long len, long offset, int mode) {
+            public long mmap(long fd, long len, long offset, int flags) {
                 if (FILE_MAP_FAIL.compareAndSet(true, false)) {
                     return FilesFacade.MAP_FAILED;
                 }
-                return super.mmap(fd, len, offset, mode);
+                return super.mmap(fd, len, offset, flags);
             }
 
             @Override

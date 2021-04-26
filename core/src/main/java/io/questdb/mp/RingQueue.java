@@ -24,9 +24,12 @@
 
 package io.questdb.mp;
 
+import io.questdb.std.Misc;
 import io.questdb.std.ObjectFactory;
 
-public class RingQueue<T> {
+import java.io.Closeable;
+
+public class RingQueue<T> implements Closeable {
     private final int mask;
     private final T[] buf;
 
@@ -37,6 +40,13 @@ public class RingQueue<T> {
 
         for (int i = 0; i < cycle; i++) {
             buf[i] = factory.newInstance();
+        }
+    }
+
+    @Override
+    public void close() {
+        for (int i = 0, n = buf.length; i < n; i++) {
+            Misc.free(buf[i]);
         }
     }
 

@@ -35,8 +35,24 @@ public class BitmapIndexBwdReader extends AbstractIndexReader {
     public BitmapIndexBwdReader() {
     }
 
-    public BitmapIndexBwdReader(CairoConfiguration configuration, Path path, CharSequence name, long unIndexedNullCount) {
-        of(configuration, path, name, unIndexedNullCount);
+    public BitmapIndexBwdReader(
+            CairoConfiguration configuration,
+            Path path,
+            CharSequence name,
+            long unIndexedNullCount,
+            long partitionTxn
+    ) {
+        of(configuration, path, name, unIndexedNullCount, partitionTxn);
+    }
+
+    // test only
+    public BitmapIndexBwdReader(
+            CairoConfiguration configuration,
+            Path path,
+            CharSequence name,
+            long unIndexedNullCount
+    ) {
+        of(configuration, path, name, unIndexedNullCount, -1);
     }
 
     @Override

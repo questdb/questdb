@@ -56,7 +56,7 @@ public class AlterTableDropColumnTest extends AbstractGriffinTest {
 
     @Test
     public void testBusyTable() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             CountDownLatch allHaltLatch = new CountDownLatch(1);
             try {
                 createX();
@@ -76,9 +76,7 @@ public class AlterTableDropColumnTest extends AbstractGriffinTest {
                         e.printStackTrace();
                         errorCounter.incrementAndGet();
                     } finally {
-                        engine.releaseAllReaders();
-                        engine.releaseAllWriters();
-
+                        engine.clear();
                         allHaltLatch.countDown();
                     }
                 }).start();
@@ -95,10 +93,7 @@ public class AlterTableDropColumnTest extends AbstractGriffinTest {
                 TestUtils.assertContains(e.getFlyweightMessage(), "table 'x' could not be altered: [0]: table busy");
             }
 
-            engine.releaseAllReaders();
-            engine.releaseAllWriters();
-
-            allHaltLatch.await(2, TimeUnit.SECONDS);
+            Assert.assertTrue(allHaltLatch.await(2, TimeUnit.SECONDS));
         });
     }
 
@@ -132,8 +127,7 @@ public class AlterTableDropColumnTest extends AbstractGriffinTest {
                         Assert.assertEquals(0, engine.getBusyWriterCount());
                         Assert.assertEquals(0, engine.getBusyReaderCount());
                     } finally {
-                        engine.releaseAllReaders();
-                        engine.releaseAllWriters();
+                        engine.clear();
                     }
                 }
         );
@@ -179,9 +173,7 @@ public class AlterTableDropColumnTest extends AbstractGriffinTest {
                 Assert.assertEquals(position, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), message);
             }
-
-            engine.releaseAllReaders();
-            engine.releaseAllWriters();
+            engine.clear();
         });
     }
 

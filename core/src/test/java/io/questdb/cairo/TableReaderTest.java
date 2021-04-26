@@ -1731,7 +1731,7 @@ public class TableReaderTest extends AbstractCairoTest {
 
             try (TableReader r = new TableReader(configuration, "x")) {
                 sink.clear();
-                printer.print(r.getCursor(), r.getMetadata(), true);
+                printer.print(r.getCursor(), r.getMetadata(), true, sink);
             }
 
             TestUtils.assertEquals("a\n" +
@@ -1766,7 +1766,7 @@ public class TableReaderTest extends AbstractCairoTest {
 
             try (TableReader r = new TableReader(configuration, "all")) {
                 sink.clear();
-                printer.print(r.getCursor(), r.getMetadata(), true);
+                printer.print(r.getCursor(), r.getMetadata(), true, sink);
                 TestUtils.assertEquals(expected, sink);
             }
         });
@@ -2373,9 +2373,9 @@ public class TableReaderTest extends AbstractCairoTest {
 
             FilesFacade ff = new FilesFacadeImpl() {
                 @Override
-                public boolean rmdir(Path name) {
+                public int rmdir(Path name) {
                     if (Chars.endsWith(name, "2017-12-14" + Files.SEPARATOR)) {
-                        return false;
+                        return 1;
                     }
                     return super.rmdir(name);
                 }
@@ -3605,7 +3605,6 @@ public class TableReaderTest extends AbstractCairoTest {
                     Assert.assertFalse(reader.reload());
                     // reader can see all the rows ? Meaning none?
                     assertCursor(reader.getCursor(), ts, increment, blob, 0, null);
-
                 }
 
                 try (TableReader reader = new TableReader(configuration, "all")) {

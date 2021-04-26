@@ -82,6 +82,15 @@ public:
         Vec8i(z0).store(p);
         Vec8i(z1).store((int32_t*)p+8);
     }
+    // Member function to store into array (unaligned) with non-temporal memory hint
+    void store_nt(void * p) const {
+        Vec8i(z0).store_nt(p);
+        Vec8i(z1).store_nt((int32_t*)p+8);
+    }
+    // Required alignment for store_nt call in bytes
+    static constexpr int store_nt_alignment() {
+        return Vec8i::store_nt_alignment();
+    }
     // Member function to store into array, aligned by 64
     void store_a(void * p) const {
         Vec8i(z0).store_a(p);

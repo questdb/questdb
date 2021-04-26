@@ -26,6 +26,7 @@ package io.questdb.cutlass.line.udp;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.vm.AppendOnlyVirtualMemory;
 import io.questdb.cutlass.line.*;
 import io.questdb.cutlass.line.CairoLineProtoParserSupport.BadCastException;
 import io.questdb.log.Log;
@@ -56,7 +57,7 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
     private final LongList columnNameType = new LongList();
     private final LongList columnIndexAndType = new LongList();
     private final LongList columnValues = new LongList();
-    private final AppendMemory appendMemory = new AppendMemory();
+    private final AppendOnlyVirtualMemory appendMemory = new AppendOnlyVirtualMemory();
     private final MicrosecondClock clock;
     private final FieldNameParser MY_NEW_FIELD_NAME = this::parseFieldNameNewTable;
     private final FieldValueParser MY_NEW_TAG_VALUE = this::parseTagValueNewTable;
@@ -373,7 +374,7 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
                 columnIndexAndType.add(Numbers.encodeLowHighInts(columnIndex, columnType));
                 columnValues.add(value.getCacheAddress());
             } else {
-                LOG.error().$("mismatched column and value types [table=").$(writer.getName())
+                LOG.error().$("mismatched column and value types [table=").$(writer.getTableName())
                         .$(", column=").$(metadata.getColumnName(columnIndex))
                         .$(", columnType=").$(ColumnType.nameOf(columnType))
                         .$(", valueType=").$(ColumnType.nameOf(valueType))
@@ -388,7 +389,7 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
                 columnIndexAndType.add(Numbers.encodeLowHighInts(columnCount++, valueType));
                 columnValues.add(value.getCacheAddress());
             } else {
-                LOG.error().$("invalid column name [table=").$(writer.getName())
+                LOG.error().$("invalid column name [table=").$(writer.getTableName())
                         .$(", columnName=").$(colNameAsChars)
                         .$(']').$();
                 switchModeToSkipLine();
@@ -429,7 +430,7 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
             // add previous writer to commit list
             CacheEntry e = writerCache.valueAtQuick(cacheEntryIndex);
             if (e.writer != null) {
-                commitList.put(e.writer.getName(), e.writer);
+                commitList.put(e.writer.getTableName(), e.writer);
             }
         }
 

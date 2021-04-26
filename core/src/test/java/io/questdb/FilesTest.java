@@ -56,7 +56,7 @@ public class FilesTest {
         touch(new File(r, "d/1.txt"));
         touch(new File(r, "a/b/2.txt"));
         try (Path path = new Path().of(r.getAbsolutePath()).$()) {
-            Assert.assertTrue(Files.rmdir(path));
+            Assert.assertEquals(0, Files.rmdir(path));
             Assert.assertFalse(r.exists());
         }
     }

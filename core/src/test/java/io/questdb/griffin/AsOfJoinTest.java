@@ -231,7 +231,7 @@ public class AsOfJoinTest extends AbstractGriffinTest {
                     "B\t1\t1970-01-01T00:00:00.030000Z\n" +
                     "B\t2\t1970-01-01T00:00:00.040000Z\n" +
                     "B\t3\t1970-01-01T00:00:00.050000Z\n";
-            printSqlResult(ex, "tabY", "ts", null, null, true, true, true);
+            printSqlResult(ex, "tabY", "ts", true, true);
             ex = "tag\tx\tts\n" +
                     "B\t1\t1970-01-01T00:00:00.010000Z\n" +
                     "B\t2\t1970-01-01T00:00:00.020000Z\n" +
@@ -239,7 +239,7 @@ public class AsOfJoinTest extends AbstractGriffinTest {
                     "A\t3\t1970-01-01T00:00:00.030000Z\n" +
                     "A\t6\t1970-01-01T00:00:00.040000Z\n" +
                     "A\t7\t1970-01-01T00:00:00.050000Z\n";
-            printSqlResult(ex, "tabZ", "ts", null, null, true, true, true);
+            printSqlResult(ex, "tabZ", "ts", true, true);
             // test
             ex = "tag\thi\tlo\n" +
                     "A\t1\tNaN\n" +
@@ -249,7 +249,7 @@ public class AsOfJoinTest extends AbstractGriffinTest {
                     "B\t2\t3\n" +
                     "B\t3\t3\n";
             String query = "select a.tag, a.x hi, b.x lo from tabY a lt join tabZ b on (tag) ";
-            printSqlResult(ex, query, null, null, null, false, true, true);
+            printSqlResult(ex, query, null, false, true);
         });
     }
 
@@ -454,7 +454,7 @@ public class AsOfJoinTest extends AbstractGriffinTest {
                     "B\t1\t1970-01-01T00:00:00.030000Z\n" +
                     "B\t2\t1970-01-01T00:00:00.040000Z\n" +
                     "B\t3\t1970-01-01T00:00:00.050000Z\n";
-            printSqlResult(ex, "tabY", "ts", null, null, true, true, true);
+            printSqlResult(ex, "tabY", "ts", true, true);
             // test
             ex = "tag\thi\tlo\n" +
                     "A\t1\tNaN\n" +
@@ -464,7 +464,7 @@ public class AsOfJoinTest extends AbstractGriffinTest {
                     "B\t2\t1\n" +
                     "B\t3\t2\n";
             String query = "select a.tag, a.x hi, b.x lo from tabY a lt join tabY b on (tag) ";
-            printSqlResult(ex, query, null, null, null, false, true, true);
+            printSqlResult(ex, query, null, false, true);
         });
     }
 
@@ -487,7 +487,7 @@ public class AsOfJoinTest extends AbstractGriffinTest {
                     "B\t1\t1970-01-01T00:00:00.040000Z\n" +
                     "B\t2\t1970-01-01T00:00:00.050000Z\n" +
                     "B\t3\t1970-01-01T00:00:00.060000Z\n";
-            printSqlResult(ex, "tabY", "ts", null, null, true, true, true);
+            printSqlResult(ex, "tabY", "ts", true, true);
             // test
             ex = "tag\thi\tlo\n" +
                     "A\t1\tNaN\n" +
@@ -497,7 +497,7 @@ public class AsOfJoinTest extends AbstractGriffinTest {
                     "B\t2\t1\n" +
                     "B\t3\t2\n";
             String query = "select a.tag, a.x hi, b.x lo from tabY a lt join tabY b on (tag) ";
-            printSqlResult(ex, query, null, null, null, false, true, true);
+            printSqlResult(ex, query, null, false, true);
         });
     }
 
@@ -541,12 +541,12 @@ public class AsOfJoinTest extends AbstractGriffinTest {
                     "CC\t24\t1970-01-01T00:00:00.210000Z\n" +
                     "CC\t25\t1970-01-01T00:00:00.220000Z\n";
             String query = "tab";
-            printSqlResult(ex, query, "ts", null, null, true, true, true);
+            printSqlResult(ex, query, "ts", true, true);
             // test
             ex = "tag\thi\tlo\n" +
                     "CC\t24\t20\n";
             query = "select a.tag, a.x hi, b.x lo from tab a lt join tab b where a.x > b.x + 1";
-            printSqlResult(ex, query, null, null, null, false, true, false);
+            printSqlResult(ex, query, null, false, false);
         });
     }
 
@@ -590,7 +590,7 @@ public class AsOfJoinTest extends AbstractGriffinTest {
                     "CC\t24\t1970-01-01T00:00:00.210000Z\n" +
                     "CC\t25\t1970-01-01T00:00:00.220000Z\n";
             String query = "tab";
-            printSqlResult(ex, query, "ts", null, null, true, true, true);
+            printSqlResult(ex, query, "ts", true, true);
             // test
             ex = "tag\thi\tlo\n" +
                     "AA\t7\t2\n" +
@@ -601,7 +601,7 @@ public class AsOfJoinTest extends AbstractGriffinTest {
                     "BB\t18\t15\n" +
                     "AA\t20\t17\n";
             query = "select a.tag, a.x hi, b.x lo from tab a lt join tab b on (tag)  where a.x > b.x + 1";
-            printSqlResult(ex, query, null, null, null, false, true, false);
+            printSqlResult(ex, query, null, false, false);
         });
     }
 }

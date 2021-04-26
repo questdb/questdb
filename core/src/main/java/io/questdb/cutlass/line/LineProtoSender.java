@@ -32,6 +32,7 @@ import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.Chars;
 import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 import io.questdb.std.str.AbstractCharSink;
 import io.questdb.std.str.CharSink;
 
@@ -288,7 +289,7 @@ public class LineProtoSender extends AbstractCharSink implements Closeable {
             ptr = lineStart = lo;
         } else if (len < capacity) {
             long target = lo == bufA ? bufB : bufA;
-            Unsafe.getUnsafe().copyMemory(lineStart, target, len);
+            Vect.memcpy(lineStart, target, len);
             send();
             lineStart = lo = target;
             ptr = target + len;
