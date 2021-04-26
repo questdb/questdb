@@ -175,8 +175,13 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
-    public long mmap(long fd, long len, long offset, int mode) {
-        return Files.mmap(fd, len, offset, mode);
+    public long mmap(long fd, long len, long offset, int flags) {
+        return Files.mmap(fd, len, offset, flags);
+    }
+
+    @Override
+    public long mmap(long fd, long len, long flags, int mode, long baseAddress) {
+        return Files.mmap(fd, len, flags, mode);
     }
 
     @Override
@@ -220,7 +225,7 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
-    public boolean rmdir(Path name) {
+    public int rmdir(Path name) {
         return Files.rmdir(name);
     }
 
@@ -236,7 +241,10 @@ public class FilesFacadeImpl implements FilesFacade {
 
     @Override
     public boolean allocate(long fd, long size) {
-        return Files.allocate(fd, size);
+        if (Os.type != Os.WINDOWS) {
+            return Files.allocate(fd, size);
+        }
+        return true;
     }
 
     @Override

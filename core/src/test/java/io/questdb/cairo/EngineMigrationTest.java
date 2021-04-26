@@ -24,8 +24,7 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.vm.PagedMappedReadWriteMemory;
 import io.questdb.griffin.AbstractGriffinTest;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
@@ -414,13 +413,12 @@ public class EngineMigrationTest extends AbstractGriffinTest {
     }
 
     private void downgradeTxFile(TableModel src, LongList removedPartitions) {
-        engine.releaseAllReaders();
-        engine.releaseAllWriters();
+        engine.clear();
 
         try (Path path = new Path()) {
             path.concat(root).concat(src.getName()).concat(TableUtils.META_FILE_NAME);
             FilesFacade ff = configuration.getFilesFacade();
-            try (ReadWriteMemory rwTx = new ReadWriteMemory(ff, path.$(), ff.getPageSize())) {
+            try (PagedMappedReadWriteMemory rwTx = new PagedMappedReadWriteMemory(ff, path.$(), ff.getPageSize())) {
                 if (rwTx.getInt(META_OFFSET_VERSION) >= VERSION_TX_STRUCT_UPDATE_1 - 1) {
                     rwTx.putInt(META_OFFSET_VERSION, VERSION_TX_STRUCT_UPDATE_1 - 1);
                 }
@@ -430,12 +428,10 @@ public class EngineMigrationTest extends AbstractGriffinTest {
             IntList symbolCounts = new IntList();
             path.trimTo(0).concat(root).concat(src.getName());
             LongList attachedPartitions = new LongList();
-            try (TxReader txFile = new TxReader(ff, path.$())) {
-                txFile.initPartitionBy(src.getPartitionBy());
-                txFile.open();
+            try (TxReader txFile = new TxReader(ff, path.$(), src.getPartitionBy())) {
                 txFile.readUnchecked();
 
-                for (int i = 0; i < txFile.getPartitionsCount() - 1; i++) {
+                for (int i = 0; i < txFile.getPartitionCount() - 1; i++) {
                     attachedPartitions.add(txFile.getPartitionTimestamp(i));
                     attachedPartitions.add(txFile.getPartitionSize(i));
                 }
@@ -443,7 +439,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
             }
 
             path.trimTo(0).concat(root).concat(src.getName()).concat(TXN_FILE_NAME);
-            try (ReadWriteMemory rwTx = new ReadWriteMemory(ff, path.$(), ff.getPageSize())) {
+            try (PagedMappedReadWriteMemory rwTx = new PagedMappedReadWriteMemory(ff, path.$(), ff.getPageSize())) {
                 rwTx.putInt(TX_STRUCT_UPDATE_1_OFFSET_MAP_WRITER_COUNT, symbolCounts.size());
                 rwTx.jumpTo(TX_STRUCT_UPDATE_1_OFFSET_MAP_WRITER_COUNT + 4);
 
@@ -476,7 +472,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
                     if (ff.exists(path.$())) {
                         ff.remove(path);
                     }
-                    try (ReadWriteMemory rwAr = new ReadWriteMemory(ff, path.$(), 8)) {
+                    try (PagedMappedReadWriteMemory rwAr = new PagedMappedReadWriteMemory(ff, path.$(), 8)) {
                         rwAr.putLong(partitionSize);
                     }
                 }
@@ -490,13 +486,12 @@ public class EngineMigrationTest extends AbstractGriffinTest {
     }
 
     private CharSequence executeSql(String sql) throws SqlException {
-        try (RecordCursorFactory rcf = compiler.compile(sql
-                , sqlExecutionContext).getRecordCursorFactory()) {
-            try (RecordCursor cursor = rcf.getCursor(sqlExecutionContext)) {
-                sink.clear();
-                printer.print(cursor, rcf.getMetadata(), true);
-                return sink;
-            }
-        }
+        TestUtils.printSql(
+                compiler,
+                sqlExecutionContext,
+                sql,
+                sink
+        );
+        return sink;
     }
 }

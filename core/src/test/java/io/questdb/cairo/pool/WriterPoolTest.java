@@ -24,9 +24,9 @@
 
 package io.questdb.cairo.pool;
 
+import io.questdb.MessageBusImpl;
 import io.questdb.cairo.*;
 import io.questdb.cairo.pool.ex.EntryLockedException;
-import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.pool.ex.PoolClosedException;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
@@ -65,7 +65,7 @@ public class WriterPoolTest extends AbstractCairoTest {
             final AtomicInteger writerCount = new AtomicInteger();
             new Thread(() -> {
                 try {
-                    for (int i = 0; i < 10000; i++) {
+                    for (int i = 0; i < 1000; i++) {
                         try (TableWriter ignored = pool.get("z")) {
                             writerCount.incrementAndGet();
                         } catch (EntryUnavailableException ignored) {
@@ -89,7 +89,7 @@ public class WriterPoolTest extends AbstractCairoTest {
                 try {
                     barrier.await();
 
-                    for (int i = 0; i < 10000; i++) {
+                    for (int i = 0; i < 1000; i++) {
                         pool.releaseInactive();
                         LockSupport.parkNanos(1L);
                     }
@@ -453,7 +453,7 @@ public class WriterPoolTest extends AbstractCairoTest {
 
             Assert.assertTrue(pool.lock("x"));
 
-            TableWriter writer = new TableWriter(configuration, "x", null, false, DefaultLifecycleManager.INSTANCE);
+            TableWriter writer = new TableWriter(configuration, "x", messageBus, false, DefaultLifecycleManager.INSTANCE);
             for (int i = 0; i < 100; i++) {
                 TableWriter.Row row = writer.newRow();
                 row.putDate(0, i);
@@ -461,7 +461,7 @@ public class WriterPoolTest extends AbstractCairoTest {
             }
             writer.commit();
 
-            pool.unlock("x", writer);
+            pool.unlock("x", writer, false);
 
             // make sure our writer stays in pool and close() doesn't destroy it
             Assert.assertSame(writer, pool.get("x"));
@@ -538,6 +538,7 @@ public class WriterPoolTest extends AbstractCairoTest {
                     new Thread(() -> {
                         try {
                             barrier.await();
+                            //------------- thread 1
                             try (TableWriter w = pool.get("z")) {
                                 writerCount.incrementAndGet();
                                 populate(w);
@@ -744,15 +745,7 @@ public class WriterPoolTest extends AbstractCairoTest {
             } catch (CairoException ignore) {
             }
 
-            // writer has to fail again if called before
-            // release() invocation
-            try {
-                pool.get("z");
-                Assert.fail();
-            } catch (CairoException ignore) {
-            }
-
-            Assert.assertEquals(0, pool.size());
+            Assert.assertEquals(1, pool.size());
             Assert.assertEquals(0, pool.getBusyCount());
 
             pool.releaseInactive();
@@ -770,7 +763,7 @@ public class WriterPoolTest extends AbstractCairoTest {
 
     private void assertWithPool(PoolAwareCode code, CairoConfiguration configuration) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (WriterPool pool = new WriterPool(configuration, null)) {
+            try (WriterPool pool = new WriterPool(configuration, new MessageBusImpl(configuration))) {
                 code.run(pool);
             }
         });

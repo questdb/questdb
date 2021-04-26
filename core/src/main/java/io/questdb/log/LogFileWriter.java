@@ -132,7 +132,7 @@ public class LogFileWriter extends SynchronizedJob implements Closeable, LogWrit
                 flush();
             }
 
-            Unsafe.getUnsafe().copyMemory(sink.getAddress(), _wptr, l);
+            Vect.memcpy(sink.getAddress(), _wptr, l);
             _wptr += l;
         }
     }

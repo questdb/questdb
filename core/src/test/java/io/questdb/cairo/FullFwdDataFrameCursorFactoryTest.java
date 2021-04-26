@@ -29,14 +29,13 @@ import io.questdb.cairo.sql.DataFrame;
 import io.questdb.cairo.sql.DataFrameCursor;
 import io.questdb.cairo.sql.ReaderOutOfDateException;
 import io.questdb.std.Rnd;
-import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
 public class FullFwdDataFrameCursorFactoryTest extends AbstractCairoTest {
     @Test
     public void testFactory() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             final int N = 100;
             // separate two symbol columns with primitive. It will make problems apparent if index does not shift correctly
             try (TableModel model = new TableModel(configuration, "x", PartitionBy.DAY).
@@ -72,27 +71,25 @@ public class FullFwdDataFrameCursorFactoryTest extends AbstractCairoTest {
                 writer.commit();
             }
 
-            try (CairoEngine engine = new CairoEngine(configuration)) {
-                FullFwdDataFrameCursorFactory factory = new FullFwdDataFrameCursorFactory(engine, "x", 0);
-                long count = 0;
-                try (DataFrameCursor cursor = factory.getCursor(AllowAllSqlSecurityContext.INSTANCE)) {
-                    DataFrame frame;
-                    while ((frame = cursor.next()) != null) {
-                        count += frame.getRowHi() - frame.getRowLo();
-                    }
+            FullFwdDataFrameCursorFactory factory = new FullFwdDataFrameCursorFactory(engine, "x", 0);
+            long count = 0;
+            try (DataFrameCursor cursor = factory.getCursor(AllowAllSqlSecurityContext.INSTANCE)) {
+                DataFrame frame;
+                while ((frame = cursor.next()) != null) {
+                    count += frame.getRowHi() - frame.getRowLo();
                 }
-                Assert.assertEquals(0, engine.getBusyReaderCount());
-                Assert.assertEquals(M, count);
+            }
+            Assert.assertEquals(0, engine.getBusyReaderCount());
+            Assert.assertEquals(M, count);
 
-                try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "x")) {
-                    writer.removeColumn("b");
-                }
+            try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "x")) {
+                writer.removeColumn("b");
+            }
 
-                try {
-                    factory.getCursor(AllowAllSqlSecurityContext.INSTANCE);
-                    Assert.fail();
-                } catch (ReaderOutOfDateException ignored) {
-                }
+            try {
+                factory.getCursor(AllowAllSqlSecurityContext.INSTANCE);
+                Assert.fail();
+            } catch (ReaderOutOfDateException ignored) {
             }
         });
     }

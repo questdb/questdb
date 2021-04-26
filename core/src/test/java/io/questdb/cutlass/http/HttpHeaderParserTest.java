@@ -488,6 +488,6 @@ public class HttpHeaderParserTest {
         TestUtils.assertEquals("1", hp.getUrlParam("x"));
         TestUtils.assertEquals("&b", hp.getUrlParam("a"));
         Assert.assertNull(hp.getUrlParam("c"));
-        Assert.assertNull(hp.getHeader("xxx"));
+        Assert.assertNull(hp.getHeader("merge_copy_var_column"));
     }
 }

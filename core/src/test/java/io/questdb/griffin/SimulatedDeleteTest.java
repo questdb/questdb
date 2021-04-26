@@ -26,9 +26,7 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.sql.InsertMethod;
 import io.questdb.cairo.sql.InsertStatement;
-import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.test.tools.TestUtils;
-import org.junit.Assert;
 import org.junit.Test;
 
 public class SimulatedDeleteTest extends AbstractGriffinTest {
@@ -42,15 +40,31 @@ public class SimulatedDeleteTest extends AbstractGriffinTest {
             execInsert(compiler.compile("insert into balances (cust_id, balance_ccy, balance, timestamp) values (2, 'EUR', 880.20, 6000000004);", sqlExecutionContext).getInsertStatement());
             execInsert(compiler.compile("insert into balances (cust_id, balance_ccy, inactive, timestamp) values (1, 'USD', true, 6000000006));", sqlExecutionContext).getInsertStatement());
 
-            CompiledQuery cc = compiler.compile("(select * from balances latest by balance_ccy where cust_id=1) where not inactive;", sqlExecutionContext);
-            Assert.assertNotNull(cc.getRecordCursorFactory());
+            assertSql(
+                    "(select * from balances latest by balance_ccy where cust_id=1) where not inactive;",
+                    "cust_id\tbalance_ccy\tbalance\tinactive\ttimestamp\n" +
+                            "1\tEUR\t650.5\tfalse\t1970-01-01T01:40:00.000002Z\n"
+            );
+        });
+    }
 
-            try (RecordCursorFactory factory = cc.getRecordCursorFactory()) {
-                sink.clear();
-                printer.print(factory.getCursor(sqlExecutionContext), factory.getMetadata(), true);
-                TestUtils.assertEquals("cust_id\tbalance_ccy\tbalance\tinactive\ttimestamp\n" +
-                        "1\tEUR\t650.5\tfalse\t1970-01-01T01:40:00.000002Z\n", sink);
-            }
+    @Test
+    public void testNotSelectDeletedByLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table state_table(time timestamp, id int, state symbol);", sqlExecutionContext);
+            execInsert(compiler.compile("insert into state_table values(systimestamp(), 12345, 'OFF');", sqlExecutionContext).getInsertStatement());
+            execInsert(compiler.compile("insert into state_table values(systimestamp(), 12345, 'OFF');", sqlExecutionContext).getInsertStatement());
+            execInsert(compiler.compile("insert into state_table values(systimestamp(), 12345, 'OFF');", sqlExecutionContext).getInsertStatement());
+            execInsert(compiler.compile("insert into state_table values(systimestamp(), 12345, 'OFF');", sqlExecutionContext).getInsertStatement());
+            execInsert(compiler.compile("insert into state_table values(systimestamp(), 12345, 'ON');", sqlExecutionContext).getInsertStatement());
+            TestUtils.assertSql(
+                    compiler,
+                    sqlExecutionContext,
+                    "(select state from state_table latest by state limit -1) where state != 'ON';",
+                    sink,
+                    "state\n"
+            );
+
         });
     }
 

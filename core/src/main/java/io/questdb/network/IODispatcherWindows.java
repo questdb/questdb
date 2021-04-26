@@ -26,6 +26,7 @@ package io.questdb.network;
 
 import io.questdb.std.LongIntHashMap;
 import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 
 public class IODispatcherWindows<C extends IOContext> extends AbstractIODispatcher<C> {
     private static final int M_OPERATION = 2;
@@ -234,7 +235,7 @@ public class IODispatcherWindows<C extends IOContext> extends AbstractIODispatch
             int sz = size * 2;
             int l = SelectAccessor.ARRAY_OFFSET + 8 * sz;
             long _addr = Unsafe.malloc(l);
-            Unsafe.getUnsafe().copyMemory(address, _addr, lim - address);
+            Vect.memcpy(address, _addr, lim - address);
             Unsafe.free(address, lim - address);
             lim = _addr + l;
             size = sz;

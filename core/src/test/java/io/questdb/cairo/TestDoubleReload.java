@@ -51,12 +51,6 @@ public class TestDoubleReload extends AbstractCairoTest {
             w.commit();
             reader.reload();
 
-//            RecordCursor cursor = reader.getCursor();
-//            Record record = cursor.getRecord();
-//            while (cursor.hasNext()) {
-//                System.out.println(record.getInt(0));
-//            }
-
             r = w.newRow();
             r.putInt(0, 10);
             r.append();

@@ -1911,7 +1911,7 @@ public class JoinTest extends AbstractGriffinTest {
             try {
                 Assert.assertNotNull(factory);
                 sink.clear();
-                printer.printHeader(factory.getMetadata());
+                printer.printHeader(factory.getMetadata(), sink);
                 TestUtils.assertEquals("x\tx1\tx2\n", sink);
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     Assert.assertEquals(Long.MAX_VALUE, cursor.size());

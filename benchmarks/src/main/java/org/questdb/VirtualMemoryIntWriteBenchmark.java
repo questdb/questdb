@@ -24,8 +24,8 @@
 
 package org.questdb;
 
-import io.questdb.cairo.ContiguousVirtualMemory;
-import io.questdb.cairo.VirtualMemory;
+import io.questdb.cairo.vm.ContiguousVirtualMemory;
+import io.questdb.cairo.vm.PagedVirtualMemory;
 import org.openjdk.jmh.annotations.*;
 import org.openjdk.jmh.runner.Runner;
 import org.openjdk.jmh.runner.RunnerException;
@@ -38,7 +38,7 @@ import java.util.concurrent.TimeUnit;
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.NANOSECONDS)
 public class VirtualMemoryIntWriteBenchmark {
-    private static final VirtualMemory mem1 = new VirtualMemory(1024 * 1024, Integer.MAX_VALUE);
+    private static final PagedVirtualMemory mem1 = new PagedVirtualMemory(1024 * 1024, Integer.MAX_VALUE);
     private static final ContiguousVirtualMemory mem3 = new ContiguousVirtualMemory(1024 * 1024, Integer.MAX_VALUE);
 
     public static void main(String[] args) throws RunnerException {

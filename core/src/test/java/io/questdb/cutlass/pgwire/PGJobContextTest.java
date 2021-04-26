@@ -1047,7 +1047,7 @@ nodejs code:
 
     @Test
     public void testInsertTableDoesNotExistPrepared() throws Exception {
-        testInsertTableDoesNotExist(false, "Cannot append. File does not exist");
+        testInsertTableDoesNotExist(false, "could not open read-write");
     }
 
     @Test
@@ -1207,7 +1207,7 @@ nodejs code:
                 }
                 connection.setAutoCommit(false);
                 try (PreparedStatement batchInsert = connection.prepareStatement("insert into test_large_batch(id,val,ts) values(?,?,?)")) {
-                    for (int i = 0; i < 100; i++) {
+                    for (int i = 0; i < 2; i++) {
                         batchInsert.clearParameters();
                         batchInsert.setLong(1, 0L);
                         batchInsert.setInt(2, 1);
@@ -1460,6 +1460,104 @@ nodejs code:
             @Override
             public String getDefaultUsername() {
                 return "xyz";
+            }
+        });
+    }
+
+    @Test
+    public void testLargeSelect() throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    final PGWireServer ignored = createPGServer(4);
+                    final Connection connection = getConnection(false, true)
+            ) {
+                try (Statement statement = connection.createStatement()) {
+                    statement.executeUpdate("CREATE TABLE IF NOT EXISTS recorded_l1_data (\n" +
+                            " HighLimitPrice double,\n" +
+                            " LastAuctionImbalanceSide string,\n" +
+                            " LastAuctionImbalanceVolume double,\n" +
+                            " LastAuctionPrice double,\n" +
+                            " LastAuctionVolume double,\n" +
+                            " LastPrice double,\n" +
+                            " LastTradePrice double,\n" +
+                            " LastTradeQty double,\n" +
+                            " LowLimitPrice double,\n" +
+                            " MARKET_EURONEXT_PhaseQualifier long,\n" +
+                            " MARKET_EURONEXT_StatusReason long,\n" +
+                            " MARKET_EURONEXT_TradingPeriod long,\n" +
+                            " MARKET_GroupTradingStatus long,\n" +
+                            " MARKET_JSE_MIT_TradingStatusDetails string,\n" +
+                            " MARKET_LSE_SuspendedIndicator string,\n" +
+                            " MARKET_OMX_NORDIC_NoteCodes1 long,\n" +
+                            " MARKET_OMX_NORDIC_NoteCodes2 long,\n" +
+                            " MARKET_SWX_BookCondition long,\n" +
+                            " MARKET_SWX_SecurityTradingStatus long,\n" +
+                            " MARKET_SWX_TradingPhase string,\n" +
+                            " MARKET_SWX_TradingSessionSubID string,\n" +
+                            " MARKET_TradingStatus long,\n" +
+                            " askPx double,\n" +
+                            " askQty double,\n" +
+                            " bidPx double,\n" +
+                            " bidQty double,\n" +
+                            " glid symbol,\n" +
+                            " TradingStatus long,\n" +
+                            " serverTimestamp long,\n" +
+                            " marketTimestamp long,\n" +
+                            " timestamp timestamp\n" +
+                            " ) timestamp(timestamp) partition by DAY;"
+                    );
+                }
+
+                try (Statement statement = connection.createStatement()) {
+                    statement.executeUpdate("insert into recorded_l1_data \n" +
+                            " select \n" +
+                            "     rnd_double(), \n" +
+                            "     rnd_str(), \n" +
+                            "     rnd_double(),\n" +
+                            "     rnd_double(),\n" +
+                            "     rnd_double(),\n" +
+                            "     rnd_double(),\n" +
+                            "     rnd_double(),\n" +
+                            "     rnd_double(),\n" +
+                            "     rnd_double(),\n" +
+                            "     rnd_long(),\n" +
+                            "     rnd_long(),\n" +
+                            "     rnd_long(),\n" +
+                            "     rnd_long(),\n" +
+                            "     rnd_str(),\n" +
+                            "     rnd_str(),\n" +
+                            "     rnd_long(),\n" +
+                            "     rnd_long(),\n" +
+                            "     rnd_long(),\n" +
+                            "     rnd_long(),\n" +
+                            "     rnd_str(),\n" +
+                            "     rnd_str(),\n" +
+                            "     rnd_long(),\n" +
+                            "     rnd_double(),\n" +
+                            "     rnd_double(),\n" +
+                            "     rnd_double(),\n" +
+                            "     rnd_double(),\n" +
+                            "     rnd_symbol('a','b','c'),\n" +
+                            "     rnd_long(),\n" +
+                            "     rnd_long(),\n" +
+                            "     rnd_long(),\n" +
+                            "     timestamp_sequence(0, 100000)\n" +
+                            "     from long_sequence(50000)\n" +
+                            "    )");
+                }
+
+                double sum = 0;
+                long count = 0;
+                try (PreparedStatement preparedStatement = connection.prepareStatement("SELECT * FROM recorded_l1_data;")) {
+                    try (ResultSet rs = preparedStatement.executeQuery()) {
+                        while (rs.next()) {
+                            sum += rs.getDouble(1);
+                            count++;
+                        }
+                    }
+                }
+                Assert.assertEquals(50_000, count);
+                Assert.assertEquals(24963.57352782434, sum, 0.00000001);
             }
         });
     }
@@ -2044,11 +2142,11 @@ nodejs code:
                     try (PreparedStatement statement = connection.prepareStatement(createDatesTblStmt)) {
                         statement.execute();
                     }
-                    queryTimestampsInRange(connection, 7);
+                    queryTimestampsInRange(connection);
                 }
 
                 try (final Connection connection = getConnection(false, false)) {
-                    queryTimestampsInRange(connection, 7);
+                    queryTimestampsInRange(connection);
                     try (PreparedStatement statement = connection.prepareStatement("drop table xts")) {
                         statement.execute();
                     }
@@ -2066,7 +2164,7 @@ nodejs code:
                     try (PreparedStatement statement = connection.prepareStatement(createDatesTblStmt)) {
                         statement.execute();
                     }
-                    queryTimestampsInRange(connection, 7);
+                    queryTimestampsInRange(connection);
                 }
 
                 boolean caught = false;
@@ -2080,9 +2178,6 @@ nodejs code:
                         caught = true;
                         Assert.assertEquals("ERROR: could not parse [value='abcd', as=TIMESTAMP, index=0]\n  Position: 1", ex.getMessage());
                     }
-//                    try(PreparedStatement statement = connection.prepareStatement("drop table xts")) {
-//                        statement.execute();
-//                    }
                 }
 
                 try (final Connection connection = getConnection(false, false);
@@ -2105,7 +2200,7 @@ nodejs code:
                     statement.execute();
                 }
 
-                queryTimestampsInRange(connection, 7);
+                queryTimestampsInRange(connection);
 
                 try (PreparedStatement statement = connection.prepareStatement("drop table xts")) {
                     statement.execute();
@@ -2130,7 +2225,7 @@ nodejs code:
                         }
                     }
 
-                    queryTimestampsInRange(connection, 7);
+                    queryTimestampsInRange(connection);
 
                     try (PreparedStatement statement = connection.prepareStatement("drop table xts")) {
                         statement.execute();
@@ -2579,6 +2674,14 @@ nodejs code:
                                     rs
                             );
                         }
+                        // The next iteration of the loop will create a new connection which may be in a different thread than the current
+                        // connection
+                        // The new connection will execute a "create table if not exists " statement which requires a full table lock
+                        // This connection has just execute a read query on the table and hence has a temporary read lock which will be
+                        // released shortly after we receive the query response
+                        // In order to guarantee that the temporary read lock is released before the next iteration of this loop we execute
+                        // a new query, with this connection, which does not lock the table.
+                        connection.prepareStatement("select 1").execute();
                     }
                 }
             }
@@ -3049,10 +3152,10 @@ nodejs code:
         };
     }
 
-    private void queryTimestampsInRange(Connection connection, int hoursInterval) throws SQLException, IOException {
+    private void queryTimestampsInRange(Connection connection) throws SQLException, IOException {
         try (PreparedStatement statement = connection.prepareStatement("select ts FROM xts WHERE ts <= dateadd('d', -1, ?) and ts >= dateadd('d', -2, ?)")) {
             ResultSet rs = null;
-            for (long micros = 0; micros < count * Timestamps.HOUR_MICROS; micros += Timestamps.HOUR_MICROS * hoursInterval) {
+            for (long micros = 0; micros < count * Timestamps.HOUR_MICROS; micros += Timestamps.HOUR_MICROS * 7) {
                 sink.clear();
                 statement.setTimestamp(1, new Timestamp(micros));
                 statement.setTimestamp(2, new Timestamp(micros));

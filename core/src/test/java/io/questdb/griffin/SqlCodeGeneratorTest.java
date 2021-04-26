@@ -211,7 +211,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
                 sink.clear();
                 try (RecordCursor cursor = lookupFactory.getCursor(sqlExecutionContext)) {
-                    printer.print(cursor, lookupFactory.getMetadata(), true);
+                    printer.print(cursor, lookupFactory.getMetadata(), true, sink);
                     TestUtils.assertEquals(
                             "deviceName\ttime\tslot\tport\tdownStream\tupStream\n" +
                                     "FKBW\t1970-01-01T00:00:02.300000Z\tFKBW\t\t0.04998168904446332\t0.04998168904446332\n" +
@@ -530,8 +530,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             Assert.assertEquals(CREATE_TABLE, compiler.compile("create table x (col string)", sqlExecutionContext).getType());
 
-            engine.releaseAllReaders();
-            engine.releaseAllWriters();
+            engine.clear();
 
             CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
                 @Override
@@ -563,10 +562,9 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
             } catch (SqlException e) {
                 Assert.assertEquals(51, e.getPosition());
                 TestUtils.assertContains(e.getMessage(), "max cached symbol capacity");
+            } finally {
+                engine.clear();
             }
-
-            engine.releaseAllWriters();
-            engine.releaseAllReaders();
         });
     }
 
@@ -2015,8 +2013,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                     Assert.assertEquals(0, engine.getBusyReaderCount());
                     Assert.assertEquals(0, engine.getBusyWriterCount());
                 } finally {
-                    engine.releaseAllWriters();
-                    engine.releaseAllReaders();
+                    engine.clear();
                 }
             }
         });
@@ -4785,9 +4782,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
         compiler.compile("insert into y select timestamp_sequence(cast('2018-01-31T23:00:00.000000Z' as timestamp), 100), rnd_double() from long_sequence(1000)", sqlExecutionContext);
 
         // to shut up memory leak check
-        engine.releaseAllReaders();
-        engine.releaseAllWriters();
-
+        engine.clear();
         assertQuery(
                 "time\tvisMiles\n" +
                         "2018-01-31T23:00:00.000000Z\t0.26625499503275796\n" +
@@ -4892,23 +4887,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
         }
     }
 
-    //NOTE Kahan should fail this  - Neumaier should pass
-    //    @Test
-//    public void testSumDoubleColumnWithNeumaierMethodVectorised1() throws Exception {
-//        String ddl = "create table x (ds double) partition by NONE";
-//        compiler.compile(ddl, sqlExecutionContext);
-//
-//        double tenTo100 = Math.pow(10, 100);
-//        executeInsertStatement(tenTo100);
-//        executeInsertStatement(1.0);
-//        executeInsertStatement(1.0);
-//        executeInsertStatement(-tenTo100);
-//
-//        try (TableReader r = new TableReader(configuration, "x")) {
-//            Assert.assertEquals(2, r.sumDouble(0), 0.0000001);
-//        }
-//    }
-
     @Test
     public void testVectorSumAvgDoubleRndColumnWithNulls() throws Exception {
         assertQuery("avg\tsum\n" +
@@ -4925,7 +4903,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     @Test
     public void testVectorSumAvgDoubleRndColumnWithNullsParallel() throws Exception {
 
-        Sequence seq = engine.getMessageBus().getVectorAggregateSubSequence();
+        Sequence seq = engine.getMessageBus().getVectorAggregateSubSeq();
         // consume sequence fully and do nothing
         // this might be needed to make sure we don't consume things other tests publish here
         while (true) {

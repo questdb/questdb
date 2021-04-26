@@ -210,17 +210,12 @@ public class InsertTest extends AbstractGriffinTest {
                 method.commit();
             }
 
-            sink.clear();
             try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), insertStatement.getTableName())) {
-                printer.print(reader.getCursor(), reader.getMetadata(), true);
-            }
-
-        });
-        TestUtils.assertEquals("cust_id\tccy\tbalance\n" +
+                TestUtils.assertReader("cust_id\tccy\tbalance\n" +
                         "1\tGBP\t150.4\n" +
-                        "1\tGBP\t56.4\n",
-                sink
-        );
+                        "1\tGBP\t56.4\n", reader, sink);
+            }
+        });
     }
 
     @Test
@@ -256,11 +251,7 @@ public class InsertTest extends AbstractGriffinTest {
             String expected = "timestamp\tfield\tvalue\n" +
                     "2019-12-04T13:20:49.000000Z\tX\t123.33\n";
 
-            sink.clear();
-            try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), insert.getTableName())) {
-                printer.print(reader.getCursor(), reader.getMetadata(), true);
-                TestUtils.assertEquals(expected, sink);
-            }
+            assertReader(expected, insert.getTableName());
         });
     }
 
@@ -279,11 +270,7 @@ public class InsertTest extends AbstractGriffinTest {
             String expected = "timestamp\tfield\tvalue\n" +
                     "2019-12-04T13:20:49.000000Z\tX\t123.33\n";
 
-            sink.clear();
-            try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), insert.getTableName())) {
-                printer.print(reader.getCursor(), reader.getMetadata(), true);
-                TestUtils.assertEquals(expected, sink);
-            }
+            assertReader(expected, insert.getTableName());
         });
     }
 
@@ -330,11 +317,7 @@ public class InsertTest extends AbstractGriffinTest {
             String expected = "cust_id\tccy\tbalance\n" +
                     "1\tUSD\t356.12\n";
 
-            sink.clear();
-            try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), insert.getTableName())) {
-                printer.print(reader.getCursor(), reader.getMetadata(), true);
-                TestUtils.assertEquals(expected, sink);
-            }
+            assertReader(expected, insert.getTableName());
         });
     }
 
@@ -400,11 +383,7 @@ public class InsertTest extends AbstractGriffinTest {
             String expected = "id\tsym\n" +
                     "2\tA\n";
 
-            sink.clear();
-            try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), insert.getTableName())) {
-                printer.print(reader.getCursor(), reader.getMetadata(), true);
-                TestUtils.assertEquals(expected, sink);
-            }
+            assertReader(expected, insert.getTableName());
         });
     }
 
@@ -419,11 +398,7 @@ public class InsertTest extends AbstractGriffinTest {
                     "USDJPY\tfalse\n" +
                     "USDFJD\ttrue\n";
 
-            sink.clear();
-            try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "symbols")) {
-                printer.print(reader.getCursor(), reader.getMetadata(), true);
-                TestUtils.assertEquals(expected, sink);
-            }
+            assertReader(expected, "symbols");
         });
     }
 
@@ -438,11 +413,7 @@ public class InsertTest extends AbstractGriffinTest {
                     "2010-01-04T10:00:00.000000Z\tUSDJPY\t1.0\t2.0\n" +
                     "2010-01-04T10:01:40.000000Z\tUSDFJD\t2.0\t4.0\n";
 
-            sink.clear();
-            try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "trades")) {
-                printer.print(reader.getCursor(), reader.getMetadata(), true);
-                TestUtils.assertEquals(expected, sink);
-            }
+            assertReader(expected, "trades");
         });
     }
 
@@ -455,11 +426,7 @@ public class InsertTest extends AbstractGriffinTest {
             String expected1 = "ts\tsym\tbid\task\n" +
                     "2010-01-04T10:00:00.000000Z\tUSDJPY\t1.0\t2.0\n";
 
-            sink.clear();
-            try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "trades")) {
-                printer.print(reader.getCursor(), reader.getMetadata(), true);
-                TestUtils.assertEquals(expected1, sink);
-            }
+            assertReader(expected1, "trades");
 
             try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "trades")) {
                 w.truncate();
@@ -470,11 +437,7 @@ public class InsertTest extends AbstractGriffinTest {
             String expected2 = "ts\tsym\tbid\task\n" +
                     "2073-05-21T13:35:00.000000Z\tUSDFJD\t2.0\t4.0\n";
 
-            sink.clear();
-            try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "trades")) {
-                printer.print(reader.getCursor(), reader.getMetadata(), true);
-                TestUtils.assertEquals(expected2, sink);
-            }
+            assertReader(expected2, "trades");
         });
     }
 
@@ -489,11 +452,7 @@ public class InsertTest extends AbstractGriffinTest {
                     "2010-01-04T10:00:00.000000Z\tUSDJPY\t1.0\t2.0\n" +
                     "2073-05-21T13:35:00.000000Z\tUSDFJD\t2.0\t4.0\n";
 
-            sink.clear();
-            try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "trades")) {
-                printer.print(reader.getCursor(), reader.getMetadata(), true);
-                TestUtils.assertEquals(expected, sink);
-            }
+            assertReader(expected, "trades");
         });
     }
 
@@ -676,9 +635,6 @@ public class InsertTest extends AbstractGriffinTest {
 
     @Test
     public void testInsertISOMilliWithTzDateStringTimestampColumFails() throws Exception {
-        final String expected = "seq\tts\n" +
-                "1\t2021-01-03T00:30:00.000000Z\n";
-
         assertInsertTimestamp(
                 "Invalid timestamp",
                 "insert into tab values (1, '2021-01-03T02:00:00-:30')",
@@ -723,59 +679,65 @@ public class InsertTest extends AbstractGriffinTest {
         );
     }
 
-    private void assertInsertTimestamp(String expected, String ddl2, String exceptionType, boolean commitInsert) throws Exception {
-        try {
-            // Test as designated timestamp
-            assertInsertQuery(
-                    "seq\tts\n",
-                    "tab",
-                    "create table tab(seq long, ts timestamp) timestamp(ts)",
-                    "ts",
-                    ddl2,
-                    expected,
-                    true,
-                    true,
-                    true,
-                    commitInsert
-            );
-            if (exceptionType != null) {
-                Assert.fail("SqlException expected");
-            }
-        } catch (Exception e) {
-            if (exceptionType == null) throw e;
+       private void assertInsertTimestamp(String expected, String ddl2, String exceptionType, boolean commitInsert) throws Exception {
+           if (commitInsert) {
+               compiler.compile("create table tab(seq long, ts timestamp) timestamp(ts)", sqlExecutionContext);
+               try {
+                   executeInsert(ddl2);
+                   if (exceptionType != null) {
+                       Assert.fail("SqlException expected");
+                   }
+                   assertSql("tab", expected);
+               } catch (CairoException e) {
+                   if (exceptionType == null) throw e;
+                   Assert.assertEquals(exceptionType, e.getClass().getName());
+                   TestUtils.assertContains(e.getFlyweightMessage(), expected);
+               }
+           } else {
+               compiler.compile("create table tab(seq long, ts timestamp) timestamp(ts)", sqlExecutionContext);
+               try {
+                   compiler.compile(ddl2, sqlExecutionContext);
+                   if (exceptionType != null) {
+                       Assert.fail("SqlException expected");
+                   }
+                   assertSql("tab", expected);
+               } catch (CairoException e) {
+                   if (exceptionType == null) throw e;
+                   Assert.assertEquals(exceptionType, e.getClass().getName());
+                   TestUtils.assertContains(e.getFlyweightMessage(), expected);
+               }
+           }
 
-            Assert.assertEquals(exceptionType, e.getClass().getName());
-            TestUtils.assertContains(e.getMessage(), expected);
-        }
+           compiler.compile("drop table tab", sqlExecutionContext);
 
-        tearDownAfterTest();
-        tearDown0();
-        setUp0();
-
-        try {
-            // Test as non-designated timestamp
-            assertInsertQuery(
-                    "seq\tts\n",
-                    "tab",
-                    "create table tab(seq long, ts timestamp)",
-                    null,
-                    ddl2,
-                    expected,
-                    true,
-                    true,
-                    true,
-                    commitInsert
-            );
-            if (exceptionType != null) {
-                Assert.fail("SqlException expected");
-            }
-        } catch (Exception e) {
-            if (exceptionType == null) throw e;
-
-            Assert.assertEquals(exceptionType, e.getClass().getName());
-            TestUtils.assertContains(e.getMessage(), expected);
-        }
-    }
+           if (commitInsert) {
+               compiler.compile("create table tab(seq long, ts timestamp)", sqlExecutionContext);
+               try {
+                   executeInsert(ddl2);
+                   if (exceptionType != null) {
+                       Assert.fail("SqlException expected");
+                   }
+                   assertSql("tab", expected);
+               } catch (Throwable e) {
+                   if (exceptionType == null) throw e;
+                   Assert.assertEquals(exceptionType, e.getClass().getName());
+                   TestUtils.assertContains(e.getMessage(), expected);
+               }
+           } else {
+               compiler.compile("create table tab(seq long, ts timestamp)", sqlExecutionContext);
+               try {
+                   compiler.compile(ddl2, sqlExecutionContext);
+                   if (exceptionType != null) {
+                       Assert.fail("SqlException expected");
+                   }
+                   assertSql("tab", expected);
+               } catch (Throwable e) {
+                   if (exceptionType == null) throw e;
+                   Assert.assertEquals(exceptionType, e.getClass().getName());
+                   TestUtils.assertContains(e.getMessage(), expected);
+               }
+           }
+       }
 
     private void testBindVariableInsert(
             int partitionBy,

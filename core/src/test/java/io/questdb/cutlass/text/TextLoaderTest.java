@@ -26,8 +26,6 @@ package io.questdb.cutlass.text;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.http.ex.NotEnoughLinesException;
 import io.questdb.cutlass.json.JsonLexer;
 import io.questdb.griffin.AbstractGriffinTest;
@@ -60,8 +58,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
     @After
     public void tearDown2() {
         sink.clear();
-        engine.releaseAllWriters();
-        engine.releaseAllReaders();
+        engine.clear();
     }
 
     @Test
@@ -2337,7 +2334,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
                     "CMP2,4,155,5.08547495584935,2015-02-04T19:15:09.000Z,2015-02-04 19:15:09,02/04/2015,8919,TRUE,8671995\n" +
                     "\"CMP1\",7,4486,,2015-02-05T19:15:09.000Z,2015-02-05 19:15:09,02/05/2015,8670,FALSE,751877\n" +
                     "CMP2,2,6641,0.0381825352087617,2015-02-06T19:15:09.000Z,2015-02-06 19:15:09,02/06/2015,8331,TRUE,40909232527\n" +
-                    "CMP1,1,xxx,0.849663221742958,2015-02-07T19:15:09.000Z,2015-02-07 19:15:09,02/07/2015,9592,FALSE,11490662\n" +
+                    "CMP1,1,merge_copy_var_column,0.849663221742958,2015-02-07T19:15:09.000Z,2015-02-07 19:15:09,02/07/2015,9592,FALSE,11490662\n" +
                     "CMP2,2,4770,2.85092033445835,2015-02-08T19:15:09.000Z,2015-02-08 19:15:09,02/08/2015,253,TRUE,33766814\n" +
                     "CMP1,5,4938,4.42754498450086,2015-02-09T19:15:09.000Z,2015-02-09 19:15:09,02/09/2015,7817,FALSE,61983099\n";
 
@@ -2646,23 +2643,19 @@ public class TextLoaderTest extends AbstractGriffinTest {
             }
             Assert.assertEquals(0, engine.getBusyWriterCount());
             Assert.assertEquals(0, engine.getBusyReaderCount());
-            engine.releaseAllWriters();
-            engine.releaseAllReaders();
-
-            AbstractGriffinTest.engine.releaseAllReaders();
-            AbstractGriffinTest.engine.releaseAllWriters();
+            engine.clear();
+            AbstractGriffinTest.engine.clear();
         });
     }
 
     private void assertTable(String expected) throws SqlException {
-        try (
-                RecordCursorFactory factory = compiler.compile("test", sqlExecutionContext).getRecordCursorFactory();
-                RecordCursor cursor = factory.getCursor(sqlExecutionContext)
-        ) {
-            sink.clear();
-            printer.print(cursor, factory.getMetadata(), true);
-            TestUtils.assertEquals(expected, sink);
-        }
+        TestUtils.assertSql(
+                compiler,
+                sqlExecutionContext,
+                "test",
+                sink,
+                expected
+        );
     }
 
     private void assertTimestampAsLong(String nominatedTimestamp, String expectedMeta) throws Exception {
@@ -2683,6 +2676,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
 
             try (SqlCompiler compiler = new SqlCompiler(engine)) {
                 compiler.compile("create table test(StrSym symbol, ts timestamp) " + nominatedTimestamp, sqlExecutionContext);
+                engine.releaseAllWriters();
             }
 
             assertNoLeak(

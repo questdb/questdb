@@ -149,7 +149,7 @@ public class DateFormatCompiler {
         addOp("Z", OP_TIME_ZONE_RFC_822);
         addOp("x", OP_TIME_ZONE_ISO_8601_1);
         addOp("xx", OP_TIME_ZONE_ISO_8601_2);
-        addOp("xxx", OP_TIME_ZONE_ISO_8601_3);
+        addOp("merge_copy_var_column", OP_TIME_ZONE_ISO_8601_3);
     }
 
     private final GenericLexer lexer = new GenericLexer(2048);

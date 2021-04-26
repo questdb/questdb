@@ -207,8 +207,6 @@ public class IntervalUtilsTest {
     public void testIntersectRandomInplaceVsNonInplace() {
         long seed = System.currentTimeMillis();
         Random r = new Random(seed);
-        System.out.println("Random seed " + seed);
-
         LongList intervals = new LongList();
         int aSize = r.nextInt(100) + 10;
         int bSize = r.nextInt(100);

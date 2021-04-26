@@ -52,7 +52,7 @@ public class NegatingFunctionFactory implements FunctionFactory {
         Function function = delegate.newInstance(args, position, configuration, sqlExecutionContext);
         if (function instanceof NegatableBooleanFunction) {
             NegatableBooleanFunction negateableFunction = (NegatableBooleanFunction) function;
-            negateableFunction.setNegated(true);
+            negateableFunction.setNegated();
         }
         return function;
     }

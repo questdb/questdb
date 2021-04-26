@@ -46,11 +46,15 @@
         return r;
     }
     static inline uint32_t bit_scan_forward(uint64_t a) {
+#ifdef __APPLE__
+        return __builtin_ffsll(a) - 1;
+#else
         uint64_t r;
         __asm("rbit %0, %1; clz %0, %0;" : "=r"(r) : "r"(a) : );
         return r;
+#endif
     }
-    #define BITS_SHIFT 3
+#define BITS_SHIFT 3
 #else
     #include "vcl/vectorclass.h"
     #define BITS_SHIFT 0
@@ -250,7 +254,6 @@ public:
         offset_ = hash & mask;
         mask_ = mask;
     }
-
 
     [[nodiscard]] inline uint64_t offset() const { return offset_; }
 

@@ -29,10 +29,7 @@ import io.questdb.cutlass.text.types.TypeManager;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
-import io.questdb.std.Mutable;
-import io.questdb.std.ObjList;
-import io.questdb.std.ObjectPool;
-import io.questdb.std.Unsafe;
+import io.questdb.std.*;
 import io.questdb.std.str.DirectByteCharSequence;
 
 import java.io.Closeable;
@@ -225,7 +222,6 @@ public class TextLexer implements Closeable, Mutable {
 
     private boolean growRollBuf(int requiredLength, boolean updateFields) {
         if (requiredLength > lineRollBufLimit) {
-            // todo: log content of roll buffer
             LOG.info()
                     .$("too long [table=").$(tableName)
                     .$(", line=").$(lineCount)
@@ -242,7 +238,7 @@ public class TextLexer implements Closeable, Mutable {
         long p = Unsafe.malloc(len);
         long l = lineRollBufCur - lineRollBufPtr;
         if (l > 0) {
-            Unsafe.getUnsafe().copyMemory(lineRollBufPtr, p, l);
+            Vect.memcpy(lineRollBufPtr, p, l);
         }
         Unsafe.free(lineRollBufPtr, lineRollBufLen);
         if (updateFields) {
@@ -378,7 +374,7 @@ public class TextLexer implements Closeable, Mutable {
         int l = (int) (hi - lo - lastLineStart);
         if (l < lineRollBufLen || growRollBuf(l, false)) {
             assert lo + lastLineStart + l <= hi;
-            Unsafe.getUnsafe().copyMemory(lo + lastLineStart, lineRollBufPtr, l);
+            Vect.memcpy(lo + lastLineStart, lineRollBufPtr, l);
             lineRollBufCur = lineRollBufPtr + l;
             shift(lo + lastLineStart - lineRollBufPtr);
         }

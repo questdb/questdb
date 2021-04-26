@@ -24,8 +24,11 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.vm.AppendOnlyVirtualMemory;
+import io.questdb.cairo.vm.SinglePageMappedReadOnlyPageMemory;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 import io.questdb.std.str.Path;
 import org.junit.Assert;
 import org.junit.Test;
@@ -61,7 +64,7 @@ public class BinarySearchTest extends AbstractCairoTest {
     public void testFindForwardBeforeRange() {
         try (Path path = new Path()) {
             path.of(root).concat("binsearch.d").$();
-            try (AppendMemory appendMem = new AppendMemory(FilesFacadeImpl.INSTANCE, path, 4096)) {
+            try (AppendOnlyVirtualMemory appendMem = new AppendOnlyVirtualMemory(FilesFacadeImpl.INSTANCE, path, 4096)) {
                 for (int i = 0; i < 100; i++) {
                     for (int j = 0; j < 3; j++) {
                         appendMem.putLong(i);
@@ -69,7 +72,7 @@ public class BinarySearchTest extends AbstractCairoTest {
                 }
 
                 long max = 100 * 3 - 1;
-                try (OnePageMemory mem = new OnePageMemory(FilesFacadeImpl.INSTANCE, path, 400 * Long.BYTES)) {
+                try (SinglePageMappedReadOnlyPageMemory mem = new SinglePageMappedReadOnlyPageMemory(FilesFacadeImpl.INSTANCE, path, 400 * Long.BYTES)) {
                     long index = BinarySearch.find(mem, -20, 0, max, BinarySearch.SCAN_DOWN);
                     Assert.assertEquals(-1, index);
                 }
@@ -81,11 +84,11 @@ public class BinarySearchTest extends AbstractCairoTest {
     public void testFindForwardTwoValues() {
         try (Path path = new Path()) {
             path.of(root).concat("binsearch.d").$();
-            try (AppendMemory appendMem = new AppendMemory(FilesFacadeImpl.INSTANCE, path, 4096)) {
+            try (AppendOnlyVirtualMemory appendMem = new AppendOnlyVirtualMemory(FilesFacadeImpl.INSTANCE, path, 4096)) {
                 appendMem.putLong(1);
                 appendMem.putLong(3);
 
-                try (OnePageMemory mem = new OnePageMemory(FilesFacadeImpl.INSTANCE, path, 400 * Long.BYTES)) {
+                try (SinglePageMappedReadOnlyPageMemory mem = new SinglePageMappedReadOnlyPageMemory(FilesFacadeImpl.INSTANCE, path, 400 * Long.BYTES)) {
                     Assert.assertEquals(0, BinarySearch.find(mem, 2, 0, 1, BinarySearch.SCAN_DOWN));
                 }
             }
@@ -121,11 +124,11 @@ public class BinarySearchTest extends AbstractCairoTest {
     public void testFindReverseTwoValues() {
         try (Path path = new Path()) {
             path.of(root).concat("binsearch.d").$();
-            try (AppendMemory appendMem = new AppendMemory(FilesFacadeImpl.INSTANCE, path, 4096)) {
+            try (AppendOnlyVirtualMemory appendMem = new AppendOnlyVirtualMemory(FilesFacadeImpl.INSTANCE, path, 4096)) {
                 appendMem.putLong(1);
                 appendMem.putLong(3);
 
-                try (OnePageMemory mem = new OnePageMemory(FilesFacadeImpl.INSTANCE, path, 400 * Long.BYTES)) {
+                try (SinglePageMappedReadOnlyPageMemory mem = new SinglePageMappedReadOnlyPageMemory(FilesFacadeImpl.INSTANCE, path, 400 * Long.BYTES)) {
                     Assert.assertEquals(0, BinarySearch.find(mem, 2, 0, 1, BinarySearch.SCAN_UP));
                 }
             }
@@ -182,10 +185,10 @@ public class BinarySearchTest extends AbstractCairoTest {
         testMem256Find(3, 20, 100, BinarySearch.SCAN_UP);
     }
 
-    private void testColumnFindForward(int repeatCount, long searchValue, int distinctValueCount, int scanDirection) {
+    private void testColumnFindForward(long repeatCount, long searchValue, int distinctValueCount, int scanDirection) {
         try (Path path = new Path()) {
             path.of(root).concat("binsearch.d").$();
-            try (AppendMemory appendMem = new AppendMemory(FilesFacadeImpl.INSTANCE, path, 4096)) {
+            try (AppendOnlyVirtualMemory appendMem = new AppendOnlyVirtualMemory(FilesFacadeImpl.INSTANCE, path, 4096)) {
                 for (int i = 0; i < distinctValueCount; i++) {
                     for (int j = 0; j < repeatCount; j++) {
                         appendMem.putLong(i);
@@ -193,7 +196,7 @@ public class BinarySearchTest extends AbstractCairoTest {
                 }
 
                 long max = distinctValueCount * repeatCount - 1;
-                try (OnePageMemory mem = new OnePageMemory(FilesFacadeImpl.INSTANCE, path, 400 * Long.BYTES)) {
+                try (SinglePageMappedReadOnlyPageMemory mem = new SinglePageMappedReadOnlyPageMemory(FilesFacadeImpl.INSTANCE, path, 400 * Long.BYTES)) {
                     long index = BinarySearch.find(mem, searchValue, 0, max, scanDirection);
                     if (searchValue > distinctValueCount - 1) {
                         Assert.assertEquals(max, index);
@@ -210,8 +213,8 @@ public class BinarySearchTest extends AbstractCairoTest {
         }
     }
 
-    private void testMem256Find(int repeatCount, long searchValue, int distinctValueCount, int scanDirection) {
-        long size = distinctValueCount * repeatCount * 16;
+    private void testMem256Find(long repeatCount, long searchValue, int distinctValueCount, int scanDirection) {
+        long size = distinctValueCount * repeatCount * 16L;
         long mem = Unsafe.malloc(size);
         try {
             for (int i = 0; i < distinctValueCount; i++) {
@@ -221,7 +224,7 @@ public class BinarySearchTest extends AbstractCairoTest {
             }
 
             long max = distinctValueCount * repeatCount - 1;
-            long index = TableWriter.searchIndex(mem, searchValue, 0, max, scanDirection);
+            long index = Vect.boundedBinarySearchIndexT(mem, searchValue, 0, max, scanDirection);
             if (searchValue > distinctValueCount - 1) {
                 Assert.assertEquals(max, index);
             } else {

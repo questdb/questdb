@@ -24,10 +24,11 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.vm.ReadOnlyVirtualMemory;
 import io.questdb.std.str.Path;
 
 public final class BitmapIndexUtils {
-    static final int KEY_ENTRY_SIZE = 32;
+    static final long KEY_ENTRY_SIZE = 32;
     static final int KEY_ENTRY_OFFSET_VALUE_COUNT = 0;
     static final int KEY_ENTRY_OFFSET_LAST_VALUE_BLOCK_OFFSET = 16;
     static final int KEY_ENTRY_OFFSET_FIRST_VALUE_BLOCK_OFFSET = 8;
@@ -62,23 +63,22 @@ public final class BitmapIndexUtils {
      * <p>
      * List of value blocks is assumed to be ordered by value in ascending order.
      *
-     * @param initialCount         total count of values in all blocks.
-     * @param lastValueBlockOffset offset of last value block in chain of blocks.
+     * @param valueCount         total count of values in all blocks.
+     * @param blockOffset offset of last value block in chain of blocks.
      * @param valueMem             value block memory
      * @param maxValue             upper limit for block values.
      * @param blockValueCountMod   number of values in single block - 1
      * @param seeker               interface that collects results of the search
      */
     static void seekValueBlockRTL(
-            long initialCount,
-            long lastValueBlockOffset,
-            VirtualMemory valueMem,
+            long valueCount,
+            long blockOffset,
+            ReadOnlyVirtualMemory valueMem,
             long maxValue,
             long blockValueCountMod,
             ValueBlockSeeker seeker
     ) {
-        long valueCount = initialCount;
-        long valueBlockOffset = lastValueBlockOffset;
+        long valueBlockOffset = blockOffset;
         if (valueCount > 0) {
             long prevBlockOffset = (blockValueCountMod + 1) * 8;
             long cellCount;
@@ -128,7 +128,7 @@ public final class BitmapIndexUtils {
     static void seekValueBlockLTR(
             long initialCount,
             long firstValueBlockOffset,
-            VirtualMemory valueMem,
+            ReadOnlyVirtualMemory valueMem,
             long minValue,
             long blockValueCountMod,
             ValueBlockSeeker seeker
@@ -196,7 +196,7 @@ public final class BitmapIndexUtils {
      * @param value     value we search of
      * @return index directly behind the searched value or group of values if list contains duplicate values.
      */
-    static long searchValueBlock(VirtualMemory memory, long offset, long cellCount, long value) {
+    static long searchValueBlock(ReadOnlyVirtualMemory memory, long offset, long cellCount, long value) {
         // when block is "small", we just scan it linearly
         if (cellCount < 64) {
             // this will definitely exit because we had checked that at least the last value is greater than value

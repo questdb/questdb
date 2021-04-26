@@ -33,6 +33,7 @@ open module io.questdb {
 
     exports io.questdb;
     exports io.questdb.cairo;
+    exports io.questdb.cairo.vm;
     exports io.questdb.cairo.map;
     exports io.questdb.cairo.sql;
     exports io.questdb.cairo.pool;
@@ -41,6 +42,7 @@ open module io.questdb {
 
     exports io.questdb.cutlass.http;
     exports io.questdb.cutlass.http.processors;
+    exports io.questdb.cutlass.http.ex;
     exports io.questdb.cutlass.json;
     exports io.questdb.cutlass.line;
     exports io.questdb.cutlass.line.udp;
