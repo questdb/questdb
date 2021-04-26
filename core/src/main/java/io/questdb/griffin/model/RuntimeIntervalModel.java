@@ -112,6 +112,7 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
         int size = intervals.size();
         int dynamicStart = size - dynamicRangeList.size() * STATIC_LONGS_PER_DYNAMIC_INTERVAL;
         int dynamicIndex = 0;
+        int operations = 0;
 
         for (int i = dynamicStart; i < size; i += STATIC_LONGS_PER_DYNAMIC_INTERVAL) {
             Function dynamicFunction = dynamicRangeList.getQuick(dynamicIndex++);
@@ -138,8 +139,9 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
 
                 if (dynamicHiLo == IntervalDynamicIndicator.IS_LO_SEPARATE_DYNAMIC) {
                     // Both ends of BETWEEN are dynamic and different values. Take next dynamic point.
-                    i++;
+                    i += STATIC_LONGS_PER_DYNAMIC_INTERVAL;
                     dynamicFunction = dynamicRangeList.getQuick(dynamicIndex++);
+                    dynamicFunction.init(null, sqlContext);
                     long dynamicValue2 = getTimestamp(dynamicFunction);
                     if (dynamicValue == Numbers.LONG_NaN) {
                         // function evaluated to null. return empty set
@@ -167,7 +169,7 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
                 outIntervals.setQuick(divider, lo);
             }
 
-            if (i > 0) {
+            if (dynamicStart > 0 || operations++ > 0) {
                 // Do not apply operation (intersect, subtract)
                 // if this is first element and no pre-calculated static intervals exist
                 switch (operation) {

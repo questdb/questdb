@@ -109,10 +109,11 @@ class ExpressionParser {
             int braceCount = 0;
             int bracketCount = 0;
             int betweenCount = 0;
-            int betweenEndCount = 0;
+            int betweenAndCount = 0;
             int caseCount = 0;
             int argStackDepth = 0;
             int castAsCount = 0;
+            int betweenStartCaseCount = 0;
 
             ExpressionNode node;
             CharSequence tok;
@@ -423,8 +424,8 @@ class ExpressionParser {
                                 processDefaultBranch = true;
                             }
                         } else if (SqlKeywords.isAndKeyword(tok)) {
-                            if (betweenCount > betweenEndCount) {
-                                betweenEndCount++;
+                            if (caseCount == betweenStartCaseCount && betweenCount > betweenAndCount) {
+                                betweenAndCount++;
                                 thisBranch = BRANCH_BETWEEN_END;
                                 while ((node = opStack.pop()) != null && !SqlKeywords.isBetweenKeyword(node.token)) {
                                     argStackDepth = onNode(listener, node, argStackDepth);
@@ -456,8 +457,12 @@ class ExpressionParser {
                     case 'B':
                         if (SqlKeywords.isBetweenKeyword(tok)) {
                             thisBranch = BRANCH_BETWEEN_START;
+                            if (betweenCount > betweenAndCount) {
+                                // Nested between are not supported
+                                throw SqlException.$(position, "between statements cannot be nested");
+                            }
                             betweenCount++;
-                            paramCount = 0;
+                            betweenStartCaseCount = caseCount;
                         }
                         processDefaultBranch = true;
                         break;

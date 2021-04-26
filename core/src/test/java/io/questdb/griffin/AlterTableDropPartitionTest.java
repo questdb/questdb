@@ -620,7 +620,7 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
     }
 
     private void assertPartitionResult(String expectedBeforeDrop, String intervalSearch) throws SqlException {
-        try (RecordCursorFactory factory = compiler.compile("select count() from x where timestamp = '" + intervalSearch + "'", sqlExecutionContext).getRecordCursorFactory()) {
+        try (RecordCursorFactory factory = compiler.compile("select count() from x where timestamp in '" + intervalSearch + "'", sqlExecutionContext).getRecordCursorFactory()) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 sink.clear();
                 printer.print(cursor, factory.getMetadata(), true);
@@ -630,7 +630,7 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
     }
 
     private void assertPartitionResultForTimestampColumnNameTs(String expectedBeforeDrop, String intervalSearch) throws SqlException {
-        try (RecordCursorFactory factory = compiler.compile("select count() from x where ts = '" + intervalSearch + "'", sqlExecutionContext).getRecordCursorFactory()) {
+        try (RecordCursorFactory factory = compiler.compile("select count() from x where ts in '" + intervalSearch + "'", sqlExecutionContext).getRecordCursorFactory()) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 sink.clear();
                 printer.print(cursor, factory.getMetadata(), true);

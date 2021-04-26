@@ -432,25 +432,33 @@ final class WhereClauseParser implements Mutable {
             }
         } else {
             // Multiple values treat as multiple Timestamp points
-            int n = in.args.size() - 1;
-            for (int i = 0; i < n; i++) {
-                ExpressionNode inListItem = in.args.getQuick(i);
-                if (inListItem.type != ExpressionNode.CONSTANT) {
-                    return false;
+            // Only possible to translate if it's the only timestamp restriction atm
+            // NOT IN can be translated in any case as series of substructions
+            if (!model.hasIntervalFilters() || isNegated) {
+                int n = in.args.size() - 1;
+                for (int i = 0; i < n; i++) {
+                    ExpressionNode inListItem = in.args.getQuick(i);
+                    if (inListItem.type != ExpressionNode.CONSTANT) {
+                        return false;
+                    }
                 }
-            }
 
-            for (int i = 0; i < n; i++) {
-                ExpressionNode inListItem = in.args.getQuick(i);
-                long ts = parseTokenAsTimestamp(inListItem);
-                if (!isNegated) {
-                    model.unionIntervals(ts, ts);
-                } else {
-                    model.unionIntervals(ts, ts);
+                for (int i = 0; i < n; i++) {
+                    ExpressionNode inListItem = in.args.getQuick(i);
+                    long ts = parseTokenAsTimestamp(inListItem);
+                    if (!isNegated) {
+                        if (i == 0) {
+                            model.intersectIntervals(ts, ts);
+                        } else {
+                            model.unionIntervals(ts, ts);
+                        }
+                    } else {
+                        model.subtractIntervals(ts, ts);
+                    }
                 }
+                in.intrinsicValue = IntrinsicModel.TRUE;
+                return true;
             }
-            in.intrinsicValue = IntrinsicModel.TRUE;
-            return true;
         }
         return false;
     }

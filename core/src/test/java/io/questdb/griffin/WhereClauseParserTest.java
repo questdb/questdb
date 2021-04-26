@@ -29,11 +29,9 @@ import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
-import io.questdb.griffin.model.ExpressionNode;
-import io.questdb.griffin.model.IntrinsicModel;
-import io.questdb.griffin.model.QueryModel;
-import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
+import io.questdb.griffin.model.*;
 import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
 import io.questdb.test.tools.TestUtils;
 import org.junit.*;
 
@@ -267,6 +265,13 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTimestampFunctionOfThreeArgs() throws Exception {
+        IntrinsicModel m = modelOf("func(2, timestamp, 'abc')");
+        Assert.assertFalse(m.hasIntervalFilters());
+        assertFilter(m, "'abc'timestamp2func");
+    }
+
+    @Test
     public void testBetweenInFunctionOfThreeArgsDangling() {
         try {
             modelOf("func(2, timestamp between '2014-01-01T12:30:00.000Z' and '2014-01-02T12:30:00.000Z',)");
@@ -281,6 +286,19 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     public void testBetweenIntervalWithCaseStatementAsParam() throws SqlException {
         runWhereTest("timestamp between case when true then '2014-01-04T12:30:00.000Z' else '2014-01-02T12:30:00.000Z' end and '2014-01-02T12:30:00.000Z'",
                 "[{lo=2014-01-02T12:30:00.000000Z, hi=2014-01-04T12:30:00.000000Z}]");
+    }
+
+    @Test
+    public void testBetweenIntervalWithCaseStatementAsParamWIthAndInCase() throws SqlException {
+        runWhereTest("timestamp between case when true and true then '2014-01-04T12:30:00.000Z' else '2014-01-02T12:30:00.000Z' end and '2014-01-02T12:30:00.000Z'",
+                "[{lo=2014-01-02T12:30:00.000000Z, hi=2014-01-04T12:30:00.000000Z}]");
+    }
+
+    @Test
+    public void testBetweenINowAndOneDayBefore() throws SqlException, NumericException {
+        currentMicros = IntervalUtils.parseFloorPartialDate("2014-01-03T12:30:00.000000Z");
+        runWhereTest("timestamp between now() and dateadd('d', -1, now())",
+                "[{lo=2014-01-02T12:30:00.000000Z, hi=2014-01-03T12:30:00.000000Z}]");
     }
 
     @Test
@@ -299,8 +317,8 @@ public class WhereClauseParserTest extends AbstractCairoTest {
                     "[{lo=2014-01-02T12:30:00.000000Z, hi=2014-01-04T12:30:00.000000Z}]");
             Assert.fail();
         } catch (SqlException e) {
-            Assert.assertEquals(84, e.getPosition());
-            TestUtils.assertEquals("missing arguments", e.getFlyweightMessage());
+            Assert.assertEquals(18, e.getPosition());
+            TestUtils.assertEquals("unbalanced 'case'", e.getFlyweightMessage());
         }
     }
 
@@ -897,7 +915,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
 
     @Test
     public void testIntervalInManyArgs() throws SqlException {
-        runWhereCompareToModelTest(
+        runWhereIntervalTest0(
                 "timestamp in ('2014-01-01T12:30:00.000Z', '2014-01-02T12:30:00.000Z', '2014-01-03T12:30:00.000Z')",
                 "[{lo=2014-01-01T12:30:00.000000Z, hi=2014-01-01T12:30:00.000000Z}," +
                         "{lo=2014-01-02T12:30:00.000000Z, hi=2014-01-02T12:30:00.000000Z}," +
@@ -1212,8 +1230,8 @@ public class WhereClauseParserTest extends AbstractCairoTest {
 
     @Test
     public void testNotInIntervalTooMany() throws SqlException {
-        runWhereCompareToModelTest("(timestamp not in  ('2015-05-11T15:00:00.000Z','2015-05-11T15:00:00.000Z','2015-05-11T15:00:00.000Z')) and timestamp = '2015-05-11'",
-                "[{lo=2015-05-11T00:00:00.000000Z, hi=2015-05-11T00:00:00.000000Z},{lo=2015-05-11T15:00:00.000000Z, hi=2015-05-11T15:00:00.000000Z}]");
+        runWhereIntervalTest0("(timestamp not in  ('2015-05-11T15:00:00.000Z','2015-05-11T15:00:00.000Z','2015-05-11T15:00:00.000Z')) and timestamp in '2015-05-11'",
+                "[{lo=2015-05-11T00:00:00.000000Z, hi=2015-05-11T14:59:59.999999Z},{lo=2015-05-11T15:00:00.000001Z, hi=2015-05-11T23:59:59.999999Z}]");
     }
 
     @Test
@@ -1556,8 +1574,8 @@ public class WhereClauseParserTest extends AbstractCairoTest {
             modelOf("ask between between 1 and 2 and bid+ask/2");
             Assert.fail();
         } catch (SqlException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "too few");
-            Assert.assertEquals(4, e.getPosition());
+            TestUtils.assertContains(e.getFlyweightMessage(), "between statements cannot be nested");
+            Assert.assertEquals(12, e.getPosition());
         }
     }
 
@@ -1567,7 +1585,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
             modelOf("ask between (between 1 and 2) and bid+ask/2");
             Assert.fail();
         } catch (SqlException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "too few");
+            TestUtils.assertContains(e.getFlyweightMessage(), "between statements cannot be nested");
             Assert.assertEquals(13, e.getPosition());
         }
     }

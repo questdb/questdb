@@ -157,7 +157,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
                         100, "2020-01-01", 10
                 );
 
-                String queryOld = "select sum(c1) from src where ts != '2020-01-01'";
+                String queryOld = "select sum(c1) from src where ts not in '2020-01-01'";
                 String queryNew = "select sum(c1) from src";
                 LongList removedTimestamps = new LongList();
                 removedTimestamps.add(TimestampFormatUtils.parseTimestamp("2020-01-01T00:00:00.000Z"));
@@ -266,7 +266,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
             assertRemoveUpgradeFile();
 
             DefaultCairoConfiguration config = new DefaultCairoConfiguration(root) {
-                private FilesFacadeImpl ff = failToWriteMetaOffset(META_OFFSET_VERSION, "meta");
+                private final FilesFacadeImpl ff = failToWriteMetaOffset(META_OFFSET_VERSION, "meta");
 
                 @Override
                 public FilesFacade getFilesFacade() {
@@ -295,7 +295,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
             assertRemoveUpgradeFile();
 
             DefaultCairoConfiguration config = new DefaultCairoConfiguration(root) {
-                private FilesFacadeImpl ff = failToWriteMetaOffset(META_OFFSET_TABLE_ID, "meta");
+                private final FilesFacadeImpl ff = failToWriteMetaOffset(META_OFFSET_TABLE_ID, "meta");
 
                 @Override
                 public FilesFacade getFilesFacade() {
@@ -324,7 +324,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
             assertRemoveUpgradeFile();
 
             DefaultCairoConfiguration config = new DefaultCairoConfiguration(root) {
-                private FilesFacadeImpl ff = failToWriteMetaOffset(META_OFFSET_TABLE_ID, TableUtils.UPGRADE_FILE_NAME);
+                private final FilesFacadeImpl ff = failToWriteMetaOffset(META_OFFSET_TABLE_ID, TableUtils.UPGRADE_FILE_NAME);
 
                 @Override
                 public FilesFacade getFilesFacade() {
