@@ -24,12 +24,11 @@
 
 package io.questdb.griffin.model;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.LongList;
-import io.questdb.std.Misc;
-import io.questdb.std.ObjList;
+import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.Timestamps;
 
 import static io.questdb.griffin.model.IntervalUtils.STATIC_LONGS_PER_DYNAMIC_INTERVAL;
@@ -130,18 +129,38 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
                 short dynamicHiLo = IntervalUtils.getEncodedDynamicIndicator(intervals, i);
 
                 dynamicFunction.init(null, sqlContext);
-                long dynamicValue = dynamicFunction.getTimestamp(null);
-                if (dynamicValue == Long.MIN_VALUE) {
+                long dynamicValue = getTimestamp(dynamicFunction);
+                if (dynamicValue == Numbers.LONG_NaN) {
                     // function evaluated to null. return empty set
                     outIntervals.clear();
                     return;
                 }
 
-                if ((dynamicHiLo & IntervalDynamicIndicator.IS_HI_DYNAMIC) != 0) {
-                    hi = dynamicValue + adjustment;
+                if (dynamicHiLo == IntervalDynamicIndicator.IS_LO_SEPARATE_DYNAMIC) {
+                    // Both ends of BETWEEN are dynamic and different values. Take next dynamic point.
+                    i++;
+                    dynamicFunction = dynamicRangeList.getQuick(dynamicIndex++);
+                    long dynamicValue2 = getTimestamp(dynamicFunction);
+                    if (dynamicValue == Numbers.LONG_NaN) {
+                        // function evaluated to null. return empty set
+                        outIntervals.clear();
+                        return;
+                    }
+                    hi = dynamicValue2;
+                    lo = dynamicValue;
+                } else {
+                    if ((dynamicHiLo & IntervalDynamicIndicator.IS_HI_DYNAMIC) != 0) {
+                        hi = dynamicValue + adjustment;
+                    }
+                    if ((dynamicHiLo & IntervalDynamicIndicator.IS_LO_DYNAMIC) != 0) {
+                        lo = dynamicValue + adjustment;
+                    }
                 }
-                if ((dynamicHiLo & IntervalDynamicIndicator.IS_LO_DYNAMIC) != 0) {
-                    lo = dynamicValue + adjustment;
+
+                if (operation == IntervalOperation.INTERSECT_BETWEEN || operation == IntervalOperation.SUBTRACT_BETWEEN) {
+                    long tempHi = Math.max(hi, lo);
+                    lo = Math.min(hi, lo);
+                    hi = tempHi;
                 }
 
                 outIntervals.extendAndSet(divider + 1, hi);
@@ -153,9 +172,11 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
                 // if this is first element and no pre-calculated static intervals exist
                 switch (operation) {
                     case IntervalOperation.INTERSECT:
+                    case IntervalOperation.INTERSECT_BETWEEN:
                         IntervalUtils.intersectInplace(outIntervals, divider);
                         break;
                     case IntervalOperation.SUBTRACT:
+                    case IntervalOperation.SUBTRACT_BETWEEN:
                         IntervalUtils.subtract(outIntervals, divider);
                         break;
                     case IntervalOperation.UNION:
@@ -166,6 +187,18 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
                 }
             }
         }
+    }
+
+    private long getTimestamp(Function dynamicFunction) {
+        if (dynamicFunction.getType() == ColumnType.STRING) {
+            CharSequence value = dynamicFunction.getStr(null);
+            try {
+                return IntervalUtils.parseFloorPartialDate(value);
+            } catch (NumericException e) {
+                return Numbers.LONG_NaN;
+            }
+        }
+        return dynamicFunction.getTimestamp(null);
     }
 
     private boolean isStatic() {

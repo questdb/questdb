@@ -29,4 +29,5 @@ public final class IntervalDynamicIndicator {
     public final static short IS_LO_DYNAMIC = 0x1;
     public final static short IS_HI_DYNAMIC = 0x2;
     public final static short IS_LO_HI_DYNAMIC = IS_LO_DYNAMIC | IS_HI_DYNAMIC;
+    public final static short IS_LO_SEPARATE_DYNAMIC = 0x4;
 }

@@ -30,4 +30,6 @@ public final class IntervalOperation {
     public static final short INTERSECT = 1;
     public static final short SUBTRACT = 2;
     public static final short UNION = 3;
+    public static final short INTERSECT_BETWEEN = 4;
+    public static final short SUBTRACT_BETWEEN = 5;
 }

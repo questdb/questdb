@@ -278,24 +278,29 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testBetweenIntervalWithCaseStatementAsParam() {
-        try {
-            modelOf("timestamp between case when true then '2014-01-02T12:30:00.000Z' else '2014-01-02T12:30:00.000Z' and '2014-01-02T12:30:00.000Z'");
-            Assert.fail();
-        } catch (SqlException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "between/and parameters must be constants");
-            Assert.assertEquals(18, e.getPosition());
-        }
+    public void testBetweenIntervalWithCaseStatementAsParam() throws SqlException {
+        runWhereTest("timestamp between case when true then '2014-01-04T12:30:00.000Z' else '2014-01-02T12:30:00.000Z' end and '2014-01-02T12:30:00.000Z'",
+                "[{lo=2014-01-02T12:30:00.000000Z, hi=2014-01-04T12:30:00.000000Z}]");
     }
 
     @Test
-    public void testBetweenIntervalWithCaseStatementAsParam2() {
+    public void testBetweenIntervalWithCaseStatementAsParam2() throws SqlException {
+        runWhereTest("timestamp between " +
+                        "'2014-01-02T12:30:00.000Z' " +
+                        "and " +
+                        "case when true then '2014-01-02T12:30:00.000Z' else '2014-01-03T12:30:00.000Z' end",
+                "[{lo=2014-01-02T12:30:00.000000Z, hi=2014-01-02T12:30:00.000000Z}]");
+    }
+
+    @Test
+    public void testBetweenWithDanglingCase() throws SqlException {
         try {
-            modelOf("timestamp between '2014-01-02T12:30:00.000Z' and case when true then '2014-01-02T12:30:00.000Z' else '2014-01-02T12:30:00.000Z'");
+            runWhereTest("timestamp between case when true then '2014-01-04T12:30:00.000Z' else '2014-01-02T12:30:00.000Z' and '2014-01-02T12:30:00.000Z'",
+                    "[{lo=2014-01-02T12:30:00.000000Z, hi=2014-01-04T12:30:00.000000Z}]");
             Assert.fail();
         } catch (SqlException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "between/and parameters must be constants");
-            Assert.assertEquals(49, e.getPosition());
+            Assert.assertEquals(84, e.getPosition());
+            TestUtils.assertEquals("missing arguments", e.getFlyweightMessage());
         }
     }
 
@@ -1456,25 +1461,15 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testTwoBetweenIntervalsForExpression() {
-        try {
-            modelOf("ask between bid+ask/2 and 10 ");
-            Assert.fail();
-        } catch (SqlException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "between/and parameters must be constants");
-            Assert.assertEquals(12, e.getPosition());
-        }
+    public void testTwoBetweenIntervalsForExpression() throws SqlException {
+        IntrinsicModel m = modelOf("ask between bid+ask/2 and 10 ");
+        assertFilter(m, "102ask/bid+askbetween");
     }
 
     @Test
-    public void testTwoBetweenIntervalsForExpression2() {
-        try {
-            modelOf("ask between 1 and bid+ask/2");
-            Assert.fail();
-        } catch (SqlException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "between/and parameters must be constants");
-            Assert.assertEquals(18, e.getPosition());
-        }
+    public void testTwoBetweenIntervalsForExpression2() throws SqlException {
+        IntrinsicModel m = modelOf("ask between 1 and bid+ask/2");
+        assertFilter(m, "2ask/bid+1askbetween");
     }
 
     @Test
@@ -1678,17 +1673,17 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     }
 
     private IntrinsicModel runWhereCompareToModelTest(String where, String expected, SetBindVars bindVars) throws SqlException {
-//        runWhereIntervalTest0(where + " and timestamp < dateadd('y', 1000, now())", expected, bindVars);
-//        runWhereIntervalTest0(where + " and dateadd('y', 1000, now()) > timestamp", expected, bindVars);
-//
-//        runWhereIntervalTest0("timestamp < dateadd('y', 1000, now()) and " + where, expected, bindVars);
-//        runWhereIntervalTest0("dateadd('y', 1000, now()) > timestamp and " + where, expected, bindVars);
-//
-//        runWhereIntervalTest0(where + " and timestamp > dateadd('y', -1000, now())", expected, bindVars);
-//        runWhereIntervalTest0(where + " and dateadd('y', -1000, now()) < timestamp", expected, bindVars);
-//
-//        runWhereIntervalTest0("timestamp > dateadd('y', -1000, now()) and " + where, expected, bindVars);
-//        runWhereIntervalTest0("dateadd('y', -1000, now()) < timestamp and " + where, expected, bindVars);
+        runWhereIntervalTest0(where + " and timestamp < dateadd('y', 1000, now())", expected, bindVars);
+        runWhereIntervalTest0(where + " and dateadd('y', 1000, now()) > timestamp", expected, bindVars);
+
+        runWhereIntervalTest0("timestamp < dateadd('y', 1000, now()) and " + where, expected, bindVars);
+        runWhereIntervalTest0("dateadd('y', 1000, now()) > timestamp and " + where, expected, bindVars);
+
+        runWhereIntervalTest0(where + " and timestamp > dateadd('y', -1000, now())", expected, bindVars);
+        runWhereIntervalTest0(where + " and dateadd('y', -1000, now()) < timestamp", expected, bindVars);
+
+        runWhereIntervalTest0("timestamp > dateadd('y', -1000, now()) and " + where, expected, bindVars);
+        runWhereIntervalTest0("dateadd('y', -1000, now()) < timestamp and " + where, expected, bindVars);
 
         return runWhereIntervalTest0(where, expected, bindVars);
     }

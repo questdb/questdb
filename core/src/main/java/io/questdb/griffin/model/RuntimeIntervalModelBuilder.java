@@ -28,6 +28,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.LongList;
 import io.questdb.std.Mutable;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 /**
@@ -53,6 +54,11 @@ public class RuntimeIntervalModelBuilder implements Mutable {
     private final ObjList<Function> dynamicRangeList = new ObjList<>();
     private boolean intervalApplied = false;
 
+    private long betweenBoundary;
+    private Function betweenBoundaryFunc;
+    private boolean betweenBoundarySet;
+    private boolean betweenNegated;
+
     public RuntimeIntrinsicIntervalModel build() {
         return new RuntimeIntervalModel(new LongList(staticIntervals), new ObjList<>(dynamicRangeList));
     }
@@ -62,6 +68,13 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         staticIntervals.clear();
         dynamicRangeList.clear();
         intervalApplied = false;
+        clearBetweenParsing();
+    }
+
+    public void clearBetweenParsing() {
+        betweenBoundarySet = false;
+        betweenBoundaryFunc = null;
+        betweenBoundary = Numbers.LONG_NaN;
     }
 
     public boolean hasIntervalFilters() {
@@ -96,6 +109,70 @@ public class RuntimeIntervalModelBuilder implements Mutable {
             IntervalUtils.addHiLoInterval(lo, hi, IntervalOperation.INTERSECT, staticIntervals);
             dynamicRangeList.add(null);
         }
+        intervalApplied = true;
+    }
+
+    public void setBetweenNegated(boolean isNegated) {
+        betweenNegated = isNegated;
+    }
+
+    public void setBetweenBoundary(long timestamp) {
+        if (!betweenBoundarySet) {
+            betweenBoundary = timestamp;
+            betweenBoundarySet = true;
+        } else {
+            if (betweenBoundaryFunc == null) {
+                // Constant interval
+                long lo = Math.min(timestamp, betweenBoundary);
+                long hi = Math.max(timestamp, betweenBoundary);
+                if (!betweenNegated) {
+                    intersect(lo, hi);
+                } else {
+                    subtractInterval(lo, hi);
+                }
+            } else {
+                intersectBetweenSemiDynamic(betweenBoundaryFunc, timestamp);
+            }
+            betweenBoundarySet = false;
+        }
+    }
+
+    public void setBetweenBoundary(Function timestamp) {
+        if (!betweenBoundarySet) {
+            betweenBoundaryFunc = timestamp;
+            betweenBoundarySet = true;
+        } else {
+            if (betweenBoundaryFunc == null) {
+                intersectBetweenSemiDynamic(timestamp, betweenBoundary);
+            } else {
+                intersectBetweenDynamic(timestamp, betweenBoundaryFunc);
+            }
+            betweenBoundarySet = false;
+        }
+    }
+
+    private void intersectBetweenSemiDynamic(Function funcValue, long constValue) {
+        if (constValue == Numbers.LONG_NaN) {
+            intersectEmpty();
+            return;
+        }
+
+        if (isEmptySet()) return;
+
+        short operation = betweenNegated ? IntervalOperation.SUBTRACT_BETWEEN : IntervalOperation.INTERSECT_BETWEEN;
+        IntervalUtils.addHiLoInterval(constValue, 0, (short) 0, IntervalDynamicIndicator.IS_HI_DYNAMIC, operation, staticIntervals);
+        dynamicRangeList.add(funcValue);
+        intervalApplied = true;
+    }
+
+    private void intersectBetweenDynamic(Function funcValue1, Function funcValue2) {
+        if (isEmptySet()) return;
+
+        short operation = betweenNegated ? IntervalOperation.SUBTRACT_BETWEEN : IntervalOperation.INTERSECT_BETWEEN;
+        IntervalUtils.addHiLoInterval(0, 0, (short) 0, IntervalDynamicIndicator.IS_LO_SEPARATE_DYNAMIC, operation, staticIntervals);
+        IntervalUtils.addHiLoInterval(0, 0, (short) 0, IntervalDynamicIndicator.IS_LO_SEPARATE_DYNAMIC, operation, staticIntervals);
+        dynamicRangeList.add(funcValue1);
+        dynamicRangeList.add(funcValue2);
         intervalApplied = true;
     }
 
