@@ -112,12 +112,14 @@ public class AbstractCairoTest {
     public void setUp() {
         LOG.info().$("Starting test ").$(getClass().getSimpleName()).$('#').$(testName.getMethodName()).$();
         TestUtils.createTestPath(root);
+        engine.openTableId();
+        engine.resetTableId();
     }
 
     @After
     public void tearDown() {
         LOG.info().$("Tearing down test ").$(getClass().getSimpleName()).$('#').$(testName.getMethodName()).$();
-        engine.resetTableId();
+        engine.freeTableId();
         engine.clear();
         TestUtils.removeTestPath(root);
     }
