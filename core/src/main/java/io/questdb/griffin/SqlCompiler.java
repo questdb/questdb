@@ -102,6 +102,7 @@ public class SqlCompiler implements Closeable {
             }
         }
     };
+
     public SqlCompiler(CairoEngine engine) {
         this(engine, engine.getMessageBus(), null);
     }
@@ -1328,49 +1329,49 @@ public class SqlCompiler implements Closeable {
         }
     }
 
-    private void copyOrdered(
-            TableWriter writer,
-           RecordMetadata metadata, RecordCursor cursor,
-            RecordToRowCopier copier,
-            int cursorTimestampIndex
-    ) {
+    private void copyOrdered(TableWriter writer, RecordMetadata metadata, RecordCursor cursor, RecordToRowCopier copier, int cursorTimestampIndex) {
+        int timestampType = metadata.getColumnType(cursorTimestampIndex);
+        if (timestampType == ColumnType.STRING || timestampType == ColumnType.SYMBOL) {
+            copyOrderedStrTimestamp(writer, cursor, copier, cursorTimestampIndex);
+        } else {
+            copyOrdered0(writer, cursor, copier, cursorTimestampIndex);
+        }
+        writer.commit();
+    }
+
+    private void copyOrdered0(TableWriter writer, RecordCursor cursor, RecordToRowCopier copier, int cursorTimestampIndex) {
         final Record record = cursor.getRecord();
         while (cursor.hasNext()) {
             TableWriter.Row row = writer.newRow(record.getTimestamp(cursorTimestampIndex));
             copier.copy(record, row);
             row.append();
         }
-        writer.commit();
     }
 
     private void copyOrderedBatched(
             TableWriter writer,
+            RecordMetadata metadata,
             RecordCursor cursor,
             RecordToRowCopier copier,
             int cursorTimestampIndex,
             long batchSize,
             long hysteresis
     ) {
+        int timestampType = metadata.getColumnType(cursorTimestampIndex);
+        if (timestampType == ColumnType.STRING || timestampType == ColumnType.SYMBOL) {
+            copyOrderedBatchedStrTimestamp(writer, cursor, copier, cursorTimestampIndex, batchSize, hysteresis);
+        } else {
+            copyOrderedBatched0(writer, cursor, copier, cursorTimestampIndex, batchSize, hysteresis);
+        }
+        writer.commit();
+    }
+
+    private void copyOrderedBatched0(TableWriter writer, RecordCursor cursor, RecordToRowCopier copier, int cursorTimestampIndex, long batchSize, long hysteresis) {
         long deadline = batchSize;
         long rowCount = 0;
         final Record record = cursor.getRecord();
-        int timestampType = metadata.getColumnType(cursorTimestampIndex);
-
         while (cursor.hasNext()) {
-            long timestamp;
-            if (timestampType == ColumnType.STRING || timestampType == ColumnType.SYMBOL) {
-                CharSequence str = record.getStr(cursorTimestampIndex);
-                try {
-                    // It's allowed to insert ISO formatted string to timestamp column
-                    timestamp = IntervalUtils.parseFloorPartialDate(str);
-                } catch (NumericException numericException) {
-                    throw CairoException.instance(0).put("Invalid timestamp: ").put(str);
-                }
-            } else {
-                timestamp = record.getTimestamp(cursorTimestampIndex);
-            }
-
-            TableWriter.Row row = writer.newRow(timestamp);
+            TableWriter.Row row = writer.newRow(record.getTimestamp(cursorTimestampIndex));
             copier.copy(record, row);
             row.append();
             if (++rowCount > deadline) {
@@ -1378,7 +1379,42 @@ public class SqlCompiler implements Closeable {
                 deadline = rowCount + batchSize;
             }
         }
-        writer.commit();
+    }
+
+    private void copyOrderedBatchedStrTimestamp(TableWriter writer, RecordCursor cursor, RecordToRowCopier copier, int cursorTimestampIndex, long batchSize, long hysteresis) {
+        long deadline = batchSize;
+        long rowCount = 0;
+        final Record record = cursor.getRecord();
+        while (cursor.hasNext()) {
+            CharSequence str = record.getStr(cursorTimestampIndex);
+            try {
+                // It's allowed to insert ISO formatted string to timestamp column
+                TableWriter.Row row = writer.newRow(IntervalUtils.parseFloorPartialDate(str));
+                copier.copy(record, row);
+                row.append();
+                if (++rowCount > deadline) {
+                    writer.commitWithHysteresis(hysteresis);
+                    deadline = rowCount + batchSize;
+                }
+            } catch (NumericException numericException) {
+                throw CairoException.instance(0).put("Invalid timestamp: ").put(str);
+            }
+        }
+    }
+
+    private void copyOrderedStrTimestamp(TableWriter writer, RecordCursor cursor, RecordToRowCopier copier, int cursorTimestampIndex) {
+        final Record record = cursor.getRecord();
+        while (cursor.hasNext()) {
+            final CharSequence str = record.getStr(cursorTimestampIndex);
+            try {
+                // It's allowed to insert ISO formatted string to timestamp column
+                TableWriter.Row row = writer.newRow(IntervalUtils.parseFloorPartialDate(str));
+                copier.copy(record, row);
+                row.append();
+            } catch (NumericException numericException) {
+                throw CairoException.instance(0).put("Invalid timestamp: ").put(str);
+            }
+        }
     }
 
     private void copyTable(SqlExecutionContext executionContext, CopyModel model) throws SqlException {
@@ -1448,11 +1484,11 @@ public class SqlCompiler implements Closeable {
         }
     }
 
-    private void copyUnordered(RecordCursor cursor, TableWriter writer, RecordToRowCopier ccopier) {
+    private void copyUnordered(RecordCursor cursor, TableWriter writer, RecordToRowCopier copier) {
         final Record record = cursor.getRecord();
         while (cursor.hasNext()) {
             TableWriter.Row row = writer.newRow();
-            ccopier.copy(record, row);
+            copier.copy(record, row);
             row.append();
         }
         writer.commit();
@@ -1786,6 +1822,7 @@ public class SqlCompiler implements Closeable {
                         if (model.getBatchSize() != -1) {
                             copyOrderedBatched(
                                     writer,
+                                    factory.getMetadata(),
                                     cursor,
                                     copier,
                                     writerTimestampIndex,

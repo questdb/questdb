@@ -722,7 +722,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
                 + dates.stream().filter(arr -> filter.test((long) arr[0]))
                 .map(arr -> arr[1] + "\n")
                 .collect(Collectors.joining());
-        printSqlResult(expected, query, "ts", null, null, true, true, expectSize, false, queryPlan, false);
+        printSqlResult(expected, query, "ts", null, null, true, true, expectSize, false, queryPlan);
         return (int) expectedCount;
     }
 }

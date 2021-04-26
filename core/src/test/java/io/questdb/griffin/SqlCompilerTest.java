@@ -2942,7 +2942,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                 executeInsert("insert into xy(ts) values ('2020-01-10T18:00:01.800Zz')");
                 Assert.fail();
             } catch (CairoException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "could not convert to timestamp");
+                TestUtils.assertContains(e.getFlyweightMessage(), "Invalid timestamp:");
             }
 
             assertSql(

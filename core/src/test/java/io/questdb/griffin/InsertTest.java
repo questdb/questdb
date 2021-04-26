@@ -35,6 +35,7 @@ import io.questdb.std.Long256;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -683,6 +684,65 @@ public class InsertTest extends AbstractGriffinTest {
     }
 
     private void assertInsertTimestamp(String expected, String ddl2, String exceptionType, boolean commitInsert) throws Exception {
+        if (commitInsert) {
+            compiler.compile("create table tab(seq long, ts timestamp) timestamp(ts)", sqlExecutionContext);
+            try {
+                executeInsert(ddl2);
+                if (exceptionType != null) {
+                    Assert.fail("SqlException expected");
+                }
+                assertSql("tab", expected);
+            } catch (CairoException e) {
+                if (exceptionType == null) throw e;
+                Assert.assertEquals(exceptionType, e.getClass().getName());
+                TestUtils.assertContains(e.getFlyweightMessage(), expected);
+            }
+        } else {
+            compiler.compile("create table tab(seq long, ts timestamp) timestamp(ts)", sqlExecutionContext);
+            try {
+                compiler.compile(ddl2, sqlExecutionContext);
+                if (exceptionType != null) {
+                    Assert.fail("SqlException expected");
+                }
+                assertSql("tab", expected);
+            } catch (CairoException e) {
+                if (exceptionType == null) throw e;
+                Assert.assertEquals(exceptionType, e.getClass().getName());
+                TestUtils.assertContains(e.getFlyweightMessage(), expected);
+            }
+        }
+
+        compiler.compile("drop table tab", sqlExecutionContext);
+
+        if (commitInsert) {
+            compiler.compile("create table tab(seq long, ts timestamp)", sqlExecutionContext);
+            try {
+                executeInsert(ddl2);
+                if (exceptionType != null) {
+                    Assert.fail("SqlException expected");
+                }
+                assertSql("tab", expected);
+            } catch (Throwable e) {
+                if (exceptionType == null) throw e;
+                Assert.assertEquals(exceptionType, e.getClass().getName());
+                TestUtils.assertContains(e.getMessage(), expected);
+            }
+        } else {
+            compiler.compile("create table tab(seq long, ts timestamp)", sqlExecutionContext);
+            try {
+                compiler.compile(ddl2, sqlExecutionContext);
+                if (exceptionType != null) {
+                    Assert.fail("SqlException expected");
+                }
+                assertSql("tab", expected);
+            } catch (Throwable e) {
+                if (exceptionType == null) throw e;
+                Assert.assertEquals(exceptionType, e.getClass().getName());
+                TestUtils.assertContains(e.getMessage(), expected);
+            }
+        }
+
+/*
         try {
             // Test as designated timestamp
             assertInsertQuery(
@@ -734,7 +794,30 @@ public class InsertTest extends AbstractGriffinTest {
             Assert.assertEquals(exceptionType, e.getClass().getName());
             TestUtils.assertContains(e.getMessage(), expected);
         }
+*/
     }
+
+/*
+    protected static void assertInsertQuery(
+            CharSequence expected,
+            CharSequence query,
+            CharSequence ddl,
+            @Nullable CharSequence expectedTimestamp,
+            @Nullable CharSequence ddl2,
+            @Nullable CharSequence expected2,
+            boolean supportsRandomAccess,
+            boolean checkSameStr,
+            boolean expectSize,
+            boolean commitInsert
+    ) throws Exception {
+        assertMemoryLeak(() -> {
+            if (ddl != null) {
+                compiler.compile(ddl, sqlExecutionContext);
+            }
+            printSqlResult(expected, query, expectedTimestamp, ddl2, expected2, supportsRandomAccess, checkSameStr, expectSize, false, null, commitInsert);
+        });
+    }
+*/
 
     private void testBindVariableInsert(
             int partitionBy,

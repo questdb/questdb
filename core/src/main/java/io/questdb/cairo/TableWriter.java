@@ -4470,7 +4470,7 @@ public class TableWriter implements Closeable {
             // try UTC timestamp first (micro)
             long l;
             try {
-                l = value != null ? TimestampFormatUtils.parseUTCTimestamp(value) : Numbers.LONG_NaN;
+                l = value != null ? IntervalUtils.parseFloorPartialDate(value) : Numbers.LONG_NaN;
             } catch (NumericException e) {
                 throw CairoException.instance(0).put("Invalid timestamp: ").put(value);
             }
