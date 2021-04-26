@@ -50,7 +50,7 @@ public class LogFactoryTest {
 
     @Test(expected = LogError.class)
     public void testBadWriter() {
-        System.setProperty(LogFactory.CONFIG_SYSTEM_PROPERTY, "/nfslog-bad-writer.conf");
+        System.setProperty(LogFactory.CONFIG_SYSTEM_PROPERTY, "/test-log-bad-writer.conf");
 
         try (LogFactory factory = new LogFactory()) {
             LogFactory.configureFromSystemProperties(factory, null);
@@ -124,7 +124,7 @@ public class LogFactoryTest {
 
     @Test
     public void testNoDefault() {
-        System.setProperty(LogFactory.CONFIG_SYSTEM_PROPERTY, "/nfslog1.conf");
+        System.setProperty(LogFactory.CONFIG_SYSTEM_PROPERTY, "/test-log.conf");
 
         try (LogFactory factory = new LogFactory()) {
             LogFactory.configureFromSystemProperties(factory);
@@ -466,7 +466,7 @@ public class LogFactoryTest {
 
     @Test
     public void testSilent() {
-        System.setProperty(LogFactory.CONFIG_SYSTEM_PROPERTY, "/nfslog-silent.conf");
+        System.setProperty(LogFactory.CONFIG_SYSTEM_PROPERTY, "/test-log-silent.conf");
 
         try (LogFactory factory = new LogFactory()) {
             LogFactory.configureFromSystemProperties(factory);

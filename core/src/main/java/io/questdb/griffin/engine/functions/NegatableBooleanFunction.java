@@ -31,7 +31,7 @@ public abstract class NegatableBooleanFunction extends BooleanFunction {
         super(position);
     }
 
-    void setNegated(boolean negated) {
-        this.negated = negated;
+    void setNegated() {
+        this.negated = true;
     }
 }

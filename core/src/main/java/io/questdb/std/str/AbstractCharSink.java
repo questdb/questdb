@@ -259,6 +259,13 @@ public abstract class AbstractCharSink implements CharSink {
         }
     }
 
+    public CharSink repeat(CharSequence value, int n) {
+        for (int i = 0; i < n; i++) {
+            put(value);
+        }
+        return this;
+    }
+
     private void put0(Throwable e) {
         put(e.getClass().getName());
         if (e.getMessage() != null) {

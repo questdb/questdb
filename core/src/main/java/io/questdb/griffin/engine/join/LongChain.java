@@ -24,7 +24,7 @@
 
 package io.questdb.griffin.engine.join;
 
-import io.questdb.cairo.ContiguousVirtualMemory;
+import io.questdb.cairo.vm.ContiguousVirtualMemory;
 import io.questdb.std.Mutable;
 
 import java.io.Closeable;

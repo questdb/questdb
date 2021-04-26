@@ -413,16 +413,15 @@ public class SampleByTest extends AbstractGriffinTest {
                     sqlExecutionContext
             );
 
-            engine.releaseAllWriters();
-            engine.releaseAllReaders();
+            engine.clear();
 
             final FilesFacade ff = new FilesFacadeImpl() {
-                int count = 6;
+                int count = 10;
 
                 @Override
-                public long mmap(long fd, long len, long offset, int mode) {
+                public long mmap(long fd, long len, long offset, int flags) {
                     if (count-- > 0) {
-                        return super.mmap(fd, len, offset, mode);
+                        return super.mmap(fd, len, offset, flags);
                     }
                     return -1;
                 }
@@ -448,8 +447,7 @@ public class SampleByTest extends AbstractGriffinTest {
                     Assert.assertEquals(0, engine.getBusyReaderCount());
                     Assert.assertEquals(0, engine.getBusyWriterCount());
                 }
-                engine.releaseAllReaders();
-                engine.releaseAllWriters();
+                engine.clear();
             }
         });
     }
@@ -1438,12 +1436,12 @@ public class SampleByTest extends AbstractGriffinTest {
             );
 
             FilesFacade ff = new FilesFacadeImpl() {
-                int count = 3;
+                int count = 4;
 
                 @Override
-                public long mmap(long fd, long len, long offset, int mode) {
+                public long mmap(long fd, long len, long offset, int flags) {
                     if (count-- > 0) {
-                        return super.mmap(fd, len, offset, mode);
+                        return super.mmap(fd, len, offset, flags);
                     }
                     return -1;
                 }
@@ -1487,12 +1485,12 @@ public class SampleByTest extends AbstractGriffinTest {
             );
 
             FilesFacade ff = new FilesFacadeImpl() {
-                int count = 6;
+                int count = 10;
 
                 @Override
-                public long mmap(long fd, long len, long offset, int mode) {
+                public long mmap(long fd, long len, long offset, int flags) {
                     if (count-- > 0) {
-                        return super.mmap(fd, len, offset, mode);
+                        return super.mmap(fd, len, offset, flags);
                     }
                     return -1;
                 }
@@ -4191,7 +4189,7 @@ public class SampleByTest extends AbstractGriffinTest {
                 compiler.compile("truncate table x", sqlExecutionContext);
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     sink.clear();
-                    printer.print(cursor, factory.getMetadata(), true);
+                    printer.print(cursor, factory.getMetadata(), true, sink);
                     TestUtils.assertEquals("b\tsum\tsum1\tsum2\tsum3\tsum4\tsum5\tk\n", sink);
                 }
             }

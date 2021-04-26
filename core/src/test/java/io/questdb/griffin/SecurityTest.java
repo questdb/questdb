@@ -127,10 +127,8 @@ public class SecurityTest extends AbstractGriffinTest {
                 Assert.assertEquals(0, memoryRestrictedEngine.getBusyWriterCount());
                 Assert.assertEquals(0, memoryRestrictedEngine.getBusyReaderCount());
             } finally {
-                engine.releaseAllReaders();
-                engine.releaseAllWriters();
-                memoryRestrictedEngine.releaseAllReaders();
-                memoryRestrictedEngine.releaseAllWriters();
+                engine.clear();
+                memoryRestrictedEngine.clear();
             }
         });
     }

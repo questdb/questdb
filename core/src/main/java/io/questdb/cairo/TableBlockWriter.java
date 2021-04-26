@@ -34,9 +34,10 @@ import java.util.concurrent.locks.LockSupport;
 
 import io.questdb.MessageBus;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.vm.VmUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.mp.Job;
+import io.questdb.mp.AbstractQueueConsumerJob;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.Sequence;
 import io.questdb.std.Files;
@@ -80,11 +81,11 @@ public class TableBlockWriter implements Closeable {
         this.ff = configuration.getFilesFacade();
         this.mkDirMode = configuration.getMkDirMode();
         queue = messageBus.getTableBlockWriterQueue();
-        pubSeq = messageBus.getTableBlockWriterPubSequence();
+        pubSeq = messageBus.getTableBlockWriterPubSeq();
     }
 
     public void appendPageFrameColumn(int columnIndex, long pageFrameSize, long sourceAddress) {
-        LOG.info().$("appending data").$(" [tableName=").$(writer.getName()).$(", columnIndex=").$(columnIndex).$(", pageFrameSize=").$(pageFrameSize).$(']').$();
+        LOG.info().$("appending data").$(" [tableName=").$(writer.getTableName()).$(", columnIndex=").$(columnIndex).$(", pageFrameSize=").$(pageFrameSize).$(']').$();
         if (columnIndex == timestampColumnIndex) {
             long firstBlockTimestamp = Unsafe.getUnsafe().getLong(sourceAddress);
             if (firstBlockTimestamp < firstTimestamp) {
@@ -106,7 +107,7 @@ public class TableBlockWriter implements Closeable {
             partitionBlockWriters.getQuick(n).cancel();
         }
         writer.purgeUnusedPartitions();
-        LOG.info().$("cancelled new block [table=").$(writer.getName()).$(']').$();
+        LOG.info().$("cancelled new block [table=").$(writer.getTableName()).$(']').$();
         clear();
     }
 
@@ -118,19 +119,18 @@ public class TableBlockWriter implements Closeable {
     }
 
     public void commit() {
-        LOG.info().$("committing block write").$(" [tableName=").$(writer.getName()).$(", firstTimestamp=").$ts(firstTimestamp).$(", lastTimestamp=").$ts(lastTimestamp).$(']').$();
+        LOG.info().$("committing block write").$(" [tableName=").$(writer.getTableName()).$(", firstTimestamp=").$ts(firstTimestamp).$(", lastTimestamp=").$ts(lastTimestamp).$(']').$();
         // Need to complete all data tasks before we can start index tasks
         completePendingConcurrentTasks(false);
         for (int n = 0; n < nextPartitionBlockWriterIndex; n++) {
             partitionBlockWriters.getQuick(n).startCommitAppendedBlock();
         }
         completePendingConcurrentTasks(false);
-        long nTotalRowsAdded = 0;
         for (int n = 0; n < nextPartitionBlockWriterIndex; n++) {
-            nTotalRowsAdded += partitionBlockWriters.getQuick(n).completeCommitAppendedBlock();
+            partitionBlockWriters.getQuick(n).completeCommitAppendedBlock();
         }
         writer.commitBlock(firstTimestamp);
-        LOG.info().$("committed new block [table=").$(writer.getName()).$(']').$();
+        LOG.info().$("committed new block [table=").$(writer.getTableName()).$(']').$();
         clear();
     }
 
@@ -169,7 +169,7 @@ public class TableBlockWriter implements Closeable {
 
     void clear() {
         if (nCompletedConcurrentTasks.get() < nEnqueuedConcurrentTasks) {
-            LOG.error().$("new block should have been either committed or cancelled [table=").$(writer.getName()).$(']').$();
+            LOG.error().$("new block should have been either committed or cancelled [table=").$(writer.getTableName()).$(']').$();
             completePendingConcurrentTasks(true);
         }
         metadata = null;
@@ -275,7 +275,7 @@ public class TableBlockWriter implements Closeable {
                 timestampFloorMethod = NO_PARTITIONING_FLOOR;
                 break;
         }
-        LOG.info().$("started new block [table=").$(writer.getName()).$(']').$();
+        LOG.info().$("started new block [table=").$(writer.getTableName()).$(']').$();
     }
 
     private enum TaskType {
@@ -404,33 +404,20 @@ public class TableBlockWriter implements Closeable {
         private TableBlockWriterTask task;
     }
 
-    public static class TableBlockWriterJob implements Job {
-        private final RingQueue<TableBlockWriterTaskHolder> queue;
-        private final Sequence subSeq;
-
+    public static class TableBlockWriterJob extends AbstractQueueConsumerJob<TableBlockWriterTaskHolder> {
         public TableBlockWriterJob(MessageBus messageBus) {
-            this.queue = messageBus.getTableBlockWriterQueue();
-            this.subSeq = messageBus.getTableBlockWriterSubSequence();
+            super(messageBus.getTableBlockWriterQueue(), messageBus.getTableBlockWriterSubSeq());
         }
 
         @Override
-        public boolean run(int workerId) {
-            boolean useful = false;
-            while (true) {
-                long cursor = subSeq.next();
-                if (cursor >= 0) {
-                    try {
-                        final TableBlockWriterTaskHolder holder = queue.get(cursor);
-                        useful |= holder.task.run();
-                        holder.task = null;
-                    } finally {
-                        subSeq.done(cursor);
-                    }
-                }
-
-                if (cursor == -1) {
-                    return useful;
-                }
+        protected boolean doRun(int workerId, long cursor) {
+            try {
+                final TableBlockWriterTaskHolder holder = queue.get(cursor);
+                boolean useful = holder.task.run();
+                holder.task = null;
+                return useful;
+            } finally {
+                subSeq.done(cursor);
             }
         }
     }
@@ -452,11 +439,11 @@ public class TableBlockWriter implements Closeable {
         private void openPartition() {
             assert !opened;
             partitionStruct.of(columnCount);
-            path.of(root).concat(writer.getName());
-            timestampHi = TableUtils.setPathForPartition(path, partitionBy, timestampLo);
+            path.of(root).concat(writer.getTableName());
+            timestampHi = TableUtils.setPathForPartition(path, partitionBy, timestampLo, true);
             int plen = path.length();
             try {
-                if (ff.mkdirs(path.put(Files.SEPARATOR).$(), mkDirMode) != 0) {
+                if (ff.mkdirs(path.slash$(), mkDirMode) != 0) {
                     throw CairoException.instance(ff.errno()).put("Could not create directory: ").put(path);
                 }
 
@@ -580,7 +567,7 @@ public class TableBlockWriter implements Closeable {
             columnTops.clear();
         }
 
-        private long completeCommitAppendedBlock() {
+        private void completeCommitAppendedBlock() {
             long nRowsAdded = 0;
             for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
                 long nColRowsAdded = partitionStruct.getColumnNRowsAdded(columnIndex);
@@ -592,7 +579,6 @@ public class TableBlockWriter implements Closeable {
             long blockLastTimestamp = Math.min(timestampHi, lastTimestamp);
             LOG.info().$("committing ").$(nRowsAdded).$(" rows to partition at ").$(path).$(" [firstTimestamp=").$ts(timestampLo).$(", lastTimestamp=").$ts(timestampHi).$(']').$();
             writer.startAppendedBlock(timestampLo, blockLastTimestamp, nRowsAdded, columnTops);
-            return nRowsAdded;
         }
 
         private void completeUpdateSymbolCache(int columnIndex, long colNRowsAdded) {
@@ -797,7 +783,7 @@ public class TableBlockWriter implements Closeable {
                 // so null will evaluate to just VirtualMemory.STRING_LENGTH_BYTES
                 // but for positive length values we need to subtract 2
                 // how do we do that? Lets use inverted sign bit
-                final long sz = (VirtualMemory.STRING_LENGTH_BYTES + Character.BYTES * (strLen + 1) - bit);
+                final long sz = (VmUtils.STRING_LENGTH_BYTES + 2L * (strLen + 1) - bit);
                 columnDataAddress += sz;
                 offset += sz;
             }
@@ -811,7 +797,7 @@ public class TableBlockWriter implements Closeable {
                 try {
                     switch (taskType) {
                         case AppendBlock:
-                            Unsafe.getUnsafe().copyMemory(sourceAddress, destAddress, sourceSizeOrEnd);
+                            Vect.memcpy(sourceAddress, destAddress, sourceSizeOrEnd);
                             return true;
 
                         case GenerateStringIndex:

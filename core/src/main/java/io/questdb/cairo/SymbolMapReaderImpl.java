@@ -26,6 +26,8 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.vm.SinglePageMappedReadOnlyPageMemory;
+import io.questdb.cairo.vm.VmUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
@@ -36,8 +38,8 @@ import java.io.Closeable;
 public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
     private static final Log LOG = LogFactory.getLog(SymbolMapReaderImpl.class);
     private final BitmapIndexBwdReader indexReader = new BitmapIndexBwdReader();
-    private final ExtendableOnePageMemory charMem = new ExtendableOnePageMemory();
-    private final ExtendableOnePageMemory offsetMem = new ExtendableOnePageMemory();
+    private final SinglePageMappedReadOnlyPageMemory charMem = new SinglePageMappedReadOnlyPageMemory();
+    private final SinglePageMappedReadOnlyPageMemory offsetMem = new SinglePageMappedReadOnlyPageMemory();
     private final ObjList<String> cache = new ObjList<>();
     private int maxHash;
     private boolean cached;
@@ -60,7 +62,7 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
         this.cache.clear();
         long fd = this.offsetMem.getFd();
         Misc.free(offsetMem);
-        LOG.info().$("closed [fd=").$(fd).$(']').$();
+        LOG.debug().$("closed [fd=").$(fd).$(']').$();
     }
 
     @Override
@@ -122,7 +124,7 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
             this.nullValue = offsetMem.getBool(SymbolMapWriter.HEADER_NULL_FLAG);
 
             // index writer is used to identify attempts to store duplicate symbol value
-            this.indexReader.of(configuration, path.trimTo(plen), name, 0);
+            this.indexReader.of(configuration, path.trimTo(plen), name, 0, -1);
 
             // this is the place where symbol values are stored
             this.charMem.of(ff, SymbolMapWriter.charFileName(path.trimTo(plen), name), mapPageSize, 0);
@@ -138,7 +140,7 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
                 this.cache.setPos(symbolCapacity);
             }
             this.cache.clear();
-            LOG.info().$("open [name=").$(path.trimTo(plen).concat(name).$()).$(", fd=").$(this.offsetMem.getFd()).$(", capacity=").$(symbolCapacity).$(']').$();
+            LOG.debug().$("open [name=").$(path.trimTo(plen).concat(name).$()).$(", fd=").$(this.offsetMem.getFd()).$(", capacity=").$(symbolCapacity).$(']').$();
         } catch (CairoException e) {
             close();
             throw e;
@@ -213,7 +215,7 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
         if (symbolCount > 0) {
             long lastSymbolOffset = this.offsetMem.getLong(SymbolMapWriter.keyToOffset(symbolCount - 1));
             this.charMem.grow(lastSymbolOffset + 4);
-            charMemLength = lastSymbolOffset + this.charMem.getStrLen(lastSymbolOffset) * 2 + 4;
+            charMemLength = lastSymbolOffset + VmUtils.getStorageLength(this.charMem.getStrLen(lastSymbolOffset));
         } else {
             charMemLength = 0;
         }

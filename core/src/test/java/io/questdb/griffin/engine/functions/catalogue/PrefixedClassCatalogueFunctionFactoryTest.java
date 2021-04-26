@@ -139,13 +139,12 @@ public class PrefixedClassCatalogueFunctionFactoryTest extends AbstractGriffinTe
             sink.clear();
             try (RecordCursorFactory factory = compiler.compile("select * from pg_catalog.pg_class", sqlExecutionContext).getRecordCursorFactory()) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    printer.print(cursor, factory.getMetadata(), true);
+                    printer.print(cursor, factory.getMetadata(), true, sink);
                     TestUtils.assertEquals("relname\trelnamespace\trelkind\trelowner\toid\trelpartbound\n" +
                             "pg_class\t11\tr\t0\t1259\t\n", sink);
 
                     compiler.compile("create table xyz (a int)", sqlExecutionContext);
-                    engine.releaseAllReaders();
-                    engine.releaseAllWriters();
+                    engine.clear();
 
                     cursor.toTop();
                     Assert.assertTrue(cursor.hasNext());
@@ -249,7 +248,7 @@ public class PrefixedClassCatalogueFunctionFactoryTest extends AbstractGriffinTe
             try (RecordCursorFactory factory = compiler.compile("select * from pg_catalog.pg_class() order by relname", sqlExecutionContext).getRecordCursorFactory()) {
                 RecordCursor cursor = factory.getCursor(sqlExecutionContext);
                 try {
-                    printer.print(cursor, factory.getMetadata(), true);
+                    printer.print(cursor, factory.getMetadata(), true, sink);
                     TestUtils.assertEquals("relname\trelnamespace\trelkind\trelowner\toid\trelpartbound\n" +
                             "pg_class\t11\tr\t0\t1259\t\n", sink);
 
@@ -259,7 +258,7 @@ public class PrefixedClassCatalogueFunctionFactoryTest extends AbstractGriffinTe
                     cursor = factory.getCursor(sqlExecutionContext);
 
                     sink.clear();
-                    printer.print(cursor, factory.getMetadata(), true);
+                    printer.print(cursor, factory.getMetadata(), true, sink);
                     TestUtils.assertEquals("relname\trelnamespace\trelkind\trelowner\toid\trelpartbound\n" +
                             "pg_class\t11\tr\t0\t1259\t\n" +
                             "xyz\t2200\tr\t0\t1\t\n", sink);
@@ -276,7 +275,7 @@ public class PrefixedClassCatalogueFunctionFactoryTest extends AbstractGriffinTe
                     cursor = factory.getCursor(sqlExecutionContext);
 
                     sink.clear();
-                    printer.print(cursor, factory.getMetadata(), true);
+                    printer.print(cursor, factory.getMetadata(), true, sink);
 
                     TestUtils.assertEquals("relname\trelnamespace\trelkind\trelowner\toid\trelpartbound\n" +
                                     "pg_class\t11\tr\t0\t1259\t\n" +
@@ -290,7 +289,7 @@ public class PrefixedClassCatalogueFunctionFactoryTest extends AbstractGriffinTe
                     cursor = factory.getCursor(sqlExecutionContext);
 
                     sink.clear();
-                    printer.print(cursor, factory.getMetadata(), true);
+                    printer.print(cursor, factory.getMetadata(), true, sink);
 
                     TestUtils.assertEquals("relname\trelnamespace\trelkind\trelowner\toid\trelpartbound\n" +
                             "pg_class\t11\tr\t0\t1259\t\n" +

@@ -29,6 +29,7 @@ public final class PoolConstants {
     public static final int CR_NAME_LOCK = 2;
     public static final int CR_IDLE = 3;
     public static final int CR_REOPEN = 4;
+    public static final int CR_DISTRESSED = 5;
 
     public static String closeReasonText(int reason) {
         switch (reason) {
@@ -40,6 +41,8 @@ public final class PoolConstants {
                 return "IDLE";
             case CR_REOPEN:
                 return "REOPEN";
+            case CR_DISTRESSED:
+                return "DISTRESSED";
             default:
                 return "UNKNOWN";
         }

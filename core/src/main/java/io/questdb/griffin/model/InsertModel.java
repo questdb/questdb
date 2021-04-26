@@ -36,6 +36,8 @@ public class InsertModel implements ExecutionModel, Mutable, Sinkable {
     private QueryModel queryModel;
     private int selectKeywordPosition;
     private int endOfValuesPosition;
+    private long batchSize = -1;
+    private long hysteresis = 0;
 
     private InsertModel() {
     }
@@ -61,6 +63,8 @@ public class InsertModel implements ExecutionModel, Mutable, Sinkable {
         this.columnValues.clear();
         this.selectKeywordPosition = 0;
         this.endOfValuesPosition = 0;
+        this.batchSize = -1;
+        this.hysteresis = 0;
     }
 
     public int getColumnPosition(int columnIndex) {
@@ -96,6 +100,22 @@ public class InsertModel implements ExecutionModel, Mutable, Sinkable {
         this.queryModel = queryModel;
     }
 
+    public long getBatchSize() {
+        return batchSize;
+    }
+
+    public void setBatchSize(long batchSize) {
+        this.batchSize = batchSize;
+    }
+
+    public long getHysteresis() {
+        return hysteresis;
+    }
+
+    public void setHysteresis(long hysteresis) {
+        this.hysteresis = hysteresis;
+    }
+
     public ExpressionNode getTableName() {
         return tableName;
     }
@@ -114,7 +134,16 @@ public class InsertModel implements ExecutionModel, Mutable, Sinkable {
 
     @Override
     public void toSink(CharSink sink) {
-        sink.put("insert into ").put(tableName.token).put(' ');
+        sink.put("insert");
+        if (batchSize != -1) {
+            sink.put(" batch ").put(batchSize);
+        }
+
+        if (hysteresis != 0) {
+            sink.put(" hysteresis ").put(hysteresis);
+        }
+
+        sink.put(" into ").put(tableName.token).put(' ');
         int n = columnSet.size();
         if (n > 0) {
             sink.put('(');

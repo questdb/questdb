@@ -24,12 +24,9 @@
 
 package io.questdb.griffin.engine.functions.eq;
 
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.AbstractGriffinTest;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.std.Rnd;
-import io.questdb.test.tools.TestUtils;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -68,15 +65,10 @@ public class EqStrFunctionFactoryTest extends AbstractGriffinTest {
                     " from long_sequence(10000)" +
                     ")", sqlExecutionContext);
 
-            try (RecordCursorFactory factory = compiler.compile("x where a = b", sqlExecutionContext).getRecordCursorFactory()) {
-                sink.clear();
-
-                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    printer.print(cursor, factory.getMetadata(), true);
-                }
-
-                TestUtils.assertEquals(expected, sink);
-            }
+            assertSql(
+                    "x where a = b",
+                    expected
+            );
         });
     }
 
@@ -122,14 +114,10 @@ public class EqStrFunctionFactoryTest extends AbstractGriffinTest {
                     " from long_sequence(10000)" +
                     ")", sqlExecutionContext);
 
-            try (RecordCursorFactory factory = compiler.compile("x where a = b", sqlExecutionContext).getRecordCursorFactory()) {
-                sink.clear();
-                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    printer.print(cursor, factory.getMetadata(), true);
-                }
-
-                TestUtils.assertEquals(expected, sink);
-            }
+            assertSql(
+                    "x where a = b",
+                    expected
+            );
         });
     }
 
@@ -159,15 +147,10 @@ public class EqStrFunctionFactoryTest extends AbstractGriffinTest {
                     " from long_sequence(10000)" +
                     ")", sqlExecutionContext);
 
-            try (RecordCursorFactory factory = compiler.compile("x where a = 'UW'", sqlExecutionContext).getRecordCursorFactory()) {
-                sink.clear();
-
-                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    printer.print(cursor, factory.getMetadata(), true);
-                }
-
-                TestUtils.assertEquals(expected, sink);
-            }
+            assertSql(
+                    "x where a = 'UW'",
+                    expected
+            );
         });
     }
 
@@ -197,15 +180,10 @@ public class EqStrFunctionFactoryTest extends AbstractGriffinTest {
                     " from long_sequence(10000)" +
                     ")", sqlExecutionContext);
 
-            try (RecordCursorFactory factory = compiler.compile("x where 'UW' = a", sqlExecutionContext).getRecordCursorFactory()) {
-                sink.clear();
-
-                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    printer.print(cursor, factory.getMetadata(), true);
-                }
-
-                TestUtils.assertEquals(expected, sink);
-            }
+            assertSql(
+                    "x where 'UW' = a",
+                    expected
+            );
         });
     }
 
@@ -234,15 +212,10 @@ public class EqStrFunctionFactoryTest extends AbstractGriffinTest {
                     " from long_sequence(10000)" +
                     ")", sqlExecutionContext);
 
-            try (RecordCursorFactory factory = compiler.compile("x where a = null", sqlExecutionContext).getRecordCursorFactory()) {
-                sink.clear();
-
-                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    printer.print(cursor, factory.getMetadata(), true);
-                }
-
-                TestUtils.assertEquals(expected, sink);
-            }
+            assertSql(
+                    "x where a = null",
+                    expected
+            );
         });
     }
 }

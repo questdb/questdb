@@ -24,10 +24,6 @@
 
 package io.questdb.cutlass.http;
 
-import java.io.BufferedOutputStream;
-import java.io.File;
-import java.io.FileOutputStream;
-import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.BrokenBarrierException;
 import java.util.concurrent.locks.LockSupport;
@@ -72,7 +68,7 @@ public class SendAndReceiveRequestBuilder {
     private boolean expectDisconnect;
     private int requestCount = 1;
     private int compareLength = -1;
-    private int maxWaitTimeoutMs = 5000;
+    private final int maxWaitTimeoutMs = 5000;
 
     public void execute(
             String request,
@@ -189,13 +185,6 @@ public class SendAndReceiveRequestBuilder {
             receivedBytes[i] = (byte) receivedByteList.getQuick(i);
         }
 
-        // // TODO
-        // try (BufferedOutputStream os = new BufferedOutputStream(new FileOutputStream(new File("/tmp/test")))) {
-        // os.write(receivedBytes);
-        // } catch (IOException ex) {
-        //
-        // }
-
         String actual = new String(receivedBytes, StandardCharsets.UTF_8);
         if (!printOnly) {
             if (expectedResponse instanceof ByteSequence) {
@@ -227,7 +216,7 @@ public class SendAndReceiveRequestBuilder {
         }
     }
 
-    public String executeUntilDisconnect(String request, long fd, final int len, long ptr, HttpClientStateListener listener) throws InterruptedException {
+    public void executeUntilDisconnect(String request, long fd, final int len, long ptr, HttpClientStateListener listener) throws InterruptedException {
         withExpectDisconnect(true);
         long timestamp = System.currentTimeMillis();
         int sent = 0;
@@ -286,7 +275,6 @@ public class SendAndReceiveRequestBuilder {
             Assert.fail();
         }
 
-        return actual;
     }
 
     public void executeWithStandardHeaders(
@@ -363,10 +351,6 @@ public class SendAndReceiveRequestBuilder {
         return this;
     }
 
-    public SendAndReceiveRequestBuilder withMaxTimeout(int maxTimeout) {
-        this.maxWaitTimeoutMs = maxTimeout;
-        return this;
-    }
 
     @FunctionalInterface
     public interface RequestAction {

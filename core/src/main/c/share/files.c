@@ -24,7 +24,7 @@
 
 #include <unistd.h>
 #include <sys/stat.h>
-#include <sys/fcntl.h>
+#include <fcntl.h>
 #include <sys/file.h>
 #include <sys/mman.h>
 
@@ -54,7 +54,7 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_write
 }
 
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_mmap0
-        (JNIEnv *e, jclass cl, jlong fd, jlong len, jlong offset, jint flags) {
+        (JNIEnv *e, jclass cl, jlong fd, jlong len, jlong offset, jint flags, jlong baseAddress) {
     int prot = 0;
 
     if (flags == com_questdb_std_Files_MAP_RO) {
@@ -62,8 +62,7 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_mmap0
     } else if (flags == com_questdb_std_Files_MAP_RW) {
         prot = PROT_READ | PROT_WRITE;
     }
-
-    return (jlong) mmap(NULL, (size_t) len, prot, MAP_SHARED, (int) fd, offset);
+    return (jlong) mmap((void *) baseAddress, (size_t) len, prot, MAP_SHARED, (int) fd, offset);
 }
 
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_munmap0

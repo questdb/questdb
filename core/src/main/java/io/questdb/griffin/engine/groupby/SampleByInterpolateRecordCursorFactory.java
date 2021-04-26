@@ -424,8 +424,8 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
         for (int i = 0; i < groupByScalarFunctionCount; i++) {
             InterpolationUtil.StoreYFunction storeYFunction = storeYFunctions.getQuick(i);
             GroupByFunction groupByFunction = groupByScalarFunctions.getQuick(i);
-            storeYFunction.store(groupByFunction, x1Value, yData + i * 16);
-            storeYFunction.store(groupByFunction, x2value, yData + i * 16 + 8);
+            storeYFunction.store(groupByFunction, x1Value, yData + i * 16L);
+            storeYFunction.store(groupByFunction, x2value, yData + i * 16L + 8);
         }
     }
 
@@ -499,7 +499,7 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
             }
             for (int i = 0; i < groupByScalarFunctionCount; i++) {
                 GroupByFunction function = groupByScalarFunctions.getQuick(i);
-                interpolatorFunctions.getQuick(i).interpolateAndStore(function, result, x, x1, x2, yData + i * 16, yData + i * 16 + 8);
+                interpolatorFunctions.getQuick(i).interpolateAndStore(function, result, x, x1, x2, yData + i * 16L, yData + i * 16L + 8);
             }
             result.putByte(0, (byte) 0); // fill the value, change flag from 'gap' to 'fill'
         }

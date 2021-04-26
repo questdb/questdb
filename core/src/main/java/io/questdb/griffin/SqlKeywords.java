@@ -94,6 +94,19 @@ public class SqlKeywords {
                 && (tok.charAt(i) | 32) == 'c';
     }
 
+    public static boolean isBatch(CharSequence tok) {
+        if (tok.length() != 5) {
+            return false;
+        }
+
+        int i = 0;
+        return (tok.charAt(i++) | 32) == 'b'
+                && (tok.charAt(i++) | 32) == 'a'
+                && (tok.charAt(i++) | 32) == 't'
+                && (tok.charAt(i++) | 32) == 'c'
+                && (tok.charAt(i) | 32) == 'h';
+    }
+
     public static boolean isBegin(CharSequence tok) {
         if (tok.length() != 5) {
             return false;
@@ -504,6 +517,24 @@ public class SqlKeywords {
                 && (tok.charAt(i)) == 'r';
     }
 
+    public static boolean isHysteresis(CharSequence tok) {
+        if (tok.length() != 10) {
+            return false;
+        }
+
+        int i = 0;
+        return (tok.charAt(i++)) == 'h'
+                && (tok.charAt(i++)) == 'y'
+                && (tok.charAt(i++)) == 's'
+                && (tok.charAt(i++)) == 't'
+                && (tok.charAt(i++)) == 'e'
+                && (tok.charAt(i++)) == 'r'
+                && (tok.charAt(i++)) == 'e'
+                && (tok.charAt(i++)) == 's'
+                && (tok.charAt(i++)) == 'i'
+                && (tok.charAt(i)) == 's';
+    }
+
     public static boolean isInKeyword(CharSequence tok) {
         if (tok.length() != 2) {
             return false;
@@ -566,6 +597,18 @@ public class SqlKeywords {
                 && (tok.charAt(i++) | 32) == 'e'
                 && (tok.charAt(i++) | 32) == 'c'
                 && (tok.charAt(i) | 32) == 't';
+    }
+
+    public static boolean isInto(CharSequence tok) {
+        if (tok.length() != 4) {
+            return false;
+        }
+
+        int i = 0;
+        return (tok.charAt(i++) | 32) == 'i'
+                && (tok.charAt(i++) | 32) == 'n'
+                && (tok.charAt(i++) | 32) == 't'
+                && (tok.charAt(i) | 32) == 'o';
     }
 
     public static boolean isIsolationKeyword(CharSequence tok) {

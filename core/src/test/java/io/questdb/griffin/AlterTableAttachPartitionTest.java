@@ -27,8 +27,6 @@ package io.questdb.griffin;
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.DataFrame;
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
@@ -41,6 +39,7 @@ import org.junit.Test;
 
 import java.io.IOException;
 import java.nio.file.FileSystems;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static java.nio.file.StandardCopyOption.REPLACE_EXISTING;
 
@@ -91,13 +90,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                         .col("l", ColumnType.LONG));
 
                 copyAttachPartition(src, dst, 0, "2020-01-10");
-                try {
-                    copyAttachPartition(src, dst, 1001, "2020-01-09");
-                    Assert.fail();
-                } catch (CairoException e) {
-                    // Insert row attempt expected to fail.
-                    TestUtils.assertContains(e.getMessage(), "Cannot insert rows out of order");
-                }
+                copyAttachPartition(src, dst, 1001, "2020-01-09");
             }
         });
     }
@@ -220,7 +213,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
 
     @Test
     public void testAttachPartitionMissingColumnType() throws Exception {
-        assertMemoryLeak(() -> assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             try (TableModel src = new TableModel(configuration, "src", PartitionBy.DAY)) {
 
                 createPopulateTable(
@@ -246,7 +239,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                 assertSchemaMismatch(src, dst -> dst.col("ts", ColumnType.CHAR));
                 assertSchemaMismatch(src, dst -> dst.col("ts", ColumnType.SHORT));
             }
-        }));
+        });
     }
 
     @Test
@@ -348,7 +341,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
 
                     Assert.assertTrue(writer.inTransaction());
 
-                    // This commits the append before attacheing
+                    // This commits the append before attaching
                     writer.attachPartition(timestamp);
                     Assert.assertEquals(partitionRowCount + 1, writer.size());
 
@@ -423,126 +416,82 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
 
     @Test
     public void testCannotMapTimestampColumn() throws Exception {
+        AtomicInteger counter = new AtomicInteger(1);
         FilesFacadeImpl ff = new FilesFacadeImpl() {
             private long tsdFd;
 
             @Override
-            public long mmap(long fd, long len, long offset, int mode) {
+            public long mmap(long fd, long len, long offset, int flags) {
                 if (tsdFd != fd) {
-                    return super.mmap(fd, len, offset, mode);
+                    return super.mmap(fd, len, offset, flags);
                 }
+                tsdFd = 0;
                 return -1;
             }
 
             @Override
             public long openRO(LPSZ name) {
                 long fd = super.openRO(name);
-                if (Chars.endsWith(name, "ts.d")) {
+                if (Chars.endsWith(name, "ts.d") && counter.decrementAndGet() == 0) {
                     this.tsdFd = fd;
                 }
                 return fd;
             }
         };
 
-        testSqlFailedOnFsOperation(ff, false, "Cannot map");
+        testSqlFailedOnFsOperation(ff, "Cannot map");
     }
 
     @Test
     public void testCannotReadTimestampColumn() throws Exception {
+        AtomicInteger counter = new AtomicInteger(1);
         FilesFacadeImpl ff = new FilesFacadeImpl() {
             @Override
             public long openRO(LPSZ name) {
-                if (Chars.endsWith(name, "ts.d")) {
+                if (Chars.endsWith(name, "ts.d") && counter.decrementAndGet() == 0) {
                     return -1;
                 }
                 return super.openRO(name);
             }
         };
 
-        testSqlFailedOnFsOperation(ff, false, "[12] table 'dst' could not be altered: [", "]: Cannot open:");
+        testSqlFailedOnFsOperation(ff, "[12] table 'dst' could not be altered: [", "]: Cannot open:");
     }
 
     @Test
     public void testCannotReadTimestampColumnFileDoesNotExist() throws Exception {
+        AtomicInteger counter = new AtomicInteger(1);
         FilesFacadeImpl ff = new FilesFacadeImpl() {
             @Override
             public boolean exists(LPSZ name) {
-                if (Chars.endsWith(name, "ts.d")) {
+                if (Chars.endsWith(name, "ts.d") && counter.decrementAndGet() == 0) {
                     return false;
                 }
                 return super.exists(name);
             }
         };
 
-        testSqlFailedOnFsOperation(ff, false, "[12] table 'dst' could not be altered: [0]: Doesn't exist:");
+        testSqlFailedOnFsOperation(ff, "[12] table 'dst' could not be altered: [0]: Doesn't exist:");
     }
 
     @Test
     public void testCannotRenameDetachedFolderOnAttach() throws Exception {
+        AtomicInteger counter = new AtomicInteger(1);
         FilesFacadeImpl ff = new FilesFacadeImpl() {
             @Override
             public boolean rename(LPSZ from, LPSZ to) {
-                if (Chars.endsWith(to, "2020-01-01")) {
+                if (Chars.endsWith(to, "2020-01-01") && counter.decrementAndGet() == 0) {
                     return false;
                 }
                 return super.rename(from, to);
             }
         };
 
-        testSqlFailedOnFsOperation(ff, true, "[12] table 'dst' could not be altered: [", "]: File system error on trying to rename [from=");
-    }
-
-    private void testSqlFailedOnFsOperation(FilesFacadeImpl ff, boolean reCopy, String... errorContains) throws Exception {
-        DefaultCairoConfiguration config = new DefaultCairoConfiguration(root) {
-            @Override
-            public FilesFacade getFilesFacade() {
-                return ff;
-            }
-        };
-
-        assertMemoryLeak(() -> {
-            try (TableModel src = new TableModel(config, "src", PartitionBy.DAY);
-                 TableModel dst = new TableModel(config, "dst", PartitionBy.DAY)) {
-                try (CairoEngine engine2 = new CairoEngine(config); SqlCompiler compiler2 = new SqlCompiler(engine2)) {
-                    CairoEngine tempEngine = engine;
-                    SqlCompiler tempCompiler = compiler;
-                    engine = engine2;
-                    compiler = compiler2;
-
-                    createPopulateTable(
-                            src.col("l", ColumnType.LONG)
-                                    .col("i", ColumnType.INT)
-                                    .timestamp("ts"),
-                            100,
-                            "2020-01-01",
-                            1);
-
-                    CairoTestUtils.create(dst.timestamp("ts")
-                            .col("i", ColumnType.INT)
-                            .col("l", ColumnType.LONG));
-
-                    try {
-                        copyAttachPartition(src, dst, 0, "2020-01-01");
-                        Assert.fail();
-                    } catch (SqlException e) {
-                        for (String error : errorContains) {
-                            TestUtils.assertContains(e.getMessage(), error);
-                        }
-                    } finally {
-                        engine2.releaseAllWriters();
-                        engine2.releaseAllReaders();
-                        engine = tempEngine;
-                        compiler = tempCompiler;
-                    }
-                }
-
-                // second attempt without FilesFacade override should work ok
-                copyAttachPartition(src, dst, 0, !reCopy, "2020-01-01");
-            }
-        });
+        testSqlFailedOnFsOperation(ff, "[12] table 'dst' could not be altered: [", "]: File system error on trying to rename [from=");
     }
 
     private void assertSchemaMatch(AddColumn tm) throws Exception {
+        setUp();
         assertMemoryLeak(() -> {
             try (TableModel src = new TableModel(configuration, "src", PartitionBy.DAY);
                  TableModel dst = new TableModel(configuration, "dst", PartitionBy.DAY)) {
@@ -566,9 +515,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                 copyAttachPartition(src, dst, 0, "2020-01-01");
             }
         });
-        tearDownAfterTest();
-        tearDown0();
-        setUp0();
+        tearDown();
     }
 
     private void assertSchemaMismatch(TableModel src, AddColumn tm) throws IOException, NumericException {
@@ -587,7 +534,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             } catch (SqlException e) {
                 TestUtils.assertContains(e.getMessage(), "Column file does not exist");
             }
-            Files.rmdir(path.concat(root).concat("dst").concat("2020-01-10").$());
+            Files.rmdir(path.concat(root).concat("dst").concat("2020-01-10").put(TableUtils.DETACHED_DIR_MARKER).$());
         }
     }
 
@@ -667,7 +614,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
 
             TestUtils.assertEquals(
                     "cnt\n" +
-                            "-1\n",
+                            (-1 - countAjdustment) + "\n",
                     executeSql("with " +
                             "t2 as (select 1 as id, count() as cnt from dst)\n" +
                             withClause +
@@ -681,7 +628,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
     private void copyDirectory(Path from, Path to) throws IOException {
         LOG.info().$("copying folder [from=").$(from).$(", to=").$(to).$(']').$();
         if (Files.mkdir(to, DIR_MODE) != 0) {
-            Assert.fail("Cannot create " + to.toString() + ". Error: " + Os.errno());
+            Assert.fail("Cannot create " + to + ". Error: " + Os.errno());
         }
 
         java.nio.file.Path dest = FileSystems.getDefault().getPath(to.toString() + Files.SEPARATOR);
@@ -705,19 +652,18 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
         try (Path p1 = new Path().of(configuration.getRoot()).concat(src).concat(srcDir).$();
              Path backup = new Path().of(configuration.getRoot())) {
 
-            copyDirectory(p1, backup.concat(dst).concat(dstDir).$());
+            copyDirectory(p1, backup.concat(dst).concat(dstDir).put(TableUtils.DETACHED_DIR_MARKER).$());
         }
     }
 
     private CharSequence executeSql(String sql) throws SqlException {
-        try (RecordCursorFactory rcf = compiler.compile(sql
-                , sqlExecutionContext).getRecordCursorFactory()) {
-            try (RecordCursor cursor = rcf.getCursor(sqlExecutionContext)) {
-                sink.clear();
-                printer.print(cursor, rcf.getMetadata(), true);
-                return sink;
-            }
-        }
+        TestUtils.printSql(
+                compiler,
+                sqlExecutionContext,
+                sql,
+                sink
+        );
+        return sink;
     }
 
     private int readAllRows(TableReader tableReader) {
@@ -732,6 +678,40 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             }
             return count;
         }
+    }
+
+    private void testSqlFailedOnFsOperation(FilesFacadeImpl ff, String... errorContains) throws Exception {
+        assertMemoryLeak(ff, () -> {
+            try (
+                    TableModel src = new TableModel(configuration, "src", PartitionBy.DAY);
+                    TableModel dst = new TableModel(configuration, "dst", PartitionBy.DAY)
+            ) {
+
+                createPopulateTable(
+                        src.col("l", ColumnType.LONG)
+                                .col("i", ColumnType.INT)
+                                .timestamp("ts"),
+                        100,
+                        "2020-01-01",
+                        1);
+
+                CairoTestUtils.create(dst.timestamp("ts")
+                        .col("i", ColumnType.INT)
+                        .col("l", ColumnType.LONG));
+
+                try {
+                    copyAttachPartition(src, dst, 0, "2020-01-01");
+                    Assert.fail();
+                } catch (SqlException e) {
+                    for (String error : errorContains) {
+                        TestUtils.assertContains(e.getMessage(), error);
+                    }
+                }
+
+                // second attempt without FilesFacade override should work ok
+                copyAttachPartition(src, dst, 0, true, "2020-01-01");
+            }
+        });
     }
 
     @FunctionalInterface

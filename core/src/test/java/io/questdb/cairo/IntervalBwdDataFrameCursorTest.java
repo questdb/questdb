@@ -38,40 +38,6 @@ import org.junit.Test;
 public class IntervalBwdDataFrameCursorTest extends AbstractCairoTest {
     private static final LongList intervals = new LongList();
 
-    private static void assertIndexRowsMatchSymbol(DataFrameCursor cursor, TableReaderRecord record, int columnIndex, long expectedCount) {
-        // SymbolTable is table at table scope, so it will be the same for every
-        // data frame here. Get its instance outside of data frame loop.
-        StaticSymbolTable symbolTable = cursor.getSymbolTable(columnIndex);
-
-        long rowCount = 0;
-        DataFrame frame;
-        while ((frame = cursor.next()) != null) {
-            record.jumpTo(frame.getPartitionIndex(), frame.getRowLo());
-            final long limit = frame.getRowHi();
-            final long low = frame.getRowLo();
-
-            // BitmapIndex is always at data frame scope, each table can have more than one.
-            // we have to get BitmapIndexReader instance once for each frame.
-            BitmapIndexReader indexReader = frame.getBitmapIndexReader(columnIndex, BitmapIndexReader.DIR_BACKWARD);
-
-            // because out Symbol column 0 is indexed, frame has to have index.
-            Assert.assertNotNull(indexReader);
-
-            int keyCount = indexReader.getKeyCount();
-            for (int i = 0; i < keyCount; i++) {
-                RowCursor ic = indexReader.getCursor(true, i, low, limit - 1);
-                CharSequence expected = symbolTable.valueOf(i - 1);
-                while (ic.hasNext()) {
-                    long row = ic.next();
-                    record.setRecordIndex(row);
-                    TestUtils.assertEquals(expected, record.getSym(columnIndex));
-                    rowCount++;
-                }
-            }
-        }
-        Assert.assertEquals(expectedCount, rowCount);
-    }
-
     @Test
     public void testAllIntervalsAfterTableByDay() throws Exception {
         // day partition
@@ -372,7 +338,7 @@ public class IntervalBwdDataFrameCursorTest extends AbstractCairoTest {
     }
 
     public void testReload(int partitionBy, long increment, LongList intervals, int rowCount, CharSequence expected1, CharSequence expected2) throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
 
             try (TableModel model = new TableModel(configuration, "x", partitionBy).
                     col("a", ColumnType.SYMBOL).indexed(true, 4).
@@ -385,69 +351,67 @@ public class IntervalBwdDataFrameCursorTest extends AbstractCairoTest {
             final Rnd rnd = new Rnd();
             long timestamp = TimestampFormatUtils.parseTimestamp("1980-01-01T00:00:00.000Z");
 
-            try (CairoEngine engine = new CairoEngine(configuration)) {
-                final int timestampIndex;
-                try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x")) {
-                    timestampIndex = reader.getMetadata().getTimestampIndex();
-                }
-                final TableReaderRecord record = new TableReaderRecord();
-                final IntervalBwdDataFrameCursorFactory factory = new IntervalBwdDataFrameCursorFactory(
-                        engine,
-                        "x",
-                        0,
-                        new RuntimeIntervalModel(intervals),
-                        timestampIndex);
-                try (DataFrameCursor cursor = factory.getCursor(AllowAllSqlSecurityContext.INSTANCE)) {
+            final int timestampIndex;
+            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x")) {
+                timestampIndex = reader.getMetadata().getTimestampIndex();
+            }
+            final TableReaderRecord record = new TableReaderRecord();
+            final IntervalBwdDataFrameCursorFactory factory = new IntervalBwdDataFrameCursorFactory(
+                    engine,
+                    "x",
+                    0,
+                    new RuntimeIntervalModel(intervals),
+                    timestampIndex);
+            try (DataFrameCursor cursor = factory.getCursor(AllowAllSqlSecurityContext.INSTANCE)) {
 
-                    // assert that there is nothing to start with
-                    record.of(cursor.getTableReader());
+                // assert that there is nothing to start with
+                record.of(cursor.getTableReader());
 
-                    assertEquals("", record, cursor);
+                assertEquals("", record, cursor);
 
-                    try (TableWriter writer = new TableWriter(configuration, "x")) {
-                        for (int i = 0; i < rowCount; i++) {
-                            TableWriter.Row row = writer.newRow(timestamp);
-                            row.putSym(0, rnd.nextChars(4));
-                            row.putSym(1, rnd.nextChars(4));
-                            row.append();
-                            timestamp += increment;
-                        }
-                        writer.commit();
-
-                        Assert.assertTrue(cursor.reload());
-                        assertEquals(expected1, record, cursor);
-
-                        timestamp = Timestamps.addYear(timestamp, 3);
-
-                        for (int i = 0; i < rowCount; i++) {
-                            TableWriter.Row row = writer.newRow(timestamp);
-                            row.putSym(0, rnd.nextChars(4));
-                            row.putSym(1, rnd.nextChars(4));
-                            row.append();
-                            timestamp += increment;
-                        }
-                        writer.commit();
-
-                        Assert.assertTrue(cursor.reload());
-                        if (expected2 != null) {
-                            assertEquals(expected2, record, cursor);
-                        } else {
-                            assertEquals(expected1, record, cursor);
-                        }
-
-                        Assert.assertFalse(cursor.reload());
+                try (TableWriter writer = new TableWriter(configuration, "x")) {
+                    for (int i = 0; i < rowCount; i++) {
+                        TableWriter.Row row = writer.newRow(timestamp);
+                        row.putSym(0, rnd.nextChars(4));
+                        row.putSym(1, rnd.nextChars(4));
+                        row.append();
+                        timestamp += increment;
                     }
-                }
+                    writer.commit();
 
-                try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "x")) {
-                    writer.removeColumn("b");
-                }
+                    Assert.assertTrue(cursor.reload());
+                    assertEquals(expected1, record, cursor);
 
-                try {
-                    factory.getCursor(AllowAllSqlSecurityContext.INSTANCE);
-                    Assert.fail();
-                } catch (ReaderOutOfDateException ignored) {
+                    timestamp = Timestamps.addYear(timestamp, 3);
+
+                    for (int i = 0; i < rowCount; i++) {
+                        TableWriter.Row row = writer.newRow(timestamp);
+                        row.putSym(0, rnd.nextChars(4));
+                        row.putSym(1, rnd.nextChars(4));
+                        row.append();
+                        timestamp += increment;
+                    }
+                    writer.commit();
+
+                    Assert.assertTrue(cursor.reload());
+                    if (expected2 != null) {
+                        assertEquals(expected2, record, cursor);
+                    } else {
+                        assertEquals(expected1, record, cursor);
+                    }
+
+                    Assert.assertFalse(cursor.reload());
                 }
+            }
+
+            try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "x")) {
+                writer.removeColumn("b");
+            }
+
+            try {
+                factory.getCursor(AllowAllSqlSecurityContext.INSTANCE);
+                Assert.fail();
+            } catch (ReaderOutOfDateException ignored) {
             }
         });
     }
@@ -539,6 +503,40 @@ public class IntervalBwdDataFrameCursorTest extends AbstractCairoTest {
                 "1980-01-01T00:00:00.000000Z\n";
 
         testIntervals(PartitionBy.DAY, increment, N, expected, 72);
+    }
+
+    private static void assertIndexRowsMatchSymbol(DataFrameCursor cursor, TableReaderRecord record, int columnIndex, long expectedCount) {
+        // SymbolTable is table at table scope, so it will be the same for every
+        // data frame here. Get its instance outside of data frame loop.
+        StaticSymbolTable symbolTable = cursor.getSymbolTable(columnIndex);
+
+        long rowCount = 0;
+        DataFrame frame;
+        while ((frame = cursor.next()) != null) {
+            record.jumpTo(frame.getPartitionIndex(), frame.getRowLo());
+            final long limit = frame.getRowHi();
+            final long low = frame.getRowLo();
+
+            // BitmapIndex is always at data frame scope, each table can have more than one.
+            // we have to get BitmapIndexReader instance once for each frame.
+            BitmapIndexReader indexReader = frame.getBitmapIndexReader(columnIndex, BitmapIndexReader.DIR_BACKWARD);
+
+            // because out Symbol column 0 is indexed, frame has to have index.
+            Assert.assertNotNull(indexReader);
+
+            int keyCount = indexReader.getKeyCount();
+            for (int i = 0; i < keyCount; i++) {
+                RowCursor ic = indexReader.getCursor(true, i, low, limit - 1);
+                CharSequence expected = symbolTable.valueOf(i - 1);
+                while (ic.hasNext()) {
+                    long row = ic.next();
+                    record.setRecordIndex(row);
+                    TestUtils.assertEquals(expected, record.getSym(columnIndex));
+                    rowCount++;
+                }
+            }
+        }
+        Assert.assertEquals(expectedCount, rowCount);
     }
 
     private void assertEquals(CharSequence expected, TableReaderRecord record, DataFrameCursor cursor) {
