@@ -50,6 +50,7 @@ import static io.questdb.cairo.TableWriter.*;
 public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
     private static final Log LOG = LogFactory.getLog(O3PartitionJob.class);
+
     public O3PartitionJob(MessageBus messageBus) {
         super(messageBus.getO3PartitionQueue(), messageBus.getO3PartitionSubSeq());
     }
@@ -246,7 +247,13 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
                         prefixType = O3_BLOCK_DATA;
                         prefixLo = 0;
-                        prefixHi = Vect.boundedBinarySearch64Bit(srcTimestampAddr, oooTimestampLo, 0, srcDataMax - 1, BinarySearch.SCAN_DOWN);
+                        prefixHi = Vect.boundedBinarySearch64Bit(
+                                srcTimestampAddr,
+                                oooTimestampLo,
+                                0,
+                                srcDataMax - 1,
+                                BinarySearch.SCAN_DOWN
+                        );
                         mergeDataLo = prefixHi + 1;
                         mergeOOOLo = srcOooLo;
 
@@ -259,22 +266,28 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             // +------+
 
                             mergeOOOHi = srcOooHi;
-                            mergeDataHi = Vect.boundedBinarySearch64Bit(srcTimestampAddr, oooTimestampMax - 1, mergeDataLo, srcDataMax - 1, BinarySearch.SCAN_DOWN) + 1;
+                            mergeDataHi = Vect.boundedBinarySearch64Bit(
+                                    srcTimestampAddr,
+                                    oooTimestampMax - 1,
+                                    mergeDataLo,
+                                    srcDataMax - 1,
+                                    BinarySearch.SCAN_DOWN
+                            );
 
-                            if (mergeDataLo < mergeDataHi) {
-                                mergeType = O3_BLOCK_MERGE;
-                            } else {
+                            if (mergeDataLo > mergeDataHi) {
                                 // the OO data implodes right between rows of existing data
                                 // so we will have both data prefix and suffix and the middle bit
 
                                 // is the out of order
                                 mergeType = O3_BLOCK_O3;
-                                mergeDataHi--;
+                            } else {
+                                mergeType = O3_BLOCK_MERGE;
                             }
 
                             suffixType = O3_BLOCK_DATA;
                             suffixLo = mergeDataHi + 1;
                             suffixHi = srcDataMax - 1;
+                            assert suffixLo <= suffixHi;
                         } else if (oooTimestampMax > dataTimestampHi) {
 
                             //
@@ -285,7 +298,14 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             //          |     |
                             //          +-----+
 
-                            mergeOOOHi = Vect.boundedBinarySearchIndexT(sortedTimestampsAddr, dataTimestampHi, srcOooLo, srcOooHi, BinarySearch.SCAN_UP);
+                            mergeOOOHi = Vect.boundedBinarySearchIndexT(
+                                    sortedTimestampsAddr,
+                                    dataTimestampHi,
+                                    srcOooLo,
+                                    srcOooHi,
+                                    BinarySearch.SCAN_UP
+                            );
+
                             mergeDataHi = srcDataMax - 1;
 
                             mergeType = O3_BLOCK_MERGE;
@@ -325,7 +345,13 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         //  |      |
 
                         mergeDataLo = 0;
-                        prefixHi = Vect.boundedBinarySearchIndexT(sortedTimestampsAddr, dataTimestampLo, srcOooLo, srcOooHi, BinarySearch.SCAN_DOWN);
+                        prefixHi = Vect.boundedBinarySearchIndexT(
+                                sortedTimestampsAddr,
+                                dataTimestampLo,
+                                srcOooLo,
+                                srcOooHi,
+                                BinarySearch.SCAN_DOWN
+                        );
                         mergeOOOLo = prefixHi + 1;
 
                         if (oooTimestampMax < dataTimestampHi) {
@@ -338,7 +364,13 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
                             mergeType = O3_BLOCK_MERGE;
                             mergeOOOHi = srcOooHi;
-                            mergeDataHi = Vect.boundedBinarySearch64Bit(srcTimestampAddr, oooTimestampMax, 0, srcDataMax - 1, BinarySearch.SCAN_DOWN);
+                            mergeDataHi = Vect.boundedBinarySearch64Bit(
+                                    srcTimestampAddr,
+                                    oooTimestampMax,
+                                    0,
+                                    srcDataMax - 1,
+                                    BinarySearch.SCAN_DOWN
+                            );
 
                             suffixLo = mergeDataHi + 1;
                             suffixType = O3_BLOCK_DATA;
@@ -353,13 +385,18 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             //          +-----+
 
                             mergeDataHi = srcDataMax - 1;
-                            mergeOOOHi = Vect.boundedBinarySearchIndexT(sortedTimestampsAddr, dataTimestampHi - 1, mergeOOOLo, srcOooHi, BinarySearch.SCAN_DOWN) + 1;
+                            mergeOOOHi = Vect.boundedBinarySearchIndexT(
+                                    sortedTimestampsAddr,
+                                    dataTimestampHi - 1,
+                                    mergeOOOLo,
+                                    srcOooHi,
+                                    BinarySearch.SCAN_DOWN
+                            );
 
-                            if (mergeOOOLo < mergeOOOHi) {
-                                mergeType = O3_BLOCK_MERGE;
-                            } else {
+                            if (mergeOOOLo > mergeOOOHi) {
                                 mergeType = O3_BLOCK_DATA;
-                                mergeOOOHi--;
+                            } else {
+                                mergeType = O3_BLOCK_MERGE;
                             }
 
                             if (mergeOOOHi < srcOooHi) {
