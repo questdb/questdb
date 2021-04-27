@@ -2315,14 +2315,15 @@ public class TableWriter implements Closeable {
                                 .$(", srcOooLo=").$(srcOooLo)
                                 .$(", srcOooHi=").$(srcOooHi)
                                 .$(", srcOooMax=").$(srcOooMax)
-                                .$(", timestampMin=").$ts(o3TimestampMin)
-                                .$(", timestamp=").$ts(o3Timestamp)
-                                .$(", timestampMax=").$ts(o3TimestampMax)
+                                .$(", o3TimestampMin=").$ts(o3TimestampMin)
+                                .$(", o3Timestamp=").$ts(o3Timestamp)
+                                .$(", o3TimestampMax=").$ts(o3TimestampMax)
                                 .$(", partitionTimestamp=").$ts(partitionTimestamp)
                                 .$(", partitionIndex=").$(partitionIndex)
                                 .$(", srcDataSize=").$(srcDataSize)
-                                .$(", srcDataSize=").$(srcDataSize)
+                                .$(", maxTimestamp=").$ts(maxTimestamp)
                                 .$(", last=").$(last)
+                                .$(", memUsed=").$(Unsafe.getMemUsed())
                                 .I$();
 
                         o3PartitionUpdRemaining.incrementAndGet();
@@ -2469,6 +2470,7 @@ public class TableWriter implements Closeable {
                 // adjust O3 master ref so that virtual row count becomes equal to value of "o3HysteresisRowCount"
                 this.o3MasterRef = this.masterRef - o3HysteresisRowCount * 2 + 1;
             }
+            LOG.debug().$("adjusted [o3RowCount=").$(getO3RowCount()).I$();
         }
         if (columns.getQuick(0).isClosed() || partitionTimestampHi < txFile.getMaxTimestamp()) {
             openPartition(txFile.getMaxTimestamp());
@@ -2876,7 +2878,6 @@ public class TableWriter implements Closeable {
             boolean partitionMutates
     ) {
         this.txFile.minTimestamp = Math.min(timestampMin, this.txFile.minTimestamp);
-
         final long partitionSize = srcDataMax + srcOooPartitionHi - srcOooPartitionLo + 1;
         final long rowDelta = srcOooPartitionHi - srcOooMax;
         if (partitionTimestamp < lastPartitionTimestamp) {
@@ -2888,7 +2889,9 @@ public class TableWriter implements Closeable {
         } else {
             // this is last partition
             this.txFile.transientRowCount = partitionSize;
-            this.txFile.maxTimestamp = timestampMax;
+            // todo: test with repeated ingest, what was happening before is
+            //   repeated ingest was resetting max timestamp
+            this.txFile.maxTimestamp = Math.max(this.txFile.maxTimestamp, timestampMax);
         }
 
         final int partitionIndex = txFile.findAttachedPartitionIndexByLoTimestamp(partitionTimestamp);
@@ -2958,7 +2961,7 @@ public class TableWriter implements Closeable {
     private void o3ProcessPartitionRemoveCandidates0(int n) {
         final long readerTxn = txnScoreboard.getMin();
         final long readerTxnCount = txnScoreboard.getActiveReaderCount(readerTxn);
-        if (txnScoreboard.isTxnUnused(txFile.getTxn() - 1, readerTxn)) {
+        if (txnScoreboard.isTxnUnused(txFile.getTxn() - 1)) {
             for (int i = 0; i < n; i += 2) {
                 final long timestamp = o3PartitionRemoveCandidates.getQuick(i);
                 final long txn = o3PartitionRemoveCandidates.getQuick(i + 1);
