@@ -95,6 +95,10 @@ public class TableReader implements Closeable, SymbolTableSource {
             LOG.info().$("table [id=").$(metadata.getId()).$(']').$();
             this.txFile = new TxReader(ff, path, partitionBy);
             readTxnSlow();
+            if (this.txn == TableUtils.INITIAL_TXN) {
+                // When txn file is empty, init symbol counts
+                initSymbolCountSnapshot(metadata);
+            }
             openSymbolMaps();
             partitionCount = txFile.getPartitionCount();
             partitionFormat = TableUtils.getPartitionDateFmt(partitionBy);
@@ -124,6 +128,16 @@ public class TableReader implements Closeable, SymbolTableSource {
             close();
             throw e;
         }
+    }
+
+    private void initSymbolCountSnapshot(TableReaderMetadata metadata) {
+            int symbolCount = 0;
+            for(int i = 0; i < metadata.columnCount; i++) {
+                if (metadata.getColumnType(i) == ColumnType.SYMBOL) {
+                    symbolCount++;
+                }
+            }
+            this.symbolCountSnapshot.setPos(symbolCount);
     }
 
     public static int getPrimaryColumnIndex(int base, int index) {

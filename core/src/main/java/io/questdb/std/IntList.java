@@ -139,6 +139,7 @@ public class IntList implements Mutable {
      * @return element at the specified position.
      */
     public int getQuick(int index) {
+        assert index < pos;
         return buffer[index];
     }
 
