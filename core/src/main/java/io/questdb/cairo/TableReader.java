@@ -131,13 +131,13 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     private void initSymbolCountSnapshot(TableReaderMetadata metadata) {
-            int symbolCount = 0;
-            for(int i = 0; i < metadata.columnCount; i++) {
-                if (metadata.getColumnType(i) == ColumnType.SYMBOL) {
-                    symbolCount++;
-                }
+        int symbolCount = 0;
+        for(int i = 0; i < metadata.columnCount; i++) {
+            if (metadata.getColumnType(i) == ColumnType.SYMBOL) {
+                symbolCount++;
             }
-            this.symbolCountSnapshot.setPos(symbolCount);
+        }
+        this.symbolCountSnapshot.setAll(0, symbolCount);
     }
 
     public static int getPrimaryColumnIndex(int base, int index) {
