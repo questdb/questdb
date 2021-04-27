@@ -274,14 +274,14 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                     BinarySearch.SCAN_DOWN
                             );
 
-                            if (mergeDataLo <= mergeDataHi) {
-                                mergeType = O3_BLOCK_MERGE;
-                            } else {
+                            if (mergeDataLo > mergeDataHi) {
                                 // the OO data implodes right between rows of existing data
                                 // so we will have both data prefix and suffix and the middle bit
 
                                 // is the out of order
                                 mergeType = O3_BLOCK_O3;
+                            } else {
+                                mergeType = O3_BLOCK_MERGE;
                             }
 
                             suffixType = O3_BLOCK_DATA;
@@ -393,10 +393,10 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                     BinarySearch.SCAN_DOWN
                             );
 
-                            if (mergeOOOLo <= mergeOOOHi) {
-                                mergeType = O3_BLOCK_MERGE;
-                            } else {
+                            if (mergeOOOLo > mergeOOOHi) {
                                 mergeType = O3_BLOCK_DATA;
+                            } else {
+                                mergeType = O3_BLOCK_MERGE;
                             }
 
                             if (mergeOOOHi < srcOooHi) {
