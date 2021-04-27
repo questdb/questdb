@@ -137,7 +137,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                 symbolCount++;
             }
         }
-        this.symbolCountSnapshot.setAll(0, symbolCount);
+        this.symbolCountSnapshot.setAll(symbolCount, 0);
     }
 
     public static int getPrimaryColumnIndex(int base, int index) {
