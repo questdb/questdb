@@ -124,7 +124,7 @@ final class WhereClauseParser implements Mutable {
                 checkFunctionCanBeTimestamp(m, executionContext, function);
 
                 if (function.isConstant()) {
-                    long value = function.getTimestamp(null);
+                    long value = getTimestampFromConstFunction(function);
                     if (value == Numbers.LONG_NaN) {
                         // make it empty set
                         model.intersectEmpty();
@@ -256,7 +256,7 @@ final class WhereClauseParser implements Mutable {
             checkFunctionCanBeTimestamp(metadata, executionContext, function);
 
             if (function.isConstant()) {
-                lo = function.getTimestamp(null);
+                lo = getTimestampFromConstFunction(function);
                 if (lo == Numbers.LONG_NaN) {
                     // make it empty set
                     model.intersectEmpty();
@@ -281,11 +281,19 @@ final class WhereClauseParser implements Mutable {
                 || compareWithNode.type == ExpressionNode.OPERATION;
     }
 
+    private static long getTimestampFromConstFunction(Function function) throws SqlException {
+        if (function.getType() != ColumnType.STRING) {
+            return function.getTimestamp(null);
+        }
+        CharSequence str = function.getStr(null);
+        return parseStringAsTimestamp(str, function.getPosition());
+    }
+
     private void checkFunctionCanBeTimestamp(RecordMetadata metadata, SqlExecutionContext executionContext, Function function) throws SqlException {
         if (function.getType() == ColumnType.UNDEFINED) {
             int timestampType = metadata.getColumnType(metadata.getTimestampIndex());
             function.assignType(timestampType, executionContext.getBindVariableService());
-        } else if (function.getType() != ColumnType.DATE && function.getType() != ColumnType.TIMESTAMP) {
+        } else if (!canCastToTimestamp(function.getType())) {
             throw SqlException.invalidDate(function.getPosition());
         }
     }
@@ -377,15 +385,11 @@ final class WhereClauseParser implements Mutable {
             return true;
         } else if (isFunc(lo)) {
             Function f1 = functionParser.parseFunction(lo, metadata, executionContext);
+            checkFunctionCanBeTimestamp(metadata, executionContext, f1);
             if (f1.isConstant()) {
-                if (f1.getType() == ColumnType.STRING) {
-                    long timestamp = parseStringAsTimestamp(f1.getStr(null), f1.getPosition());
-                    model.setBetweenBoundary(timestamp);
-                } else if (f1.getType() == ColumnType.TIMESTAMP) {
-                    long timestamp = f1.getTimestamp(null);
-                    model.setBetweenBoundary(timestamp);
-                }
-            } else if (f1.isRuntimeConstant() && f1.getType() == ColumnType.TIMESTAMP || f1.getType() == ColumnType.STRING) {
+                long timestamp = getTimestampFromConstFunction(f1);
+                model.setBetweenBoundary(timestamp);
+            } else if (f1.isRuntimeConstant()) {
                 model.setBetweenBoundary(f1);
             }
             return true;
@@ -393,7 +397,13 @@ final class WhereClauseParser implements Mutable {
         return false;
     }
 
-    private long parseTokenAsTimestamp(ExpressionNode lo) throws SqlException {
+    private static boolean canCastToTimestamp(int type) {
+        return type == ColumnType.TIMESTAMP
+                || type == ColumnType.DATE
+                || type == ColumnType.STRING;
+    }
+
+    private static long parseTokenAsTimestamp(ExpressionNode lo) throws SqlException {
         try {
             return IntervalUtils.parseFloorPartialDate(lo.token, 1, lo.token.length() - 1);
         } catch (NumericException ignore) {
@@ -401,7 +411,7 @@ final class WhereClauseParser implements Mutable {
         }
     }
 
-    private long parseStringAsTimestamp(CharSequence str, int position) throws SqlException {
+    private static long parseStringAsTimestamp(CharSequence str, int position) throws SqlException {
         try {
             return IntervalUtils.parseFloorPartialDate(str);
         } catch (NumericException ignore) {
@@ -546,7 +556,7 @@ final class WhereClauseParser implements Mutable {
             checkFunctionCanBeTimestamp(metadata, executionContext, function);
 
             if (function.isConstant()) {
-                long hi = function.getTimestamp(null);
+                long hi = getTimestampFromConstFunction(function);
                 if (hi == Numbers.LONG_NaN) {
                     model.intersectEmpty();
                 } else {

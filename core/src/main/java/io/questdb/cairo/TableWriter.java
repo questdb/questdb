@@ -4467,13 +4467,14 @@ public class TableWriter implements Closeable {
         }
 
         public void putTimestamp(int index, CharSequence value) {
+            long l;
             try {
                 // try UTC timestamp first (micro)
-                long l = IntervalUtils.parseFloorPartialDate(value);
-                putTimestamp(index, l);
+                l = value != null ? IntervalUtils.parseFloorPartialDate(value) : Numbers.LONG_NaN;
             } catch (NumericException e) {
                 throw CairoException.instance(0).put("Invalid timestamp: ").put(value);
             }
+            putTimestamp(index, l);
         }
 
         private WriteOnlyVirtualMemory getPrimaryColumn(int columnIndex) {
