@@ -100,11 +100,6 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
             }
 
             @Override
-            public int getMaxUncommittedRows() {
-                return 25;
-            }
-
-            @Override
             public long getMinIdleMsBeforeWriterRelease() {
                 return 150;
             }

@@ -219,6 +219,8 @@ public class PropServerConfigurationTest {
         // assert mime types
         TestUtils.assertEquals("application/json", configuration.getHttpServerConfiguration().getStaticContentProcessorConfiguration().getMimeTypesCache().get("json"));
 
+        Assert.assertEquals(1000, configuration.getCairoConfiguration().getO3MaxUncommittedRows());
+
         // influxdb line TCP protocol
         Assert.assertTrue(configuration.getLineTcpReceiverConfiguration().isEnabled());
         Assert.assertEquals(10, configuration.getLineTcpReceiverConfiguration().getNetDispatcherConfiguration().getActiveConnectionLimit());
@@ -248,7 +250,6 @@ public class PropServerConfigurationTest {
         Assert.assertFalse(configuration.getLineTcpReceiverConfiguration().getIOWorkerPoolConfiguration().haltOnError());
         Assert.assertEquals(10_000, configuration.getLineTcpReceiverConfiguration().getNUpdatesPerLoadRebalance());
         Assert.assertEquals(1.9, configuration.getLineTcpReceiverConfiguration().getMaxLoadRatio(), 0.001);
-        Assert.assertEquals(1000, configuration.getLineTcpReceiverConfiguration().getMaxUncommittedRows());
         Assert.assertEquals(250, configuration.getLineTcpReceiverConfiguration().getMaintenanceJobHysteresisInMs());
         Assert.assertEquals(PartitionBy.DAY, configuration.getLineTcpReceiverConfiguration().getDefaultPartitionBy());
         Assert.assertFalse(configuration.getLineTcpReceiverConfiguration().isIOAggressiveRecv());
@@ -530,6 +531,8 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(256, configuration.getCairoConfiguration().getColumnCastModelPoolCapacity());
             Assert.assertEquals(64, configuration.getCairoConfiguration().getCreateTableModelPoolCapacity());
 
+            Assert.assertEquals(100000, configuration.getCairoConfiguration().getO3MaxUncommittedRows());
+
             Assert.assertEquals(167903521, configuration.getLineUdpReceiverConfiguration().getBindIPv4Address());
             Assert.assertEquals(9915, configuration.getLineUdpReceiverConfiguration().getPort());
             Assert.assertEquals(-536805119, configuration.getLineUdpReceiverConfiguration().getGroupIPv4Address());
@@ -569,7 +572,6 @@ public class PropServerConfigurationTest {
             Assert.assertTrue(configuration.getLineTcpReceiverConfiguration().getIOWorkerPoolConfiguration().haltOnError());
             Assert.assertEquals(100_000, configuration.getLineTcpReceiverConfiguration().getNUpdatesPerLoadRebalance());
             Assert.assertEquals(1.5, configuration.getLineTcpReceiverConfiguration().getMaxLoadRatio(), 0.001);
-            Assert.assertEquals(100000, configuration.getLineTcpReceiverConfiguration().getMaxUncommittedRows());
             Assert.assertEquals(1000, configuration.getLineTcpReceiverConfiguration().getMaintenanceJobHysteresisInMs());
             Assert.assertEquals(PartitionBy.MONTH, configuration.getLineTcpReceiverConfiguration().getDefaultPartitionBy());
             Assert.assertTrue(configuration.getLineTcpReceiverConfiguration().isIOAggressiveRecv());

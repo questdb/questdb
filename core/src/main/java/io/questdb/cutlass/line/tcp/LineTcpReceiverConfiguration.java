@@ -63,8 +63,6 @@ public interface LineTcpReceiverConfiguration {
 
     double getMaxLoadRatio();
 
-    int getMaxUncommittedRows();
-
     long getMaintenanceJobHysteresisInMs();
     
     String getAuthDbPath();
@@ -74,6 +72,4 @@ public interface LineTcpReceiverConfiguration {
     boolean isIOAggressiveRecv();
 
     long getMinIdleMsBeforeWriterRelease();
-
-    long getCommitHysteresisInMicros();
 }

@@ -163,11 +163,11 @@ class LineTcpMeasurementScheduler implements Closeable {
 
         nUpdatesPerLoadRebalance = lineConfiguration.getNUpdatesPerLoadRebalance();
         maxLoadRatio = lineConfiguration.getMaxLoadRatio();
-        maxUncommittedRows = lineConfiguration.getMaxUncommittedRows();
+        maxUncommittedRows = engine.getConfiguration().getO3MaxUncommittedRows();
         maintenanceJobHysteresisInMs = lineConfiguration.getMaintenanceJobHysteresisInMs();
         defaultPartitionBy = lineConfiguration.getDefaultPartitionBy();
         minIdleMsBeforeWriterRelease = lineConfiguration.getMinIdleMsBeforeWriterRelease();
-        commitHysteresisInMicros = lineConfiguration.getCommitHysteresisInMicros();
+        commitHysteresisInMicros = engine.getConfiguration().getO3CommitHysteresisInMicros();
     }
 
     protected NetworkIOJob createNetworkIOJob(IODispatcher<LineTcpConnectionContext> dispatcher, int workerId) {

@@ -126,11 +126,6 @@ public class LineTcpServerTest extends AbstractCairoTest {
         }
 
         @Override
-        public int getMaxUncommittedRows() {
-            return 50;
-        }
-
-        @Override
         public long getMaintenanceJobHysteresisInMs() {
             return 25;
         }

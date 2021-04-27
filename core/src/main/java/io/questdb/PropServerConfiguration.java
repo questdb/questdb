@@ -194,6 +194,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int o3UpdPartitionSizeQueueCapacity;
     private final int o3PurgeDiscoveryQueueCapacity;
     private final int o3PurgeQueueCapacity;
+    private final int o3MaxUncommittedRows;
+    private final long o3CommitHystersisInMicros;
     private final long instanceHashLo;
     private final long instanceHashHi;
     private final int sqlTxnScoreboardEntryCount;
@@ -310,13 +312,11 @@ public class PropServerConfiguration implements ServerConfiguration {
     private long lineTcpIOWorkerSleepThreshold;
     private int lineTcpNUpdatesPerLoadRebalance;
     private double lineTcpMaxLoadRatio;
-    private int lineTcpMaxUncommittedRows;
     private long lineTcpMaintenanceJobHysteresisInMs;
     private String lineTcpAuthDbPath;
     private int lineDefaultPartitionBy;
     private boolean lineTcpAggressiveRecv;
     private long minIdleMsBeforeWriterRelease;
-    private long lineTcpCommitHystersisInMicros;
     private String httpVersion;
     private int httpMinWorkerCount;
     private boolean httpMinWorkerHaltOnError;
@@ -633,6 +633,8 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.o3UpdPartitionSizeQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.o3.upd.partition.size.queue.capacity", 1024));
             this.o3PurgeDiscoveryQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.o3.purge.discovery.queue.capacity", 1024));
             this.o3PurgeQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.o3.purge.queue.capacity", 1024));
+            this.o3MaxUncommittedRows = getInt(properties, env, "cairo.o3.max.uncommitted.rows", 1000);
+            this.o3CommitHystersisInMicros = getLong(properties, env, "cairo.o3.commit.hysteresis.in.ms", 0) * 1_000;
             this.sqlAnalyticStorePageSize = Numbers.ceilPow2(getIntSize(properties, env, "cairo.sql.analytic.store.page.size", 1024 * 1024));
             this.sqlAnalyticStoreMaxPages = Numbers.ceilPow2(getIntSize(properties, env, "cairo.sql.analytic.store.max.pages", Integer.MAX_VALUE));
             this.sqlAnalyticRowIdPageSize = Numbers.ceilPow2(getIntSize(properties, env, "cairo.sql.analytic.rowid.page.size", 512 * 1024));
@@ -696,7 +698,6 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.lineTcpIOWorkerSleepThreshold = getLong(properties, env, "line.tcp.io.worker.sleep.threshold", 10000);
                 this.lineTcpNUpdatesPerLoadRebalance = getInt(properties, env, "line.tcp.n.updates.per.load.balance", 10_000);
                 this.lineTcpMaxLoadRatio = getDouble(properties, env, "line.tcp.max.load.ratio", 1.9);
-                this.lineTcpMaxUncommittedRows = getInt(properties, env, "line.tcp.max.uncommitted.rows", 1000);
                 this.lineTcpMaintenanceJobHysteresisInMs = getInt(properties, env, "line.tcp.maintenance.job.hysteresis.in.ms", 250);
                 this.lineTcpAuthDbPath = getString(properties, env, "line.tcp.auth.db.path", null);
                 String defaultPartitionByProperty = getString(properties, env, "line.tcp.default.partition.by", "DAY");
@@ -710,7 +711,6 @@ public class PropServerConfiguration implements ServerConfiguration {
                 }
                 this.lineTcpAggressiveRecv = getBoolean(properties, env, "line.tcp.io.aggressive.recv", false);
                 this.minIdleMsBeforeWriterRelease = getLong(properties, env, "line.tcp.min.idle.ms.before.writer.release", 30_000);
-                this.lineTcpCommitHystersisInMicros = getLong(properties, env, "line.tcp.commit.hysteresis.in.ms", 0) * 1_000;
             }
 
             this.buildInformation = buildInformation;
@@ -1833,6 +1833,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         public long getDatabaseIdLo() {
             return instanceHashLo;
         }
+        
+        @Override
+        public int getO3MaxUncommittedRows() {
+            return o3MaxUncommittedRows;
+        }
+
+        @Override
+        public long getO3CommitHysteresisInMicros() {
+            return o3CommitHystersisInMicros;
+        }
     }
 
     private class PropLineUdpReceiverConfiguration implements LineUdpReceiverConfiguration {
@@ -2146,11 +2156,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getMaxUncommittedRows() {
-            return lineTcpMaxUncommittedRows;
-        }
-
-        @Override
         public long getMaintenanceJobHysteresisInMs() {
             return lineTcpMaintenanceJobHysteresisInMs;
         }
@@ -2173,11 +2178,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getMinIdleMsBeforeWriterRelease() {
             return minIdleMsBeforeWriterRelease;
-        }
-
-        @Override
-        public long getCommitHysteresisInMicros() {
-            return lineTcpCommitHystersisInMicros;
         }
     }
 

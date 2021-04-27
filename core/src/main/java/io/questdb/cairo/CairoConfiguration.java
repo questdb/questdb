@@ -226,4 +226,8 @@ public interface CairoConfiguration {
     long getDatabaseIdLo();
 
     int getTxnScoreboardEntryCount();
+
+    int getO3MaxUncommittedRows();
+
+    long getO3CommitHysteresisInMicros();
 }
