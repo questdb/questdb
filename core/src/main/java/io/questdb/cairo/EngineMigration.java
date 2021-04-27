@@ -118,9 +118,9 @@ public class EngineMigration {
         return MIGRATIONS_CRITICALITY.getQuick(version - MIGRATIONS_LIST_OFFSET);
     }
 
-    static void setByVersion(int version, MigrationAction action, int criticality) {
+    private static void setByVersion(int version, MigrationAction action, int criticality) {
         MIGRATIONS.setQuick(version - MIGRATIONS_LIST_OFFSET, action);
-        MIGRATIONS_CRITICALITY.setQuick(version - MIGRATIONS_LIST_OFFSET, criticality);
+        MIGRATIONS_CRITICALITY.extendAndSet(version - MIGRATIONS_LIST_OFFSET, criticality);
     }
 
     private boolean upgradeTables(MigrationContext context, int latestVersion) {

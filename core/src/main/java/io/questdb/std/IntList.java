@@ -240,6 +240,7 @@ public class IntList implements Mutable {
     }
 
     public void setQuick(int index, int value) {
+        assert index < pos;
         buffer[index] = value;
     }
 
