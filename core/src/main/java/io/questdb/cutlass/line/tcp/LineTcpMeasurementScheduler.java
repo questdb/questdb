@@ -93,10 +93,8 @@ class LineTcpMeasurementScheduler implements Closeable {
     private final int[] loadByThread;
     private final int nUpdatesPerLoadRebalance;
     private final double maxLoadRatio;
-    private final int maxUncommittedRows;
     private final long maintenanceJobHysteresisInMs;
     private final long minIdleMsBeforeWriterRelease;
-    private final long commitHysteresisInMicros;
     private final int defaultPartitionBy;
     private final NetworkIOJob[] netIoJobs;
     private Sequence pubSeq;
@@ -163,11 +161,9 @@ class LineTcpMeasurementScheduler implements Closeable {
 
         nUpdatesPerLoadRebalance = lineConfiguration.getNUpdatesPerLoadRebalance();
         maxLoadRatio = lineConfiguration.getMaxLoadRatio();
-        maxUncommittedRows = engine.getConfiguration().getO3MaxUncommittedRows();
         maintenanceJobHysteresisInMs = lineConfiguration.getMaintenanceJobHysteresisInMs();
         defaultPartitionBy = lineConfiguration.getDefaultPartitionBy();
         minIdleMsBeforeWriterRelease = lineConfiguration.getMinIdleMsBeforeWriterRelease();
-        commitHysteresisInMicros = engine.getConfiguration().getO3CommitHysteresisInMicros();
     }
 
     protected NetworkIOJob createNetworkIOJob(IODispatcher<LineTcpConnectionContext> dispatcher, int workerId) {
@@ -756,6 +752,8 @@ class LineTcpMeasurementScheduler implements Closeable {
         private int nUpdates = 0; // Number of updates since the last load rebalance, this is an estimate because its incremented by
                                   // multiple threads without synchronisation
         private TableWriter writer;
+        private int maxUncommittedRows;
+        private long commitHysteresisInMicros;
         private int nUncommitted = 0;
         private final ThreadLocalDetails[] localDetailsArray;
         private boolean assignedToJob = false;
@@ -809,6 +807,8 @@ class LineTcpMeasurementScheduler implements Closeable {
         TableWriter getWriter() {
             if (null == writer) {
                 writer = engine.getWriter(securityContext, tableName);
+                maxUncommittedRows = writer.getMetadata().getO3MaxUncommittedRows();
+                commitHysteresisInMicros = writer.getMetadata().getO3CommitHysteresisInMicros();
             }
             return writer;
         }
@@ -1321,6 +1321,16 @@ class LineTcpMeasurementScheduler implements Closeable {
         @Override
         public int getTimestampIndex() {
             return protoParser.getnEntities();
+        }
+
+        @Override
+        public int getO3MaxUncommittedRows() {
+            return cairoConfiguration.getO3MaxUncommittedRows();
+        }
+
+        @Override
+        public long getO3CommitHysteresisInMicros() {
+            return cairoConfiguration.getO3CommitHysteresisInMicros();
         }
 
         TableStructureAdapter of(CharSequence tableName, NewLineProtoParser protoParser) {

@@ -46,4 +46,8 @@ public interface TableStructure {
     CharSequence getTableName();
 
     int getTimestampIndex();
+
+    int getO3MaxUncommittedRows();
+
+    long getO3CommitHysteresisInMicros();
 }

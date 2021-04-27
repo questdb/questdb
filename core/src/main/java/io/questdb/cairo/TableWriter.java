@@ -685,7 +685,7 @@ public class TableWriter implements Closeable {
         return txFile.getMaxTimestamp();
     }
 
-    public RecordMetadata getMetadata() {
+    public TableWriterMetadata getMetadata() {
         return metadata;
     }
 

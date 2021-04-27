@@ -24,21 +24,40 @@
 
 package io.questdb.cutlass.line.udp;
 
-import io.questdb.cairo.*;
-import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.cairo.vm.AppendOnlyVirtualMemory;
-import io.questdb.cutlass.line.*;
-import io.questdb.cutlass.line.CairoLineProtoParserSupport.BadCastException;
-import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
-import io.questdb.std.*;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
-import io.questdb.std.str.Path;
+import static io.questdb.cairo.TableUtils.TABLE_DOES_NOT_EXIST;
+import static io.questdb.cairo.TableUtils.TABLE_EXISTS;
 
 import java.io.Closeable;
 
-import static io.questdb.cairo.TableUtils.TABLE_DOES_NOT_EXIST;
-import static io.questdb.cairo.TableUtils.TABLE_EXISTS;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.CairoSecurityContext;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableStructure;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.vm.AppendOnlyVirtualMemory;
+import io.questdb.cutlass.line.CachedCharSequence;
+import io.questdb.cutlass.line.CairoLineProtoParserSupport;
+import io.questdb.cutlass.line.CairoLineProtoParserSupport.BadCastException;
+import io.questdb.cutlass.line.CharSequenceCache;
+import io.questdb.cutlass.line.LineProtoParser;
+import io.questdb.cutlass.line.LineProtoTimestampAdapter;
+import io.questdb.cutlass.line.tcp.LineTcpReceiverConfiguration;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.std.Chars;
+import io.questdb.std.LongList;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.Sinkable;
+import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.str.Path;
 
 public class CairoLineProtoParser implements LineProtoParser, Closeable {
     private final static Log LOG = LogFactory.getLog(CairoLineProtoParser.class);
@@ -541,6 +560,16 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
         @Override
         public int getTimestampIndex() {
             return timestampIndex;
+        }
+
+        @Override
+        public int getO3MaxUncommittedRows() {
+            return configuration.getO3MaxUncommittedRows();
+        }
+
+        @Override
+        public long getO3CommitHysteresisInMicros() {
+            return configuration.getO3CommitHysteresisInMicros();
         }
 
         TableStructureAdapter of(CharSequenceCache cache) {

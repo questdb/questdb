@@ -2342,6 +2342,16 @@ public class SqlCompiler implements Closeable {
             return timestampIndex;
         }
 
+        @Override
+        public int getO3MaxUncommittedRows() {
+            return model.getO3MaxUncommittedRows();
+        }
+
+        @Override
+        public long getO3CommitHysteresisInMicros() {
+            return model.getO3CommitHysteresisInMicros();
+        }
+
         TableStructureAdapter of(CreateTableModel model, RecordMetadata metadata, IntIntHashMap typeCast) {
             if (model.getTimestampIndex() != -1) {
                 timestampIndex = model.getTimestampIndex();

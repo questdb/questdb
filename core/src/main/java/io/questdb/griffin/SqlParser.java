@@ -432,6 +432,9 @@ public final class SqlParser {
             tok = optTok(lexer);
         }
 
+        model.setO3MaxUncommittedRows(configuration.getO3MaxUncommittedRows());
+        model.setO3CommitHysteresisInMicros(configuration.getO3CommitHysteresisInMicros());
+
         if (tok == null || Chars.equals(tok, ';')) {
             return model;
         }

@@ -60,6 +60,8 @@ public final class TableUtils {
     public static final long META_OFFSET_TIMESTAMP_INDEX = 8;
     public static final long META_OFFSET_VERSION = 12;
     public static final long META_OFFSET_TABLE_ID = 16;
+    public static final long META_OFFSET_O3_MAX_UNCOMMITTED_ROWS = 20;
+    public static final long META_OFFSET_O3_COMMIT_HYSTERESIS_IN_MICROS = 24;
     public static final String FILE_SUFFIX_I = ".i";
     public static final String FILE_SUFFIX_D = ".d";
     public static final int LONGS_PER_TX_ATTACHED_PARTITION = 4;
@@ -158,6 +160,8 @@ public final class TableUtils {
                 mem.putInt(structure.getTimestampIndex());
                 mem.putInt(tableVersion);
                 mem.putInt(tableId);
+                mem.putInt(structure.getO3MaxUncommittedRows());
+                mem.putLong(structure.getO3CommitHysteresisInMicros());
                 mem.jumpTo(TableUtils.META_OFFSET_COLUMN_TYPES);
 
                 for (int i = 0; i < count; i++) {
