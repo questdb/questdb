@@ -24,22 +24,32 @@
 
 package io.questdb.griffin;
 
+import io.questdb.WorkerPoolAwareConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TxnScoreboard;
+import io.questdb.mp.Job;
+import io.questdb.mp.SOCountDownLatch;
+import io.questdb.mp.WorkerPool;
+import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
-import org.junit.*;
+import org.junit.After;
+import org.junit.Before;
+import org.junit.Rule;
+import org.junit.Test;
 import org.junit.rules.TestName;
 
 import java.net.URISyntaxException;
+import java.util.concurrent.CyclicBarrier;
 
 public class O3Test extends AbstractO3Test {
+    private final StringBuilder tstData = new StringBuilder();
     @Rule
     public TestName name = new TestName();
-    private final StringBuilder tstData = new StringBuilder();
 
     @Before
     public void setUp4() {
@@ -65,6 +75,11 @@ public class O3Test extends AbstractO3Test {
             System.err.println(tstData);
             System.err.flush();
         }
+    }
+
+    @Test
+    public void testAppendToLastPartition() throws Exception {
+        executeWithPool(4, O3Test::testAppendToLastPartition);
     }
 
     @Test
@@ -227,26 +242,6 @@ public class O3Test extends AbstractO3Test {
     }
 
     @Test
-    public void testInsertTouchesNotLastPartition() throws Exception {
-        executeVanilla(O3Test::testOOOTouchesNotLastPartition0);
-    }
-
-    @Test
-    public void testInsertTouchesNotLastPartitionParallel() throws Exception {
-        executeWithPool(4, O3Test::testOOOTouchesNotLastPartition0);
-    }
-
-    @Test
-    public void testInsertTouchesNotLastTopPartition() throws Exception {
-        executeVanilla(O3Test::testOOOTouchesNotLastPartitionTop0);
-    }
-
-    @Test
-    public void testInsertTouchesNotLastPartitionTopParallel() throws Exception {
-        executeWithPool(4, O3Test::testOOOTouchesNotLastPartitionTop0);
-    }
-
-    @Test
     public void testColumnTopMidDataMergeData() throws Exception {
         executeVanilla(O3Test::testColumnTopMidDataMergeData0);
     }
@@ -299,6 +294,26 @@ public class O3Test extends AbstractO3Test {
     @Test
     public void testColumnTopNewPartitionMiddleOfTableParallel() throws Exception {
         executeWithPool(4, O3Test::testColumnTopNewPartitionMiddleOfTable0);
+    }
+
+    @Test
+    public void testInsertTouchesNotLastPartition() throws Exception {
+        executeVanilla(O3Test::testOOOTouchesNotLastPartition0);
+    }
+
+    @Test
+    public void testInsertTouchesNotLastPartitionParallel() throws Exception {
+        executeWithPool(4, O3Test::testOOOTouchesNotLastPartition0);
+    }
+
+    @Test
+    public void testInsertTouchesNotLastPartitionTopParallel() throws Exception {
+        executeWithPool(4, O3Test::testOOOTouchesNotLastPartitionTop0);
+    }
+
+    @Test
+    public void testInsertTouchesNotLastTopPartition() throws Exception {
+        executeVanilla(O3Test::testOOOTouchesNotLastPartitionTop0);
     }
 
     @Test
@@ -424,6 +439,11 @@ public class O3Test extends AbstractO3Test {
     @Test
     public void testPartitionedDataOODataPbOODataDropColumnContended() throws Exception {
         executeWithPool(0, O3Test::testPartitionedDataOODataPbOODataDropColumn0);
+    }
+
+    @Test
+    public void testPartitionedDataOODataPbOODataDropColumnParallel() throws Exception {
+        executeWithPool(4, O3Test::testPartitionedDataOODataPbOODataDropColumn0);
     }
 
     @Test
@@ -592,6 +612,16 @@ public class O3Test extends AbstractO3Test {
     }
 
     @Test
+    public void testPartitionedOOTopAndBottomParallel() throws Exception {
+        executeWithPool(4, O3Test::testPartitionedOOTopAndBottom0);
+    }
+
+    @Test
+    public void testTwoTablesCompeteForBuffer() throws Exception {
+        executeWithPool(4, O3Test::testTwoTablesCompeteForBuffer0);
+    }
+
+    @Test
     public void testVanillaHysteresis() throws Exception {
         executeVanilla(O3Test::testVanillaHysteresis0);
     }
@@ -602,8 +632,8 @@ public class O3Test extends AbstractO3Test {
     }
 
     @Test
-    public void testVanillaHysteresisSinglePartitionContended() throws Exception {
-        executeWithPool(0, O3Test::testVanillaHysteresisSinglePartition0);
+    public void testVanillaHysteresisParallel() throws Exception {
+        executeWithPool(4, O3Test::testVanillaHysteresis0);
     }
 
     @Test
@@ -612,18 +642,170 @@ public class O3Test extends AbstractO3Test {
     }
 
     @Test
+    public void testVanillaHysteresisSinglePartitionContended() throws Exception {
+        executeWithPool(0, O3Test::testVanillaHysteresisSinglePartition0);
+    }
+
+    @Test
     public void testVanillaHysteresisSinglePartitionParallel() throws Exception {
         executeWithPool(4, O3Test::testVanillaHysteresisSinglePartition0);
     }
 
-    @Test
-    public void testVanillaHysteresisParallel() throws Exception {
-        executeWithPool(4, O3Test::testVanillaHysteresis0);
-    }
+    private static void testTwoTablesCompeteForBuffer0(
+            CairoEngine engine,
+            SqlCompiler compiler,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        compiler.compile(
+                "create table x as (" +
+                        "select" +
+                        " rnd_str(5,16,2) i," +
+                        " rnd_str(5,16,2) sym," +
+                        " rnd_str(5,16,2) amt," +
+                        " rnd_str(5,16,2) timestamp," +
+                        " rnd_str(5,16,2) b," +
+                        " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                        " rnd_str(5,16,2) d," +
+                        " rnd_str(5,16,2) e," +
+                        " rnd_str(5,16,2) f," +
+                        " rnd_str(5,16,2) g," +
+                        " rnd_str(5,16,2) ik," +
+                        " rnd_str(5,16,2) j," +
+                        " timestamp_sequence(500000000000L,100000000L) ts," +
+                        " rnd_str(5,16,2) l," +
+                        " rnd_str(5,16,2) m," +
+                        " rnd_str(5,16,2) n," +
+                        " rnd_str(5,16,2) t," +
+                        " rnd_str(5,16,2) l256" +
+                        " from long_sequence(10000)" +
+                        ") timestamp (ts) partition by DAY",
+                executionContext
+        );
 
-    @Test
-    public void testPartitionedOOTopAndBottomParallel() throws Exception {
-        executeWithPool(4, O3Test::testPartitionedOOTopAndBottom0);
+        compiler.compile("create table x1 as (x) timestamp(ts) partition by DAY", executionContext);
+
+        compiler.compile(
+                "create table y as (" +
+                        "select" +
+                        " rnd_str(5,16,2) i," +
+                        " rnd_str(5,16,2) sym," +
+                        " rnd_str(5,16,2) amt," +
+                        " rnd_str(5,16,2) timestamp," +
+                        " rnd_str(5,16,2) b," +
+                        " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                        " rnd_str(5,16,2) d," +
+                        " rnd_str(5,16,2) e," +
+                        " rnd_str(5,16,2) f," +
+                        " rnd_str(5,16,2) g," +
+                        " rnd_str(5,16,2) ik," +
+                        " rnd_str(5,16,2) j," +
+                        " timestamp_sequence(500000000023L,99999999L) ts," +
+                        " rnd_str(5,16,2) l," +
+                        " rnd_str(5,16,2) m," +
+                        " rnd_str(5,16,2) n," +
+                        " rnd_str(5,16,2) t," +
+                        " rnd_str(5,16,2) l256" +
+                        " from long_sequence(10000)" +
+                        ") timestamp (ts) partition by DAY",
+                executionContext
+        );
+
+        compiler.compile("create table y1 as (y)", executionContext);
+
+        // create another compiler to be used by second pool
+        try (SqlCompiler compiler2 = new SqlCompiler(engine)) {
+
+            final CyclicBarrier barrier = new CyclicBarrier(2);
+            final SOCountDownLatch haltLatch = new SOCountDownLatch(2);
+
+            // we have two pairs of tables (x,y) and (x1,y1)
+            WorkerPool pool1 = new WorkerPool(new WorkerPoolAwareConfiguration() {
+                @Override
+                public int[] getWorkerAffinity() {
+                    return new int[]{-1};
+                }
+
+                @Override
+                public int getWorkerCount() {
+                    return 1;
+                }
+
+                @Override
+                public boolean haltOnError() {
+                    return true;
+                }
+
+                @Override
+                public boolean isEnabled() {
+                    return true;
+                }
+            });
+
+            pool1.assign(new Job() {
+                private boolean toRun = true;
+                @Override
+                public boolean run(int workerId) {
+                    if (toRun) {
+                        try {
+                            toRun = false;
+                            barrier.await();
+                            compiler.compile("insert into x select * from y", executionContext);
+                        } catch (Exception e) {
+                            e.printStackTrace();
+                        } finally {
+                            haltLatch.countDown();
+                        }
+                    }
+                    return false;
+                }
+            });
+            pool1.assignCleaner(Path.CLEANER);
+
+            final WorkerPool pool2 = new WorkerPool(new WorkerPoolConfiguration() {
+                @Override
+                public int[] getWorkerAffinity() {
+                    return new int[]{-1};
+                }
+
+                @Override
+                public int getWorkerCount() {
+                    return 1;
+                }
+
+                @Override
+                public boolean haltOnError() {
+                    return true;
+                }
+            });
+
+            pool2.assign(new Job() {
+                private boolean toRun = true;
+                @Override
+                public boolean run(int workerId) {
+                    if (toRun) {
+                        try {
+                            toRun = false;
+                            barrier.await();
+                            compiler2.compile("insert into x1 select * from y1", executionContext);
+                        } catch (Exception e) {
+                            e.printStackTrace();
+                        } finally {
+                            haltLatch.countDown();
+                        }
+                    }
+                    return false;
+                }
+            });
+            pool2.assignCleaner(Path.CLEANER);
+
+            pool1.start(null);
+            pool2.start(null);
+
+            haltLatch.await();
+
+            pool1.halt();
+            pool2.halt();
+        }
     }
 
     private static void testPartitionedOOONullSetters0(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext)
@@ -4450,9 +4632,7 @@ public class O3Test extends AbstractO3Test {
                 compiler,
                 sqlExecutionContext,
                 "create table y as (select * from x union all 1am)",
-                "y order by ts",
-                "insert into x select * from 1am",
-                "x"
+                "insert into x select * from 1am"
         );
 
         assertIndexConsistency(
@@ -4479,11 +4659,6 @@ public class O3Test extends AbstractO3Test {
         );
     }
 
-    @Test
-    public void testAppendToLastPartition() throws Exception {
-        executeWithPool(4, O3Test::testAppendToLastPartition);
-    }
-
     private static void testAppendToLastPartition(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
         compiler.compile(
                 "create table x (" +
@@ -4501,7 +4676,6 @@ public class O3Test extends AbstractO3Test {
             TxnScoreboard txnScoreboard = w.getTxnScoreboard();
             for (int i = 0; i < 1000; i++) {
                 TableWriter.Row r;
-                // todo: we need to truncate last partition when we close it, otherwise we're leaving massive files behind
                 r = w.newRow(ts - step);
                 r.putInt(0, rnd.nextInt());
                 r.putDouble(1, rnd.nextDouble());
