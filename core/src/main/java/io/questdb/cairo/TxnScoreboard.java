@@ -36,7 +36,6 @@ import java.io.Closeable;
 
 public class TxnScoreboard implements Closeable {
 
-    public static final long READER_NOT_YET_ACTIVE = -1;
     private static final Log LOG = LogFactory.getLog(TxnScoreboard.class);
 
     private final long fd;
@@ -89,7 +88,7 @@ public class TxnScoreboard implements Closeable {
         return getMin(mem);
     }
 
-    public boolean isTxnUnused(long nameTxn) {
+    public boolean isTxnAvailable(long nameTxn) {
         return isTxnAvailable(mem, nameTxn);
     }
 

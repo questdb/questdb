@@ -2959,7 +2959,7 @@ public class TableWriter implements Closeable {
     private void o3ProcessPartitionRemoveCandidates0(int n) {
         final long readerTxn = txnScoreboard.getMin();
         final long readerTxnCount = txnScoreboard.getActiveReaderCount(readerTxn);
-        if (txnScoreboard.isTxnUnused(txFile.getTxn() - 1)) {
+        if (txnScoreboard.isTxnAvailable(txFile.getTxn() - 1)) {
             for (int i = 0; i < n; i += 2) {
                 final long timestamp = o3PartitionRemoveCandidates.getQuick(i);
                 final long txn = o3PartitionRemoveCandidates.getQuick(i + 1);
