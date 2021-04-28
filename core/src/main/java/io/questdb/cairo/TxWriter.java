@@ -312,6 +312,7 @@ public final class TxWriter extends TxReader implements Closeable {
 
     public void updateMaxTimestamp(long timestamp) {
         prevMaxTimestamp = maxTimestamp;
+        assert timestamp >= maxTimestamp;
         maxTimestamp = timestamp;
     }
 

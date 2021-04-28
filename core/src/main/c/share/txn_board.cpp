@@ -115,6 +115,16 @@ public:
         return false;
     }
 
+    inline bool is_txn_avalable(int64_t txn) {
+        int64_t _min = get_min();
+        if (_min == -1 || get_count(txn) == 0) {
+            return true;
+        }
+        update_min(txn);
+        _min = get_min();
+        return _min == txn && get_count(txn) == 0;
+    }
+
     void init(uint32_t entry_count) {
         mask = entry_count - 1;
         size = entry_count;
@@ -126,6 +136,11 @@ extern "C" {
 JNIEXPORT jboolean JNICALL Java_io_questdb_cairo_TxnScoreboard_acquireTxn0
         (JAVA_STATIC, jlong p_txn_scoreboard, jlong txn) {
     return reinterpret_cast<txn_scoreboard_t<COUNTER_T> *>(p_txn_scoreboard)->txn_acquire(txn);
+}
+
+JNIEXPORT jboolean JNICALL Java_io_questdb_cairo_TxnScoreboard_isTxnAvailable
+        (JAVA_STATIC, jlong p_txn_scoreboard, jlong txn) {
+    return reinterpret_cast<txn_scoreboard_t<COUNTER_T> *>(p_txn_scoreboard)->is_txn_avalable(txn);
 }
 
 JNIEXPORT void JNICALL Java_io_questdb_cairo_TxnScoreboard_releaseTxn0
