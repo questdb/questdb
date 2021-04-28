@@ -840,6 +840,16 @@ public class SqlKeywords {
                 && (tok.charAt(i) | 32) == 'r';
     }
 
+    public static boolean isO3(CharSequence tok) {
+        if (tok.length() != 2) {
+            return false;
+        }
+
+        int i = 0;
+        return (tok.charAt(i++) | 32) == 'o'
+                && (tok.charAt(i++) | 32) == '3';
+    }
+
     public static boolean isPartitionKeyword(CharSequence tok) {
         if (tok.length() != 9) {
             return false;
