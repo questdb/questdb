@@ -56,7 +56,7 @@ public class AppendOnlyVirtualMemory extends PagedVirtualMemory implements Mappe
         if (page == mappedPage) {
             return pageAddress;
         }
-        return -1;
+        return 0L;
     }
 
     @Override
@@ -68,6 +68,14 @@ public class AppendOnlyVirtualMemory extends PagedVirtualMemory implements Mappe
     @Override
     protected void release(int page, long address) {
         ff.munmap(address, getPageSize(page));
+    }
+
+    public long mapRandomRead(long offset, long size) {
+        return ff.mmap(fd, size, offset, Files.MAP_RO);
+    }
+
+    public void releaseRandomRead(long offset, long size) {
+        ff.munmap(offset, size);
     }
 
     public final void close(boolean truncate) {

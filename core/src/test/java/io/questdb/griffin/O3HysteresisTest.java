@@ -24,9 +24,7 @@
 
 package io.questdb.griffin;
 
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.EntityColumnFilter;
-import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.*;
 import io.questdb.cairo.TableWriter.Row;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.Record;
@@ -34,11 +32,10 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlCompiler.RecordToRowCopier;
+import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.BytecodeAssembler;
-import io.questdb.std.IntList;
-import io.questdb.std.NumericException;
+import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Before;
@@ -205,6 +202,48 @@ public class O3HysteresisTest extends AbstractO3Test {
     @Test
     public void testNoHysteresisWithRollbackParallel() throws Exception {
         executeWithPool(2, this::testNoHysteresisWithRollback);
+    }
+
+    @Test
+    public void testBigUncommitedToMove() throws Exception {
+        executeWithPool(0, this::testBigUncommitedToMove0);
+    }
+
+    private void testBigUncommitedToMove0(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException, NumericException {
+        try(TableModel weather = new TableModel(engine.getConfiguration(), "weather", PartitionBy.DAY)) {
+            weather.col("id", ColumnType.LONG)
+                    .col("ok", ColumnType.DOUBLE)
+                    .timestamp("ts");
+
+            TestUtils.createPopulateTable(compiler,
+                    sqlExecutionContext,
+                    weather,
+                    0,
+                    "2021-04-27",
+                    0
+            );
+
+            // Create hugh commit which has big part before OOO starts
+            // which exceed default AppendOnlyVirtualMemory size
+            int iterations = 2;
+            long start = IntervalUtils.parseFloorPartialDate("2021-04-27T12:00:00");
+            int idCount = 16_000_000;
+            final Rnd rnd = new Rnd();
+
+            try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, weather.getName())) {
+                for (int i = 0; i < iterations; i++) {
+                    for (int id = 0; id < idCount; id++) {
+                        long timestamp = start + i * (idCount - 100_000)+ id;
+                        Row row = writer.newRow(timestamp);
+                        row.putLong(0, id);
+                        row.putDouble(1, rnd.nextDouble());
+                        row.append();
+                    }
+                }
+
+                writer.commitWithHysteresis(120000 * 1000);
+            }
+        }
     }
 
     private void insertUncommitted(

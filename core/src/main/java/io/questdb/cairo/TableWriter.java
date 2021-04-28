@@ -2240,7 +2240,7 @@ public class TableWriter implements Closeable {
                     o3HysteresisRowCount = o3RowCount;
                     srcOooMax = 0;
                 }
-                LOG.debug().$("o3 hysteresis [table=").$(tableName)
+                LOG.debug().$("o3 commit hysteresis [table=").$(tableName)
                         .$(", o3max=").$ts(o3max)
                         .$(", hysteresisThresholdTimestamp=").$ts(hysteresisThresholdTimestamp)
                         .$(", o3HysteresisRowCount=").$(o3HysteresisRowCount)
@@ -2249,7 +2249,7 @@ public class TableWriter implements Closeable {
                         .I$();
             } else {
                 LOG.debug()
-                        .$("o3 no hysteresis [table=").$(tableName)
+                        .$("o3 commit no hysteresis [table=").$(tableName)
                         .$(", o3RowCount=").$(o3RowCount)
                         .I$();
                 srcOooMax = o3RowCount;
@@ -2772,18 +2772,39 @@ public class TableWriter implements Closeable {
 
             o3DataMem.jumpTo(dstVarOffset + extendedSize);
             long appendAddress = o3DataMem.addressOf(dstVarOffset);
-            long sourceAddress = srcDataMem.addressOf(srcFixOffset);
-            Vect.memcpy(sourceAddress, appendAddress, extendedSize);
+            boolean dataToMoveMapped = srcDataMem.isMapped(srcFixOffset, extendedSize);
+            long sourceAddress = dataToMoveMapped ?
+                    srcDataMem.addressOf(srcFixOffset) : srcDataMem.mapRandomRead(srcFixOffset, extendedSize);
+            try {
+                assert sourceAddress > 0;
+                Vect.memcpy(sourceAddress, appendAddress, extendedSize);
+            } finally {
+                if (!dataToMoveMapped) {
+                    srcDataMem.releaseRandomRead(sourceAddress, extendedSize);
+                }
+            }
             srcDataMem.jumpTo(srcFixOffset);
         } else {
             // Timestamp column
             colIndex = -colIndex - 1;
             int shl = ColumnType.pow2SizeOf(ColumnType.TIMESTAMP);
+
             AppendOnlyVirtualMemory srcDataMem = getPrimaryColumn(colIndex);
             long srcFixOffset = committedTransientRowCount << shl;
-            for (long n = 0; n < transientRowsAdded; n++) {
-                long ts = srcDataMem.getLong(srcFixOffset + (n << shl));
-                o3TimestampMem.putLong128(ts, o3RowCount + n);
+            long toMoveSize = transientRowsAdded * Long.BYTES;
+            boolean dataToMoveMapped = srcDataMem.isMapped(srcFixOffset, toMoveSize);
+            long mappedAddress = dataToMoveMapped ?
+                    srcDataMem.addressOf(srcFixOffset) : srcDataMem.mapRandomRead(srcFixOffset, toMoveSize);
+            try {
+                for (long n = 0; n < transientRowsAdded; n++) {
+                    long offset = mappedAddress + (n << shl);
+                    long ts = Unsafe.getUnsafe().getLong(offset);
+                    o3TimestampMem.putLong128(ts, o3RowCount + n);
+                }
+            } finally {
+                if (!dataToMoveMapped) {
+                    srcDataMem.releaseRandomRead(mappedAddress, toMoveSize);
+                }
             }
             srcDataMem.jumpTo(srcFixOffset);
         }
