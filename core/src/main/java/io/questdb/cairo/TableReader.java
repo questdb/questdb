@@ -985,6 +985,9 @@ public class TableReader implements Closeable, SymbolTableSource {
             // exit if this is the same as we already have
             if (txn == this.txn) {
                 txnScoreboard.acquireTxn(txn);
+                if (txn == TableUtils.INITIAL_TXN) {
+                    this.txFile.readSymbolCounts(this.symbolCountSnapshot);
+                }
                 return false;
             }
 

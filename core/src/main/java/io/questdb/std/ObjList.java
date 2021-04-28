@@ -105,6 +105,7 @@ public class ObjList<T> implements Mutable, Sinkable {
     }
 
     public T getAndSetQuick(int index, T value) {
+        assert index < pos;
         T v = buffer[index];
         buffer[index] = value;
         return v;
@@ -132,6 +133,7 @@ public class ObjList<T> implements Mutable, Sinkable {
      * @return element at the specified position.
      */
     public T getQuick(int index) {
+        assert index < pos;
         return buffer[index];
     }
 
@@ -268,6 +270,7 @@ public class ObjList<T> implements Mutable, Sinkable {
     }
 
     public void setQuick(int index, T value) {
+        assert index < pos;
         buffer[index] = value;
     }
 
