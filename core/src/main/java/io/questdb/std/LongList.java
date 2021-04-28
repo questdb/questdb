@@ -214,10 +214,12 @@ public class LongList implements Mutable, LongVec {
      * @return element at the specified position.
      */
     public long getQuick(int index) {
+        assert index < pos;
         return buffer[index];
     }
 
     public void setQuick(int index, long value) {
+        assert index < pos;
         buffer[index] = value;
     }
 
