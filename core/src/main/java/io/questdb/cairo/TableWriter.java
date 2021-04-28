@@ -2889,8 +2889,6 @@ public class TableWriter implements Closeable {
         } else {
             // this is last partition
             this.txFile.transientRowCount = partitionSize;
-            // todo: test with repeated ingest, what was happening before is
-            //   repeated ingest was resetting max timestamp
             this.txFile.maxTimestamp = Math.max(this.txFile.maxTimestamp, timestampMax);
         }
 

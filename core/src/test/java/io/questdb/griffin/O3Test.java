@@ -28,6 +28,7 @@ import io.questdb.WorkerPoolAwareConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TxnScoreboard;
+import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.mp.Job;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
@@ -37,10 +38,7 @@ import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
-import org.junit.After;
-import org.junit.Before;
-import org.junit.Rule;
-import org.junit.Test;
+import org.junit.*;
 import org.junit.rules.TestName;
 
 import java.net.URISyntaxException;
@@ -307,6 +305,11 @@ public class O3Test extends AbstractO3Test {
     }
 
     @Test
+    public void testO3EdgeBugContended() throws Exception {
+        executeWithPool(0, O3Test::testO3EdgeBug);
+    }
+
+    @Test
     public void testOOOFollowedByAnotherOOO() throws Exception {
         executeWithPool(4, O3Test::testOooFollowedByAnotherOOO0);
     }
@@ -449,11 +452,6 @@ public class O3Test extends AbstractO3Test {
     @Test
     public void testPartitionedDataOOIntoLastIndexSearchBugContended() throws Exception {
         executeWithPool(0, O3Test::testPartitionedDataOOIntoLastIndexSearchBug0);
-    }
-
-    @Test
-    public void testO3EdgeBugContended() throws Exception {
-        executeWithPool(0, O3Test::testO3EdgeBug);
     }
 
     @Test
@@ -612,6 +610,11 @@ public class O3Test extends AbstractO3Test {
     }
 
     @Test
+    public void testRepeatedIngest() throws Exception {
+        executeWithPool(4, O3Test::testRepeatedIngest0);
+    }
+
+    @Test
     public void testTwoTablesCompeteForBuffer() throws Exception {
         executeWithPool(4, O3Test::testTwoTablesCompeteForBuffer0);
     }
@@ -738,6 +741,7 @@ public class O3Test extends AbstractO3Test {
 
             pool1.assign(new Job() {
                 private boolean toRun = true;
+
                 @Override
                 public boolean run(int workerId) {
                     if (toRun) {
@@ -775,6 +779,7 @@ public class O3Test extends AbstractO3Test {
 
             pool2.assign(new Job() {
                 private boolean toRun = true;
+
                 @Override
                 public boolean run(int workerId) {
                     if (toRun) {
@@ -1388,6 +1393,245 @@ public class O3Test extends AbstractO3Test {
         compiler.compile("insert into x select * from tail", sqlExecutionContext);
 
         testXAndIndex(engine, compiler, sqlExecutionContext, expected);
+    }
+
+    private static void testRepeatedIngest0(
+            CairoEngine engine,
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException, NumericException {
+
+        compiler.compile("create table x (a int, ts timestamp) timestamp(ts) partition by DAY", sqlExecutionContext);
+
+
+        long ts = TimestampFormatUtils.parseUTCTimestamp("2020-03-10T20:36:00.000000Z");
+        long expectedMaxTimestamp = Long.MIN_VALUE;
+        int step = 100;
+        int rowCount = 10;
+        try (TableWriter w = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "x")) {
+            for (int i = 0; i < 20; i++) {
+                for (int j = 0; j < rowCount; j++) {
+                    long t = ts + (rowCount - j) * step;
+                    expectedMaxTimestamp = Math.max(expectedMaxTimestamp, t);
+                    TableWriter.Row r = w.newRow(t);
+                    r.putInt(0, i * step + j);
+                    r.append();
+                }
+                w.commit();
+                ts--;
+            }
+            Assert.assertEquals(expectedMaxTimestamp, w.getMaxTimestamp());
+        }
+
+        final String expected = "a\tts\n" +
+                "1909\t2020-03-10T20:36:00.000081Z\n" +
+                "1809\t2020-03-10T20:36:00.000082Z\n" +
+                "1709\t2020-03-10T20:36:00.000083Z\n" +
+                "1609\t2020-03-10T20:36:00.000084Z\n" +
+                "1509\t2020-03-10T20:36:00.000085Z\n" +
+                "1409\t2020-03-10T20:36:00.000086Z\n" +
+                "1309\t2020-03-10T20:36:00.000087Z\n" +
+                "1209\t2020-03-10T20:36:00.000088Z\n" +
+                "1109\t2020-03-10T20:36:00.000089Z\n" +
+                "1009\t2020-03-10T20:36:00.000090Z\n" +
+                "909\t2020-03-10T20:36:00.000091Z\n" +
+                "809\t2020-03-10T20:36:00.000092Z\n" +
+                "709\t2020-03-10T20:36:00.000093Z\n" +
+                "609\t2020-03-10T20:36:00.000094Z\n" +
+                "509\t2020-03-10T20:36:00.000095Z\n" +
+                "409\t2020-03-10T20:36:00.000096Z\n" +
+                "309\t2020-03-10T20:36:00.000097Z\n" +
+                "209\t2020-03-10T20:36:00.000098Z\n" +
+                "109\t2020-03-10T20:36:00.000099Z\n" +
+                "9\t2020-03-10T20:36:00.000100Z\n" +
+                "1908\t2020-03-10T20:36:00.000181Z\n" +
+                "1808\t2020-03-10T20:36:00.000182Z\n" +
+                "1708\t2020-03-10T20:36:00.000183Z\n" +
+                "1608\t2020-03-10T20:36:00.000184Z\n" +
+                "1508\t2020-03-10T20:36:00.000185Z\n" +
+                "1408\t2020-03-10T20:36:00.000186Z\n" +
+                "1308\t2020-03-10T20:36:00.000187Z\n" +
+                "1208\t2020-03-10T20:36:00.000188Z\n" +
+                "1108\t2020-03-10T20:36:00.000189Z\n" +
+                "1008\t2020-03-10T20:36:00.000190Z\n" +
+                "908\t2020-03-10T20:36:00.000191Z\n" +
+                "808\t2020-03-10T20:36:00.000192Z\n" +
+                "708\t2020-03-10T20:36:00.000193Z\n" +
+                "608\t2020-03-10T20:36:00.000194Z\n" +
+                "508\t2020-03-10T20:36:00.000195Z\n" +
+                "408\t2020-03-10T20:36:00.000196Z\n" +
+                "308\t2020-03-10T20:36:00.000197Z\n" +
+                "208\t2020-03-10T20:36:00.000198Z\n" +
+                "108\t2020-03-10T20:36:00.000199Z\n" +
+                "8\t2020-03-10T20:36:00.000200Z\n" +
+                "1907\t2020-03-10T20:36:00.000281Z\n" +
+                "1807\t2020-03-10T20:36:00.000282Z\n" +
+                "1707\t2020-03-10T20:36:00.000283Z\n" +
+                "1607\t2020-03-10T20:36:00.000284Z\n" +
+                "1507\t2020-03-10T20:36:00.000285Z\n" +
+                "1407\t2020-03-10T20:36:00.000286Z\n" +
+                "1307\t2020-03-10T20:36:00.000287Z\n" +
+                "1207\t2020-03-10T20:36:00.000288Z\n" +
+                "1107\t2020-03-10T20:36:00.000289Z\n" +
+                "1007\t2020-03-10T20:36:00.000290Z\n" +
+                "907\t2020-03-10T20:36:00.000291Z\n" +
+                "807\t2020-03-10T20:36:00.000292Z\n" +
+                "707\t2020-03-10T20:36:00.000293Z\n" +
+                "607\t2020-03-10T20:36:00.000294Z\n" +
+                "507\t2020-03-10T20:36:00.000295Z\n" +
+                "407\t2020-03-10T20:36:00.000296Z\n" +
+                "307\t2020-03-10T20:36:00.000297Z\n" +
+                "207\t2020-03-10T20:36:00.000298Z\n" +
+                "107\t2020-03-10T20:36:00.000299Z\n" +
+                "7\t2020-03-10T20:36:00.000300Z\n" +
+                "1906\t2020-03-10T20:36:00.000381Z\n" +
+                "1806\t2020-03-10T20:36:00.000382Z\n" +
+                "1706\t2020-03-10T20:36:00.000383Z\n" +
+                "1606\t2020-03-10T20:36:00.000384Z\n" +
+                "1506\t2020-03-10T20:36:00.000385Z\n" +
+                "1406\t2020-03-10T20:36:00.000386Z\n" +
+                "1306\t2020-03-10T20:36:00.000387Z\n" +
+                "1206\t2020-03-10T20:36:00.000388Z\n" +
+                "1106\t2020-03-10T20:36:00.000389Z\n" +
+                "1006\t2020-03-10T20:36:00.000390Z\n" +
+                "906\t2020-03-10T20:36:00.000391Z\n" +
+                "806\t2020-03-10T20:36:00.000392Z\n" +
+                "706\t2020-03-10T20:36:00.000393Z\n" +
+                "606\t2020-03-10T20:36:00.000394Z\n" +
+                "506\t2020-03-10T20:36:00.000395Z\n" +
+                "406\t2020-03-10T20:36:00.000396Z\n" +
+                "306\t2020-03-10T20:36:00.000397Z\n" +
+                "206\t2020-03-10T20:36:00.000398Z\n" +
+                "106\t2020-03-10T20:36:00.000399Z\n" +
+                "6\t2020-03-10T20:36:00.000400Z\n" +
+                "1905\t2020-03-10T20:36:00.000481Z\n" +
+                "1805\t2020-03-10T20:36:00.000482Z\n" +
+                "1705\t2020-03-10T20:36:00.000483Z\n" +
+                "1605\t2020-03-10T20:36:00.000484Z\n" +
+                "1505\t2020-03-10T20:36:00.000485Z\n" +
+                "1405\t2020-03-10T20:36:00.000486Z\n" +
+                "1305\t2020-03-10T20:36:00.000487Z\n" +
+                "1205\t2020-03-10T20:36:00.000488Z\n" +
+                "1105\t2020-03-10T20:36:00.000489Z\n" +
+                "1005\t2020-03-10T20:36:00.000490Z\n" +
+                "905\t2020-03-10T20:36:00.000491Z\n" +
+                "805\t2020-03-10T20:36:00.000492Z\n" +
+                "705\t2020-03-10T20:36:00.000493Z\n" +
+                "605\t2020-03-10T20:36:00.000494Z\n" +
+                "505\t2020-03-10T20:36:00.000495Z\n" +
+                "405\t2020-03-10T20:36:00.000496Z\n" +
+                "305\t2020-03-10T20:36:00.000497Z\n" +
+                "205\t2020-03-10T20:36:00.000498Z\n" +
+                "105\t2020-03-10T20:36:00.000499Z\n" +
+                "5\t2020-03-10T20:36:00.000500Z\n" +
+                "1904\t2020-03-10T20:36:00.000581Z\n" +
+                "1804\t2020-03-10T20:36:00.000582Z\n" +
+                "1704\t2020-03-10T20:36:00.000583Z\n" +
+                "1604\t2020-03-10T20:36:00.000584Z\n" +
+                "1504\t2020-03-10T20:36:00.000585Z\n" +
+                "1404\t2020-03-10T20:36:00.000586Z\n" +
+                "1304\t2020-03-10T20:36:00.000587Z\n" +
+                "1204\t2020-03-10T20:36:00.000588Z\n" +
+                "1104\t2020-03-10T20:36:00.000589Z\n" +
+                "1004\t2020-03-10T20:36:00.000590Z\n" +
+                "904\t2020-03-10T20:36:00.000591Z\n" +
+                "804\t2020-03-10T20:36:00.000592Z\n" +
+                "704\t2020-03-10T20:36:00.000593Z\n" +
+                "604\t2020-03-10T20:36:00.000594Z\n" +
+                "504\t2020-03-10T20:36:00.000595Z\n" +
+                "404\t2020-03-10T20:36:00.000596Z\n" +
+                "304\t2020-03-10T20:36:00.000597Z\n" +
+                "204\t2020-03-10T20:36:00.000598Z\n" +
+                "104\t2020-03-10T20:36:00.000599Z\n" +
+                "4\t2020-03-10T20:36:00.000600Z\n" +
+                "1903\t2020-03-10T20:36:00.000681Z\n" +
+                "1803\t2020-03-10T20:36:00.000682Z\n" +
+                "1703\t2020-03-10T20:36:00.000683Z\n" +
+                "1603\t2020-03-10T20:36:00.000684Z\n" +
+                "1503\t2020-03-10T20:36:00.000685Z\n" +
+                "1403\t2020-03-10T20:36:00.000686Z\n" +
+                "1303\t2020-03-10T20:36:00.000687Z\n" +
+                "1203\t2020-03-10T20:36:00.000688Z\n" +
+                "1103\t2020-03-10T20:36:00.000689Z\n" +
+                "1003\t2020-03-10T20:36:00.000690Z\n" +
+                "903\t2020-03-10T20:36:00.000691Z\n" +
+                "803\t2020-03-10T20:36:00.000692Z\n" +
+                "703\t2020-03-10T20:36:00.000693Z\n" +
+                "603\t2020-03-10T20:36:00.000694Z\n" +
+                "503\t2020-03-10T20:36:00.000695Z\n" +
+                "403\t2020-03-10T20:36:00.000696Z\n" +
+                "303\t2020-03-10T20:36:00.000697Z\n" +
+                "203\t2020-03-10T20:36:00.000698Z\n" +
+                "103\t2020-03-10T20:36:00.000699Z\n" +
+                "3\t2020-03-10T20:36:00.000700Z\n" +
+                "1902\t2020-03-10T20:36:00.000781Z\n" +
+                "1802\t2020-03-10T20:36:00.000782Z\n" +
+                "1702\t2020-03-10T20:36:00.000783Z\n" +
+                "1602\t2020-03-10T20:36:00.000784Z\n" +
+                "1502\t2020-03-10T20:36:00.000785Z\n" +
+                "1402\t2020-03-10T20:36:00.000786Z\n" +
+                "1302\t2020-03-10T20:36:00.000787Z\n" +
+                "1202\t2020-03-10T20:36:00.000788Z\n" +
+                "1102\t2020-03-10T20:36:00.000789Z\n" +
+                "1002\t2020-03-10T20:36:00.000790Z\n" +
+                "902\t2020-03-10T20:36:00.000791Z\n" +
+                "802\t2020-03-10T20:36:00.000792Z\n" +
+                "702\t2020-03-10T20:36:00.000793Z\n" +
+                "602\t2020-03-10T20:36:00.000794Z\n" +
+                "502\t2020-03-10T20:36:00.000795Z\n" +
+                "402\t2020-03-10T20:36:00.000796Z\n" +
+                "302\t2020-03-10T20:36:00.000797Z\n" +
+                "202\t2020-03-10T20:36:00.000798Z\n" +
+                "102\t2020-03-10T20:36:00.000799Z\n" +
+                "2\t2020-03-10T20:36:00.000800Z\n" +
+                "1901\t2020-03-10T20:36:00.000881Z\n" +
+                "1801\t2020-03-10T20:36:00.000882Z\n" +
+                "1701\t2020-03-10T20:36:00.000883Z\n" +
+                "1601\t2020-03-10T20:36:00.000884Z\n" +
+                "1501\t2020-03-10T20:36:00.000885Z\n" +
+                "1401\t2020-03-10T20:36:00.000886Z\n" +
+                "1301\t2020-03-10T20:36:00.000887Z\n" +
+                "1201\t2020-03-10T20:36:00.000888Z\n" +
+                "1101\t2020-03-10T20:36:00.000889Z\n" +
+                "1001\t2020-03-10T20:36:00.000890Z\n" +
+                "901\t2020-03-10T20:36:00.000891Z\n" +
+                "801\t2020-03-10T20:36:00.000892Z\n" +
+                "701\t2020-03-10T20:36:00.000893Z\n" +
+                "601\t2020-03-10T20:36:00.000894Z\n" +
+                "501\t2020-03-10T20:36:00.000895Z\n" +
+                "401\t2020-03-10T20:36:00.000896Z\n" +
+                "301\t2020-03-10T20:36:00.000897Z\n" +
+                "201\t2020-03-10T20:36:00.000898Z\n" +
+                "101\t2020-03-10T20:36:00.000899Z\n" +
+                "1\t2020-03-10T20:36:00.000900Z\n" +
+                "1900\t2020-03-10T20:36:00.000981Z\n" +
+                "1800\t2020-03-10T20:36:00.000982Z\n" +
+                "1700\t2020-03-10T20:36:00.000983Z\n" +
+                "1600\t2020-03-10T20:36:00.000984Z\n" +
+                "1500\t2020-03-10T20:36:00.000985Z\n" +
+                "1400\t2020-03-10T20:36:00.000986Z\n" +
+                "1300\t2020-03-10T20:36:00.000987Z\n" +
+                "1200\t2020-03-10T20:36:00.000988Z\n" +
+                "1100\t2020-03-10T20:36:00.000989Z\n" +
+                "1000\t2020-03-10T20:36:00.000990Z\n" +
+                "900\t2020-03-10T20:36:00.000991Z\n" +
+                "800\t2020-03-10T20:36:00.000992Z\n" +
+                "700\t2020-03-10T20:36:00.000993Z\n" +
+                "600\t2020-03-10T20:36:00.000994Z\n" +
+                "500\t2020-03-10T20:36:00.000995Z\n" +
+                "400\t2020-03-10T20:36:00.000996Z\n" +
+                "300\t2020-03-10T20:36:00.000997Z\n" +
+                "200\t2020-03-10T20:36:00.000998Z\n" +
+                "100\t2020-03-10T20:36:00.000999Z\n" +
+                "0\t2020-03-10T20:36:00.001000Z\n";
+
+        TestUtils.assertSql(
+                compiler,
+                sqlExecutionContext,
+                "x",
+                sink,
+                expected
+        );
     }
 
     private static void testXAndIndex(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, String expected) throws SqlException {
