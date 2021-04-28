@@ -72,7 +72,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     private int columnCount;
     private int columnCountBits;
     private long rowCount;
-    private long txn = TableUtils.INITIAL_TXN - 1; // Force to read txn file once even when there are no transactions yet
+    private long txn = TableUtils.INITIAL_TXN;
     private long tempMem8b = Unsafe.malloc(8);
     private boolean active;
 
@@ -985,6 +985,9 @@ public class TableReader implements Closeable, SymbolTableSource {
             // exit if this is the same as we already have
             if (txn == this.txn) {
                 txnScoreboard.acquireTxn(txn);
+                if (txn == TableUtils.INITIAL_TXN) {
+                    this.txFile.readSymbolCounts(this.symbolCountSnapshot);
+                }
                 return false;
             }
 
