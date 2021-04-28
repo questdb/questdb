@@ -3595,8 +3595,16 @@ public class TableWriter implements Closeable {
                 return;
             }
             try {
-                long dirTimestamp = partitionDirFmt.parse(nativeLPSZ, null);
-                if (txFile.attachedPartitionsContains(dirTimestamp) || txFile.isActivePartition(dirTimestamp)) {
+                long txn = 0;
+                int txnSep = Chars.indexOf(nativeLPSZ, '.');
+                if (txnSep < 0) {
+                    txnSep = nativeLPSZ.length();
+                } else {
+                    txn = Numbers.parseLong(nativeLPSZ, txnSep + 1, nativeLPSZ.length());
+                }
+                long dirTimestamp = partitionDirFmt.parse(nativeLPSZ, 0, txnSep, null);
+                if (txn <= txFile.txn &&
+                        (txFile.attachedPartitionsContains(dirTimestamp) || txFile.isActivePartition(dirTimestamp))) {
                     return;
                 }
             } catch (NumericException ignore) {

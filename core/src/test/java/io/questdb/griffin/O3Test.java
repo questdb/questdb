@@ -25,9 +25,7 @@
 package io.questdb.griffin;
 
 import io.questdb.WorkerPoolAwareConfiguration;
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.TableWriter;
-import io.questdb.cairo.TxnScoreboard;
+import io.questdb.cairo.*;
 import io.questdb.mp.Job;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
@@ -644,6 +642,45 @@ public class O3Test extends AbstractO3Test {
     @Test
     public void testVanillaHysteresisSinglePartitionParallel() throws Exception {
         executeWithPool(4, O3Test::testVanillaHysteresisSinglePartition0);
+    }
+
+    @Test
+    public void testWriterOpensCorrectTxnPartitionOnRestart() throws Exception {
+        executeWithPool(0, O3Test::testWriterOpensCorrectTxnPartitionOnRestart0);
+    }
+
+    private static void testWriterOpensCorrectTxnPartitionOnRestart0(
+            CairoEngine engine,
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException, NumericException {
+        CairoConfiguration configuration = engine.getConfiguration();
+        try (TableModel x = new TableModel(configuration, "x", PartitionBy.DAY)) {
+            TestUtils.createPopulateTable(
+                    compiler,
+                    sqlExecutionContext,
+                    x.col("id", ColumnType.LONG)
+                            .col("ok", ColumnType.DOUBLE)
+                            .timestamp("ts"),
+                    10,
+                    "2020-01-01",
+                    1);
+
+            // Insert OOO to create partition dir 2020-01-01.1
+            TestUtils.insert(compiler, sqlExecutionContext, "insert into x values(1, 100.0, '2020-01-01T00:01:00')");
+            TestUtils.assertSql(compiler, sqlExecutionContext,"select count() from x", sink,
+                    "count\n" +
+                            "11\n"
+            );
+
+            // Close and open writer. Partition dir 2020-01-01.1 should not be purged
+            engine.releaseAllWriters();
+            TestUtils.insert(compiler, sqlExecutionContext, "insert into x values(2, 101.0, '2020-01-01T00:02:00')");
+            TestUtils.assertSql(compiler, sqlExecutionContext,"select count() from x", sink,
+                    "count\n" +
+                            "12\n"
+            );
+        }
     }
 
     private static void testTwoTablesCompeteForBuffer0(
