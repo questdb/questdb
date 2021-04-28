@@ -24,15 +24,16 @@
 
 package io.questdb.test.tools;
 
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.RecordCursorPrinter;
-import io.questdb.cairo.TableReader;
+import io.questdb.cairo.*;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.*;
+import io.questdb.std.datetime.microtime.TimestampFormatUtils;
+import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.MutableCharSink;
 import io.questdb.std.str.Path;
 import org.junit.Assert;
@@ -488,6 +489,87 @@ public final class TestUtils {
     public static void removeTestPath(CharSequence root) {
         Path path = Path.getThreadLocal(root);
         Files.rmdir(path.slash$());
+    }
+
+    public static void createPopulateTable(
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext,
+            TableModel tableModel,
+            int totalRows,
+            String startDate,
+            int partitionCount) throws NumericException, SqlException {
+        long fromTimestamp = IntervalUtils.parseFloorPartialDate(startDate);
+
+        long increment = 0;
+        if (tableModel.getPartitionBy() != PartitionBy.NONE) {
+            Timestamps.TimestampAddMethod partitionAdd = TableUtils.getPartitionAdd(tableModel.getPartitionBy());
+            long toTs = partitionAdd.calculate(fromTimestamp, partitionCount) - fromTimestamp - Timestamps.SECOND_MICROS;
+            increment = totalRows > 0 ? Math.max(toTs / totalRows, 1) : 0;
+        }
+
+        StringBuilder sql = new StringBuilder();
+        sql.append("create table ").append(tableModel.getName()).append(" as (").append(Misc.EOL).append("select").append(Misc.EOL);
+        for (int i = 0; i < tableModel.getColumnCount(); i++) {
+            int colType = tableModel.getColumnType(i);
+            CharSequence colName = tableModel.getColumnName(i);
+            switch (colType) {
+                case ColumnType.INT:
+                    sql.append("cast(x as int) ").append(colName);
+                    break;
+                case ColumnType.STRING:
+                    sql.append("CAST(x as STRING) ").append(colName);
+                    break;
+                case ColumnType.LONG:
+                    sql.append("x ").append(colName);
+                    break;
+                case ColumnType.DOUBLE:
+                    sql.append("x / 1000.0 ").append(colName);
+                    break;
+                case ColumnType.TIMESTAMP:
+                    sql.append("CAST(").append(fromTimestamp).append("L AS TIMESTAMP) + x * ").append(increment).append("  ").append(colName);
+                    break;
+                case ColumnType.SYMBOL:
+                    sql.append("rnd_symbol(4,4,4,2) ").append(colName);
+                    break;
+                case ColumnType.BOOLEAN:
+                    sql.append("rnd_boolean() ").append(colName);
+                    break;
+                case ColumnType.FLOAT:
+                    sql.append("CAST(x / 1000.0 AS FLOAT) ").append(colName);
+                    break;
+                case ColumnType.DATE:
+                    sql.append("CAST(").append(fromTimestamp).append("L AS DATE) ").append(colName);
+                    break;
+                case ColumnType.LONG256:
+                    sql.append("CAST(x AS LONG256) ").append(colName);
+                    break;
+                case ColumnType.BYTE:
+                    sql.append("CAST(x AS BYTE) ").append(colName);
+                    break;
+                case ColumnType.CHAR:
+                    sql.append("CAST(x AS CHAR) ").append(colName);
+                    break;
+                case ColumnType.SHORT:
+                    sql.append("CAST(x AS SHORT) ").append(colName);
+                    break;
+                default:
+                    throw new UnsupportedOperationException();
+            }
+            if (i < tableModel.getColumnCount() - 1) {
+                sql.append("," + Misc.EOL);
+            }
+        }
+
+        sql.append(Misc.EOL + "from long_sequence(").append(totalRows).append(")");
+        sql.append(")" + Misc.EOL);
+        if (tableModel.getTimestampIndex() != -1) {
+            CharSequence timestampCol = tableModel.getColumnName(tableModel.getTimestampIndex());
+            sql.append(" timestamp(").append(timestampCol).append(")");
+        }
+        if (tableModel.getPartitionBy() != PartitionBy.NONE) {
+            sql.append(" Partition By ").append(PartitionBy.toString(tableModel.getPartitionBy()));
+        }
+        compiler.compile(sql.toString(), sqlExecutionContext);
     }
 
     @FunctionalInterface
