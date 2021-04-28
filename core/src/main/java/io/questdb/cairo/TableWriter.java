@@ -2207,6 +2207,8 @@ public class TableWriter implements Closeable {
         o3BasketPool.clear();
 
         long o3HysteresisRowCount = 0;
+        long o3MaxUncommittedRows = metadata.getO3MaxUncommittedRows();
+
         final int timestampIndex = metadata.getTimestampIndex();
         this.lastPartitionTimestamp = timestampFloorMethod.floor(partitionTimestampHi);
         try {
@@ -2235,7 +2237,12 @@ public class TableWriter implements Closeable {
                 if (hysteresisThresholdTimestamp >= o3TimestampMin) {
                     long hysteresisThresholdRow = Vect.boundedBinarySearchIndexT(sortedTimestampsAddr, hysteresisThresholdTimestamp, 0, o3RowCount - 1, BinarySearch.SCAN_DOWN);
                     o3HysteresisRowCount = o3RowCount - hysteresisThresholdRow - 1;
-                    srcOooMax = hysteresisThresholdRow + 1;
+                    if (o3HysteresisRowCount > o3MaxUncommittedRows) {
+                        o3HysteresisRowCount = o3MaxUncommittedRows;
+                        srcOooMax = o3RowCount - o3MaxUncommittedRows;
+                    } else {
+                        srcOooMax = hysteresisThresholdRow + 1;
+                    }
                 } else {
                     o3HysteresisRowCount = o3RowCount;
                     srcOooMax = 0;
