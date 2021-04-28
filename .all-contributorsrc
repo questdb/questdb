@@ -332,6 +332,17 @@
         "code",
         "tool"
       ]
+    },
+    {
+      "login": "tiagostutz",
+      "name": "Tiago de Oliveira Stutz",
+      "avatar_url": "https://avatars.githubusercontent.com/u/3986989?v=4",
+      "profile": "https://github.com/tiagostutz",
+      "contributions": [
+        "userTesting",
+        "bug",
+        "projectManagement"
+      ]
     }
   ],
   "badgeTemplate": "[![All Contributors](https://img.shields.io/badge/all_contributors-<%= contributors.length %>-orange.svg)](#contributors)",
