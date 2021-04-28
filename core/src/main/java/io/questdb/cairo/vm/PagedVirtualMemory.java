@@ -927,7 +927,7 @@ public class PagedVirtualMemory implements ReadWriteVirtualMemory, Closeable {
         return cachePageAddress(page, allocateNextPage(page));
     }
 
-    long offsetInPage(long offset) {
+    public long offsetInPage(long offset) {
         return offset & mod;
     }
 

@@ -227,7 +227,7 @@ public class O3HysteresisTest extends AbstractO3Test {
             // which exceed default AppendOnlyVirtualMemory size
             int iterations = 2;
             long start = IntervalUtils.parseFloorPartialDate("2021-04-27T12:00:00");
-            int idCount = 16_000_000;
+            int idCount = 5_000_000;
             final Rnd rnd = new Rnd();
 
             try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, weather.getName())) {
