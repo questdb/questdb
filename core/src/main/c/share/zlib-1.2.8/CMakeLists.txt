@@ -1,5 +1,5 @@
 # This make file has been modified to compile with questdb sources
-cmake_minimum_required(VERSION 2.4.4)
+cmake_minimum_required(VERSION 3.5)
 set(CMAKE_ALLOW_LOOSE_LOOP_CONSTRUCTS ON)
 
 set(VERSION "1.2.8")
