@@ -210,14 +210,25 @@ public class O3HysteresisTest extends AbstractO3Test {
     }
 
     private void testBigUncommitedToMove0(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException, NumericException {
-        try(TableModel weather = new TableModel(engine.getConfiguration(), "weather", PartitionBy.DAY)) {
-            weather.col("id", ColumnType.LONG)
+        try(TableModel tableModel = new TableModel(engine.getConfiguration(), "table", PartitionBy.DAY)) {
+            tableModel.col("id", ColumnType.LONG)
                     .col("ok", ColumnType.DOUBLE)
+                    .col("str", ColumnType.STRING)
                     .timestamp("ts");
 
-            TestUtils.createPopulateTable(compiler,
+            TestUtils.createPopulateTable("o3",
+                    compiler,
                     sqlExecutionContext,
-                    weather,
+                    tableModel,
+                    0,
+                    "2021-04-27",
+                    0
+            );
+
+            TestUtils.createPopulateTable("ordered",
+                    compiler,
+                    sqlExecutionContext,
+                    tableModel,
                     0,
                     "2021-04-27",
                     0
@@ -228,22 +239,40 @@ public class O3HysteresisTest extends AbstractO3Test {
             int iterations = 2;
             long start = IntervalUtils.parseFloorPartialDate("2021-04-27T12:00:00");
             int idCount = 5_000_000;
-            final Rnd rnd = new Rnd();
 
-            try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, weather.getName())) {
+            String[] varCol = new String[] {"abc", "aldfjkasdlfkj", "as", "2021-04-27T12:00:00"};
+
+            // Add 2 batches
+            try (TableWriter o3 = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "o3");
+                 TableWriter ordered = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "ordered")) {
                 for (int i = 0; i < iterations; i++) {
+                    int backwards = iterations - i - 1;
+                    int forward = i;
+                    final Rnd rnd = new Rnd();
                     for (int id = 0; id < idCount; id++) {
-                        long timestamp = start + i * (idCount - 100_000)+ id;
-                        Row row = writer.newRow(timestamp);
+                        long timestamp = start + backwards * idCount + id;
+
+                        Row row = o3.newRow(timestamp);
                         row.putLong(0, id);
                         row.putDouble(1, rnd.nextDouble());
+                        row.putStr(2, varCol[id % varCol.length]);
+                        row.append();
+
+                        timestamp = start + forward * idCount + id;
+                        row = ordered.newRow(timestamp);
+                        row.putLong(0, id);
+                        row.putDouble(1, rnd.nextDouble());
+                        row.putStr(2, varCol[id % varCol.length]);
                         row.append();
                     }
                 }
 
-                writer.commitWithHysteresis(120000 * 1000);
+                o3.commit();
+                ordered.commit();
             }
         }
+
+        assertSqlCursors(compiler, sqlExecutionContext, "ordered", "o3");
     }
 
     private void insertUncommitted(

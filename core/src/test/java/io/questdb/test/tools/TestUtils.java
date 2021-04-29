@@ -491,7 +491,19 @@ public final class TestUtils {
         Files.rmdir(path.slash$());
     }
 
+
     public static void createPopulateTable(
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext,
+            TableModel tableModel,
+            int totalRows,
+            String startDate,
+            int partitionCount) throws NumericException, SqlException {
+        createPopulateTable(tableModel.getTableName(), compiler, sqlExecutionContext, tableModel, totalRows, startDate, partitionCount);
+    }
+
+    public static void createPopulateTable(
+            CharSequence tableName,
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext,
             TableModel tableModel,
@@ -508,7 +520,7 @@ public final class TestUtils {
         }
 
         StringBuilder sql = new StringBuilder();
-        sql.append("create table ").append(tableModel.getName()).append(" as (").append(Misc.EOL).append("select").append(Misc.EOL);
+        sql.append("create table ").append(tableName).append(" as (").append(Misc.EOL).append("select").append(Misc.EOL);
         for (int i = 0; i < tableModel.getColumnCount(); i++) {
             int colType = tableModel.getColumnType(i);
             CharSequence colName = tableModel.getColumnName(i);
