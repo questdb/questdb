@@ -24,16 +24,80 @@
 
 package io.questdb.griffin;
 
+import static io.questdb.griffin.SqlKeywords.CONCAT_FUNC_NAME;
+import static io.questdb.griffin.SqlKeywords.isAllKeyword;
+import static io.questdb.griffin.SqlKeywords.isAsKeyword;
+import static io.questdb.griffin.SqlKeywords.isAscKeyword;
+import static io.questdb.griffin.SqlKeywords.isByKeyword;
+import static io.questdb.griffin.SqlKeywords.isCacheKeyword;
+import static io.questdb.griffin.SqlKeywords.isCapacityKeyword;
+import static io.questdb.griffin.SqlKeywords.isCaseKeyword;
+import static io.questdb.griffin.SqlKeywords.isCastKeyword;
+import static io.questdb.griffin.SqlKeywords.isColonColonKeyword;
+import static io.questdb.griffin.SqlKeywords.isConcatFunction;
+import static io.questdb.griffin.SqlKeywords.isConcatOperator;
+import static io.questdb.griffin.SqlKeywords.isCopyKeyword;
+import static io.questdb.griffin.SqlKeywords.isCountKeyword;
+import static io.questdb.griffin.SqlKeywords.isCreateKeyword;
+import static io.questdb.griffin.SqlKeywords.isDescKeyword;
+import static io.questdb.griffin.SqlKeywords.isDistinctKeyword;
+import static io.questdb.griffin.SqlKeywords.isExceptKeyword;
+import static io.questdb.griffin.SqlKeywords.isFillKeyword;
+import static io.questdb.griffin.SqlKeywords.isFromKeyword;
+import static io.questdb.griffin.SqlKeywords.isGroupKeyword;
+import static io.questdb.griffin.SqlKeywords.isHeaderKeyword;
+import static io.questdb.griffin.SqlKeywords.isIndexKeyword;
+import static io.questdb.griffin.SqlKeywords.isInsertKeyword;
+import static io.questdb.griffin.SqlKeywords.isIntersectKeyword;
+import static io.questdb.griffin.SqlKeywords.isLatestKeyword;
+import static io.questdb.griffin.SqlKeywords.isLeftKeyword;
+import static io.questdb.griffin.SqlKeywords.isLimitKeyword;
+import static io.questdb.griffin.SqlKeywords.isNoCacheKeyword;
+import static io.questdb.griffin.SqlKeywords.isNotJoinKeyword;
+import static io.questdb.griffin.SqlKeywords.isO3CommitHysteresis;
+import static io.questdb.griffin.SqlKeywords.isO3MaxUncommittedRowsParam;
+import static io.questdb.griffin.SqlKeywords.isOnKeyword;
+import static io.questdb.griffin.SqlKeywords.isOrderKeyword;
+import static io.questdb.griffin.SqlKeywords.isOuterKeyword;
+import static io.questdb.griffin.SqlKeywords.isOverKeyword;
+import static io.questdb.griffin.SqlKeywords.isPartitionKeyword;
+import static io.questdb.griffin.SqlKeywords.isRenameKeyword;
+import static io.questdb.griffin.SqlKeywords.isSampleKeyword;
+import static io.questdb.griffin.SqlKeywords.isSelectKeyword;
+import static io.questdb.griffin.SqlKeywords.isTimestampKeyword;
+import static io.questdb.griffin.SqlKeywords.isTrueKeyword;
+import static io.questdb.griffin.SqlKeywords.isUnionKeyword;
+import static io.questdb.griffin.SqlKeywords.isValuesKeyword;
+import static io.questdb.griffin.SqlKeywords.isWhereKeyword;
+import static io.questdb.griffin.SqlKeywords.isWithKeyword;
+
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
+
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableUtils;
-import io.questdb.griffin.model.*;
-import io.questdb.std.*;
-import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
-
-import static io.questdb.griffin.SqlKeywords.*;
+import io.questdb.griffin.model.AnalyticColumn;
+import io.questdb.griffin.model.ColumnCastModel;
+import io.questdb.griffin.model.CopyModel;
+import io.questdb.griffin.model.CreateTableModel;
+import io.questdb.griffin.model.ExecutionModel;
+import io.questdb.griffin.model.ExpressionNode;
+import io.questdb.griffin.model.InsertModel;
+import io.questdb.griffin.model.QueryColumn;
+import io.questdb.griffin.model.QueryModel;
+import io.questdb.griffin.model.RenameTableModel;
+import io.questdb.griffin.model.WithClauseModel;
+import io.questdb.std.Chars;
+import io.questdb.std.GenericLexer;
+import io.questdb.std.LowerCaseAsciiCharSequenceHashSet;
+import io.questdb.std.LowerCaseAsciiCharSequenceIntHashMap;
+import io.questdb.std.LowerCaseCharSequenceObjHashMap;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.ObjList;
+import io.questdb.std.ObjectPool;
 
 public final class SqlParser {
 
@@ -194,6 +258,69 @@ public final class SqlParser {
         } catch (NumericException e) {
             throw err(lexer, "bad long integer");
         }
+    }
+
+    private long expectMicros(CharSequence tok, int position) throws SqlException {
+        int k = -1;
+
+        final int len = tok.length();
+
+        // look for end of digits
+        for (int i = 0; i < len; i++) {
+            char c = tok.charAt(i);
+            if (c < '0' || c > '9') {
+                k = i;
+                break;
+            }
+        }
+
+        if (k == -1) {
+            throw SqlException.$(position + len, "expected interval qualifier in ").put(tok);
+        }
+
+        try {
+            long interval = Numbers.parseLong(tok, 0, k);
+            int nChars = len - k;
+            if (nChars > 2) {
+                throw SqlException.$(position + k, "expected 1/2 letter interval qualifier in ").put(tok);
+            }
+
+            switch (tok.charAt(k)) {
+                case 's':
+                    if (nChars == 1) {
+                        // seconds
+                        return interval * 1_000_000l;
+                    }
+                    break;
+                case 'm':
+                    if (nChars == 1) {
+                        // minutes
+                        return interval * 60_000_000l;
+                    } else {
+                        if (tok.charAt(k + 1) == 's') {
+                            // millis
+                            return interval * 1_000;
+                        }
+                    }
+                    break;
+                case 'h':
+                    if (nChars == 1) {
+                        // hours
+                        return interval * 3_600_000_000l;
+                    }
+                    break;
+                case 'd':
+                    if (nChars == 1) {
+                        // days
+                        return interval * 86_400_000_000l;
+                    }
+                    break;
+            }
+        } catch (NumericException ex) {
+            // Ignored
+        }
+
+        throw SqlException.$(position + len, "invalid interval qualifier ").put(tok);
     }
 
     private ExpressionNode expectLiteral(GenericLexer lexer) throws SqlException {
@@ -433,22 +560,29 @@ public final class SqlParser {
             }
             model.setPartitionBy(partitionBy);
             tok = optTok(lexer);
-            if (tok != null && isO3(tok)) {
-                tok = optTok(lexer);
-                if (tok == null || !Chars.equals(tok, '(')) {
-                    throw SqlException.position(lexer.getPosition()).put(" expected O3 parameters (maxUncommittedRows, commitHysteresisInMillis)");
+            if (tok != null && isWithKeyword(tok)) {
+                ExpressionNode expr;
+                while ((expr = expr(lexer, (QueryModel) null)) != null) {
+                    if (Chars.equals(expr.token, '=')) {
+                        if (isO3MaxUncommittedRowsParam(expr.lhs.token)) {
+                            try {
+                                o3MaxUncommittedRows = Numbers.parseInt(expr.rhs.token);
+                            } catch (NumericException e) {
+                                throw SqlException.position(lexer.getPosition()).put(" could not parse o3MaxUncommittedRows value \"").put(expr.rhs.token).put('"');
+                            }
+                        } else if (isO3CommitHysteresis(expr.lhs.token)) {
+                            o3CommitHysteresisInMicros = expectMicros(expr.rhs.token, lexer.getPosition());
+                        } else {
+                            throw SqlException.position(lexer.getPosition()).put(" unrecognized ").put(expr.lhs.token).put(" after WITH");
+                        }
+                        tok = optTok(lexer);
+                        if (Chars.equals(tok, ',')) {
+                            continue;
+                        }
+                        break;
+                    }
+                    throw SqlException.position(lexer.getPosition()).put(" expected parameter after WITH");
                 }
-                o3MaxUncommittedRows = expectInt(lexer);
-                tok = optTok(lexer);
-                if (tok == null || !Chars.equals(tok, ',')) {
-                    throw SqlException.position(lexer.getPosition()).put(" expected O3 parameters (maxUncommittedRows, commitHysteresisInMillis)");
-                }
-                o3CommitHysteresisInMicros = expectLong(lexer) * 1_000;
-                tok = optTok(lexer);
-                if (tok == null || !Chars.equals(tok, ')')) {
-                    throw SqlException.position(lexer.getPosition()).put(" expected O3 parameters (maxUncommittedRows, commitHysteresisInMillis)");
-                }
-                tok = optTok(lexer);
             }
         }
 

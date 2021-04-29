@@ -2168,7 +2168,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                         "t TIMESTAMP, " +
                         "y BOOLEAN) " +
                         "timestamp(t) " +
-                        "partition by DAY o3(10000,250)",
+                        "partition by DAY WITH o3MaxUncommittedRows=10000, o3CommitHysteresis=250ms;",
                 sqlExecutionContext);
 
         try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE,
