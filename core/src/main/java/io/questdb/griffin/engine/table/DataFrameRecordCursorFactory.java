@@ -243,12 +243,11 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
 
         private PageFrame computeFrame(long min) {
             for (int i = 0; i < columnCount; i++) {
-                final int columnIndex = columnIndexes.getQuick(i);
                 final long top = topsRemaining.getQuick(i);
                 if (top > 0) {
                     assert min <= top;
                     topsRemaining.setQuick(i, top - min);
-                    columnPageAddress.setQuick(columnIndex, 0);
+                    columnPageAddress.setQuick(i, 0);
                     pageSizes.setQuick(i, min);
                 } else {
                     long addr = columnPageNextAddress.getQuick(i);

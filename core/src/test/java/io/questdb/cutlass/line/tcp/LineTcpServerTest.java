@@ -60,6 +60,8 @@ public class LineTcpServerTest extends AbstractCairoTest {
     private final static String AUTH_KEY_ID2 = "testUser2";
     private final static PrivateKey AUTH_PRIVATE_KEY2 = AuthDb.importPrivateKey("lwJi3TSb4G6UcHxFJmPhOTWa4BLwJOOiK76wT6Uk7pI");
     private static final long TEST_TIMEOUT_IN_MS = 120000;
+    private int maxMeasurementSize = 50;
+
     private final WorkerPool sharedWorkerPool = new WorkerPool(new WorkerPoolConfiguration() {
         private final int[] affinity = {-1, -1};
 
@@ -106,7 +108,7 @@ public class LineTcpServerTest extends AbstractCairoTest {
 
         @Override
         public int getMaxMeasurementSize() {
-            return 50;
+            return maxMeasurementSize;
         }
 
         @Override
@@ -176,7 +178,7 @@ public class LineTcpServerTest extends AbstractCairoTest {
                     "weather,location=us-eastcoast temperature=81 1465839830101400200\n";
             send(lineData);
 
-            TableWriter writer = waitForWriterRelease(3);
+            TableWriter writer = waitForWriterRelease(3, "weather");
             writer.close();
 
             lineData = "weather,location=us-midwest temperature=85 1465839830102300200\n" +
@@ -184,7 +186,7 @@ public class LineTcpServerTest extends AbstractCairoTest {
                     "weather,location=us-westcost temperature=82 1465839830102500200\n";
             send(lineData);
 
-            writer = waitForWriterRelease(6);
+            writer = waitForWriterRelease(6, "weather");
             writer.close();
 
             String expected = "location\ttemperature\ttimestamp\n" +
@@ -206,7 +208,7 @@ public class LineTcpServerTest extends AbstractCairoTest {
                     "weather,location=us-eastcoast temperature=81 1465839830101400200\n";
             send(lineData);
 
-            TableWriter writer = waitForWriterRelease(3);
+            TableWriter writer = waitForWriterRelease(3, "weather");
             writer.truncate();
             writer.close();
 
@@ -215,7 +217,7 @@ public class LineTcpServerTest extends AbstractCairoTest {
                     "weather,location=us-westcost temperature=82 1465839830102500200\n";
             send(lineData);
 
-            writer = waitForWriterRelease(3);
+            writer = waitForWriterRelease(3, "weather");
             writer.close();
 
             String expected = "location\ttemperature\ttimestamp\n" +
@@ -234,7 +236,7 @@ public class LineTcpServerTest extends AbstractCairoTest {
                     "weather,location=us-eastcoast temperature=81 1465839830101400200\n";
             send(lineData);
 
-            TableWriter writer = waitForWriterRelease(3);
+            TableWriter writer = waitForWriterRelease(3, "weather");
             writer.close();
             engine.remove(AllowAllCairoSecurityContext.INSTANCE, path, "weather");
 
@@ -243,7 +245,7 @@ public class LineTcpServerTest extends AbstractCairoTest {
                     "weather,location=us-westcost temperature=82 1465839830102500200\n";
             send(lineData);
 
-            writer = waitForWriterRelease(3);
+            writer = waitForWriterRelease(3, "weather");
             writer.close();
 
             String expected = "location\ttemperature\ttimestamp\n" +
@@ -262,7 +264,7 @@ public class LineTcpServerTest extends AbstractCairoTest {
                     "weather,location=us-eastcoast temperature=81 1465839830101400200\n";
             send(lineData);
 
-            TableWriter writer = waitForWriterRelease(3);
+            TableWriter writer = waitForWriterRelease(3, "weather");
             writer.close();
             engine.remove(AllowAllCairoSecurityContext.INSTANCE, path, "weather");
 
@@ -271,7 +273,7 @@ public class LineTcpServerTest extends AbstractCairoTest {
                     "weather,loc=us-westcost temp=82 1465839830102500200\n";
             send(lineData);
 
-            writer = waitForWriterRelease(3);
+            writer = waitForWriterRelease(3, "weather");
             writer.close();
 
             String expected = "loc\ttemp\ttimestamp\n" +
@@ -290,7 +292,7 @@ public class LineTcpServerTest extends AbstractCairoTest {
                     "weather,location=us-eastcoast temperature=81 1465839830101400200\n";
             send(lineData);
 
-            TableWriter writer = waitForWriterRelease(3);
+            TableWriter writer = waitForWriterRelease(3, "weather");
             writer.close();
             engine.remove(AllowAllCairoSecurityContext.INSTANCE, path, "weather");
 
@@ -299,7 +301,7 @@ public class LineTcpServerTest extends AbstractCairoTest {
                     "weather,location=us-westcost,source=sensor1 temp=82 1465839830102500200\n";
             send(lineData);
 
-            writer = waitForWriterRelease(3);
+            writer = waitForWriterRelease(3, "weather");
             writer.close();
 
             String expected = "location\tsource\ttemp\ttimestamp\n" +
@@ -308,6 +310,29 @@ public class LineTcpServerTest extends AbstractCairoTest {
                     "us-westcost\tsensor1\t82.0\t2016-06-13T17:43:50.102500Z\n";
             assertTable(expected, "weather");
         });
+    }
+
+    @Test
+    public void testWriter17Fields() throws Exception {
+        int defautlMeasurementSize = maxMeasurementSize;
+        String lineData = "tableCRASH,tag_n_1=1,tag_n_2=2,tag_n_3=3,tag_n_4=4,tag_n_5=5,tag_n_6=6," +
+                "tag_n_7=7,tag_n_8=8,tag_n_9=9,tag_n_10=10,tag_n_11=11,tag_n_12=12,tag_n_13=13," +
+                "tag_n_14=14,tag_n_15=15,tag_n_16=16,tag_n_17=17 value=42.4 1619509249714000000\n";
+        try {
+            maxMeasurementSize = lineData.length();
+            runInContext(() -> {
+                send(lineData);
+
+                TableWriter writer = waitForWriterRelease(1, "tableCRASH");
+                writer.close();
+
+                String expected = "tag_n_1\ttag_n_2\ttag_n_3\ttag_n_4\ttag_n_5\ttag_n_6\ttag_n_7\ttag_n_8\ttag_n_9\ttag_n_10\ttag_n_11\ttag_n_12\ttag_n_13\ttag_n_14\ttag_n_15\ttag_n_16\ttag_n_17\tvalue\ttimestamp\n" +
+                        "1\t2\t3\t4\t5\t6\t7\t8\t9\t10\t11\t12\t13\t14\t15\t16\t17\t42.400000000000006\t2021-04-27T07:40:49.714000Z\n";
+                assertTable(expected, "tableCRASH");
+            });
+        } finally {
+            maxMeasurementSize = defautlMeasurementSize;
+        }
     }
 
     private void assertTable(CharSequence expected, CharSequence tableName) {
@@ -472,22 +497,22 @@ public class LineTcpServerTest extends AbstractCairoTest {
         });
     }
 
-    private TableWriter waitForWriterRelease(int nMinRows) {
+    private TableWriter waitForWriterRelease(int nMinRows, String tableName) {
         int status = TableUtils.TABLE_DOES_NOT_EXIST;
         int nRows = 0;
         long startEpochMillis = System.currentTimeMillis();
         while (true) {
             if (status != TableUtils.TABLE_EXISTS) {
-                status = engine.getStatus(AllowAllCairoSecurityContext.INSTANCE, path, "weather", 0, "weather".length());
+                status = engine.getStatus(AllowAllCairoSecurityContext.INSTANCE, path, tableName, 0, tableName.length());
             } else if (nRows < nMinRows) {
-                try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "weather")) {
+                try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
                     nRows = (int) reader.size();
                 } catch (EntryLockedException e) {
                     //
                 }
             } else {
                 try {
-                    return engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "weather");
+                    return engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName);
                 } catch (EntryUnavailableException ex) {
                     //
                 }
