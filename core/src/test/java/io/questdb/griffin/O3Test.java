@@ -767,7 +767,7 @@ public class O3Test extends AbstractO3Test {
 
                 @Override
                 public boolean haltOnError() {
-                    return true;
+                    return false;
                 }
 
                 @Override
@@ -786,7 +786,7 @@ public class O3Test extends AbstractO3Test {
                             toRun = false;
                             barrier.await();
                             compiler.compile("insert into x select * from y", executionContext);
-                        } catch (Exception e) {
+                        } catch (Throwable e) {
                             e.printStackTrace();
                         } finally {
                             haltLatch.countDown();
@@ -810,7 +810,7 @@ public class O3Test extends AbstractO3Test {
 
                 @Override
                 public boolean haltOnError() {
-                    return true;
+                    return false;
                 }
             });
 
@@ -824,7 +824,7 @@ public class O3Test extends AbstractO3Test {
                             toRun = false;
                             barrier.await();
                             compiler2.compile("insert into x1 select * from y1", executionContext);
-                        } catch (Exception e) {
+                        } catch (Throwable e) {
                             e.printStackTrace();
                         } finally {
                             haltLatch.countDown();

@@ -488,7 +488,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public int getO3UpdPartitionSizeQueueCapacity() {
-        return 1024;
+        return 16;
     }
 
     @Override

@@ -24,12 +24,16 @@
 
 package io.questdb.tasks;
 
+import io.questdb.std.ObjectFactory;
+
 public class O3PartitionUpdateTask {
     private long partitionTimestamp;
     private long srcOooPartitionLo;
     private long srcOooPartitionHi;
     private long srcDataMax;
     private boolean partitionMutates;
+
+    public static final ObjectFactory<O3PartitionUpdateTask> CONSTRUCTOR = O3PartitionUpdateTask::new;
 
     public long getPartitionTimestamp() {
         return partitionTimestamp;
