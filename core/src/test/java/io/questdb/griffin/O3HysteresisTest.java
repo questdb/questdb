@@ -981,7 +981,7 @@ public class O3HysteresisTest extends AbstractO3Test {
                 "), index(sym) timestamp (ts) partition by DAY";
         compiler.compile(sql, sqlExecutionContext);
 
-        sql = "create table y as (select * from x where i<=250) partition by DAY o3(100, 10000)";
+        sql = "create table y as (select * from x where i<=250) partition by DAY WITH o3MaxUncommittedRows=100, o3CommitHysteresis=10s";
         compiler.compile(sql, sqlExecutionContext);
 
         TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where i<=250", sink);

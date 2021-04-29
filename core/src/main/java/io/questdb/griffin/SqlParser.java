@@ -576,7 +576,7 @@ public final class SqlParser {
                             throw SqlException.position(lexer.getPosition()).put(" unrecognized ").put(expr.lhs.token).put(" after WITH");
                         }
                         tok = optTok(lexer);
-                        if (Chars.equals(tok, ',')) {
+                        if (null != tok && Chars.equals(tok, ',')) {
                             continue;
                         }
                         break;
