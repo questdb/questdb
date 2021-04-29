@@ -70,14 +70,6 @@ public class AppendOnlyVirtualMemory extends PagedVirtualMemory implements Mappe
         ff.munmap(address, getPageSize(page));
     }
 
-    public long mapRandomRead(long offset, long size) {
-        return ff.mmap(fd, size, offset, Files.MAP_RO);
-    }
-
-    public void releaseRandomRead(long offset, long size) {
-        ff.munmap(offset, size);
-    }
-
     public final void close(boolean truncate) {
         long sz = getAppendOffset();
         releaseCurrentPage();

@@ -212,10 +212,11 @@ public class O3HysteresisTest extends AbstractO3Test {
     private void testBigUncommitedToMove0(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException, NumericException {
         try(TableModel tableModel = new TableModel(engine.getConfiguration(), "table", PartitionBy.DAY)) {
             tableModel.col("id", ColumnType.LONG)
-                    .col("ok", ColumnType.DOUBLE)
+                    .col("ok", ColumnType.FLOAT)
                     .col("str", ColumnType.STRING)
                     .timestamp("ts");
 
+            // Create emtpy tables of same structure
             TestUtils.createPopulateTable("o3",
                     compiler,
                     sqlExecutionContext,
@@ -234,45 +235,48 @@ public class O3HysteresisTest extends AbstractO3Test {
                     0
             );
 
-            // Create hugh commit which has big part before OOO starts
-            // which exceed default AppendOnlyVirtualMemory size
-            int iterations = 2;
-            long start = IntervalUtils.parseFloorPartialDate("2021-04-27T12:00:00");
-            int idCount = 5_000_000;
+            long start = IntervalUtils.parseFloorPartialDate("2021-04-27T08:00:00");
+            for (int mils = 2; mils < 6; mils +=2) {
+                int idCount = mils * 1_000_000;
 
-            String[] varCol = new String[] {"abc", "aldfjkasdlfkj", "as", "2021-04-27T12:00:00"};
+                // Create big commit with has big part before OOO starts
+                // which exceed default AppendOnlyVirtualMemory size in one or all columns
+                int iterations = 2;
+                String[] varCol = new String[]{"abc", "aldfjkasdlfkj", "as", "2021-04-27T12:00:00"};
 
-            // Add 2 batches
-            try (TableWriter o3 = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "o3");
-                 TableWriter ordered = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "ordered")) {
-                for (int i = 0; i < iterations; i++) {
-                    int backwards = iterations - i - 1;
-                    int forward = i;
-                    final Rnd rnd = new Rnd();
-                    for (int id = 0; id < idCount; id++) {
-                        long timestamp = start + backwards * idCount + id;
+                // Add 2 batches
+                try (TableWriter o3 = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "o3");
+                     TableWriter ordered = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "ordered")) {
+                    for (int i = 0; i < iterations; i++) {
+                        int backwards = iterations - i - 1;
+                        int forward = i;
+                        final Rnd rnd = new Rnd();
+                        for (int id = 0; id < idCount; id++) {
+                            long timestamp = start + backwards * idCount + id;
 
-                        Row row = o3.newRow(timestamp);
-                        row.putLong(0, id);
-                        row.putDouble(1, rnd.nextDouble());
-                        row.putStr(2, varCol[id % varCol.length]);
-                        row.append();
+                            Row row = o3.newRow(timestamp);
+                            row.putLong(0, timestamp);
+                            row.putFloat(1, rnd.nextFloat());
+                            row.putStr(2, varCol[id % varCol.length]);
+                            row.append();
 
-                        timestamp = start + forward * idCount + id;
-                        row = ordered.newRow(timestamp);
-                        row.putLong(0, id);
-                        row.putDouble(1, rnd.nextDouble());
-                        row.putStr(2, varCol[id % varCol.length]);
-                        row.append();
+                            timestamp = start + forward * idCount + id;
+                            row = ordered.newRow(timestamp);
+                            row.putLong(0, timestamp);
+                            row.putFloat(1, rnd.nextFloat());
+                            row.putStr(2, varCol[id % varCol.length]);
+                            row.append();
+                        }
                     }
+
+                    o3.commit();
+                    ordered.commit();
                 }
 
-                o3.commit();
-                ordered.commit();
+                assertSqlCursors(compiler, sqlExecutionContext, "ordered", "o3");
+                start += idCount * iterations;
             }
         }
-
-        assertSqlCursors(compiler, sqlExecutionContext, "ordered", "o3");
     }
 
     private void insertUncommitted(
