@@ -157,6 +157,9 @@ public class TableWriter implements Closeable {
     private final O3ColumnUpdateMethod o3MoveUncommittedRef = this::o3MoveUncommitted0;
     private long lastPartitionTimestamp;
     private boolean o3InError = false;
+    private final RingQueue<O3PartitionUpdateTask> o3PartitionUpdateQueue;
+    private final MPSequence o3PartitionUpdatePubSeq;
+    private final SCSequence o3PartitionUpdateSubSeq;
 
     public TableWriter(CairoConfiguration configuration, CharSequence tableName) {
         this(configuration, tableName, new MessageBusImpl(configuration));
@@ -194,6 +197,12 @@ public class TableWriter implements Closeable {
         this.mkDirMode = configuration.getMkDirMode();
         this.fileOperationRetryCount = configuration.getFileOperationRetryCount();
         this.tableName = Chars.toString(tableName);
+
+        this.o3PartitionUpdateQueue = new RingQueue<O3PartitionUpdateTask>(O3PartitionUpdateTask.CONSTRUCTOR, configuration.getO3UpdPartitionSizeQueueCapacity());
+        this.o3PartitionUpdatePubSeq = new MPSequence(this.o3PartitionUpdateQueue.getCapacity());
+        this.o3PartitionUpdateSubSeq = new SCSequence();
+        o3PartitionUpdatePubSeq.then(o3PartitionUpdateSubSeq).then(o3PartitionUpdatePubSeq);
+
         this.path = new Path();
         this.path.of(root).concat(tableName);
         this.other = new Path().of(root).concat(tableName);
@@ -1581,6 +1590,7 @@ public class TableWriter implements Closeable {
     }
 
     void closeActivePartition() {
+        LOG.info().$("closing last partition [table=").$(tableName).I$();
         closeAppendMemoryNoTruncate(true);
         Misc.freeObjList(denseIndexers);
         denseIndexers.clear();
@@ -2034,11 +2044,11 @@ public class TableWriter implements Closeable {
     }
 
     Sequence getO3PartitionUpdatePubSeq() {
-        return messageBus.getO3PartitionUpdatePubSeq();
+        return o3PartitionUpdatePubSeq;
     }
 
     RingQueue<O3PartitionUpdateTask> getO3PartitionUpdateQueue() {
-        return messageBus.getO3PartitionUpdateQueue();
+        return o3PartitionUpdateQueue;
     }
 
     private long getO3RowCount() {
@@ -2268,6 +2278,7 @@ public class TableWriter implements Closeable {
             int latchCount = 0;
             long srcOoo = 0;
             boolean flattenTimestamp = true;
+            int pCount = 0;
             try {
                 while (srcOoo < srcOooMax) {
                     try {
@@ -2326,6 +2337,7 @@ public class TableWriter implements Closeable {
                                 .$(", memUsed=").$(Unsafe.getMemUsed())
                                 .I$();
 
+                        pCount++;
                         o3PartitionUpdRemaining.incrementAndGet();
                         final O3Basket o3Basket = o3BasketPool.next();
                         o3Basket.ensureCapacity(columnCount, indexCount);
@@ -2429,8 +2441,9 @@ public class TableWriter implements Closeable {
                 // we are stealing work here it is possible we get exception from this method
                 LOG.debug()
                         .$("o3 expecting updates [table=").$(tableName)
-                        .$(", updateCount=").$(o3PartitionUpdRemaining.get())
+                        .$(", partitionsPublished=").$(pCount)
                         .I$();
+
                 o3ConsumePartitionUpdates(
                         srcOooMax,
                         o3TimestampMin,
@@ -2438,7 +2451,6 @@ public class TableWriter implements Closeable {
                 );
 
                 o3DoneLatch.await(latchCount);
-
 
                 o3InError = !success || o3ErrorCount.get() > 0;
                 if (success && o3ErrorCount.get() > 0) {
@@ -2549,8 +2561,7 @@ public class TableWriter implements Closeable {
             long timestampMin,
             long timestampMax
     ) {
-        final Sequence updSizeSubSeq = messageBus.getO3PartitionUpdateSubSeq();
-        final RingQueue<O3PartitionUpdateTask> updSizeQueue = messageBus.getO3PartitionUpdateQueue();
+        final Sequence updSizeSubSeq = o3PartitionUpdateSubSeq;
         final Sequence partitionSubSeq = messageBus.getO3PartitionSubSeq();
         final RingQueue<O3PartitionTask> partitionQueue = messageBus.getO3PartitionQueue();
         final Sequence openColumnSubSeq = messageBus.getO3OpenColumnSubSeq();
@@ -2561,14 +2572,14 @@ public class TableWriter implements Closeable {
         do {
             long cursor = updSizeSubSeq.next();
             if (cursor > -1) {
-                final O3PartitionUpdateTask task = updSizeQueue.get(cursor);
+                final O3PartitionUpdateTask task = o3PartitionUpdateQueue.get(cursor);
                 final long partitionTimestamp = task.getPartitionTimestamp();
                 final long srcOooPartitionLo = task.getSrcOooPartitionLo();
                 final long srcOooPartitionHi = task.getSrcOooPartitionHi();
                 final long srcDataMax = task.getSrcDataMax();
                 final boolean partitionMutates = task.isPartitionMutates();
 
-                this.o3PartitionUpdRemaining.decrementAndGet();
+                o3ClockDownPartitionUpdateCount();
 
                 updSizeSubSeq.done(cursor);
 

@@ -67,10 +67,6 @@ public class MessageBusImpl implements MessageBus {
     private final MPSequence o3CopyPubSeq;
     private final MCSequence o3CopySubSeq;
 
-    private final RingQueue<O3PartitionUpdateTask> o3UpdPartitionSizeQueue;
-    private final MPSequence o3UpdPartitionSizePubSeq;
-    private final SCSequence o3UpdPartitionSizeSubSeq;
-
     private final CairoConfiguration configuration;
 
     public MessageBusImpl(@NotNull CairoConfiguration configuration) {
@@ -109,11 +105,6 @@ public class MessageBusImpl implements MessageBus {
         this.o3CopyPubSeq = new MPSequence(this.o3CopyQueue.getCapacity());
         this.o3CopySubSeq = new MCSequence(this.o3CopyQueue.getCapacity());
         o3CopyPubSeq.then(o3CopySubSeq).then(o3CopyPubSeq);
-
-        this.o3UpdPartitionSizeQueue = new RingQueue<>(O3PartitionUpdateTask::new, configuration.getO3UpdPartitionSizeQueueCapacity());
-        this.o3UpdPartitionSizePubSeq = new MPSequence(this.o3UpdPartitionSizeQueue.getCapacity());
-        this.o3UpdPartitionSizeSubSeq = new SCSequence();
-        o3UpdPartitionSizePubSeq.then(o3UpdPartitionSizeSubSeq).then(o3UpdPartitionSizePubSeq);
 
         this.o3PurgeDiscoveryQueue = new RingQueue<>(O3PurgeDiscoveryTask::new, configuration.getO3PurgeDiscoveryQueueCapacity());
         this.o3PurgeDiscoveryPubSeq = new MPSequence(this.o3PurgeDiscoveryQueue.getCapacity());
@@ -234,21 +225,6 @@ public class MessageBusImpl implements MessageBus {
     @Override
     public MCSequence getO3OpenColumnSubSeq() {
         return o3OpenColumnSubSeq;
-    }
-
-    @Override
-    public MPSequence getO3PartitionUpdatePubSeq() {
-        return o3UpdPartitionSizePubSeq;
-    }
-
-    @Override
-    public RingQueue<O3PartitionUpdateTask> getO3PartitionUpdateQueue() {
-        return o3UpdPartitionSizeQueue;
-    }
-
-    @Override
-    public SCSequence getO3PartitionUpdateSubSeq() {
-        return o3UpdPartitionSizeSubSeq;
     }
 
     @Override

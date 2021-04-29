@@ -127,6 +127,7 @@ public class ConcurrentTest {
     }
 
     @Test
+    // todo: this sometimes hangs
     public void testOneToManyWaiting() throws Exception {
         LOG.info().$("testOneToManyWaiting").$();
         int cycle = 1024;
