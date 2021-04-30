@@ -39,6 +39,8 @@ public interface Log {
 
     LogRecord xinfo();
 
+    LogRecord xBlockingInfo();
+
     LogRecord xdebug();
 
     LogRecord xadvisory();

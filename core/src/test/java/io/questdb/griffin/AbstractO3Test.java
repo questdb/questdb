@@ -91,20 +91,20 @@ public class AbstractO3Test {
                     log.error().$(e).$();
                     try (RecordCursor expectedCursor = factory.getCursor(sqlExecutionContext)) {
                         try (RecordCursor actualCursor = factory2.getCursor(sqlExecutionContext)) {
-                            log.xinfo().$();
+                            log.xBlockingInfo().$();
 
                             LogRecordSinkAdapter recordSinkAdapter = new LogRecordSinkAdapter();
-                            LogRecord record = log.xinfo().$("java.lang.AssertionError: expected:<");
+                            LogRecord record = log.xBlockingInfo().$("java.lang.AssertionError: expected:<");
                             printer.printHeaderNoNl(factory.getMetadata(), recordSinkAdapter.of(record));
                             record.$();
                             printer.print(expectedCursor, factory.getMetadata(), false, log);
 
-                            record = log.xinfo().$("> but was:<");
+                            record = log.xBlockingInfo().$("> but was:<");
                             printer.printHeaderNoNl(factory2.getMetadata(), recordSinkAdapter.of(record));
                             record.$();
 
                             printer.print(actualCursor, factory2.getMetadata(), false, log);
-                            log.xinfo().$(">").$();
+                            log.xBlockingInfo().$(">").$();
                         }
                     }
                     throw e;

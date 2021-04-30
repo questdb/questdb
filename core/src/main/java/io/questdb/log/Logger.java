@@ -258,6 +258,10 @@ class Logger implements LogRecord, Log {
         return next(infoSeq, infoRing, LogLevel.LOG_LEVEL_INFO);
     }
 
+    public LogRecord xBlockingInfo() {
+        return nextBlocking(infoSeq, infoRing, LogLevel.LOG_LEVEL_INFO);
+    }
+
     private LogRecord next(Sequence seq, RingQueue<LogRecordSink> ring, int level) {
 
         if (seq == null) {
@@ -268,6 +272,21 @@ class Logger implements LogRecord, Log {
         if (cursor < 0) {
             return NullLogRecord.INSTANCE;
         }
+        Holder h = tl.get();
+        h.cursor = cursor;
+        h.seq = seq;
+        h.ring = ring;
+        LogRecordSink r = ring.get(cursor);
+        r.setLevel(level);
+        r.clear(0);
+        return this;
+    }
+
+    private LogRecord nextBlocking(Sequence seq, RingQueue<LogRecordSink> ring, int level) {
+        if (seq == null) {
+            return NullLogRecord.INSTANCE;
+        }
+        long cursor = seq.nextBully();
         Holder h = tl.get();
         h.cursor = cursor;
         h.seq = seq;
