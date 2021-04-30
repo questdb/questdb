@@ -129,6 +129,9 @@ public class TableWriter implements Closeable {
     private final TxnScoreboard txnScoreboard;
     private final StringSink o3Sink = new StringSink();
     private final NativeLPSZ o3NativeLPSZ = new NativeLPSZ();
+    private final RingQueue<O3PartitionUpdateTask> o3PartitionUpdateQueue;
+    private final MPSequence o3PartitionUpdatePubSeq;
+    private final SCSequence o3PartitionUpdateSubSeq;
     private long todoTxn;
     private ContiguousVirtualMemory o3TimestampMem;
     private final O3ColumnUpdateMethod o3MoveHysteresisRef = this::o3MoveHysteresis0;
@@ -157,9 +160,6 @@ public class TableWriter implements Closeable {
     private final O3ColumnUpdateMethod o3MoveUncommittedRef = this::o3MoveUncommitted0;
     private long lastPartitionTimestamp;
     private boolean o3InError = false;
-    private final RingQueue<O3PartitionUpdateTask> o3PartitionUpdateQueue;
-    private final MPSequence o3PartitionUpdatePubSeq;
-    private final SCSequence o3PartitionUpdateSubSeq;
 
     public TableWriter(CairoConfiguration configuration, CharSequence tableName) {
         this(configuration, tableName, new MessageBusImpl(configuration));
@@ -2197,6 +2197,69 @@ public class TableWriter implements Closeable {
         o3ErrorCount.incrementAndGet();
     }
 
+    private long o3CalculatedMoveUncommitedSize(long transientRowsAdded, long committedTransientRowCount) {
+        for (int colIndex = 0; colIndex < columnCount; colIndex++) {
+            int columnType = metadata.getColumnType(colIndex);
+            AppendOnlyVirtualMemory primaryColumn = getPrimaryColumn(colIndex);
+            AppendOnlyVirtualMemory secondaryColumn = getSecondaryColumn(colIndex);
+            // Fixed size column
+            int shl = ColumnType.pow2SizeOf(columnType);
+
+            if (secondaryColumn == null) {
+                long srcMappedRows = primaryColumn.offsetInPage((committedTransientRowCount + transientRowsAdded) << shl) >> shl;
+                // 40
+                if (srcMappedRows < transientRowsAdded) {
+                    long delta = transientRowsAdded - srcMappedRows;
+                    committedTransientRowCount += delta;
+                    transientRowsAdded -= delta;
+                }
+                assert primaryColumn.addressOf(committedTransientRowCount << shl) > 0;
+            } else {
+                // var len column
+                // primary is the variable file
+                // and secondary is fixed file
+                // 64bit per record in secondary file
+                shl = 3;
+                long varLenMappedBytes = primaryColumn.offsetInPage(primaryColumn.getAppendOffset());
+                long fixLenMappedRows = secondaryColumn.offsetInPage(secondaryColumn.getAppendOffset()) >> shl;
+                if (fixLenMappedRows < transientRowsAdded) {
+                    committedTransientRowCount += transientRowsAdded - fixLenMappedRows;
+                    transientRowsAdded = fixLenMappedRows;
+                }
+                assert secondaryColumn.addressOf(committedTransientRowCount << shl) > 0;
+
+                // 130
+                long varFileCommittedOffset = secondaryColumn.getLong(committedTransientRowCount << shl);
+                long varFileAppendOffset = primaryColumn.getAppendOffset();
+                // offset of memory mapped page in the file
+                long varFileMappedOffset = varFileAppendOffset - varLenMappedBytes;
+                //assert primaryColumn.addressOf(varFileMappedOffset) > 0;
+
+                // if offset of string of first mapped row in the index is outside of mapped page in var file
+                if (varFileCommittedOffset < varFileMappedOffset) {
+                    // we need to binary search fix file
+                    // to find the first row mapped in variable file
+                    long firstMappedVarColRowOffset = Vect.binarySearch64Bit(
+                            secondaryColumn.addressOf(committedTransientRowCount << shl),
+                            varFileMappedOffset,
+                            0,
+                            fixLenMappedRows - 1,
+                            BinarySearch.SCAN_DOWN // doesn't matter
+                    );
+                    if (firstMappedVarColRowOffset < 0) {
+                        firstMappedVarColRowOffset = -firstMappedVarColRowOffset - 1;
+                    }
+                    transientRowsAdded -= firstMappedVarColRowOffset;
+                    assert transientRowsAdded >= 0;
+                    committedTransientRowCount += firstMappedVarColRowOffset;
+                    long varColMappedOffset = secondaryColumn.getLong(committedTransientRowCount << shl);
+                    assert primaryColumn.addressOf(varColMappedOffset) > 0;
+                }
+            }
+        }
+        return transientRowsAdded;
+    }
+
     void o3ClockDownPartitionUpdateCount() {
         o3PartitionUpdRemaining.decrementAndGet();
     }
@@ -2730,16 +2793,13 @@ public class TableWriter implements Closeable {
     private long o3MoveUncommitted(final int timestampIndex) {
         final long committedRowCount = txFile.getCommittedFixedRowCount() + txFile.getCommittedTransientRowCount();
         final long rowsAdded = txFile.getRowCount() - committedRowCount;
-        long trueTransientRowsAdded = Math.min(txFile.getTransientRowCount(), rowsAdded);
-        final long transientRowsAdded = trueTransientRowsAdded;
-        final long committedTransientRowCount = txFile.getTransientRowCount() - transientRowsAdded;
-        if (transientRowsAdded > 0) {
+        final long committedTransientRowCount = txFile.getTransientRowCount() - Math.min(txFile.getTransientRowCount(), rowsAdded);
+        if (Math.min(txFile.getTransientRowCount(), rowsAdded) > 0) {
             LOG.debug()
                     .$("o3 move uncommitted [table=").$(tableName)
-                    .$(", transientRowsAdded=").$(transientRowsAdded)
+                    .$(", transientRowsAdded=").$(Math.min(txFile.getTransientRowCount(), rowsAdded))
                     .I$();
-            long moved = o3MoveUncommitted0(timestampIndex, transientRowsAdded, committedTransientRowCount);
-            return moved;
+            return o3MoveUncommitted0(timestampIndex, Math.min(txFile.getTransientRowCount(), rowsAdded), committedTransientRowCount);
         }
         return 0;
     }
@@ -2805,7 +2865,7 @@ public class TableWriter implements Closeable {
     }
 
     private long o3MoveUncommitted0(int timestampIndex, long transientRowsAdded, long committedTransientRowCount) {
-        long transientRowsAddedNew = o3CalculatedMoveUncommitedSize(timestampIndex, transientRowsAdded, committedTransientRowCount);
+        long transientRowsAddedNew = o3CalculatedMoveUncommitedSize(transientRowsAdded, committedTransientRowCount);
         long delta = transientRowsAdded - transientRowsAddedNew;
         assert delta >= 0;
 
@@ -2880,64 +2940,6 @@ public class TableWriter implements Closeable {
             } else {
                 // If transientRowsAdded is decreased because uncommitted area is not mapped
                 txFile.resetToLastPartition(committedTransientRowCount, maxCommitedTimestamp);
-            }
-        }
-        return transientRowsAdded;
-    }
-
-    private long o3CalculatedMoveUncommitedSize(int timestampIndex, long transientRowsAdded, long committedTransientRowCount) {
-        for (int colIndex = 0; colIndex < columnCount; colIndex++) {
-            int columnType = metadata.getColumnType(colIndex);
-            AppendOnlyVirtualMemory primaryColumn = getPrimaryColumn(colIndex);
-            AppendOnlyVirtualMemory secondaryColumn = getSecondaryColumn(colIndex);
-            // Fixed size column
-            int shl = ColumnType.pow2SizeOf(columnType);
-
-            if (secondaryColumn == null) {
-                long srcMappedRows = primaryColumn.offsetInPage((committedTransientRowCount + transientRowsAdded) << shl) >> shl;
-                if (srcMappedRows < transientRowsAdded) {
-                    long delta = transientRowsAdded - srcMappedRows;
-                    committedTransientRowCount += delta;
-                    transientRowsAdded -= delta;
-                }
-                assert primaryColumn.addressOf(committedTransientRowCount << shl) > 0;
-            } else {
-                // var len column
-                // primary is the variable file
-                // and secondary is fixed file
-                // 64bit per record in secondary file
-                shl = 3;
-                long varLenMappedBytes = primaryColumn.offsetInPage(primaryColumn.getAppendOffset());
-                long fixLenMappedRows = secondaryColumn.offsetInPage(secondaryColumn.getAppendOffset()) >> shl;
-                if (fixLenMappedRows < transientRowsAdded) {
-                    committedTransientRowCount += transientRowsAdded - fixLenMappedRows;
-                    transientRowsAdded = fixLenMappedRows;
-                }
-                assert secondaryColumn.addressOf(committedTransientRowCount << shl) > 0;
-
-                long varFileCommittedOffset = secondaryColumn.getLong(committedTransientRowCount << shl);
-                long varFileAppendOffset = primaryColumn.getAppendOffset();
-                long varFileMappedOffset = varFileAppendOffset - varLenMappedBytes;
-                //assert primaryColumn.addressOf(varFileMappedOffset) > 0;
-
-                if (varFileCommittedOffset < varFileMappedOffset) {
-                    // we need to binary search fix file
-                    // to find the first row mapped in variable file
-                    long firstMappedVarColRowOffset = Vect.binarySearch64Bit(
-                            secondaryColumn.addressOf(committedTransientRowCount << shl),
-                            varFileMappedOffset,
-                            0,
-                            fixLenMappedRows - 1,
-                            BinarySearch.SCAN_DOWN);
-                    if (firstMappedVarColRowOffset < 0) {
-                        firstMappedVarColRowOffset = -firstMappedVarColRowOffset;
-                    }
-                    transientRowsAdded -= firstMappedVarColRowOffset;
-                    assert transientRowsAdded >= 0;
-                    committedTransientRowCount += firstMappedVarColRowOffset;
-                    long varColMappedOffset = secondaryColumn.getLong(committedTransientRowCount << shl);
-                    assert primaryColumn.addressOf(varColMappedOffset) > 0;
-                }
             }
         }
         return transientRowsAdded;

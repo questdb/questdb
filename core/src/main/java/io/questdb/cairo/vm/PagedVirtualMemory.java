@@ -79,7 +79,7 @@ public class PagedVirtualMemory implements ReadWriteVirtualMemory, Closeable {
     public boolean isMapped(long offset, long size) {
         int pageIndex = pageIndex(offset);
         int pageEndIndex = pageIndex(offset + size - 1);
-        if (pageEndIndex == pageEndIndex) {
+        if (pageIndex == pageEndIndex) {
             return getPageAddress(pageIndex) > 0;
         }
         return false;
