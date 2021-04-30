@@ -25,7 +25,6 @@
 package io.questdb.log;
 
 import io.questdb.std.Sinkable;
-import io.questdb.std.str.CharSink;
 
 import java.io.File;
 
@@ -71,6 +70,4 @@ public interface LogRecord {
     LogRecord microTime(long x);
 
     LogRecord utf8(CharSequence sequence);
-
-    CharSink sink();
 }

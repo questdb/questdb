@@ -2197,63 +2197,116 @@ public class TableWriter implements Closeable {
         o3ErrorCount.incrementAndGet();
     }
 
-    private long o3CalculatedMoveUncommitedSize(long transientRowsAdded, long committedTransientRowCount) {
+    private long o3CalculatedMoveUncommittedSize(long transientRowsAdded, long committedTransientRowCount) {
+        // We want to move as much as possible of uncommitted rows to O3 dedicated memory from column files
+        // but not all the column file data is mapped and mapping is relatively expensive.
+        // If the rows are not moved to O3 memory it will result in merge of bigger segment
+        // from O3 to column files
+        // If all the rows moved this will be sort shuffle in O3 memory and copying back to column files
         for (int colIndex = 0; colIndex < columnCount; colIndex++) {
             int columnType = metadata.getColumnType(colIndex);
             AppendOnlyVirtualMemory primaryColumn = getPrimaryColumn(colIndex);
             AppendOnlyVirtualMemory secondaryColumn = getSecondaryColumn(colIndex);
             // Fixed size column
+            //
+            //   Partition can be like this
+            //
+            //          Page 1 (16Mb) unmapped                            Page 2 (16Mb) mapped
+            //   |  ================================ < === |  ================================ > ----- |
+            //   |   committedTransientRowCount     I    transientRowsAdded                   |
+            //
+            // We want to move separator I between committedTransientRowCount and transientRowsAdded
+            // to start from mapped page boundary but keeping sum of committedTransientRowCount + transientRowsAdded same
+            // so that after the change in committedTransientRowCount, transientRowsAdded the picture looks like
+            //
+            //          Page 1 (16Mb) unmapped                            Page 2 (16Mb) mapped
+            //   |  ================================ < === |  ================================ > ----- |
+            //   |     committedTransientRowCount          I     transientRowsAdded            |
+
             int shl = ColumnType.pow2SizeOf(columnType);
 
             if (secondaryColumn == null) {
                 long srcMappedRows = primaryColumn.offsetInPage((committedTransientRowCount + transientRowsAdded) << shl) >> shl;
-                // 40
                 if (srcMappedRows < transientRowsAdded) {
                     long delta = transientRowsAdded - srcMappedRows;
                     committedTransientRowCount += delta;
                     transientRowsAdded -= delta;
                 }
+
+                // Assert that fixed column is mapped for row committedTransientRowCount
                 assert primaryColumn.addressOf(committedTransientRowCount << shl) > 0;
+
             } else {
-                // var len column
-                // primary is the variable file
-                // and secondary is fixed file
-                // 64bit per record in secondary file
+                // Variable length record column. It has 2 files:
+                // Primary is the variable record length file
+                // Secondary is fixed file with 64bit per record
+
                 shl = 3;
-                long varLenMappedBytes = primaryColumn.offsetInPage(primaryColumn.getAppendOffset());
+
+                // Here both files have to be mapped into memory
+                //
+                // Step 1: process fixed record file in the same way as fixed size column above
+                //
                 long fixLenMappedRows = secondaryColumn.offsetInPage(secondaryColumn.getAppendOffset()) >> shl;
                 if (fixLenMappedRows < transientRowsAdded) {
                     committedTransientRowCount += transientRowsAdded - fixLenMappedRows;
                     transientRowsAdded = fixLenMappedRows;
                 }
+
+                // Assert that secondary file is mapped for row committedTransientRowCount
                 assert secondaryColumn.addressOf(committedTransientRowCount << shl) > 0;
+                //
+                // Step 2: check all rows in transientRowsAdded are mapped in variable record file
+                //
+                // Fixed record file (secondary) has offset records of the variable file
+                //
+                // Primary file:
+                //
+                // |   Page 1 (unmapped )     |     Page 2 (mapped)      |
+                // | ========== I =========== | =================== > -- |
+                // | record one | record 2 | r3 | value of record 3 |
+                //
+                //  Secondary file:
+                //
+                // | Page 1 (mapped )         |
+                // | 0  | 14 | 25 | 30 | -----|
+                //
+                // here committedTransientRowCount == 0 and transientRowsAdded == 4
 
-                // 130
+                // varFileCommittedOffset is record with 0 offset in the example and is 0
                 long varFileCommittedOffset = secondaryColumn.getLong(committedTransientRowCount << shl);
-                long varFileAppendOffset = primaryColumn.getAppendOffset();
-                // offset of memory mapped page in the file
-                long varFileMappedOffset = varFileAppendOffset - varLenMappedBytes;
-                //assert primaryColumn.addressOf(varFileMappedOffset) > 0;
 
-                // if offset of string of first mapped row in the index is outside of mapped page in var file
+                // varFileMappedOffset is 28 in the above example (offset in bytes where Page 2 of primary file starts)
+                long varFileAppendOffset = primaryColumn.getAppendOffset();
+                long varLenMappedBytes = primaryColumn.offsetInPage(primaryColumn.getAppendOffset());
+                long varFileMappedOffset = varFileAppendOffset - varLenMappedBytes;
+
+                // Check if all variable file records we want to move are mapped
                 if (varFileCommittedOffset < varFileMappedOffset) {
-                    // we need to binary search fix file
-                    // to find the first row mapped in variable file
+                    // We need to binary search fix file
+                    // to find the records where mapped page starts (Page 2 in the example, offset 28)
                     long firstMappedVarColRowOffset = Vect.binarySearch64Bit(
-                            secondaryColumn.addressOf(committedTransientRowCount << shl),
-                            varFileMappedOffset,
-                            0,
-                            fixLenMappedRows - 1,
+                            secondaryColumn.addressOf(committedTransientRowCount << shl), // this is address of memory of fix file where to start the search
+                            varFileMappedOffset, // This is the value we search for (28 in case of example)
+                            0, // start from index 0
+                            fixLenMappedRows - 1, // and search in all mapped rows (inclusive of ixLenMappedRows - 1)
                             BinarySearch.SCAN_DOWN // doesn't matter
                     );
+
+                    // In the example firstMappedVarColRowOffset expected to be -3 -1, e.g. no exact match found
+                    // value 28 is between index 2 and 3 in the secondary file
                     if (firstMappedVarColRowOffset < 0) {
+                        // convert it to index 3, the first index of the value >= 28
                         firstMappedVarColRowOffset = -firstMappedVarColRowOffset - 1;
                     }
+
+                    // move transientRowsAdded to 1 and committedTransientRowCount to 3
                     transientRowsAdded -= firstMappedVarColRowOffset;
                     assert transientRowsAdded >= 0;
                     committedTransientRowCount += firstMappedVarColRowOffset;
-                    long varColMappedOffset = secondaryColumn.getLong(committedTransientRowCount << shl);
-                    assert primaryColumn.addressOf(varColMappedOffset) > 0;
+
+                    // assert that secondary file is mapped for record committedTransientRowCount
+                    assert primaryColumn.addressOf(secondaryColumn.getLong(committedTransientRowCount << shl)) > 0;
                 }
             }
         }
@@ -2799,7 +2852,7 @@ public class TableWriter implements Closeable {
                     .$("o3 move uncommitted [table=").$(tableName)
                     .$(", transientRowsAdded=").$(Math.min(txFile.getTransientRowCount(), rowsAdded))
                     .I$();
-            return o3MoveUncommitted0(timestampIndex, Math.min(txFile.getTransientRowCount(), rowsAdded), committedTransientRowCount);
+            return o3ScheduleMoveUncommitted0(timestampIndex, Math.min(txFile.getTransientRowCount(), rowsAdded), committedTransientRowCount);
         }
         return 0;
     }
@@ -2864,29 +2917,35 @@ public class TableWriter implements Closeable {
         }
     }
 
-    private long o3MoveUncommitted0(int timestampIndex, long transientRowsAdded, long committedTransientRowCount) {
-        long transientRowsAddedNew = o3CalculatedMoveUncommitedSize(transientRowsAdded, committedTransientRowCount);
+    private long o3ScheduleMoveUncommitted0(int timestampIndex, long transientRowsAdded, long committedTransientRowCount) {
+        long transientRowsAddedNew = o3CalculatedMoveUncommittedSize(transientRowsAdded, committedTransientRowCount);
         long delta = transientRowsAdded - transientRowsAddedNew;
         assert delta >= 0;
 
-        long maxCommitedTimestamp = 0;
         if (delta > 0) {
             // Not all uncommitted rows can be moved to O3 staging memory
             // because column files are not fully mapped to memory
             // reduce number of rows to move
             transientRowsAdded -= delta;
             committedTransientRowCount += delta;
-            AppendOnlyVirtualMemory timestampColumn = getPrimaryColumn(timestampIndex);
-            if (!timestampColumn.isMapped((committedTransientRowCount - 1) << 3, Long.BYTES)) {
-                // Need to leave one more record in column files
-                // to correctly get max timestamp
-                transientRowsAdded--;
-                committedTransientRowCount++;
-            }
-            maxCommitedTimestamp = timestampColumn.getLong((committedTransientRowCount - 1) << 3);
         }
 
         if (transientRowsAdded > 0) {
+
+            long maxCommittedTimestamp = 0;
+            if (delta > 0) {
+                // If there are rows to move
+                // and we cannot move all uncommitted rows to o3 memory
+                // we have to set maxCommittedTimestamp in tx file
+                AppendOnlyVirtualMemory timestampColumn = getPrimaryColumn(timestampIndex);
+                if (!timestampColumn.isMapped((committedTransientRowCount - 1) << 3, Long.BYTES)) {
+                    // Need to leave one more record in column files
+                    // to correctly get max timestamp
+                    transientRowsAdded--;
+                    committedTransientRowCount++;
+                }
+                maxCommittedTimestamp = timestampColumn.getLong((committedTransientRowCount - 1) << 3);
+            }
 
             final Sequence pubSeq = this.messageBus.getO3CallbackPubSeq();
             final RingQueue<O3CallbackTask> queue = this.messageBus.getO3CallbackQueue();
@@ -2939,7 +2998,8 @@ public class TableWriter implements Closeable {
                 txFile.resetToLastPartition(committedTransientRowCount);
             } else {
                 // If transientRowsAdded is decreased because uncommitted area is not mapped
-                txFile.resetToLastPartition(committedTransientRowCount, maxCommitedTimestamp);
+                // maxCommittedTimestamp the last value of the segment left in files
+                txFile.resetToLastPartition(committedTransientRowCount, maxCommittedTimestamp);
             }
         }
         return transientRowsAdded;

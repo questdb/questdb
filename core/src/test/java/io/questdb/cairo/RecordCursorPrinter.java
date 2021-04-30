@@ -54,16 +54,17 @@ public class RecordCursorPrinter {
     }
 
     public void print(RecordCursor cursor, RecordMetadata metadata, boolean header, Log sink) {
+        LogRecordSinkAdapter logRecSink = new LogRecordSinkAdapter();
         if (header) {
-            LogRecord line = sink.xdebug();
-            printHeaderNoNl(metadata, line.sink());
+            LogRecord line = sink.xinfo();
+            printHeaderNoNl(metadata, logRecSink.of(line));
             line.$();
         }
 
         final Record record = cursor.getRecord();
         while (cursor.hasNext()) {
-            LogRecord line = sink.xdebug();
-            printRecordNoNl(record, metadata, line.sink());
+            LogRecord line = sink.xinfo();
+            printRecordNoNl(record, metadata, logRecSink.of(line));
             line.$();
         }
     }

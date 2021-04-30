@@ -93,14 +93,14 @@ public class AbstractO3Test {
                         try (RecordCursor actualCursor = factory2.getCursor(sqlExecutionContext)) {
                             log.xinfo().$();
 
-                            LogRecord record = log.xdebug().$("java.lang.AssertionError: expected:<");
-                            printer.printHeaderNoNl(factory.getMetadata(), record.sink());
+                            LogRecordSinkAdapter recordSinkAdapter = new LogRecordSinkAdapter();
+                            LogRecord record = log.xinfo().$("java.lang.AssertionError: expected:<");
+                            printer.printHeaderNoNl(factory.getMetadata(), recordSinkAdapter.of(record));
                             record.$();
-
                             printer.print(expectedCursor, factory.getMetadata(), false, log);
 
                             record = log.xinfo().$("> but was:<");
-                            printer.printHeaderNoNl(factory2.getMetadata(), record.sink());
+                            printer.printHeaderNoNl(factory2.getMetadata(), recordSinkAdapter.of(record));
                             record.$();
 
                             printer.print(actualCursor, factory2.getMetadata(), false, log);

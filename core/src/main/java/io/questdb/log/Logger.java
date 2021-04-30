@@ -278,7 +278,7 @@ class Logger implements LogRecord, Log {
         return this;
     }
 
-    public CharSink sink() {
+    private CharSink sink() {
         Holder h = tl.get();
         return h.ring.get(h.cursor);
     }
