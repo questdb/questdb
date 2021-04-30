@@ -35,7 +35,10 @@ import io.questdb.griffin.SqlCompiler.RecordToRowCopier;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.*;
+import io.questdb.std.BytecodeAssembler;
+import io.questdb.std.IntList;
+import io.questdb.std.NumericException;
+import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Before;
@@ -273,7 +276,7 @@ public class O3HysteresisTest extends AbstractO3Test {
                     ordered.commit();
                 }
 
-                assertSqlCursors(compiler, sqlExecutionContext, "ordered", "o3");
+                assertSqlCursors(compiler, sqlExecutionContext, "ordered", "o3", LOG);
                 start += idCount * iterations;
             }
         }

@@ -278,12 +278,12 @@ class Logger implements LogRecord, Log {
         return this;
     }
 
-    private CharSink sink() {
+    public CharSink sink() {
         Holder h = tl.get();
         return h.ring.get(h.cursor);
     }
 
-    private LogRecord xdebug() {
+    public LogRecord xdebug() {
         return next(debugSeq, debugRing, LogLevel.LOG_LEVEL_DEBUG);
     }
 

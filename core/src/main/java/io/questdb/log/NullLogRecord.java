@@ -25,6 +25,7 @@
 package io.questdb.log;
 
 import io.questdb.std.Sinkable;
+import io.questdb.std.str.CharSink;
 
 import java.io.File;
 
@@ -127,5 +128,105 @@ final class NullLogRecord implements LogRecord {
     @Override
     public LogRecord utf8(CharSequence sequence) {
         return this;
+    }
+
+    @Override
+    public CharSink sink() {
+        return NullCharSink.INSTANCE;
+    }
+
+    private static class NullCharSink implements CharSink {
+
+        public final static NullCharSink INSTANCE = new NullCharSink();
+
+        @Override
+        public CharSink encodeUtf8(CharSequence cs) {
+            return this;
+        }
+
+        @Override
+        public CharSink encodeUtf8(CharSequence cs, int lo, int hi) {
+            return this;
+        }
+
+        @Override
+        public CharSink encodeUtf8AndQuote(CharSequence cs) {
+            return this;
+        }
+
+        @Override
+        public char[] getDoubleDigitsBuffer() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public CharSink put(char c) {
+            return this;
+        }
+
+        @Override
+        public CharSink putUtf8(char c) {
+            return this;
+        }
+
+        @Override
+        public CharSink put(int value) {
+            return this;
+        }
+
+        @Override
+        public CharSink put(long value) {
+            return this;
+        }
+
+        @Override
+        public CharSink put(float value, int scale) {
+            return this;
+        }
+
+        @Override
+        public CharSink put(double value) {
+            return this;
+        }
+
+        @Override
+        public CharSink put(double value, int scale) {
+            return this;
+        }
+
+        @Override
+        public CharSink put(boolean value) {
+            return this;
+        }
+
+        @Override
+        public CharSink put(Throwable e) {
+            return this;
+        }
+
+        @Override
+        public CharSink put(Sinkable sinkable) {
+            return this;
+        }
+
+        @Override
+        public CharSink putISODate(long value) {
+            return this;
+        }
+
+        @Override
+        public CharSink putISODateMillis(long value) {
+            return this;
+        }
+
+        @Override
+        public CharSink putQuoted(CharSequence cs) {
+            return this;
+        }
+
+        @Override
+        public CharSink put(char[] chars, int start, int len) {
+            return this;
+        }
     }
 }
