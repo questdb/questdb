@@ -788,6 +788,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                 return;
             }
             if ((nUncommitted > 0 || commitHysteresisInMicros > 0) && null != writer) {
+                LOG.debug().$("maintenance commit [table=").$(writer.getTableName()).I$();
                 writer.commit();
                 lastCommitEpochMs = milliClock.getTicks();
                 nUncommitted = 0;

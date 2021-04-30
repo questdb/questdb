@@ -283,7 +283,7 @@ class Logger implements LogRecord, Log {
         return h.ring.get(h.cursor);
     }
 
-    private LogRecord xdebug() {
+    public LogRecord xdebug() {
         return next(debugSeq, debugRing, LogLevel.LOG_LEVEL_DEBUG);
     }
 

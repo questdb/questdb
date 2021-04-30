@@ -56,7 +56,7 @@ public class AppendOnlyVirtualMemory extends PagedVirtualMemory implements Mappe
         if (page == mappedPage) {
             return pageAddress;
         }
-        return -1;
+        return 0L;
     }
 
     @Override

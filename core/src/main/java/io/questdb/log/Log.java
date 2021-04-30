@@ -39,5 +39,7 @@ public interface Log {
 
     LogRecord xinfo();
 
+    LogRecord xdebug();
+
     LogRecord xadvisory();
 }
