@@ -82,12 +82,6 @@ public interface MessageBus extends Closeable {
 
     MCSequence getO3CallbackSubSeq();
 
-    MPSequence getO3PartitionUpdatePubSeq();
-
-    RingQueue<O3PartitionUpdateTask> getO3PartitionUpdateQueue();
-
-    SCSequence getO3PartitionUpdateSubSeq();
-
     default Sequence getTableBlockWriterPubSeq() {
         return null;
     }

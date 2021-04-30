@@ -865,7 +865,7 @@ public final class TableUtils {
             log.debug().$("open [file=").$(path).$(", fd=").$(fd).$(']').$();
             return fd;
         }
-        throw CairoException.instance(ff.errno()).put("could not open read-write [file=").put(path).put(", fd=").put(fd).put(']');
+        throw CairoException.instance(ff.errno()).put("could not open read-write [file=").put(path).put(']');
     }
 
     static {
