@@ -24,9 +24,7 @@
 
 package io.questdb.griffin;
 
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.EntityColumnFilter;
-import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.*;
 import io.questdb.cairo.TableWriter.Row;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.Record;
@@ -34,11 +32,13 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlCompiler.RecordToRowCopier;
+import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.IntList;
 import io.questdb.std.NumericException;
+import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Before;
@@ -205,6 +205,81 @@ public class O3HysteresisTest extends AbstractO3Test {
     @Test
     public void testNoHysteresisWithRollbackParallel() throws Exception {
         executeWithPool(2, this::testNoHysteresisWithRollback);
+    }
+
+    @Test
+    public void testBigUncommitedToMove() throws Exception {
+        executeWithPool(0, this::testBigUncommitedToMove0);
+    }
+
+    private void testBigUncommitedToMove0(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException, NumericException {
+        try(TableModel tableModel = new TableModel(engine.getConfiguration(), "table", PartitionBy.DAY)) {
+            tableModel.col("id", ColumnType.LONG)
+                    .col("ok", ColumnType.FLOAT)
+                    .col("str", ColumnType.STRING)
+                    .timestamp("ts");
+
+            // Create emtpy tables of same structure
+            TestUtils.createPopulateTable("o3",
+                    compiler,
+                    sqlExecutionContext,
+                    tableModel,
+                    0,
+                    "2021-04-27",
+                    0
+            );
+
+            TestUtils.createPopulateTable("ordered",
+                    compiler,
+                    sqlExecutionContext,
+                    tableModel,
+                    0,
+                    "2021-04-27",
+                    0
+            );
+
+            long start = IntervalUtils.parseFloorPartialDate("2021-04-27T08:00:00");
+            for (int mils = 2; mils < 6; mils +=2) {
+                int idCount = mils * 1_000_000;
+
+                // Create big commit with has big part before OOO starts
+                // which exceed default AppendOnlyVirtualMemory size in one or all columns
+                int iterations = 2;
+                String[] varCol = new String[]{"abc", "aldfjkasdlfkj", "as", "2021-04-27T12:00:00"};
+
+                // Add 2 batches
+                try (TableWriter o3 = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "o3");
+                     TableWriter ordered = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "ordered")) {
+                    for (int i = 0; i < iterations; i++) {
+                        int backwards = iterations - i - 1;
+                        int forward = i;
+                        final Rnd rnd = new Rnd();
+                        for (int id = 0; id < idCount; id++) {
+                            long timestamp = start + backwards * idCount + id;
+
+                            Row row = o3.newRow(timestamp);
+                            row.putLong(0, timestamp);
+                            row.putFloat(1, rnd.nextFloat());
+                            row.putStr(2, varCol[id % varCol.length]);
+                            row.append();
+
+                            timestamp = start + forward * idCount + id;
+                            row = ordered.newRow(timestamp);
+                            row.putLong(0, timestamp);
+                            row.putFloat(1, rnd.nextFloat());
+                            row.putStr(2, varCol[id % varCol.length]);
+                            row.append();
+                        }
+                    }
+
+                    o3.commit();
+                    ordered.commit();
+                }
+
+                assertSqlCursors(compiler, sqlExecutionContext, "ordered", "o3", LOG);
+                start += idCount * iterations;
+            }
+        }
     }
 
     private void insertUncommitted(
