@@ -373,7 +373,7 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
                     .$();
             Assert.fail();
         } catch (SqlException e) {
-            TestUtils.assertContains(e.getMessage(), "invalid bind variable index");
+            TestUtils.assertContains(e.getFlyweightMessage(), "invalid bind variable index");
         }
     }
 
@@ -791,7 +791,7 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
             Assert.fail();
         } catch (SqlException e) {
             Assert.assertEquals(8, e.getPosition());
-            TestUtils.assertContains(e.getMessage(), "undefined bind variable: :xyz");
+            TestUtils.assertContains(e.getFlyweightMessage(), "undefined bind variable: :xyz");
         }
     }
 

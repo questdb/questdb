@@ -308,10 +308,7 @@ public class SinglePageMappedReadOnlyPageMemory implements MappedReadOnlyMemory 
         if (!exists) {
             throw CairoException.instance(0).put("File not found: ").put(name);
         }
-        fd = ff.openRO(name);
-        if (fd == -1) {
-            throw CairoException.instance(ff.errno()).put("Cannot open file: ").put(name);
-        }
+        fd = TableUtils.openRO(ff, name, LOG);
     }
 
     public class CharSequenceView extends AbstractCharSequence {

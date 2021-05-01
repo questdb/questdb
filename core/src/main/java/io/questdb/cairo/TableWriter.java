@@ -749,6 +749,10 @@ public class TableWriter implements Closeable {
         return newRow(0L);
     }
 
+    public void o3BumpErrorCount() {
+        o3ErrorCount.incrementAndGet();
+    }
+
     public long partitionNameToTimestamp(CharSequence partitionName) {
         if (partitionDirFmt == null) {
             throw CairoException.instance(0).put("table is not partitioned");
@@ -2193,10 +2197,6 @@ public class TableWriter implements Closeable {
         }
     }
 
-    void o3BumpErrorCount() {
-        o3ErrorCount.incrementAndGet();
-    }
-
     private long o3CalculatedMoveUncommittedSize(long transientRowsAdded, long committedTransientRowCount) {
         // We want to move as much as possible of uncommitted rows to O3 dedicated memory from column files
         // but not all the column file data is mapped and mapping is relatively expensive.
@@ -2458,10 +2458,11 @@ public class TableWriter implements Closeable {
                         final O3Basket o3Basket = o3BasketPool.next();
                         o3Basket.ensureCapacity(columnCount, indexCount);
 
-                        if (last && (srcDataSize < 0 || o3Timestamp >= maxTimestamp)) {
-                            AtomicInteger columnCounter = o3ColumnCounters.next();
-                            columnCounter.set(columnCount);
+                        AtomicInteger columnCounter = o3ColumnCounters.next();
+                        columnCounter.set(columnCount);
+                        latchCount++;
 
+                        if (last && (srcDataSize < 0 || o3Timestamp >= maxTimestamp)) {
                             Path pathToPartition = Path.getThreadLocal(this.path);
                             TableUtils.setPathForPartition(pathToPartition, partitionBy, o3TimestampMin, false);
                             TableUtils.txnPartitionConditionally(pathToPartition, srcNameTxn);
@@ -2532,6 +2533,7 @@ public class TableWriter implements Closeable {
                                 flattenTimestamp = false;
                             }
                             o3CommitPartitionAsync(
+                                    columnCounter,
                                     maxTimestamp,
                                     sortedTimestampsAddr,
                                     srcOooMax,
@@ -2546,7 +2548,6 @@ public class TableWriter implements Closeable {
                                     o3Basket
                             );
                         }
-                        latchCount++;
                     } catch (CairoException | CairoError e) {
                         LOG.error().$((Sinkable) e).$();
                         success = false;
@@ -2608,6 +2609,7 @@ public class TableWriter implements Closeable {
     }
 
     private void o3CommitPartitionAsync(
+            AtomicInteger columnCounter,
             long maxTimestamp,
             long sortedTimestampsAddr,
             long srcOooMax,
@@ -2642,7 +2644,7 @@ public class TableWriter implements Closeable {
                     getTxn(),
                     sortedTimestampsAddr,
                     this,
-                    o3ColumnCounters.next(),
+                    columnCounter,
                     o3Basket
             );
             messageBus.getO3PartitionPubSeq().done(cursor);
@@ -2665,7 +2667,7 @@ public class TableWriter implements Closeable {
                     getTxn(),
                     sortedTimestampsAddr,
                     this,
-                    o3ColumnCounters.next(),
+                    columnCounter,
                     o3Basket,
                     tempMem16b
             );
@@ -2677,7 +2679,6 @@ public class TableWriter implements Closeable {
             long timestampMin,
             long timestampMax
     ) {
-        final Sequence updSizeSubSeq = o3PartitionUpdateSubSeq;
         final Sequence partitionSubSeq = messageBus.getO3PartitionSubSeq();
         final RingQueue<O3PartitionTask> partitionQueue = messageBus.getO3PartitionQueue();
         final Sequence openColumnSubSeq = messageBus.getO3OpenColumnSubSeq();
@@ -2686,7 +2687,7 @@ public class TableWriter implements Closeable {
         final RingQueue<O3CopyTask> copyQueue = messageBus.getO3CopyQueue();
 
         do {
-            long cursor = updSizeSubSeq.next();
+            long cursor = o3PartitionUpdateSubSeq.next();
             if (cursor > -1) {
                 final O3PartitionUpdateTask task = o3PartitionUpdateQueue.get(cursor);
                 final long partitionTimestamp = task.getPartitionTimestamp();
@@ -2697,7 +2698,7 @@ public class TableWriter implements Closeable {
 
                 o3ClockDownPartitionUpdateCount();
 
-                updSizeSubSeq.done(cursor);
+                o3PartitionUpdateSubSeq.done(cursor);
 
                 if (o3ErrorCount.get() == 0) {
                     o3PartitionUpdate(
@@ -2711,69 +2712,72 @@ public class TableWriter implements Closeable {
                             partitionMutates
                     );
                 }
-            } else {
-                cursor = partitionSubSeq.next();
-                if (cursor > -1) {
-                    final O3PartitionTask partitionTask = partitionQueue.get(cursor);
-                    if (o3ErrorCount.get() > 0) {
-                        // do we need to free anything on the task?
-                        partitionSubSeq.done(cursor);
-                        o3ClockDownPartitionUpdateCount();
-                        o3CountDownDoneLatch();
-                    } else {
-                        o3ProcessPartitionSafe(partitionSubSeq, cursor, partitionTask);
-                    }
+                continue;
+            }
+
+            cursor = partitionSubSeq.next();
+            if (cursor > -1) {
+                final O3PartitionTask partitionTask = partitionQueue.get(cursor);
+                if (partitionTask.getTableWriter() == this && o3ErrorCount.get() > 0) {
+                    // do we need to free anything on the task?
+                    partitionSubSeq.done(cursor);
+                    o3ClockDownPartitionUpdateCount();
+                    o3CountDownDoneLatch();
                 } else {
-                    cursor = openColumnSubSeq.next();
-                    if (cursor > -1) {
-                        O3OpenColumnTask openColumnTask = openColumnQueue.get(cursor);
-                        if (o3ErrorCount.get() > 0) {
-                            O3CopyJob.closeColumnIdle(
-                                    openColumnTask.getColumnCounter(),
-                                    openColumnTask.getTimestampMergeIndexAddr(),
-                                    openColumnTask.getSrcTimestampFd(),
-                                    openColumnTask.getSrcTimestampAddr(),
-                                    openColumnTask.getSrcTimestampSize(),
-                                    this
-                            );
-                            openColumnSubSeq.done(cursor);
-                        } else {
-                            o3OpenColumnSafe(openColumnSubSeq, cursor, openColumnTask);
-                        }
-                    } else {
-                        cursor = copySubSeq.next();
-                        if (cursor > -1) {
-                            O3CopyTask copyTask = copyQueue.get(cursor);
-                            if (o3ErrorCount.get() > 0) {
-                                O3CopyJob.copyIdle(
-                                        copyTask.getColumnCounter(),
-                                        copyTask.getPartCounter(),
-                                        copyTask.getTimestampMergeIndexAddr(),
-                                        copyTask.getSrcDataFixFd(),
-                                        copyTask.getSrcDataFixAddr(),
-                                        copyTask.getSrcDataFixSize(),
-                                        copyTask.getSrcDataVarFd(),
-                                        copyTask.getSrcDataVarAddr(),
-                                        copyTask.getSrcDataVarSize(),
-                                        copyTask.getDstFixFd(),
-                                        copyTask.getDstFixAddr(),
-                                        copyTask.getDstFixSize(),
-                                        copyTask.getDstVarFd(),
-                                        copyTask.getDstVarAddr(),
-                                        copyTask.getDstVarSize(),
-                                        copyTask.getSrcTimestampFd(),
-                                        copyTask.getSrcTimestampAddr(),
-                                        copyTask.getSrcTimestampSize(),
-                                        copyTask.getDstKFd(),
-                                        copyTask.getDstVFd(),
-                                        this
-                                );
-                                copySubSeq.done(cursor);
-                            } else {
-                                o3CopySafe(cursor);
-                            }
-                        }
-                    }
+                    o3ProcessPartitionSafe(partitionSubSeq, cursor, partitionTask);
+                }
+                continue;
+            }
+
+            cursor = openColumnSubSeq.next();
+            if (cursor > -1) {
+                O3OpenColumnTask openColumnTask = openColumnQueue.get(cursor);
+                if (openColumnTask.getTableWriter() == this && o3ErrorCount.get() > 0) {
+                    O3CopyJob.closeColumnIdle(
+                            openColumnTask.getColumnCounter(),
+                            openColumnTask.getTimestampMergeIndexAddr(),
+                            openColumnTask.getSrcTimestampFd(),
+                            openColumnTask.getSrcTimestampAddr(),
+                            openColumnTask.getSrcTimestampSize(),
+                            this
+                    );
+                    openColumnSubSeq.done(cursor);
+                } else {
+                    o3OpenColumnSafe(openColumnSubSeq, cursor, openColumnTask);
+                }
+                continue;
+            }
+
+            cursor = copySubSeq.next();
+            if (cursor > -1) {
+                O3CopyTask copyTask = copyQueue.get(cursor);
+                if (copyTask.getTableWriter() == this && o3ErrorCount.get() > 0) {
+                    O3CopyJob.copyIdle(
+                            copyTask.getColumnCounter(),
+                            copyTask.getPartCounter(),
+                            copyTask.getTimestampMergeIndexAddr(),
+                            copyTask.getSrcDataFixFd(),
+                            copyTask.getSrcDataFixAddr(),
+                            copyTask.getSrcDataFixSize(),
+                            copyTask.getSrcDataVarFd(),
+                            copyTask.getSrcDataVarAddr(),
+                            copyTask.getSrcDataVarSize(),
+                            copyTask.getDstFixFd(),
+                            copyTask.getDstFixAddr(),
+                            copyTask.getDstFixSize(),
+                            copyTask.getDstVarFd(),
+                            copyTask.getDstVarAddr(),
+                            copyTask.getDstVarSize(),
+                            copyTask.getSrcTimestampFd(),
+                            copyTask.getSrcTimestampAddr(),
+                            copyTask.getSrcTimestampSize(),
+                            copyTask.getDstKFd(),
+                            copyTask.getDstVFd(),
+                            this
+                    );
+                    copySubSeq.done(cursor);
+                } else {
+                    o3CopySafe(cursor);
                 }
             }
         } while (this.o3PartitionUpdRemaining.get() > 0);
@@ -3094,7 +3098,6 @@ public class TableWriter implements Closeable {
             long srcDataMax
     ) {
         o3ClockDownPartitionUpdateCount();
-
         o3PartitionUpdate(
                 timestampMin,
                 timestampMax,
@@ -3395,13 +3398,14 @@ public class TableWriter implements Closeable {
         AppendOnlyVirtualMemory mem1 = getPrimaryColumn(i);
         AppendOnlyVirtualMemory mem2 = getSecondaryColumn(i);
 
-        mem1.of(ff, dFile(path.trimTo(plen), name), configuration.getAppendPageSize());
-
-        if (mem2 != null) {
-            mem2.of(ff, iFile(path.trimTo(plen), name), configuration.getAppendPageSize());
+        try {
+            mem1.of(ff, dFile(path.trimTo(plen), name), configuration.getAppendPageSize());
+            if (mem2 != null) {
+                mem2.of(ff, iFile(path.trimTo(plen), name), configuration.getAppendPageSize());
+            }
+        } finally {
+            path.trimTo(plen);
         }
-
-        path.trimTo(plen);
     }
 
     private void openFirstPartition(long timestamp) {
@@ -3541,11 +3545,7 @@ public class TableWriter implements Closeable {
             dFile(other, metadata.getColumnName(metadata.getTimestampIndex()));
             if (ff.exists(other)) {
                 // read min timestamp value
-                long fd = ff.openRO(other);
-                if (fd == -1) {
-                    // oops
-                    throw CairoException.instance(Os.errno()).put("could not open [file=").put(other).put(']');
-                }
+                final long fd = TableUtils.openRO(ff, other, LOG);
                 try {
                     long n = ff.read(fd, tempMem16b, Long.BYTES, 0);
                     if (n != Long.BYTES) {

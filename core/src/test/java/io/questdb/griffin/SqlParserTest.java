@@ -5309,7 +5309,7 @@ public class SqlParserTest extends AbstractGriffinTest {
                         Assert.fail("Exception expected");
                     } catch (SqlException e) {
                         Assert.assertEquals(14, e.getPosition());
-                        TestUtils.assertContains(e.getMessage(), "Cannot open file");
+                        TestUtils.assertContains(e.getFlyweightMessage(), "could not open");
                     }
                 } finally {
                     for (int i = 0, n = tableModels.length; i < n; i++) {
@@ -5347,7 +5347,7 @@ public class SqlParserTest extends AbstractGriffinTest {
                         Assert.fail("Exception expected");
                     } catch (SqlException e) {
                         Assert.assertEquals(14, e.getPosition());
-                        TestUtils.assertContains(e.getMessage(), "table is locked");
+                        TestUtils.assertContains(e.getFlyweightMessage(), "table is locked");
                     }
                 } finally {
                     for (int i = 0, n = tableModels.length; i < n; i++) {
@@ -5827,7 +5827,7 @@ public class SqlParserTest extends AbstractGriffinTest {
                     Assert.fail("Exception expected");
                 } catch (SqlException e) {
                     Assert.assertEquals(position, e.getPosition());
-                    TestUtils.assertContains(e.getMessage(), contains);
+                    TestUtils.assertContains(e.getFlyweightMessage(), contains);
                 }
             });
         } finally {

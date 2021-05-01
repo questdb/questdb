@@ -325,7 +325,7 @@ public class CairoMemoryTest {
                             mem2.getLong(N * 16);
                             Assert.fail();
                         } catch (CairoException e) {
-                            TestUtils.assertContains(e.getMessage(), "Trying to map read-only page outside");
+                            TestUtils.assertContains(e.getFlyweightMessage(), "Trying to map read-only page outside");
                         }
 
                         // make sure jump() is reported

@@ -77,10 +77,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             O3Basket o3Basket,
             long tmpBuf
     ) {
-
         // is out of order data hitting the last partition?
         // if so we do not need to re-open files and and write to existing file descriptors
-
         final long oooTimestampLo = getTimestampIndexValue(sortedTimestampsAddr, srcOooLo);
         final RecordMetadata metadata = tableWriter.getMetadata();
         final int timestampIndex = metadata.getTimestampIndex();
@@ -884,7 +882,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     LOG.error().$("open column error [table=").$(tableWriter.getTableName())
                             .$(", e=").$(e)
                             .I$();
-                    tableWriter.o3BumpErrorCount();
                     columnsInFlight = i + 1;
                     throw e;
                 }
