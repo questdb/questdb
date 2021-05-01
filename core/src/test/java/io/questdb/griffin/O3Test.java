@@ -699,24 +699,24 @@ public class O3Test extends AbstractO3Test {
         compiler.compile(
                 "create table x as (" +
                         "select" +
-                        " rnd_str(5,16,2) i," +
-                        " rnd_str(5,16,2) sym," +
-                        " rnd_str(5,16,2) amt," +
-                        " rnd_str(5,16,2) timestamp," +
-                        " rnd_str(5,16,2) b," +
+                        " rnd_str(5,16,10) i," +
+                        " rnd_str(5,16,10) sym," +
+                        " rnd_str(5,16,10) amt," +
+                        " rnd_str(5,16,10) timestamp," +
+                        " rnd_str(5,16,10) b," +
                         " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
-                        " rnd_str(5,16,2) d," +
-                        " rnd_str(5,16,2) e," +
-                        " rnd_str(5,16,2) f," +
-                        " rnd_str(5,16,2) g," +
-                        " rnd_str(5,16,2) ik," +
-                        " rnd_str(5,16,2) j," +
+                        " rnd_str(5,16,10) d," +
+                        " rnd_str(5,16,10) e," +
+                        " rnd_str(5,16,10) f," +
+                        " rnd_str(5,16,10) g," +
+                        " rnd_str(5,16,10) ik," +
+                        " rnd_str(5,16,10) j," +
                         " timestamp_sequence(500000000000L,100000000L) ts," +
-                        " rnd_str(5,16,2) l," +
-                        " rnd_str(5,16,2) m," +
-                        " rnd_str(5,16,2) n," +
-                        " rnd_str(5,16,2) t," +
-                        " rnd_str(5,16,2) l256" +
+                        " rnd_str(5,16,10) l," +
+                        " rnd_str(5,16,10) m," +
+                        " rnd_str(5,16,10) n," +
+                        " rnd_str(5,16,10) t," +
+                        " rnd_str(5,16,10) l256" +
                         " from long_sequence(10000)" +
                         ") timestamp (ts) partition by DAY",
                 executionContext
@@ -727,24 +727,24 @@ public class O3Test extends AbstractO3Test {
         compiler.compile(
                 "create table y as (" +
                         "select" +
-                        " rnd_str(5,16,2) i," +
-                        " rnd_str(5,16,2) sym," +
-                        " rnd_str(5,16,2) amt," +
-                        " rnd_str(5,16,2) timestamp," +
-                        " rnd_str(5,16,2) b," +
+                        " rnd_str(5,16,10) i," +
+                        " rnd_str(5,16,10) sym," +
+                        " rnd_str(5,16,10) amt," +
+                        " rnd_str(5,16,10) timestamp," +
+                        " rnd_str(5,16,10) b," +
                         " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
-                        " rnd_str(5,16,2) d," +
-                        " rnd_str(5,16,2) e," +
-                        " rnd_str(5,16,2) f," +
-                        " rnd_str(5,16,2) g," +
-                        " rnd_str(5,16,2) ik," +
-                        " rnd_str(5,16,2) j," +
+                        " rnd_str(5,16,10) d," +
+                        " rnd_str(5,16,10) e," +
+                        " rnd_str(5,16,10) f," +
+                        " rnd_str(5,16,10) g," +
+                        " rnd_str(5,16,10) ik," +
+                        " rnd_str(5,16,10) j," +
                         " timestamp_sequence(500000080000L,79999631L) ts," +
-                        " rnd_str(5,16,2) l," +
-                        " rnd_str(5,16,2) m," +
-                        " rnd_str(5,16,2) n," +
-                        " rnd_str(5,16,2) t," +
-                        " rnd_str(5,16,2) l256" +
+                        " rnd_str(5,16,10) l," +
+                        " rnd_str(5,16,10) m," +
+                        " rnd_str(5,16,10) n," +
+                        " rnd_str(5,16,10) t," +
+                        " rnd_str(5,16,10) l256" +
                         " from long_sequence(10000)" +
                         ") timestamp (ts) partition by DAY",
                 executionContext

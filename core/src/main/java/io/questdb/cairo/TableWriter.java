@@ -2856,7 +2856,11 @@ public class TableWriter implements Closeable {
                     .$("o3 move uncommitted [table=").$(tableName)
                     .$(", transientRowsAdded=").$(Math.min(txFile.getTransientRowCount(), rowsAdded))
                     .I$();
-            return o3ScheduleMoveUncommitted0(timestampIndex, Math.min(txFile.getTransientRowCount(), rowsAdded), committedTransientRowCount);
+            return o3ScheduleMoveUncommitted0(
+                    timestampIndex,
+                    Math.min(txFile.getTransientRowCount(), rowsAdded),
+                    committedTransientRowCount
+            );
         }
         return 0;
     }

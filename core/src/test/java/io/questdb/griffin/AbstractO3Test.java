@@ -324,6 +324,11 @@ public class AbstractO3Test {
                     public int getO3PurgeQueueCapacity() {
                         return 0;
                     }
+
+                    @Override
+                    public int getO3UpdPartitionSizeQueueCapacity() {
+                        return 0;
+                    }
                 };
                 execute(null, runnable, configuration);
             }

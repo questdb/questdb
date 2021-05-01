@@ -775,11 +775,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
                 final BitmapIndexWriter indexWriter;
                 if (isIndexed) {
-                    if (openColumnMode == OPEN_LAST_PARTITION_FOR_APPEND) {
-                        indexWriter = tableWriter.getBitmapIndexWriter(i);
-                    } else {
-                        indexWriter = o3Basket.nextIndexer();
-                    }
+                    indexWriter = o3Basket.nextIndexer();
                 } else {
                     indexWriter = null;
                 }
