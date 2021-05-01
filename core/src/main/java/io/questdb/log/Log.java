@@ -51,5 +51,7 @@ public interface Log {
 
     LogRecord xdebug();
 
+    LogRecord xDebugW();
+
     LogRecord xadvisory();
 }
