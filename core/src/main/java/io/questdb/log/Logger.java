@@ -33,6 +33,7 @@ import io.questdb.std.Sinkable;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.CharSink;
+import org.jetbrains.annotations.NotNull;
 
 import java.io.File;
 
@@ -222,22 +223,42 @@ class Logger implements LogRecord, Log {
 
     @Override
     public LogRecord debug() {
-        return xdebug().ts().$(" D ").$(name);
+        return addTimestamp(xdebug(), " D ");
     }
 
     @Override
     public LogRecord error() {
-        return xerror().ts().$(" E ").$(name);
+        return addTimestamp(xerror(), " E ");
     }
 
     @Override
     public LogRecord info() {
-        return xinfo().ts().$(" I ").$(name);
+        return addTimestamp(xinfo(), " I ");
+    }
+
+    @Override
+    public LogRecord infoW() {
+        return addTimestamp(xInfoW(), " I ");
+    }
+
+    @Override
+    public LogRecord errorW() {
+        return addTimestamp(xErrorW(), " E ");
+    }
+
+    @Override
+    public LogRecord debugW() {
+        return addTimestamp(xDebugW(), " D ");
+    }
+
+    @Override
+    public LogRecord advisoryW() {
+        return addTimestamp(xAdvisoryW(), " A ");
     }
 
     @Override
     public LogRecord advisory() {
-        return xadvisory().ts().$(" A ").$(name);
+        return addTimestamp(xadvisory(), " A ");
     }
 
     @Override
@@ -249,13 +270,43 @@ class Logger implements LogRecord, Log {
         return next(errorSeq, errorRing, LogLevel.LOG_LEVEL_ERROR);
     }
 
+    public LogRecord xinfo() {
+        return next(infoSeq, infoRing, LogLevel.LOG_LEVEL_INFO);
+    }
+
+    /**
+     * Guaranteed log delivery at INFO level. The calling thread will wait for async logger
+     * to become available instead of discarding log message.
+     *
+     * @return log record API
+     */
+    public LogRecord xInfoW() {
+        return nextWaiting(infoSeq, infoRing, LogLevel.LOG_LEVEL_INFO);
+    }
+
+    public LogRecord xdebug() {
+        return next(debugSeq, debugRing, LogLevel.LOG_LEVEL_DEBUG);
+    }
+
     @Override
     public LogRecord xadvisory() {
         return next(advisorySeq, advisoryRing, LogLevel.LOG_LEVEL_ADVISORY);
     }
 
-    public LogRecord xinfo() {
-        return next(infoSeq, infoRing, LogLevel.LOG_LEVEL_INFO);
+    public LogRecord xAdvisoryW() {
+        return nextWaiting(infoSeq, infoRing, LogLevel.LOG_LEVEL_ADVISORY);
+    }
+
+    public LogRecord xDebugW() {
+        return nextWaiting(infoSeq, infoRing, LogLevel.LOG_LEVEL_DEBUG);
+    }
+
+    public LogRecord xErrorW() {
+        return nextWaiting(infoSeq, infoRing, LogLevel.LOG_LEVEL_ERROR);
+    }
+
+    private LogRecord addTimestamp(LogRecord rec, String level) {
+        return rec.ts().$(level).$(name);
     }
 
     private LogRecord next(Sequence seq, RingQueue<LogRecordSink> ring, int level) {
@@ -264,10 +315,22 @@ class Logger implements LogRecord, Log {
             return NullLogRecord.INSTANCE;
         }
 
-        long cursor = seq.next();
+        final long cursor = seq.next();
         if (cursor < 0) {
             return NullLogRecord.INSTANCE;
         }
+        return prepareLogRecord(seq, ring, level, cursor);
+    }
+
+    private LogRecord nextWaiting(Sequence seq, RingQueue<LogRecordSink> ring, int level) {
+        if (seq == null) {
+            return NullLogRecord.INSTANCE;
+        }
+        return prepareLogRecord(seq, ring, level, seq.nextBully());
+    }
+
+    @NotNull
+    private LogRecord prepareLogRecord(Sequence seq, RingQueue<LogRecordSink> ring, int level, long cursor) {
         Holder h = tl.get();
         h.cursor = cursor;
         h.seq = seq;
@@ -281,10 +344,6 @@ class Logger implements LogRecord, Log {
     private CharSink sink() {
         Holder h = tl.get();
         return h.ring.get(h.cursor);
-    }
-
-    public LogRecord xdebug() {
-        return next(debugSeq, debugRing, LogLevel.LOG_LEVEL_DEBUG);
     }
 
     private static class Holder {
