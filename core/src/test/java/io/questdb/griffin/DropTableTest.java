@@ -82,7 +82,7 @@ public class DropTableTest extends AbstractGriffinTest {
                 compiler.compile("drop i_am_missing", sqlExecutionContext);
             } catch (SqlException e) {
                 Assert.assertEquals(5, e.getPosition());
-                TestUtils.assertContains("'table' expected", e.getFlyweightMessage());
+                TestUtils.assertContains(e.getFlyweightMessage(),"'table' expected");
             }
         });
     }

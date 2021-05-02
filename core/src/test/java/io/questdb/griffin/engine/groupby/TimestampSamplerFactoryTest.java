@@ -42,7 +42,7 @@ public class TimestampSamplerFactoryTest {
             Assert.fail();
         } catch (SqlException e) {
             Assert.assertEquals(131, e.getPosition());
-            TestUtils.assertContains(e.getMessage(), "expected single letter qualifier");
+            TestUtils.assertContains(e.getFlyweightMessage(), "expected single letter qualifier");
         }
     }
 
@@ -127,7 +127,7 @@ public class TimestampSamplerFactoryTest {
             Assert.fail();
         } catch (SqlException e) {
             Assert.assertEquals(expectedPosition, e.getPosition());
-            TestUtils.assertContains(e.getMessage(), expectedMessage);
+            TestUtils.assertContains(e.getFlyweightMessage(), expectedMessage);
         }
     }
 }

@@ -1815,7 +1815,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getO3UpdPartitionSizeQueueCapacity() {
+        public int getO3PartitionUpdateQueueCapacity() {
             return o3UpdPartitionSizeQueueCapacity;
         }
 

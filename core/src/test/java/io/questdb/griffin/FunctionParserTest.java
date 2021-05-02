@@ -986,7 +986,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
             Assert.fail();
         } catch (SqlException e) {
             Assert.assertEquals(0, e.getPosition());
-            TestUtils.assertContains(e.getMessage(), "unexpected argument");
+            TestUtils.assertContains(e.getFlyweightMessage(), "unexpected argument");
         }
     }
 
@@ -1011,8 +1011,8 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
             Assert.fail();
         } catch (SqlException e) {
             Assert.assertEquals(0, e.getPosition());
-            TestUtils.assertContains(e.getMessage(), "unexpected argument");
-            TestUtils.assertContains(e.getMessage(), "constant");
+            TestUtils.assertContains(e.getFlyweightMessage(), "unexpected argument");
+            TestUtils.assertContains(e.getFlyweightMessage(), "constant");
         }
     }
 
@@ -1125,7 +1125,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         functions.add(new EqDoubleFunctionFactory());
         functions.add(new EqLongFunctionFactory());
         try (Function f = parseFunction("$2 = $1", null, createFunctionParser())) {
-            TestUtils.assertContains("io.questdb.griffin.engine.functions.eq.EqDoubleFunctionFactory.Func", f.getClass().getCanonicalName());
+            TestUtils.assertContains(f.getClass().getCanonicalName(),"io.questdb.griffin.engine.functions.eq.EqDoubleFunctionFactory.Func");
         }
         Assert.assertEquals(ColumnType.DOUBLE, bindVariableService.getFunction(0).getType());
         Assert.assertEquals(ColumnType.DOUBLE, bindVariableService.getFunction(1).getType());
@@ -1286,7 +1286,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
         metadata.add(new TableColumnMetadata("a", ColumnType.LONG, null));
         try (Function f = parseFunction("a = $1", metadata, createFunctionParser())) {
-            TestUtils.assertContains("io.questdb.griffin.engine.functions.eq.EqLongFunctionFactory.Func", f.getClass().getCanonicalName());
+            TestUtils.assertContains(f.getClass().getCanonicalName(), "io.questdb.griffin.engine.functions.eq.EqLongFunctionFactory.Func");
         }
         Assert.assertEquals(ColumnType.LONG, bindVariableService.getFunction(0).getType());
     }
@@ -1300,7 +1300,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
         metadata.add(new TableColumnMetadata("a", ColumnType.FLOAT, null));
         try (Function f = parseFunction("a = $1", metadata, createFunctionParser())) {
-            TestUtils.assertContains("io.questdb.griffin.engine.functions.eq.EqDoubleFunctionFactory.Func", f.getClass().getCanonicalName());
+            TestUtils.assertContains(f.getClass().getCanonicalName(),"io.questdb.griffin.engine.functions.eq.EqDoubleFunctionFactory.Func");
         }
         Assert.assertEquals(ColumnType.DOUBLE, bindVariableService.getFunction(0).getType());
     }
@@ -1354,7 +1354,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         bindVariableService.clear();
         functions.add(factory);
         try (Function f = parseFunction(expr, null, createFunctionParser())) {
-            TestUtils.assertContains(expectedFunctionClass, f.getClass().getCanonicalName());
+            TestUtils.assertContains(f.getClass().getCanonicalName(), expectedFunctionClass);
         }
 
         for (int i = 0, n = expectedTypes.length; i < n; i++) {
@@ -1408,7 +1408,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
             Assert.fail();
         } catch (SqlException e) {
             Assert.assertEquals(expectedPos, e.getPosition());
-            TestUtils.assertContains(e.getMessage(), expectedMessage);
+            TestUtils.assertContains(e.getFlyweightMessage(), expectedMessage);
         }
     }
 

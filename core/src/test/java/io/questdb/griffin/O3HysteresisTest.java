@@ -240,7 +240,7 @@ public class O3HysteresisTest extends AbstractO3Test {
 
             long start = IntervalUtils.parseFloorPartialDate("2021-04-27T08:00:00");
             for (int mils = 2; mils < 6; mils +=2) {
-                int idCount = mils * 1_000_000;
+                long idCount = mils * 1_000_000L;
 
                 // Create big commit with has big part before OOO starts
                 // which exceed default AppendOnlyVirtualMemory size in one or all columns
@@ -251,8 +251,7 @@ public class O3HysteresisTest extends AbstractO3Test {
                 try (TableWriter o3 = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "o3");
                      TableWriter ordered = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "ordered")) {
                     for (int i = 0; i < iterations; i++) {
-                        int backwards = iterations - i - 1;
-                        int forward = i;
+                        long backwards = iterations - i - 1;
                         final Rnd rnd = new Rnd();
                         for (int id = 0; id < idCount; id++) {
                             long timestamp = start + backwards * idCount + id;
@@ -263,7 +262,7 @@ public class O3HysteresisTest extends AbstractO3Test {
                             row.putStr(2, varCol[id % varCol.length]);
                             row.append();
 
-                            timestamp = start + forward * idCount + id;
+                            timestamp = start + i * idCount + id;
                             row = ordered.newRow(timestamp);
                             row.putLong(0, timestamp);
                             row.putFloat(1, rnd.nextFloat());

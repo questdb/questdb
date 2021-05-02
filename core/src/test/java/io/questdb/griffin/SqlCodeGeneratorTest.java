@@ -561,7 +561,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(51, e.getPosition());
-                TestUtils.assertContains(e.getMessage(), "max cached symbol capacity");
+                TestUtils.assertContains(e.getFlyweightMessage(), "max cached symbol capacity");
             } finally {
                 engine.clear();
             }
@@ -2007,7 +2007,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                             );
                             Assert.fail();
                         } catch (CairoException e) {
-                            TestUtils.assertContains(e.getMessage(), "Cannot open file");
+                            TestUtils.assertContains(e.getFlyweightMessage(), "could not open");
                         }
                     }
                     Assert.assertEquals(0, engine.getBusyReaderCount());

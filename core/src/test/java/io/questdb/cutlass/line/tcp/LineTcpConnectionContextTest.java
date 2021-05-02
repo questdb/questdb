@@ -1177,11 +1177,11 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
 
         scheduler = new LineTcpMeasurementScheduler(lineTcpConfiguration, engine, netIoWorkerPool, null, workerPool) {
             @Override
-            boolean tryCommitNewEvent(NetworkIOJob netIoJob, NewLineProtoParser protoParser, FloatingDirectCharSink charSink) {
+            boolean tryButCouldNotCommit(NetworkIOJob netIoJob, NewLineProtoParser protoParser, FloatingDirectCharSink charSink) {
                 if (null != onCommitNewEvent) {
                     onCommitNewEvent.run();
                 }
-                return super.tryCommitNewEvent(netIoJob, protoParser, charSink);
+                return super.tryButCouldNotCommit(netIoJob, protoParser, charSink);
             }
 
             @Override

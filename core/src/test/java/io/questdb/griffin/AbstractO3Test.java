@@ -167,7 +167,7 @@ public class AbstractO3Test {
         AbstractO3Test.assertSqlResultAgainstFile(compiler, sqlExecutionContext, "x where sym = 'googl'", resourceName);
     }
 
-    protected static void assertO3DataConsistency(
+    protected static void assertO3DataCursors(
             CairoEngine engine,
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext,
@@ -322,6 +322,11 @@ public class AbstractO3Test {
 
                     @Override
                     public int getO3PurgeQueueCapacity() {
+                        return 0;
+                    }
+
+                    @Override
+                    public int getO3PartitionUpdateQueueCapacity() {
                         return 0;
                     }
                 };

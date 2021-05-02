@@ -243,7 +243,7 @@ public class CairoEngineTest extends AbstractCairoTest {
                     engine.remove(AllowAllCairoSecurityContext.INSTANCE, path, "x");
                     Assert.fail();
                 } catch (CairoException e) {
-                    TestUtils.assertContains(e.getMessage(), "remove failed");
+                    TestUtils.assertContains(e.getFlyweightMessage(), "remove failed");
                 }
             }
         });
@@ -322,7 +322,7 @@ public class CairoEngineTest extends AbstractCairoTest {
                         engine.rename(AllowAllCairoSecurityContext.INSTANCE, path, "x", otherPath, "y");
                         Assert.fail();
                     } catch (CairoException e) {
-                        TestUtils.assertContains(e.getMessage(), "table busy");
+                        TestUtils.assertContains(e.getFlyweightMessage(), "table busy");
                     }
                 }
             }
@@ -362,7 +362,7 @@ public class CairoEngineTest extends AbstractCairoTest {
                     engine.rename(AllowAllCairoSecurityContext.INSTANCE, path, "x", otherPath, "y");
                     Assert.fail();
                 } catch (CairoException e) {
-                    TestUtils.assertContains(e.getMessage(), "Rename failed");
+                    TestUtils.assertContains(e.getFlyweightMessage(), "Rename failed");
                 }
 
                 assertReader(engine, "x");
@@ -389,7 +389,7 @@ public class CairoEngineTest extends AbstractCairoTest {
                 engine.rename(AllowAllCairoSecurityContext.INSTANCE, path, "x", otherPath, "y");
                 Assert.fail();
             } catch (CairoException e) {
-                TestUtils.assertContains(e.getMessage(), "does not exist");
+                TestUtils.assertContains(e.getFlyweightMessage(), "does not exist");
             }
         });
     }
@@ -408,7 +408,7 @@ public class CairoEngineTest extends AbstractCairoTest {
                     engine.rename(AllowAllCairoSecurityContext.INSTANCE, path, "x", otherPath, "y");
                     Assert.fail();
                 } catch (CairoException e) {
-                    TestUtils.assertContains(e.getMessage(), "exists");
+                    TestUtils.assertContains(e.getFlyweightMessage(), "exists");
                 }
                 assertWriter(engine, "x");
                 assertReader(engine, "x");

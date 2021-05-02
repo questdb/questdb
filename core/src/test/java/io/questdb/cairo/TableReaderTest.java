@@ -2582,7 +2582,7 @@ public class TableReaderTest extends AbstractCairoTest {
                         writer.addColumn("b", ColumnType.STRING);
                         Assert.fail();
                     } catch (CairoException e) {
-                        TestUtils.assertContains(e.getMessage(), "Cannot remove");
+                        TestUtils.assertContains(e.getFlyweightMessage(), "Cannot remove");
                     }
 
                     // now assert what reader sees
@@ -2801,7 +2801,7 @@ public class TableReaderTest extends AbstractCairoTest {
                         writer.addColumn("b", ColumnType.STRING);
                         Assert.fail();
                     } catch (CairoException e) {
-                        TestUtils.assertContains(e.getMessage(), "Cannot remove");
+                        TestUtils.assertContains(e.getFlyweightMessage(), "Cannot remove");
                     }
 
                     // now assert what reader sees

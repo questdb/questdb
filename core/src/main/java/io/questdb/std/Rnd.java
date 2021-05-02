@@ -100,6 +100,10 @@ public class Rnd {
         return (int) nextLong();
     }
 
+    public int nextInt(int boundary) {
+        return nextPositiveInt() % boundary;
+    }
+
     public long nextLong() {
         long l1 = s0;
         long l0 = s1;
