@@ -24,7 +24,10 @@
 
 package io.questdb.cutlass.line.tcp;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.AbstractCairoTest;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableReaderRecordCursor;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
@@ -150,6 +153,7 @@ public class LineTcpServerTest extends AbstractCairoTest {
         }
 
     };
+
     private Path path;
 
     @Test
@@ -364,7 +368,12 @@ public class LineTcpServerTest extends AbstractCairoTest {
         }
     }
 
-    private void test(String authKeyId, PrivateKey authPrivateKey, int msgBufferSize, final int nRows) throws Exception {
+    private void test(
+            String authKeyId,
+            PrivateKey authPrivateKey,
+            int msgBufferSize,
+            final int nRows
+    ) throws Exception {
         this.authKeyId = authKeyId;
         this.msgBufferSize = msgBufferSize;
         assertMemoryLeak(() -> {
@@ -389,9 +398,9 @@ public class LineTcpServerTest extends AbstractCairoTest {
                 }
             });
 
-            long startEpochMs = System.currentTimeMillis();
             minIdleMsBeforeWriterRelease = 100;
             try (LineTcpServer ignored = LineTcpServer.create(lineConfiguration, sharedWorkerPool, LOG, engine)) {
+                long startEpochMs = System.currentTimeMillis();
                 sharedWorkerPool.assignCleaner(Path.CLEANER);
                 sharedWorkerPool.start(LOG);
 
@@ -479,7 +488,6 @@ public class LineTcpServerTest extends AbstractCairoTest {
                 }
             } finally {
                 engine.setPoolListener(null);
-                Path.clearThreadLocals();
             }
 
             for (int n = 0; n < tables.size(); n++) {
