@@ -471,7 +471,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
                     playText0(textLoader, csv, 1024, ENTITY_MANIPULATOR);
                     Assert.fail();
                 } catch (CairoException e) {
-                    TestUtils.assertContains(e.getMessage(), "Could not lock");
+                    TestUtils.assertContains(e.getFlyweightMessage(), "Could not lock");
                 }
             }
         });
@@ -1855,7 +1855,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
                 playText0(textLoader, csv, 1024, ENTITY_MANIPULATOR);
                 Assert.fail();
             } catch (CairoException e) {
-                TestUtils.assertContains(e.getMessage(), "name is reserved");
+                TestUtils.assertContains(e.getFlyweightMessage(), "name is reserved");
             }
         });
     }
@@ -2037,7 +2037,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
                 playText0(textLoader, csv, 1, ENTITY_MANIPULATOR);
                 Assert.fail();
             } catch (CairoException e) {
-                TestUtils.assertContains(e.getMessage(), "cannot determine text structure");
+                TestUtils.assertContains(e.getFlyweightMessage(), "cannot determine text structure");
             }
         });
     }
@@ -2373,7 +2373,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
                         3);
                 Assert.fail();
             } catch (CairoException e) {
-                TestUtils.assertContains(e.getMessage(), "cannot import text into BINARY column");
+                TestUtils.assertContains(e.getFlyweightMessage(), "cannot import text into BINARY column");
             }
         });
     }
@@ -2547,7 +2547,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
                 playText0(textLoader, csv, 1024, ENTITY_MANIPULATOR);
                 Assert.fail();
             } catch (CairoException e) {
-                TestUtils.assertContains(e.getMessage(), "column count mismatch [textColumnCount=10, tableColumnCount=2, table=test]");
+                TestUtils.assertContains(e.getFlyweightMessage(), "column count mismatch [textColumnCount=10, tableColumnCount=2, table=test]");
             }
         });
     }

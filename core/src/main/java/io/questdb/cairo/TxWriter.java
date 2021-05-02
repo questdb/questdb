@@ -353,8 +353,12 @@ public final class TxWriter extends TxReader implements Closeable {
     }
 
     void resetToLastPartition(long committedTransientRowCount) {
+        resetToLastPartition(committedTransientRowCount, txMem.getLong(TX_OFFSET_MAX_TIMESTAMP));
+    }
+
+    void resetToLastPartition(long committedTransientRowCount, long newMaxTimestamp) {
         updatePartitionSizeByTimestamp(maxTimestamp, committedTransientRowCount);
-        prevMaxTimestamp = txMem.getLong(TX_OFFSET_MAX_TIMESTAMP);
+        prevMaxTimestamp = newMaxTimestamp;
         maxTimestamp = prevMaxTimestamp;
         transientRowCount = committedTransientRowCount;
     }

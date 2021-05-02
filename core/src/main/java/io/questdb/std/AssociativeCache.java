@@ -96,7 +96,10 @@ public class AssociativeCache<V> implements Closeable, Mutable {
         }
 
         if (Chars.equalsNc(key, keys[lo])) {
-            values[lo] = value;
+            if (values[lo] != value) {
+                Misc.free(values[lo]);
+                values[lo] = value;
+            }
         } else {
             System.arraycopy(keys, lo, keys, lo + 1, bmask);
             System.arraycopy(values, lo, values, lo + 1, bmask);

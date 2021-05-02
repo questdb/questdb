@@ -10,8 +10,8 @@
   <a href="https://github.com/questdb/questdb/blob/master/LICENSE.txt">
     <img src="https://img.shields.io/github/license/questdb/questdb" alt="Apache 2.0 licence"/>
   </a>
-  <a href="https://hub.docker.com/r/questdb/questdb">
-    <img src="https://img.shields.io/docker/pulls/questdb/questdb.svg" alt="QuestDB Docker images"/>
+  <a href="#contribute">
+    <img src="https://img.shields.io/github/all-contributors/questdb/questdb" alt="QuestDB open source contributors"/>
   </a>
   <a href="https://dev.azure.com/questdb/questdb">
     <img src="https://dev.azure.com/questdb/questdb/_apis/build/status/Build%20and%20upload%20snapshot%20%28Linux%29?branchName=master" alt="Azure pipeline status"/>

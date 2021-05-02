@@ -57,7 +57,7 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
             Assert.fail();
         } catch (SqlException e) {
             Assert.assertEquals(expectedPosition, e.getPosition());
-            TestUtils.assertContains(e.getMessage(), expectedMsg);
+            TestUtils.assertContains(e.getFlyweightMessage(), expectedMsg);
         }
     }
 

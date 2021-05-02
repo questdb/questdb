@@ -125,10 +125,10 @@ class LineTcpConnectionContext implements IOContext, Mutable {
         return false;
     }
 
-    private boolean doHandleDisconnectEvent() {
+    private void doHandleDisconnectEvent() {
         if (protoParser.getBufferAddress() == recvBufEnd) {
             LOG.error().$('[').$(fd).$("] buffer overflow [msgBufferSize=").$(recvBufEnd - recvBufStart).$(']').$();
-            return true;
+            return;
         }
 
         if (peerDisconnected) {
@@ -139,7 +139,6 @@ class LineTcpConnectionContext implements IOContext, Mutable {
                 LOG.info().$('[').$(fd).$("] peer disconnected").$();
             }
         }
-        return peerDisconnected;
     }
 
     IOContextResult handleIO(NetworkIOJob netIoJob) {
@@ -154,7 +153,7 @@ class LineTcpConnectionContext implements IOContext, Mutable {
                 switch (rc) {
                     case MEASUREMENT_COMPLETE: {
                         if (goodMeasurement) {
-                            if (!scheduler.tryCommitNewEvent(netIoJob, protoParser, charSink)) {
+                            if (scheduler.tryButCouldNotCommit(netIoJob, protoParser, charSink)) {
                                 // Waiting for writer threads to drain queue, request callback as soon as possible
                                 if (checkQueueFullLogHysteresis()) {
                                     LOG.debug().$('[').$(fd).$("] queue full").$();

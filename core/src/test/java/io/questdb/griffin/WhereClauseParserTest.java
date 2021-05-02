@@ -202,7 +202,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
             modelOf("timestamp in ('2014-01-02T12:30:00.000Z', '2014-01Z')");
             Assert.fail("Exception expected");
         } catch (SqlException e) {
-            TestUtils.assertContains(e.getMessage(), "Invalid date");
+            TestUtils.assertContains(e.getFlyweightMessage(), "Invalid date");
             Assert.assertEquals(42, e.getPosition());
         }
     }
@@ -253,7 +253,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
             modelOf("timestamp in ('2014-01Z', '2014-01-02T12:30:00.000Z')");
             Assert.fail("Exception expected");
         } catch (SqlException e) {
-            TestUtils.assertContains(e.getMessage(), "Invalid date");
+            TestUtils.assertContains(e.getFlyweightMessage(), "Invalid date");
             Assert.assertEquals(14, e.getPosition());
         }
     }
@@ -705,7 +705,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
             modelOf("sym in ()");
             Assert.fail("exception expected");
         } catch (SqlException e) {
-            TestUtils.assertContains(e.getMessage(), "Too few arguments");
+            TestUtils.assertContains(e.getFlyweightMessage(), "Too few arguments");
         }
     }
 
@@ -835,7 +835,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
             modelOf("timestamp in (\"2014-01-01T12:30:00.000Z\")");
             Assert.fail("Exception expected");
         } catch (SqlException e) {
-            TestUtils.assertContains(e.getMessage(), "Too few arg");
+            TestUtils.assertContains(e.getFlyweightMessage(), "Too few arg");
         }
     }
 
@@ -845,7 +845,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
             modelOf("timestamp in ()");
             Assert.fail("Exception expected");
         } catch (SqlException e) {
-            TestUtils.assertContains(e.getMessage(), "Too few arg");
+            TestUtils.assertContains(e.getFlyweightMessage(), "Too few arg");
         }
     }
 
@@ -855,7 +855,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
             modelOf("timestamp in (\"2014-01-01T12:30:00.000Z\", \"2014-01-02T12:30:00.000Z\", \"2014-01-03T12:30:00.000Z\")");
             Assert.fail("Exception expected");
         } catch (SqlException e) {
-            TestUtils.assertContains(e.getMessage(), "Too many arg");
+            TestUtils.assertContains(e.getFlyweightMessage(), "Too many arg");
         }
     }
 
@@ -1049,7 +1049,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         try {
             modelOf("ex != null and abb != 'blah'");
         } catch (SqlException e) {
-            TestUtils.assertContains(e.getMessage(), "Invalid column");
+            TestUtils.assertContains(e.getFlyweightMessage(), "Invalid column");
             Assert.assertEquals(15, e.getPosition());
         }
     }
@@ -1552,7 +1552,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
             Assert.fail("exception expected");
         } catch (SqlException e) {
             Assert.assertEquals(4, e.getPosition());
-            TestUtils.assertContains(e.getMessage(), "Multiple lambda");
+            TestUtils.assertContains(e.getFlyweightMessage(), "Multiple lambda");
         }
     }
 

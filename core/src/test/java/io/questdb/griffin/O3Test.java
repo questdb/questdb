@@ -27,6 +27,8 @@ package io.questdb.griffin;
 import io.questdb.WorkerPoolAwareConfiguration;
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.mp.Job;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
@@ -41,8 +43,11 @@ import org.junit.rules.TestName;
 
 import java.net.URISyntaxException;
 import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.atomic.AtomicInteger;
 
 public class O3Test extends AbstractO3Test {
+    private static final Log LOG = LogFactory.getLog(O3Test.class);
+
     private final StringBuilder tstData = new StringBuilder();
     @Rule
     public TestName name = new TestName();
@@ -694,24 +699,24 @@ public class O3Test extends AbstractO3Test {
         compiler.compile(
                 "create table x as (" +
                         "select" +
-                        " rnd_str(5,16,2) i," +
-                        " rnd_str(5,16,2) sym," +
-                        " rnd_str(5,16,2) amt," +
-                        " rnd_str(5,16,2) timestamp," +
-                        " rnd_str(5,16,2) b," +
+                        " rnd_str(5,16,10) i," +
+                        " rnd_str(5,16,10) sym," +
+                        " rnd_str(5,16,10) amt," +
+                        " rnd_str(5,16,10) timestamp," +
+                        " rnd_str(5,16,10) b," +
                         " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
-                        " rnd_str(5,16,2) d," +
-                        " rnd_str(5,16,2) e," +
-                        " rnd_str(5,16,2) f," +
-                        " rnd_str(5,16,2) g," +
-                        " rnd_str(5,16,2) ik," +
-                        " rnd_str(5,16,2) j," +
+                        " rnd_str(5,16,10) d," +
+                        " rnd_str(5,16,10) e," +
+                        " rnd_str(5,16,10) f," +
+                        " rnd_str(5,16,10) g," +
+                        " rnd_str(5,16,10) ik," +
+                        " rnd_str(5,16,10) j," +
                         " timestamp_sequence(500000000000L,100000000L) ts," +
-                        " rnd_str(5,16,2) l," +
-                        " rnd_str(5,16,2) m," +
-                        " rnd_str(5,16,2) n," +
-                        " rnd_str(5,16,2) t," +
-                        " rnd_str(5,16,2) l256" +
+                        " rnd_str(5,16,10) l," +
+                        " rnd_str(5,16,10) m," +
+                        " rnd_str(5,16,10) n," +
+                        " rnd_str(5,16,10) t," +
+                        " rnd_str(5,16,10) l256" +
                         " from long_sequence(10000)" +
                         ") timestamp (ts) partition by DAY",
                 executionContext
@@ -722,24 +727,24 @@ public class O3Test extends AbstractO3Test {
         compiler.compile(
                 "create table y as (" +
                         "select" +
-                        " rnd_str(5,16,2) i," +
-                        " rnd_str(5,16,2) sym," +
-                        " rnd_str(5,16,2) amt," +
-                        " rnd_str(5,16,2) timestamp," +
-                        " rnd_str(5,16,2) b," +
+                        " rnd_str(5,16,10) i," +
+                        " rnd_str(5,16,10) sym," +
+                        " rnd_str(5,16,10) amt," +
+                        " rnd_str(5,16,10) timestamp," +
+                        " rnd_str(5,16,10) b," +
                         " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
-                        " rnd_str(5,16,2) d," +
-                        " rnd_str(5,16,2) e," +
-                        " rnd_str(5,16,2) f," +
-                        " rnd_str(5,16,2) g," +
-                        " rnd_str(5,16,2) ik," +
-                        " rnd_str(5,16,2) j," +
-                        " timestamp_sequence(500000000023L,99999999L) ts," +
-                        " rnd_str(5,16,2) l," +
-                        " rnd_str(5,16,2) m," +
-                        " rnd_str(5,16,2) n," +
-                        " rnd_str(5,16,2) t," +
-                        " rnd_str(5,16,2) l256" +
+                        " rnd_str(5,16,10) d," +
+                        " rnd_str(5,16,10) e," +
+                        " rnd_str(5,16,10) f," +
+                        " rnd_str(5,16,10) g," +
+                        " rnd_str(5,16,10) ik," +
+                        " rnd_str(5,16,10) j," +
+                        " timestamp_sequence(500000080000L,79999631L) ts," +
+                        " rnd_str(5,16,10) l," +
+                        " rnd_str(5,16,10) m," +
+                        " rnd_str(5,16,10) n," +
+                        " rnd_str(5,16,10) t," +
+                        " rnd_str(5,16,10) l256" +
                         " from long_sequence(10000)" +
                         ") timestamp (ts) partition by DAY",
                 executionContext
@@ -747,11 +752,15 @@ public class O3Test extends AbstractO3Test {
 
         compiler.compile("create table y1 as (y)", executionContext);
 
+        // create expected result sets
+        compiler.compile("create table z as (x union all y)", executionContext);
+
         // create another compiler to be used by second pool
         try (SqlCompiler compiler2 = new SqlCompiler(engine)) {
 
             final CyclicBarrier barrier = new CyclicBarrier(2);
             final SOCountDownLatch haltLatch = new SOCountDownLatch(2);
+            final AtomicInteger errorCount = new AtomicInteger();
 
             // we have two pairs of tables (x,y) and (x1,y1)
             WorkerPool pool1 = new WorkerPool(new WorkerPoolAwareConfiguration() {
@@ -767,7 +776,7 @@ public class O3Test extends AbstractO3Test {
 
                 @Override
                 public boolean haltOnError() {
-                    return true;
+                    return false;
                 }
 
                 @Override
@@ -786,8 +795,9 @@ public class O3Test extends AbstractO3Test {
                             toRun = false;
                             barrier.await();
                             compiler.compile("insert into x select * from y", executionContext);
-                        } catch (Exception e) {
+                        } catch (Throwable e) {
                             e.printStackTrace();
+                            errorCount.incrementAndGet();
                         } finally {
                             haltLatch.countDown();
                         }
@@ -810,7 +820,7 @@ public class O3Test extends AbstractO3Test {
 
                 @Override
                 public boolean haltOnError() {
-                    return true;
+                    return false;
                 }
             });
 
@@ -824,8 +834,9 @@ public class O3Test extends AbstractO3Test {
                             toRun = false;
                             barrier.await();
                             compiler2.compile("insert into x1 select * from y1", executionContext);
-                        } catch (Exception e) {
+                        } catch (Throwable e) {
                             e.printStackTrace();
+                            errorCount.incrementAndGet();
                         } finally {
                             haltLatch.countDown();
                         }
@@ -833,6 +844,7 @@ public class O3Test extends AbstractO3Test {
                     return false;
                 }
             });
+
             pool2.assignCleaner(Path.CLEANER);
 
             pool1.start(null);
@@ -842,6 +854,10 @@ public class O3Test extends AbstractO3Test {
 
             pool1.halt();
             pool2.halt();
+
+            Assert.assertEquals(0, errorCount.get());
+            assertSqlCursors(compiler, executionContext, "z order by ts", "x", LOG);
+            assertSqlCursors(compiler, executionContext, "z order by ts", "x1", LOG);
         }
     }
 
@@ -944,7 +960,7 @@ public class O3Test extends AbstractO3Test {
         );
 
         // create third table, which will contain both X and 1AM
-        assertO3DataConsistency(
+        assertO3DataCursors(
                 engine,
                 compiler,
                 sqlExecutionContext,
@@ -1020,7 +1036,7 @@ public class O3Test extends AbstractO3Test {
         );
 
         // create third table, which will contain both X and 1AM
-        assertO3DataConsistency(
+        assertO3DataCursors(
                 engine,
                 compiler,
                 sqlExecutionContext,
@@ -1119,7 +1135,7 @@ public class O3Test extends AbstractO3Test {
         );
 
         // create third table, which will contain both X and 1AM
-        assertO3DataConsistency(
+        assertO3DataCursors(
                 engine,
                 compiler,
                 sqlExecutionContext,
@@ -1191,7 +1207,7 @@ public class O3Test extends AbstractO3Test {
         );
 
         // create third table, which will contain both X and 1AM
-        assertO3DataConsistency(
+        assertO3DataCursors(
                 engine,
                 compiler,
                 sqlExecutionContext,
@@ -1769,7 +1785,7 @@ public class O3Test extends AbstractO3Test {
         );
 
         // create third table, which will contain both X and 1AM
-        assertO3DataConsistency(
+        assertO3DataCursors(
                 engine,
                 compiler,
                 sqlExecutionContext,
@@ -2053,7 +2069,7 @@ public class O3Test extends AbstractO3Test {
         );
 
         // create third table, which will contain both X and 1AM
-        assertO3DataConsistency(
+        assertO3DataCursors(
                 engine,
                 compiler,
                 sqlExecutionContext,
@@ -2564,7 +2580,7 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext
         );
 
-        assertO3DataConsistency(
+        assertO3DataCursors(
                 engine,
                 compiler,
                 sqlExecutionContext,
@@ -2785,7 +2801,7 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext
         );
 
-        assertO3DataConsistency(
+        assertO3DataCursors(
                 engine,
                 compiler,
                 sqlExecutionContext,
@@ -2856,7 +2872,7 @@ public class O3Test extends AbstractO3Test {
         );
 
         // create third table, which will contain both X and 1AM
-        assertO3DataConsistency(
+        assertO3DataCursors(
                 engine,
                 compiler,
                 sqlExecutionContext,
@@ -3934,7 +3950,7 @@ public class O3Test extends AbstractO3Test {
         );
 
         // create third table, which will contain both X and 1AM
-        assertO3DataConsistency(
+        assertO3DataCursors(
                 engine,
                 compiler,
                 executionContext,
@@ -3975,7 +3991,7 @@ public class O3Test extends AbstractO3Test {
         );
 
         // create third table, which will contain both X and 1AM
-        assertO3DataConsistency(
+        assertO3DataCursors(
                 engine,
                 compiler,
                 executionContext,
@@ -4075,7 +4091,7 @@ public class O3Test extends AbstractO3Test {
         );
 
         // create third table, which will contain both X and 1AM
-        assertO3DataConsistency(
+        assertO3DataCursors(
                 engine,
                 compiler,
                 executionContext,
@@ -4173,7 +4189,7 @@ public class O3Test extends AbstractO3Test {
         );
 
         // create third table, which will contain both X and 1AM
-        assertO3DataConsistency(
+        assertO3DataCursors(
                 engine,
                 compiler,
                 executionContext,
@@ -4274,7 +4290,7 @@ public class O3Test extends AbstractO3Test {
         );
 
         // create third table, which will contain both X and 1AM
-        assertO3DataConsistency(
+        assertO3DataCursors(
                 engine,
                 compiler,
                 executionContext,
@@ -4398,7 +4414,7 @@ public class O3Test extends AbstractO3Test {
         );
 
         // create third table, which will contain both X and 1AM
-        assertO3DataConsistency(
+        assertO3DataCursors(
                 engine,
                 compiler,
                 sqlExecutionContext,
@@ -4608,7 +4624,7 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext
         );
 
-        assertO3DataConsistency(
+        assertO3DataCursors(
                 engine,
                 compiler,
                 sqlExecutionContext,
@@ -4686,7 +4702,7 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext
         );
 
-        assertO3DataConsistency(
+        assertO3DataCursors(
                 engine,
                 compiler,
                 sqlExecutionContext,
@@ -5031,7 +5047,7 @@ public class O3Test extends AbstractO3Test {
 
         compiler.compile("alter table x drop column c", sqlExecutionContext);
 
-        assertO3DataConsistency(
+        assertO3DataCursors(
                 engine,
                 compiler,
                 sqlExecutionContext,
@@ -5146,7 +5162,7 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext
         );
 
-        assertO3DataConsistency(
+        assertO3DataCursors(
                 engine,
                 compiler,
                 sqlExecutionContext,

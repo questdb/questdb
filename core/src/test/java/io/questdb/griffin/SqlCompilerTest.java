@@ -1780,7 +1780,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                     });
             Assert.fail();
         } catch (SqlException e) {
-            TestUtils.assertContains(e.getMessage(), "underlying cursor is extremely volatile");
+            TestUtils.assertContains(e.getFlyweightMessage(), "underlying cursor is extremely volatile");
         }
     }
 
@@ -1908,7 +1908,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
             Assert.fail();
         } catch (SqlException e) {
             Assert.assertEquals(43, e.getPosition());
-            TestUtils.assertContains(e.getMessage(), "Invalid column: b");
+            TestUtils.assertContains(e.getFlyweightMessage(), "Invalid column: b");
         }
     }
 
@@ -1966,7 +1966,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
             Assert.fail();
         } catch (SqlException e) {
             Assert.assertEquals(46, e.getPosition());
-            TestUtils.assertContains(e.getMessage(), "TIMESTAMP column expected");
+            TestUtils.assertContains(e.getFlyweightMessage(), "TIMESTAMP column expected");
         }
     }
 
@@ -3129,7 +3129,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
             Assert.fail();
         } catch (SqlException e) {
             Assert.assertEquals(94, e.getPosition());
-            TestUtils.assertContains(e.getMessage(), "unsupported cast");
+            TestUtils.assertContains(e.getFlyweightMessage(), "unsupported cast");
         }
     }
 
@@ -3164,7 +3164,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
             Assert.fail();
         } catch (SqlException e) {
             Assert.assertEquals(93, e.getPosition());
-            TestUtils.assertContains(e.getMessage(), "unsupported cast");
+            TestUtils.assertContains(e.getFlyweightMessage(), "unsupported cast");
         }
     }
 
@@ -3189,7 +3189,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
             Assert.fail();
         } catch (SqlException e) {
             Assert.assertEquals(92, e.getPosition());
-            TestUtils.assertContains(e.getMessage(), "unsupported cast");
+            TestUtils.assertContains(e.getFlyweightMessage(), "unsupported cast");
         }
     }
 
@@ -3214,7 +3214,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
             Assert.fail();
         } catch (SqlException e) {
             Assert.assertEquals(97, e.getPosition());
-            TestUtils.assertContains(e.getMessage(), "unsupported cast");
+            TestUtils.assertContains(e.getFlyweightMessage(), "unsupported cast");
         }
     }
 
@@ -3239,7 +3239,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
             Assert.fail();
         } catch (SqlException e) {
             Assert.assertEquals(98, e.getPosition());
-            TestUtils.assertContains(e.getMessage(), "unsupported cast");
+            TestUtils.assertContains(e.getFlyweightMessage(), "unsupported cast");
         }
     }
 
@@ -3263,7 +3263,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
             Assert.fail();
         } catch (SqlException e) {
             Assert.assertEquals(95, e.getPosition());
-            TestUtils.assertContains(e.getMessage(), "unsupported cast");
+            TestUtils.assertContains(e.getFlyweightMessage(), "unsupported cast");
         }
     }
 
@@ -3278,7 +3278,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
             Assert.fail();
         } catch (SqlException e) {
             Assert.assertEquals(95, e.getPosition());
-            TestUtils.assertContains(e.getMessage(), "unsupported cast");
+            TestUtils.assertContains(e.getFlyweightMessage(), "unsupported cast");
         }
     }
 
@@ -3293,7 +3293,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
             Assert.fail();
         } catch (SqlException e) {
             Assert.assertEquals(84, e.getPosition());
-            TestUtils.assertContains(e.getMessage(), "unsupported cast");
+            TestUtils.assertContains(e.getFlyweightMessage(), "unsupported cast");
         }
     }
 
@@ -3364,7 +3364,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
             Assert.fail();
         } catch (SqlException e) {
             Assert.assertEquals(position, e.getPosition());
-            TestUtils.assertContains(e.getMessage(), expectedMessage);
+            TestUtils.assertContains(e.getFlyweightMessage(), expectedMessage);
         }
     }
 

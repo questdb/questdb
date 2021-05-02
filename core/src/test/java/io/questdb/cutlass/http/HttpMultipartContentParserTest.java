@@ -98,7 +98,7 @@ public class HttpMultipartContentParserTest {
                         multipartContentParser.parse(p, p + len, LISTENER);
                         Assert.fail();
                     } catch (HttpException e) {
-                        TestUtils.assertContains(e.getMessage(), "Malformed start boundary");
+                        TestUtils.assertContains(e.getFlyweightMessage(), "Malformed start boundary");
                     } finally {
                         Unsafe.free(pBoundary, boundary.length());
                     }
@@ -196,7 +196,7 @@ public class HttpMultipartContentParserTest {
                         multipartContentParser.parse(p, p + len, LISTENER);
                         Assert.fail();
                     } catch (HttpException e) {
-                        TestUtils.assertContains(e.getMessage(), "Malformed start boundary");
+                        TestUtils.assertContains(e.getFlyweightMessage(), "Malformed start boundary");
                     } finally {
                         Unsafe.free(pBoundary, boundary.length());
                     }
