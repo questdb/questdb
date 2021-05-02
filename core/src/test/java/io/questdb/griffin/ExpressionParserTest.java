@@ -916,6 +916,17 @@ public class ExpressionParserTest extends AbstractCairoTest {
         assertFail("a-^b", 1, "too few arguments for '-' [found=1,expected=2]");
     }
 
+    @Test
+    public void testFloatLiteralScientific() throws Exception {
+        x("1.8e-1", "1.8e-1");
+        x("1.234e-10", "1.234e-10");
+        x("1.234E-10", "1.234E-10");
+        x("1.234e10", "1.234e10");
+        x("1.234E10", "1.234E10");
+        x("0.234E10", "0.234E10");
+        x(".234E10", ".234E10");
+    }
+
     private void assertFail(String content, int pos, String contains) {
         try {
             compiler.testParseExpression(content, rpnBuilder);
