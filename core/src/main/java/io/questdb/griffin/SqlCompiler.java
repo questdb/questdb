@@ -1366,7 +1366,14 @@ public class SqlCompiler implements Closeable {
         writer.commit();
     }
 
-    private void copyOrderedBatched0(TableWriter writer, RecordCursor cursor, RecordToRowCopier copier, int cursorTimestampIndex, long batchSize, long hysteresis) {
+    private void copyOrderedBatched0(
+            TableWriter writer,
+            RecordCursor cursor,
+            RecordToRowCopier copier,
+            int cursorTimestampIndex,
+            long batchSize,
+            long hysteresis
+    ) {
         long deadline = batchSize;
         long rowCount = 0;
         final Record record = cursor.getRecord();
@@ -1381,7 +1388,14 @@ public class SqlCompiler implements Closeable {
         }
     }
 
-    private void copyOrderedBatchedStrTimestamp(TableWriter writer, RecordCursor cursor, RecordToRowCopier copier, int cursorTimestampIndex, long batchSize, long hysteresis) {
+    private void copyOrderedBatchedStrTimestamp(
+            TableWriter writer,
+            RecordCursor cursor,
+            RecordToRowCopier copier,
+            int cursorTimestampIndex,
+            long batchSize,
+            long hysteresis
+    ) {
         long deadline = batchSize;
         long rowCount = 0;
         final Record record = cursor.getRecord();

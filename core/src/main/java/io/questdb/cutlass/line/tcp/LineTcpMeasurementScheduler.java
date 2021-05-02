@@ -70,8 +70,8 @@ class LineTcpMeasurementScheduler implements Closeable {
     private final int[] loadByThread;
     private final int nUpdatesPerLoadRebalance;
     private final double maxLoadRatio;
-    private final long maintenanceJobHysteresisInMs;
-    private final long minIdleMsBeforeWriterRelease;
+    private final long maintenanceInterval;
+    private final long writerIdleTimeout;
     private final int defaultPartitionBy;
     private final NetworkIOJob[] netIoJobs;
     private final TableStructureAdapter tableStructureAdapter = new TableStructureAdapter();
@@ -137,9 +137,9 @@ class LineTcpMeasurementScheduler implements Closeable {
 
         nUpdatesPerLoadRebalance = lineConfiguration.getNUpdatesPerLoadRebalance();
         maxLoadRatio = lineConfiguration.getMaxLoadRatio();
-        maintenanceJobHysteresisInMs = lineConfiguration.getMaintenanceJobHysteresisInMs();
+        maintenanceInterval = lineConfiguration.getMaintenanceInterval();
         defaultPartitionBy = lineConfiguration.getDefaultPartitionBy();
-        minIdleMsBeforeWriterRelease = lineConfiguration.getMinIdleMsBeforeWriterRelease();
+        writerIdleTimeout = lineConfiguration.getWriterIdleTimeout();
     }
 
     @Override
@@ -374,7 +374,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                 try {
                     LineTcpMeasurementEvent event = queue.get(seq);
                     event.threadId = INCOMPLETE_EVENT_ID;
-                    TableUpdateDetails.ThreadLocalDetails localDetails = tableUpdateDetails.startNewMeasumentEvent(netIoJob.getWorkerId());
+                    TableUpdateDetails.ThreadLocalDetails localDetails = tableUpdateDetails.startNewMeasurementEvent(netIoJob.getWorkerId());
                     event.createMeasurementEvent(tableUpdateDetails, localDetails, protoParser, charSink);
                     return false;
                 } finally {
@@ -431,11 +431,11 @@ class LineTcpMeasurementScheduler implements Closeable {
             bufLo = 0;
         }
 
-        private void clear() {
-        }
-
         void createMeasurementEvent(
-                TableUpdateDetails tableUpdateDetails, TableUpdateDetails.ThreadLocalDetails localDetails, NewLineProtoParser protoParser, FloatingDirectCharSink floatingCharSink
+                TableUpdateDetails tableUpdateDetails,
+                TableUpdateDetails.ThreadLocalDetails localDetails,
+                NewLineProtoParser protoParser,
+                FloatingDirectCharSink floatingCharSink
         ) {
             threadId = INCOMPLETE_EVENT_ID;
             this.tableUpdateDetails = tableUpdateDetails;
@@ -532,7 +532,6 @@ class LineTcpMeasurementScheduler implements Closeable {
         }
 
         void createRebalanceEvent(int fromThreadId, int toThreadId, TableUpdateDetails tableUpdateDetails) {
-            clear();
             threadId = REBALANCE_EVENT_ID;
             rebalanceFromThreadId = fromThreadId;
             rebalanceToThreadId = toThreadId;
@@ -541,7 +540,6 @@ class LineTcpMeasurementScheduler implements Closeable {
         }
 
         void createReleaseWriterEvent(TableUpdateDetails tableUpdateDetails) {
-            clear();
             threadId = RELEASE_WRITER_EVENT_ID;
             this.tableUpdateDetails = tableUpdateDetails;
         }
@@ -591,7 +589,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                                 throw CairoException.instance(0).put("invalid column name [table=").put(writer.getTableName())
                                         .put(", columnName=").put(job.charSink).put(']');
                             }
-                            // Reset to begining of entities
+                            // Reset to beginning of entities
                             bufPos = firstEntityBufPos;
                             nEntity = -1;
                             row = writer.newRow(timestamp);
@@ -727,26 +725,27 @@ class LineTcpMeasurementScheduler implements Closeable {
         final String tableName;
         private final ThreadLocalDetails[] localDetailsArray;
         private int writerThreadId;
-        private int nUpdates = 0; // Number of updates since the last load rebalance, this is an estimate because its incremented by
+        // Number of updates since the last load rebalance, this is an estimate because its incremented by
         // multiple threads without synchronisation
+        private int nUpdates = 0;
         private TableWriter writer;
         private int maxUncommittedRows;
         private long commitHysteresisInMicros;
         private int nUncommitted = 0;
         private boolean assignedToJob = false;
-        private long lastMeasurementReceivedEpochMs = Long.MAX_VALUE;
-        private long lastCommitEpochMs;
+        private long lastMeasurementMillis = Long.MAX_VALUE;
+        private long lastCommitMillis;
         private int nNetworkIoWorkers = 0;
 
         private TableUpdateDetails(String tableName, int writerThreadId, NetworkIOJob[] netIoJobs) {
-            super();
             this.tableName = tableName;
             this.writerThreadId = writerThreadId;
-            localDetailsArray = new ThreadLocalDetails[netIoJobs.length];
-            for (int n = 0; n < netIoJobs.length; n++) {
-                localDetailsArray[n] = new ThreadLocalDetails(netIoJobs[n].getUnusedSymbolCaches());
+            final int n = netIoJobs.length;
+            localDetailsArray = new ThreadLocalDetails[n];
+            for (int i = 0; i < n; i++) {
+                localDetailsArray[i] = new ThreadLocalDetails(netIoJobs[i].getUnusedSymbolCaches());
             }
-            lastCommitEpochMs = milliClock.getTicks();
+            lastCommitMillis = milliClock.getTicks();
         }
 
         @Override
@@ -756,7 +755,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                 if (null != writer) {
                     if (nUncommitted > 0 || commitHysteresisInMicros > 0) {
                         writer.commit();
-                        lastCommitEpochMs = milliClock.getTicks();
+                        lastCommitMillis = milliClock.getTicks();
                     }
                     writer.close();
                     writer = null;
@@ -789,51 +788,43 @@ class LineTcpMeasurementScheduler implements Closeable {
             nUncommitted++;
             if (nUncommitted >= maxUncommittedRows) {
                 writer.commitWithHysteresis(commitHysteresisInMicros);
-                lastCommitEpochMs = milliClock.getTicks();
-                nUncommitted = 0;
+                resetUncommitted();
             }
         }
 
         void handleWriterRelease() {
             if (null != writer) {
-                if (nUncommitted > 0 || commitHysteresisInMicros > 0) {
-                    writer.commit();
-                    lastCommitEpochMs = milliClock.getTicks();
-                    nUncommitted = 0;
-                }
-                writer.close();
+                writer.commit();
+                writer = Misc.free(writer);
+                resetUncommitted();
             }
-            writer = null;
         }
 
-        void handleWriterThreadMaintenance() {
-            if ((milliClock.getTicks() - lastCommitEpochMs) < maintenanceJobHysteresisInMs) {
+        void handleWriterThreadMaintenance(long ticks) {
+            if (ticks - lastCommitMillis < maintenanceInterval) {
                 return;
             }
             if ((nUncommitted > 0 || commitHysteresisInMicros > 0) && null != writer) {
                 LOG.debug().$("maintenance commit [table=").$(writer.getTableName()).I$();
                 writer.commit();
-                lastCommitEpochMs = milliClock.getTicks();
-                nUncommitted = 0;
+                resetUncommitted();
             }
         }
 
-        ThreadLocalDetails startNewMeasumentEvent(int workerId) {
+        private void resetUncommitted() {
+            lastCommitMillis = milliClock.getTicks();
+            nUncommitted = 0;
+        }
+
+        ThreadLocalDetails startNewMeasurementEvent(int workerId) {
             ThreadLocalDetails localDetails = localDetailsArray[workerId];
-            lastMeasurementReceivedEpochMs = milliClock.getTicks();
+            lastMeasurementMillis = milliClock.getTicks();
             return localDetails;
         }
 
         void switchThreads() {
             assignedToJob = false;
-            if (null != writer) {
-                if (nUncommitted > 0 || commitHysteresisInMicros > 0) {
-                    writer.commit();
-                    lastCommitEpochMs = milliClock.getTicks();
-                }
-                writer.close();
-                writer = null;
-            }
+            handleWriterRelease();
         }
 
         private class ThreadLocalDetails implements Closeable {
@@ -849,16 +840,17 @@ class LineTcpMeasurementScheduler implements Closeable {
             @Override
             public void close() {
                 Misc.freeObjList(symbolCacheByColumnIndex);
-                path.close();
+                Misc.free(path);
             }
 
             private SymbolCache addSymbolCache(int colIndex) {
                 try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
                     path.of(cairoConfiguration.getRoot()).concat(tableName);
                     SymbolCache symCache;
-                    if (unusedSymbolCaches.size() > 0) {
-                        symCache = unusedSymbolCaches.get(unusedSymbolCaches.size() - 1);
-                        unusedSymbolCaches.remove(unusedSymbolCaches.size() - 1);
+                    final int lastUnusedSymbolCacheIndex = unusedSymbolCaches.size() - 1;
+                    if (lastUnusedSymbolCacheIndex > -1) {
+                        symCache = unusedSymbolCaches.get(lastUnusedSymbolCacheIndex);
+                        unusedSymbolCaches.remove(lastUnusedSymbolCacheIndex);
                     } else {
                         symCache = new SymbolCache();
                     }
@@ -882,22 +874,27 @@ class LineTcpMeasurementScheduler implements Closeable {
             }
 
             int getColumnIndex(CharSequence colName) {
-                int colIndex = columnIndexByName.get(colName);
-                if (colIndex == CharSequenceIntHashMap.NO_ENTRY_VALUE) {
-                    try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
-                        TableReaderMetadata metadata = reader.getMetadata();
-                        colIndex = metadata.getColumnIndexQuiet(colName);
-                        if (colIndex < 0) {
-                            return -1;
-                        }
-                        // re-cache all column names once
-                        columnIndexByName.clear();
-                        for (int n = 0, sz = metadata.getColumnCount(); n < sz; n++) {
-                            columnIndexByName.put(metadata.getColumnName(n), n);
-                        }
-                    }
+                final int colIndex = columnIndexByName.get(colName);
+                if (colIndex != CharSequenceIntHashMap.NO_ENTRY_VALUE) {
+                    return colIndex;
                 }
-                return colIndex;
+                return getColumnIndex0(colName);
+            }
+
+            private int getColumnIndex0(CharSequence colName) {
+                try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+                    TableReaderMetadata metadata = reader.getMetadata();
+                    int colIndex = metadata.getColumnIndexQuiet(colName);
+                    if (colIndex < 0) {
+                        return -1;
+                    }
+                    // re-cache all column names once
+                    columnIndexByName.clear();
+                    for (int n = 0, sz = metadata.getColumnCount(); n < sz; n++) {
+                        columnIndexByName.put(metadata.getColumnName(n), n);
+                    }
+                    return colIndex;
+                }
             }
 
             int getSymbolIndex(int colIndex, CharSequence symValue) {
@@ -928,12 +925,9 @@ class LineTcpMeasurementScheduler implements Closeable {
         private final DirectCharSink charSink = new DirectCharSink(64);
         private final FloatingDirectCharSink floatingCharSink = new FloatingDirectCharSink();
         private final ObjList<TableUpdateDetails> assignedTables = new ObjList<>();
-        private long lastMaintenanceJobMillis = 0;
+        private long lastMaintenanceMillis = 0;
 
-        private WriterJob(
-                int id,
-                Sequence sequence
-        ) {
+        private WriterJob(int id, Sequence sequence) {
             super();
             this.workerId = id;
             this.sequence = sequence;
@@ -956,23 +950,23 @@ class LineTcpMeasurementScheduler implements Closeable {
                 }
             }
 
-            appendMemory.close();
-            path.close();
-            charSink.close();
-            floatingCharSink.close();
+            Misc.free(appendMemory);
+            Misc.free(path);
+            Misc.free(charSink);
+            Misc.free(floatingCharSink);
             Misc.freeObjList(assignedTables);
             assignedTables.clear();
         }
 
         private void doMaintenance() {
-            long millis = milliClock.getTicks();
-            if ((millis - lastMaintenanceJobMillis) < maintenanceJobHysteresisInMs) {
+            final long millis = milliClock.getTicks();
+            if (millis - lastMaintenanceMillis < maintenanceInterval) {
                 return;
             }
 
-            lastMaintenanceJobMillis = millis;
+            lastMaintenanceMillis = millis;
             for (int n = 0, sz = assignedTables.size(); n < sz; n++) {
-                assignedTables.getQuick(n).handleWriterThreadMaintenance();
+                assignedTables.getQuick(n).handleWriterThreadMaintenance(millis);
             }
         }
 
@@ -1008,6 +1002,7 @@ class LineTcpMeasurementScheduler implements Closeable {
 
                         default:
                             eventProcessed = true;
+                            break;
                     }
                 }
 
@@ -1043,8 +1038,11 @@ class LineTcpMeasurementScheduler implements Closeable {
                         break;
                     }
                 }
-                LOG.info().$("rebalance cycle, old thread finished [threadId=").$(workerId).$(", table=").$(event.tableUpdateDetails.tableName).$(']').$(", nUncommitted=")
-                        .$(event.tableUpdateDetails.nUncommitted).$(']').$();
+                LOG.info()
+                        .$("rebalance cycle, old thread finished [threadId=").$(workerId)
+                        .$(", table=").$(event.tableUpdateDetails.tableName)
+                        .$(", nUncommitted=").$(event.tableUpdateDetails.nUncommitted)
+                        .I$();
                 event.tableUpdateDetails.switchThreads();
                 event.rebalanceReleasedByFromThread = true;
             }
@@ -1063,9 +1061,11 @@ class LineTcpMeasurementScheduler implements Closeable {
                     // Table must have been re-assigned to an IO thread
                     return true;
                 }
-                LOG.info().$("releasing writer, its been idle since ").$ts(tableUpdateDetails.lastMeasurementReceivedEpochMs *
-                        1_000).$("[tableName=").$(tableUpdateDetails.tableName).$(']')
-                        .$();
+                LOG.info()
+                        .$("releasing writer, its been idle since ").$ts(tableUpdateDetails.lastMeasurementMillis * 1_000)
+                        .$("[tableName=").$(tableUpdateDetails.tableName)
+                        .I$();
+
                 tableUpdateDetails.handleWriterRelease();
             } finally {
                 tableUpdateDetailsLock.readLock().unlock();
@@ -1091,16 +1091,6 @@ class LineTcpMeasurementScheduler implements Closeable {
         }
 
         @Override
-        public int getWorkerId() {
-            return workerId;
-        }
-
-        @Override
-        public TableUpdateDetails getTableUpdateDetails(CharSequence tableName) {
-            return localTableUpdateDetailsByTableName.get(tableName);
-        }
-
-        @Override
         public void addTableUpdateDetails(TableUpdateDetails tableUpdateDetails) {
             localTableUpdateDetailsByTableName.put(tableUpdateDetails.tableName, tableUpdateDetails);
             tableUpdateDetails.nNetworkIoWorkers++;
@@ -1109,13 +1099,23 @@ class LineTcpMeasurementScheduler implements Closeable {
         }
 
         @Override
+        public void close() {
+            Misc.freeObjList(unusedSymbolCaches);
+        }
+
+        @Override
+        public TableUpdateDetails getTableUpdateDetails(CharSequence tableName) {
+            return localTableUpdateDetailsByTableName.get(tableName);
+        }
+
+        @Override
         public ObjList<SymbolCache> getUnusedSymbolCaches() {
             return unusedSymbolCaches;
         }
 
         @Override
-        public void close() {
-            Misc.freeObjList(unusedSymbolCaches);
+        public int getWorkerId() {
+            return workerId;
         }
 
         @Override
@@ -1137,7 +1137,7 @@ class LineTcpMeasurementScheduler implements Closeable {
             }
 
             long millis = milliClock.getTicks();
-            if ((millis - lastMaintenanceJobMillis) > maintenanceJobHysteresisInMs) {
+            if ((millis - lastMaintenanceJobMillis) > maintenanceInterval) {
                 busy = doMaintenance(millis);
                 if (!busy) {
                     lastMaintenanceJobMillis = millis;
@@ -1150,27 +1150,20 @@ class LineTcpMeasurementScheduler implements Closeable {
         private boolean doMaintenance(long millis) {
             for (int n = 0, sz = localTableUpdateDetailsByTableName.size(); n < sz; n++) {
                 TableUpdateDetails tableUpdateDetails = localTableUpdateDetailsByTableName.get(localTableUpdateDetailsByTableName.keys().get(n));
-                if (millis - tableUpdateDetails.lastMeasurementReceivedEpochMs >= minIdleMsBeforeWriterRelease) {
+                if (millis - tableUpdateDetails.lastMeasurementMillis >= writerIdleTimeout) {
                     tableUpdateDetailsLock.writeLock().lock();
                     try {
                         if (tableUpdateDetails.nNetworkIoWorkers == 1) {
-                            long seq = getNextPublisherEventSequence();
-                            if (seq >= 0) {
-                                try {
-                                    LineTcpMeasurementEvent event = queue.get(seq);
-                                    event.createReleaseWriterEvent(tableUpdateDetails);
-                                    removeTableUpdateDetails(tableUpdateDetails);
-                                    tableUpdateDetailsByTableName.remove(tableUpdateDetails.tableName);
-                                    idleTableUpdateDetailsByTableName.put(tableUpdateDetails.tableName, tableUpdateDetails);
-                                    return true;
-                                } finally {
-
-                                    pubSeq.done(seq);
-                                }
-                            } else {
-                                return true;
+                            final long seq = getNextPublisherEventSequence();
+                            if (seq > -1) {
+                                LineTcpMeasurementEvent event = queue.get(seq);
+                                event.createReleaseWriterEvent(tableUpdateDetails);
+                                removeTableUpdateDetails(tableUpdateDetails);
+                                tableUpdateDetailsByTableName.remove(tableUpdateDetails.tableName);
+                                idleTableUpdateDetailsByTableName.put(tableUpdateDetails.tableName, tableUpdateDetails);
+                                pubSeq.done(seq);
                             }
-
+                            return true;
                         } else {
                             removeTableUpdateDetails(tableUpdateDetails);
                         }
@@ -1210,8 +1203,8 @@ class LineTcpMeasurementScheduler implements Closeable {
         }
 
         private void removeTableUpdateDetails(TableUpdateDetails tableUpdateDetails) {
-            tableUpdateDetails.nNetworkIoWorkers--;
             localTableUpdateDetailsByTableName.remove(tableUpdateDetails.tableName);
+            tableUpdateDetails.nNetworkIoWorkers--;
             tableUpdateDetails.localDetailsArray[workerId].clear();
             LOG.info()
                     .$("network IO thread released table [workerId=").$(workerId)

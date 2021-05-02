@@ -33,43 +33,49 @@ import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 
 public interface LineTcpReceiverConfiguration {
-    boolean isEnabled();
+    String getAuthDbPath();
 
     CairoSecurityContext getCairoSecurityContext();
 
-    LineProtoTimestampAdapter getTimestampAdapter();
-
     int getConnectionPoolInitialCapacity();
 
-    IODispatcherConfiguration getNetDispatcherConfiguration();
+    int getDefaultPartitionBy();
 
-    int getNetMsgBufferSize();
+    WorkerPoolAwareConfiguration getIOWorkerPoolConfiguration();
+
+    /**
+     * Interval in milliseconds to perform writer maintenance. Such maintenance can
+     * incur cost of commit (in case of using "hysteresis"), load rebalance and writer release.
+     *
+     * @return interval in milliseconds
+     */
+    long getMaintenanceInterval();
+
+    double getMaxLoadRatio();
 
     int getMaxMeasurementSize();
-
-    NetworkFacade getNetworkFacade();
-
-    int getWriterQueueCapacity();
 
     MicrosecondClock getMicrosecondClock();
 
     MillisecondClock getMillisecondClock();
 
-    WorkerPoolAwareConfiguration getWriterWorkerPoolConfiguration();
-
-    WorkerPoolAwareConfiguration getIOWorkerPoolConfiguration();
+    long getWriterIdleTimeout();
 
     int getNUpdatesPerLoadRebalance();
 
-    double getMaxLoadRatio();
+    IODispatcherConfiguration getNetDispatcherConfiguration();
 
-    long getMaintenanceJobHysteresisInMs();
-    
-    String getAuthDbPath();
+    int getNetMsgBufferSize();
 
-    int getDefaultPartitionBy();
+    NetworkFacade getNetworkFacade();
+
+    LineProtoTimestampAdapter getTimestampAdapter();
+
+    int getWriterQueueCapacity();
+
+    WorkerPoolAwareConfiguration getWriterWorkerPoolConfiguration();
+
+    boolean isEnabled();
 
     boolean isIOAggressiveRecv();
-
-    long getMinIdleMsBeforeWriterRelease();
 }

@@ -312,7 +312,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private long lineTcpIOWorkerSleepThreshold;
     private int lineTcpNUpdatesPerLoadRebalance;
     private double lineTcpMaxLoadRatio;
-    private long lineTcpMaintenanceJobHysteresisInMs;
+    private long lineTcpMaintenanceInterval;
     private String lineTcpAuthDbPath;
     private int lineDefaultPartitionBy;
     private boolean lineTcpAggressiveRecv;
@@ -698,7 +698,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.lineTcpIOWorkerSleepThreshold = getLong(properties, env, "line.tcp.io.worker.sleep.threshold", 10000);
                 this.lineTcpNUpdatesPerLoadRebalance = getInt(properties, env, "line.tcp.n.updates.per.load.balance", 10_000);
                 this.lineTcpMaxLoadRatio = getDouble(properties, env, "line.tcp.max.load.ratio", 1.9);
-                this.lineTcpMaintenanceJobHysteresisInMs = getInt(properties, env, "line.tcp.maintenance.job.hysteresis.in.ms", 250);
+                this.lineTcpMaintenanceInterval = getInt(properties, env, "line.tcp.maintenance.job.hysteresis.in.ms", 30_000);
                 this.lineTcpAuthDbPath = getString(properties, env, "line.tcp.auth.db.path", null);
                 String defaultPartitionByProperty = getString(properties, env, "line.tcp.default.partition.by", "DAY");
                 this.lineDefaultPartitionBy = PartitionBy.fromString(defaultPartitionByProperty);
@@ -2156,8 +2156,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public long getMaintenanceJobHysteresisInMs() {
-            return lineTcpMaintenanceJobHysteresisInMs;
+        public long getMaintenanceInterval() {
+            return lineTcpMaintenanceInterval;
         }
 
         @Override
@@ -2176,7 +2176,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public long getMinIdleMsBeforeWriterRelease() {
+        public long getWriterIdleTimeout() {
             return minIdleMsBeforeWriterRelease;
         }
     }
