@@ -27,11 +27,19 @@ package io.questdb.log;
 public interface Log {
     LogRecord debug();
 
+    LogRecord debugW();
+
     LogRecord error();
+
+    LogRecord errorW();
 
     LogRecord info();
 
+    LogRecord infoW();
+
     LogRecord advisory();
+
+    LogRecord advisoryW();
 
     boolean isDebugEnabled();
 
@@ -39,7 +47,11 @@ public interface Log {
 
     LogRecord xinfo();
 
+    LogRecord xInfoW();
+
     LogRecord xdebug();
+
+    LogRecord xDebugW();
 
     LogRecord xadvisory();
 }
