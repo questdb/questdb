@@ -57,6 +57,8 @@ import java.sql.Date;
 import java.sql.*;
 import java.text.SimpleDateFormat;
 import java.util.*;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 import java.util.stream.LongStream;
 import java.util.stream.Stream;
@@ -1564,7 +1566,7 @@ nodejs code:
 
     @Test
     public void testLoginBadPassword() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             try (PGWireServer ignored = createPGServer(1)) {
                 Properties properties = new Properties();
                 properties.setProperty("user", "admin");
@@ -1574,6 +1576,228 @@ nodejs code:
                     Assert.fail();
                 } catch (SQLException e) {
                     TestUtils.assertContains(e.getMessage(), "invalid username/password");
+                }
+            }
+        });
+    }
+
+    private static class DelayingNetworkFacade extends NetworkFacadeImpl {
+        private final AtomicBoolean delaying = new AtomicBoolean(false);
+        private final AtomicInteger delayedAttemptsCounter = new AtomicInteger(0);
+
+        @Override
+        public int send(long fd, long buffer, int bufferLen) {
+            if (!delaying.get()) {
+                return super.send(fd, buffer, bufferLen);
+            }
+
+            if (delayedAttemptsCounter.decrementAndGet() < 0) {
+                delaying.set(false);
+            }
+            return 0;
+        }
+
+        void startDelaying(int delayedAttempts) {
+            delayedAttemptsCounter.set(delayedAttempts);
+            delaying.set(true);
+        }
+    }
+
+    @Test
+    public void testSlowClient() throws Exception {
+        assertMemoryLeak(() -> {
+
+            DelayingNetworkFacade nf = new DelayingNetworkFacade();
+            int idleSendCountBeforeGivingUp = 10_000;
+            PGWireConfiguration configuration = new DefaultPGWireConfiguration() {
+
+                @Override
+                public NetworkFacade getNetworkFacade() {
+                    return nf;
+                }
+
+                @Override
+                public int getIdleSendCountBeforeGivingUp() {
+                    return idleSendCountBeforeGivingUp;
+                }
+
+                @Override
+                public int getSendBufferSize() {
+                    return 1024;
+                }
+            };
+
+            try (
+                    PGWireServer ignored = createPGServer(configuration);
+                    Connection connection = getConnection(false, true);
+                    Statement statement = connection.createStatement()
+            ) {
+                String sql = "SELECT * FROM long_sequence(100) x";
+
+                nf.startDelaying(idleSendCountBeforeGivingUp);
+
+                boolean hasResultSet = statement.execute(sql);
+                // Temporary log showing a value of hasResultSet, as it is currently impossible to stop the server and complete the test.
+                LOG.info().$("hasResultSet=").$(hasResultSet).$();
+                Assert.assertTrue(hasResultSet);
+            }
+        });
+    }
+
+    @Test
+    public void testSlowClient2() throws Exception {
+        assertMemoryLeak(() -> {
+
+            DelayingNetworkFacade nf = new DelayingNetworkFacade();
+            int idleSendCountBeforeGivingUp = 10_000;
+            PGWireConfiguration configuration = new DefaultPGWireConfiguration() {
+
+                @Override
+                public NetworkFacade getNetworkFacade() {
+                    return nf;
+                }
+
+                @Override
+                public int getIdleSendCountBeforeGivingUp() {
+                    return idleSendCountBeforeGivingUp;
+                }
+            };
+
+            try (
+                    PGWireServer ignored = createPGServer(configuration);
+                    Connection connection = getConnection(false, true);
+                    Statement statement = connection.createStatement()
+            ) {
+                statement.executeUpdate("CREATE TABLE sensors (ID LONG, make STRING, city STRING)");
+                statement.executeUpdate("INSERT INTO sensors\n" +
+                        "    SELECT\n" +
+                        "        x ID, \n" +
+                        "        rnd_str('Eberle', 'Honeywell', 'Omron', 'United Automation', 'RS Pro') make,\n" +
+                        "        rnd_str('New York', 'Miami', 'Boston', 'Chicago', 'San Francisco') city\n" +
+                        "    FROM long_sequence(10000) x");
+                statement.executeUpdate("CREATE TABLE readings\n" +
+                        "AS(\n" +
+                        "    SELECT\n" +
+                        "        x ID,\n" +
+                        "        timestamp_sequence(to_timestamp('2019-10-17T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), rnd_long(1,10,2) * 100000L) ts,\n" +
+                        "        rnd_double(0)*8 + 15 temp,\n" +
+                        "        rnd_long(0, 10000, 0) sensorId\n" +
+                        "    FROM long_sequence(10000) x)\n" +
+                        "TIMESTAMP(ts)\n" +
+                        "PARTITION BY MONTH");
+
+                String sql = "SELECT *\n" +
+                        "FROM readings\n" +
+                        "JOIN(\n" +
+                        "    SELECT ID sensId, make, city\n" +
+                        "    FROM sensors)\n" +
+                        "ON readings.sensorId = sensId";
+
+                nf.startDelaying(idleSendCountBeforeGivingUp);
+
+                boolean hasResultSet = statement.execute(sql);
+                // Temporary log showing a value of hasResultSet, as it is currently impossible to stop the server and complete the test.
+                LOG.info().$("hasResultSet=").$(hasResultSet).$();
+                Assert.assertTrue(hasResultSet);
+            }
+        });
+    }
+
+    @Test
+    public void testSmallSendBufferForRowDescription() throws Exception {
+        assertMemoryLeak(() -> {
+
+            PGWireConfiguration configuration = new DefaultPGWireConfiguration() {
+                @Override
+                public int getSendBufferSize() {
+                    return 256;
+                }
+            };
+
+            try (
+                    PGWireServer ignored = createPGServer(configuration);
+                    Connection connection = getConnection(false, true);
+                    Statement statement = connection.createStatement()
+            ) {
+                statement.executeUpdate("create table x as (" +
+                        "select" +
+                        " rnd_str(5,16,2) i," +
+                        " rnd_str(5,16,2) sym," +
+                        " rnd_str(5,16,2) amt," +
+                        " rnd_str(5,16,2) timestamp," +
+                        " rnd_str(5,16,2) b," +
+                        " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                        " rnd_str(5,16,2) d," +
+                        " rnd_str(5,16,2) e," +
+                        " rnd_str(5,16,2) f," +
+                        " rnd_str(5,16,2) g," +
+                        " rnd_str(5,16,2) ik," +
+                        " rnd_str(5,16,2) j," +
+                        " timestamp_sequence(500000000000L,100000000L) ts," +
+                        " rnd_str(5,16,2) l," +
+                        " rnd_str(5,16,2) m," +
+                        " rnd_str(5,16,2) n," +
+                        " rnd_str(5,16,2) t," +
+                        " rnd_str(5,16,2) l256" +
+                        " from long_sequence(10000)" +
+                        ") timestamp (ts) partition by DAY");
+                String sql = "SELECT * FROM x";
+
+                try {
+                    statement.execute(sql);
+                    Assert.fail();
+                } catch (SQLException e) {
+                    TestUtils.assertContains(e.getMessage(), "not enough space in send buffer for row description");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testSmallSendBufferForRowData() throws Exception {
+        assertMemoryLeak(() -> {
+
+            PGWireConfiguration configuration = new DefaultPGWireConfiguration() {
+                @Override
+                public int getSendBufferSize() {
+                    return 300;
+                }
+            };
+
+            try (
+                    PGWireServer ignored = createPGServer(configuration);
+                    Connection connection = getConnection(false, true);
+                    Statement statement = connection.createStatement()
+            ) {
+                statement.executeUpdate("create table x as (" +
+                        "select" +
+                        " rnd_str(5,16,2) i," +
+                        " rnd_str(5,16,2) sym," +
+                        " rnd_str(5,16,2) amt," +
+                        " rnd_str(5,16,2) timestamp," +
+                        " rnd_str(5,16,2) b," +
+                        " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                        " rnd_str(5,16,2) d," +
+                        " rnd_str(5,16,2) e," +
+                        " rnd_str(300,300,2) f," + // <-- really long string
+                        " rnd_str(5,16,2) g," +
+                        " rnd_str(5,16,2) ik," +
+                        " rnd_str(5,16,2) j," +
+                        " timestamp_sequence(500000000000L,100000000L) ts," +
+                        " rnd_str(5,16,2) l," +
+                        " rnd_str(5,16,2) m," +
+                        " rnd_str(5,16,2) n," +
+                        " rnd_str(5,16,2) t," +
+                        " rnd_str(5,16,2) l256" +
+                        " from long_sequence(10000)" +
+                        ") timestamp (ts) partition by DAY");
+                String sql = "SELECT * FROM x";
+
+                try {
+                    statement.execute(sql);
+                    Assert.fail();
+                } catch (SQLException e) {
+                    TestUtils.assertContains(e.getMessage(), "not enough space in send buffer for row data");
                 }
             }
         });
