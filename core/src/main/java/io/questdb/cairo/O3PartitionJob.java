@@ -141,8 +141,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     0,
                     0,
                     srcDataTxn,
-                    last ? OPEN_LAST_PARTITION_FOR_APPEND : OPEN_NEW_PARTITION_FOR_APPEND,
-                    last ? -columns.getQuick(getPrimaryColumnIndex(timestampIndex)).getFd() : 0,  // timestamp fd
+                    OPEN_NEW_PARTITION_FOR_APPEND,
+                    0,  // timestamp fd
                     0,
                     0,
                     timestampIndex,
@@ -437,11 +437,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 if (prefixType == O3_BLOCK_NONE) {
                     // We do not need to create a copy of partition when we simply need to append
                     // existing the one.
-                    if (last) {
-                        openColumnMode = OPEN_LAST_PARTITION_FOR_APPEND;
-                    } else {
-                        openColumnMode = OPEN_MID_PARTITION_FOR_APPEND;
-                    }
+                    openColumnMode = OPEN_MID_PARTITION_FOR_APPEND;
                 } else {
                     txnPartition(path.trimTo(pplen), txn);
                     createDirsOrFail(ff, path.slash$(), tableWriter.getConfiguration().getMkDirMode());
@@ -875,6 +871,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         );
                     }
                 } catch (Throwable e) {
+                    tableWriter.o3BumpErrorCount();
                     LOG.error().$("open column error [table=").$(tableWriter.getTableName())
                             .$(", e=").$(e)
                             .I$();
