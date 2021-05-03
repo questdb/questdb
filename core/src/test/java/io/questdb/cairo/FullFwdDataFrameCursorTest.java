@@ -1060,7 +1060,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                 writer.commit();
                 // closing should fail
             } catch (CairoException e) {
-                TestUtils.assertContains(e.getMessage(), "remove");
+                TestUtils.assertContains(e.getFlyweightMessage(), "remove");
             }
 
             new TableWriter(AbstractCairoTest.configuration, "ABC").close();
@@ -1169,7 +1169,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                     writer.commit();
                     Assert.fail();
                 } catch (CairoError e) {
-                    TestUtils.assertContains(e.getMessage(), "distressed");
+                    TestUtils.assertContains(e.getFlyweightMessage(), "distressed");
                 }
 
                 // test that we cannot rollback
@@ -1177,7 +1177,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                     writer.rollback();
                     Assert.fail();
                 } catch (CairoError e) {
-                    TestUtils.assertContains(e.getMessage(), "distressed");
+                    TestUtils.assertContains(e.getFlyweightMessage(), "distressed");
                 }
             }
 

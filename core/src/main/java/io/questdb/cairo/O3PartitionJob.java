@@ -77,10 +77,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             O3Basket o3Basket,
             long tmpBuf
     ) {
-
         // is out of order data hitting the last partition?
         // if so we do not need to re-open files and and write to existing file descriptors
-
         final long oooTimestampLo = getTimestampIndexValue(sortedTimestampsAddr, srcOooLo);
         final RecordMetadata metadata = tableWriter.getMetadata();
         final int timestampIndex = metadata.getTimestampIndex();
@@ -143,8 +141,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     0,
                     0,
                     srcDataTxn,
-                    last ? OPEN_LAST_PARTITION_FOR_APPEND : OPEN_NEW_PARTITION_FOR_APPEND,
-                    last ? -columns.getQuick(getPrimaryColumnIndex(timestampIndex)).getFd() : 0,  // timestamp fd
+                    OPEN_NEW_PARTITION_FOR_APPEND,
+                    0,  // timestamp fd
                     0,
                     0,
                     timestampIndex,
@@ -439,11 +437,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 if (prefixType == O3_BLOCK_NONE) {
                     // We do not need to create a copy of partition when we simply need to append
                     // existing the one.
-                    if (last) {
-                        openColumnMode = OPEN_LAST_PARTITION_FOR_APPEND;
-                    } else {
-                        openColumnMode = OPEN_MID_PARTITION_FOR_APPEND;
-                    }
+                    openColumnMode = OPEN_MID_PARTITION_FOR_APPEND;
                 } else {
                     txnPartition(path.trimTo(pplen), txn);
                     createDirsOrFail(ff, path.slash$(), tableWriter.getConfiguration().getMkDirMode());
@@ -777,11 +771,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
                 final BitmapIndexWriter indexWriter;
                 if (isIndexed) {
-                    if (openColumnMode == OPEN_LAST_PARTITION_FOR_APPEND) {
-                        indexWriter = tableWriter.getBitmapIndexWriter(i);
-                    } else {
-                        indexWriter = o3Basket.nextIndexer();
-                    }
+                    indexWriter = o3Basket.nextIndexer();
                 } else {
                     indexWriter = null;
                 }
@@ -881,10 +871,10 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         );
                     }
                 } catch (Throwable e) {
+                    tableWriter.o3BumpErrorCount();
                     LOG.error().$("open column error [table=").$(tableWriter.getTableName())
                             .$(", e=").$(e)
                             .I$();
-                    tableWriter.o3BumpErrorCount();
                     columnsInFlight = i + 1;
                     throw e;
                 }

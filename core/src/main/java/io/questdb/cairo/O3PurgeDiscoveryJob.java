@@ -189,22 +189,20 @@ public class O3PurgeDiscoveryJob extends AbstractQueueConsumerJob<O3PurgeDiscove
     @Override
     protected boolean doRun(int workerId, long cursor) {
         final O3PurgeDiscoveryTask task = queue.get(cursor);
-        try {
-            return discoverPartitions(
-                    configuration.getFilesFacade(),
-                    sink[workerId],
-                    nativeLPSZ[workerId],
-                    txnList[workerId],
-                    purgeQueue,
-                    purgePubSeq,
-                    configuration.getRoot(),
-                    task.getTableName(),
-                    task.getPartitionBy(),
-                    task.getTimestamp(),
-                    task.getTxnScoreboard()
-            );
-        } finally {
-            subSeq.done(cursor);
-        }
+        final boolean useful = discoverPartitions(
+                configuration.getFilesFacade(),
+                sink[workerId],
+                nativeLPSZ[workerId],
+                txnList[workerId],
+                purgeQueue,
+                purgePubSeq,
+                configuration.getRoot(),
+                task.getTableName(),
+                task.getPartitionBy(),
+                task.getTimestamp(),
+                task.getTxnScoreboard()
+        );
+        subSeq.done(cursor);
+        return useful;
     }
 }

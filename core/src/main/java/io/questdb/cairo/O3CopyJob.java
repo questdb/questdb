@@ -628,14 +628,17 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             long srcTimestampSize,
             TableWriter tableWriter
     ) {
-        final FilesFacade ff = tableWriter.getFilesFacade();
-        O3Utils.unmap(ff, srcTimestampAddr, srcTimestampSize);
-        O3Utils.close(ff, srcTimestampFd);
-        if (timestampMergeIndexAddr != 0) {
-            Vect.freeMergedIndex(timestampMergeIndexAddr);
+        try {
+            final FilesFacade ff = tableWriter.getFilesFacade();
+            O3Utils.unmap(ff, srcTimestampAddr, srcTimestampSize);
+            O3Utils.close(ff, srcTimestampFd);
+            if (timestampMergeIndexAddr != 0) {
+                Vect.freeMergedIndex(timestampMergeIndexAddr);
+            }
+        } finally {
+            tableWriter.o3ClockDownPartitionUpdateCount();
+            tableWriter.o3CountDownDoneLatch();
         }
-        tableWriter.o3ClockDownPartitionUpdateCount();
-        tableWriter.o3CountDownDoneLatch();
     }
 
     // lowest timestamp of partition where data is headed

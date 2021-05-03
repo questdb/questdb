@@ -217,7 +217,7 @@ public interface CairoConfiguration {
 
     int getO3CopyQueueCapacity();
 
-    int getO3UpdPartitionSizeQueueCapacity();
+    int getO3PartitionUpdateQueueCapacity();
 
     BuildInformation getBuildInformation();
 

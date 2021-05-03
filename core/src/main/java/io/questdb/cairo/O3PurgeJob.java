@@ -74,29 +74,27 @@ public class O3PurgeJob extends AbstractQueueConsumerJob<O3PurgeTask> {
     @Override
     protected boolean doRun(int workerId, long cursor) {
         final O3PurgeTask task = queue.get(cursor);
-        try {
-            int errno;
-            if ((errno = purgePartitionDir(
-                    configuration.getFilesFacade(),
-                    Path.getThreadLocal(configuration.getRoot()).concat(task.getTableName()),
-                    task.getPartitionBy(),
-                    task.getTimestamp(),
-                    task.getTxnScoreboard(),
-                    task.getNameTxnToRemove(),
-                    task.getMinTxnToExpect()
-            )) == 0) {
-                return true;
-            } else {
-                LOG.info()
-                        .$("could not purge, re-queue? [table=").$(task.getTableName())
-                        .$(", ts=").$ts(task.getTimestamp())
-                        .$(", txn=").$(task.getNameTxnToRemove())
-                        .$(", errno=").$(errno)
-                        .$(']').$();
-                return false;
-            }
-        } finally {
-            subSeq.done(cursor);
+        int errno = purgePartitionDir(
+                configuration.getFilesFacade(),
+                Path.getThreadLocal(configuration.getRoot()).concat(task.getTableName()),
+                task.getPartitionBy(),
+                task.getTimestamp(),
+                task.getTxnScoreboard(),
+                task.getNameTxnToRemove(),
+                task.getMinTxnToExpect()
+        );
+        subSeq.done(cursor);
+
+        if (errno == 0) {
+            return true;
+        } else {
+            LOG.info()
+                    .$("could not purge, re-queue? [table=").$(task.getTableName())
+                    .$(", ts=").$ts(task.getTimestamp())
+                    .$(", txn=").$(task.getNameTxnToRemove())
+                    .$(", errno=").$(errno)
+                    .$(']').$();
+            return false;
         }
     }
 }
