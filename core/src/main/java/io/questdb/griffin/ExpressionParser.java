@@ -520,7 +520,7 @@ class ExpressionParser {
                             }
                             if (prevBranch == BRANCH_DOT) {
                                 final ExpressionNode en = opStack.peek();
-                                if (en != null && en.type != ExpressionNode.CONTROL) {
+                                if (en != null && en.type != ExpressionNode.CONTROL && en.type != ExpressionNode.OPERATION) {
                                     // check if this is '1.2' or '1. 2'
                                     if (position > 0 && lexer.getContent().charAt(position - 1) == '.') {
                                         if (en.token instanceof GenericLexer.FloatingSequence) {
