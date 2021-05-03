@@ -212,9 +212,9 @@ public class O3HysteresisTest extends AbstractO3Test {
         executeWithPool(0, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
             try(TableModel tableModel = new TableModel(engine.getConfiguration(), "table", PartitionBy.DAY)) {
                 tableModel
-                        .col("id", ColumnType.LONG)    // 0x1
-                        .col("ok", ColumnType.FLOAT)   // 0x2
-                        .col("str", ColumnType.STRING) // 0x4
+                        .col("id", ColumnType.LONG)
+                        .col("ok", ColumnType.FLOAT)
+                        .col("str", ColumnType.STRING)
                         .timestamp("ts");
                 testBigUncommittedMove1(engine, compiler, sqlExecutionContext, tableModel);
             }
