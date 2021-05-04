@@ -126,6 +126,20 @@ class ExpressionParser {
                 boolean processDefaultBranch = false;
                 int position = lexer.lastTokenPosition();
                 switch (thisChar) {
+                    case '-':
+                    case '+':
+                        processDefaultBranch = true;
+                        if (prevBranch == BRANCH_CONSTANT) {
+                            if (position > 0) {
+                                char c = lexer.getContent().charAt(position - 1);
+                                if (c == 'e' || c == 'E') { // Incomplete scientific floating-point literal
+                                    ExpressionNode en = opStack.peek();
+                                    ((GenericLexer.FloatingSequence) en.token).setHi(position + 1);
+                                    processDefaultBranch = false;
+                                }
+                            }
+                        }
+                        break;
                     case '.':
                         // Check what is on stack. If we have 'a .b' we have to stop processing
                         if (thisBranch == BRANCH_LITERAL || thisBranch == BRANCH_CONSTANT) {
@@ -494,9 +508,19 @@ class ExpressionParser {
                             }
 
                             thisBranch = BRANCH_CONSTANT;
+                            if (prevBranch == BRANCH_CONSTANT && position > 0) {
+                                char prevChar = lexer.getContent().charAt(position - 1);
+                                if (prevChar == '-' || prevChar == '+') {
+                                    final ExpressionNode en = opStack.peek();
+                                    if (en.token instanceof GenericLexer.FloatingSequence) {
+                                        ((GenericLexer.FloatingSequence) en.token).setHi(lexer.getTokenHi());
+                                        break;
+                                    }
+                                }
+                            }
                             if (prevBranch == BRANCH_DOT) {
                                 final ExpressionNode en = opStack.peek();
-                                if (en != null && en.type != ExpressionNode.CONTROL) {
+                                if (en != null && en.type != ExpressionNode.CONTROL && en.type != ExpressionNode.OPERATION) {
                                     // check if this is '1.2' or '1. 2'
                                     if (position > 0 && lexer.getContent().charAt(position - 1) == '.') {
                                         if (en.token instanceof GenericLexer.FloatingSequence) {
