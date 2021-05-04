@@ -209,6 +209,7 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
     }
 
     public Path of(CharSequence str) {
+        checkClosed();
         if (str == this) {
             this.len = str.length();
             this.wptr = ptr + len;
@@ -220,7 +221,14 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
         }
     }
 
+    private void checkClosed() {
+        if (ptr == 0) {
+            this.ptr = this.wptr = Unsafe.malloc(capacity + 1);
+        }
+    }
+
     public Path of(CharSequence str, int from, int to) {
+        checkClosed();
         this.wptr = ptr;
         this.len = 0;
         return concat(str, from, to);
