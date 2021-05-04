@@ -28,6 +28,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableModel;
 import io.questdb.griffin.AbstractGriffinTest;
+import io.questdb.std.FilesFacade;
 import io.questdb.std.str.Path;
 import org.junit.Test;
 
@@ -47,7 +48,7 @@ public class TableMetadataCursorFactoryTest extends AbstractGriffinTest {
         }
 
         assertSql(
-                "tables",
+                "tables order by id desc",
                 "id\tname\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3CommitHysteresisMicros\n" +
                         "2\ttable2\tts2\tNONE\t1000\t0\n" +
                         "1\ttable1\tts1\tDAY\t1000\t0\n"
@@ -122,9 +123,13 @@ public class TableMetadataCursorFactoryTest extends AbstractGriffinTest {
             createPopulateTable(tm1, 0, "2020-01-01", 0);
         }
 
+        engine.releaseAllWriters();
+        engine.releaseAllReaders();
+
+        FilesFacade filesFacade = configuration.getFilesFacade();
         try (Path path = new Path()) {
             path.concat(configuration.getRoot()).concat("table1").concat(META_FILE_NAME).$();
-            configuration.getFilesFacade().remove(path);
+            filesFacade.remove(path);
         }
         assertSql(
                 "tables",
