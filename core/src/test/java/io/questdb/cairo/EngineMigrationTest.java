@@ -336,13 +336,6 @@ public class EngineMigrationTest extends AbstractGriffinTest {
         });
     }
 
-    @Override
-    public void tearDown() {
-        super.tearDown();
-        configOverrideMaxUncommittedRows = -1;
-        configOverrideO3CommitHysteresisInMicros = -1;
-    }
-
     @Test
     public void testMigrateTableSimple() throws Exception {
         configOverrideMaxUncommittedRows = 50001;

@@ -151,8 +151,9 @@ public class TableMetadataCursorFactory implements FunctionFactory {
                     nativeLPSZ.of(ff.findName(findPtr));
                     int type = ff.findType(findPtr);
                     if (type == Files.DT_DIR && nativeLPSZ.charAt(0) != '.') {
-                        record.of(executionContext, nativeLPSZ);
-                        return true;
+                        if (record.open(executionContext, nativeLPSZ)) {
+                            return true;
+                        }
                     }
                 }
             }
@@ -231,7 +232,7 @@ public class TableMetadataCursorFactory implements FunctionFactory {
                     return getStr(col).length();
                 }
 
-                public void of(SqlExecutionContext executionContext, NativeLPSZ tableName) {
+                public boolean open(SqlExecutionContext executionContext, NativeLPSZ tableName) {
                     if (reader != null) {
                         reader.close();
                         reader = null;
@@ -243,9 +244,12 @@ public class TableMetadataCursorFactory implements FunctionFactory {
                         // perhaps this folder is not a table
                         // remove it from the result set
                         LOG.info().$("cannot query table metadata [table=").$(tableName).$(", error=").$(e.getFlyweightMessage()).I$();
+                        return false;
                     } finally {
                         path.trimTo(pathLen);
                     }
+
+                    return true;
                 }
             }
         }
