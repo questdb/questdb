@@ -265,7 +265,7 @@ public class WriterPool extends AbstractPool implements ResourcePool<TableWriter
                 // we cache the writer in the writerPool whose access via the engine is thread safe
                 assert writer == null && e.lockFd != -1;
                 LOG.info().$("created [table=`").utf8(name).$("`, thread=").$(thread).$(']').$();
-                writer = new TableWriter(configuration, name, messageBus, false, e, root);
+                writer = new TableWriter(configuration, name, messageBus, false, e, root, true);
             }
 
             if (writer == null) {
@@ -385,7 +385,7 @@ public class WriterPool extends AbstractPool implements ResourcePool<TableWriter
         try {
             checkClosed();
             LOG.info().$("open [table=`").utf8(name).$("`, thread=").$(thread).$(']').$();
-            e.writer = new TableWriter(configuration, name, messageBus, true, e, root);
+            e.writer = new TableWriter(configuration, name, messageBus, true, e, root, false);
             return logAndReturn(e, PoolListener.EV_CREATE);
         } catch (CairoException ex) {
             LOG.error()
@@ -417,6 +417,7 @@ public class WriterPool extends AbstractPool implements ResourcePool<TableWriter
     private TableWriter logAndReturn(Entry e, short event) {
         LOG.info().$(">> [table=`").utf8(e.writer.getTableName()).$("`, thread=").$(e.owner).$(']').$();
         notifyListener(e.owner, e.writer.getTableName(), event);
+        e.writer.openDeferredMemory();
         return e.writer;
     }
 
@@ -473,6 +474,7 @@ public class WriterPool extends AbstractPool implements ResourcePool<TableWriter
             TableWriter w = writer;
             if (writer != null) {
                 writer.setLifecycleManager(DefaultLifecycleManager.INSTANCE);
+                writer.openDeferredMemory();
                 writer = null;
             }
             return w;

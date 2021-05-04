@@ -32,17 +32,19 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.MappedReadOnlyMemory;
 import io.questdb.cairo.vm.SinglePageMappedReadOnlyPageMemory;
+import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.ObjIntHashMap;
 import io.questdb.std.str.Path;
 
 class SymbolCache implements Closeable {
-    private final ObjIntHashMap<CharSequence> indexBySym = new ObjIntHashMap<>(8, 0.5, SymbolTable.VALUE_NOT_FOUND);
+    private final ObjIntHashMap<CharSequence> indexBySym;
     private final MappedReadOnlyMemory txMem = new SinglePageMappedReadOnlyPageMemory();
     private final SymbolMapReaderImpl symMapReader = new SymbolMapReaderImpl();
     private long transientSymCountOffset;
 
-    SymbolCache() {
+    public SymbolCache(CairoConfiguration configuration) {
+        indexBySym = new ObjIntHashMap<>(configuration.getDefaultSymbolCapacity(), 0.5, SymbolTable.VALUE_NOT_FOUND);
     }
 
     void of(CairoConfiguration configuration, Path path, CharSequence name, int symIndex) {
@@ -53,21 +55,21 @@ class SymbolCache implements Closeable {
         int symCount = txMem.getInt(transientSymCountOffset);
         path.trimTo(plen);
         symMapReader.of(configuration, path, name, symCount);
+        indexBySym.clear(symCount);
     }
 
     int getSymIndex(CharSequence symValue) {
-        int symIndex = indexBySym.get(symValue);
-
-        if (SymbolTable.VALUE_NOT_FOUND != symIndex) {
-            return symIndex;
+        final int index = indexBySym.keyIndex(symValue);
+        if (index < 0) {
+            return indexBySym.valueAt(index);
         }
 
         int symCount = txMem.getInt(transientSymCountOffset);
         symMapReader.updateSymbolCount(symCount);
-        symIndex = symMapReader.keyOf(symValue);
+        int symIndex = symMapReader.keyOf(symValue);
 
         if (SymbolTable.VALUE_NOT_FOUND != symIndex) {
-            indexBySym.put(symValue.toString(), symIndex);
+            indexBySym.putAt(index, Chars.toString(symValue), symIndex);
         }
 
         return symIndex;

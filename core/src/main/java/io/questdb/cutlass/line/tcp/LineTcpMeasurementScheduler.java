@@ -794,6 +794,7 @@ class LineTcpMeasurementScheduler implements Closeable {
 
         void handleWriterRelease() {
             if (null != writer) {
+                LOG.debug().$("release commit [table=").$(writer.getTableName()).I$();
                 writer.commit();
                 writer = Misc.free(writer);
                 resetUncommitted();
@@ -852,7 +853,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                         symCache = unusedSymbolCaches.get(lastUnusedSymbolCacheIndex);
                         unusedSymbolCaches.remove(lastUnusedSymbolCacheIndex);
                     } else {
-                        symCache = new SymbolCache();
+                        symCache = new SymbolCache(cairoConfiguration);
                     }
                     int symIndex = resolveSymbolIndex(reader.getMetadata(), colIndex);
                     symCache.of(cairoConfiguration, path, reader.getMetadata().getColumnName(colIndex), symIndex);

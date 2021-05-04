@@ -160,6 +160,7 @@ public class TableWriter implements Closeable {
     private final O3ColumnUpdateMethod o3MoveUncommittedRef = this::o3MoveUncommitted0;
     private long lastPartitionTimestamp;
     private boolean o3InError = false;
+    private boolean deferredMemoryAlloc;
 
     public TableWriter(CairoConfiguration configuration, CharSequence tableName) {
         this(configuration, tableName, new MessageBusImpl(configuration));
@@ -176,7 +177,7 @@ public class TableWriter implements Closeable {
             boolean lock,
             LifecycleManager lifecycleManager
     ) {
-        this(configuration, tableName, messageBus, lock, lifecycleManager, configuration.getRoot());
+        this(configuration, tableName, messageBus, lock, lifecycleManager, configuration.getRoot(), false);
     }
 
     public TableWriter(
@@ -185,7 +186,8 @@ public class TableWriter implements Closeable {
             @NotNull MessageBus messageBus,
             boolean lock,
             LifecycleManager lifecycleManager,
-            CharSequence root
+            CharSequence root,
+            boolean deferMemoryAlloc
     ) {
         LOG.info().$("open '").utf8(tableName).$('\'').$();
         this.configuration = configuration;
@@ -278,9 +280,12 @@ public class TableWriter implements Closeable {
             timestampSetter = configureTimestampSetter();
             this.appendTimestampSetter = timestampSetter;
             this.txFile.readRowCounts();
-            configureAppendPosition();
-            purgeUnusedPartitions();
-            clearTodoLog();
+            this.deferredMemoryAlloc = deferMemoryAlloc;
+            if (!deferMemoryAlloc) {
+                configureAppendPosition();
+                purgeUnusedPartitions();
+                clearTodoLog();
+            }
         } catch (CairoException e) {
             LOG.error().$("could not open '").$(path).$("' and this is why: {").$((Sinkable) e).$('}').$();
             doClose(false);
@@ -751,6 +756,15 @@ public class TableWriter implements Closeable {
 
     public void o3BumpErrorCount() {
         o3ErrorCount.incrementAndGet();
+    }
+
+    public void openDeferredMemory() {
+        if (deferredMemoryAlloc) {
+            configureAppendPosition();
+            purgeUnusedPartitions();
+            clearTodoLog();
+            deferredMemoryAlloc = false;
+        }
     }
 
     public long partitionNameToTimestamp(CharSequence partitionName) {
@@ -2374,6 +2388,8 @@ public class TableWriter implements Closeable {
                     srcOooMax = 0;
                 }
                 LOG.debug().$("o3 commit hysteresis [table=").$(tableName)
+                        .$(", hysteresis=").$(hysteresis)
+                        .$(", o3MaxUncommittedRows=").$(o3MaxUncommittedRows)
                         .$(", o3max=").$ts(o3max)
                         .$(", hysteresisThresholdTimestamp=").$ts(hysteresisThresholdTimestamp)
                         .$(", o3HysteresisRowCount=").$(o3HysteresisRowCount)
@@ -2932,94 +2948,6 @@ public class TableWriter implements Closeable {
         }
     }
 
-    private long o3ScheduleMoveUncommitted0(int timestampIndex, long transientRowsAdded, long committedTransientRowCount) {
-        long transientRowsAddedNew = o3CalculatedMoveUncommittedSize(transientRowsAdded, committedTransientRowCount);
-        long delta = transientRowsAdded - transientRowsAddedNew;
-        assert delta >= 0;
-
-        if (delta > 0) {
-            // Not all uncommitted rows can be moved to O3 staging memory
-            // because column files are not fully mapped to memory
-            // reduce number of rows to move
-            transientRowsAdded -= delta;
-            committedTransientRowCount += delta;
-        }
-
-        if (transientRowsAdded > 0) {
-
-            long maxCommittedTimestamp = 0;
-            if (delta > 0) {
-                // If there are rows to move
-                // and we cannot move all uncommitted rows to o3 memory
-                // we have to set maxCommittedTimestamp in tx file
-                AppendOnlyVirtualMemory timestampColumn = getPrimaryColumn(timestampIndex);
-                if (!timestampColumn.isMapped((committedTransientRowCount - 1) << 3, Long.BYTES)) {
-                    // Need to leave one more record in column files
-                    // to correctly get max timestamp
-                    transientRowsAdded--;
-                    committedTransientRowCount++;
-                }
-                maxCommittedTimestamp = timestampColumn.getLong((committedTransientRowCount - 1) << 3);
-            }
-
-            final Sequence pubSeq = this.messageBus.getO3CallbackPubSeq();
-            final RingQueue<O3CallbackTask> queue = this.messageBus.getO3CallbackQueue();
-            o3PendingCallbackTasks.clear();
-            o3DoneLatch.reset();
-            int queuedCount = 0;
-
-            for (int colIndex = 0; colIndex < columnCount; colIndex++) {
-                int columnType = metadata.getColumnType(colIndex);
-                int columnIndex = colIndex != timestampIndex ? colIndex : -colIndex - 1;
-
-                long cursor = pubSeq.next();
-
-                // Pass column index as -1 when it's designated timestamp column to o3 move method
-                if (cursor > -1) {
-                    try {
-                        final O3CallbackTask task = queue.get(cursor);
-                        task.of(
-                                o3DoneLatch,
-                                columnIndex,
-                                columnType,
-                                committedTransientRowCount,
-                                transientRowsAdded,
-                                this.o3MoveUncommittedRef
-                        );
-
-                        o3PendingCallbackTasks.add(task);
-                    } finally {
-                        queuedCount++;
-                        pubSeq.done(cursor);
-                    }
-                } else {
-                    o3MoveUncommitted0(columnIndex, columnType, committedTransientRowCount, transientRowsAdded);
-                }
-            }
-
-            for (int n = o3PendingCallbackTasks.size() - 1; n > -1; n--) {
-                final O3CallbackTask task = o3PendingCallbackTasks.getQuick(n);
-                if (task.tryLock()) {
-                    O3CallbackJob.runCallbackWithCol(
-                            task,
-                            -1,
-                            null
-                    );
-                }
-            }
-
-            o3DoneLatch.await(queuedCount);
-            if (delta == 0) {
-                txFile.resetToLastPartition(committedTransientRowCount);
-            } else {
-                // If transientRowsAdded is decreased because uncommitted area is not mapped
-                // maxCommittedTimestamp the last value of the segment left in files
-                txFile.resetToLastPartition(committedTransientRowCount, maxCommittedTimestamp);
-            }
-        }
-        return transientRowsAdded;
-    }
-
     private void o3OpenColumnSafe(Sequence openColumnSubSeq, long cursor, O3OpenColumnTask openColumnTask) {
         try {
             O3OpenColumnJob.openColumn(openColumnTask, cursor, openColumnSubSeq, tempMem16b);
@@ -3210,6 +3138,94 @@ public class TableWriter implements Closeable {
                     .$(", txn=").$(txn)
                     .$(']').$();
         }
+    }
+
+    private long o3ScheduleMoveUncommitted0(int timestampIndex, long transientRowsAdded, long committedTransientRowCount) {
+        long transientRowsAddedNew = o3CalculatedMoveUncommittedSize(transientRowsAdded, committedTransientRowCount);
+        long delta = transientRowsAdded - transientRowsAddedNew;
+        assert delta >= 0;
+
+        if (delta > 0) {
+            // Not all uncommitted rows can be moved to O3 staging memory
+            // because column files are not fully mapped to memory
+            // reduce number of rows to move
+            transientRowsAdded -= delta;
+            committedTransientRowCount += delta;
+        }
+
+        if (transientRowsAdded > 0) {
+
+            long maxCommittedTimestamp = 0;
+            if (delta > 0) {
+                // If there are rows to move
+                // and we cannot move all uncommitted rows to o3 memory
+                // we have to set maxCommittedTimestamp in tx file
+                AppendOnlyVirtualMemory timestampColumn = getPrimaryColumn(timestampIndex);
+                if (!timestampColumn.isMapped((committedTransientRowCount - 1) << 3, Long.BYTES)) {
+                    // Need to leave one more record in column files
+                    // to correctly get max timestamp
+                    transientRowsAdded--;
+                    committedTransientRowCount++;
+                }
+                maxCommittedTimestamp = timestampColumn.getLong((committedTransientRowCount - 1) << 3);
+            }
+
+            final Sequence pubSeq = this.messageBus.getO3CallbackPubSeq();
+            final RingQueue<O3CallbackTask> queue = this.messageBus.getO3CallbackQueue();
+            o3PendingCallbackTasks.clear();
+            o3DoneLatch.reset();
+            int queuedCount = 0;
+
+            for (int colIndex = 0; colIndex < columnCount; colIndex++) {
+                int columnType = metadata.getColumnType(colIndex);
+                int columnIndex = colIndex != timestampIndex ? colIndex : -colIndex - 1;
+
+                long cursor = pubSeq.next();
+
+                // Pass column index as -1 when it's designated timestamp column to o3 move method
+                if (cursor > -1) {
+                    try {
+                        final O3CallbackTask task = queue.get(cursor);
+                        task.of(
+                                o3DoneLatch,
+                                columnIndex,
+                                columnType,
+                                committedTransientRowCount,
+                                transientRowsAdded,
+                                this.o3MoveUncommittedRef
+                        );
+
+                        o3PendingCallbackTasks.add(task);
+                    } finally {
+                        queuedCount++;
+                        pubSeq.done(cursor);
+                    }
+                } else {
+                    o3MoveUncommitted0(columnIndex, columnType, committedTransientRowCount, transientRowsAdded);
+                }
+            }
+
+            for (int n = o3PendingCallbackTasks.size() - 1; n > -1; n--) {
+                final O3CallbackTask task = o3PendingCallbackTasks.getQuick(n);
+                if (task.tryLock()) {
+                    O3CallbackJob.runCallbackWithCol(
+                            task,
+                            -1,
+                            null
+                    );
+                }
+            }
+
+            o3DoneLatch.await(queuedCount);
+            if (delta == 0) {
+                txFile.resetToLastPartition(committedTransientRowCount);
+            } else {
+                // If transientRowsAdded is decreased because uncommitted area is not mapped
+                // maxCommittedTimestamp the last value of the segment left in files
+                txFile.resetToLastPartition(committedTransientRowCount, maxCommittedTimestamp);
+            }
+        }
+        return transientRowsAdded;
     }
 
     private void o3ShiftHysteresisUp(int timestampIndex, long o3HysteresisRowCount, long o3RowCount) {
@@ -3941,7 +3957,7 @@ public class TableWriter implements Closeable {
         }
     }
 
-    private long repairDataGaps(long timestamp) {
+    private long repairDataGaps(final long timestamp) {
         if (txFile.getMaxTimestamp() != Numbers.LONG_NaN && partitionBy != PartitionBy.NONE) {
             long actualSize = 0;
             long lastTimestamp = -1;
