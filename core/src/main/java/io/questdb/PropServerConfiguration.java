@@ -350,6 +350,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.databaseRoot = new File(root, databaseRoot).getAbsolutePath();
         }
 
+        int cpuAvailable = Runtime.getRuntime().availableProcessors();
         int cpuUsed = 0;
         final FilesFacade ff = cairoConfiguration.getFilesFacade();
         try (Path path = new Path()) {
@@ -378,7 +379,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.httpMinServerEnabled = getBoolean(properties, env, "http.min.enabled", true);
             if (httpMinServerEnabled) {
                 this.httpMinWorkerHaltOnError = getBoolean(properties, env, "http.min.worker.haltOnError", false);
-                this.httpMinWorkerCount = getInt(properties, env, "http.min.worker.count", 1);
+                this.httpMinWorkerCount = getInt(properties, env, "http.min.worker.count", cpuAvailable > 16 ? 1 : 0);
                 cpuUsed += this.httpMinWorkerCount;
                 this.httpMinWorkerAffinity = getAffinity(properties, env, "http.min.worker.affinity", httpMinWorkerCount);
                 this.httpMinWorkerYieldThreshold = getLong(properties, env, "http.min.worker.yield.threshold", 10);
@@ -406,7 +407,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.multipartIdleSpinCount = getLong(properties, env, "http.multipart.idle.spin.count", 10_000);
                 this.recvBufferSize = getIntSize(properties, env, "http.receive.buffer.size", 1024 * 1024);
                 this.requestHeaderBufferSize = getIntSize(properties, env, "http.request.header.buffer.size", 32 * 2014);
-                this.httpWorkerCount = getInt(properties, env, "http.worker.count", 2);
+                this.httpWorkerCount = getInt(properties, env, "http.worker.count", cpuAvailable > 16 ? 2 : 0);
                 cpuUsed += this.httpWorkerCount;
                 this.httpWorkerAffinity = getAffinity(properties, env, "http.worker.affinity", httpWorkerCount);
                 this.httpWorkerHaltOnError = getBoolean(properties, env, "http.worker.haltOnError", false);
@@ -518,7 +519,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                 if (this.pgDefaultLocale == null) {
                     throw new ServerConfigurationException("pg.date.locale", dateLocale);
                 }
-                this.pgWorkerCount = getInt(properties, env, "pg.worker.count", 2);
+                this.pgWorkerCount = getInt(properties, env, "pg.worker.count", cpuAvailable > 16 ? 2 : 0);
                 cpuUsed += this.pgWorkerCount;
                 this.pgWorkerAffinity = getAffinity(properties, env, "pg.worker.affinity", pgWorkerCount);
                 this.pgHaltOnError = getBoolean(properties, env, "pg.halt.on.error", false);
@@ -691,7 +692,16 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.lineTcpWriterWorkerPoolHaltOnError = getBoolean(properties, env, "line.tcp.writer.halt.on.error", false);
                 this.lineTcpWriterWorkerYieldThreshold = getLong(properties, env, "line.tcp.writer.worker.yield.threshold", 10);
                 this.lineTcpWriterWorkerSleepThreshold = getLong(properties, env, "line.tcp.writer.worker.sleep.threshold", 10000);
-                this.lineTcpIOWorkerCount = getInt(properties, env, "line.tcp.io.worker.count", 6);
+
+                int ilpTcpWorkerCount;
+                if (cpuAvailable < 9) {
+                    ilpTcpWorkerCount = 0;
+                } else if (cpuAvailable < 17) {
+                    ilpTcpWorkerCount = 2;
+                } else {
+                    ilpTcpWorkerCount = 6;
+                }
+                this.lineTcpIOWorkerCount = getInt(properties, env, "line.tcp.io.worker.count", ilpTcpWorkerCount);
                 cpuUsed += this.lineTcpIOWorkerCount;
                 this.lineTcpIOWorkerAffinity = getAffinity(properties, env, "line.tcp.io.worker.affinity", lineTcpIOWorkerCount);
                 this.lineTcpIOWorkerPoolHaltOnError = getBoolean(properties, env, "line.tcp.io.halt.on.error", false);
@@ -714,7 +724,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.minIdleMsBeforeWriterRelease = getLong(properties, env, "line.tcp.min.idle.ms.before.writer.release", 10_000);
             }
 
-            this.sharedWorkerCount = getInt(properties, env, "shared.worker.count", Math.max(1, Runtime.getRuntime().availableProcessors() - 1) / 2 - cpuUsed);
+            this.sharedWorkerCount = getInt(properties, env, "shared.worker.count", Math.max(1, (cpuAvailable - 1) / 2 - cpuUsed));
             this.sharedWorkerAffinity = getAffinity(properties, env, "shared.worker.affinity", sharedWorkerCount);
             this.sharedWorkerHaltOnError = getBoolean(properties, env, "shared.worker.haltOnError", false);
             this.sharedWorkerYieldThreshold = getLong(properties, env, "shared.worker.yield.threshold", 10);

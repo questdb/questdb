@@ -2650,6 +2650,10 @@ nodejs code:
     }
 
     @Test
+    @Ignore
+    // todo: this test is fundamentally broken, server interaction here boils down
+    //    to sending text to unauthenticated connection
+    //    we need to re-record actual bind variable interaction
     public void testRustBindVariableHex() throws Exception {
         //hex for close message 43 00000009 53 535f31 00
         String script = ">0000004300030000636c69656e745f656e636f64696e6700555446380074696d657a6f6e650055544300757365720061646d696e006461746162617365007164620000\n" +
@@ -2685,9 +2689,11 @@ nodejs code:
                 ">4300000008537330005300000004\n" +
                 "<33000000045a0000000549\n" +
                 ">5800000004\n";
-        assertHexScript(NetworkFacadeImpl.INSTANCE,
+        assertHexScript(
+                NetworkFacadeImpl.INSTANCE,
                 script,
-                getHexPgWireConfig());
+                new DefaultPGWireConfiguration()
+        );
     }
 
     //addition for pgwire rust

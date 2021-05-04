@@ -79,9 +79,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(10_000, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getMultipartIdleSpinCount());
         Assert.assertEquals(1048576, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getRecvBufferSize());
         Assert.assertEquals(64448, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getRequestHeaderBufferSize());
-        Assert.assertEquals(2, configuration.getHttpServerConfiguration().getWorkerCount());
         Assert.assertFalse(configuration.getHttpServerConfiguration().haltOnError());
-        Assert.assertArrayEquals(new int[]{-1,-1}, configuration.getHttpServerConfiguration().getWorkerAffinity());
         Assert.assertFalse(configuration.getHttpServerConfiguration().haltOnError());
         Assert.assertEquals(2097152, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getSendBufferSize());
         Assert.assertEquals("index.html", configuration.getHttpServerConfiguration().getStaticContentProcessorConfiguration().getIndexFileName());
@@ -243,10 +241,8 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(10_000, configuration.getLineTcpReceiverConfiguration().getWriterWorkerPoolConfiguration().getSleepThreshold());
         Assert.assertArrayEquals(new int[]{-1}, configuration.getLineTcpReceiverConfiguration().getWriterWorkerPoolConfiguration().getWorkerAffinity());
         Assert.assertFalse(configuration.getLineTcpReceiverConfiguration().getWriterWorkerPoolConfiguration().haltOnError());
-        Assert.assertEquals(6, configuration.getLineTcpReceiverConfiguration().getIOWorkerPoolConfiguration().getWorkerCount());
         Assert.assertEquals(10, configuration.getLineTcpReceiverConfiguration().getIOWorkerPoolConfiguration().getYieldThreshold());
         Assert.assertEquals(10_000, configuration.getLineTcpReceiverConfiguration().getIOWorkerPoolConfiguration().getSleepThreshold());
-        Assert.assertArrayEquals(new int[]{-1,-1,-1,-1,-1,-1}, configuration.getLineTcpReceiverConfiguration().getIOWorkerPoolConfiguration().getWorkerAffinity());
         Assert.assertFalse(configuration.getLineTcpReceiverConfiguration().getIOWorkerPoolConfiguration().haltOnError());
         Assert.assertEquals(10_000_000, configuration.getLineTcpReceiverConfiguration().getNUpdatesPerLoadRebalance());
         Assert.assertEquals(1.9, configuration.getLineTcpReceiverConfiguration().getMaxLoadRatio(), 0.001);
@@ -490,7 +486,7 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(400_000, configuration.getCairoConfiguration().getInactiveWriterTTL());
             Assert.assertEquals(1024, configuration.getCairoConfiguration().getIndexValueBlockSize());
             Assert.assertEquals(23, configuration.getCairoConfiguration().getMaxSwapFileCount());
-            Assert.assertEquals(580, configuration.getCairoConfiguration().getMkDirMode());
+            Assert.assertEquals(509, configuration.getCairoConfiguration().getMkDirMode());
             Assert.assertEquals(1000000, configuration.getCairoConfiguration().getParallelIndexThreshold());
             Assert.assertEquals(10, configuration.getCairoConfiguration().getReaderPoolMaxSegments());
             Assert.assertEquals(5_000_000, configuration.getCairoConfiguration().getSpinLockTimeoutUs());
