@@ -24,19 +24,6 @@
 
 package io.questdb.cairo;
 
-import java.io.IOException;
-
-import org.jetbrains.annotations.Nullable;
-import org.junit.After;
-import org.junit.AfterClass;
-import org.junit.Assert;
-import org.junit.Before;
-import org.junit.BeforeClass;
-import org.junit.ClassRule;
-import org.junit.Rule;
-import org.junit.rules.TemporaryFolder;
-import org.junit.rules.TestName;
-
 import io.questdb.MessageBus;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -47,6 +34,12 @@ import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.Nullable;
+import org.junit.*;
+import org.junit.rules.TemporaryFolder;
+import org.junit.rules.TestName;
+
+import java.io.IOException;
 
 public class AbstractCairoTest {
 
@@ -64,6 +57,8 @@ public class AbstractCairoTest {
     protected static CairoEngine engine;
     protected static String inputRoot = null;
     protected static FilesFacade ff;
+    protected static long configOverrideO3CommitHysteresisInMicros = -1;
+    protected static int configOverrideMaxUncommittedRows = -1;
 
     @Rule
     public TestName testName = new TestName();
@@ -97,6 +92,18 @@ public class AbstractCairoTest {
             @Override
             public CharSequence getInputRoot() {
                 return inputRoot;
+            }
+
+            @Override
+            public long getO3CommitHysteresisInMicros() {
+                if (configOverrideO3CommitHysteresisInMicros >= 0) return configOverrideO3CommitHysteresisInMicros;
+                return super.getO3CommitHysteresisInMicros();
+            }
+
+            @Override
+            public int getO3MaxUncommittedRows() {
+                if (configOverrideMaxUncommittedRows >= 0) return configOverrideMaxUncommittedRows;
+                return super.getO3MaxUncommittedRows();
             }
         };
         engine = new CairoEngine(configuration);
