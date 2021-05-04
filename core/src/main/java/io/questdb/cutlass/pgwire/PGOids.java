@@ -150,17 +150,17 @@ public class PGOids {
         PG_TYPE_TO_SIZE_MAP.put(PG_BOOL, Byte.BYTES);
         PG_TYPE_TO_SIZE_MAP.put(PG_NUMERIC, Long256.BYTES);
 
-        PG_TYPE_TO_NAME[0] = "VARCHAR";
-        PG_TYPE_TO_NAME[1] = "TIMESTAMP";
-        PG_TYPE_TO_NAME[2] = "FLOAT8";
-        PG_TYPE_TO_NAME[3] = "FLOAT4";
-        PG_TYPE_TO_NAME[4] = "INT4";
-        PG_TYPE_TO_NAME[5] = "INT2";
-        PG_TYPE_TO_NAME[6] = "CHAR";
-        PG_TYPE_TO_NAME[7] = "INT8";
-        PG_TYPE_TO_NAME[8] = "BOOL";
-        PG_TYPE_TO_NAME[9] = "BINARY";
-        PG_TYPE_TO_NAME[10] = "NUMERIC";
-        PG_TYPE_TO_NAME[11] = "DATE";
+        PG_TYPE_TO_NAME[0] = "varchar";
+        PG_TYPE_TO_NAME[1] = "timestamp";
+        PG_TYPE_TO_NAME[2] = "float8";
+        PG_TYPE_TO_NAME[3] = "float4";
+        PG_TYPE_TO_NAME[4] = "int4";
+        PG_TYPE_TO_NAME[5] = "int2";
+        PG_TYPE_TO_NAME[6] = "char";
+        PG_TYPE_TO_NAME[7] = "int8";
+        PG_TYPE_TO_NAME[8] = "bool";
+        PG_TYPE_TO_NAME[9] = "binary";
+        PG_TYPE_TO_NAME[10] = "numeric";
+        PG_TYPE_TO_NAME[11] = "date";
     }
 }
