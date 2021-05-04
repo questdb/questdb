@@ -123,7 +123,7 @@ public class TableWriter implements Closeable {
     private final TxWriter txFile;
     private final FindVisitor removePartitionDirsNotAttached = this::removePartitionDirsNotAttached;
     private final LongList o3PartitionRemoveCandidates = new LongList();
-    private final LongConsumer appendTimestampSetter;
+    private LongConsumer appendTimestampSetter;
     private final ObjectPool<O3MutableAtomicInteger> o3ColumnCounters = new ObjectPool<O3MutableAtomicInteger>(O3MutableAtomicInteger::new, 64);
     private final ObjectPool<O3Basket> o3BasketPool = new ObjectPool<O3Basket>(O3Basket::new, 64);
     private final TxnScoreboard txnScoreboard;
@@ -276,21 +276,29 @@ public class TableWriter implements Closeable {
                 partitionDirFmt = null;
             }
 
-            configureColumnMemory();
-            timestampSetter = configureTimestampSetter();
-            this.appendTimestampSetter = timestampSetter;
-            this.txFile.readRowCounts();
             this.deferredMemoryAlloc = deferMemoryAlloc;
+            // we defer memory map because we experienced performance loss in ILP
+            // the scenario back then was:
+            // create table + table writer (in pool) over HTTP rest
+            // ingest via ILP thread
             if (!deferMemoryAlloc) {
-                configureAppendPosition();
-                purgeUnusedPartitions();
-                clearTodoLog();
+                executeDeferred();
             }
         } catch (CairoException e) {
             LOG.error().$("could not open '").$(path).$("' and this is why: {").$((Sinkable) e).$('}').$();
             doClose(false);
             throw e;
         }
+    }
+
+    private void executeDeferred() {
+        configureColumnMemory();
+        timestampSetter = configureTimestampSetter();
+        this.appendTimestampSetter = timestampSetter;
+        this.txFile.readRowCounts();
+        configureAppendPosition();
+        purgeUnusedPartitions();
+        clearTodoLog();
     }
 
     public static int getPrimaryColumnIndex(int index) {
@@ -760,9 +768,7 @@ public class TableWriter implements Closeable {
 
     public void openDeferredMemory() {
         if (deferredMemoryAlloc) {
-            configureAppendPosition();
-            purgeUnusedPartitions();
-            clearTodoLog();
+            executeDeferred();
             deferredMemoryAlloc = false;
         }
     }

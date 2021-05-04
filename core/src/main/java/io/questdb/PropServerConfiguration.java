@@ -711,7 +711,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                     this.lineTcpAuthDbPath = new File(root, this.lineTcpAuthDbPath).getAbsolutePath();
                 }
                 this.lineTcpAggressiveRecv = getBoolean(properties, env, "line.tcp.io.aggressive.recv", false);
-                this.minIdleMsBeforeWriterRelease = getLong(properties, env, "line.tcp.min.idle.ms.before.writer.release", 30_000);
+                this.minIdleMsBeforeWriterRelease = getLong(properties, env, "line.tcp.min.idle.ms.before.writer.release", 10_000);
             }
 
             this.sharedWorkerCount = getInt(properties, env, "shared.worker.count", Math.max(1, Runtime.getRuntime().availableProcessors() - 1) / 2 - cpuUsed);

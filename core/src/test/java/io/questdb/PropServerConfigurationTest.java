@@ -253,7 +253,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(30_000, configuration.getLineTcpReceiverConfiguration().getMaintenanceInterval());
         Assert.assertEquals(PartitionBy.DAY, configuration.getLineTcpReceiverConfiguration().getDefaultPartitionBy());
         Assert.assertFalse(configuration.getLineTcpReceiverConfiguration().isIOAggressiveRecv());
-        Assert.assertEquals(30_000, configuration.getLineTcpReceiverConfiguration().getWriterIdleTimeout());
+        Assert.assertEquals(10_000, configuration.getLineTcpReceiverConfiguration().getWriterIdleTimeout());
 
         Assert.assertTrue(configuration.getHttpServerConfiguration().getHttpContextConfiguration().getServerKeepAlive());
         Assert.assertEquals("HTTP/1.1 ", configuration.getHttpServerConfiguration().getHttpContextConfiguration().getHttpVersion());
