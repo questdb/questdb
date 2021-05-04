@@ -1331,7 +1331,6 @@ class SqlOptimiser {
         ObjList<QueryModel> joinModels = model.getJoinModels();
         for (int i = 0, n = joinModels.size(); i < n; i++) {
             QueryModel m = joinModels.getQuick(i);
-            ExpressionNode where = m.getWhereClause();
 
             // join models can have "where" clause
             // although in context of SQL where is executed after joins, this model
@@ -1339,13 +1338,8 @@ class SqlOptimiser {
             // is applied before join. Please see post-join-where for filters that
             // executed in line with standard SQL behaviour.
 
-            if (where != null) {
-                if (where.type == LITERAL) {
-                    m.setWhereClause(columnPrefixEraser.rewrite(where));
-                } else {
-                    traversalAlgo.traverse(where, columnPrefixEraser);
-                }
-            }
+            rewriteWhere(m, m.getWhereClause());
+            rewriteWhere(m, m.getPostJoinWhereClause());
 
             QueryModel nested = m.getNestedModel();
             if (nested != null) {
@@ -1355,6 +1349,16 @@ class SqlOptimiser {
             nested = m.getUnionModel();
             if (nested != null) {
                 eraseColumnPrefixInWhereClauses(nested);
+            }
+        }
+    }
+
+    private void rewriteWhere(QueryModel m, ExpressionNode where) throws SqlException {
+        if (where != null) {
+            if (where.type == LITERAL) {
+                m.setWhereClause(columnPrefixEraser.rewrite(where));
+            } else {
+                traversalAlgo.traverse(where, columnPrefixEraser);
             }
         }
     }
