@@ -160,8 +160,8 @@ public final class TableUtils {
             mem.putInt(tableVersion);
             mem.putInt(tableId);
             mem.putInt(structure.getO3MaxUncommittedRows());
-                mem.putLong(structure.getO3CommitHysteresisInMicros());
-                mem.jumpTo(TableUtils.META_OFFSET_COLUMN_TYPES);
+            mem.putLong(structure.getO3CommitHysteresisInMicros());
+            mem.jumpTo(TableUtils.META_OFFSET_COLUMN_TYPES);
 
             for (int i = 0; i < count; i++) {
                 mem.putByte((byte) structure.getColumnType(i));
@@ -381,6 +381,15 @@ public final class TableUtils {
 
     public static long openFileRWOrFail(FilesFacade ff, LPSZ path) {
         return openRW(ff, path, LOG);
+    }
+
+    public static long openRO(FilesFacade ff, LPSZ path, Log log) {
+        final long fd = ff.openRO(path);
+        if (fd > -1) {
+            log.debug().$("open [file=").$(path).$(", fd=").$(fd).$(']').$();
+            return fd;
+        }
+        throw CairoException.instance(ff.errno()).put("could not open read-only [file=").put(path).put(']');
     }
 
     public static void renameOrFail(FilesFacade ff, Path src, Path dst) {
@@ -859,15 +868,6 @@ public final class TableUtils {
             return fd;
         }
         throw CairoException.instance(ff.errno()).put("could not open read-write [file=").put(path).put(']');
-    }
-
-    public static long openRO(FilesFacade ff, LPSZ path, Log log) {
-        final long fd = ff.openRO(path);
-        if (fd > -1) {
-            log.debug().$("open [file=").$(path).$(", fd=").$(fd).$(']').$();
-            return fd;
-        }
-        throw CairoException.instance(ff.errno()).put("could not open read-only [file=").put(path).put(']');
     }
 
     static {

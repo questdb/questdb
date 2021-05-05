@@ -853,7 +853,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                         symCache = unusedSymbolCaches.get(lastUnusedSymbolCacheIndex);
                         unusedSymbolCaches.remove(lastUnusedSymbolCacheIndex);
                     } else {
-                        symCache = new SymbolCache(cairoConfiguration);
+                        symCache = new SymbolCache();
                     }
                     int symIndex = resolveSymbolIndex(reader.getMetadata(), colIndex);
                     symCache.of(cairoConfiguration, path, reader.getMetadata().getColumnName(colIndex), symIndex);

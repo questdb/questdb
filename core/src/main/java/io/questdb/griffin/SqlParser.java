@@ -289,13 +289,13 @@ public final class SqlParser {
                 case 's':
                     if (nChars == 1) {
                         // seconds
-                        return interval * 1_000_000l;
+                        return interval * 1_000_000L;
                     }
                     break;
                 case 'm':
                     if (nChars == 1) {
                         // minutes
-                        return interval * 60_000_000l;
+                        return interval * 60_000_000L;
                     } else {
                         if (tok.charAt(k + 1) == 's') {
                             // millis
@@ -306,13 +306,13 @@ public final class SqlParser {
                 case 'h':
                     if (nChars == 1) {
                         // hours
-                        return interval * 3_600_000_000l;
+                        return interval * 3_600_000_000L;
                     }
                     break;
                 case 'd':
                     if (nChars == 1) {
                         // days
-                        return interval * 86_400_000_000l;
+                        return interval * 86_400_000_000L;
                     }
                     break;
             }
