@@ -593,7 +593,13 @@ class SqlOptimiser {
                     if (qualifies) {
                         postFilterRemoved.add(k);
                         QueryModel m = parent.getJoinModels().getQuick(index);
-                        m.setPostJoinWhereClause(concatFilters(m.getPostJoinWhereClause(), filterNodes.getQuick(k)));
+                        final ExpressionNode node = filterNodes.getQuick(k);
+                        // it is possible that filter references only top query via alias
+                        // we will need to strip these aliases before assigning filter
+                        if (index == 0) {
+                            traversalAlgo.traverse(node, literalRewritingVisitor.of(m.getAliasToColumnNameMap()));
+                        }
+                        m.setPostJoinWhereClause(concatFilters(m.getPostJoinWhereClause(), node));
                     }
                 }
             }
