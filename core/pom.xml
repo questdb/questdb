@@ -38,7 +38,7 @@
         <argLine>-Dfile.encoding=UTF-8</argLine>
     </properties>
 
-    <version>6.0.0-SNAPSHOT</version>
+    <version>6.0.0.b2</version>
     <groupId>org.questdb</groupId>
     <artifactId>${questdb.artifactid}</artifactId>
     <packaging>jar</packaging>
