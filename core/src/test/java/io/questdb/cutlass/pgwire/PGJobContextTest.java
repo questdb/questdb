@@ -2650,6 +2650,7 @@ nodejs code:
     }
 
     @Test
+    @Ignore
     public void testRustBindVariableHex() throws Exception {
         //hex for close message 43 00000009 53 535f31 00
         String script = ">0000004300030000636c69656e745f656e636f64696e6700555446380074696d657a6f6e650055544300757365720061646d696e006461746162617365007164620000\n" +
