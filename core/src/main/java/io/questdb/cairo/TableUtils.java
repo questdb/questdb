@@ -147,71 +147,67 @@ public final class TableUtils {
 
         final int rootLen = path.length();
 
-        final long dirFd = !ff.isRestrictedFileSystem() ? ff.openRO(path.$()) : 0;
-        if (dirFd != -1) {
-            try (AppendOnlyVirtualMemory mem = memory) {
-                mem.of(ff, path.trimTo(rootLen).concat(META_FILE_NAME).$(), ff.getPageSize());
-                final int count = structure.getColumnCount();
-                path.trimTo(rootLen);
-                mem.putInt(count);
-                mem.putInt(structure.getPartitionBy());
-                mem.putInt(structure.getTimestampIndex());
-                mem.putInt(tableVersion);
-                mem.putInt(tableId);
-                mem.jumpTo(TableUtils.META_OFFSET_COLUMN_TYPES);
+        final long dirFd = !ff.isRestrictedFileSystem() ? TableUtils.openRO(ff, path.$(), LOG) : 0;
+        try (AppendOnlyVirtualMemory mem = memory) {
+            mem.of(ff, path.trimTo(rootLen).concat(META_FILE_NAME).$(), ff.getPageSize());
+            final int count = structure.getColumnCount();
+            path.trimTo(rootLen);
+            mem.putInt(count);
+            mem.putInt(structure.getPartitionBy());
+            mem.putInt(structure.getTimestampIndex());
+            mem.putInt(tableVersion);
+            mem.putInt(tableId);
+            mem.jumpTo(TableUtils.META_OFFSET_COLUMN_TYPES);
 
-                for (int i = 0; i < count; i++) {
-                    mem.putByte((byte) structure.getColumnType(i));
-                    long flags = 0;
-                    if (structure.isIndexed(i)) {
-                        flags |= META_FLAG_BIT_INDEXED;
-                    }
-
-                    if (structure.isSequential(i)) {
-                        flags |= META_FLAG_BIT_SEQUENTIAL;
-                    }
-
-                    mem.putLong(flags);
-                    mem.putInt(structure.getIndexBlockCapacity(i));
-                    mem.skip(META_COLUMN_DATA_RESERVED); // reserved
-                }
-                for (int i = 0; i < count; i++) {
-                    mem.putStr(structure.getColumnName(i));
+            for (int i = 0; i < count; i++) {
+                mem.putByte((byte) structure.getColumnType(i));
+                long flags = 0;
+                if (structure.isIndexed(i)) {
+                    flags |= META_FLAG_BIT_INDEXED;
                 }
 
-                // create symbol maps
-                int symbolMapCount = 0;
-                for (int i = 0; i < count; i++) {
-                    if (structure.getColumnType(i) == ColumnType.SYMBOL) {
-                        SymbolMapWriter.createSymbolMapFiles(
-                                ff,
-                                mem,
-                                path.trimTo(rootLen),
-                                structure.getColumnName(i),
-                                structure.getSymbolCapacity(i),
-                                structure.getSymbolCacheFlag(i)
-                        );
-                        symbolMapCount++;
-                    }
+                if (structure.isSequential(i)) {
+                    flags |= META_FLAG_BIT_SEQUENTIAL;
                 }
-                mem.of(ff, path.trimTo(rootLen).concat(TXN_FILE_NAME).$(), ff.getPageSize());
-                TableUtils.resetTxn(mem, symbolMapCount, 0L, INITIAL_TXN, 0L);
-                resetTodoLog(ff, path, rootLen, mem);
-                // allocate txn scoreboard
-                path.trimTo(rootLen).concat(TXN_SCOREBOARD_FILE_NAME).$();
-            } finally {
-                if (dirFd > 0) {
-                    if (ff.fsync(dirFd) != 0) {
-                        LOG.error()
-                                .$("could not fsync [fd=").$(dirFd)
-                                .$(", errno=").$(ff.errno())
-                                .$(']').$();
-                    }
-                    ff.close(dirFd);
+
+                mem.putLong(flags);
+                mem.putInt(structure.getIndexBlockCapacity(i));
+                mem.skip(META_COLUMN_DATA_RESERVED); // reserved
+            }
+            for (int i = 0; i < count; i++) {
+                mem.putStr(structure.getColumnName(i));
+            }
+
+            // create symbol maps
+            int symbolMapCount = 0;
+            for (int i = 0; i < count; i++) {
+                if (structure.getColumnType(i) == ColumnType.SYMBOL) {
+                    SymbolMapWriter.createSymbolMapFiles(
+                            ff,
+                            mem,
+                            path.trimTo(rootLen),
+                            structure.getColumnName(i),
+                            structure.getSymbolCapacity(i),
+                            structure.getSymbolCacheFlag(i)
+                    );
+                    symbolMapCount++;
                 }
             }
-        } else {
-            throw CairoException.instance(ff.errno()).put("Could not open dir [path=").put(path).put(']');
+            mem.of(ff, path.trimTo(rootLen).concat(TXN_FILE_NAME).$(), ff.getPageSize());
+            TableUtils.resetTxn(mem, symbolMapCount, 0L, INITIAL_TXN, 0L);
+            resetTodoLog(ff, path, rootLen, mem);
+            // allocate txn scoreboard
+            path.trimTo(rootLen).concat(TXN_SCOREBOARD_FILE_NAME).$();
+        } finally {
+            if (dirFd > 0) {
+                if (ff.fsync(dirFd) != 0) {
+                    LOG.error()
+                            .$("could not fsync [fd=").$(dirFd)
+                            .$(", errno=").$(ff.errno())
+                            .$(']').$();
+                }
+                ff.close(dirFd);
+            }
         }
     }
 
@@ -627,11 +623,7 @@ public final class TableUtils {
     }
 
     static long readLongAtOffset(FilesFacade ff, Path path, long tempMem8b, long offset) {
-        long fd = ff.openRO(path);
-        if (fd == -1) {
-            throw CairoException.instance(ff.errno()).put("Cannot open: ").put(path);
-        }
-
+        final long fd = TableUtils.openRO(ff, path, LOG);
         try {
             if (ff.read(fd, tempMem8b, Long.BYTES, offset) != Long.BYTES) {
                 throw CairoException.instance(ff.errno()).put("Cannot read: ").put(path);
@@ -650,7 +642,7 @@ public final class TableUtils {
     static long readColumnTop(FilesFacade ff, Path path, CharSequence name, int plen, long buf) {
         try {
             if (ff.exists(topFile(path.chop$(), name))) {
-                long fd = ff.openRO(path);
+                final long fd = TableUtils.openRO(ff, path, LOG);
                 try {
                     if (ff.read(fd, buf, 8, 0) != 8) {
                         throw CairoException.instance(Os.errno()).put("Cannot read top of column ").put(path);
@@ -809,10 +801,7 @@ public final class TableUtils {
         int plen = path.chop$().length();
         try {
             if (ff.exists(path.concat(columnName).put(FILE_SUFFIX_D).$())) {
-                long fd = ff.openRO(path);
-                if (fd == -1) {
-                    throw CairoException.instance(ff.errno()).put("Cannot open: ").put(path);
-                }
+                final long fd = TableUtils.openRO(ff, path, LOG);
                 try {
                     long fileSize = ff.length(fd);
                     long mappedMem = ff.mmap(fd, fileSize, 0, Files.MAP_RO);
@@ -865,7 +854,16 @@ public final class TableUtils {
             log.debug().$("open [file=").$(path).$(", fd=").$(fd).$(']').$();
             return fd;
         }
-        throw CairoException.instance(ff.errno()).put("could not open read-write [file=").put(path).put(", fd=").put(fd).put(']');
+        throw CairoException.instance(ff.errno()).put("could not open read-write [file=").put(path).put(']');
+    }
+
+    public static long openRO(FilesFacade ff, LPSZ path, Log log) {
+        final long fd = ff.openRO(path);
+        if (fd > -1) {
+            log.debug().$("open [file=").$(path).$(", fd=").$(fd).$(']').$();
+            return fd;
+        }
+        throw CairoException.instance(ff.errno()).put("could not open read-only [file=").put(path).put(']');
     }
 
     static {

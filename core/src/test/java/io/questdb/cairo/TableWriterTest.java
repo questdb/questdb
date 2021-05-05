@@ -371,6 +371,20 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCloseActivePartitionAndRollback() throws Exception {
+        int N = 10000;
+        create(FF, PartitionBy.DAY, N);
+        try (TableWriter writer = new TableWriter(configuration, PRODUCT)){
+            long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
+            Rnd rnd = new Rnd();
+            populateProducts(writer, rnd, ts, N, 6 * 60000 * 1000L);
+            writer.closeActivePartition();
+            writer.rollback();
+            Assert.assertEquals(0, writer.size());
+        }
+    }
+
+    @Test
     public void testAddColumnMetaOpenFail() throws Exception {
         testUnrecoverableAddColumn(new FilesFacadeImpl() {
             int counter = 2;
@@ -651,7 +665,7 @@ public class TableWriterTest extends AbstractCairoTest {
                     w.addColumn("c", ColumnType.STRING, 0, false, true, 1024, false);
                     Assert.fail();
                 } catch (CairoException e) {
-                    TestUtils.assertContains(e.getMessage(), "only supported");
+                    TestUtils.assertContains(e.getFlyweightMessage(), "only supported");
                 }
 
                 for (int i = 0; i < N; i++) {
@@ -693,7 +707,7 @@ public class TableWriterTest extends AbstractCairoTest {
                     w.addColumn("c", ColumnType.SYMBOL, 0, false, true, 0, false);
                     Assert.fail();
                 } catch (CairoException e) {
-                    TestUtils.assertContains(e.getMessage(), "Invalid index value block capacity");
+                    TestUtils.assertContains(e.getFlyweightMessage(), "Invalid index value block capacity");
                 }
 
                 for (int i = 0; i < N; i++) {
@@ -1739,7 +1753,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 new TableWriter(configuration, "x");
                 Assert.fail();
             } catch (CairoException e) {
-                TestUtils.assertContains(e.getMessage(), "only supported");
+                TestUtils.assertContains(e.getFlyweightMessage(), "only supported");
             }
         });
     }

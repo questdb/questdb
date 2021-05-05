@@ -27,6 +27,8 @@ package io.questdb.cairo;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.log.Log;
+import io.questdb.log.LogRecord;
 import io.questdb.std.Chars;
 import io.questdb.std.Numbers;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
@@ -51,25 +53,49 @@ public class RecordCursorPrinter {
         }
     }
 
+    public void print(RecordCursor cursor, RecordMetadata metadata, boolean header, Log sink) {
+        LogRecordSinkAdapter logRecSink = new LogRecordSinkAdapter();
+        if (header) {
+            LogRecord line = sink.xDebugW();
+            printHeaderNoNl(metadata, logRecSink.of(line));
+            line.$();
+        }
+
+        final Record record = cursor.getRecord();
+        while (cursor.hasNext()) {
+            LogRecord line = sink.xDebugW();
+            printRecordNoNl(record, metadata, logRecSink.of(line));
+            line.$();
+        }
+    }
+
     public void print(Record r, RecordMetadata m, CharSink sink) {
+        printRecordNoNl(r, m, sink);
+        sink.put("\n");
+        sink.flush();
+    }
+
+    public void printRecordNoNl(Record r, RecordMetadata m, CharSink sink) {
         for (int i = 0, sz = m.getColumnCount(); i < sz; i++) {
             if (i > 0) {
                 sink.put(delimiter);
             }
             printColumn(r, m, i, sink);
         }
-        sink.put("\n");
-        sink.flush();
     }
 
     public void printHeader(RecordMetadata metadata, CharSink sink) {
+        printHeaderNoNl(metadata, sink);
+        sink.put('\n');
+    }
+
+    public void printHeaderNoNl(RecordMetadata metadata, CharSink sink) {
         for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
             if (i > 0) {
                 sink.put(delimiter);
             }
             sink.put(metadata.getColumnName(i));
         }
-        sink.put('\n');
     }
 
     public void printFullColumn(RecordCursor cursor, RecordMetadata metadata, int i, boolean header, CharSink sink) {

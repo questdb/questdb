@@ -50,6 +50,26 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testAliasTopJoinTable() throws SqlException {
+        assertQuery(
+                "select-choose tx.a a, tx.b b from (select [a, b, xid] from x tx outer join select [yid] from y ty on yid = xid post-join-where a = 1 or b = 2) tx",
+                "select tx.a, tx.b from x as tx left join y as ty on xid = yid where tx.a = 1 or tx.b=2",
+                modelOf("x").col("xid", ColumnType.INT).col("a", ColumnType.INT).col("b", ColumnType.INT),
+                modelOf("y").col("yid", ColumnType.INT).col("a", ColumnType.INT).col("b", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testAliasSecondJoinTable() throws SqlException {
+        assertQuery(
+                "select-choose tx.a a, tx.b b from (select [a, b, xid] from x tx outer join select [yid, a, b] from y ty on yid = xid post-join-where ty.a = 1 or ty.b = 2) tx",
+                "select tx.a, tx.b from x as tx left join y as ty on xid = yid where ty.a = 1 or ty.b=2",
+                modelOf("x").col("xid", ColumnType.INT).col("a", ColumnType.INT).col("b", ColumnType.INT),
+                modelOf("y").col("yid", ColumnType.INT).col("a", ColumnType.INT).col("b", ColumnType.INT)
+        );
+    }
+
+    @Test
     public void testAliasWithSpace() throws Exception {
         assertQuery("select-choose x from (select [x] from x 'b a' where x > 1) 'b a'",
                 "x 'b a' where x > 1",
@@ -5309,7 +5329,7 @@ public class SqlParserTest extends AbstractGriffinTest {
                         Assert.fail("Exception expected");
                     } catch (SqlException e) {
                         Assert.assertEquals(14, e.getPosition());
-                        TestUtils.assertContains(e.getMessage(), "Cannot open file");
+                        TestUtils.assertContains(e.getFlyweightMessage(), "could not open");
                     }
                 } finally {
                     for (int i = 0, n = tableModels.length; i < n; i++) {
@@ -5347,7 +5367,7 @@ public class SqlParserTest extends AbstractGriffinTest {
                         Assert.fail("Exception expected");
                     } catch (SqlException e) {
                         Assert.assertEquals(14, e.getPosition());
-                        TestUtils.assertContains(e.getMessage(), "table is locked");
+                        TestUtils.assertContains(e.getFlyweightMessage(), "table is locked");
                     }
                 } finally {
                     for (int i = 0, n = tableModels.length; i < n; i++) {
@@ -5862,7 +5882,7 @@ public class SqlParserTest extends AbstractGriffinTest {
                     Assert.fail("Exception expected");
                 } catch (SqlException e) {
                     Assert.assertEquals(position, e.getPosition());
-                    TestUtils.assertContains(e.getMessage(), contains);
+                    TestUtils.assertContains(e.getFlyweightMessage(), contains);
                 }
             });
         } finally {

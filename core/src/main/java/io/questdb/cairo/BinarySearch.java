@@ -27,7 +27,9 @@ package io.questdb.cairo;
 import io.questdb.cairo.vm.ReadOnlyVirtualMemory;
 
 public class BinarySearch {
+    // Up is decreasing direction
     public static final int SCAN_UP = -1;
+    // Down is increasing direction
     public static final int SCAN_DOWN = 1;
 
     /**

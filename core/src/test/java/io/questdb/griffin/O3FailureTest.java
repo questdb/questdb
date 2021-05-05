@@ -24,12 +24,18 @@
 
 package io.questdb.griffin;
 
+import io.questdb.WorkerPoolAwareConfiguration;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.DefaultCairoConfiguration;
+import io.questdb.mp.Job;
+import io.questdb.mp.SOCountDownLatch;
+import io.questdb.mp.WorkerPool;
+import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.std.*;
 import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -37,6 +43,7 @@ import org.junit.Test;
 import java.io.File;
 import java.net.URISyntaxException;
 import java.net.URL;
+import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -648,7 +655,6 @@ public class O3FailureTest extends AbstractO3Test {
             @Override
             public boolean truncate(long fd, long size) {
                 if (counter.decrementAndGet() == 0) {
-                    new Exception().printStackTrace();
                     return false;
                 }
                 return super.truncate(fd, size);
@@ -977,6 +983,42 @@ public class O3FailureTest extends AbstractO3Test {
     public void testPartitionedOpenTimestampFailContended() throws Exception {
         counter.set(3);
         executeWithPool(0, O3FailureTest::testPartitionedDataAppendOOPrependOODataFailRetry0, ffOpenFailure);
+    }
+
+    @Test
+    public void testOutOfFileHandles() throws Exception {
+        counter.set(1536);
+        executeWithPool(4, O3FailureTest::testOutOfFileHandles0, new FilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name) {
+                if (counter.decrementAndGet() < 0) {
+                    return -1;
+                }
+                return super.openRW(name);
+            }
+
+            @Override
+            public long openRO(LPSZ name) {
+                if (counter.decrementAndGet() < 0) {
+                    return -1;
+                }
+                return super.openRO(name);
+            }
+
+            @Override
+            public long openAppend(LPSZ name) {
+                if (counter.decrementAndGet() < 0) {
+                    return -1;
+                }
+                return super.openAppend(name);
+            }
+
+            @Override
+            public boolean close(long fd) {
+                counter.incrementAndGet();
+                return super.close(fd);
+            }
+        });
     }
 
     @Test
@@ -2470,5 +2512,172 @@ public class O3FailureTest extends AbstractO3Test {
             };
             execute(null, runnable, configuration);
         });
+    }
+
+    private static void testOutOfFileHandles0(
+            CairoEngine engine,
+            SqlCompiler compiler,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        compiler.compile(
+                "create table x as (" +
+                        "select" +
+                        " rnd_str(5,16,2) i," +
+                        " rnd_str(5,16,2) sym," +
+                        " rnd_str(5,16,2) amt," +
+                        " rnd_str(5,16,2) timestamp," +
+                        " rnd_str(5,16,2) b," +
+                        " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                        " rnd_str(5,16,2) d," +
+                        " rnd_str(5,16,2) e," +
+                        " rnd_str(5,16,2) f," +
+                        " rnd_str(5,16,2) g," +
+                        " rnd_str(5,16,2) ik," +
+                        " rnd_str(5,16,2) j," +
+                        " timestamp_sequence(500000000000L,100000000L) ts," +
+                        " rnd_str(5,16,2) l," +
+                        " rnd_str(5,16,2) m," +
+                        " rnd_str(5,16,2) n," +
+                        " rnd_str(5,16,2) t," +
+                        " rnd_str(5,16,2) l256" +
+                        " from long_sequence(10000)" +
+                        ") timestamp (ts) partition by DAY",
+                executionContext
+        );
+
+        compiler.compile("create table x1 as (x) timestamp(ts) partition by DAY", executionContext);
+
+        compiler.compile(
+                "create table y as (" +
+                        "select" +
+                        " rnd_str(5,16,2) i," +
+                        " rnd_str(5,16,2) sym," +
+                        " rnd_str(5,16,2) amt," +
+                        " rnd_str(5,16,2) timestamp," +
+                        " rnd_str(5,16,2) b," +
+                        " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                        " rnd_str(5,16,2) d," +
+                        " rnd_str(5,16,2) e," +
+                        " rnd_str(5,16,2) f," +
+                        " rnd_str(5,16,2) g," +
+                        " rnd_str(5,16,2) ik," +
+                        " rnd_str(5,16,2) j," +
+                        " timestamp_sequence(500000080000L,79999631L) ts," +
+                        " rnd_str(5,16,2) l," +
+                        " rnd_str(5,16,2) m," +
+                        " rnd_str(5,16,2) n," +
+                        " rnd_str(5,16,2) t," +
+                        " rnd_str(5,16,2) l256" +
+                        " from long_sequence(10000)" +
+                        ") timestamp (ts) partition by DAY",
+                executionContext
+        );
+
+        compiler.compile("create table y1 as (y)", executionContext);
+
+        // create expected result sets
+        compiler.compile("create table z as (x union all y)", executionContext);
+
+        // create another compiler to be used by second pool
+        try (SqlCompiler compiler2 = new SqlCompiler(engine)) {
+
+            final CyclicBarrier barrier = new CyclicBarrier(2);
+            final SOCountDownLatch haltLatch = new SOCountDownLatch(2);
+            final AtomicInteger errorCount = new AtomicInteger();
+
+            // we have two pairs of tables (x,y) and (x1,y1)
+            WorkerPool pool1 = new WorkerPool(new WorkerPoolAwareConfiguration() {
+                @Override
+                public int[] getWorkerAffinity() {
+                    return new int[]{-1};
+                }
+
+                @Override
+                public int getWorkerCount() {
+                    return 1;
+                }
+
+                @Override
+                public boolean haltOnError() {
+                    return false;
+                }
+
+                @Override
+                public boolean isEnabled() {
+                    return true;
+                }
+            });
+
+            pool1.assign(new Job() {
+                private boolean toRun = true;
+
+                @Override
+                public boolean run(int workerId) {
+                    if (toRun) {
+                        try {
+                            toRun = false;
+                            barrier.await();
+                            compiler.compile("insert into x select * from y", executionContext);
+                        } catch (Throwable e) {
+                            e.printStackTrace();
+                            errorCount.incrementAndGet();
+                        } finally {
+                            haltLatch.countDown();
+                        }
+                    }
+                    return false;
+                }
+            });
+            pool1.assignCleaner(Path.CLEANER);
+
+            final WorkerPool pool2 = new WorkerPool(new WorkerPoolConfiguration() {
+                @Override
+                public int[] getWorkerAffinity() {
+                    return new int[]{-1};
+                }
+
+                @Override
+                public int getWorkerCount() {
+                    return 1;
+                }
+
+                @Override
+                public boolean haltOnError() {
+                    return false;
+                }
+            });
+
+            pool2.assign(new Job() {
+                private boolean toRun = true;
+
+                @Override
+                public boolean run(int workerId) {
+                    if (toRun) {
+                        try {
+                            toRun = false;
+                            barrier.await();
+                            compiler2.compile("insert into x1 select * from y1", executionContext);
+                        } catch (Throwable e) {
+                            e.printStackTrace();
+                            errorCount.incrementAndGet();
+                        } finally {
+                            haltLatch.countDown();
+                        }
+                    }
+                    return false;
+                }
+            });
+
+            pool2.assignCleaner(Path.CLEANER);
+
+            pool1.start(null);
+            pool2.start(null);
+
+            haltLatch.await();
+
+            pool1.halt();
+            pool2.halt();
+            Assert.assertEquals(2, errorCount.get());
+        }
     }
 }

@@ -76,6 +76,15 @@ public class PagedVirtualMemory implements ReadWriteVirtualMemory, Closeable {
         }
     }
 
+    public boolean isMapped(long offset, long size) {
+        int pageIndex = pageIndex(offset);
+        int pageEndIndex = pageIndex(offset + size - 1);
+        if (pageIndex == pageEndIndex) {
+            return getPageAddress(pageIndex) > 0;
+        }
+        return false;
+    }
+
     public long addressOf(long offset) {
         if (roOffsetLo < offset && offset < roOffsetHi) {
             return absolutePointer + offset;
@@ -320,6 +329,7 @@ public class PagedVirtualMemory implements ReadWriteVirtualMemory, Closeable {
             final int page = pageIndex(offset);
             final long pageSize = getPageSize(page);
             final long pageAddress = getPageAddress(page);
+            assert pageAddress > 0;
             final long offsetInPage = offsetInPage(offset);
             final long bytesToCopy = Math.min(len, pageSize - offsetInPage);
             Vect.memcpy(pageAddress + offsetInPage, address, bytesToCopy);
@@ -694,7 +704,7 @@ public class PagedVirtualMemory implements ReadWriteVirtualMemory, Closeable {
      */
     private long computeHotPage(int page) {
         long pageAddress = getPageAddress(page);
-        assert pageAddress != 0;
+        assert pageAddress > 0;
         roOffsetLo = pageOffset(page) - 1;
         roOffsetHi = roOffsetLo + getPageSize(page) + 1;
         absolutePointer = pageAddress - roOffsetLo - 1;
@@ -917,7 +927,7 @@ public class PagedVirtualMemory implements ReadWriteVirtualMemory, Closeable {
         return cachePageAddress(page, allocateNextPage(page));
     }
 
-    long offsetInPage(long offset) {
+    public long offsetInPage(long offset) {
         return offset & mod;
     }
 

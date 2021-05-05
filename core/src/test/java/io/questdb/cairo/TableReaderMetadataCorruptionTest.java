@@ -196,7 +196,7 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
                     new TableReaderMetadata(FilesFacadeImpl.INSTANCE, path);
                     Assert.fail();
                 } catch (CairoException e) {
-                    TestUtils.assertContains(e.getMessage(), contains);
+                    TestUtils.assertContains(e.getFlyweightMessage(), contains);
                 }
             }
         });
@@ -222,7 +222,7 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
                     try {
                         metadata.createTransitionIndex();
                     } catch (CairoException e) {
-                        TestUtils.assertContains(e.getMessage(), "Incorrect columnCount");
+                        TestUtils.assertContains(e.getFlyweightMessage(), "Incorrect columnCount");
                     }
                 }
             }

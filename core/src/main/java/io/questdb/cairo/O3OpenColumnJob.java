@@ -30,10 +30,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.AbstractQueueConsumerJob;
 import io.questdb.mp.Sequence;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.Numbers;
-import io.questdb.std.Unsafe;
-import io.questdb.std.Vect;
+import io.questdb.std.*;
 import io.questdb.std.str.Path;
 import io.questdb.tasks.O3CopyTask;
 import io.questdb.tasks.O3OpenColumnTask;
@@ -535,6 +532,9 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     );
                 }
             } catch (Throwable e) {
+                LOG.error().$("append mid partition error 1 [table=").$(tableWriter.getTableName())
+                        .$(", e=").$(e)
+                        .I$();
                 tableWriter.o3BumpErrorCount();
                 O3CopyJob.copyIdleQuick(
                         columnCounter,
@@ -574,6 +574,9 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     dFile(pathToPartition.trimTo(plen), columnName);
                     dstVarFd = openRW(ff, pathToPartition, LOG);
                 } catch (Throwable e) {
+                    LOG.error().$("append mid partition error 2 [table=").$(tableWriter.getTableName())
+                            .$(", e=").$(e)
+                            .I$();
                     tableWriter.o3BumpErrorCount();
                     O3CopyJob.copyIdleQuick(
                             columnCounter,
@@ -656,6 +659,9 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     dFile(pathToPartition.trimTo(plen), columnName);
                     dstFixFd = openRW(ff, pathToPartition, LOG);
                 } catch (Throwable e) {
+                    LOG.error().$("append mid partition error 3 [table=").$(tableWriter.getTableName())
+                            .$(", e=").$(e)
+                            .I$();
                     tableWriter.o3BumpErrorCount();
                     O3CopyJob.copyIdleQuick(
                             columnCounter,
@@ -772,6 +778,9 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 dstVFd = openRW(ff, pathToPartition, LOG);
             }
         } catch (Throwable e) {
+            LOG.error().$("append fix error [table=").$(tableWriter.getTableName())
+                    .$(", e=").$(e)
+                    .I$();
             tableWriter.o3BumpErrorCount();
             O3CopyJob.copyIdleQuick(
                     columnCounter,
@@ -890,6 +899,9 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 dstFixSize = -dstFixSize;
             }
         } catch (Throwable e) {
+            LOG.error().$("append ts error [table=").$(tableWriter.getTableName())
+                    .$(", e=").$(e)
+                    .I$();
             tableWriter.o3BumpErrorCount();
             O3CopyJob.copyIdleQuick(
                     columnCounter,
@@ -1036,6 +1048,9 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 dstVarAdjust = dstVarMem.getAppendOffset();
             }
         } catch (Throwable e) {
+            LOG.error().$("append var error [table=").$(tableWriter.getTableName())
+                    .$(", e=").$(e)
+                    .I$();
             tableWriter.o3BumpErrorCount();
             O3CopyJob.copyIdleQuick(
                     columnCounter,
@@ -1729,6 +1744,9 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             try {
                 srcDataTop = getSrcDataTop(ff, pathToPartition, plen, columnName, srcDataMax, tmpBuf);
             } catch (Throwable e) {
+                LOG.error().$("merge mid partition error 1 [table=").$(tableWriter.getTableName())
+                        .$(", e=").$(e)
+                        .I$();
                 tableWriter.o3BumpErrorCount();
                 O3CopyJob.copyIdleQuick(
                         columnCounter,
@@ -1767,6 +1785,9 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     dFile(pathToPartition.trimTo(plen), columnName);
                     srcDataVarFd = openRW(ff, pathToPartition, LOG);
                 } catch (Throwable e) {
+                    LOG.error().$("merge mid partition error 2 [table=").$(tableWriter.getTableName())
+                            .$(", e=").$(e)
+                            .I$();
                     tableWriter.o3BumpErrorCount();
                     O3CopyJob.copyIdleQuick(
                             columnCounter,
@@ -1846,6 +1867,9 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         srcDataFixFd = openRW(ff, pathToPartition, LOG);
                     }
                 } catch (Throwable e) {
+                    LOG.error().$("merge mid partition error 3 [table=").$(tableWriter.getTableName())
+                            .$(", e=").$(e)
+                            .I$();
                     tableWriter.o3BumpErrorCount();
                     O3CopyJob.copyIdleQuick(
                             columnCounter,
@@ -2083,6 +2107,9 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 partCount++;
             }
         } catch (Throwable e) {
+            LOG.error().$("merge fix error [table=").$(tableWriter.getTableName())
+                    .$(", e=").$(e)
+                    .I$();
             tableWriter.o3BumpErrorCount();
             O3CopyJob.copyIdleQuick(
                     columnCounter,
@@ -2398,6 +2425,9 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 partCount++;
             }
         } catch (Throwable e) {
+            LOG.error().$("merge var error [table=").$(tableWriter.getTableName())
+                    .$(", e=").$(e)
+                    .I$();
             tableWriter.o3BumpErrorCount();
             O3CopyJob.copyIdleQuick(
                     columnCounter,
@@ -2579,6 +2609,9 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     break;
             }
         } catch (Throwable e) {
+            LOG.error().$("append new partition error [table=").$(tableWriter.getTableName())
+                    .$(", e=").$(e)
+                    .I$();
             tableWriter.o3BumpErrorCount();
             O3CopyJob.copyIdleQuick(
                     columnCounter,

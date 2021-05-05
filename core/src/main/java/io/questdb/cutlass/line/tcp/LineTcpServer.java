@@ -94,10 +94,10 @@ public class LineTcpServer implements Closeable {
         }
         LineTcpServer lineTcpServer = new LineTcpServer(lineConfiguration, cairoEngine, ioWorkerPool, writerWorkerPool, dedicatedPools);
         if (ioWorkerPool != sharedWorkerPool) {
-            ioWorkerPool.start(LOG);
+            ioWorkerPool.start(log);
         }
         if (writerWorkerPool != sharedWorkerPool) {
-            writerWorkerPool.start(LOG);
+            writerWorkerPool.start(log);
         }
         return lineTcpServer;
     }
