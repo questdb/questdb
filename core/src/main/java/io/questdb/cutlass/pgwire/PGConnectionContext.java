@@ -407,27 +407,27 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     }
 
     public void setDoubleBindVariable(int index, long address, int valueLen) throws BadProtocolException, SqlException {
-        ensureValueLength(Double.BYTES, valueLen);
+        ensureValueLength(index, Double.BYTES, valueLen);
         bindVariableService.setDouble(index, Double.longBitsToDouble(getLongUnsafe(address)));
     }
 
     public void setFloatBindVariable(int index, long address, int valueLen) throws BadProtocolException, SqlException {
-        ensureValueLength(Float.BYTES, valueLen);
+        ensureValueLength(index, Float.BYTES, valueLen);
         bindVariableService.setFloat(index, Float.intBitsToFloat(getIntUnsafe(address)));
     }
 
     public void setIntBindVariable(int index, long address, int valueLen) throws BadProtocolException, SqlException {
-        ensureValueLength(Integer.BYTES, valueLen);
+        ensureValueLength(index, Integer.BYTES, valueLen);
         bindVariableService.setInt(index, getIntUnsafe(address));
     }
 
     public void setLongBindVariable(int index, long address, int valueLen) throws BadProtocolException, SqlException {
-        ensureValueLength(Long.BYTES, valueLen);
+        ensureValueLength(index, Long.BYTES, valueLen);
         bindVariableService.setLong(index, getLongUnsafe(address));
     }
 
     public void setShortBindVariable(int index, long address, int valueLen) throws BadProtocolException, SqlException {
-        ensureValueLength(Short.BYTES, valueLen);
+        ensureValueLength(index, Short.BYTES, valueLen);
         bindVariableService.setShort(index, getShortUnsafe(address));
     }
 
@@ -442,7 +442,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     }
 
     public void setTimestampBindVariable(int index, long address, int valueLen) throws BadProtocolException, SqlException {
-        ensureValueLength(Long.BYTES, valueLen);
+        ensureValueLength(index, Long.BYTES, valueLen);
         bindVariableService.setTimestamp(index, getLongUnsafe(address) + Numbers.JULIAN_EPOCH_OFFSET_USEC);
     }
 
@@ -454,11 +454,15 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         return Numbers.bswap(Unsafe.getUnsafe().getShort(address));
     }
 
-    private static void ensureValueLength(int required, int valueLen) throws BadProtocolException {
-        if (required == valueLen) {
+    private static void ensureValueLength(int index, int required, int actual) throws BadProtocolException {
+        if (required == actual) {
             return;
         }
-        LOG.error().$("bad parameter value length [required=").$(required).$(", actual=").$(valueLen).$(']').$();
+        LOG.error()
+                .$("bad parameter value length [required=").$(required)
+                .$(", actual=").$(actual)
+                .$(", index=").$(index)
+                .I$();
         throw BadProtocolException.INSTANCE;
     }
 

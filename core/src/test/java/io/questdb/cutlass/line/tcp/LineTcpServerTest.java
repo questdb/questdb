@@ -128,12 +128,7 @@ public class LineTcpServerTest extends AbstractCairoTest {
         }
 
         @Override
-        public int getMaxUncommittedRows() {
-            return 50;
-        }
-
-        @Override
-        public long getMaintenanceJobHysteresisInMs() {
+        public long getMaintenanceInterval() {
             return 25;
         }
 
@@ -148,7 +143,7 @@ public class LineTcpServerTest extends AbstractCairoTest {
         }
 
         @Override
-        public long getMinIdleMsBeforeWriterRelease() {
+        public long getWriterIdleTimeout() {
             return minIdleMsBeforeWriterRelease;
         }
 

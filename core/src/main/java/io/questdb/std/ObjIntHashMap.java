@@ -68,6 +68,17 @@ public class ObjIntHashMap<K> implements Iterable<ObjIntHashMap.Entry<K>>, Mutab
         Arrays.fill(keys, noEntryValue);
     }
 
+    @SuppressWarnings("unchecked")
+    public void clear(int newCapacity) {
+        if (newCapacity <= capacity) {
+            clear();
+        } else {
+            free = capacity = newCapacity;
+            keys = (K[]) new Object[Numbers.ceilPow2((int) (this.capacity / loadFactor))];
+            values = new int[keys.length];
+        }
+    }
+
     public int get(K key) {
         return valueAt(keyIndex(key));
     }

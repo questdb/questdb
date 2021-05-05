@@ -1366,7 +1366,14 @@ public class SqlCompiler implements Closeable {
         writer.commit();
     }
 
-    private void copyOrderedBatched0(TableWriter writer, RecordCursor cursor, RecordToRowCopier copier, int cursorTimestampIndex, long batchSize, long hysteresis) {
+    private void copyOrderedBatched0(
+            TableWriter writer,
+            RecordCursor cursor,
+            RecordToRowCopier copier,
+            int cursorTimestampIndex,
+            long batchSize,
+            long hysteresis
+    ) {
         long deadline = batchSize;
         long rowCount = 0;
         final Record record = cursor.getRecord();
@@ -1381,7 +1388,14 @@ public class SqlCompiler implements Closeable {
         }
     }
 
-    private void copyOrderedBatchedStrTimestamp(TableWriter writer, RecordCursor cursor, RecordToRowCopier copier, int cursorTimestampIndex, long batchSize, long hysteresis) {
+    private void copyOrderedBatchedStrTimestamp(
+            TableWriter writer,
+            RecordCursor cursor,
+            RecordToRowCopier copier,
+            int cursorTimestampIndex,
+            long batchSize,
+            long hysteresis
+    ) {
         long deadline = batchSize;
         long rowCount = 0;
         final Record record = cursor.getRecord();
@@ -2340,6 +2354,16 @@ public class SqlCompiler implements Closeable {
         @Override
         public int getTimestampIndex() {
             return timestampIndex;
+        }
+
+        @Override
+        public int getO3MaxUncommittedRows() {
+            return model.getO3MaxUncommittedRows();
+        }
+
+        @Override
+        public long getO3CommitHysteresisInMicros() {
+            return model.getO3CommitHysteresisInMicros();
         }
 
         TableStructureAdapter of(CreateTableModel model, RecordMetadata metadata, IntIntHashMap typeCast) {

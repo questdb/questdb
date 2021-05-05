@@ -100,12 +100,7 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
             }
 
             @Override
-            public int getMaxUncommittedRows() {
-                return 25;
-            }
-
-            @Override
-            public long getMinIdleMsBeforeWriterRelease() {
+            public long getWriterIdleTimeout() {
                 return 150;
             }
 
@@ -1358,7 +1353,7 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
         Assert.assertTrue(disconnected || !closeConnection);
         // Wait for last commit
         try {
-            Thread.sleep(lineTcpConfiguration.getMaintenanceJobHysteresisInMs() + 50);
+            Thread.sleep(lineTcpConfiguration.getMaintenanceInterval() + 50);
         } catch (InterruptedException ex) {
             throw new RuntimeException(ex);
         }

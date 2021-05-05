@@ -520,4 +520,14 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     public int getTxnScoreboardEntryCount() {
         return 8192;
     }
+
+    @Override
+    public int getO3MaxUncommittedRows() {
+        return 1000;
+    }
+
+    @Override
+    public long getO3CommitHysteresisInMicros() {
+        return 0;
+    }
 }
