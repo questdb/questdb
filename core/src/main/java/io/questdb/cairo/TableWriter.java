@@ -2465,7 +2465,7 @@ public class TableWriter implements Closeable {
                         // move uncommitted is liable to change max timestamp
                         // however we need to identify last partition before max timestamp skips to NULL for example
                         final long maxTimestamp = txFile.getMaxTimestamp();
-
+                        final boolean append = last && (srcDataSize < 0 || o3Timestamp >= maxTimestamp);
                         LOG.debug().
                                 $("o3 partition task [table=").$(tableName)
                                 .$(", srcOooLo=").$(srcOooLo)
@@ -2479,6 +2479,7 @@ public class TableWriter implements Closeable {
                                 .$(", srcDataSize=").$(srcDataSize)
                                 .$(", maxTimestamp=").$ts(maxTimestamp)
                                 .$(", last=").$(last)
+                                .$(", append=").$(append)
                                 .$(", memUsed=").$(Unsafe.getMemUsed())
                                 .I$();
 
@@ -2491,7 +2492,7 @@ public class TableWriter implements Closeable {
                         columnCounter.set(columnCount);
                         latchCount++;
 
-                        if (last && (srcDataSize < 0 || o3Timestamp >= maxTimestamp)) {
+                        if (append) {
                             Path pathToPartition = Path.getThreadLocal(this.path);
                             TableUtils.setPathForPartition(pathToPartition, partitionBy, o3TimestampMin, false);
                             TableUtils.txnPartitionConditionally(pathToPartition, srcNameTxn);
