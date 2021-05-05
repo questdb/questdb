@@ -238,12 +238,12 @@ public class EngineMigration {
             long tempMem = migrationContext.getTempMemory(8);
             Unsafe.getUnsafe().putInt(tempMem, migrationContext.getConfiguration().getO3MaxUncommittedRows());
             if (ff.write(migrationContext.metadataFd, tempMem, Integer.BYTES, META_OFFSET_O3_MAX_UNCOMMITTED_ROWS) != Integer.BYTES) {
-                CairoException.instance(ff.errno()).put("Cannot update metadata [path=").put(path).put(']');
+                throw CairoException.instance(ff.errno()).put("Cannot update metadata [path=").put(path).put(']');
             }
 
             Unsafe.getUnsafe().putLong(tempMem, migrationContext.getConfiguration().getO3CommitHysteresisInMicros());
             if (ff.write(migrationContext.metadataFd, tempMem, Long.BYTES, META_OFFSET_O3_COMMIT_HYSTERESIS_IN_MICROS) != Long.BYTES) {
-                CairoException.instance(ff.errno()).put("Cannot update metadata [path=").put(path).put(']');
+                throw CairoException.instance(ff.errno()).put("Cannot update metadata [path=").put(path).put(']');
             }
         }
 
