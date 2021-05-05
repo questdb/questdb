@@ -53,6 +53,7 @@ class SymbolCache implements Closeable {
         int symCount = txMem.getInt(transientSymCountOffset);
         path.trimTo(plen);
         symMapReader.of(configuration, path, name, symCount);
+        indexBySym.clear();
     }
 
     int getSymIndex(CharSequence symValue) {
