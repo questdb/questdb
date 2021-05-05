@@ -354,6 +354,59 @@ public class EngineMigrationTest extends AbstractGriffinTest {
         });
     }
 
+    @Test
+    public void testCannotUpdateHysteresisMetadata1() throws Exception {
+        configOverrideMaxUncommittedRows = 1231231;
+        configOverrideO3CommitHysteresisInMicros = 85754;
+        assertMemoryLeak(() -> {
+            try (TableModel src = new TableModel(configuration, "src", PartitionBy.NONE)) {
+                createPopulateTable(
+                        src.col("c1", ColumnType.INT).col("ts", ColumnType.TIMESTAMP).timestamp(),
+                        100, "2020-01-01", 0
+                );
+
+                ff = new FilesFacadeImpl() {
+                    @Override
+                    public long write(long fd, long buf, long len, long offset) {
+                        if (META_OFFSET_O3_MAX_UNCOMMITTED_ROWS == offset) {
+                            return 0;
+                        }
+                        return super.write(fd, buf, len, offset);
+                    }
+                };
+
+                try {
+                    assertMetadataMigration(src, "select sum(c1) from src");
+                    Assert.fail();
+                } catch (SqlException e) {
+                    Chars.contains(e.getFlyweightMessage(), "Metadata version does not match runtime version");
+                }
+
+                ff = new FilesFacadeImpl() {
+                    @Override
+                    public long write(long fd, long buf, long len, long offset) {
+                        if (META_OFFSET_O3_COMMIT_HYSTERESIS_IN_MICROS == offset) {
+                            return 0;
+                        }
+                        return super.write(fd, buf, len, offset);
+                    }
+                };
+
+                try {
+                    new EngineMigration(engine, configuration).migrateEngineTo(ColumnType.VERSION);
+                    assertMetadataMigration(src, "select sum(c1) from src");
+                    Assert.fail();
+                } catch (SqlException e) {
+                    Chars.contains(e.getFlyweightMessage(), "Metadata version does not match runtime version");
+                }
+
+                ff = new FilesFacadeImpl();
+                new EngineMigration(engine, configuration).migrateEngineTo(ColumnType.VERSION);
+                assertMetadataMigration(src, "select sum(c1) from src");
+            }
+        });
+    }
+
     private void assertMetadataMigration(TableModel src, String query) throws SqlException {
         assertMetadataMigration(src, query, query);
     }
