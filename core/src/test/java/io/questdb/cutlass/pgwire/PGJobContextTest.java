@@ -3978,4 +3978,25 @@ nodejs code:
             }
         });
     }
+
+    @Test
+    public void testRegProcedure() throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    final PGWireServer ignored = createPGServer(1);
+                    final Connection connection = getConnection(false, true)
+            ) {
+                final CallableStatement stmt = connection.prepareCall("SELECT t.oid, t.typname, t.typelem, t.typdelim, t.typinput, r.rngsubtype, t.typtype, t.typbasetype " +
+                        "FROM pg_type as t "+
+                        "LEFT JOIN pg_range as r ON oid = rngtypid " +
+                        "WHERE " +
+                        "t.typname IN ('int2', 'int4', 'int8', 'oid', 'float4', 'float8', 'text', 'varchar', 'char', 'name', 'bpchar', 'bool', 'bit', 'varbit', 'timestamptz', 'date', 'money', 'bytea', 'point', 'hstore', 'json', 'jsonb', 'cidr', 'inet', 'uuid', 'xml', 'tsvector', 'macaddr', 'citext', 'ltree', 'line', 'lseg', 'box', 'path', 'polygon', 'circle', 'time', 'timestamp', 'numeric', 'interval') " +
+                        "OR t.typtype IN ('r', 'e', 'd') " +
+                        "OR t.typinput = 'array_in(cstring,oid,integer)'::regprocedure " +
+                        "OR t.typelem != 0 ");
+                stmt.execute();
+            }
+        });
+    }
+
 }
