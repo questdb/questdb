@@ -47,8 +47,6 @@ public class EngineMigration {
     public static final long TX_STRUCT_UPDATE_1_OFFSET_MAP_WRITER_COUNT = 72;
     public static final long TX_STRUCT_UPDATE_1_META_OFFSET_PARTITION_BY = 4;
     public static final String TX_STRUCT_UPDATE_1_ARCHIVE_FILE_NAME = "_archive";
-    public static final String TX_STRUCT_UPDATE_1_BACKUP_NAME = TXN_FILE_NAME + ".v" + (VERSION_TX_STRUCT_UPDATE_1 - 1);
-    public static final String META_UPDATE_1_BACKUP_NAME = META_FILE_NAME + ".v" + (VERSION_TBL_META_HYSTERESIS - 1);
 
     private static final Log LOG = LogFactory.getLog(EngineMigration.class);
     private static final ObjList<MigrationAction> MIGRATIONS = new ObjList<>();
@@ -157,8 +155,10 @@ public class EngineMigration {
                                         LOG.info().$("upgrading [path=").$(path).$(",fromVersion=").$(currentTableVersion)
                                                 .$(",toVersion=").$(latestVersion).I$();
 
-                                        path.trimTo(plen);
                                         copyPath.trimTo(plen);
+                                        backupFile(ff, path, copyPath, TableUtils.META_FILE_NAME, currentTableVersion);
+
+                                        path.trimTo(plen);
                                         context.of(path, copyPath, fd);
 
                                         for (int i = currentTableVersion + 1; i <= latestVersion; i++) {
@@ -213,6 +213,28 @@ public class EngineMigration {
         return updateSuccess;
     }
 
+    private static void backupFile(FilesFacade ff, Path src, Path toTemp, String backupName, int version) {
+        // make a copy
+        int copyPathLen = toTemp.length();
+        try {
+            toTemp.concat(backupName).put(".v").put(version);
+            for (int i = 1; ff.exists(toTemp.$()); i++) {
+                // if backup file already exists
+                // add .<num> at the end until file name is unique
+                LOG.info().$("back up file exists, [path=").$(toTemp).I$();
+                toTemp.trimTo(copyPathLen);
+                toTemp.concat(backupName).put(".v").put(version).put(".").put(i);
+            }
+
+            LOG.info().$("back up coping file [from=").$(src).$(",to=").$(toTemp).I$();
+            if (ff.copy(src.$(), toTemp.$()) < 0) {
+                throw CairoException.instance(ff.errno()).put("Cannot backup transaction file [to=").put(toTemp).put(']');
+            }
+        } finally {
+            toTemp.trimTo(copyPathLen);
+        }
+    }
+
     @FunctionalInterface
     interface MigrationAction {
         void migrate(MigrationContext context);
@@ -234,7 +256,7 @@ public class EngineMigration {
                 LOG.error().$("meta file does not exist, nothing to migrate [path=").$(path).I$();
                 return;
             }
-            backupFile(ff, path, migrationContext.getTablePath2(), META_UPDATE_1_BACKUP_NAME);
+            // Metadata file should already be backed up
             long tempMem = migrationContext.getTempMemory(8);
             Unsafe.getUnsafe().putInt(tempMem, migrationContext.getConfiguration().getO3MaxUncommittedRows());
             if (ff.write(migrationContext.metadataFd, tempMem, Integer.BYTES, META_OFFSET_O3_MAX_UNCOMMITTED_ROWS) != Integer.BYTES) {
@@ -274,7 +296,7 @@ public class EngineMigration {
                 LOG.error().$("tx file does not exist, nothing to migrate [path=").$(path).I$();
                 return;
             }
-            backupFile(ff, path, migrationContext.getTablePath2(), TX_STRUCT_UPDATE_1_BACKUP_NAME);
+            backupFile(ff, path, migrationContext.getTablePath2(), TXN_FILE_NAME, VERSION_TX_STRUCT_UPDATE_1 - 1);
 
             LOG.debug().$("opening for rw [path=").$(path).I$();
             MappedReadWriteMemory txMem = migrationContext.createRwMemoryOf(ff, path.$(), ff.getPageSize());
@@ -319,28 +341,6 @@ public class EngineMigration {
                 assert updateSize == 0;
             } finally {
                 txMem.close();
-            }
-        }
-
-        private static void backupFile(FilesFacade ff, Path src, Path toTemp, String backupName) {
-            // make a copy
-            int copyPathLen = toTemp.length();
-            try {
-                toTemp.concat(backupName).$();
-                if (ff.exists(toTemp)) {
-                    LOG.info().$("back up file exists, [path=").$(toTemp).I$();
-                    for (int i = 1; ff.exists(toTemp.$()); i++) {
-                        toTemp.trimTo(copyPathLen);
-                        toTemp.put(".").put(i);
-                    }
-                }
-
-                LOG.info().$("back up coping file [from=").$(src).$(",to=").$(toTemp).I$();
-                if (ff.copy(src, toTemp) < 0) {
-                    throw CairoException.instance(ff.errno()).put("Cannot backup transaction file [to=").put(toTemp).put(']');
-                }
-            } finally {
-                toTemp.trimTo(copyPathLen);
             }
         }
 
