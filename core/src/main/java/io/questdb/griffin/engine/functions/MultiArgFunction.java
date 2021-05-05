@@ -68,11 +68,19 @@ public interface MultiArgFunction extends Function {
     @Override
     default boolean isRuntimeConstant() {
         ObjList<Function> args = getArgs();
-        for(int i = 0, n = args.size(); i < n; i++) {
-            if (!args.getQuick(i).isRuntimeConstant()) {
-                return false;
+        boolean runtimeConstFound = false;
+        for (int i = 0, n = args.size(); i < n; i++) {
+            Function function = args.getQuick(i);
+            if (!function.isRuntimeConstant()) {
+                // If at least one arg is RuntimeConstant and others are Constant
+                // then result of this method should be true
+                if (!function.isConstant()) {
+                    return false;
+                }
+            } else {
+                runtimeConstFound = true;
             }
         }
-        return true;
+        return runtimeConstFound;
     }
 }
