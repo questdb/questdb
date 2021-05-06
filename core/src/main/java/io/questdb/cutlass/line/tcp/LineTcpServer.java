@@ -57,7 +57,8 @@ public class LineTcpServer implements Closeable {
         this.contextFactory = new LineTcpConnectionContextFactory(lineConfiguration);
         this.dispatcher = IODispatchers.create(
                 lineConfiguration.getNetDispatcherConfiguration(),
-                contextFactory);
+                contextFactory
+        );
         this.dedicatedPools = dedicatedPools;
         ioWorkerPool.assign(dispatcher);
         scheduler = new LineTcpMeasurementScheduler(lineConfiguration, engine, ioWorkerPool, dispatcher, writerWorkerPool);

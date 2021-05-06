@@ -510,6 +510,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.catalogue.ProcCatalogueFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.RangeCatalogueFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.PrefixedPgGetKeywordsFunctionFactory,
+            io.questdb.griffin.engine.functions.catalogue.TableMetadataCursorFactory,
 //                  concat()
             io.questdb.griffin.engine.functions.str.ConcatFunctionFactory,
             // replace()

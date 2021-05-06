@@ -194,4 +194,7 @@ public final class Vect {
     public static native long getPerformanceCounter(int index);
 
     public static native void resetPerformanceCounters();
+
+    public static native long sortVarColumn(long mergedTimestampsAddr, long valueCount, long srcDataAddr,
+                                            long srcIndxAddr, long tgtDataAddr, long tgtIndxAdd);
 }

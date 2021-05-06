@@ -77,7 +77,6 @@ public class TableReader implements Closeable, SymbolTableSource {
     private boolean active;
 
     public TableReader(CairoConfiguration configuration, CharSequence tableName) {
-        LOG.debug().$("open '").utf8(tableName).$('\'').$();
         this.configuration = configuration;
         this.ff = configuration.getFilesFacade();
         this.tableName = Chars.toString(tableName);
@@ -92,7 +91,10 @@ public class TableReader implements Closeable, SymbolTableSource {
             int partitionBy = this.metadata.getPartitionBy();
             this.txnScoreboard = new TxnScoreboard(ff, path.trimTo(rootLen), configuration.getTxnScoreboardEntryCount());
             path.trimTo(rootLen);
-            LOG.info().$("table [id=").$(metadata.getId()).$(']').$();
+            LOG.debug()
+                    .$("open [id=").$(metadata.getId())
+                    .$(", table=").utf8(tableName)
+                    .I$();
             this.txFile = new TxReader(ff, path, partitionBy);
             readTxnSlow();
             openSymbolMaps();
@@ -120,7 +122,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             this.columnTops.setPos(capacity / 2);
             this.recordCursor.of(this);
             this.active = true;
-        } catch (CairoException e) {
+        } catch (Throwable e) {
             close();
             throw e;
         }

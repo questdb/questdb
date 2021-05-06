@@ -38,20 +38,32 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
     private final Path path;
     private final FilesFacade ff;
     private final CharSequenceIntHashMap tmpValidationMap = new CharSequenceIntHashMap();
-    private final int id;
+    private int id;
     private MappedReadOnlyMemory transitionMeta;
 
-    public TableReaderMetadata(FilesFacade ff, Path path) {
+    public TableReaderMetadata(FilesFacade ff) {
+        this.path = new Path();
         this.ff = ff;
-        this.path = new Path().of(path).$();
+        this.metaMem = new SinglePageMappedReadOnlyPageMemory();
+        this.columnMetadata = new ObjList<>(columnCount);
+        this.columnNameIndexMap = new CharSequenceIntHashMap();
+    }
+
+    public TableReaderMetadata(FilesFacade ff, Path path) {
+        this(ff);
+        of(path);
+    }
+
+    public TableReaderMetadata of(Path path) {
+        this.path.of(path).$();
         try {
-            this.metaMem = new SinglePageMappedReadOnlyPageMemory(ff, path, ff.length(path));
+            this.metaMem.of(ff, path, ff.length(path));
             this.columnCount = metaMem.getInt(TableUtils.META_OFFSET_COUNT);
-            this.columnNameIndexMap = new CharSequenceIntHashMap(columnCount);
+            this.columnNameIndexMap.clear();
             TableUtils.validate(ff, metaMem, this.columnNameIndexMap);
             this.timestampIndex = metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX);
             this.id = metaMem.getInt(TableUtils.META_OFFSET_TABLE_ID);
-            this.columnMetadata = new ObjList<>(columnCount);
+            this.columnMetadata.clear();
             long offset = TableUtils.getColumnNameOffset(columnCount);
 
             // don't create strings in this loop, we already have them in columnNameIndexMap
@@ -70,10 +82,11 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
                 );
                 offset += VmUtils.getStorageLength(name);
             }
-        } catch (CairoException e) {
+        } catch (Throwable e) {
             close();
             throw e;
         }
+        return this;
     }
 
     public static void freeTransitionIndex(long address) {
@@ -249,6 +262,14 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
 
     public int getVersion() {
         return metaMem.getInt(TableUtils.META_OFFSET_VERSION);
+    }
+
+    public int getMaxUncommittedRows() {
+        return metaMem.getInt(TableUtils.META_OFFSET_O3_MAX_UNCOMMITTED_ROWS);
+    }
+
+    public long getO3CommitHysteresisMicros() {
+        return metaMem.getLong(TableUtils.META_OFFSET_O3_COMMIT_HYSTERESIS_IN_MICROS);
     }
 
     private TableColumnMetadata moveMetadata(int index, TableColumnMetadata metadata) {

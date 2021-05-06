@@ -1366,7 +1366,14 @@ public class SqlCompiler implements Closeable {
         writer.commit();
     }
 
-    private void copyOrderedBatched0(TableWriter writer, RecordCursor cursor, RecordToRowCopier copier, int cursorTimestampIndex, long batchSize, long hysteresis) {
+    private void copyOrderedBatched0(
+            TableWriter writer,
+            RecordCursor cursor,
+            RecordToRowCopier copier,
+            int cursorTimestampIndex,
+            long batchSize,
+            long hysteresis
+    ) {
         long deadline = batchSize;
         long rowCount = 0;
         final Record record = cursor.getRecord();
@@ -1375,13 +1382,20 @@ public class SqlCompiler implements Closeable {
             copier.copy(record, row);
             row.append();
             if (++rowCount > deadline) {
-                writer.commitWithHysteresis(hysteresis);
+                writer.commitHysteresis(hysteresis);
                 deadline = rowCount + batchSize;
             }
         }
     }
 
-    private void copyOrderedBatchedStrTimestamp(TableWriter writer, RecordCursor cursor, RecordToRowCopier copier, int cursorTimestampIndex, long batchSize, long hysteresis) {
+    private void copyOrderedBatchedStrTimestamp(
+            TableWriter writer,
+            RecordCursor cursor,
+            RecordToRowCopier copier,
+            int cursorTimestampIndex,
+            long batchSize,
+            long hysteresis
+    ) {
         long deadline = batchSize;
         long rowCount = 0;
         final Record record = cursor.getRecord();
@@ -1393,7 +1407,7 @@ public class SqlCompiler implements Closeable {
                 copier.copy(record, row);
                 row.append();
                 if (++rowCount > deadline) {
-                    writer.commitWithHysteresis(hysteresis);
+                    writer.commitHysteresis(hysteresis);
                     deadline = rowCount + batchSize;
                 }
             } catch (NumericException numericException) {
@@ -1469,7 +1483,7 @@ public class SqlCompiler implements Closeable {
             RecordToRowCopier recordToRowCopier = assembleRecordToRowCopier(asm, cursorMetadata, writerMetadata, entityColumnFilter);
             copyTableData(cursor, cursorMetadata, writer, writerMetadata, recordToRowCopier);
             return writer;
-        } catch (CairoException e) {
+        } catch (Throwable e) {
             writer.close();
             throw e;
         }
@@ -1833,7 +1847,7 @@ public class SqlCompiler implements Closeable {
                             copyOrdered(writer, factory.getMetadata(), cursor, copier, writerTimestampIndex);
                         }
                     }
-                } catch (CairoException e) {
+                } catch (Throwable e) {
                     // rollback data when system error occurs
                     writer.rollback();
                     throw e;
@@ -2340,6 +2354,16 @@ public class SqlCompiler implements Closeable {
         @Override
         public int getTimestampIndex() {
             return timestampIndex;
+        }
+
+        @Override
+        public int getO3MaxUncommittedRows() {
+            return model.getO3MaxUncommittedRows();
+        }
+
+        @Override
+        public long getO3CommitHysteresisInMicros() {
+            return model.getO3CommitHysteresisInMicros();
         }
 
         TableStructureAdapter of(CreateTableModel model, RecordMetadata metadata, IntIntHashMap typeCast) {

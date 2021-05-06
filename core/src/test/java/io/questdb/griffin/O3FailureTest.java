@@ -720,7 +720,7 @@ public class O3FailureTest extends AbstractO3Test {
     @Test
     public void testPartitionedAllocateLastPartitionFailNoReopen() throws Exception {
         counter.set(2);
-        executeWithoutPool(O3FailureTest::testPartitionedDataAppendOOPrependOODataFailRetryNoReopen, ffFailToAllocateIndex);
+        executeWithPool(0, O3FailureTest::testPartitionedDataAppendOOPrependOODataFailRetryNoReopen, ffFailToAllocateIndex);
     }
 
     @Test

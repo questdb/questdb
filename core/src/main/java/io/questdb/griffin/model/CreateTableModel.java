@@ -42,6 +42,8 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
     private QueryModel queryModel;
     private ExpressionNode timestamp;
     private ExpressionNode partitionBy;
+    private int o3MaxUncommittedRows;
+    private long o3CommitHysteresisInMicros;
     private boolean ignoreIfExists = false;
 
     private CreateTableModel() {
@@ -310,5 +312,23 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
         } else {
             columnBits.setQuick(index, Numbers.encodeLowHighInts(flags & ~COLUMN_FLAG_INDEXED, Numbers.ceilPow2(indexValueBlockSize)));
         }
+    }
+
+    @Override
+    public int getO3MaxUncommittedRows() {
+        return o3MaxUncommittedRows;
+    }
+
+    public void setO3MaxUncommittedRows(int lineTcpMaxUncommittedRows) {
+        this.o3MaxUncommittedRows = lineTcpMaxUncommittedRows;
+    }
+
+    @Override
+    public long getO3CommitHysteresisInMicros() {
+        return o3CommitHysteresisInMicros;
+    }
+
+    public void setO3CommitHysteresisInMicros(long lineTcpCommitHysteresisInMicros) {
+        this.o3CommitHysteresisInMicros = lineTcpCommitHysteresisInMicros;
     }
 }

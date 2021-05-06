@@ -2161,6 +2161,30 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testCreateTableWithO3() throws SqlException {
+        compiler.compile(
+                "create table x (" +
+                        "a INT, " +
+                        "t TIMESTAMP, " +
+                        "y BOOLEAN) " +
+                        "timestamp(t) " +
+                        "partition by DAY WITH o3MaxUncommittedRows=10000, o3CommitHysteresis=250ms;",
+                sqlExecutionContext);
+
+        try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE,
+                "x")) {
+            sink.clear();
+            TableWriterMetadata metadata = writer.getMetadata();
+            metadata.toJson(sink);
+            TestUtils.assertEquals(
+                    "{\"columnCount\":3,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"INT\"},{\"index\":1,\"name\":\"t\",\"type\":\"TIMESTAMP\"},{\"index\":2,\"name\":\"y\",\"type\":\"BOOLEAN\"}],\"timestampIndex\":1}",
+                    sink);
+            Assert.assertEquals(10000, metadata.getO3MaxUncommittedRows());
+            Assert.assertEquals(250000, metadata.getO3CommitHysteresisInMicros());
+        }
+    }
+
+    @Test
     public void testCreateTableFail() throws Exception {
         FilesFacade ff = new FilesFacadeImpl() {
             int count = 8; // this count is very deliberately coincidental with

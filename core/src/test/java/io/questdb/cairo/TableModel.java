@@ -80,6 +80,7 @@ public class TableModel implements TableStructure, Closeable {
         return false;
     }
 
+    @Override
     public boolean getSymbolCacheFlag(int index) {
         return (columnBits.getQuick(index * 2 + 1) & COLUMN_FLAG_CACHED) == COLUMN_FLAG_CACHED;
     }
@@ -88,22 +89,27 @@ public class TableModel implements TableStructure, Closeable {
         return cairoCfg;
     }
 
+    @Override
     public int getColumnCount() {
         return columnNames.size();
     }
 
+    @Override
     public CharSequence getColumnName(int index) {
         return columnNames.getQuick(index);
     }
 
+    @Override
     public int getColumnType(int index) {
         return (int) columnBits.getQuick(index * 2);
     }
 
+    @Override
     public int getIndexBlockCapacity(int index) {
         return (int) (columnBits.getQuick(index * 2 + 1) >> 32);
     }
 
+    @Override
     public boolean isIndexed(int index) {
         return (columnBits.getQuick(index * 2 + 1) & COLUMN_FLAG_INDEXED) == COLUMN_FLAG_INDEXED;
     }
@@ -116,6 +122,7 @@ public class TableModel implements TableStructure, Closeable {
         return name;
     }
 
+    @Override
     public int getPartitionBy() {
         return partitionBy;
     }
@@ -129,10 +136,12 @@ public class TableModel implements TableStructure, Closeable {
         return name;
     }
 
+    @Override
     public int getSymbolCapacity(int index) {
         return (int) (columnBits.getQuick(index * 2) >> 32);
     }
 
+    @Override
     public int getTimestampIndex() {
         return timestampIndex;
     }
@@ -169,5 +178,15 @@ public class TableModel implements TableStructure, Closeable {
         timestampIndex = columnNames.size();
         col(name, ColumnType.TIMESTAMP);
         return this;
+    }
+
+    @Override
+    public int getO3MaxUncommittedRows() {
+        return cairoCfg.getO3MaxUncommittedRows();
+    }
+
+    @Override
+    public long getO3CommitHysteresisInMicros() {
+        return cairoCfg.getO3CommitHysteresisInMicros();
     }
 }
