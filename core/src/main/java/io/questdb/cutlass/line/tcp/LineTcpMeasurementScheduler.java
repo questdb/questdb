@@ -717,7 +717,11 @@ class LineTcpMeasurementScheduler implements Closeable {
                 row.append();
                 tableUpdateDetails.handleRowAppended();
             } catch (CairoException ex) {
-                LOG.error().$("could not write line protocol measurement [tableName=").$(tableUpdateDetails.tableName).$(", ex=").$(ex.getFlyweightMessage()).$(']').$();
+                LOG.error()
+                        .$("could not write line protocol measurement [tableName=").$(tableUpdateDetails.tableName)
+                        .$(", ex=").$(ex.getFlyweightMessage())
+                        .$(", errno=").$(ex.getErrno())
+                        .I$();
                 if (row != null) {
                     row.cancel();
                 }

@@ -275,8 +275,7 @@ public class TableWriter implements Closeable {
             }
 
                 executeDeferred();
-        } catch (CairoException e) {
-            LOG.error().$("could not open '").$(path).$("' and this is why: {").$((Sinkable) e).$('}').$();
+        } catch (Throwable e) {
             doClose(false);
             throw e;
         }
@@ -489,7 +488,7 @@ public class TableWriter implements Closeable {
             } finally {
                 path.trimTo(rootLen);
             }
-        } catch (CairoException | CairoError e) {
+        } catch (Throwable e) {
             LOG.error().$("rolling back index created so far [path=").$(path).$(']').$();
             removeIndexFiles(columnName);
             throw e;
@@ -1526,7 +1525,7 @@ public class TableWriter implements Closeable {
                     try {
                         openPartition(rollbackToMaxTimestamp);
                         setAppendPosition(rollbackToTransientRowCount, false);
-                    } catch (CairoException e) {
+                    } catch (Throwable e) {
                         freeColumns(false);
                         throw e;
                     }

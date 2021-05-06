@@ -122,7 +122,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             this.columnTops.setPos(capacity / 2);
             this.recordCursor.of(this);
             this.active = true;
-        } catch (CairoException e) {
+        } catch (Throwable e) {
             close();
             throw e;
         }

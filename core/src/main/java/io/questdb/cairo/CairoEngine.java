@@ -74,7 +74,7 @@ public class CairoEngine implements Closeable, WriterSource {
         openTableId();
         try {
             new EngineMigration(this, configuration).migrateEngineTo(ColumnType.VERSION);
-        } catch (CairoException e) {
+        } catch (Throwable e) {
             close();
             throw e;
         }

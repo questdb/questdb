@@ -160,7 +160,7 @@ public class CompactMap implements Map {
             this.cursor = new CompactMapCursor(record);
             nResizes = 0;
             this.maxResizes = maxResizes;
-        } catch (CairoException e) {
+        } catch (Throwable e) {
             Misc.free(this.entries);
             Misc.free(entrySlots);
             throw e;

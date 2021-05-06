@@ -69,7 +69,7 @@ public class GroupByRecordCursorFactory implements RecordCursorFactory {
             this.groupByFunctions = groupByFunctions;
             this.recordFunctions = recordFunctions;
             this.cursor = new VirtualFunctionSkewedSymbolRecordCursor(recordFunctions);
-        } catch (CairoException e) {
+        } catch (Throwable e) {
             Misc.freeObjList(recordFunctions);
             throw e;
         }
@@ -101,7 +101,7 @@ public class GroupByRecordCursorFactory implements RecordCursorFactory {
             // init all record function for this cursor, in case functions require metadata and/or symbol tables
             Function.init(recordFunctions, baseCursor, executionContext);
             return cursor;
-        } catch (CairoException e) {
+        } catch (Throwable e) {
             baseCursor.close();
             throw e;
         }

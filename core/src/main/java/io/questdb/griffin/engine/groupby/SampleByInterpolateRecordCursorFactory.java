@@ -404,7 +404,7 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
             }
 
             return initFunctionsAndCursor(executionContext, dataMap.getCursor(), baseCursor);
-        } catch (CairoException e) {
+        } catch (Throwable e) {
             baseCursor.close();
             throw e;
         }

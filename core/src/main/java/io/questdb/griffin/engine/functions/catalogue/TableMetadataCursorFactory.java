@@ -254,7 +254,11 @@ public class TableMetadataCursorFactory implements FunctionFactory {
                     } catch (CairoException e) {
                         // perhaps this folder is not a table
                         // remove it from the result set
-                        LOG.info().$("cannot query table metadata [table=").$(tableName).$(", error=").$(e.getFlyweightMessage()).I$();
+                        LOG.info()
+                                .$("cannot query table metadata [table=").$(tableName)
+                                .$(", error=").$(e.getFlyweightMessage())
+                                .$(", errno=").$(e.getErrno())
+                                .I$();
                         return false;
                     } finally {
                         path.trimTo(pathLen).$();
