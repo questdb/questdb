@@ -4687,9 +4687,9 @@ public class TableWriter implements Closeable {
         }
 
         public void putTimestamp(int index, CharSequence value) {
+            // try UTC timestamp first (micro)
             long l;
             try {
-                // try UTC timestamp first (micro)
                 l = value != null ? IntervalUtils.parseFloorPartialDate(value) : Numbers.LONG_NaN;
             } catch (NumericException e) {
                 throw CairoException.instance(0).put("Invalid timestamp: ").put(value);

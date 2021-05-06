@@ -307,16 +307,11 @@ final class WhereClauseParser implements Mutable {
             SqlExecutionContext executionContext
     ) throws SqlException {
 
-        if (node.paramCount != 3) {
-            throw SqlException.$(node.position, "Too few arguments for 'between'");
-        }
-
         ExpressionNode col = node.args.getLast();
         if (col.type != ExpressionNode.LITERAL) {
             return false;
         }
         CharSequence column = translator.translateAlias(col.token);
-
         if (m.getColumnIndexQuiet(column) == -1) {
             throw SqlException.invalidColumn(col.position, col.token);
         }
@@ -363,12 +358,12 @@ final class WhereClauseParser implements Mutable {
 
         try {
             model.setBetweenNegated(isNegated);
-            boolean isBetweenTranlated = translateBetweenToTimestampModel(model, functionParser, metadata, executionContext, lo);
-            if (isBetweenTranlated) {
-                isBetweenTranlated = translateBetweenToTimestampModel(model, functionParser, metadata, executionContext, hi);
+            boolean isBetweenTranslated = translateBetweenToTimestampModel(model, functionParser, metadata, executionContext, lo);
+            if (isBetweenTranslated) {
+                isBetweenTranslated = translateBetweenToTimestampModel(model, functionParser, metadata, executionContext, hi);
             }
 
-            if (isBetweenTranlated) {
+            if (isBetweenTranslated) {
                 between.intrinsicValue = IntrinsicModel.TRUE;
                 return true;
             }
@@ -391,6 +386,8 @@ final class WhereClauseParser implements Mutable {
                 model.setBetweenBoundary(timestamp);
             } else if (f1.isRuntimeConstant()) {
                 model.setBetweenBoundary(f1);
+            } else {
+                return false;
             }
             return true;
         }
@@ -424,10 +421,6 @@ final class WhereClauseParser implements Mutable {
             return false;
         }
 
-        if (in.paramCount < 2) {
-            throw SqlException.$(in.position, "Too few args");
-        }
-
         if (in.paramCount == 2) {
             // Single value ts in '2010-01-01' - treat string literal as an interval, not single Timestamp point
             ExpressionNode lo = in.rhs;
@@ -443,7 +436,7 @@ final class WhereClauseParser implements Mutable {
         } else {
             // Multiple values treat as multiple Timestamp points
             // Only possible to translate if it's the only timestamp restriction atm
-            // NOT IN can be translated in any case as series of substructions
+            // NOT IN can be translated in any case as series of subtractions
             if (!model.hasIntervalFilters() || isNegated) {
                 int n = in.args.size() - 1;
                 for (int i = 0; i < n; i++) {

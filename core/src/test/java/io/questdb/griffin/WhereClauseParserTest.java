@@ -257,6 +257,23 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testBetweenFuncArgument() throws Exception {
+        IntrinsicModel m = modelOf("dateadd(1, 'd', timestamp) between '2014-01-01T12:30:00.000Z' and '2014-01-02T12:30:00.000Z");
+        Assert.assertFalse(m.hasIntervalFilters());
+        assertFilter(m, "'2014-01-02T12:30:00.000'2014-01-01T12:30:00.000Z'timestamp'd'1dateaddbetween");
+    }
+
+    @Test
+    public void testBetweenInvalidColumn() {
+        try {
+            modelOf("invalidTimestamp between '2014-01-01T12:30:00.000Z' and '2014-01-02T12:30:00.000Z");
+            Assert.fail();
+        } catch (SqlException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "Invalid column: invalidTimestamp");
+        }
+    }
+
+    @Test
     public void testBetweenInFunctionOfThreeArgs() throws Exception {
         IntrinsicModel m = modelOf("func(2, timestamp between '2014-01-01T12:30:00.000Z' and '2014-01-02T12:30:00.000Z', 'abc')");
         Assert.assertFalse(m.hasIntervalFilters());
@@ -310,7 +327,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testBetweenWithDanglingCase() throws SqlException {
+    public void testBetweenWithDanglingCase() {
         try {
             runWhereTest("timestamp between case when true then '2014-01-04T12:30:00.000Z' else '2014-01-02T12:30:00.000Z' and '2014-01-02T12:30:00.000Z'",
                     "[{lo=2014-01-02T12:30:00.000000Z, hi=2014-01-04T12:30:00.000000Z}]");
@@ -897,6 +914,13 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         } catch (SqlException e) {
             TestUtils.assertContains(e.getFlyweightMessage(), "Too few arg");
         }
+    }
+
+    @Test
+    public void testIntervalInNotFunction() throws SqlException {
+        IntrinsicModel m = modelOf("dateadd(1, 'd', timestamp) in ('2014-01-01T12:30:00.000Z', '2014-01-02T12:30:00.000Z')");
+        Assert.assertFalse(m.hasIntervalFilters());
+        TestUtils.assertEquals("'2014-01-02T12:30:00.000Z''2014-01-01T12:30:00.000Z'timestamp'd'1dateaddin", toRpn(m.filter));
     }
 
     @Test

@@ -30,6 +30,7 @@ import io.questdb.cairo.TableModel;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Ignore;
@@ -907,7 +908,84 @@ public class TimestampQueryTest extends AbstractGriffinTest {
             expected = "min\tmax\n" +
                     "2020-01-01T01:00:00.000000Z\t2020-01-02T23:00:00.000000Z\n";
             assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where nts not between dateadd('d', -1, '2020-01-01') and '2020-01-01'");
+
+            // Non constant
+            expected = "min\tmax\n" +
+                    "2020-01-01T00:00:00.000000Z\t2020-01-02T00:00:00.000000Z\n";
+            assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where nts between '2020-01-' || '02' and dateadd('d', -1, nts)");
+
+            // NOT between Non constant
+            expected = "min\tmax\n" +
+                    "2020-01-02T01:00:00.000000Z\t2020-01-02T23:00:00.000000Z\n";
+            assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where nts not between '2020-01-' || '02' and dateadd('d', -1, nts)");
         });
+    }
+
+    @Test
+    public void testTimestampStringComparisonNonConst() throws Exception {
+        assertMemoryLeak(() -> {
+            // create table
+            String createStmt = "create table tt (dts timestamp, nts timestamp) timestamp(dts)";
+            compiler.compile(createStmt, sqlExecutionContext);
+
+            // insert same values to dts (designated) as nts (non-designated) timestamp
+            compiler.compile("insert into tt " +
+                    "select timestamp_sequence(1577836800000000L, 60*60*1000000L), timestamp_sequence(1577836800000000L, 60*60*1000000L) " +
+                    "from long_sequence(48L)", sqlExecutionContext);
+
+            String expected;
+            // between constants
+            expected = "min\tmax\n" +
+                    "2020-01-01T00:00:00.000000Z\t2020-01-02T00:00:00.000000Z\n";
+            assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where nts = to_str(nts,'yyyy-MM-dd')");
+        });
+    }
+
+    @Test
+    public void testTimestampStringComparisonInvalidValue() throws Exception {
+        assertMemoryLeak(() -> {
+            // create table
+            String createStmt = "create table tt (dts timestamp, nts timestamp) timestamp(dts)";
+            compiler.compile(createStmt, sqlExecutionContext);
+
+            // insert same values to dts (designated) as nts (non-designated) timestamp
+            compiler.compile("insert into tt " +
+                    "select timestamp_sequence(1577836800000000L, 60*60*1000000L), timestamp_sequence(1577836800000000L, 60*60*1000000L) " +
+                    "from long_sequence(48L)", sqlExecutionContext);
+
+            assertTimestampTtFailedQuery("Invalid date", "select min(nts), max(nts) from tt where nts > 'invalid'");
+        });
+    }
+
+    @Test
+    public void testTimestampStringComparisonBetweenInvalidValue() throws Exception {
+        assertMemoryLeak(() -> {
+            // create table
+            String createStmt = "create table tt (dts timestamp, nts timestamp) timestamp(dts)";
+            compiler.compile(createStmt, sqlExecutionContext);
+
+            // insert same values to dts (designated) as nts (non-designated) timestamp
+            compiler.compile("insert into tt " +
+                    "select timestamp_sequence(1577836800000000L, 60*60*1000000L), timestamp_sequence(1577836800000000L, 60*60*1000000L) " +
+                    "from long_sequence(48L)", sqlExecutionContext);
+
+            assertTimestampTtFailedQuery("Invalid date", "select min(nts), max(nts) from tt where nts between 'invalid' and '2020-01-01'");
+        });
+    }
+
+    private void assertTimestampTtFailedQuery(String expectedError, String query) throws SqlException {
+        assertTimestampTtFailedQuery0(expectedError, query);
+        String dtsQuery = query.replace("nts", "dts");
+        assertTimestampTtFailedQuery0(expectedError, dtsQuery);
+    }
+
+    private void assertTimestampTtFailedQuery0(String expectedError, String query) {
+        try {
+            compiler.compile(query, sqlExecutionContext);
+            Assert.fail();
+        } catch (SqlException ex) {
+            TestUtils.assertContains(ex.getFlyweightMessage(), expectedError);
+        }
     }
 
     private void assertTimestampTtQuery(String expected, String query) throws SqlException {
@@ -937,7 +1015,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
     }
 
     @Test
-    @Ignore
+    @Ignore // https://github.com/questdb/questdb/issues/911
     public void testTimestampMin() throws Exception {
         assertQuery(
                 "nts\tmin\n",
