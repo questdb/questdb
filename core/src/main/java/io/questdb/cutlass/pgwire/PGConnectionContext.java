@@ -152,6 +152,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     private IntList activeBindVariableTypes;
     private boolean sendParameterDescription;
     private PGResumeProcessor resumeProcessor;
+    private final PGResumeProcessor resumeCursorRef = this::resumeCursor;
 
     public PGConnectionContext(
             CairoEngine engine,
@@ -1926,7 +1927,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         final Record record = currentCursor.getRecord();
         final RecordMetadata metadata = currentFactory.getMetadata();
         final int columnCount = metadata.getColumnCount();
-        resumeProcessor = this::resumeCursor;
+        resumeProcessor = resumeCursorRef;
         sendCursor0(record, columnCount);
     }
 
