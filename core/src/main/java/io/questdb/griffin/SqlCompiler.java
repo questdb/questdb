@@ -1382,7 +1382,7 @@ public class SqlCompiler implements Closeable {
             copier.copy(record, row);
             row.append();
             if (++rowCount > deadline) {
-                writer.commitWithHysteresis(hysteresis);
+                writer.commitHysteresis(hysteresis);
                 deadline = rowCount + batchSize;
             }
         }
@@ -1407,7 +1407,7 @@ public class SqlCompiler implements Closeable {
                 copier.copy(record, row);
                 row.append();
                 if (++rowCount > deadline) {
-                    writer.commitWithHysteresis(hysteresis);
+                    writer.commitHysteresis(hysteresis);
                     deadline = rowCount + batchSize;
                 }
             } catch (NumericException numericException) {

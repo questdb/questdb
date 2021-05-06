@@ -123,7 +123,6 @@ public class TableWriter implements Closeable {
     private final TxWriter txFile;
     private final FindVisitor removePartitionDirsNotAttached = this::removePartitionDirsNotAttached;
     private final LongList o3PartitionRemoveCandidates = new LongList();
-    private LongConsumer appendTimestampSetter;
     private final ObjectPool<O3MutableAtomicInteger> o3ColumnCounters = new ObjectPool<O3MutableAtomicInteger>(O3MutableAtomicInteger::new, 64);
     private final ObjectPool<O3Basket> o3BasketPool = new ObjectPool<O3Basket>(O3Basket::new, 64);
     private final TxnScoreboard txnScoreboard;
@@ -132,6 +131,7 @@ public class TableWriter implements Closeable {
     private final RingQueue<O3PartitionUpdateTask> o3PartitionUpdateQueue;
     private final MPSequence o3PartitionUpdatePubSeq;
     private final SCSequence o3PartitionUpdateSubSeq;
+    private LongConsumer appendTimestampSetter;
     private long todoTxn;
     private ContiguousVirtualMemory o3TimestampMem;
     private final O3ColumnUpdateMethod o3MoveHysteresisRef = this::o3MoveHysteresis0;
@@ -160,7 +160,6 @@ public class TableWriter implements Closeable {
     private final O3ColumnUpdateMethod o3MoveUncommittedRef = this::o3MoveUncommitted0;
     private long lastPartitionTimestamp;
     private boolean o3InError = false;
-    private boolean deferredMemoryAlloc;
 
     public TableWriter(CairoConfiguration configuration, CharSequence tableName) {
         this(configuration, tableName, new MessageBusImpl(configuration));
@@ -177,7 +176,7 @@ public class TableWriter implements Closeable {
             boolean lock,
             LifecycleManager lifecycleManager
     ) {
-        this(configuration, tableName, messageBus, lock, lifecycleManager, configuration.getRoot(), false);
+        this(configuration, tableName, messageBus, lock, lifecycleManager, configuration.getRoot());
     }
 
     public TableWriter(
@@ -186,8 +185,7 @@ public class TableWriter implements Closeable {
             @NotNull MessageBus messageBus,
             boolean lock,
             LifecycleManager lifecycleManager,
-            CharSequence root,
-            boolean deferMemoryAlloc
+            CharSequence root
     ) {
         LOG.info().$("open '").utf8(tableName).$('\'').$();
         this.configuration = configuration;
@@ -276,29 +274,12 @@ public class TableWriter implements Closeable {
                 partitionDirFmt = null;
             }
 
-            this.deferredMemoryAlloc = deferMemoryAlloc;
-            // we defer memory map because we experienced performance loss in ILP
-            // the scenario back then was:
-            // create table + table writer (in pool) over HTTP rest
-            // ingest via ILP thread
-            if (!deferMemoryAlloc) {
                 executeDeferred();
-            }
         } catch (CairoException e) {
             LOG.error().$("could not open '").$(path).$("' and this is why: {").$((Sinkable) e).$('}').$();
             doClose(false);
             throw e;
         }
-    }
-
-    private void executeDeferred() {
-        configureColumnMemory();
-        timestampSetter = configureTimestampSetter();
-        this.appendTimestampSetter = timestampSetter;
-        this.txFile.readRowCounts();
-        configureAppendPosition();
-        purgeUnusedPartitions();
-        clearTodoLog();
     }
 
     public static int getPrimaryColumnIndex(int index) {
@@ -683,7 +664,18 @@ public class TableWriter implements Closeable {
         commit(commitMode, 0);
     }
 
-    public void commitWithHysteresis(long lastTimestampHysteresisInMicros) {
+    public boolean checkMaxAndCommitHysteresis() {
+        if (getO3RowCount() < metadata.getO3MaxUncommittedRows()) {
+            return false;
+        }
+        commitHysteresis();
+        return true;
+    }
+    public void commitHysteresis() {
+        commit(defaultCommitMode, metadata.getO3CommitHysteresisInMicros());
+    }
+
+    public void commitHysteresis(long lastTimestampHysteresisInMicros) {
         commit(defaultCommitMode, lastTimestampHysteresisInMicros);
     }
 
@@ -764,13 +756,6 @@ public class TableWriter implements Closeable {
 
     public void o3BumpErrorCount() {
         o3ErrorCount.incrementAndGet();
-    }
-
-    public void openDeferredMemory() {
-        if (deferredMemoryAlloc) {
-            executeDeferred();
-            deferredMemoryAlloc = false;
-        }
     }
 
     public long partitionNameToTimestamp(CharSequence partitionName) {
@@ -1995,6 +1980,16 @@ public class TableWriter implements Closeable {
         }
     }
 
+    private void executeDeferred() {
+        configureColumnMemory();
+        timestampSetter = configureTimestampSetter();
+        this.appendTimestampSetter = timestampSetter;
+        this.txFile.readRowCounts();
+        configureAppendPosition();
+        purgeUnusedPartitions();
+        clearTodoLog();
+    }
+
     private void freeAndRemoveColumnPair(ObjList<?> columns, int pi, int si) {
         Misc.free(columns.getQuick(pi));
         Misc.free(columns.getQuick(si));
@@ -2075,7 +2070,7 @@ public class TableWriter implements Closeable {
         return o3PartitionUpdateQueue;
     }
 
-    private long getO3RowCount() {
+    public long getO3RowCount() {
         return (masterRef - o3MasterRef + 1) / 2;
     }
 
@@ -2196,6 +2191,21 @@ public class TableWriter implements Closeable {
         // set indexer up to continue functioning as normal
         indexer.configureFollowerAndWriter(configuration, path.trimTo(plen), columnName, getPrimaryColumn(columnIndex), columnTop);
         indexer.refreshSourceAndIndex(0, txFile.getTransientRowCount());
+    }
+
+    private boolean isAppendLastPartitionOnly(long sortedTimestampsAddr, long o3TimestampMax) {
+        boolean yep;
+        final long o3Min = getTimestampIndexValue(sortedTimestampsAddr, 0);
+        long o3MinPartitionTimestamp = timestampFloorMethod.floor(o3Min);
+        final boolean last = o3MinPartitionTimestamp == lastPartitionTimestamp;
+        final int index = txFile.findAttachedPartitionIndexByLoTimestamp(o3MinPartitionTimestamp);
+
+        if (timestampCeilMethod.ceil(o3Min) >= o3TimestampMax) {
+            yep = last && (txFile.transientRowCount < 0 || o3Min >= txFile.getMaxTimestamp());
+        } else {
+            yep = false;
+        }
+        return yep;
     }
 
     boolean isSymbolMapWriterCached(int columnIndex) {
@@ -2414,9 +2424,17 @@ public class TableWriter implements Closeable {
                 return true;
             }
 
+            final long o3TimestampMax = getTimestampIndexValue(sortedTimestampsAddr, srcOooMax - 1);
+            // move uncommitted is liable to change max timestamp
+            // however we need to identify last partition before max timestamp skips to NULL for example
+            final long maxTimestamp = txFile.getMaxTimestamp();
+            // we are going to use this soon to avoid double-copying hysteresis data
+//            final boolean yep = isAppendLastPartitionOnly(sortedTimestampsAddr, o3TimestampMax);
+
             // reshuffle all columns according to timestamp index
             o3Sort(sortedTimestampsAddr, timestampIndex, o3RowCount);
-            final long o3TimestampMax = getTimestampIndexValue(sortedTimestampsAddr, srcOooMax - 1);
+            LOG.info().$("sorted [table=").utf8(tableName).I$();
+
             this.o3DoneLatch.reset();
             this.o3PartitionUpdRemaining.set(0);
             boolean success = true;
@@ -2462,9 +2480,6 @@ public class TableWriter implements Closeable {
                             srcNameTxn = -1;
                         }
 
-                        // move uncommitted is liable to change max timestamp
-                        // however we need to identify last partition before max timestamp skips to NULL for example
-                        final long maxTimestamp = txFile.getMaxTimestamp();
                         final boolean append = last && (srcDataSize < 0 || o3Timestamp >= maxTimestamp);
                         LOG.debug().
                                 $("o3 partition task [table=").$(tableName)
@@ -2493,6 +2508,7 @@ public class TableWriter implements Closeable {
                         latchCount++;
 
                         if (append) {
+//                            assert srcOoo >= srcOooMax || !yep;
                             Path pathToPartition = Path.getThreadLocal(this.path);
                             TableUtils.setPathForPartition(pathToPartition, partitionBy, o3TimestampMin, false);
                             TableUtils.txnPartitionConditionally(pathToPartition, srcNameTxn);
