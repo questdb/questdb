@@ -117,7 +117,7 @@ public class PagedMappedReadWriteMemory extends PagedVirtualMemory implements Ma
             // we may not be able to map page here
             // make sure we close file before bailing out
             jumpTo(size);
-        } catch (CairoException e) {
+        } catch (Throwable e) {
             ff.close(fd);
             fd = -1;
             throw e;
@@ -144,7 +144,7 @@ public class PagedMappedReadWriteMemory extends PagedVirtualMemory implements Ma
             // we may not be able to map page here
             // make sure we close file before bailing out
             jumpTo(size);
-        } catch (CairoException e) {
+        } catch (Throwable e) {
             ff.close(fd);
             this.fd = -1;
             throw e;

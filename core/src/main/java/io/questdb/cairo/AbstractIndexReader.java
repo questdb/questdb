@@ -127,7 +127,7 @@ public abstract class AbstractIndexReader implements BitmapIndexReader {
             }
             this.valueMem.of(configuration.getFilesFacade(), BitmapIndexUtils.valueFileName(path.trimTo(plen), name), pageSize, 0);
             this.valueMem.grow(configuration.getFilesFacade().length(this.valueMem.getFd()));
-        } catch (CairoException e) {
+        } catch (Throwable e) {
             close();
             throw e;
         } finally {

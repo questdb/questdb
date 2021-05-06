@@ -67,7 +67,7 @@ public class ExceptRecordCursorFactory implements RecordCursorFactory {
             slaveCursor = slaveFactory.getCursor(executionContext);
             cursor.of(masterCursor, slaveCursor, executionContext);
             return cursor;
-        } catch (CairoException ex) {
+        } catch (Throwable ex) {
             Misc.free(masterCursor);
             Misc.free(slaveCursor);
             throw ex;

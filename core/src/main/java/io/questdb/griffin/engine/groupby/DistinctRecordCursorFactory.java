@@ -74,7 +74,7 @@ public class DistinctRecordCursorFactory implements RecordCursorFactory {
         try {
             cursor.of(baseCursor, dataMap, mapSink, executionContext.getSqlExecutionInterruptor());
             return cursor;
-        } catch (CairoException e) {
+        } catch (Throwable e) {
             baseCursor.close();
             throw e;
         }

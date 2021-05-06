@@ -82,7 +82,7 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
                 );
                 offset += VmUtils.getStorageLength(name);
             }
-        } catch (CairoException e) {
+        } catch (Throwable e) {
             close();
             throw e;
         }

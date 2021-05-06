@@ -584,7 +584,7 @@ public final class TableUtils {
                     throw validationException(metaMem).put("Duplicate column: ").put(name).put(" at [").put(i).put(']');
                 }
             }
-        } catch (CairoException e) {
+        } catch (Throwable e) {
             nameIndex.clear();
             throw e;
         }
