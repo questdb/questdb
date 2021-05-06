@@ -890,4 +890,29 @@ Java_io_questdb_std_Vect_resetPerformanceCounters(JNIEnv *env, jclass cl) {
 #endif
 }
 
+JNIEXPORT jlong JNICALL
+Java_io_questdb_std_Vect_sortVarColumn(JNIEnv *env, jclass cl, jlong mergedTimestampsAddr, jlong valueCount,
+                                       jlong srcDataAddr, jlong srcIndxAddr, jlong tgtDataAddr, jlong tgtIndxAddr) {
+
+    const index_t* index = reinterpret_cast<index_t *> (mergedTimestampsAddr);
+    const int64_t count = __JLONG_REINTERPRET_CAST__(int64_t, valueCount);
+    const char *src_data = reinterpret_cast<const char*>(srcDataAddr);
+    const int64_t *src_index = reinterpret_cast<const int64_t*>(srcIndxAddr);
+    char *tgt_data = reinterpret_cast<char*>(tgtDataAddr);
+    int64_t *tgt_index = reinterpret_cast<int64_t*>(tgtIndxAddr);
+
+    int64_t offset = 0;
+    for (int64_t i = 0; i < count; ++i) {
+        MM_PREFETCH_T0(index + i + 64);
+        const int64_t row = index[i].i;
+        const int64_t o1 = src_index[row];
+        const int64_t o2 = src_index[row + 1];
+        const int64_t len = o2 - o1;
+        platform_memcpy(reinterpret_cast<void*>(tgt_data + offset), reinterpret_cast<const void*>(src_data + o1), len);
+        tgt_index[i] = offset;
+        offset += len;
+    }
+    return __JLONG_REINTERPRET_CAST__(jlong, offset);
+}
+
 } // extern "C"
