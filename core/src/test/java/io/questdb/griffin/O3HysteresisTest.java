@@ -456,7 +456,7 @@ public class O3HysteresisTest extends AbstractO3Test {
                 if (nRowsAppended >= nRowsPerCommit) {
                     LOG.info().$("committing with hysteresis").$();
                     nRowsAppended = 0;
-                    writer.commitWithHysteresis(lastTimestampHysteresisInMicros);
+                    writer.commitHysteresis(lastTimestampHysteresisInMicros);
                     nCommitsWithHysteresis++;
                 }
             }
@@ -506,7 +506,7 @@ public class O3HysteresisTest extends AbstractO3Test {
             insertUncommitted(compiler, sqlExecutionContext, sql, writer);
             long lastTimestampHysteresisInMicros = maxTimestamp - TimestampFormatUtils.parseTimestamp("1970-01-06T23:59:59.000Z");
             maxTimestamp -= lastTimestampHysteresisInMicros;
-            writer.commitWithHysteresis(lastTimestampHysteresisInMicros);
+            writer.commitHysteresis(lastTimestampHysteresisInMicros);
             TestUtils.printSql(compiler, sqlExecutionContext, "select i, ts from x where ts<=cast(" + maxTimestamp + " as timestamp)", sink);
             TestUtils.printSql(compiler, sqlExecutionContext, "select i, ts from y", sink2);
             TestUtils.assertEquals(sink, sink2);
@@ -515,7 +515,7 @@ public class O3HysteresisTest extends AbstractO3Test {
             insertUncommitted(compiler, sqlExecutionContext, sql, writer);
             lastTimestampHysteresisInMicros = (maxTimestamp - minTimestamp) / 2;
             maxTimestamp -= lastTimestampHysteresisInMicros;
-            writer.commitWithHysteresis(lastTimestampHysteresisInMicros);
+            writer.commitHysteresis(lastTimestampHysteresisInMicros);
             TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where ts<=cast(" + maxTimestamp + " as timestamp)", sink);
             TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
             TestUtils.assertEquals(sink, sink2);
@@ -565,7 +565,7 @@ public class O3HysteresisTest extends AbstractO3Test {
             insertUncommitted(compiler, sqlExecutionContext, sql, writer);
             long lastTimestampHysteresisInMicros = maxTimestamp - TimestampFormatUtils.parseTimestamp("1970-01-07T00:00:00.000Z");
             maxTimestamp -= lastTimestampHysteresisInMicros;
-            writer.commitWithHysteresis(lastTimestampHysteresisInMicros);
+            writer.commitHysteresis(lastTimestampHysteresisInMicros);
             TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where ts<=cast(" + maxTimestamp + " as timestamp)", sink);
             TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
             TestUtils.assertEquals(sink, sink2);
@@ -574,7 +574,7 @@ public class O3HysteresisTest extends AbstractO3Test {
             insertUncommitted(compiler, sqlExecutionContext, sql, writer);
             lastTimestampHysteresisInMicros = (maxTimestamp - minTimestamp) / 2;
             maxTimestamp -= lastTimestampHysteresisInMicros;
-            writer.commitWithHysteresis(lastTimestampHysteresisInMicros);
+            writer.commitHysteresis(lastTimestampHysteresisInMicros);
             TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where ts<=cast(" + maxTimestamp + " as timestamp)", sink);
             TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
             TestUtils.assertEquals(sink, sink2);
@@ -624,7 +624,7 @@ public class O3HysteresisTest extends AbstractO3Test {
             insertUncommitted(compiler, sqlExecutionContext, sql, writer);
             long lastTimestampHysteresisInMicros = maxTimestamp - TimestampFormatUtils.parseTimestamp("1970-01-07T00:00:00.000Z");
             minTimestamp = maxTimestamp - lastTimestampHysteresisInMicros;
-            writer.commitWithHysteresis(lastTimestampHysteresisInMicros);
+            writer.commitHysteresis(lastTimestampHysteresisInMicros);
             TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where ts<='1970-01-07T00:00:00.000Z'", sink);
             TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
             TestUtils.assertEquals(sink, sink2);
@@ -637,7 +637,7 @@ public class O3HysteresisTest extends AbstractO3Test {
             insertUncommitted(compiler, sqlExecutionContext, sql, writer);
             lastTimestampHysteresisInMicros = (maxTimestamp - minTimestamp) / 2;
             maxTimestamp -= lastTimestampHysteresisInMicros;
-            writer.commitWithHysteresis(lastTimestampHysteresisInMicros);
+            writer.commitHysteresis(lastTimestampHysteresisInMicros);
             TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where ts<=cast(" + maxTimestamp + " as timestamp) and (i<=185 or i>=200)", sink);
             TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
             TestUtils.assertEquals(sink, sink2);
@@ -687,7 +687,7 @@ public class O3HysteresisTest extends AbstractO3Test {
             insertUncommitted(compiler, sqlExecutionContext, sql, writer);
             long lastTimestampHysteresisInMicros = maxTimestamp - TimestampFormatUtils.parseTimestamp("1970-01-06T23:59:59.000Z");
             minTimestamp = maxTimestamp - lastTimestampHysteresisInMicros;
-            writer.commitWithHysteresis(lastTimestampHysteresisInMicros);
+            writer.commitHysteresis(lastTimestampHysteresisInMicros);
             TestUtils.printSql(compiler, sqlExecutionContext, "select i, ts from x where ts<='1970-01-06T23:59:59.000Z'", sink);
             TestUtils.printSql(compiler, sqlExecutionContext, "select i, ts from y", sink2);
             TestUtils.assertEquals(sink, sink2);
@@ -700,7 +700,7 @@ public class O3HysteresisTest extends AbstractO3Test {
             insertUncommitted(compiler, sqlExecutionContext, sql, writer);
             lastTimestampHysteresisInMicros = (maxTimestamp - minTimestamp) / 2;
             maxTimestamp -= lastTimestampHysteresisInMicros;
-            writer.commitWithHysteresis(lastTimestampHysteresisInMicros);
+            writer.commitHysteresis(lastTimestampHysteresisInMicros);
             TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where ts<=cast(" + maxTimestamp + " as timestamp) and (i<=184 or i>=200)", sink);
             TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
             TestUtils.assertEquals(sink, sink2);
@@ -750,7 +750,7 @@ public class O3HysteresisTest extends AbstractO3Test {
             insertUncommitted(compiler, sqlExecutionContext, sql, writer);
             long lastTimestampHysteresisInMicros = (maxTimestamp - minTimestamp) / 2;
             maxTimestamp -= lastTimestampHysteresisInMicros;
-            writer.commitWithHysteresis(lastTimestampHysteresisInMicros);
+            writer.commitHysteresis(lastTimestampHysteresisInMicros);
             TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where ts<=cast(" + maxTimestamp + " as timestamp)", sink);
             TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
             TestUtils.assertEquals(sink, sink2);
@@ -759,7 +759,7 @@ public class O3HysteresisTest extends AbstractO3Test {
             insertUncommitted(compiler, sqlExecutionContext, sql, writer);
             lastTimestampHysteresisInMicros = (maxTimestamp - minTimestamp) / 2;
             maxTimestamp -= lastTimestampHysteresisInMicros;
-            writer.commitWithHysteresis(lastTimestampHysteresisInMicros);
+            writer.commitHysteresis(lastTimestampHysteresisInMicros);
             TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where ts<=cast(" + maxTimestamp + " as timestamp)", sink);
             TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
             TestUtils.assertEquals(sink, sink2);
@@ -809,7 +809,7 @@ public class O3HysteresisTest extends AbstractO3Test {
             insertUncommitted(compiler, sqlExecutionContext, sql, writer);
             long lastTimestampHysteresisInMicros = (maxTimestamp - minTimestamp) / 2;
             maxTimestamp -= lastTimestampHysteresisInMicros;
-            writer.commitWithHysteresis(lastTimestampHysteresisInMicros);
+            writer.commitHysteresis(lastTimestampHysteresisInMicros);
             TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where ts<=cast(" + maxTimestamp + " as timestamp)", sink);
             TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
             TestUtils.assertEquals(sink, sink2);
@@ -822,7 +822,7 @@ public class O3HysteresisTest extends AbstractO3Test {
             insertUncommitted(compiler, sqlExecutionContext, sql, writer);
             lastTimestampHysteresisInMicros = (maxTimestamp - minTimestamp) / 2;
             maxTimestamp -= lastTimestampHysteresisInMicros;
-            writer.commitWithHysteresis(lastTimestampHysteresisInMicros);
+            writer.commitHysteresis(lastTimestampHysteresisInMicros);
             TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where ts<=cast(" + maxTimestamp + " as timestamp) and (i<=175 or i>=200)", sink);
             TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
             TestUtils.assertEquals(sink, sink2);
@@ -873,7 +873,7 @@ public class O3HysteresisTest extends AbstractO3Test {
             insertUncommitted(compiler, sqlExecutionContext, sql, writer);
             long lastTimestampHysteresisInMicros = (maxTimestamp - minTimestamp) / 2;
             maxTimestamp -= lastTimestampHysteresisInMicros;
-            writer.commitWithHysteresis(lastTimestampHysteresisInMicros);
+            writer.commitHysteresis(lastTimestampHysteresisInMicros);
             TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where ts<=cast(" + maxTimestamp + " as timestamp)", sink);
             TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
             TestUtils.assertEquals(sink, sink2);
@@ -922,7 +922,7 @@ public class O3HysteresisTest extends AbstractO3Test {
             insertUncommitted(compiler, sqlExecutionContext, sql, writer);
             long lastTimestampHysteresisInMicros = (maxTimestamp - minTimestamp) / 2;
             maxTimestamp -= lastTimestampHysteresisInMicros;
-            writer.commitWithHysteresis(lastTimestampHysteresisInMicros);
+            writer.commitHysteresis(lastTimestampHysteresisInMicros);
             TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where ts<=cast(" + maxTimestamp + " as timestamp)", sink);
             TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
             TestUtils.assertEquals(sink, sink2);
@@ -971,7 +971,7 @@ public class O3HysteresisTest extends AbstractO3Test {
             insertUncommitted(compiler, sqlExecutionContext, sql, writer);
             long lastTimestampHysteresisInMicros = (maxTimestamp - minTimestamp) / 2;
             maxTimestamp -= lastTimestampHysteresisInMicros;
-            writer.commitWithHysteresis(lastTimestampHysteresisInMicros);
+            writer.commitHysteresis(lastTimestampHysteresisInMicros);
             TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where ts<=cast(" + maxTimestamp + " as timestamp)", sink);
             TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
             TestUtils.assertEquals(sink, sink2);
@@ -1020,7 +1020,7 @@ public class O3HysteresisTest extends AbstractO3Test {
             insertUncommitted(compiler, sqlExecutionContext, sql, writer);
             long lastTimestampHysteresisInMicros = (maxTimestamp - minTimestamp) / 2;
             maxTimestamp -= lastTimestampHysteresisInMicros;
-            writer.commitWithHysteresis(lastTimestampHysteresisInMicros);
+            writer.commitHysteresis(lastTimestampHysteresisInMicros);
             TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where ts<=cast(" + maxTimestamp + " as timestamp)", sink);
             TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
             TestUtils.assertEquals(sink, sink2);
@@ -1077,7 +1077,7 @@ public class O3HysteresisTest extends AbstractO3Test {
             insertUncommitted(compiler, sqlExecutionContext, sql, writer);
             long lastTimestampHysteresisInMicros = (maxTimestamp - minTimestamp) * 3 / 4;
             maxTimestamp -= lastTimestampHysteresisInMicros;
-            writer.commitWithHysteresis(lastTimestampHysteresisInMicros);
+            writer.commitHysteresis(lastTimestampHysteresisInMicros);
             TestUtils.printSql(compiler, sqlExecutionContext, "select i, ts from x where ts<=cast(" + maxTimestamp + " as timestamp)", sink);
             TestUtils.printSql(compiler, sqlExecutionContext, "select i, ts from y", sink2);
             TestUtils.assertEquals(sink, sink2);
@@ -1126,7 +1126,7 @@ public class O3HysteresisTest extends AbstractO3Test {
             insertUncommitted(compiler, sqlExecutionContext, sql, writer);
             long lastTimestampHysteresisInMicros = (maxTimestamp - minTimestamp) * 3 / 4;
             maxTimestamp -= lastTimestampHysteresisInMicros;
-            writer.commitWithHysteresis(lastTimestampHysteresisInMicros);
+            writer.commitHysteresis(lastTimestampHysteresisInMicros);
             TestUtils.printSql(compiler, sqlExecutionContext, "select i, ts from x limit 400", sink);
             TestUtils.printSql(compiler, sqlExecutionContext, "select i, ts from y", sink2);
             TestUtils.assertEquals(sink, sink2);

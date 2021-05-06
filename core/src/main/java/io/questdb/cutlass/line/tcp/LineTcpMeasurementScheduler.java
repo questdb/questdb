@@ -318,11 +318,15 @@ class LineTcpMeasurementScheduler implements Closeable {
     }
 
     private TableUpdateDetails startNewMeasurementEvent(NetworkIOJob netIoJob, NewLineProtoParser protoParser) {
-        TableUpdateDetails tableUpdateDetails = netIoJob.getTableUpdateDetails(protoParser.getMeasurementName());
+        final TableUpdateDetails tableUpdateDetails = netIoJob.getTableUpdateDetails(protoParser.getMeasurementName());
         if (null != tableUpdateDetails) {
             return tableUpdateDetails;
         }
+        return startNewMeasurementEvent0(netIoJob, protoParser);
+    }
 
+    private TableUpdateDetails startNewMeasurementEvent0(NetworkIOJob netIoJob, NewLineProtoParser protoParser) {
+        TableUpdateDetails tableUpdateDetails;
         tableUpdateDetailsLock.writeLock().lock();
         try {
             int keyIndex = tableUpdateDetailsByTableName.keyIndex(protoParser.getMeasurementName());
@@ -729,9 +733,6 @@ class LineTcpMeasurementScheduler implements Closeable {
         // multiple threads without synchronisation
         private int nUpdates = 0;
         private TableWriter writer;
-        private int maxUncommittedRows;
-        private long commitHysteresisInMicros;
-        private int nUncommitted = 0;
         private boolean assignedToJob = false;
         private long lastMeasurementMillis = Long.MAX_VALUE;
         private long lastCommitMillis;
@@ -753,10 +754,7 @@ class LineTcpMeasurementScheduler implements Closeable {
             if (writerThreadId != Integer.MIN_VALUE) {
                 LOG.info().$("closing table [tableName=").$(tableName).$(']').$();
                 if (null != writer) {
-                    if (nUncommitted > 0 || commitHysteresisInMicros > 0) {
-                        writer.commit();
-                        lastCommitMillis = milliClock.getTicks();
-                    }
+                    writer.commit();
                     writer.close();
                     writer = null;
                 }
@@ -776,19 +774,15 @@ class LineTcpMeasurementScheduler implements Closeable {
         }
 
         TableWriter getWriter() {
-            if (null == writer) {
-                writer = engine.getWriter(securityContext, tableName);
-                maxUncommittedRows = writer.getMetadata().getO3MaxUncommittedRows();
-                commitHysteresisInMicros = writer.getMetadata().getO3CommitHysteresisInMicros();
+            if (null != writer) {
+                return writer;
             }
-            return writer;
+            return writer = engine.getWriter(securityContext, tableName);
         }
 
         void handleRowAppended() {
-            nUncommitted++;
-            if (nUncommitted >= maxUncommittedRows) {
-                writer.commitWithHysteresis(commitHysteresisInMicros);
-                resetUncommitted();
+            if (writer.checkMaxAndCommitHysteresis()) {
+                lastCommitMillis = milliClock.getTicks();
             }
         }
 
@@ -797,7 +791,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                 LOG.debug().$("release commit [table=").$(writer.getTableName()).I$();
                 writer.commit();
                 writer = Misc.free(writer);
-                resetUncommitted();
+                lastCommitMillis = milliClock.getTicks();
             }
         }
 
@@ -805,16 +799,11 @@ class LineTcpMeasurementScheduler implements Closeable {
             if (ticks - lastCommitMillis < maintenanceInterval) {
                 return;
             }
-            if ((nUncommitted > 0 || commitHysteresisInMicros > 0) && null != writer) {
+            if (null != writer) {
                 LOG.debug().$("maintenance commit [table=").$(writer.getTableName()).I$();
                 writer.commit();
-                resetUncommitted();
+                lastCommitMillis = milliClock.getTicks();
             }
-        }
-
-        private void resetUncommitted() {
-            lastCommitMillis = milliClock.getTicks();
-            nUncommitted = 0;
         }
 
         ThreadLocalDetails startNewMeasurementEvent(int workerId) {
@@ -987,7 +976,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                     if (!event.tableUpdateDetails.assignedToJob) {
                         assignedTables.add(event.tableUpdateDetails);
                         event.tableUpdateDetails.assignedToJob = true;
-                        LOG.info().$("assigned table to writer thread [tableName=").$(event.tableUpdateDetails.tableName).$(", threadId=").$(workerId).$(']').$();
+                        LOG.info().$("assigned table to writer thread [tableName=").$(event.tableUpdateDetails.tableName).$(", threadId=").$(workerId).I$();
                     }
                     event.processMeasurementEvent(this);
                     eventProcessed = true;
@@ -1042,7 +1031,6 @@ class LineTcpMeasurementScheduler implements Closeable {
                 LOG.info()
                         .$("rebalance cycle, old thread finished [threadId=").$(workerId)
                         .$(", table=").$(event.tableUpdateDetails.tableName)
-                        .$(", nUncommitted=").$(event.tableUpdateDetails.nUncommitted)
                         .I$();
                 event.tableUpdateDetails.switchThreads();
                 event.rebalanceReleasedByFromThread = true;
@@ -1078,11 +1066,11 @@ class LineTcpMeasurementScheduler implements Closeable {
     class NetworkIOJobImpl implements NetworkIOJob, Job {
         private final IODispatcher<LineTcpConnectionContext> dispatcher;
         private final int workerId;
-        // Context blocked on LineTcpMeasurementScheduler queue
-        private final ObjList<LineTcpConnectionContext> busyContexts = new ObjList<>();
-        private final IORequestProcessor<LineTcpConnectionContext> onRequest = this::onRequest;
         private final CharSequenceObjHashMap<TableUpdateDetails> localTableUpdateDetailsByTableName = new CharSequenceObjHashMap<>();
         private final ObjList<SymbolCache> unusedSymbolCaches = new ObjList<>();
+        // Context blocked on LineTcpMeasurementScheduler queue
+        private LineTcpConnectionContext busyContext = null;
+        private final IORequestProcessor<LineTcpConnectionContext> onRequest = this::onRequest;
         private long lastMaintenanceJobMillis = 0;
 
         NetworkIOJobImpl(IODispatcher<LineTcpConnectionContext> dispatcher, int workerId) {
@@ -1123,13 +1111,12 @@ class LineTcpMeasurementScheduler implements Closeable {
         public boolean run(int workerId) {
             assert this.workerId == workerId;
             boolean busy = false;
-            while (busyContexts.size() > 0) {
-                LineTcpConnectionContext busyContext = busyContexts.getQuick(0);
+            if (busyContext != null) {
                 if (handleIO(busyContext)) {
-                    break;
+                    return true;
                 }
                 LOG.debug().$("context is no longer waiting on a full queue [fd=").$(busyContext.getFd()).$(']').$();
-                busyContexts.remove(0);
+                busyContext = null;
                 busy = true;
             }
 
@@ -1198,7 +1185,7 @@ class LineTcpMeasurementScheduler implements Closeable {
 
         private void onRequest(int operation, LineTcpConnectionContext context) {
             if (handleIO(context)) {
-                busyContexts.add(context);
+                busyContext = context;
                 LOG.debug().$("context is waiting on a full queue [fd=").$(context.getFd()).$(']').$();
             }
         }
