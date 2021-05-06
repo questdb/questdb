@@ -44,6 +44,10 @@ stages:
           - bash: sudo sysctl -w fs.file-max=500000
             displayName: "Increase file count on Linux"
             condition: eq(variables['Agent.OS'], 'Linux')
+          - bash: |
+              echo "##vso[task.setvariable variable=testvar;]$(curl https://api.github.com/repos/questdb/questdb/pulls/$(System.PullRequest.PullRequestId)/files -s | grep -oP 'filename": "core/src/main/java/io/questdb.*\/\K[^.]+' | tr '\n' ',' | sed -e 's/,/,+:*./g')"
+            displayName: "List of coverage classes"
+            condition: eq(variables['Agent.OS'], 'Linux')
           - bash: sudo sysctl -w kern.sysv.shmseg=4096 && sudo sysctl -w kern.sysv.shmall=5120 && sysctl -A | grep shm
             displayName: "Increase shared mem size on Darwin"
             condition: eq(variables['Agent.OS'], 'Darwin')
@@ -54,6 +58,8 @@ stages:
               mavenOptions: "-Xmx3072m"
               options: "compile -DskipTests"
               jdkVersionOption: $(jdk)
+              codeCoverageToolOption: "jaCoCo"
+              codeCoverageClassFilter: $(COVERAGE_DIFF)
           - task: Maven@3
             displayName: "Run tests with Maven"
             inputs:
