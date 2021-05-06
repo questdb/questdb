@@ -232,7 +232,7 @@ public class BitmapIndexWriter implements Closeable, Mutable {
             this.blockValueCountMod = this.keyMem.getInt(BitmapIndexUtils.KEY_RESERVED_OFFSET_BLOCK_VALUE_COUNT) - 1;
             assert blockValueCountMod > 0;
             this.blockCapacity = (this.blockValueCountMod + 1) * 8 + BitmapIndexUtils.VALUE_BLOCK_FILE_RESERVED;
-        } catch (CairoException e) {
+        } catch (Throwable e) {
             this.close();
             if (kFdUnassigned) {
                 ff.close(keyFd);
@@ -296,7 +296,7 @@ public class BitmapIndexWriter implements Closeable, Mutable {
             this.blockValueCountMod = this.keyMem.getInt(BitmapIndexUtils.KEY_RESERVED_OFFSET_BLOCK_VALUE_COUNT) - 1;
             assert blockValueCountMod > 0;
             this.blockCapacity = (this.blockValueCountMod + 1) * 8 + BitmapIndexUtils.VALUE_BLOCK_FILE_RESERVED;
-        } catch (CairoException e) {
+        } catch (Throwable e) {
             this.close();
             throw e;
         } finally {

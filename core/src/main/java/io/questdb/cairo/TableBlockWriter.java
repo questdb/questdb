@@ -472,7 +472,7 @@ public class TableBlockWriter implements Closeable {
 
                 opened = true;
                 LOG.info().$("opened partition to '").$(path).$('\'').$();
-            } catch (CairoException ex) {
+            } catch (Throwable ex) {
                 closePartition();
                 throw ex;
             } finally {

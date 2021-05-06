@@ -886,7 +886,7 @@ public class SqlCodeGenerator implements Mutable {
                 }
             }
             return master;
-        } catch (CairoException | SqlException e) {
+        } catch (Throwable e) {
             Misc.free(master);
             throw e;
         }
@@ -1792,7 +1792,7 @@ public class SqlCodeGenerator implements Mutable {
                     entityColumnFilter,
                     asm
             );
-        } catch (CairoException e) {
+        } catch (Throwable e) {
             factory.close();
             throw e;
         }
@@ -2027,7 +2027,7 @@ public class SqlCodeGenerator implements Mutable {
                     recordFunctions
             );
 
-        } catch (CairoException | SqlException e) {
+        } catch (Throwable e) {
             Misc.free(factory);
             throw e;
         }

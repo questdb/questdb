@@ -1483,7 +1483,7 @@ public class SqlCompiler implements Closeable {
             RecordToRowCopier recordToRowCopier = assembleRecordToRowCopier(asm, cursorMetadata, writerMetadata, entityColumnFilter);
             copyTableData(cursor, cursorMetadata, writer, writerMetadata, recordToRowCopier);
             return writer;
-        } catch (CairoException e) {
+        } catch (Throwable e) {
             writer.close();
             throw e;
         }
@@ -1847,7 +1847,7 @@ public class SqlCompiler implements Closeable {
                             copyOrdered(writer, factory.getMetadata(), cursor, copier, writerTimestampIndex);
                         }
                     }
-                } catch (CairoException e) {
+                } catch (Throwable e) {
                     // rollback data when system error occurs
                     writer.rollback();
                     throw e;

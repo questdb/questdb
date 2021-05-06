@@ -1118,7 +1118,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
                         rowCount = m.execute();
                         w = m.popWriter();
                         pendingWriters.put(w.getTableName(), w);
-                    } catch (CairoException e) {
+                    } catch (Throwable e) {
                         Misc.free(m);
                         throw e;
                     }
@@ -1135,7 +1135,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
                     break;
             }
             prepareCommandComplete(true);
-        } catch (CairoException e) {
+        } catch (Throwable e) {
             if (transactionState == IN_TRANSACTION) {
                 transactionState = ERROR_TRANSACTION;
             }
