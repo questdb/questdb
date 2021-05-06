@@ -3423,7 +3423,7 @@ public class TableWriter implements Closeable {
         final long tgtIndxSize = indexMem2.size();
         // add max offset so that we do not have conditionals inside loop
         indexMem.putLong(valueCount * Long.BYTES, dataSize);
-        final long offset = o3SortVarColumn0(
+        final long offset = Vect.sortVarColumn(
                 mergedTimestampsAddr,
                 valueCount,
                 srcDataAddr,
