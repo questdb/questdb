@@ -195,10 +195,11 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int o3PurgeDiscoveryQueueCapacity;
     private final int o3PurgeQueueCapacity;
     private final int o3MaxUncommittedRows;
-    private final long o3CommitHystersisInMicros;
+    private final long o3CommitHystersis;
     private final long instanceHashLo;
     private final long instanceHashHi;
     private final int sqlTxnScoreboardEntryCount;
+    private final boolean o3QuickSortEnabled;
     private boolean httpAllowDeflateBeforeSend;
     private int[] httpWorkerAffinity;
     private int[] httpMinWorkerAffinity;
@@ -634,7 +635,8 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.o3PurgeDiscoveryQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.o3.purge.discovery.queue.capacity", 1024));
             this.o3PurgeQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.o3.purge.queue.capacity", 1024));
             this.o3MaxUncommittedRows = getInt(properties, env, "cairo.o3.max.uncommitted.rows", 500_000);
-            this.o3CommitHystersisInMicros = getLong(properties, env, "cairo.o3.commit.hysteresis.in.ms", 300_000) * 1_000;
+            this.o3CommitHystersis = getLong(properties, env, "cairo.o3.commit.hysteresis.in.ms", 300_000) * 1_000;
+            this.o3QuickSortEnabled = getBoolean(properties, env, "cairo.o3.quicksort.enabled", false);
             this.sqlAnalyticStorePageSize = Numbers.ceilPow2(getIntSize(properties, env, "cairo.sql.analytic.store.page.size", 1024 * 1024));
             this.sqlAnalyticStoreMaxPages = Numbers.ceilPow2(getIntSize(properties, env, "cairo.sql.analytic.store.max.pages", Integer.MAX_VALUE));
             this.sqlAnalyticRowIdPageSize = Numbers.ceilPow2(getIntSize(properties, env, "cairo.sql.analytic.rowid.page.size", 512 * 1024));
@@ -1856,8 +1858,13 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public long getO3CommitHysteresisInMicros() {
-            return o3CommitHystersisInMicros;
+        public long getO3CommitHysteresis() {
+            return o3CommitHystersis;
+        }
+
+        @Override
+        public boolean isO3QuickSortEnabled() {
+            return o3QuickSortEnabled;
         }
     }
 

@@ -212,6 +212,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean isO3QuickSortEnabled() {
+        return false;
+    }
+
+    @Override
     public int getSqlCharacterStoreSequencePoolCapacity() {
         return 64;
     }
@@ -527,7 +532,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public long getO3CommitHysteresisInMicros() {
+    public long getO3CommitHysteresis() {
         return 0;
     }
 }
