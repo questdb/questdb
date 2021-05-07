@@ -177,6 +177,8 @@ public final class Vect {
 
     public static native void sortLongIndexAscInPlace(long pLongData, long count);
 
+    public static native void sortULongAscInPlace(long pLongData, long count);
+
     public static native double sumDouble(long pDouble, long count);
 
     public static native double sumDoubleKahan(long pDouble, long count);

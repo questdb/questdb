@@ -1857,6 +1857,211 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testLatestByAllIndexedMultiplePartitions() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    compiler.compile("create table trips(id int, vendor symbol index, ts timestamp) timestamp(ts) partition by DAY", sqlExecutionContext);
+                    // insert three partitions
+                    compiler.compile(
+                            "insert into trips select " +
+                                    "rnd_int(), " +
+                                    "rnd_symbol('KK','ZZ', 'TT'), " +
+                                    "timestamp_sequence(0, 100000L) " +
+                                    "from long_sequence(1000)",
+                            sqlExecutionContext
+                    );
+
+                    // cast('1970-01-02' as timestamp) produces incorrect timestamp
+                    compiler.compile(
+                            "insert into trips select " +
+                                    "rnd_int(), " +
+                                    "rnd_symbol('DD','QQ', 'TT'), " +
+                                    "timestamp_sequence(to_timestamp('1970-01-02', 'yyyy-MM-dd'), 100000L) " +
+                                    "from long_sequence(1000)",
+                            sqlExecutionContext
+                    );
+
+                    compiler.compile(
+                            "insert into trips select " +
+                                    "rnd_int(), " +
+                                    "rnd_symbol('PP','QQ', 'CC'), " +
+                                    "timestamp_sequence(to_timestamp('1970-01-03', 'yyyy-MM-dd'), 100000L) " +
+                                    "from long_sequence(1000)",
+                            sqlExecutionContext
+                    );
+
+                    TestUtils.assertSql(
+                            compiler,
+                            sqlExecutionContext,
+                            "trips latest by vendor order by ts",
+                            sink,
+                            "id\tvendor\tts\n" +
+                                    "1878619626\tKK\t1970-01-01T00:01:39.200000Z\n" +
+                                    "-1243990650\tZZ\t1970-01-01T00:01:39.900000Z\n" +
+                                    "-774731115\tTT\t1970-01-02T00:01:39.800000Z\n" +
+                                    "371958898\tDD\t1970-01-02T00:01:39.900000Z\n" +
+                                    "1699760758\tPP\t1970-01-03T00:01:39.100000Z\n" +
+                                    "-610460127\tQQ\t1970-01-03T00:01:39.500000Z\n" +
+                                    "-1808277542\tCC\t1970-01-03T00:01:39.900000Z\n"
+                    );
+                }
+        );
+    }
+
+    @Test
+    public void testLatestByAllIndexedListMultiplePartitions() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    compiler.compile("create table trips(id int, vendor symbol index, ts timestamp) timestamp(ts) partition by DAY", sqlExecutionContext);
+                    // insert three partitions
+                    compiler.compile(
+                            "insert into trips select " +
+                                    "rnd_int(), " +
+                                    "rnd_symbol('KK','ZZ', 'TT'), " +
+                                    "timestamp_sequence(0, 100000L) " +
+                                    "from long_sequence(1000)",
+                            sqlExecutionContext
+                    );
+
+                    // cast('1970-01-02' as timestamp) produces incorrect timestamp
+                    compiler.compile(
+                            "insert into trips select " +
+                                    "rnd_int(), " +
+                                    "rnd_symbol('DD','QQ', 'TT'), " +
+                                    "timestamp_sequence(to_timestamp('1970-01-02', 'yyyy-MM-dd'), 100000L) " +
+                                    "from long_sequence(1000)",
+                            sqlExecutionContext
+                    );
+
+                    compiler.compile(
+                            "insert into trips select " +
+                                    "rnd_int(), " +
+                                    "rnd_symbol('PP','QQ', 'CC'), " +
+                                    "timestamp_sequence(to_timestamp('1970-01-03', 'yyyy-MM-dd'), 100000L) " +
+                                    "from long_sequence(1000)",
+                            sqlExecutionContext
+                    );
+
+                    TestUtils.assertSql(
+                            compiler,
+                            sqlExecutionContext,
+                            "trips latest by vendor where vendor in ('KK', 'ZZ', 'TT', 'DD', 'PP', 'QQ', 'CC') order by ts",
+                            sink,
+                            "id\tvendor\tts\n" +
+                                    "-1243990650\tZZ\t1970-01-01T00:01:39.900000Z\n" +
+                                    "1878619626\tKK\t1970-01-01T00:01:39.200000Z\n" +
+                                    "371958898\tDD\t1970-01-02T00:01:39.900000Z\n" +
+                                    "-774731115\tTT\t1970-01-02T00:01:39.800000Z\n" +
+                                    "-1808277542\tCC\t1970-01-03T00:01:39.900000Z\n" +
+                                    "-610460127\tQQ\t1970-01-03T00:01:39.500000Z\n" +
+                                    "1699760758\tPP\t1970-01-03T00:01:39.100000Z\n"
+                    );
+                }
+        );
+    }
+
+    @Test
+    public void testLatestByAllIndexedFilteredMultiplePartitions() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    compiler.compile("create table trips(id int, vendor symbol index, ts timestamp) timestamp(ts) partition by DAY", sqlExecutionContext);
+                    // insert three partitions
+                    compiler.compile(
+                            "insert into trips select " +
+                                    "rnd_int(), " +
+                                    "rnd_symbol('KK','ZZ', 'TT'), " +
+                                    "timestamp_sequence(0, 100000L) " +
+                                    "from long_sequence(1000)",
+                            sqlExecutionContext
+                    );
+
+                    // cast('1970-01-02' as timestamp) produces incorrect timestamp
+                    compiler.compile(
+                            "insert into trips select " +
+                                    "rnd_int(), " +
+                                    "rnd_symbol('DD','QQ', 'TT'), " +
+                                    "timestamp_sequence(to_timestamp('1970-01-02', 'yyyy-MM-dd'), 100000L) " +
+                                    "from long_sequence(1000)",
+                            sqlExecutionContext
+                    );
+
+                    compiler.compile(
+                            "insert into trips select " +
+                                    "rnd_int(), " +
+                                    "rnd_symbol('PP','QQ', 'CC'), " +
+                                    "timestamp_sequence(to_timestamp('1970-01-03', 'yyyy-MM-dd'), 100000L) " +
+                                    "from long_sequence(1000)",
+                            sqlExecutionContext
+                    );
+
+                    TestUtils.assertSql(
+                            compiler,
+                            sqlExecutionContext,
+                            "trips latest by vendor where id > 0 order by ts",
+                            sink,
+                            "id\tvendor\tts\n" +
+                                    "1878619626\tKK\t1970-01-01T00:01:39.200000Z\n" +
+                                    "801241758\tTT\t1970-01-01T00:01:39.800000Z\n" +
+                                    "371958898\tDD\t1970-01-02T00:01:39.900000Z\n" +
+                                    "1699760758\tPP\t1970-01-03T00:01:39.100000Z\n"
+                    );
+                }
+        );
+    }
+
+    @Test
+    public void testLatestByAllMultiplePartitions() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    compiler.compile("create table trips(id int, vendor symbol, ts timestamp) timestamp(ts) partition by DAY", sqlExecutionContext);
+                    // insert three partitions
+                    compiler.compile(
+                            "insert into trips select " +
+                                    "rnd_int(), " +
+                                    "rnd_symbol('KK','ZZ', 'TT'), " +
+                                    "timestamp_sequence(0, 100000L) " +
+                                    "from long_sequence(1000)",
+                            sqlExecutionContext
+                    );
+
+                    // cast('1970-01-02' as timestamp) produces incorrect timestamp
+                    compiler.compile(
+                            "insert into trips select " +
+                                    "rnd_int(), " +
+                                    "rnd_symbol('DD','QQ', 'TT'), " +
+                                    "timestamp_sequence(to_timestamp('1970-01-02', 'yyyy-MM-dd'), 100000L) " +
+                                    "from long_sequence(1000)",
+                            sqlExecutionContext
+                    );
+
+                    compiler.compile(
+                            "insert into trips select " +
+                                    "rnd_int(), " +
+                                    "rnd_symbol('PP','QQ', 'CC'), " +
+                                    "timestamp_sequence(to_timestamp('1970-01-03', 'yyyy-MM-dd'), 100000L) " +
+                                    "from long_sequence(1000)",
+                            sqlExecutionContext
+                    );
+
+                    TestUtils.assertSql(
+                            compiler,
+                            sqlExecutionContext,
+                            "trips latest by vendor order by ts",
+                            sink,
+                            "id\tvendor\tts\n" +
+                                    "1878619626\tKK\t1970-01-01T00:01:39.200000Z\n" +
+                                    "-1243990650\tZZ\t1970-01-01T00:01:39.900000Z\n" +
+                                    "-774731115\tTT\t1970-01-02T00:01:39.800000Z\n" +
+                                    "371958898\tDD\t1970-01-02T00:01:39.900000Z\n" +
+                                    "1699760758\tPP\t1970-01-03T00:01:39.100000Z\n" +
+                                    "-610460127\tQQ\t1970-01-03T00:01:39.500000Z\n" +
+                                    "-1808277542\tCC\t1970-01-03T00:01:39.900000Z\n"
+                    );
+                }
+        );
+    }
+
+    @Test
     public void testLatestByAllIndexedFilterBySymbol() throws Exception {
         final String expected = "a\tb\tc\tk\n" +
                 "67.52509547112409\tCPSW\tSXUX\t1970-01-21T20:00:00.000000Z\n";
