@@ -50,20 +50,20 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testAliasTopJoinTable() throws SqlException {
+    public void testAliasSecondJoinTable() throws SqlException {
         assertQuery(
-                "select-choose tx.a a, tx.b b from (select [a, b, xid] from x tx outer join select [yid] from y ty on yid = xid post-join-where a = 1 or b = 2) tx",
-                "select tx.a, tx.b from x as tx left join y as ty on xid = yid where tx.a = 1 or tx.b=2",
+                "select-choose tx.a a, tx.b b from (select [a, b, xid] from x tx outer join select [yid, a, b] from y ty on yid = xid post-join-where ty.a = 1 or ty.b = 2) tx",
+                "select tx.a, tx.b from x as tx left join y as ty on xid = yid where ty.a = 1 or ty.b=2",
                 modelOf("x").col("xid", ColumnType.INT).col("a", ColumnType.INT).col("b", ColumnType.INT),
                 modelOf("y").col("yid", ColumnType.INT).col("a", ColumnType.INT).col("b", ColumnType.INT)
         );
     }
 
     @Test
-    public void testAliasSecondJoinTable() throws SqlException {
+    public void testAliasTopJoinTable() throws SqlException {
         assertQuery(
-                "select-choose tx.a a, tx.b b from (select [a, b, xid] from x tx outer join select [yid, a, b] from y ty on yid = xid post-join-where ty.a = 1 or ty.b = 2) tx",
-                "select tx.a, tx.b from x as tx left join y as ty on xid = yid where ty.a = 1 or ty.b=2",
+                "select-choose tx.a a, tx.b b from (select [a, b, xid] from x tx outer join select [yid] from y ty on yid = xid post-join-where a = 1 or b = 2) tx",
+                "select tx.a, tx.b from x as tx left join y as ty on xid = yid where tx.a = 1 or tx.b=2",
                 modelOf("x").col("xid", ColumnType.INT).col("a", ColumnType.INT).col("b", ColumnType.INT),
                 modelOf("y").col("yid", ColumnType.INT).col("a", ColumnType.INT).col("b", ColumnType.INT)
         );
@@ -2284,18 +2284,6 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testInsertAsSelectColumnCountMismatch() throws Exception {
-        assertSyntaxError("insert into x (b) select * from y",
-                12, "column count mismatch",
-                modelOf("x")
-                        .col("a", ColumnType.INT)
-                        .col("b", ColumnType.STRING),
-                modelOf("y")
-                        .col("c", ColumnType.INT)
-                        .col("d", ColumnType.STRING));
-    }
-
-    @Test
     public void testInsertAsSelectBadBatchSize() throws Exception {
         assertSyntaxError(
                 "insert batch 2a hysteresis 100000 into x select * from y",
@@ -2354,6 +2342,18 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testInsertAsSelectColumnCountMismatch() throws Exception {
+        assertSyntaxError("insert into x (b) select * from y",
+                12, "column count mismatch",
+                modelOf("x")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.STRING),
+                modelOf("y")
+                        .col("c", ColumnType.INT)
+                        .col("d", ColumnType.STRING));
+    }
+
+    @Test
     public void testInsertAsSelectColumnList() throws SqlException {
         assertModel(
                 "insert into x (a, b) select-choose c, d from (select [c, d] from y)",
@@ -2366,6 +2366,18 @@ public class SqlParserTest extends AbstractGriffinTest {
                         .col("c", ColumnType.INT)
                         .col("d", ColumnType.STRING)
         );
+    }
+
+    @Test
+    public void testInsertAsSelectDuplicateColumns() throws Exception {
+        assertSyntaxError("insert into x (b,b) select * from y",
+                17, "duplicate column name",
+                modelOf("x")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.STRING),
+                modelOf("y")
+                        .col("c", ColumnType.INT)
+                        .col("d", ColumnType.STRING));
     }
 
     @Test
@@ -2394,18 +2406,6 @@ public class SqlParserTest extends AbstractGriffinTest {
                         .col("c", ColumnType.INT)
                         .col("d", ColumnType.STRING)
         );
-    }
-
-    @Test
-    public void testInsertAsSelectDuplicateColumns() throws Exception {
-        assertSyntaxError("insert into x (b,b) select * from y",
-                17, "duplicate column name",
-                modelOf("x")
-                        .col("a", ColumnType.INT)
-                        .col("b", ColumnType.STRING),
-                modelOf("y")
-                        .col("c", ColumnType.INT)
-                        .col("d", ColumnType.STRING));
     }
 
     @Test
@@ -4098,6 +4098,21 @@ public class SqlParserTest extends AbstractGriffinTest {
                         .col("contactId", ColumnType.SYMBOL)
                         .col("groupId", ColumnType.SYMBOL)
                         .timestamp()
+        );
+    }
+
+    @Test
+    public void testOrderByWithLatestBy() throws Exception {
+        assertQuery(
+                "select-choose id, vendor, pickup_datetime from (select [id, vendor, pickup_datetime] from trips timestamp (pickup_datetime) latest by vendor_id where pickup_datetime < '2009-01-01T00:02:19.000000Z') order by pickup_datetime",
+                "SELECT * FROM trips\n" +
+                        "latest by vendor_id\n" +
+                        "WHERE pickup_datetime < '2009-01-01T00:02:19.000000Z'\n" +
+                        "ORDER BY pickup_datetime",
+                modelOf("trips")
+                        .col("id", ColumnType.INT)
+                        .col("vendor", ColumnType.SYMBOL)
+                        .timestamp("pickup_datetime")
         );
     }
 

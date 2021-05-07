@@ -35,7 +35,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.Rows;
 import org.jetbrains.annotations.NotNull;
 
-class LatestByAllFilteredRecordCursor extends AbstractRecordListCursor {
+class LatestByAllFilteredRecordCursor extends AbstractDescendingRecordListCursor {
 
     private final Map map;
     private final RecordSink recordSink;
@@ -83,7 +83,6 @@ class LatestByAllFilteredRecordCursor extends AbstractRecordListCursor {
                 }
             }
         }
-
         map.clear();
     }
 }

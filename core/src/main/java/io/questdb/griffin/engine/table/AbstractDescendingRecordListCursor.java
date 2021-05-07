@@ -31,21 +31,27 @@ import io.questdb.std.IntList;
 import io.questdb.std.Rows;
 import org.jetbrains.annotations.NotNull;
 
-abstract class AbstractRecordListCursor extends AbstractDataFrameRecordCursor {
+abstract class AbstractDescendingRecordListCursor extends AbstractDataFrameRecordCursor {
 
     protected final DirectLongList rows;
     private long index;
-    private long lim;
 
-    public AbstractRecordListCursor(DirectLongList rows, @NotNull IntList columnIndexes) {
+    public AbstractDescendingRecordListCursor(DirectLongList rows, @NotNull IntList columnIndexes) {
         super(columnIndexes);
         this.rows = rows;
     }
 
     @Override
+    public long size() {
+        return rows.size();
+    }
+
+    abstract protected void buildTreeMap(SqlExecutionContext executionContext);
+
+    @Override
     public boolean hasNext() {
-        if (index < lim) {
-            long row = rows.get(index++);
+        if (index > -1) {
+            long row = rows.get(index--);
             recordA.jumpTo(Rows.toPartitionIndex(row), Rows.toLocalRowID(row));
             return true;
         }
@@ -54,15 +60,8 @@ abstract class AbstractRecordListCursor extends AbstractDataFrameRecordCursor {
 
     @Override
     public void toTop() {
-        index = 0;
+        index = rows.size() - 1;
     }
-
-    @Override
-    public long size() {
-        return lim;
-    }
-
-    abstract protected void buildTreeMap(SqlExecutionContext executionContext);
 
     @Override
     void of(DataFrameCursor dataFrameCursor, SqlExecutionContext executionContext) {
@@ -71,7 +70,6 @@ abstract class AbstractRecordListCursor extends AbstractDataFrameRecordCursor {
         this.recordB.of(dataFrameCursor.getTableReader());
         rows.clear();
         buildTreeMap(executionContext);
-        index = 0;
-        lim = rows.size();
+        index = rows.size() - 1;
     }
 }

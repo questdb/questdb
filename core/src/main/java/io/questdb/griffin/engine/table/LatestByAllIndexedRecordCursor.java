@@ -81,6 +81,10 @@ class LatestByAllIndexedRecordCursor extends AbstractRecordListCursor {
                 }
             }
 
+            // we have to sort rows because multiple symbols
+            // are liable to be looked up out of order
+            rows.sortAsUnsigned();
+
             keyLo = localLo;
             keyHi = localHi + 1;
             localLo = Integer.MAX_VALUE;
