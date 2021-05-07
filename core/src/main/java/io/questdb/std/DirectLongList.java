@@ -63,6 +63,10 @@ public class DirectLongList implements Mutable, Closeable {
         this.pos += thatCapacity;
     }
 
+    public void sortAsUnsigned() {
+        Vect.sortULongAscInPlace(address, size());
+    }
+
     public long binarySearch(long v) {
         long low = 0;
         long high = ((pos - start) >> 3) - 1;

@@ -54,11 +54,11 @@ typedef struct {
 
 #if RADIX_SHUFFLE == 0
 
-template<uint16_t sh>
-inline void radix_shuffle(uint64_t *counts, index_t *src, index_t *dest, uint64_t size) {
+template<uint16_t sh, typename T>
+inline void radix_shuffle(uint64_t *counts, T *src, T *dest, uint64_t size) {
     MM_PREFETCH_T0(counts);
     for (uint64_t x = 0; x < size; x++) {
-        const auto digit = (src[x].ts >> sh) & 0xffu;
+        const auto digit = (src[x] >> sh) & 0xffu;
         dest[counts[digit]] = src[x];
         counts[digit]++;
         MM_PREFETCH_T2(src + x + 64);
@@ -139,10 +139,11 @@ inline void radix_shuffle(uint64_t* counts, int64_t* src, int64_t* dest, uint64_
 }
 #endif
 
-void radix_sort_long_index_asc_in_place(index_t *array, uint64_t size) {
+template<typename T>
+void radix_sort_long_index_asc_in_place(T *array, uint64_t size) {
     rscounts_t counts;
     memset(&counts, 0, 256 * 8 * sizeof(uint64_t));
-    auto *cpy = (index_t *) malloc(size * sizeof(index_t));
+    auto *cpy = (T *) malloc(size * sizeof(T));
     uint64_t o8 = 0, o7 = 0, o6 = 0, o5 = 0, o4 = 0, o3 = 0, o2 = 0, o1 = 0;
     uint64_t t8, t7, t6, t5, t4, t3, t2, t1;
     int64_t x;
@@ -150,14 +151,14 @@ void radix_sort_long_index_asc_in_place(index_t *array, uint64_t size) {
     // calculate counts
     MM_PREFETCH_NTA(counts.c8);
     for (x = 0; x < size; x++) {
-        t8 = array[x].ts & 0xffu;
-        t7 = (array[x].ts >> 8u) & 0xffu;
-        t6 = (array[x].ts >> 16u) & 0xffu;
-        t5 = (array[x].ts >> 24u) & 0xffu;
-        t4 = (array[x].ts >> 32u) & 0xffu;
-        t3 = (array[x].ts >> 40u) & 0xffu;
-        t2 = (array[x].ts >> 48u) & 0xffu;
-        t1 = (array[x].ts >> 56u) & 0xffu;
+        t8 = array[x] & 0xffu;
+        t7 = (array[x] >> 8u) & 0xffu;
+        t6 = (array[x] >> 16u) & 0xffu;
+        t5 = (array[x] >> 24u) & 0xffu;
+        t4 = (array[x] >> 32u) & 0xffu;
+        t3 = (array[x] >> 40u) & 0xffu;
+        t2 = (array[x] >> 48u) & 0xffu;
+        t1 = (array[x] >> 56u) & 0xffu;
         counts.c8[t8]++;
         counts.c7[t7]++;
         counts.c6[t6]++;
@@ -210,7 +211,8 @@ void radix_sort_long_index_asc_in_place(index_t *array, uint64_t size) {
     free(cpy);
 }
 
-inline void swap(index_t *a, index_t *b) {
+template<typename T>
+inline void swap(T *a, T *b) {
     const auto t = *a;
     *a = *b;
     *b = t;
@@ -224,14 +226,15 @@ inline void swap(index_t *a, index_t *b) {
  *  of pivot
  *
  **/
-uint64_t partition(index_t *index, uint64_t low, uint64_t high) {
-    const auto pivot = index[high].ts;    // pivot
+template<typename T>
+uint64_t partition(T *index, uint64_t low, uint64_t high) {
+    const auto pivot = index[high];    // pivot
     auto i = (low - 1);  // Index of smaller element
 
     for (uint64_t j = low; j <= high - 1; j++) {
         // If current element is smaller than or
         // equal to pivot
-        if (index[j].ts <= pivot) {
+        if (index[j] <= pivot) {
             i++;    // increment index of smaller element
             swap(&index[i], &index[j]);
         }
@@ -246,7 +249,8 @@ uint64_t partition(index_t *index, uint64_t low, uint64_t high) {
  * low  --> Starting index,
  * high  --> Ending index
  **/
-void quick_sort_long_index_asc_in_place(index_t *arr, int64_t low, int64_t high) {
+template<typename T>
+void quick_sort_long_index_asc_in_place(T *arr, int64_t low, int64_t high) {
     if (low < high) {
         /* pi is partitioning index, arr[p] is now
            at right place */
@@ -259,7 +263,8 @@ void quick_sort_long_index_asc_in_place(index_t *arr, int64_t low, int64_t high)
     }
 }
 
-inline void sort(index_t *index, int64_t size) {
+template<typename T>
+inline void sort(T *index, int64_t size) {
     if (size < 600) {
         quick_sort_long_index_asc_in_place(index, 0, size - 1);
     } else {
@@ -474,8 +479,13 @@ Java_io_questdb_std_Vect_oooMergeCopyBinColumn(JNIEnv *env, jclass cl,
 JNIEXPORT void JNICALL
 Java_io_questdb_std_Vect_sortLongIndexAscInPlace(JNIEnv *env, jclass cl, jlong pLong, jlong len) {
     measure_time(4, [=]() {
-        sort(reinterpret_cast<index_t *>(pLong), len);
+        sort<index_t>(reinterpret_cast<index_t *>(pLong), len);
     });
+}
+
+JNIEXPORT void JNICALL
+Java_io_questdb_std_Vect_sortULongAscInPlace(JNIEnv *env, jclass cl, jlong pLong, jlong len) {
+    sort<uint64_t>(reinterpret_cast<uint64_t *>(pLong), len);
 }
 
 JNIEXPORT jlong JNICALL
@@ -568,7 +578,7 @@ Java_io_questdb_std_Vect_indexReshuffle64Bit(JNIEnv *env, jclass cl, jlong pSrc,
 DECLARE_DISPATCHER(re_shuffle_256bit);
 JNIEXPORT void JNICALL
 Java_io_questdb_std_Vect_indexReshuffle256Bit(JNIEnv *env, jclass cl, jlong pSrc, jlong pDest, jlong pIndex,
-                                             jlong count) {
+                                              jlong count) {
     measure_time(30, [=]() {
         re_shuffle_256bit(
                 reinterpret_cast<long_256bit *>(pSrc),
@@ -665,7 +675,7 @@ Java_io_questdb_std_Vect_mergeShuffle64Bit(JNIEnv *env, jclass cl, jlong src1, j
 
 JNIEXPORT void JNICALL
 Java_io_questdb_std_Vect_mergeShuffle256Bit(JNIEnv *env, jclass cl, jlong src1, jlong src2, jlong dest, jlong index,
-                                           jlong count) {
+                                            jlong count) {
     measure_time(29, [=]() {
         merge_shuffle_vanilla<long_256bit>(
                 reinterpret_cast<long_256bit *>(src1),
@@ -894,12 +904,12 @@ JNIEXPORT jlong JNICALL
 Java_io_questdb_std_Vect_sortVarColumn(JNIEnv *env, jclass cl, jlong mergedTimestampsAddr, jlong valueCount,
                                        jlong srcDataAddr, jlong srcIndxAddr, jlong tgtDataAddr, jlong tgtIndxAddr) {
 
-    const index_t* index = reinterpret_cast<index_t *> (mergedTimestampsAddr);
+    const index_t *index = reinterpret_cast<index_t *> (mergedTimestampsAddr);
     const int64_t count = __JLONG_REINTERPRET_CAST__(int64_t, valueCount);
-    const char *src_data = reinterpret_cast<const char*>(srcDataAddr);
-    const int64_t *src_index = reinterpret_cast<const int64_t*>(srcIndxAddr);
-    char *tgt_data = reinterpret_cast<char*>(tgtDataAddr);
-    int64_t *tgt_index = reinterpret_cast<int64_t*>(tgtIndxAddr);
+    const char *src_data = reinterpret_cast<const char *>(srcDataAddr);
+    const int64_t *src_index = reinterpret_cast<const int64_t *>(srcIndxAddr);
+    char *tgt_data = reinterpret_cast<char *>(tgtDataAddr);
+    int64_t *tgt_index = reinterpret_cast<int64_t *>(tgtIndxAddr);
 
     int64_t offset = 0;
     for (int64_t i = 0; i < count; ++i) {
@@ -908,7 +918,8 @@ Java_io_questdb_std_Vect_sortVarColumn(JNIEnv *env, jclass cl, jlong mergedTimes
         const int64_t o1 = src_index[row];
         const int64_t o2 = src_index[row + 1];
         const int64_t len = o2 - o1;
-        platform_memcpy(reinterpret_cast<void*>(tgt_data + offset), reinterpret_cast<const void*>(src_data + o1), len);
+        platform_memcpy(reinterpret_cast<void *>(tgt_data + offset), reinterpret_cast<const void *>(src_data + o1),
+                        len);
         tgt_index[i] = offset;
         offset += len;
     }
