@@ -44,8 +44,10 @@ stages:
           - bash: sudo sysctl -w fs.file-max=500000
             displayName: "Increase file count on Linux"
             condition: eq(variables['Agent.OS'], 'Linux')
-          - bash: 'echo ##vso[task.setvariable variable=COVERAGE_DIFF;]$(curl https://api.github.com/repos/questdb/questdb/pulls/${PR_ID}/files -s | grep -oP ''filename\: "core/src/main/java/io/questdb.*\/\K[^.]+'' | tr ''\n'' '','' | sed -e ''s/,/,+:*./g')'
+          - task: ShellScript@2
             displayName: "List of coverage classes"
+            inputs:
+              scriptPath: $(Build.SourcesDirectory)/ci/coverage.sh
             condition: eq(variables['Agent.OS'], 'Linux')
             env:
               PR_ID: $(System.PullRequest.PullRequestId)
