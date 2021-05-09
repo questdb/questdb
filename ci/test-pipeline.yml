@@ -48,14 +48,14 @@ stages:
             displayName: "List of coverage classes Linux"
             inputs:
               scriptPath: $(Build.SourcesDirectory)/ci/coverage.sh
-            condition: not(eq(variables['Agent.OS'], 'Linux'))
+            condition: eq(variables['Agent.OS'], 'Linux')
             env:
               PR_ID: $(System.PullRequest.PullRequestId)
           - task: CmdLine@2
             displayName: "Empty list of coverage classes Non-Linux"
             inputs:
               script: echo "##vso[task.setvariable variable=COVERAGE_DIFF;]None"
-            condition: neq(variables['Agent.OS'], 'Linux')
+            condition: not(eq(variables['Agent.OS'], 'Linux'))
           - bash: sudo sysctl -w kern.sysv.shmseg=4096 && sudo sysctl -w kern.sysv.shmall=5120 && sysctl -A | grep shm
             displayName: "Increase shared mem size on Darwin"
             condition: eq(variables['Agent.OS'], 'Darwin')
