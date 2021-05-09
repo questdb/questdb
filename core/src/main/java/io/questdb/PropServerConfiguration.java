@@ -195,10 +195,11 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int o3PurgeDiscoveryQueueCapacity;
     private final int o3PurgeQueueCapacity;
     private final int o3MaxUncommittedRows;
-    private final long o3CommitHystersisInMicros;
+    private final long o3CommitHystersis;
     private final long instanceHashLo;
     private final long instanceHashHi;
     private final int sqlTxnScoreboardEntryCount;
+    private final boolean o3QuickSortEnabled;
     private boolean httpAllowDeflateBeforeSend;
     private int[] httpWorkerAffinity;
     private int[] httpMinWorkerAffinity;
@@ -623,18 +624,19 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.backupDirTimestampFormat = getTimestampFormat(properties, env);
             this.backupTempDirName = getString(properties, env, "cairo.sql.backup.dir.tmp.name", "tmp");
             this.backupMkdirMode = getInt(properties, env, "cairo.sql.backup.mkdir.mode", 509);
-            this.tableBlockWriterQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.table.block.writer.queue.capacity", 4096));
-            this.columnIndexerQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.column.indexer.queue.capacity", 1024));
-            this.vectorAggregateQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.vector.aggregate.queue.capacity", 1024));
-            this.o3CallbackQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.o3.callback.queue.capacity", 1024));
-            this.o3PartitionQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.o3.partition.queue.capacity", 1024));
-            this.o3OpenColumnQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.o3.open.column.queue.capacity", 1024));
-            this.o3CopyQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.o3.copy.queue.capacity", 1024));
-            this.o3UpdPartitionSizeQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.o3.upd.partition.size.queue.capacity", 32));
-            this.o3PurgeDiscoveryQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.o3.purge.discovery.queue.capacity", 1024));
-            this.o3PurgeQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.o3.purge.queue.capacity", 1024));
+            this.tableBlockWriterQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.table.block.writer.queue.capacity", 256));
+            this.columnIndexerQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.column.indexer.queue.capacity", 64));
+            this.vectorAggregateQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.vector.aggregate.queue.capacity", 128));
+            this.o3CallbackQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.o3.callback.queue.capacity", 128));
+            this.o3PartitionQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.o3.partition.queue.capacity", 128));
+            this.o3OpenColumnQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.o3.open.column.queue.capacity", 128));
+            this.o3CopyQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.o3.copy.queue.capacity", 128));
+            this.o3UpdPartitionSizeQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.o3.upd.partition.size.queue.capacity", 128));
+            this.o3PurgeDiscoveryQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.o3.purge.discovery.queue.capacity", 128));
+            this.o3PurgeQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.o3.purge.queue.capacity", 128));
             this.o3MaxUncommittedRows = getInt(properties, env, "cairo.o3.max.uncommitted.rows", 500_000);
-            this.o3CommitHystersisInMicros = getLong(properties, env, "cairo.o3.commit.hysteresis.in.ms", 300_000) * 1_000;
+            this.o3CommitHystersis = getLong(properties, env, "cairo.o3.commit.hysteresis.in.ms", 300_000) * 1_000;
+            this.o3QuickSortEnabled = getBoolean(properties, env, "cairo.o3.quicksort.enabled", false);
             this.sqlAnalyticStorePageSize = Numbers.ceilPow2(getIntSize(properties, env, "cairo.sql.analytic.store.page.size", 1024 * 1024));
             this.sqlAnalyticStoreMaxPages = Numbers.ceilPow2(getIntSize(properties, env, "cairo.sql.analytic.store.max.pages", Integer.MAX_VALUE));
             this.sqlAnalyticRowIdPageSize = Numbers.ceilPow2(getIntSize(properties, env, "cairo.sql.analytic.rowid.page.size", 512 * 1024));
@@ -1856,8 +1858,13 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public long getO3CommitHysteresisInMicros() {
-            return o3CommitHystersisInMicros;
+        public long getO3CommitHysteresis() {
+            return o3CommitHystersis;
+        }
+
+        @Override
+        public boolean isO3QuickSortEnabled() {
+            return o3QuickSortEnabled;
         }
     }
 

@@ -95,9 +95,9 @@ public class AbstractCairoTest {
             }
 
             @Override
-            public long getO3CommitHysteresisInMicros() {
+            public long getO3CommitHysteresis() {
                 if (configOverrideO3CommitHysteresisInMicros >= 0) return configOverrideO3CommitHysteresisInMicros;
-                return super.getO3CommitHysteresisInMicros();
+                return super.getO3CommitHysteresis();
             }
 
             @Override
