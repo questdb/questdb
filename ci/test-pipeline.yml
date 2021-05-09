@@ -54,7 +54,7 @@ stages:
           - task: CmdLine@2
             displayName: "Empty list of coverage classes Non-Linux"
             inputs:
-              script: echo "##vso[task.setvariable variable=COVERAGE_DIFF;]None"
+              script: echo "##vso[task.setvariable variable=COVERAGE_DIFF;]-:*"
             condition: not(eq(variables['Agent.OS'], 'Linux'))
           - bash: sudo sysctl -w kern.sysv.shmseg=4096 && sudo sysctl -w kern.sysv.shmall=5120 && sysctl -A | grep shm
             displayName: "Increase shared mem size on Darwin"
