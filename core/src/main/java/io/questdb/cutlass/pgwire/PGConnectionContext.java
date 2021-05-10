@@ -117,6 +117,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     private final AssociativeCache<TypesAndInsert> typesAndInsertCache;
     private final CharSequenceObjHashMap<NamedStatementWrapper> namedStatementMap;
     private final IntList syncActions = new IntList(4);
+    private final CairoEngine engine;
     private IntList activeSelectColumnTypes;
     private int parsePhaseBindVariableCount;
     private long sendBufferPtr;
@@ -126,6 +127,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     private int bufferRemainingOffset = 0;
     private int bufferRemainingSize = 0;
     private RecordCursor currentCursor = null;
+    private RecordCursorFactory currentFactory = null;
     // these references are held by context only for a period of processing single request
     // in PF world this request can span multiple messages, but still, only for one request
     // the rationale is to be able to return "selectAndTypes" instance to thread-local
@@ -149,7 +151,8 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     // this is a reference to types either from the context or named statement, where it is provided
     private IntList activeBindVariableTypes;
     private boolean sendParameterDescription;
-    private final CairoEngine engine;
+    private PGResumeProcessor resumeProcessor;
+    private final PGResumeProcessor resumeCursorRef = this::resumeCursor;
 
     public PGConnectionContext(
             CairoEngine engine,
@@ -189,15 +192,6 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         );
         this.namedStatementMap = new CharSequenceObjHashMap<>(configuration.getNamedStatementCacheCapacity());
         this.pendingWriters = new CharSequenceObjHashMap<>(configuration.getPendingWritersCacheSize());
-    }
-
-    @Override
-    public TableWriter getWriter(CairoSecurityContext context, CharSequence name) {
-        final int index = pendingWriters.keyIndex(name);
-        if (index < 0) {
-            return pendingWriters.valueAt(index);
-        }
-        return engine.getWriter(context, name);
     }
 
     public static int getInt(long address, long msgLimit, CharSequence errorMessage) throws BadProtocolException {
@@ -289,6 +283,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         sqlExecutionContext.with(AllowAllCairoSecurityContext.INSTANCE, null, null, -1, null);
         Unsafe.free(sendBuffer, sendBufferSize);
         Unsafe.free(recvBuffer, recvBufferSize);
+        Misc.free(typesAndSelectCache);
         Misc.free(path);
         Misc.free(utf8Sink);
     }
@@ -308,6 +303,15 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         return dispatcher;
     }
 
+    @Override
+    public TableWriter getWriter(CairoSecurityContext context, CharSequence name) {
+        final int index = pendingWriters.keyIndex(name);
+        if (index < 0) {
+            return pendingWriters.valueAt(index);
+        }
+        return engine.getWriter(context, name);
+    }
+
     public void handleClientOperation(
             @Transient SqlCompiler compiler,
             @Transient AssociativeCache<TypesAndSelect> selectAndTypesCache,
@@ -318,11 +322,14 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         this.typesAndSelectCache = selectAndTypesCache;
         this.typesAndSelectPool = selectAndTypesPool;
 
-        if (bufferRemainingSize > 0) {
-            doSend(bufferRemainingOffset, bufferRemainingSize);
-        }
-
         try {
+            if (bufferRemainingSize > 0) {
+                doSend(bufferRemainingOffset, bufferRemainingSize);
+                if (resumeProcessor != null) {
+                    resumeProcessor.resume();
+                }
+            }
+
             boolean keepReceiving = true;
             OUTER:
             do {
@@ -350,34 +357,20 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
                         // nothing changed?
                         if (readOffsetBeforeParse == recvBufferReadOffset) {
                             // shift to start
-                            shiftReceiveBuffer(readOffsetBeforeParse);
+                            if (readOffsetBeforeParse > 0) {
+                                shiftReceiveBuffer(readOffsetBeforeParse);
+                            }
                             continue OUTER;
                         }
                     } while (recvBufferReadOffset < recvBufferWriteOffset);
                     clearRecvBuffer();
                 }
-            } while (keepReceiving);
+            } while (keepReceiving&&operation==IOOperation.READ);
         } catch (SqlException e) {
             reportError(e.getPosition(), e.getFlyweightMessage());
         } catch (CairoException e) {
             reportError(-1, e.getFlyweightMessage());
         }
-    }
-
-    private void shiftReceiveBuffer(long readOffsetBeforeParse) {
-        final long len = recvBufferWriteOffset - readOffsetBeforeParse;
-        LOG.debug()
-                .$("shift [offset=").$(readOffsetBeforeParse)
-                .$(", len=").$(len)
-                .$(']').$();
-
-        Unsafe.getUnsafe().copyMemory(
-                recvBuffer + readOffsetBeforeParse,
-                recvBuffer,
-                len
-        );
-        recvBufferWriteOffset = len;
-        recvBufferReadOffset = 0;
     }
 
     public PGConnectionContext of(long clientFd, IODispatcher<PGConnectionContext> dispatcher) {
@@ -415,32 +408,27 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     }
 
     public void setDoubleBindVariable(int index, long address, int valueLen) throws BadProtocolException, SqlException {
-        ensureValueLength(Double.BYTES, valueLen);
+        ensureValueLength(index, Double.BYTES, valueLen);
         bindVariableService.setDouble(index, Double.longBitsToDouble(getLongUnsafe(address)));
     }
 
     public void setFloatBindVariable(int index, long address, int valueLen) throws BadProtocolException, SqlException {
-        ensureValueLength(Float.BYTES, valueLen);
+        ensureValueLength(index, Float.BYTES, valueLen);
         bindVariableService.setFloat(index, Float.intBitsToFloat(getIntUnsafe(address)));
     }
 
     public void setIntBindVariable(int index, long address, int valueLen) throws BadProtocolException, SqlException {
-        ensureValueLength(Integer.BYTES, valueLen);
+        ensureValueLength(index, Integer.BYTES, valueLen);
         bindVariableService.setInt(index, getIntUnsafe(address));
     }
 
     public void setLongBindVariable(int index, long address, int valueLen) throws BadProtocolException, SqlException {
-        ensureValueLength(Long.BYTES, valueLen);
+        ensureValueLength(index, Long.BYTES, valueLen);
         bindVariableService.setLong(index, getLongUnsafe(address));
     }
 
-    public void setTimestampBindVariable(int index, long address, int valueLen) throws BadProtocolException, SqlException {
-        ensureValueLength(Long.BYTES, valueLen);
-        bindVariableService.setTimestamp(index, getLongUnsafe(address) + Numbers.JULIAN_EPOCH_OFFSET_USEC);
-    }
-
     public void setShortBindVariable(int index, long address, int valueLen) throws BadProtocolException, SqlException {
-        ensureValueLength(Short.BYTES, valueLen);
+        ensureValueLength(index, Short.BYTES, valueLen);
         bindVariableService.setShort(index, getShortUnsafe(address));
     }
 
@@ -454,6 +442,11 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         }
     }
 
+    public void setTimestampBindVariable(int index, long address, int valueLen) throws BadProtocolException, SqlException {
+        ensureValueLength(index, Long.BYTES, valueLen);
+        bindVariableService.setTimestamp(index, getLongUnsafe(address) + Numbers.JULIAN_EPOCH_OFFSET_USEC);
+    }
+
     private static int getIntUnsafe(long address) {
         return Numbers.bswap(Unsafe.getUnsafe().getInt(address));
     }
@@ -462,11 +455,15 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         return Numbers.bswap(Unsafe.getUnsafe().getShort(address));
     }
 
-    private static void ensureValueLength(int required, int valueLen) throws BadProtocolException {
-        if (required == valueLen) {
+    private static void ensureValueLength(int index, int required, int actual) throws BadProtocolException {
+        if (required == actual) {
             return;
         }
-        LOG.error().$("bad parameter value length [required=").$(required).$(", actual=").$(valueLen).$(']').$();
+        LOG.error()
+                .$("bad parameter value length [required=").$(required)
+                .$(", actual=").$(actual)
+                .$(", index=").$(index)
+                .I$();
         throw BadProtocolException.INSTANCE;
     }
 
@@ -1066,7 +1063,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         }
 
         if (n < size) {
-            doSendWithRetries(n, size - n);
+            doSendWithRetries(offset + n, size - n);
         }
         sendBufferPtr = sendBuffer;
         bufferRemainingSize = 0;
@@ -1121,8 +1118,8 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
                     try {
                         rowCount = m.execute();
                         w = m.popWriter();
-                        pendingWriters.put(w.getName(), w);
-                    } catch (CairoException e) {
+                        pendingWriters.put(w.getTableName(), w);
+                    } catch (Throwable e) {
                         Misc.free(m);
                         throw e;
                     }
@@ -1139,11 +1136,51 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
                     break;
             }
             prepareCommandComplete(true);
-        } catch (CairoException e) {
+        } catch (Throwable e) {
             if (transactionState == IN_TRANSACTION) {
                 transactionState = ERROR_TRANSACTION;
             }
             throw e;
+        }
+    }
+
+    private void executeTag() {
+        LOG.debug().$("executing [tag=").$(queryTag).$(']').$();
+        if (queryTag != null && TAG_OK != queryTag) {  //do not run this for OK tag (i.e.: create table)
+            executeTag0();
+        }
+    }
+
+    private void executeTag0() {
+        switch (transactionState) {
+            case COMMIT_TRANSACTION:
+                try {
+                    for (int i = 0, n = pendingWriters.size(); i < n; i++) {
+                        final TableWriter m = pendingWriters.valueQuick(i);
+                        m.commit();
+                        Misc.free(m);
+                    }
+                } finally {
+                    pendingWriters.clear();
+                    transactionState = NO_TRANSACTION;
+                }
+                break;
+            case ROLLING_BACK_TRANSACTION:
+                try {
+                    for (int i = 0, n = pendingWriters.size(); i < n; i++) {
+                        final TableWriter m = pendingWriters.valueQuick(i);
+                        m.rollback();
+                        Misc.free(m);
+                    }
+                } finally {
+                    pendingWriters.clear();
+                    transactionState = NO_TRANSACTION;
+                }
+                break;
+            default:
+                break;
+
+
         }
     }
 
@@ -1319,7 +1356,13 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
             prepareParameterDescription();
         }
         if (typesAndSelect != null) {
-            prepareRowDescription();
+            try {
+                prepareRowDescription();
+            } catch (NoSpaceLeftInResponseBufferException ignored) {
+                LOG.error().$("not enough space in buffer for row description [buffer=").$(sendBufferSize).I$();
+                responseAsciiSink.reset();
+                throw CairoException.instance(0).put("server configuration error: not enough space in send buffer for row description");
+            }
         } else {
             prepareNoDataMessage();
         }
@@ -1594,50 +1637,10 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         wrapper = null;
     }
 
-    private void executeTag() {
-        LOG.debug().$("executing [tag=").$(queryTag).$(']').$();
-        if (queryTag != null && TAG_OK != queryTag) {  //do not run this for OK tag (i.e.: create table)
-            executeTag0();
-        }
-    }
-
-    private void executeTag0() {
-        switch (transactionState) {
-            case COMMIT_TRANSACTION:
-                try {
-                    for (int i = 0, n = pendingWriters.size(); i < n; i++) {
-                        final TableWriter m = pendingWriters.valueQuick(i);
-                        m.commit();
-                        Misc.free(m);
-                    }
-                } finally {
-                    pendingWriters.clear();
-                    transactionState = NO_TRANSACTION;
-                }
-                break;
-            case ROLLING_BACK_TRANSACTION:
-                try {
-                    for (int i = 0, n = pendingWriters.size(); i < n; i++) {
-                        final TableWriter m = pendingWriters.valueQuick(i);
-                        m.rollback();
-                        Misc.free(m);
-                    }
-                } finally {
-                    pendingWriters.clear();
-                    transactionState = NO_TRANSACTION;
-                }
-                break;
-            default:
-                break;
-
-
-        }
-    }
-
     private void processExecute() throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException {
         if (typesAndSelect != null) {
             LOG.debug().$("executing query").$();
-            currentCursor = typesAndSelect.getFactory().getCursor(sqlExecutionContext);
+            setupFactoryAndCursor();
             // cache random if it was replaced
             this.rnd = sqlExecutionContext.getRandom();
             sendCursor();
@@ -1799,7 +1802,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
             buildSelectColumnTypes();
             assert queryText != null;
             queryTag = TAG_SELECT;
-            currentCursor = typesAndSelect.getFactory().getCursor(sqlExecutionContext);
+            setupFactoryAndCursor();
             prepareRowDescription();
             sendCursor();
         } else if (typesAndInsert != null) {
@@ -1875,6 +1878,14 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         clearRecvBuffer();
     }
 
+    private void resumeCursor() throws SqlException, PeerDisconnectedException, PeerIsSlowToReadException {
+        final Record record = currentCursor.getRecord();
+        final int columnCount = currentFactory.getMetadata().getColumnCount();
+        responseAsciiSink.bookmark();
+        appendSingleRecord(record, columnCount);
+        sendCursor0(record, columnCount);
+    }
+
     private void sendAndReset() throws PeerDisconnectedException, PeerIsSlowToReadException {
         doSend(0, (int) (sendBufferPtr - sendBuffer));
         responseAsciiSink.reset();
@@ -1912,11 +1923,16 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         // approach for general queries. For streaming protocol we will code something else. PostgreSQL Java driver is
         // slow anyway.
 
+        rowCount = 0;
+        final Record record = currentCursor.getRecord();
+        final RecordMetadata metadata = currentFactory.getMetadata();
+        final int columnCount = metadata.getColumnCount();
+        resumeProcessor = resumeCursorRef;
+        sendCursor0(record, columnCount);
+    }
+
+    private void sendCursor0(Record record, int columnCount) throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException {
         try {
-            final Record record = currentCursor.getRecord();
-            final RecordMetadata metadata = typesAndSelect.getFactory().getMetadata();
-            final int columnCount = metadata.getColumnCount();
-            rowCount = 0;
             while (currentCursor.hasNext()) {
                 // create checkpoint to which we can undo the buffer in case
                 // current DataRow will does not fit fully.
@@ -1928,21 +1944,50 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
                     } catch (NoSpaceLeftInResponseBufferException e) {
                         responseAsciiSink.resetToBookmark();
                         sendAndReset();
-                        // this is now start of send buffer, when this fails we need to log and disconnect
-                        appendRecord(record, columnCount);
+                        appendSingleRecord(record, columnCount);
                     }
                 } catch (SqlException e) {
                     responseAsciiSink.resetToBookmark();
                     throw e;
                 }
             }
+            resumeProcessor = null;
+            currentCursor = Misc.free(currentCursor);
+            // do not free factory, it will be cached
+            currentFactory = null;
         } finally {
-            typesAndSelectCache.put(queryText, typesAndSelect);
-            // clear selectAndTypes so that context doesn't accidentally
-            // free the factory when context finishes abnormally
-            this.typesAndSelect = null;
+            // we we resumed the cursor send the typeAndSelect will be null
+            // we do not want to overwrite cache entries and potentially
+            // leak memory
+            if (typesAndSelect != null) {
+                typesAndSelectCache.put(queryText, typesAndSelect);
+                // clear selectAndTypes so that context doesn't accidentally
+                // free the factory when context finishes abnormally
+                this.typesAndSelect = null;
+            }
         }
         prepareCommandComplete(true);
+    }
+
+    private void appendSingleRecord(Record record, int columnCount) throws SqlException {
+        try {
+            appendRecord(record, columnCount);
+        } catch (NoSpaceLeftInResponseBufferException e1) {
+            // oopsie, buffer is too small for single record
+            LOG.error().$("not enough space in buffer for row data [buffer=").$(sendBufferSize).I$();
+            responseAsciiSink.reset();
+            throw CairoException.instance(0).put("server configuration error: not enough space in send buffer for row data");
+        }
+    }
+
+    private void setupFactoryAndCursor() {
+        currentFactory = typesAndSelect.getFactory();
+        try {
+            currentCursor = currentFactory.getCursor(sqlExecutionContext);
+        } catch (Throwable e) {
+            currentFactory = Misc.free(currentFactory);
+            throw e;
+        }
     }
 
     private void setupVariableSettersFromWrapper(
@@ -1959,6 +2004,22 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         }
     }
 
+    private void shiftReceiveBuffer(long readOffsetBeforeParse) {
+        final long len = recvBufferWriteOffset - readOffsetBeforeParse;
+        LOG.debug()
+                .$("shift [offset=").$(readOffsetBeforeParse)
+                .$(", len=").$(len)
+                .$(']').$();
+
+        Vect.memcpy(
+                recvBuffer + readOffsetBeforeParse,
+                recvBuffer,
+                len
+        );
+        recvBufferWriteOffset = len;
+        recvBufferReadOffset = 0;
+    }
+
     private void validateParameterCounts(short parameterFormatCount, short parameterValueCount, int parameterTypeCount) throws BadProtocolException {
         if (parameterValueCount > 0) {
             if (parameterValueCount < parameterTypeCount) {
@@ -1970,6 +2031,11 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
                 throw BadProtocolException.INSTANCE;
             }
         }
+    }
+
+    @FunctionalInterface
+    private interface PGResumeProcessor {
+        void resume() throws PeerIsSlowToReadException, SqlException, PeerDisconnectedException;
     }
 
     public static class NamedStatementWrapper implements Mutable {
@@ -1993,6 +2059,10 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
 
         public void bookmark() {
             this.bookmarkPtr = sendBufferPtr;
+        }
+
+        public void bump(int size) {
+            sendBufferPtr += size;
         }
 
         @Override
@@ -2087,10 +2157,6 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
             ensureCapacity(Long.BYTES);
             putLong(sendBufferPtr, value);
             sendBufferPtr += Long.BYTES;
-        }
-
-        public void bump(int size) {
-            sendBufferPtr += size;
         }
 
         public void putNetworkShort(short value) {

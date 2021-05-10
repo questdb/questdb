@@ -45,7 +45,7 @@ abstract class AbstractDataFrameRecordCursorFactory extends AbstractRecordCursor
         DataFrameCursor dataFrameCursor = dataFrameCursorFactory.getCursor(executionContext);
         try {
             return getCursorInstance(dataFrameCursor, executionContext);
-        } catch (CairoException e) {
+        } catch (Throwable e) {
             dataFrameCursor.close();
             throw e;
         }

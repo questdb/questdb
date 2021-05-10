@@ -32,19 +32,19 @@ public class TypeCatalogueFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testPgTypeFunc() throws Exception {
         assertQuery(
-                "oid\ttypname\ttypbasetype\ttyparray\ttypnamespace\ttypnotnull\ttyptypmod\ttyptype\ttyprelid\ttypelem\ttypreceive\n" +
-                        "1043\tVARCHAR\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\n" +
-                        "1114\tTIMESTAMP\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\n" +
-                        "701\tFLOAT8\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\n" +
-                        "700\tFLOAT4\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\n" +
-                        "23\tINT4\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\n" +
-                        "21\tINT2\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\n" +
-                        "18\tCHAR\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\n" +
-                        "20\tINT8\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\n" +
-                        "16\tBOOL\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\n" +
-                        "17\tBINARY\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\n" +
-                        "1700\tNUMERIC\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\n" +
-                        "1082\tDATE\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\n",
+                "oid\ttypname\ttypbasetype\ttyparray\ttypnamespace\ttypnotnull\ttyptypmod\ttyptype\ttyprelid\ttypelem\ttypreceive\ttypdelim\ttypinput\n" +
+                        "1043\tvarchar\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t0\t0\n" +
+                        "1114\ttimestamp\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t0\t0\n" +
+                        "701\tfloat8\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t0\t0\n" +
+                        "700\tfloat4\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t0\t0\n" +
+                        "23\tint4\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t0\t0\n" +
+                        "21\tint2\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t0\t0\n" +
+                        "18\tchar\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t0\t0\n" +
+                        "20\tint8\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t0\t0\n" +
+                        "16\tbool\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t0\t0\n" +
+                        "17\tbinary\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t0\t0\n" +
+                        "1700\tnumeric\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t0\t0\n" +
+                        "1082\tdate\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t0\t0\n",
                 "pg_type;",
                 "create table x(a int)",
                 null,
@@ -57,19 +57,19 @@ public class TypeCatalogueFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testPrefixedPgTypeFunc() throws Exception {
         assertQuery(
-                "oid\ttypname\ttypbasetype\ttyparray\ttypnamespace\ttypnotnull\ttyptypmod\ttyptype\ttyprelid\ttypelem\ttypreceive\n" +
-                        "1043\tVARCHAR\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\n" +
-                        "1114\tTIMESTAMP\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\n" +
-                        "701\tFLOAT8\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\n" +
-                        "700\tFLOAT4\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\n" +
-                        "23\tINT4\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\n" +
-                        "21\tINT2\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\n" +
-                        "18\tCHAR\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\n" +
-                        "20\tINT8\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\n" +
-                        "16\tBOOL\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\n" +
-                        "17\tBINARY\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\n" +
-                        "1700\tNUMERIC\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\n" +
-                        "1082\tDATE\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\n",
+                "oid\ttypname\ttypbasetype\ttyparray\ttypnamespace\ttypnotnull\ttyptypmod\ttyptype\ttyprelid\ttypelem\ttypreceive\ttypdelim\ttypinput\n" +
+                        "1043\tvarchar\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t0\t0\n" +
+                        "1114\ttimestamp\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t0\t0\n" +
+                        "701\tfloat8\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t0\t0\n" +
+                        "700\tfloat4\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t0\t0\n" +
+                        "23\tint4\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t0\t0\n" +
+                        "21\tint2\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t0\t0\n" +
+                        "18\tchar\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t0\t0\n" +
+                        "20\tint8\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t0\t0\n" +
+                        "16\tbool\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t0\t0\n" +
+                        "17\tbinary\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t0\t0\n" +
+                        "1700\tnumeric\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t0\t0\n" +
+                        "1082\tdate\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t0\t0\n",
                 "pg_catalog.pg_type;",
                 "create table x(a int)",
                 null,

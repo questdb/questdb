@@ -38,6 +38,9 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.sql.CallableStatement;
+import java.sql.PreparedStatement;
+
 public class JoinTest extends AbstractGriffinTest {
     @Before
     public void setUp3() {
@@ -135,6 +138,22 @@ public class JoinTest extends AbstractGriffinTest {
     @Test
     public void testAsOfFullFat() throws Exception {
         testFullFat(this::testAsOfJoin);
+    }
+
+    @Test
+    public void testJoinAliasBug() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table x (xid int, a int, b int)", sqlExecutionContext);
+            compiler.compile("create table y (yid int, a int, b int)", sqlExecutionContext);
+            compiler.compile(
+                    "select tx.a, tx.b from x as tx left join y as ty on xid = yid where tx.a = 1 or tx.b=2",
+                    sqlExecutionContext
+            ).getRecordCursorFactory().close();
+            compiler.compile(
+                    "select tx.a, tx.b from x as tx left join y as ty on xid = yid where ty.a = 1 or ty.b=2",
+                    sqlExecutionContext
+            ).getRecordCursorFactory().close();
+        });
     }
 
     @Test
@@ -1911,7 +1930,7 @@ public class JoinTest extends AbstractGriffinTest {
             try {
                 Assert.assertNotNull(factory);
                 sink.clear();
-                printer.printHeader(factory.getMetadata());
+                printer.printHeader(factory.getMetadata(), sink);
                 TestUtils.assertEquals("x\tx1\tx2\n", sink);
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     Assert.assertEquals(Long.MAX_VALUE, cursor.size());

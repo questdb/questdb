@@ -72,7 +72,7 @@ public class Rnd {
 
     public void nextChars(final long address, int len) {
         for (int i = 0; i < len; i++) {
-            Unsafe.getUnsafe().putChar(address + i * 2, nextChar());
+            Unsafe.getUnsafe().putChar(address + i * 2L, nextChar());
         }
     }
 
@@ -98,6 +98,10 @@ public class Rnd {
 
     public int nextInt() {
         return (int) nextLong();
+    }
+
+    public int nextInt(int boundary) {
+        return nextPositiveInt() % boundary;
     }
 
     public long nextLong() {

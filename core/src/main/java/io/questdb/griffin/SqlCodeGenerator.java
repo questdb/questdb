@@ -653,12 +653,14 @@ public class SqlCodeGenerator implements Mutable {
         model.setWhereClause(null);
         final Function f = compileFilter(filter, factory.getMetadata(), executionContext);
         if (f.isConstant()) {
-            try (f) {
+            try {
                 if (f.getBool(null)) {
                     return factory;
                 }
                 // metadata is always a GenericRecordMetadata instance
                 return new EmptyTableRecordCursorFactory(factory.getMetadata());
+            } finally {
+                f.close();
             }
         }
         return new FilteredRecordCursorFactory(factory, f);
@@ -884,7 +886,7 @@ public class SqlCodeGenerator implements Mutable {
                 }
             }
             return master;
-        } catch (CairoException | SqlException e) {
+        } catch (Throwable e) {
             Misc.free(master);
             throw e;
         }
@@ -1790,7 +1792,7 @@ public class SqlCodeGenerator implements Mutable {
                     entityColumnFilter,
                     asm
             );
-        } catch (CairoException e) {
+        } catch (Throwable e) {
             factory.close();
             throw e;
         }
@@ -2025,7 +2027,7 @@ public class SqlCodeGenerator implements Mutable {
                     recordFunctions
             );
 
-        } catch (CairoException | SqlException e) {
+        } catch (Throwable e) {
             Misc.free(factory);
             throw e;
         }
@@ -2383,7 +2385,7 @@ public class SqlCodeGenerator implements Mutable {
                                     orderByKeyColumn = true;
                                 } else if (Chars.equals(orderByAdvice.getQuick(1).token, model.getTimestamp().token)) {
                                     orderByKeyColumn = true;
-                                    if (model.getOrderByDirectionAdvice().getQuick(1) == QueryModel.ORDER_DIRECTION_DESCENDING) {
+                                    if (getOrderByDirectionOrDefault(model,1) == QueryModel.ORDER_DIRECTION_DESCENDING) {
                                         indexDirection = BitmapIndexReader.DIR_BACKWARD;
                                     }
                                 }
@@ -2453,7 +2455,7 @@ public class SqlCodeGenerator implements Mutable {
                                 f,
                                 model.getOrderByAdviceMnemonic(),
                                 orderByKeyColumn,
-                                model.getOrderByDirectionAdvice().getQuick(0),
+                                getOrderByDirectionOrDefault(model, 0),
                                 indexDirection,
                                 columnIndexes
                         );
@@ -2509,7 +2511,7 @@ public class SqlCodeGenerator implements Mutable {
                                 orderByKeyColumn = true;
                             } else if (Chars.equals(orderByAdvice.getQuick(1).token, model.getTimestamp().token)) {
                                 orderByKeyColumn = true;
-                                if (model.getOrderByDirectionAdvice().getQuick(1) == QueryModel.ORDER_DIRECTION_DESCENDING) {
+                                if (getOrderByDirectionOrDefault(model, 1) == QueryModel.ORDER_DIRECTION_DESCENDING) {
                                     indexDirection = BitmapIndexReader.DIR_BACKWARD;
                                 }
                             }
@@ -2521,7 +2523,7 @@ public class SqlCodeGenerator implements Mutable {
                                         myMeta,
                                         dfcFactory,
                                         columnIndex,
-                                        model.getOrderByDirectionAdvice().getQuick(0) == QueryModel.ORDER_DIRECTION_ASCENDING,
+                                        getOrderByDirectionOrDefault(model, 0) == QueryModel.ORDER_DIRECTION_ASCENDING,
                                         indexDirection,
                                         columnIndexes
                                 );
@@ -2572,6 +2574,14 @@ public class SqlCodeGenerator implements Mutable {
                     columnIndexes
             );
         }
+    }
+
+    private static int getOrderByDirectionOrDefault(QueryModel model, int index) {
+        IntList direction = model.getOrderByDirectionAdvice();
+        if (index >= direction.size()) {
+             return 0;
+        }
+        return model.getOrderByDirectionAdvice().getQuick(index);
     }
 
     private RecordCursorFactory generateUnionAllFactory(

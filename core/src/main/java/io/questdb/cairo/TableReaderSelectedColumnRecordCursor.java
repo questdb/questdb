@@ -120,15 +120,6 @@ public class TableReaderSelectedColumnRecordCursor implements RecordCursor {
         of0(reader);
     }
 
-    public void startFrom(long rowid) {
-        partitionIndex = Rows.toPartitionIndex(rowid);
-        long recordIndex = Rows.toLocalRowID(rowid);
-        recordA.jumpTo(this.partitionIndex, recordIndex);
-        maxRecordIndex = reader.openPartition(partitionIndex) - 1;
-        partitionIndex++;
-        this.partitionLimit = reader.getPartitionCount();
-    }
-
     private void of0(TableReader reader) {
         close();
         this.reader = reader;

@@ -152,6 +152,15 @@ public:
         Vec16i x = Vec16i(Vec8i(z0),Vec8i(z1));
         x.store(p);
     }
+    // store with non-temporal memory hint
+    void store_nt(void * p) const {
+        Vec16i x = Vec16i(Vec8i(z0),Vec8i(z1));
+        x.store_nt(p);
+    }
+    // Required alignment for store_nt call in bytes
+    static constexpr int store_nt_alignment() {
+        return Vec16i::store_nt_alignment();
+    }
     // store aligned
     void store_a(void * p) const {
         Vec16i x = Vec16i(Vec8i(z0),Vec8i(z1));
@@ -932,6 +941,15 @@ public:
     void store(void * p) const {
         Vec16s(z0).store(p);
         Vec16s(z1).store((int16_t*)p + 16);
+    }
+    // store with non-temporal memory hint
+    void store_nt(void * p) const {
+        Vec16s(z0).store_nt(p);
+        Vec16s(z1).store_nt((int16_t*)p + 16);
+    }
+    // Required alignment for store_nt call in bytes
+    static constexpr int store_nt_alignment() {
+        return Vec16s::store_nt_alignment();
     }
     // store aligned
     void store_a(void * p) const {

@@ -24,8 +24,7 @@
 
 package io.questdb.griffin;
 
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -56,14 +55,12 @@ public class WithClauseTest extends AbstractGriffinTest {
     }
 
     private String select(CharSequence selectSql) throws SqlException {
-        sink.clear();
-        CompiledQuery query = compiler.compile(selectSql, sqlExecutionContext);
-        try (
-                RecordCursorFactory factory = query.getRecordCursorFactory();
-                RecordCursor cursor = factory.getCursor(sqlExecutionContext)
-        ) {
-            printer.print(cursor, factory.getMetadata(), true);
-        }
+        TestUtils.printSql(
+                compiler,
+                sqlExecutionContext,
+                selectSql,
+                sink
+        );
         return sink.toString();
     }
 }

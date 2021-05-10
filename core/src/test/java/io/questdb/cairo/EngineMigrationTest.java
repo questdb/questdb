@@ -24,8 +24,7 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.vm.PagedMappedReadWriteMemory;
 import io.questdb.griffin.AbstractGriffinTest;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
@@ -40,8 +39,7 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
-import static io.questdb.cairo.EngineMigration.TX_STRUCT_UPDATE_1_OFFSET_MAP_WRITER_COUNT;
-import static io.questdb.cairo.EngineMigration.VERSION_TX_STRUCT_UPDATE_1;
+import static io.questdb.cairo.EngineMigration.*;
 import static io.questdb.cairo.TableUtils.*;
 
 public class EngineMigrationTest extends AbstractGriffinTest {
@@ -159,7 +157,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
 
                 String queryOld = "select sum(c1) from src where ts != '2020-01-01'";
                 String queryNew = "select sum(c1) from src";
-                var removedTimestamps = new LongList();
+                LongList removedTimestamps = new LongList();
                 removedTimestamps.add(TimestampFormatUtils.parseTimestamp("2020-01-01T00:00:00.000Z"));
                 assertMigration(src, queryOld, queryNew, removedTimestamps);
             }
@@ -265,8 +263,8 @@ public class EngineMigrationTest extends AbstractGriffinTest {
             }
             assertRemoveUpgradeFile();
 
-            var config = new DefaultCairoConfiguration(root) {
-                private FilesFacadeImpl ff = failToWriteMetaOffset(META_OFFSET_VERSION, "meta");
+            DefaultCairoConfiguration config = new DefaultCairoConfiguration(root) {
+                private final FilesFacadeImpl ff = failToWriteMetaOffset(META_OFFSET_VERSION, "meta");
 
                 @Override
                 public FilesFacade getFilesFacade() {
@@ -294,8 +292,8 @@ public class EngineMigrationTest extends AbstractGriffinTest {
             }
             assertRemoveUpgradeFile();
 
-            var config = new DefaultCairoConfiguration(root) {
-                private FilesFacadeImpl ff = failToWriteMetaOffset(META_OFFSET_TABLE_ID, "meta");
+            DefaultCairoConfiguration config = new DefaultCairoConfiguration(root) {
+                private final FilesFacadeImpl ff = failToWriteMetaOffset(META_OFFSET_TABLE_ID, "meta");
 
                 @Override
                 public FilesFacade getFilesFacade() {
@@ -323,8 +321,8 @@ public class EngineMigrationTest extends AbstractGriffinTest {
             }
             assertRemoveUpgradeFile();
 
-            var config = new DefaultCairoConfiguration(root) {
-                private FilesFacadeImpl ff = failToWriteMetaOffset(META_OFFSET_TABLE_ID, TableUtils.UPGRADE_FILE_NAME);
+            DefaultCairoConfiguration config = new DefaultCairoConfiguration(root) {
+                private final FilesFacadeImpl ff = failToWriteMetaOffset(META_OFFSET_TABLE_ID, TableUtils.UPGRADE_FILE_NAME);
 
                 @Override
                 public FilesFacade getFilesFacade() {
@@ -338,13 +336,174 @@ public class EngineMigrationTest extends AbstractGriffinTest {
         });
     }
 
+    @Test
+    public void testMigrateTableSimple() throws Exception {
+        configOverrideMaxUncommittedRows = 50001;
+        configOverrideO3CommitHysteresisInMicros = 777777;
+
+        assertMemoryLeak(() -> {
+            try (TableModel src = new TableModel(configuration, "src", PartitionBy.NONE)) {
+                createPopulateTable(
+                        src.col("c1", ColumnType.INT).col("ts", ColumnType.TIMESTAMP).timestamp(),
+                        100, "2020-01-01", 0
+                );
+
+                String query = "select sum(c1) from src";
+                assertMetadataMigration(src, query);
+            }
+        });
+    }
+
+    @Test
+    public void testCannotUpdateHysteresisMetadata1() throws Exception {
+        configOverrideMaxUncommittedRows = 1231231;
+        configOverrideO3CommitHysteresisInMicros = 85754;
+        assertMemoryLeak(() -> {
+            try (TableModel src = new TableModel(configuration, "src", PartitionBy.NONE)) {
+                createPopulateTable(
+                        src.col("c1", ColumnType.INT).col("ts", ColumnType.TIMESTAMP).timestamp(),
+                        100, "2020-01-01", 0
+                );
+
+                ff = new FilesFacadeImpl() {
+                    @Override
+                    public long write(long fd, long buf, long len, long offset) {
+                        if (META_OFFSET_O3_MAX_UNCOMMITTED_ROWS == offset) {
+                            return 0;
+                        }
+                        return super.write(fd, buf, len, offset);
+                    }
+                };
+
+                try {
+                    assertMetadataMigration(src, "select sum(c1) from src");
+                    Assert.fail();
+                } catch (SqlException e) {
+                    Chars.contains(e.getFlyweightMessage(), "Metadata version does not match runtime version");
+                }
+
+                ff = new FilesFacadeImpl() {
+                    @Override
+                    public long write(long fd, long buf, long len, long offset) {
+                        if (META_OFFSET_O3_COMMIT_HYSTERESIS_IN_MICROS == offset) {
+                            return 0;
+                        }
+                        return super.write(fd, buf, len, offset);
+                    }
+                };
+
+                try {
+                    new EngineMigration(engine, configuration).migrateEngineTo(ColumnType.VERSION);
+                    assertMetadataMigration(src, "select sum(c1) from src");
+                    Assert.fail();
+                } catch (SqlException e) {
+                    Chars.contains(e.getFlyweightMessage(), "Metadata version does not match runtime version");
+                }
+
+                ff = new FilesFacadeImpl();
+                new EngineMigration(engine, configuration).migrateEngineTo(ColumnType.VERSION);
+                assertMetadataMigration(src, "select sum(c1) from src");
+            }
+        });
+    }
+
+    private void assertMetadataMigration(TableModel src, String query) throws SqlException {
+        assertMetadataMigration(src, query, query);
+    }
+
+    private void assertMetadataMigration(TableModel src, String queryOld, String queryNew) throws SqlException {
+        CharSequence expected = executeSql(queryOld).toString();
+        if (!queryOld.equals(queryNew)) {
+            // if queries are different they must produce different results
+            CharSequence expectedNewEquivalent = executeSql(queryNew).toString();
+            Assert.assertNotEquals(expected, expectedNewEquivalent);
+        }
+
+        // Downgrade version meta
+        downgradeMetaDataFile(src);
+
+        // Act
+        new EngineMigration(engine, configuration).migrateEngineTo(ColumnType.VERSION);
+
+        // Verify
+        TestUtils.assertEquals(expected, executeSql(queryNew));
+
+        // Second run of migration should not do anything
+        new EngineMigration(engine, configuration).migrateEngineTo(ColumnType.VERSION);
+        TestUtils.assertEquals(expected, executeSql(queryNew));
+
+        // Third time, downgrade and migrate
+        downgradeMetaDataFile(src);
+        new EngineMigration(engine, configuration).migrateEngineTo(ColumnType.VERSION);
+        TestUtils.assertEquals(expected, executeSql(queryNew));
+
+        assertSql("select maxUncommittedRows, o3CommitHysteresisMicros from tables where name = '" + src.getName() + "'",
+                "maxUncommittedRows\to3CommitHysteresisMicros\n" +
+                        +configOverrideMaxUncommittedRows + "\t" + configOverrideO3CommitHysteresisInMicros + "\n");
+    }
+
+    private void downgradeMetaDataFile(TableModel tableModel) {
+        engine.clear();
+        FilesFacade ff = configuration.getFilesFacade();
+
+        try (Path path = new Path()) {
+            setMetadataVersion(tableModel, ff, path, VERSION_TBL_META_HYSTERESIS);
+
+            path.concat(root).concat(tableModel.getName()).concat(TableUtils.META_FILE_NAME);
+            long fd = ff.openRO(path.$());
+            Assert.assertTrue(fd >= 0);
+
+            long fileSize = ff.length(fd);
+            ff.close(fd);
+            try (PagedMappedReadWriteMemory rwTx = new PagedMappedReadWriteMemory(ff, path.$(), fileSize)) {
+                rwTx.putInt(META_OFFSET_O3_MAX_UNCOMMITTED_ROWS, 0);
+                rwTx.putLong(META_OFFSET_O3_COMMIT_HYSTERESIS_IN_MICROS, 0);
+                rwTx.jumpTo(fileSize);
+            }
+
+            setMetadataVersion(tableModel, ff, path, VERSION_TBL_META_HYSTERESIS);
+            downgradeUpdateFileTo(ff, path, VERSION_TBL_META_HYSTERESIS);
+        }
+    }
+
+    private void setMetadataVersion(TableModel tableModel, FilesFacade ff, Path path, int version) {
+        int pathLen = path.length();
+
+        try {
+            path.trimTo(0).concat(root).concat(tableModel.getName()).concat(TableUtils.META_FILE_NAME);
+            long fd = ff.openRO(path.$());
+            Assert.assertTrue(fd >= 0);
+
+            long fileSize = ff.length(fd);
+            ff.close(fd);
+            try (PagedMappedReadWriteMemory rwTx = new PagedMappedReadWriteMemory(ff, path.$(), fileSize)) {
+                if (rwTx.getInt(META_OFFSET_VERSION) > version - 1) {
+                    rwTx.putInt(META_OFFSET_VERSION, version - 1);
+                    rwTx.jumpTo(fileSize);
+                }
+            }
+        } finally {
+            path.trimTo(pathLen);
+        }
+    }
+
+    private void downgradeUpdateFileTo(FilesFacade ff, Path path, int version) {
+        path.trimTo(0).concat(root).concat(UPGRADE_FILE_NAME);
+        if (ff.exists(path.$())) {
+            try (PagedMappedReadWriteMemory rwTx = new PagedMappedReadWriteMemory(ff, path.$(), 8)) {
+                rwTx.putInt(0, version - 1);
+                rwTx.jumpTo(Integer.BYTES);
+            }
+        }
+    }
+
     private FilesFacadeImpl failToWriteMetaOffset(final long metaOffsetVersion, final String filename) {
         return new FilesFacadeImpl() {
             private long metaFd = -1;
 
             @Override
             public long openRW(LPSZ name) {
-                var fd = super.openRW(name);
+                long fd = super.openRW(name);
                 if (name.toString().contains(filename)) {
                     this.metaFd = fd;
                 }
@@ -387,10 +546,10 @@ public class EngineMigrationTest extends AbstractGriffinTest {
     }
 
     private void assertMigration(TableModel src, String queryOld, String queryNew, LongList removedPartitions) throws SqlException {
-        var expected = executeSql(queryOld).toString();
+        CharSequence expected = executeSql(queryOld).toString();
         if (!queryOld.equals(queryNew)) {
             // if queries are different they must produce different results
-            var expectedNewEquivalent = executeSql(queryNew).toString();
+            CharSequence expectedNewEquivalent = executeSql(queryNew).toString();
             Assert.assertNotEquals(expected, expectedNewEquivalent);
         }
 
@@ -414,28 +573,21 @@ public class EngineMigrationTest extends AbstractGriffinTest {
     }
 
     private void downgradeTxFile(TableModel src, LongList removedPartitions) {
-        engine.releaseAllReaders();
-        engine.releaseAllWriters();
+        engine.clear();
+        downgradeMetaDataFile(src);
 
-        try (var path = new Path()) {
+        try (Path path = new Path()) {
             path.concat(root).concat(src.getName()).concat(TableUtils.META_FILE_NAME);
-            var ff = configuration.getFilesFacade();
-            try (var rwTx = new ReadWriteMemory(ff, path.$(), ff.getPageSize())) {
-                if (rwTx.getInt(META_OFFSET_VERSION) >= VERSION_TX_STRUCT_UPDATE_1 - 1) {
-                    rwTx.putInt(META_OFFSET_VERSION, VERSION_TX_STRUCT_UPDATE_1 - 1);
-                }
-            }
+            FilesFacade ff = configuration.getFilesFacade();
 
             // Read current symbols list
-            var symbolCounts = new IntList();
+            IntList symbolCounts = new IntList();
             path.trimTo(0).concat(root).concat(src.getName());
-            var attachedPartitions = new LongList();
-            try (var txFile = new TxReader(ff, path.$())) {
-                txFile.initPartitionBy(src.getPartitionBy());
-                txFile.open();
+            LongList attachedPartitions = new LongList();
+            try (TxReader txFile = new TxReader(ff, path.$(), src.getPartitionBy())) {
                 txFile.readUnchecked();
 
-                for (int i = 0; i < txFile.getPartitionsCount() - 1; i++) {
+                for (int i = 0; i < txFile.getPartitionCount() - 1; i++) {
                     attachedPartitions.add(txFile.getPartitionTimestamp(i));
                     attachedPartitions.add(txFile.getPartitionSize(i));
                 }
@@ -443,7 +595,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
             }
 
             path.trimTo(0).concat(root).concat(src.getName()).concat(TXN_FILE_NAME);
-            try (var rwTx = new ReadWriteMemory(ff, path.$(), ff.getPageSize())) {
+            try (PagedMappedReadWriteMemory rwTx = new PagedMappedReadWriteMemory(ff, path.$(), ff.getPageSize())) {
                 rwTx.putInt(TX_STRUCT_UPDATE_1_OFFSET_MAP_WRITER_COUNT, symbolCounts.size());
                 rwTx.jumpTo(TX_STRUCT_UPDATE_1_OFFSET_MAP_WRITER_COUNT + 4);
 
@@ -465,7 +617,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
 
             // and have file _archive in each folder the file size except last partition
             if (src.getPartitionBy() != PartitionBy.NONE) {
-                var partitionFmt = getPartitionDateFmt(src.getPartitionBy());
+                DateFormat partitionFmt = getPartitionDateFmt(src.getPartitionBy());
                 StringSink sink = new StringSink();
                 for (int i = 0; i < attachedPartitions.size() / 2; i++) {
                     long partitionTs = attachedPartitions.getQuick(i * 2);
@@ -476,11 +628,13 @@ public class EngineMigrationTest extends AbstractGriffinTest {
                     if (ff.exists(path.$())) {
                         ff.remove(path);
                     }
-                    try (var rwAr = new ReadWriteMemory(ff, path.$(), 8)) {
+                    try (PagedMappedReadWriteMemory rwAr = new PagedMappedReadWriteMemory(ff, path.$(), 8)) {
                         rwAr.putLong(partitionSize);
                     }
                 }
             }
+
+            setMetadataVersion(src, ff, path, VERSION_TX_STRUCT_UPDATE_1);
 
             path.trimTo(0).concat(root).concat(UPGRADE_FILE_NAME);
             if (ff.exists(path.$())) {
@@ -490,13 +644,12 @@ public class EngineMigrationTest extends AbstractGriffinTest {
     }
 
     private CharSequence executeSql(String sql) throws SqlException {
-        try (RecordCursorFactory rcf = compiler.compile(sql
-                , sqlExecutionContext).getRecordCursorFactory()) {
-            try (RecordCursor cursor = rcf.getCursor(sqlExecutionContext)) {
-                sink.clear();
-                printer.print(cursor, rcf.getMetadata(), true);
-                return sink;
-            }
-        }
+        TestUtils.printSql(
+                compiler,
+                sqlExecutionContext,
+                sql,
+                sink
+        );
+        return sink;
     }
 }

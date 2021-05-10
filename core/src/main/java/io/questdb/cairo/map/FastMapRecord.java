@@ -258,6 +258,11 @@ final class FastMapRecord implements MapRecord {
     }
 
     @Override
+    public CharSequence getSymB(int col) {
+        return symbolTableResolver.getSymbolTable(symbolTableIndex.getQuick(col)).valueBOf(getInt(col));
+    }
+
+    @Override
     public MapValue getValue() {
         return value.of(address0, false);
     }
@@ -278,7 +283,7 @@ final class FastMapRecord implements MapRecord {
             return address1;
         }
 
-        return Unsafe.getUnsafe().getInt(address2 + (index - split - 1) * 4) + address0;
+        return Unsafe.getUnsafe().getInt(address2 + (index - split - 1) * 4L) + address0;
     }
 
     @SuppressWarnings("MethodDoesntCallSuperMethod")
@@ -340,7 +345,7 @@ final class FastMapRecord implements MapRecord {
     private CharSequence getStr0(int index, DirectCharSequence cs) {
         long address = addressOfColumn(index);
         int len = Unsafe.getUnsafe().getInt(address);
-        return len == TableUtils.NULL_LEN ? null : cs.of(address + 4, address + 4 + len * 2);
+        return len == TableUtils.NULL_LEN ? null : cs.of(address + 4, address + 4 + len * 2L);
     }
 
     void of(long address) {

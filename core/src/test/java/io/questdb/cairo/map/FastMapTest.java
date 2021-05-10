@@ -358,7 +358,7 @@ public class FastMapTest extends AbstractCairoTest {
                     map.withKey().putBin(bad);
                     Assert.fail();
                 } catch (CairoException e) {
-                    TestUtils.assertContains(e.getMessage(), "binary column is too large");
+                    TestUtils.assertContains(e.getFlyweightMessage(), "binary column is too large");
                 }
 
                 key = map.withKey();
@@ -404,7 +404,7 @@ public class FastMapTest extends AbstractCairoTest {
                         key.createValue();
                         Assert.fail();
                     } catch (CairoException e) {
-                        TestUtils.assertContains(e.getMessage(), "row data is too large");
+                        TestUtils.assertContains(e.getFlyweightMessage(), "row data is too large");
                     }
                 }
             });

@@ -10,10 +10,13 @@ git checkout questdb-tsbs-load
 GOPATH=~/tmp/go go build -v ./...
 GOPATH=~/tmp/go go test -v github.com/timescale/tsbs/cmd/tsbs_load_questdb
 GOPATH=~/tmp/go go install -v ./...
-# Reduced data set
+# Reduced data set (iot)
 #~/tmp/go/bin/tsbs_generate_data --use-case="iot" --seed=123 --scale=4000 --timestamp-start="2016-01-01T00:00:00Z" --timestamp-end="2016-01-01T01:00:00Z" --log-interval="10s" --format="influx" > /tmp/data
-# Full data set
-~/tmp/go/bin/tsbs_generate_data --use-case="iot" --seed=123 --scale=4000 --timestamp-start="2016-01-01T00:00:00Z" --timestamp-end="2016-01-04T00:00:00Z" --log-interval="10s" --format="influx" > /tmp/data
+# Full data set (iot)
+#~/tmp/go/bin/tsbs_generate_data --use-case="iot" --seed=123 --scale=4000 --timestamp-start="2016-01-01T00:00:00Z" --timestamp-end="2016-01-04T00:00:00Z" --log-interval="10s" --format="influx" > /tmp/data
+# Data set used by timescale bench blog (link below) is cpu-only
+# https://blog.timescale.com/blog/timescaledb-vs-influxdb-for-time-series-data-timescale-influx-sql-nosql-36489299877/
+~/tmp/go/bin/tsbs_generate_data --use-case="cpu-only" --seed=123 --scale=4000 --timestamp-start="2016-01-01T00:00:00Z" --timestamp-end="2016-01-02T00:00:00Z" --log-interval="10s" --format="influx" > /tmp/data
 cat /tmp/data | ~/tmp/go/bin/tsbs_load_influx 
 # Show help
 ~/tmp/go/bin/tsbs_load_questdb -help

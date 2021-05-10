@@ -1,6 +1,11 @@
 cmake_minimum_required(VERSION 3.5)
 project(questdb)
 
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED True)
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+set(CMAKE_BUILD_TYPE MinSizeRel)
+
 # deal with windows slashes in JAVA_HOME
 if ($ENV{JAVA_HOME})
     FILE(TO_CMAKE_PATH $ENV{JAVA_HOME} JAVA_HOME)
@@ -10,6 +15,7 @@ set(
         VCL_FILES
         src/main/c/share/vec_agg.cpp
         src/main/c/share/vec_ts_agg.cpp
+        src/main/c/share/ooo_dispatch.cpp
 )
 
 set(
@@ -20,10 +26,12 @@ set(
         src/main/c/share/vec_agg.cpp
         src/main/c/share/vec_int_key_agg.cpp
         src/main/c/share/vec_ts_agg.cpp
+        src/main/c/share/ooo_dispatch.cpp
 )
 
 set(
         SOURCE_FILES
+        src/main/c/share/simd.h
         src/main/c/share/files.h
         src/main/c/share/zip.h
         src/main/c/share/net.h
@@ -31,6 +39,8 @@ set(
         src/main/c/share/os.h
         src/main/c/share/vec_agg_vanilla.h
         src/main/c/share/util.cpp
+        src/main/c/share/ooo.cpp
+        src/main/c/share/txn_board.cpp
 )
 
 # JNI includes
@@ -38,7 +48,12 @@ include_directories($ENV{JAVA_HOME}/include/)
 
 if (APPLE)
     include_directories($ENV{JAVA_HOME}/include/darwin/)
-    set(OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/src/main/resources/io/questdb/bin/osx)
+    if (CMAKE_SYSTEM_PROCESSOR MATCHES "^arm64")
+        set(AARCH64 1)
+        set(OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/src/main/resources/io/questdb/bin/armosx)
+    else()
+        set(OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/src/main/resources/io/questdb/bin/osx)
+    endif()
     set(
             SOURCE_FILES ${SOURCE_FILES}
             src/main/c/osx/kqueue.c
@@ -63,7 +78,6 @@ elseif (UNIX)
     else (CMAKE_SYSTEM_NAME MATCHES "FreeBSD")
         MESSAGE("Building for GNU/Linux")
         include_directories($ENV{JAVA_HOME}/include/linux/)
-        message(${CMAKE_SYSTEM_PROCESSOR})
         if (CMAKE_SYSTEM_PROCESSOR MATCHES "^aarch64")
             set(OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/src/main/resources/io/questdb/bin/armlinux)
             set(AARCH64 1)
@@ -97,11 +111,11 @@ if (WIN32)
             src/main/c/windows/timer.c
             src/main/c/windows/timer.h
             src/main/c/windows/accept.c
+            src/main/c/share/fs.h
     )
 else ()
     set(
-            SOURCE_FILES
-            ${SOURCE_FILES}
+            SOURCE_FILES ${SOURCE_FILES}
             src/main/c/share/files.c
             src/main/c/share/os.c
     )
@@ -121,18 +135,22 @@ add_library(questdb SHARED ${SOURCE_FILES} ${ZLIB_SRCS})
 
 if (AARCH64)
 
-    ## on ARM64 we use vanilla arithmetic functions for now
+    add_compile_definitions(__aarch64__)
 
+    ## on ARM64 we use vanilla arithmetic functions for now
     set(
             AARCH64_FILES
+            src/main/c/share/rosti.cpp
             src/main/c/aarch64/vect.cpp
+            src/main/c/share/vec_int_key_agg.cpp
             src/main/c/share/vec_agg_vanilla.cpp
+            src/main/c/share/ooo_dispatch_vanilla.cpp
     )
 
     add_library(questdb-aarch64 OBJECT ${AARCH64_FILES})
     set_target_properties(
             questdb-aarch64 PROPERTIES
-            COMPILE_FLAGS "-O3 -std=c++17"
+	        COMPILE_FLAGS "-O3 -fPIC"
     )
 
     target_link_libraries(
@@ -142,10 +160,14 @@ if (AARCH64)
 
     set_target_properties(
             questdb PROPERTIES
-            COMPILE_FLAGS "-O3"
+	        COMPILE_FLAGS "-O3"
     )
 
 else ()
+
+    #assembler subroutines by Agner Fog
+    set(ASMLIB_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src/main/c/share/asmlib/)
+    include(${ASMLIB_SOURCE_DIR}CMakeLists.txt)
 
     ## We need to compile VCL four different times with different CXX options
     ## for different instruction sets. As vect.cpp compiles it will produce
@@ -159,21 +181,23 @@ else ()
     add_library(questdb-sse4 OBJECT ${VCL_FILES})
     set_target_properties(
             questdb-sse4 PROPERTIES
-            COMPILE_FLAGS "-m64 -O3 -msse4.1 -fPIC -std=c++17"
+            COMPILE_FLAGS "-m64 -O3 -msse4.1 -fPIC"
     )
 
     # AVX2 lib
-    add_library(questdb-avx2 OBJECT ${VCL_FILES} src/main/c/share/vec_radix_sort.cpp)
+    add_library(questdb-avx2 OBJECT ${VCL_FILES})
     set_target_properties(
             questdb-avx2 PROPERTIES
-            COMPILE_FLAGS "-m64 -O3 -mavx2 -fPIC -mfma -std=c++17"
+            COMPILE_FLAGS "-m64 -O3 -mavx2 -fPIC -mfma"
     )
 
     #AVX512 lib
     add_library(questdb-avx512 OBJECT ${VCL_FILES})
+    # A_memset, A_memcpy are faster on avx512 but slower on other CPU's on Linux
+    target_compile_definitions(questdb-avx512 PRIVATE ENABLE_ASMLIB)
     set_target_properties(
             questdb-avx512 PROPERTIES
-            COMPILE_FLAGS "-m64 -O3 -mavx512f -fPIC -mfma -mavx512vl -mavx512bw -mavx512dq -std=c++17"
+            COMPILE_FLAGS "-m64 -O3 -mavx512f -fPIC -mfma -mavx512vl -mavx512bw -mavx512dq"
     )
 
     #SSE2 lib
@@ -188,21 +212,22 @@ else ()
     if (WIN32)
         set_target_properties(
                 questdb-sse2 PROPERTIES
-                COMPILE_FLAGS "-m64 -O3 -march=core2 -msse2 -std=c++17 -Wno-attributes"
+                COMPILE_FLAGS "-m64 -O3 -march=core2 -msse2 -Wno-attributes"
         )
     else ()
         set_target_properties(
                 questdb-sse2 PROPERTIES
-                COMPILE_FLAGS "-m64 -O3 -march=core2 -msse2 -fPIC -std=c++17"
+                COMPILE_FLAGS "-m64 -O3 -march=core2 -msse2 -fPIC"
         )
     endif (WIN32)
 
     set_target_properties(
             questdb PROPERTIES
-            COMPILE_FLAGS "-m64 -O3 "
+	    COMPILE_FLAGS "-lrt -m64 -O3"
     )
 
-    include_directories(src/main/c/share/abseil-cpp)
+    ## Uncomment to measure time of ooo.cpp methods
+    ## add_compile_definitions(OOO_CPP_PROFILE_TIMING)
 
     target_link_libraries(
             questdb
@@ -210,9 +235,14 @@ else ()
             questdb-sse4
             questdb-avx2
             questdb-avx512
+            asm
     )
 endif (AARCH64)
 
 if (WIN32)
     target_link_libraries(questdb wsock32 ws2_32 secur32 shlwapi)
+elseif (APPLE)
+    target_link_libraries(questdb)
+else ()
+    target_link_libraries(questdb rt)
 endif (WIN32)

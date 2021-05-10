@@ -24,6 +24,7 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.vm.AppendOnlyVirtualMemory;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
 
@@ -34,7 +35,7 @@ public class TableModel implements TableStructure, Closeable {
     private static final long COLUMN_FLAG_INDEXED = 2L;
     private final String name;
     private final int partitionBy;
-    private final AppendMemory mem = new AppendMemory();
+    private final AppendOnlyVirtualMemory mem = new AppendOnlyVirtualMemory();
     private final ObjList<CharSequence> columnNames = new ObjList<>();
     private final LongList columnBits = new LongList();
     private final Path path = new Path();
@@ -79,6 +80,7 @@ public class TableModel implements TableStructure, Closeable {
         return false;
     }
 
+    @Override
     public boolean getSymbolCacheFlag(int index) {
         return (columnBits.getQuick(index * 2 + 1) & COLUMN_FLAG_CACHED) == COLUMN_FLAG_CACHED;
     }
@@ -87,27 +89,32 @@ public class TableModel implements TableStructure, Closeable {
         return cairoCfg;
     }
 
+    @Override
     public int getColumnCount() {
         return columnNames.size();
     }
 
+    @Override
     public CharSequence getColumnName(int index) {
         return columnNames.getQuick(index);
     }
 
+    @Override
     public int getColumnType(int index) {
         return (int) columnBits.getQuick(index * 2);
     }
 
+    @Override
     public int getIndexBlockCapacity(int index) {
         return (int) (columnBits.getQuick(index * 2 + 1) >> 32);
     }
 
+    @Override
     public boolean isIndexed(int index) {
         return (columnBits.getQuick(index * 2 + 1) & COLUMN_FLAG_INDEXED) == COLUMN_FLAG_INDEXED;
     }
 
-    public AppendMemory getMem() {
+    public AppendOnlyVirtualMemory getMem() {
         return mem;
     }
 
@@ -115,6 +122,7 @@ public class TableModel implements TableStructure, Closeable {
         return name;
     }
 
+    @Override
     public int getPartitionBy() {
         return partitionBy;
     }
@@ -128,10 +136,12 @@ public class TableModel implements TableStructure, Closeable {
         return name;
     }
 
+    @Override
     public int getSymbolCapacity(int index) {
         return (int) (columnBits.getQuick(index * 2) >> 32);
     }
 
+    @Override
     public int getTimestampIndex() {
         return timestampIndex;
     }
@@ -168,5 +178,15 @@ public class TableModel implements TableStructure, Closeable {
         timestampIndex = columnNames.size();
         col(name, ColumnType.TIMESTAMP);
         return this;
+    }
+
+    @Override
+    public int getO3MaxUncommittedRows() {
+        return cairoCfg.getO3MaxUncommittedRows();
+    }
+
+    @Override
+    public long getO3CommitHysteresisInMicros() {
+        return cairoCfg.getO3CommitHysteresis();
     }
 }

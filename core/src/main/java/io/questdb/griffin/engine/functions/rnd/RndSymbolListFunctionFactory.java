@@ -72,6 +72,11 @@ public class RndSymbolListFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public CharSequence getSymbolB(Record rec) {
+            return getSymbol(rec);
+        }
+
+        @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
             this.rnd = executionContext.getRandom();
         }
@@ -84,6 +89,11 @@ public class RndSymbolListFunctionFactory implements FunctionFactory {
         @Override
         public CharSequence valueOf(int symbolKey) {
             return symbols.getQuick(TableUtils.toIndexKey(symbolKey));
+        }
+
+        @Override
+        public CharSequence valueBOf(int key) {
+            return valueOf(key);
         }
 
         private int next() {

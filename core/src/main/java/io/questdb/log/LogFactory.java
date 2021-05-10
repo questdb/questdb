@@ -40,11 +40,11 @@ public class LogFactory implements Closeable {
     public static final LogFactory INSTANCE = new LogFactory();
     public static final String DEBUG_TRIGGER = "ebug";
     public static final String DEBUG_TRIGGER_ENV = "QDB_DEBUG";
-    public static final String CONFIG_SYSTEM_PROPERTY = "questdbLog";
+    public static final String CONFIG_SYSTEM_PROPERTY = "out";
 
     private static final int DEFAULT_QUEUE_DEPTH = 1024;
     private static final int DEFAULT_MSG_SIZE = 4 * 1024;
-    private static final String DEFAULT_CONFIG = "/qlog.conf";
+    private static final String DEFAULT_CONFIG = "/log-stdout.conf";
     private static final String EMPTY_STR = "";
     private static final CharSequenceHashSet reserved = new CharSequenceHashSet();
     private static final LengthDescendingComparator LDC = new LengthDescendingComparator();
@@ -371,7 +371,7 @@ public class LogFactory implements Closeable {
         // enable all LOG levels above the minimum set one
         // ((-1 >>> (msb-1)) << msb) | level
         final int msb = Numbers.msb(level);
-        level = (((-1 >>> (msb-1)) << msb) | level) & LogLevel.LOG_LEVEL_MASK;
+        level = (((-1 >>> (msb - 1)) << msb) | level) & LogLevel.LOG_LEVEL_MASK;
 
         return new LogWriterConfig(scope == null ? EMPTY_STR : scope, level, (ring, seq, level1) -> {
             try {

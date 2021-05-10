@@ -42,10 +42,6 @@ public class MemoryPages implements Closeable, Mutable {
     private long cachePageLo;
     private final int maxPages;
 
-    public MemoryPages(long pageSize) {
-        this(pageSize, Integer.MAX_VALUE);
-    }
-
     public MemoryPages(long pageSize, int maxPages) {
         this.pageSize = Numbers.ceilPow2(pageSize);
         this.bits = Numbers.msb(this.pageSize);
@@ -101,7 +97,7 @@ public class MemoryPages implements Closeable, Mutable {
 
         if (index >= pages.size()) {
             pages.extendAndSet((int) index, Unsafe.malloc(pageSize));
-            LOG.info().$("new page [size=").$(pageSize).$(']').$();
+            LOG.debug().$("new page [size=").$(pageSize).$(']').$();
         }
 
         cachePageLo = index << bits;

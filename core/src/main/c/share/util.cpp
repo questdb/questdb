@@ -1,8 +1,10 @@
 #include <jni.h>
 #include <cstdint>
+#include "asmlib/asmlib.h"
+
+extern "C" {
 
 #ifdef __APPLE__
-extern "C" {
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Os_compareAndSwap
         (JNIEnv *e, jclass cl, jlong volatile ptr, jlong oldVal, jlong newVal) {
     return __sync_val_compare_and_swap(
@@ -11,9 +13,7 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Os_compareAndSwap
             (int64_t) (newVal)
     );
 }
-
 #else
-extern "C" {
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Os_compareAndSwap
         (JNIEnv *e, jclass cl, jlong volatile ptr, jlong oldVal, jlong newVal) {
     return __sync_val_compare_and_swap(

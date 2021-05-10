@@ -50,6 +50,9 @@ abstract class AbstractSSequence extends AbstractSequence implements Sequence {
         long r;
         WaitStrategy waitStrategy = getWaitStrategy();
         while ((r = next()) < 0) {
+            if (r == -2) {
+                continue;
+            }
             waitStrategy.await();
         }
         return r;

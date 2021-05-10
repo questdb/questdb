@@ -24,6 +24,8 @@
 
 package io.questdb.cutlass.line.tcp;
 
+import org.jetbrains.annotations.NotNull;
+
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -71,7 +73,7 @@ public class SimpleReadWriteLock implements ReadWriteLock {
         }
 
         @Override
-        public void lockInterruptibly() throws InterruptedException {
+        public void lockInterruptibly() {
             throw new UnsupportedOperationException();
         }
 
@@ -81,7 +83,7 @@ public class SimpleReadWriteLock implements ReadWriteLock {
         }
 
         @Override
-        public boolean tryLock(long time, TimeUnit unit) throws InterruptedException {
+        public boolean tryLock(long time, @NotNull TimeUnit unit) throws InterruptedException {
             throw new UnsupportedOperationException();
         }
 
@@ -109,7 +111,7 @@ public class SimpleReadWriteLock implements ReadWriteLock {
         }
 
         @Override
-        public void lockInterruptibly() throws InterruptedException {
+        public void lockInterruptibly() {
             throw new UnsupportedOperationException();
         }
 
@@ -128,7 +130,7 @@ public class SimpleReadWriteLock implements ReadWriteLock {
         }
 
         @Override
-        public boolean tryLock(long time, TimeUnit unit) throws InterruptedException {
+        public boolean tryLock(long time, @NotNull TimeUnit unit) throws InterruptedException {
             throw new UnsupportedOperationException();
         }
 

@@ -34,8 +34,7 @@ import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.StringSink;
-import io.questdb.tasks.ColumnIndexerTask;
-import io.questdb.tasks.VectorAggregateTask;
+import io.questdb.tasks.*;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Ignore;
@@ -49,44 +48,6 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
     private static final int WORK_STEALING_HIGH_CONTENTION = 3;
     private static final int WORK_STEALING_CAS_FLAP = 4;
     private static final Log LOG = LogFactory.getLog(FullFwdDataFrameCursorTest.class);
-
-    static void assertIndexRowsMatchSymbol(DataFrameCursor cursor, TableReaderRecord record, int columnIndex, long expectedRowCount) {
-        assertRowsMatchSymbol0(cursor, record, columnIndex, expectedRowCount, BitmapIndexReader.DIR_FORWARD);
-        cursor.toTop();
-        assertRowsMatchSymbol0(cursor, record, columnIndex, expectedRowCount, BitmapIndexReader.DIR_BACKWARD);
-    }
-
-    private static void assertRowsMatchSymbol0(DataFrameCursor cursor, TableReaderRecord record, int columnIndex, long expectedRowCount, int indexDirection) {
-        // SymbolTable is table at table scope, so it will be the same for every
-        // data frame here. Get its instance outside of data frame loop.
-        StaticSymbolTable symbolTable = cursor.getSymbolTable(columnIndex);
-
-        long rowCount = 0;
-        DataFrame frame;
-        while ((frame = cursor.next()) != null) {
-            record.jumpTo(frame.getPartitionIndex(), frame.getRowLo());
-            final long limit = frame.getRowHi();
-
-            // BitmapIndex is always at data frame scope, each table can have more than one.
-            // we have to get BitmapIndexReader instance once for each frame.
-            BitmapIndexReader indexReader = frame.getBitmapIndexReader(columnIndex, indexDirection);
-
-            // because out Symbol column 0 is indexed, frame has to have index.
-            Assert.assertNotNull(indexReader);
-
-            int keyCount = indexReader.getKeyCount();
-            for (int i = 0; i < keyCount; i++) {
-                RowCursor ic = indexReader.getCursor(true, i, 0, limit - 1);
-                CharSequence expected = symbolTable.valueOf(i - 1);
-                while (ic.hasNext()) {
-                    record.setRecordIndex(ic.next());
-                    TestUtils.assertEquals(expected, record.getSym(columnIndex));
-                    rowCount++;
-                }
-            }
-        }
-        Assert.assertEquals(expectedRowCount, rowCount);
-    }
 
     @Test
     public void testClose() throws Exception {
@@ -592,6 +553,11 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testReplaceIndexedWithIndexedByByNoneR() throws Exception {
+        testReplaceIndexedColWithIndexed(PartitionBy.NONE, 1000000 * 60 * 5, 0, true);
+    }
+
+    @Test
     public void testReplaceIndexedWithIndexedByByNoneRTrunc() throws Exception {
         testReplaceIndexedColWithIndexedWithTruncate(PartitionBy.NONE, 1000000 * 60 * 5, 0, true);
     }
@@ -602,25 +568,8 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testReplaceIndexedWithIndexedByByNoneR() throws Exception {
-        testReplaceIndexedColWithIndexed(PartitionBy.NONE, 1000000 * 60 * 5, 0, true);
-    }
-
-    @Test
-    public void testReplaceIndexedWithIndexedByByYearRTrunc() throws Exception {
-        testReplaceIndexedColWithIndexedWithTruncate(PartitionBy.YEAR, 1000000 * 60 * 5 * 24L * 10L, 2, true);
-    }
-
-    @Test
     public void testReplaceIndexedWithIndexedByByYear() throws Exception {
         testReplaceIndexedColWithIndexed(PartitionBy.YEAR, 1000000 * 60 * 5 * 24L * 10L, 2, false);
-    }
-
-    //
-
-    @Test
-    public void testReplaceIndexedWithIndexedByByYearTrunc() throws Exception {
-        testReplaceIndexedColWithIndexedWithTruncate(PartitionBy.YEAR, 1000000 * 60 * 5 * 24L * 10L, 2, false);
     }
 
     @Test
@@ -629,18 +578,20 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testReplaceIndexedWithIndexedByDayRTrunc() throws Exception {
-        testReplaceIndexedColWithIndexedWithTruncate(PartitionBy.DAY, 1000000 * 60 * 5, 3, true);
+    public void testReplaceIndexedWithIndexedByByYearRTrunc() throws Exception {
+        testReplaceIndexedColWithIndexedWithTruncate(PartitionBy.YEAR, 1000000 * 60 * 5 * 24L * 10L, 2, true);
     }
+
+    @Test
+    public void testReplaceIndexedWithIndexedByByYearTrunc() throws Exception {
+        testReplaceIndexedColWithIndexedWithTruncate(PartitionBy.YEAR, 1000000 * 60 * 5 * 24L * 10L, 2, false);
+    }
+
+    //
 
     @Test
     public void testReplaceIndexedWithIndexedByDay() throws Exception {
         testReplaceIndexedColWithIndexed(PartitionBy.DAY, 1000000 * 60 * 5, 3, false);
-    }
-
-    @Test
-    public void testReplaceIndexedWithIndexedByDayTrunc() throws Exception {
-        testReplaceIndexedColWithIndexedWithTruncate(PartitionBy.DAY, 1000000 * 60 * 5, 3, false);
     }
 
     @Test
@@ -649,8 +600,13 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testReplaceIndexedWithIndexedByMonthRTrunc() throws Exception {
-        testReplaceIndexedColWithIndexedWithTruncate(PartitionBy.MONTH, 1000000 * 60 * 5 * 24L, 2, true);
+    public void testReplaceIndexedWithIndexedByDayRTrunc() throws Exception {
+        testReplaceIndexedColWithIndexedWithTruncate(PartitionBy.DAY, 1000000 * 60 * 5, 3, true);
+    }
+
+    @Test
+    public void testReplaceIndexedWithIndexedByDayTrunc() throws Exception {
+        testReplaceIndexedColWithIndexedWithTruncate(PartitionBy.DAY, 1000000 * 60 * 5, 3, false);
     }
 
     @Test
@@ -659,13 +615,122 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testReplaceIndexedWithIndexedByMonthR() throws Exception {
+        testReplaceIndexedColWithIndexed(PartitionBy.MONTH, 1000000 * 60 * 5 * 24L, 2, true);
+    }
+
+    @Test
+    public void testReplaceIndexedWithIndexedByMonthRTrunc() throws Exception {
+        testReplaceIndexedColWithIndexedWithTruncate(PartitionBy.MONTH, 1000000 * 60 * 5 * 24L, 2, true);
+    }
+
+    @Test
     public void testReplaceIndexedWithIndexedByMonthTrunc() throws Exception {
         testReplaceIndexedColWithIndexedWithTruncate(PartitionBy.MONTH, 1000000 * 60 * 5 * 24L, 2, false);
     }
 
     @Test
-    public void testReplaceIndexedWithIndexedByMonthR() throws Exception {
-        testReplaceIndexedColWithIndexed(PartitionBy.MONTH, 1000000 * 60 * 5 * 24L, 2, true);
+    public void testReplaceIndexedWithUnindexedByByDay() throws Exception {
+        testReplaceIndexedColWithUnindexed(PartitionBy.DAY, 1000000 * 60 * 5, 3, false);
+    }
+
+    @Test
+    public void testReplaceIndexedWithUnindexedByByDayR() throws Exception {
+        testReplaceIndexedColWithUnindexed(PartitionBy.DAY, 1000000 * 60 * 5, 3, true);
+    }
+
+    @Test
+    public void testReplaceIndexedWithUnindexedByByNone() throws Exception {
+        testReplaceIndexedColWithUnindexed(PartitionBy.NONE, 1000000 * 60 * 5, 0, false);
+    }
+
+    @Test
+    public void testReplaceIndexedWithUnindexedByByNoneR() throws Exception {
+        testReplaceIndexedColWithUnindexed(PartitionBy.NONE, 1000000 * 60 * 5, 0, true);
+    }
+
+    @Test
+    public void testReplaceIndexedWithUnindexedByByYear() throws Exception {
+        testReplaceIndexedColWithUnindexed(PartitionBy.YEAR, 1000000 * 60 * 5 * 24L * 10L, 2, false);
+    }
+
+    ///
+
+    @Test
+    public void testReplaceIndexedWithUnindexedByByYearR() throws Exception {
+        testReplaceIndexedColWithUnindexed(PartitionBy.YEAR, 1000000 * 60 * 5 * 24L * 10L, 2, true);
+    }
+
+    @Test
+    public void testReplaceIndexedWithUnindexedByMonth() throws Exception {
+        testReplaceIndexedColWithUnindexed(PartitionBy.MONTH, 1000000 * 60 * 5 * 24L, 2, false);
+    }
+
+    @Test
+    public void testReplaceIndexedWithUnindexedByMonthR() throws Exception {
+        testReplaceIndexedColWithUnindexed(PartitionBy.MONTH, 1000000 * 60 * 5 * 24L, 2, true);
+    }
+
+    @Test
+    public void testReplaceUnindexedWithIndexedByDay() throws Exception {
+        testReplaceUnindexedColWithIndexed(PartitionBy.DAY, 1000000 * 60 * 5, 3, false);
+    }
+
+    @Test
+    public void testReplaceUnindexedWithIndexedByDayR() throws Exception {
+        testReplaceUnindexedColWithIndexed(PartitionBy.DAY, 1000000 * 60 * 5, 3, true);
+    }
+
+    @Test
+    public void testReplaceUnindexedWithIndexedByMonth() throws Exception {
+        testReplaceUnindexedColWithIndexed(PartitionBy.MONTH, 1000000 * 60 * 5 * 24L, 2, false);
+    }
+
+    @Test
+    public void testReplaceUnindexedWithIndexedByMonthR() throws Exception {
+        testReplaceUnindexedColWithIndexed(PartitionBy.MONTH, 1000000 * 60 * 5 * 24L, 2, true);
+    }
+
+    @Test
+    public void testReplaceUnindexedWithIndexedByNone() throws Exception {
+        testReplaceUnindexedColWithIndexed(PartitionBy.NONE, 1000000 * 60 * 5, 0, false);
+    }
+
+    @Test
+    public void testReplaceUnindexedWithIndexedByNoneR() throws Exception {
+        testReplaceUnindexedColWithIndexed(PartitionBy.NONE, 1000000 * 60 * 5, 0, true);
+    }
+
+    @Test
+    public void testReplaceUnindexedWithIndexedByYear() throws Exception {
+        testReplaceUnindexedColWithIndexed(PartitionBy.YEAR, 1000000 * 60 * 5 * 24L * 10L, 2, false);
+    }
+
+    @Test
+    public void testReplaceUnindexedWithIndexedByYearR() throws Exception {
+        testReplaceUnindexedColWithIndexed(PartitionBy.YEAR, 1000000 * 60 * 5 * 24L * 10L, 2, true);
+    }
+
+    @Test
+    public void testRollbackSymbolIndexByDay() throws Exception {
+        testSymbolIndexReadAfterRollback(PartitionBy.DAY, 1000000 * 60 * 5, 3);
+    }
+
+    ///
+
+    @Test
+    public void testRollbackSymbolIndexByMonth() throws Exception {
+        testSymbolIndexReadAfterRollback(PartitionBy.MONTH, 1000000 * 60 * 5 * 24L, 2);
+    }
+
+    @Test
+    public void testRollbackSymbolIndexByNone() throws Exception {
+        testSymbolIndexReadAfterRollback(PartitionBy.NONE, 1000000 * 60 * 5, 0);
+    }
+
+    @Test
+    public void testRollbackSymbolIndexByYear() throws Exception {
+        testSymbolIndexReadAfterRollback(PartitionBy.YEAR, 1000000 * 60 * 5 * 24L * 10L, 2);
     }
 
     @Test
@@ -717,186 +782,6 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                 assertIndexRowsMatchSymbol(cursor, record, 2, N);
             }
 
-        });
-    }
-
-    @Test
-    public void testReplaceIndexedWithUnindexedByByDay() throws Exception {
-        testReplaceIndexedColWithUnindexed(PartitionBy.DAY, 1000000 * 60 * 5, 3, false);
-    }
-
-    @Test
-    public void testReplaceIndexedWithUnindexedByByDayR() throws Exception {
-        testReplaceIndexedColWithUnindexed(PartitionBy.DAY, 1000000 * 60 * 5, 3, true);
-    }
-
-    ///
-
-    @Test
-    public void testReplaceIndexedWithUnindexedByByNone() throws Exception {
-        testReplaceIndexedColWithUnindexed(PartitionBy.NONE, 1000000 * 60 * 5, 0, false);
-    }
-
-    @Test
-    public void testReplaceIndexedWithUnindexedByByNoneR() throws Exception {
-        testReplaceIndexedColWithUnindexed(PartitionBy.NONE, 1000000 * 60 * 5, 0, true);
-    }
-
-    @Test
-    public void testReplaceIndexedWithUnindexedByByYear() throws Exception {
-        testReplaceIndexedColWithUnindexed(PartitionBy.YEAR, 1000000 * 60 * 5 * 24L * 10L, 2, false);
-    }
-
-    @Test
-    public void testReplaceIndexedWithUnindexedByByYearR() throws Exception {
-        testReplaceIndexedColWithUnindexed(PartitionBy.YEAR, 1000000 * 60 * 5 * 24L * 10L, 2, true);
-    }
-
-    @Test
-    public void testReplaceIndexedWithUnindexedByMonth() throws Exception {
-        testReplaceIndexedColWithUnindexed(PartitionBy.MONTH, 1000000 * 60 * 5 * 24L, 2, false);
-    }
-
-    @Test
-    public void testReplaceIndexedWithUnindexedByMonthR() throws Exception {
-        testReplaceIndexedColWithUnindexed(PartitionBy.MONTH, 1000000 * 60 * 5 * 24L, 2, true);
-    }
-
-    @Test
-    public void testReplaceUnindexedWithIndexedByDay() throws Exception {
-        testReplaceUnindexedColWithIndexed(PartitionBy.DAY, 1000000 * 60 * 5, 3, false);
-    }
-
-    @Test
-    public void testReplaceUnindexedWithIndexedByDayR() throws Exception {
-        testReplaceUnindexedColWithIndexed(PartitionBy.DAY, 1000000 * 60 * 5, 3, true);
-    }
-
-    @Test
-    public void testReplaceUnindexedWithIndexedByMonth() throws Exception {
-        testReplaceUnindexedColWithIndexed(PartitionBy.MONTH, 1000000 * 60 * 5 * 24L, 2, false);
-    }
-
-    @Test
-    public void testReplaceUnindexedWithIndexedByMonthR() throws Exception {
-        testReplaceUnindexedColWithIndexed(PartitionBy.MONTH, 1000000 * 60 * 5 * 24L, 2, true);
-    }
-
-    @Test
-    public void testReplaceUnindexedWithIndexedByNone() throws Exception {
-        testReplaceUnindexedColWithIndexed(PartitionBy.NONE, 1000000 * 60 * 5, 0, false);
-    }
-
-    @Test
-    public void testReplaceUnindexedWithIndexedByNoneR() throws Exception {
-        testReplaceUnindexedColWithIndexed(PartitionBy.NONE, 1000000 * 60 * 5, 0, true);
-    }
-
-    ///
-
-    @Test
-    public void testReplaceUnindexedWithIndexedByYear() throws Exception {
-        testReplaceUnindexedColWithIndexed(PartitionBy.YEAR, 1000000 * 60 * 5 * 24L * 10L, 2, false);
-    }
-
-    @Test
-    public void testReplaceUnindexedWithIndexedByYearR() throws Exception {
-        testReplaceUnindexedColWithIndexed(PartitionBy.YEAR, 1000000 * 60 * 5 * 24L * 10L, 2, true);
-    }
-
-    @Test
-    public void testRollbackSymbolIndexByDay() throws Exception {
-        testSymbolIndexReadAfterRollback(PartitionBy.DAY, 1000000 * 60 * 5, 3);
-    }
-
-    @Test
-    public void testRollbackSymbolIndexByMonth() throws Exception {
-        testSymbolIndexReadAfterRollback(PartitionBy.MONTH, 1000000 * 60 * 5 * 24L, 2);
-    }
-
-    @Test
-    public void testRollbackSymbolIndexByNone() throws Exception {
-        testSymbolIndexReadAfterRollback(PartitionBy.NONE, 1000000 * 60 * 5, 0);
-    }
-
-    @Test
-    public void testRollbackSymbolIndexByYear() throws Exception {
-        testSymbolIndexReadAfterRollback(PartitionBy.YEAR, 1000000 * 60 * 5 * 24L * 10L, 2);
-    }
-
-    private void testRemoveFirstColumn(int partitionBy, long increment, int expectedPartitionMin) throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            final int N = 100;
-            // separate two symbol columns with primitive. It will make problems apparent if index does not shift correctly
-            try (TableModel model = new TableModel(configuration, "x", partitionBy).
-                    col("a", ColumnType.STRING).
-                    col("b", ColumnType.SYMBOL).indexed(true, N / 4).
-                    col("i", ColumnType.INT).
-                    col("c", ColumnType.SYMBOL).indexed(true, N / 4).
-                    timestamp()
-            ) {
-                CairoTestUtils.create(model);
-            }
-
-            final Rnd rnd = new Rnd();
-            final String[] symbols = new String[N];
-            final int M = 1000;
-
-            for (int i = 0; i < N; i++) {
-                symbols[i] = rnd.nextChars(8).toString();
-            }
-
-            // prepare the data
-            long timestamp = 0;
-            try (TableWriter writer = new TableWriter(configuration, "x")) {
-                for (int i = 0; i < M; i++) {
-                    TableWriter.Row row = writer.newRow(timestamp += increment);
-                    row.putStr(0, rnd.nextChars(20));
-                    row.putSym(1, symbols[rnd.nextPositiveInt() % N]);
-                    row.putInt(2, rnd.nextInt());
-                    row.putSym(3, symbols[rnd.nextPositiveInt() % N]);
-                    row.append();
-                }
-                writer.commit();
-
-                try (TableReader reader = new TableReader(configuration, "x")) {
-                    TableReaderRecord record = new TableReaderRecord();
-
-                    Assert.assertTrue(reader.getPartitionCount() > expectedPartitionMin);
-
-                    FullFwdDataFrameCursor cursor = new FullFwdDataFrameCursor();
-
-                    // assert baseline
-                    cursor.of(reader);
-                    record.of(reader);
-
-                    assertSymbolFoundInIndex(cursor, record, 1, M);
-                    cursor.toTop();
-                    assertSymbolFoundInIndex(cursor, record, 3, M);
-
-                    writer.removeColumn("a");
-
-                    // Indexes should shift left for both writer and reader
-                    // To make sure writer is ok we add more rows
-                    for (int i = 0; i < M; i++) {
-                        TableWriter.Row row = writer.newRow(timestamp += increment);
-                        row.putSym(0, symbols[rnd.nextPositiveInt() % N]);
-                        row.putInt(1, rnd.nextInt());
-                        row.putSym(2, symbols[rnd.nextPositiveInt() % N]);
-                        row.append();
-                    }
-                    writer.commit();
-
-                    cursor.reload();
-                    assertSymbolFoundInIndex(cursor, record, 0, M * 2);
-                    cursor.toTop();
-                    assertSymbolFoundInIndex(cursor, record, 2, M * 2);
-                    cursor.toTop();
-                    assertIndexRowsMatchSymbol(cursor, record, 0, M * 2);
-                    cursor.toTop();
-                    assertIndexRowsMatchSymbol(cursor, record, 2, M * 2);
-                }
-            }
         });
     }
 
@@ -958,6 +843,44 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
     @Test
     public void testSymbolIndexReadByYearAfterAlter() throws Exception {
         testSymbolIndexReadAfterAlter(PartitionBy.YEAR, 1000000 * 60 * 5 * 24L * 10L, 2, 1000);
+    }
+
+    static void assertIndexRowsMatchSymbol(DataFrameCursor cursor, TableReaderRecord record, int columnIndex, long expectedRowCount) {
+        assertRowsMatchSymbol0(cursor, record, columnIndex, expectedRowCount, BitmapIndexReader.DIR_FORWARD);
+        cursor.toTop();
+        assertRowsMatchSymbol0(cursor, record, columnIndex, expectedRowCount, BitmapIndexReader.DIR_BACKWARD);
+    }
+
+    private static void assertRowsMatchSymbol0(DataFrameCursor cursor, TableReaderRecord record, int columnIndex, long expectedRowCount, int indexDirection) {
+        // SymbolTable is table at table scope, so it will be the same for every
+        // data frame here. Get its instance outside of data frame loop.
+        StaticSymbolTable symbolTable = cursor.getSymbolTable(columnIndex);
+
+        long rowCount = 0;
+        DataFrame frame;
+        while ((frame = cursor.next()) != null) {
+            record.jumpTo(frame.getPartitionIndex(), frame.getRowLo());
+            final long limit = frame.getRowHi();
+
+            // BitmapIndex is always at data frame scope, each table can have more than one.
+            // we have to get BitmapIndexReader instance once for each frame.
+            BitmapIndexReader indexReader = frame.getBitmapIndexReader(columnIndex, indexDirection);
+
+            // because out Symbol column 0 is indexed, frame has to have index.
+            Assert.assertNotNull(indexReader);
+
+            int keyCount = indexReader.getKeyCount();
+            for (int i = 0; i < keyCount; i++) {
+                RowCursor ic = indexReader.getCursor(true, i, 0, limit - 1);
+                CharSequence expected = symbolTable.valueOf(i - 1);
+                while (ic.hasNext()) {
+                    record.setRecordIndex(ic.next());
+                    TestUtils.assertEquals(expected, record.getSym(columnIndex));
+                    rowCount++;
+                }
+            }
+        }
+        Assert.assertEquals(expectedRowCount, rowCount);
     }
 
     private void assertData(FullFwdDataFrameCursor cursor, TableReaderRecord record, Rnd rnd, SymbolGroup sg, long expecteRowCount) {
@@ -1095,17 +1018,17 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                 boolean invoked = false;
 
                 @Override
-                public boolean wasCalled() {
-                    return invoked;
-                }
-
-                @Override
                 public boolean remove(LPSZ name) {
                     if (Chars.endsWith(name, ".lock")) {
                         invoked = true;
                         return false;
                     }
                     return super.remove(name);
+                }
+
+                @Override
+                public boolean wasCalled() {
+                    return invoked;
                 }
 
 
@@ -1137,7 +1060,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                 writer.commit();
                 // closing should fail
             } catch (CairoException e) {
-                TestUtils.assertContains(e.getMessage(), "remove");
+                TestUtils.assertContains(e.getFlyweightMessage(), "remove");
             }
 
             new TableWriter(AbstractCairoTest.configuration, "ABC").close();
@@ -1186,7 +1109,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                 }
 
                 @Override
-                public long mmap(long fd, long len, long offset, int mode) {
+                public long mmap(long fd, long len, long offset, int flags) {
                     // mess with the target FD
                     if (fd == this.fd) {
                         if (mapCount == 1) {
@@ -1194,7 +1117,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                         }
                         mapCount++;
                     }
-                    return super.mmap(fd, len, offset, mode);
+                    return super.mmap(fd, len, offset, flags);
                 }
 
                 @Override
@@ -1246,7 +1169,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                     writer.commit();
                     Assert.fail();
                 } catch (CairoError e) {
-                    TestUtils.assertContains(e.getMessage(), "distressed");
+                    TestUtils.assertContains(e.getFlyweightMessage(), "distressed");
                 }
 
                 // test that we cannot rollback
@@ -1254,7 +1177,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                     writer.rollback();
                     Assert.fail();
                 } catch (CairoError e) {
-                    TestUtils.assertContains(e.getMessage(), "distressed");
+                    TestUtils.assertContains(e.getFlyweightMessage(), "distressed");
                 }
             }
 
@@ -1329,12 +1252,12 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                 }
 
                 @Override
-                public long mmap(long fd, long len, long offset, int mode) {
+                public long mmap(long fd, long len, long offset, int flags) {
                     // mess with the target FD
                     if (fd == this.fd) {
                         return -1;
                     }
-                    return super.mmap(fd, len, offset, mode);
+                    return super.mmap(fd, len, offset, flags);
                 }
 
                 @Override
@@ -1517,7 +1440,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                 }
 
                 @Override
-                public long mmap(long fd, long len, long offset, int mode) {
+                public long mmap(long fd, long len, long offset, int flags) {
                     // mess with the target FD
                     if (fd == this.fd) {
                         if (mapCount == 1) {
@@ -1525,7 +1448,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                         }
                         mapCount++;
                     }
-                    return super.mmap(fd, len, offset, mode);
+                    return super.mmap(fd, len, offset, flags);
                 }
 
                 @Override
@@ -1667,6 +1590,82 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                 assertIndexRowsMatchSymbol(cursor, record, 1, empty ? N : N * 2);
                 cursor.toTop();
                 assertIndexRowsMatchSymbol(cursor, record, 2, empty ? N : N * 2);
+            }
+        });
+    }
+
+    private void testRemoveFirstColumn(int partitionBy, long increment, int expectedPartitionMin) throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final int N = 100;
+            // separate two symbol columns with primitive. It will make problems apparent if index does not shift correctly
+            try (TableModel model = new TableModel(configuration, "x", partitionBy).
+                    col("a", ColumnType.STRING).
+                    col("b", ColumnType.SYMBOL).indexed(true, N / 4).
+                    col("i", ColumnType.INT).
+                    col("c", ColumnType.SYMBOL).indexed(true, N / 4).
+                    timestamp()
+            ) {
+                CairoTestUtils.create(model);
+            }
+
+            final Rnd rnd = new Rnd();
+            final String[] symbols = new String[N];
+            final int M = 1000;
+
+            for (int i = 0; i < N; i++) {
+                symbols[i] = rnd.nextChars(8).toString();
+            }
+
+            // prepare the data
+            long timestamp = 0;
+            try (TableWriter writer = new TableWriter(configuration, "x")) {
+                for (int i = 0; i < M; i++) {
+                    TableWriter.Row row = writer.newRow(timestamp += increment);
+                    row.putStr(0, rnd.nextChars(20));
+                    row.putSym(1, symbols[rnd.nextPositiveInt() % N]);
+                    row.putInt(2, rnd.nextInt());
+                    row.putSym(3, symbols[rnd.nextPositiveInt() % N]);
+                    row.append();
+                }
+                writer.commit();
+
+                try (TableReader reader = new TableReader(configuration, "x")) {
+                    TableReaderRecord record = new TableReaderRecord();
+
+                    Assert.assertTrue(reader.getPartitionCount() > expectedPartitionMin);
+
+                    FullFwdDataFrameCursor cursor = new FullFwdDataFrameCursor();
+
+                    // assert baseline
+                    cursor.of(reader);
+                    record.of(reader);
+
+                    assertSymbolFoundInIndex(cursor, record, 1, M);
+                    cursor.toTop();
+                    assertSymbolFoundInIndex(cursor, record, 3, M);
+
+                    writer.removeColumn("a");
+
+                    // Indexes should shift left for both writer and reader
+                    // To make sure writer is ok we add more rows
+                    for (int i = 0; i < M; i++) {
+                        TableWriter.Row row = writer.newRow(timestamp += increment);
+                        row.putSym(0, symbols[rnd.nextPositiveInt() % N]);
+                        row.putInt(1, rnd.nextInt());
+                        row.putSym(2, symbols[rnd.nextPositiveInt() % N]);
+                        row.append();
+                    }
+                    writer.commit();
+
+                    cursor.reload();
+                    assertSymbolFoundInIndex(cursor, record, 0, M * 2);
+                    cursor.toTop();
+                    assertSymbolFoundInIndex(cursor, record, 2, M * 2);
+                    cursor.toTop();
+                    assertIndexRowsMatchSymbol(cursor, record, 0, M * 2);
+                    cursor.toTop();
+                    assertIndexRowsMatchSymbol(cursor, record, 2, M * 2);
+                }
             }
         });
     }
@@ -2259,6 +2258,61 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
         });
     }
 
+    private void testSymbolIndexReadAfterRollback(int partitionBy, long increment, int expectedPartitionMin) throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final int N = 100;
+            try (TableModel model = new TableModel(configuration, "x", partitionBy).
+                    col("a", ColumnType.SYMBOL).indexed(true, N / 4).
+                    timestamp()
+            ) {
+                CairoTestUtils.create(model);
+            }
+
+            final Rnd rnd = new Rnd();
+            final String[] symbols = new String[N];
+            final int M = 1000;
+
+            for (int i = 0; i < N; i++) {
+                symbols[i] = rnd.nextChars(8).toString();
+            }
+
+            // prepare the data, make sure rollback does the job
+            long timestamp = 0;
+
+            try (TableWriter writer = new TableWriter(configuration, "x")) {
+                timestamp = populateTable(writer, symbols, rnd, timestamp, increment, M);
+                writer.commit();
+                timestamp = populateTable(writer, symbols, rnd, timestamp, increment, M);
+                writer.rollback();
+                populateTable(writer, symbols, rnd, timestamp, increment, M);
+                writer.commit();
+            }
+
+            // check that each symbol in table exists in index as well
+            // and current row is collection of index rows
+            try (TableReader reader = new TableReader(configuration, "x")) {
+
+                // Open data frame cursor. This one will frame table as collection of
+                // partitions, each partition is a frame.
+                FullFwdDataFrameCursor cursor = new FullFwdDataFrameCursor();
+                // TableRecord will help us read the table. We need to position this record using
+                // "recordIndex" and "columnBase".
+                TableReaderRecord record = new TableReaderRecord();
+
+                Assert.assertTrue(reader.getPartitionCount() > expectedPartitionMin);
+
+                cursor.of(reader);
+                record.of(reader);
+
+                assertSymbolFoundInIndex(cursor, record, 0, M * 2);
+                cursor.toTop();
+                assertSymbolFoundInIndex(cursor, record, 0, M * 2);
+                cursor.toTop();
+                assertIndexRowsMatchSymbol(cursor, record, 0, M * 2);
+            }
+        });
+    }
+
     private void testSymbolIndexReadColumnAddAndAlter(int partitionBy, long increment, int expectedPartitionMin, int M) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final int N = 100;
@@ -2318,61 +2372,6 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                 assertSymbolFoundInIndex(cursor, record, 1, M);
                 cursor.toTop();
                 assertIndexRowsMatchSymbol(cursor, record, 1, M);
-            }
-        });
-    }
-
-    private void testSymbolIndexReadAfterRollback(int partitionBy, long increment, int expectedPartitionMin) throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            final int N = 100;
-            try (TableModel model = new TableModel(configuration, "x", partitionBy).
-                    col("a", ColumnType.SYMBOL).indexed(true, N / 4).
-                    timestamp()
-            ) {
-                CairoTestUtils.create(model);
-            }
-
-            final Rnd rnd = new Rnd();
-            final String[] symbols = new String[N];
-            final int M = 1000;
-
-            for (int i = 0; i < N; i++) {
-                symbols[i] = rnd.nextChars(8).toString();
-            }
-
-            // prepare the data, make sure rollback does the job
-            long timestamp = 0;
-
-            try (TableWriter writer = new TableWriter(configuration, "x")) {
-                timestamp = populateTable(writer, symbols, rnd, timestamp, increment, M);
-                writer.commit();
-                timestamp = populateTable(writer, symbols, rnd, timestamp, increment, M);
-                writer.rollback();
-                populateTable(writer, symbols, rnd, timestamp, increment, M);
-                writer.commit();
-            }
-
-            // check that each symbol in table exists in index as well
-            // and current row is collection of index rows
-            try (TableReader reader = new TableReader(configuration, "x")) {
-
-                // Open data frame cursor. This one will frame table as collection of
-                // partitions, each partition is a frame.
-                FullFwdDataFrameCursor cursor = new FullFwdDataFrameCursor();
-                // TableRecord will help us read the table. We need to position this record using
-                // "recordIndex" and "columnBase".
-                TableReaderRecord record = new TableReaderRecord();
-
-                Assert.assertTrue(reader.getPartitionCount() > expectedPartitionMin);
-
-                cursor.of(reader);
-                record.of(reader);
-
-                assertSymbolFoundInIndex(cursor, record, 0, M * 2);
-                cursor.toTop();
-                assertSymbolFoundInIndex(cursor, record, 0, M * 2);
-                cursor.toTop();
-                assertIndexRowsMatchSymbol(cursor, record, 0, M * 2);
             }
         });
     }
@@ -2468,17 +2467,107 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
         }
 
         @Override
+        public MPSequence getO3PurgeDiscoveryPubSeq() {
+            return null;
+        }
+
+        @Override
+        public RingQueue<O3PurgeDiscoveryTask> getO3PurgeDiscoveryQueue() {
+            return null;
+        }
+
+        @Override
+        public MCSequence getO3PurgeDiscoverySubSeq() {
+            return null;
+        }
+
+        @Override
+        public MPSequence getO3PurgePubSeq() {
+            return null;
+        }
+
+        @Override
+        public RingQueue<O3PurgeTask> getO3PurgeQueue() {
+            return null;
+        }
+
+        @Override
+        public MCSequence getO3PurgeSubSeq() {
+            return null;
+        }
+
+        @Override
+        public MPSequence getO3CopyPubSeq() {
+            return null;
+        }
+
+        @Override
+        public RingQueue<O3CopyTask> getO3CopyQueue() {
+            return null;
+        }
+
+        @Override
+        public MCSequence getO3CopySubSeq() {
+            return null;
+        }
+
+        @Override
+        public MPSequence getO3OpenColumnPubSeq() {
+            return null;
+        }
+
+        @Override
+        public RingQueue<O3OpenColumnTask> getO3OpenColumnQueue() {
+            return null;
+        }
+
+        @Override
+        public MCSequence getO3OpenColumnSubSeq() {
+            return null;
+        }
+
+        @Override
+        public MPSequence getO3PartitionPubSeq() {
+            return null;
+        }
+
+        @Override
+        public RingQueue<O3PartitionTask> getO3PartitionQueue() {
+            return null;
+        }
+
+        @Override
+        public MCSequence getO3PartitionSubSeq() {
+            return null;
+        }
+
+        @Override
+        public MPSequence getO3CallbackPubSeq() {
+            return null;
+        }
+
+        @Override
+        public RingQueue<O3CallbackTask> getO3CallbackQueue() {
+            return null;
+        }
+
+        @Override
+        public MCSequence getO3CallbackSubSeq() {
+            return null;
+        }
+
+        @Override
+        public Sequence getVectorAggregatePubSeq() {
+            return null;
+        }
+
+        @Override
         public RingQueue<VectorAggregateTask> getVectorAggregateQueue() {
             return null;
         }
 
         @Override
-        public Sequence getVectorAggregatePubSequence() {
-            return null;
-        }
-
-        @Override
-        public Sequence getVectorAggregateSubSequence() {
+        public Sequence getVectorAggregateSubSeq() {
             return null;
         }
     }

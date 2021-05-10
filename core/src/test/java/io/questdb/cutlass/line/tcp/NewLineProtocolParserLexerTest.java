@@ -40,7 +40,7 @@ import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 
 public class NewLineProtocolParserLexerTest extends LineProtoLexerTest {
-    private NewLineProtoParser protoParser = new NewLineProtoParser();
+    private final NewLineProtoParser protoParser = new NewLineProtoParser();
     private ErrorCode lastErrorCode;
     private boolean onErrorLine;
     private long startOfLineAddr;

@@ -24,6 +24,7 @@
 
 #ifndef UTIL_H
 #define UTIL_H
+
 #include <cmath>
 #include <cstdint>
 #include "jni.h"
@@ -56,5 +57,86 @@ inline uint32_t ceil_pow_2(uint32_t v) {
     v |= v >> 16u;
     return v + 1;
 }
+// the "high" boundary is inclusive
+template<class T, class V>
+inline int64_t scan_search(T data, V value, int64_t low, int64_t high, int32_t scan_dir) {
+    for (int64_t p = low; p <= high; p++) {
+        if (data[p] == value) {
+            p += scan_dir;
+            while (p > 0 && p <= high && data[p] == value) {
+                p += scan_dir;
+            }
+            return p - scan_dir;
+        }
+        if (data[p] > value) {
+            return -p - 1;
+        }
+    }
+    return -(high + 1) - 1;
+}
+
+// the "high" boundary is inclusive
+template<class T, class V>
+inline int64_t binary_search(T *data, V value, int64_t low, int64_t high, int32_t scan_dir) {
+    while (low < high) {
+        if (high - low < 65) {
+            return scan_search(data, value, low, high, scan_dir);
+        }
+        int64_t mid = (low + high) / 2;
+        T midVal = data[mid];
+
+        if (midVal < value) {
+            if (low < mid) {
+                low = mid;
+            } else {
+                if (data[high] > value) {
+                    return -low - 1;
+                }
+                return -high - 1;
+            }
+        } else if (midVal > value)
+            high = mid;
+        else {
+            // In case of multiple equal values, find the first
+            mid += scan_dir;
+            while (mid > 0 && mid <= high && data[mid] == midVal) {
+                mid += scan_dir;
+            }
+            return mid - scan_dir;
+        }
+    }
+
+    if (data[low] > value) {
+        return -low - 1;
+    }
+
+    if (data[low] == value) {
+        return low;
+    }
+
+    return -(low + 1) - 1;
+}
+
+#define JAVA_STATIC JNIEnv *e, jclass cl
+
+#if __GNUC__
+    // Fetch into all levels of the cache hierarchy.
+    #define MM_PREFETCH_T0(address)  __builtin_prefetch((address), 0, 3)
+    // Fetch into L2 and higher.
+    #define MM_PREFETCH_T1(address)  __builtin_prefetch((address), 0, 2)
+    // Fetch into L3 and higher or an implementation-specific choice (e.g., L2 if there is no L3).
+    #define MM_PREFETCH_T2(address)  __builtin_prefetch((address), 0, 1)
+    // Fetch data using the non-temporal access (NTA) hint.
+    #define MM_PREFETCH_NTA(address)  __builtin_prefetch((address), 0, 0)
+#else
+    // Fetch into all levels of the cache hierarchy.
+    #define MM_PREFETCH_T0(address) _mm_prefetch((address), _MM_HINT_T0)
+    // Fetch into L2 and higher.
+    #define MM_PREFETCH_T1(address) _mm_prefetch((address), _MM_HINT_T1)
+    // Fetch into L3 and higher or an implementation-specific choice (e.g., L2 if there is no L3).
+    #define MM_PREFETCH_T2(address) _mm_prefetch((address), _MM_HINT_T2)
+    // Fetch data using the non-temporal access (NTA) hint.
+    #define MM_PREFETCH_NTA(address) _mm_prefetch((address), _MM_HINT_NTA)
+#endif
 
 #endif //UTIL_H

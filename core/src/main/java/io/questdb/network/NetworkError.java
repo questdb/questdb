@@ -61,7 +61,7 @@ public class NetworkError extends Error implements Sinkable, FlyweightMessageCon
 
     @Override
     public String getMessage() {
-        return "[" + errno + "] " + message.toString();
+        return "[" + errno + "] " + message;
     }
 
     public NetworkError ip(int ipv4) {

@@ -26,6 +26,9 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.vm.AppendOnlyVirtualMemory;
+import io.questdb.cairo.vm.PagedMappedReadWriteMemory;
+import io.questdb.cairo.vm.VmUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
@@ -42,13 +45,13 @@ public class SymbolMapWriter implements Closeable {
     public static final int HEADER_NULL_FLAG = 8;
     private static final Log LOG = LogFactory.getLog(SymbolMapWriter.class);
     private final BitmapIndexWriter indexWriter;
-    private final ReadWriteMemory charMem;
-    private final ReadWriteMemory offsetMem;
+    private final PagedMappedReadWriteMemory charMem;
+    private final PagedMappedReadWriteMemory offsetMem;
     private final CharSequenceIntHashMap cache;
     private final DirectCharSequence tmpSymbol;
     private final int maxHash;
-    private boolean nullValue = false;
     private final TransientSymbolCountChangeHandler transientSymbolCountChangeHandler;
+    private boolean nullValue = false;
 
     public SymbolMapWriter(CairoConfiguration configuration, Path path, CharSequence name, int symbolCount, TransientSymbolCountChangeHandler transientSymbolCountChangeHandler) {
         this.transientSymbolCountChangeHandler = transientSymbolCountChangeHandler;
@@ -74,7 +77,7 @@ public class SymbolMapWriter implements Closeable {
 
             // open "offset" memory and make sure we start appending from where
             // we left off. Where we left off is stored externally to symbol map
-            this.offsetMem = new ReadWriteMemory(ff, path, mapPageSize);
+            this.offsetMem = new PagedMappedReadWriteMemory(ff, path, mapPageSize);
             final int symbolCapacity = offsetMem.getInt(HEADER_CAPACITY);
             final boolean useCache = offsetMem.getBool(HEADER_CACHE_ENABLED);
             this.offsetMem.jumpTo(keyToOffset(symbolCount));
@@ -83,7 +86,7 @@ public class SymbolMapWriter implements Closeable {
             this.indexWriter = new BitmapIndexWriter(configuration, path.trimTo(plen), name);
 
             // this is the place where symbol values are stored
-            this.charMem = new ReadWriteMemory(ff, charFileName(path.trimTo(plen), name), mapPageSize);
+            this.charMem = new PagedMappedReadWriteMemory(ff, charFileName(path.trimTo(plen), name), mapPageSize);
 
             // move append pointer for symbol values in the correct place
             jumpCharMemToSymbolCount(symbolCount);
@@ -100,8 +103,8 @@ public class SymbolMapWriter implements Closeable {
             }
 
             tmpSymbol = new DirectCharSequence();
-            LOG.info().$("open [name=").$(path.trimTo(plen).concat(name).$()).$(", fd=").$(this.offsetMem.getFd()).$(", cache=").$(cache != null).$(", capacity=").$(symbolCapacity).$(']').$();
-        } catch (CairoException e) {
+            LOG.debug().$("open [name=").$(path.trimTo(plen).concat(name).$()).$(", fd=").$(this.offsetMem.getFd()).$(", cache=").$(cache != null).$(", capacity=").$(symbolCapacity).$(']').$();
+        } catch (Throwable e) {
             close();
             throw e;
         } finally {
@@ -113,9 +116,9 @@ public class SymbolMapWriter implements Closeable {
         return path.concat(columnName).put(".c").$();
     }
 
-    public static void createSymbolMapFiles(FilesFacade ff, AppendMemory mem, Path path, CharSequence columnName, int symbolCapacity, boolean symbolCacheFlag) {
+    public static void createSymbolMapFiles(FilesFacade ff, AppendOnlyVirtualMemory mem, Path path, CharSequence columnName, int symbolCapacity, boolean symbolCacheFlag) {
         int plen = path.length();
-        try (mem) {
+        try {
             mem.of(ff, offsetFileName(path.trimTo(plen), columnName), ff.getPageSize());
             mem.putInt(symbolCapacity);
             mem.putBool(symbolCacheFlag);
@@ -130,12 +133,23 @@ public class SymbolMapWriter implements Closeable {
             BitmapIndexWriter.initKeyMemory(mem, TableUtils.MIN_INDEX_VALUE_BLOCK_SIZE);
             ff.touch(BitmapIndexUtils.valueFileName(path.trimTo(plen), columnName));
         } finally {
+            mem.close();
             path.trimTo(plen);
         }
     }
 
     public static Path offsetFileName(Path path, CharSequence columnName) {
         return path.concat(columnName).put(".o").$();
+    }
+
+    public void appendSymbolCharsBlock(long blockSize, long sourceAddress) {
+        long appendOffset = charMem.getAppendOffset();
+        try {
+            charMem.jumpTo(appendOffset);
+            charMem.putBlockOfBytes(sourceAddress, blockSize);
+        } finally {
+            charMem.jumpTo(appendOffset);
+        }
     }
 
     @Override
@@ -145,9 +159,36 @@ public class SymbolMapWriter implements Closeable {
         if (this.offsetMem != null) {
             long fd = this.offsetMem.getFd();
             Misc.free(offsetMem);
-            LOG.info().$("closed [fd=").$(fd).$(']').$();
+            LOG.debug().$("closed [fd=").$(fd).$(']').$();
         }
         nullValue = false;
+    }
+
+    public void commitAppendedBlock(int nSymbolsAdded) {
+        long offset = charMem.getAppendOffset();
+        int symbolIndex = getSymbolCount();
+        int nSymbols = symbolIndex + nSymbolsAdded;
+        while (symbolIndex < nSymbols) {
+            long symCharsOffset = offset;
+            int symLen = charMem.getInt(offset);
+            offset += Integer.BYTES;
+            long symCharsOffsetHi = offset + symLen * 2L;
+            tmpSymbol.of(charMem.addressOf(offset), charMem.addressOf(symCharsOffsetHi));
+
+            long offsetOffset = offsetMem.getAppendOffset();
+            offsetMem.putLong(symCharsOffset);
+            int hash = Hash.boundedHash(tmpSymbol, maxHash);
+            indexWriter.add(hash, offsetOffset);
+
+            if (cache != null) {
+                cache.putAt(symbolIndex, tmpSymbol.toString(), offsetToKey(offsetOffset));
+            }
+
+            offset = symCharsOffsetHi;
+            charMem.jumpTo(offset);
+            symbolIndex++;
+        }
+        LOG.debug().$("appended a block of ").$(nSymbolsAdded).$("symbols [fd=").$(this.offsetMem.getFd()).$(']').$();
     }
 
     public int getSymbolCount() {
@@ -176,10 +217,10 @@ public class SymbolMapWriter implements Closeable {
     }
 
     public void rollback(int symbolCount) {
-        indexWriter.rollbackValues(keyToOffset(symbolCount));
+        indexWriter.rollbackValues(keyToOffset(symbolCount - 1));
         offsetMem.jumpTo(keyToOffset(symbolCount));
         jumpCharMemToSymbolCount(symbolCount);
-        transientSymbolCountChangeHandler.handleTansientymbolCountChange(symbolCount);
+        transientSymbolCountChangeHandler.handleTransientSymbolCountChange(symbolCount);
         if (cache != null) {
             cache.clear();
         }
@@ -208,7 +249,7 @@ public class SymbolMapWriter implements Closeable {
     private void jumpCharMemToSymbolCount(int symbolCount) {
         if (symbolCount > 0) {
             long lastSymbolOffset = this.offsetMem.getLong(keyToOffset(symbolCount - 1));
-            int l = VirtualMemory.getStorageLength(this.charMem.getStr(lastSymbolOffset));
+            int l = VmUtils.getStorageLength(this.charMem.getStr(lastSymbolOffset));
             this.charMem.jumpTo(lastSymbolOffset + l);
         } else {
             this.charMem.jumpTo(0);
@@ -239,45 +280,8 @@ public class SymbolMapWriter implements Closeable {
         offsetMem.putLong(charMem.putStr(symbol));
         indexWriter.add(hash, offsetOffset);
         int symIndex = offsetToKey(offsetOffset);
-        transientSymbolCountChangeHandler.handleTansientymbolCountChange(symIndex + 1);
+        transientSymbolCountChangeHandler.handleTransientSymbolCountChange(symIndex + 1);
         return symIndex;
-    }
-
-    public void appendSymbolCharsBlock(long blockSize, long sourceAddress) {
-        long appendOffset = charMem.getAppendOffset();
-        try {
-            charMem.jumpTo(appendOffset);
-            charMem.putBlockOfBytes(sourceAddress, blockSize);
-        } finally {
-            charMem.jumpTo(appendOffset);
-        }
-    }
-
-    public void commitAppendedBlock(int nSymbolsAdded) {
-        long offset = charMem.getAppendOffset();
-        int symbolIndex = getSymbolCount();
-        int nSymbols = symbolIndex + nSymbolsAdded;
-        while (symbolIndex < nSymbols) {
-            long symCharsOffset = offset;
-            int symLen = charMem.getInt(offset);
-            offset += Integer.BYTES;
-            long symCharsOffsetHi = offset + symLen * Character.BYTES;
-            tmpSymbol.of(charMem.addressOf(offset), charMem.addressOf(symCharsOffsetHi));
-
-            long offsetOffset = offsetMem.getAppendOffset();
-            offsetMem.putLong(symCharsOffset);
-            int hash = Hash.boundedHash(tmpSymbol, maxHash);
-            indexWriter.add(hash, offsetOffset);
-
-            if (cache != null) {
-                cache.putAt(symbolIndex, tmpSymbol.toString(), offsetToKey(offsetOffset));
-            }
-
-            offset = symCharsOffsetHi;
-            charMem.jumpTo(offset);
-            symbolIndex++;
-        }
-        LOG.info().$("appended a block of ").$(nSymbolsAdded).$("symbols [fd=").$(this.offsetMem.getFd()).$(']').$();
     }
 
     void truncate() {
@@ -288,6 +292,6 @@ public class SymbolMapWriter implements Closeable {
     }
 
     public interface TransientSymbolCountChangeHandler {
-        void handleTansientymbolCountChange(int symbolCount);
+        void handleTransientSymbolCountChange(int symbolCount);
     }
 }

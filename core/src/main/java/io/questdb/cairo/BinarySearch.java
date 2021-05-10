@@ -24,8 +24,12 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.vm.ReadOnlyVirtualMemory;
+
 public class BinarySearch {
+    // Up is decreasing direction
     public static final int SCAN_UP = -1;
+    // Down is increasing direction
     public static final int SCAN_DOWN = 1;
 
     /**
@@ -43,7 +47,7 @@ public class BinarySearch {
      * multiple exact matches the scanDirection determines whether top or bottom of these matches is returned.
      * When scan direction is DOWN - the last index of exact matches is returns, when UP - the first index
      */
-    public static long find(ReadOnlyColumn column, long value, long low, long high, int scanDirection) {
+    public static long find(ReadOnlyVirtualMemory column, long value, long low, long high, int scanDirection) {
         while (low < high) {
             long mid = (low + high) / 2;
             long midVal = column.getLong(mid * Long.BYTES);

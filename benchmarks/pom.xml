@@ -56,8 +56,8 @@
         </dependency>
         <dependency>
             <groupId>org.questdb</groupId>
-            <artifactId>questdb</artifactId>
-            <version>6.0.0-SNAPSHOT</version>
+            <artifactId>${questdb.artifactid}</artifactId>
+            <version>6.0.1-SNAPSHOT</version>
         </dependency>
         <dependency>
             <groupId>org.apache.logging.log4j</groupId>
@@ -94,7 +94,7 @@
                 <artifactId>maven-compiler-plugin</artifactId>
                 <version>3.6.1</version>
                 <configuration>
-                    <source>${javac.target}</source>
+                    <source>11</source>
                     <target>${javac.target}</target>
                     <annotationProcessorPaths>
                         <path>
@@ -184,4 +184,54 @@
         </pluginManagement>
     </build>
 
+    <profiles>
+        <profile>
+            <id>java8</id>
+            <properties>
+                <jdk.version>8</jdk.version>
+                <java.enforce.version>1.8.0_242</java.enforce.version>
+                <questdb.artifactid>questdb-jdk8</questdb.artifactid>
+            </properties>
+            <activation>
+                <jdk>(,1.8]</jdk>
+            </activation>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-compiler-plugin</artifactId>
+                        <version>3.8.1</version>
+                        <configuration>
+                            <fork>true</fork>
+                            <source>1.8</source>
+                            <target>1.8</target>
+                            <testExcludes>
+                                <exclude>**/module-info.java</exclude>
+                            </testExcludes>
+                            <excludes>
+                                <exclude>**/module-info.java</exclude>
+                            </excludes>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+            <dependencies>
+                <dependency>
+                    <groupId>org.jetbrains</groupId>
+                    <artifactId>annotations</artifactId>
+                    <version>16.0.2</version>
+                    <scope>provided</scope>
+                </dependency>
+            </dependencies>
+        </profile>
+        <profile>
+            <id>java11+</id>
+            <properties>
+                <questdb.artifactid>questdb</questdb.artifactid>
+            </properties>
+            <activation>
+                <jdk>(1.8,)</jdk>
+            </activation>
+        </profile>
+    </profiles>
 </project>

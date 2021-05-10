@@ -86,7 +86,7 @@
     "eslint-plugin-standard": "5.0.0",
     "file-loader": "6.0.0",
     "fork-ts-checker-webpack-plugin": "6.1.0",
-    "handlebars": "4.7.6",
+    "handlebars": "4.7.7",
     "handlebars-loader": "1.7.1",
     "html-webpack-plugin": "4.3.0",
     "mini-css-extract-plugin": "0.9.0",

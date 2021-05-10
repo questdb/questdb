@@ -33,6 +33,7 @@ import io.questdb.network.IODispatcher;
 import io.questdb.network.NetworkFacade;
 import io.questdb.std.Mutable;
 import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.str.FloatingDirectCharSink;
@@ -116,7 +117,7 @@ class LineTcpConnectionContext implements IOContext, Mutable {
         if (recvBufNewStart > recvBufStart) {
             final int len = (int) (recvBufPos - recvBufNewStart);
             if (len > 0) {
-                Unsafe.getUnsafe().copyMemory(recvBufNewStart, recvBufStart, len);
+                Vect.memcpy(recvBufNewStart, recvBufStart, len);
             }
             recvBufPos = recvBufStart + len;
             return true;
@@ -124,10 +125,10 @@ class LineTcpConnectionContext implements IOContext, Mutable {
         return false;
     }
 
-    private boolean doHandleDisconnectEvent() {
+    private void doHandleDisconnectEvent() {
         if (protoParser.getBufferAddress() == recvBufEnd) {
             LOG.error().$('[').$(fd).$("] buffer overflow [msgBufferSize=").$(recvBufEnd - recvBufStart).$(']').$();
-            return true;
+            return;
         }
 
         if (peerDisconnected) {
@@ -138,7 +139,6 @@ class LineTcpConnectionContext implements IOContext, Mutable {
                 LOG.info().$('[').$(fd).$("] peer disconnected").$();
             }
         }
-        return peerDisconnected;
     }
 
     IOContextResult handleIO(NetworkIOJob netIoJob) {
@@ -153,7 +153,7 @@ class LineTcpConnectionContext implements IOContext, Mutable {
                 switch (rc) {
                     case MEASUREMENT_COMPLETE: {
                         if (goodMeasurement) {
-                            if (!scheduler.tryCommitNewEvent(netIoJob, protoParser, charSink)) {
+                            if (scheduler.tryButCouldNotCommit(netIoJob, protoParser, charSink)) {
                                 // Waiting for writer threads to drain queue, request callback as soon as possible
                                 if (checkQueueFullLogHysteresis()) {
                                     LOG.debug().$('[').$(fd).$("] queue full").$();

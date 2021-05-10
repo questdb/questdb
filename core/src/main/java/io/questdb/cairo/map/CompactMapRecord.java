@@ -24,7 +24,7 @@
 
 package io.questdb.cairo.map;
 
-import io.questdb.cairo.ContiguousVirtualMemory;
+import io.questdb.cairo.vm.ContiguousVirtualMemory;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.std.BinarySequence;
@@ -140,6 +140,11 @@ public class CompactMapRecord implements MapRecord {
     @Override
     public CharSequence getSym(int col) {
         return symbolTableResolver.getSymbolTable(symbolTableIndex.getQuick(col)).valueOf(getInt(col));
+    }
+
+    @Override
+    public CharSequence getSymB(int col) {
+        return symbolTableResolver.getSymbolTable(symbolTableIndex.getQuick(col)).valueBOf(getInt(col));
     }
 
     @Override

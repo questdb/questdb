@@ -35,12 +35,12 @@
         <nodejs.version>v12.16.2</nodejs.version>
         <runtime.assembly>none</runtime.assembly>
         <javac.target>11</javac.target>
-        <argLine>-Xmx512m --add-exports java.base/jdk.internal.math=ALL-UNNAMED -Dfile.encoding=UTF-8</argLine>
+        <argLine>-Dfile.encoding=UTF-8</argLine>
     </properties>
 
-    <version>6.0.0-SNAPSHOT</version>
+    <version>6.0.1-SNAPSHOT</version>
     <groupId>org.questdb</groupId>
-    <artifactId>questdb</artifactId>
+    <artifactId>${questdb.artifactid}</artifactId>
     <packaging>jar</packaging>
 
     <url>https://questdb.io/</url>
@@ -85,12 +85,18 @@
                 <version>3.8.1</version>
                 <configuration>
                     <compilerArgs>
-                        <arg>--add-exports</arg>
-                        <arg>java.base/jdk.internal.math=io.questdb</arg>
+                        <arg>${compilerArg1}</arg>
+                        <arg>${compilerArg2}</arg>
                     </compilerArgs>
                     <fork>true</fork>
-                    <source>${javac.target}</source>
-                    <target>${javac.target}</target>
+                    <source>${javac.compile.source}</source>
+                    <target>${javac.compile.target}</target>
+                    <testExcludes>
+                        <exclude>${excludePattern1}</exclude>
+                    </testExcludes>
+                    <excludes>
+                        <exclude>${excludeTestPattern1}</exclude>
+                    </excludes>
                 </configuration>
             </plugin>
             <plugin>
@@ -132,7 +138,7 @@
                                     <version>3.0.0</version>
                                 </requireMavenVersion>
                                 <requireJavaVersion>
-                                    <version>11</version>
+                                    <version>${java.enforce.version}</version>
                                 </requireJavaVersion>
                             </rules>
                         </configuration>
@@ -182,6 +188,19 @@
                     <doUpdate>false</doUpdate>
                 </configuration>
             </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <version>2.17</version>
+                <configuration>
+                    <properties>
+                        <property>
+                            <name>listener</name>
+                            <value>io.questdb.TestListener</value>
+                        </property>
+                    </properties>
+                </configuration>
+            </plugin>
         </plugins>
     </build>
 
@@ -217,9 +236,12 @@
                         </executions>
                         <configuration>
                             <additionalJOptions>
-                                <additionalJOption>--add-exports</additionalJOption>
-                                <additionalJOption>java.base/jdk.internal.math=io.questdb</additionalJOption>
+                                <additionalJOption>${compilerArg1}</additionalJOption>
+                                <additionalJOption>${compilerArg2}</additionalJOption>
                             </additionalJOptions>
+                            <sourceFileExcludes>
+                                <sourceFileExclude>${excludePattern1}</sourceFileExclude>
+                            </sourceFileExcludes>
                         </configuration>
                     </plugin>
                     <plugin>
@@ -508,6 +530,84 @@
 				</plugins>
 			</build>
 		</profile>
+        <profile>
+            <id>java8</id>
+            <properties>
+                <jdk.version>8</jdk.version>
+                <java.enforce.version>1.8.0_242</java.enforce.version>
+                <questdb.artifactid>questdb-jdk8</questdb.artifactid>
+                <compilerArg1></compilerArg1>
+                <compilerArg2></compilerArg2>
+                <excludePattern1>module-info.java</excludePattern1>
+                <excludeTestPattern1>module-info.java</excludeTestPattern1>
+                <javac.compile.source>1.8</javac.compile.source>
+                <javac.compile.target>1.8</javac.compile.target>
+            </properties>
+            <activation>
+                <jdk>(,1.8]</jdk>
+            </activation>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>com.igormaznitsa</groupId>
+                        <artifactId>jcp</artifactId>
+                        <version>7.0.4</version>
+                        <executions>
+                            <!-- make preprocessing of sources -->
+                            <execution>
+                                <id>preprocess-sources</id>
+                                <goals>
+                                    <goal>preprocess</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                        <configuration>
+                            <vars>
+                                <jdk.version>${jdk.version}</jdk.version>
+                            </vars>
+                            <excludeExtensions>
+                                <ext>MD</ext>
+                                <ext>md</ext>
+                                <ext>xml</ext>
+                            </excludeExtensions>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+            <dependencies>
+                <dependency>
+                    <groupId>org.jetbrains</groupId>
+                    <artifactId>annotations</artifactId>
+                    <version>16.0.2</version>
+                    <scope>provided</scope>
+                </dependency>
+            </dependencies>
+        </profile>
+        <profile>
+            <id>java11+</id>
+            <properties>
+                <jdk.version>11</jdk.version>
+                <java.enforce.version>11</java.enforce.version>
+                <questdb.artifactid>questdb</questdb.artifactid>
+                <compilerArg1>--add-exports</compilerArg1>
+                <compilerArg2>java.base/jdk.internal.math=io.questdb</compilerArg2>
+                <excludePattern1>nothing-to-exclude-dummy-value-include-all-java11plus</excludePattern1>
+                <excludeTestPattern1>nothing-to-exclude-dummy-value-include-all-java11plus</excludeTestPattern1>
+                <javac.compile.source>${javac.target}</javac.compile.source>
+                <javac.compile.target>${javac.target}</javac.compile.target>
+            </properties>
+            <activation>
+                <jdk>(1.8,)</jdk>
+            </activation>
+            <dependencies>
+                <dependency>
+                    <groupId>org.jetbrains</groupId>
+                    <artifactId>annotations</artifactId>
+                    <version>17.0.0</version>
+                    <scope>provided</scope>
+                </dependency>
+            </dependencies>
+        </profile>
     </profiles>
 
     <dependencies>
@@ -517,13 +617,6 @@
             <artifactId>junit</artifactId>
             <version>4.13.1</version>
             <scope>test</scope>
-        </dependency>
-
-        <dependency>
-            <groupId>org.jetbrains</groupId>
-            <artifactId>annotations</artifactId>
-            <version>17.0.0</version>
-            <scope>provided</scope>
         </dependency>
 
         <dependency>

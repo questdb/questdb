@@ -50,6 +50,26 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testAliasSecondJoinTable() throws SqlException {
+        assertQuery(
+                "select-choose tx.a a, tx.b b from (select [a, b, xid] from x tx outer join select [yid, a, b] from y ty on yid = xid post-join-where ty.a = 1 or ty.b = 2) tx",
+                "select tx.a, tx.b from x as tx left join y as ty on xid = yid where ty.a = 1 or ty.b=2",
+                modelOf("x").col("xid", ColumnType.INT).col("a", ColumnType.INT).col("b", ColumnType.INT),
+                modelOf("y").col("yid", ColumnType.INT).col("a", ColumnType.INT).col("b", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testAliasTopJoinTable() throws SqlException {
+        assertQuery(
+                "select-choose tx.a a, tx.b b from (select [a, b, xid] from x tx outer join select [yid] from y ty on yid = xid post-join-where a = 1 or b = 2) tx",
+                "select tx.a, tx.b from x as tx left join y as ty on xid = yid where tx.a = 1 or tx.b=2",
+                modelOf("x").col("xid", ColumnType.INT).col("a", ColumnType.INT).col("b", ColumnType.INT),
+                modelOf("y").col("yid", ColumnType.INT).col("a", ColumnType.INT).col("b", ColumnType.INT)
+        );
+    }
+
+    @Test
     public void testAliasWithSpace() throws Exception {
         assertQuery("select-choose x from (select [x] from x 'b a' where x > 1) 'b a'",
                 "x 'b a' where x > 1",
@@ -73,15 +93,6 @@ public class SqlParserTest extends AbstractGriffinTest {
         assertSyntaxError("orders join customers on customerId = customerId", 25, "Ambiguous",
                 modelOf("orders").col("customerId", ColumnType.INT),
                 modelOf("customers").col("customerId", ColumnType.INT)
-        );
-    }
-
-    @Test
-    public void testDuplicateColumnGroupBy() throws SqlException {
-        assertQuery(
-                "select-group-by b, sum(a) sum, k1, k1 k from (select-choose [b, a, k k1] b, a, k k1, timestamp from (select [b, a, k] from x y timestamp (timestamp)) y) y sample by 3h",
-                "select b, sum(a), k k1, k from x y sample by 3h",
-                modelOf("x").col("a", ColumnType.DOUBLE).col("b", ColumnType.SYMBOL).col("k", ColumnType.TIMESTAMP).timestamp()
         );
     }
 
@@ -1831,10 +1842,10 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testDuplicateColumnsVirtualAndGroupBySelect() throws SqlException {
+    public void testDuplicateColumnGroupBy() throws SqlException {
         assertQuery(
-                "select-group-by sum(b + a) sum, column, k1, k1 k from (select-virtual [a, b, a + b column, k1] a, b, a + b column, k1, k1 k, timestamp from (select-choose [a, b, k k1] a, b, k k1, timestamp from (select [a, b, k] from x timestamp (timestamp)))) sample by 1m",
-                "select sum(b+a), a+b, k k1, k from x sample by 1m",
+                "select-group-by b, sum(a) sum, k1, k1 k from (select-choose [b, a, k k1] b, a, k k1, timestamp from (select [b, a, k] from x y timestamp (timestamp)) y) y sample by 3h",
+                "select b, sum(a), k k1, k from x y sample by 3h",
                 modelOf("x").col("a", ColumnType.DOUBLE).col("b", ColumnType.SYMBOL).col("k", ColumnType.TIMESTAMP).timestamp()
         );
     }
@@ -1849,14 +1860,11 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testNonAggFunctionWithAggFunctionSampleBy() throws SqlException {
+    public void testDuplicateColumnsVirtualAndGroupBySelect() throws SqlException {
         assertQuery(
-                "select-group-by day, isin, last(start_price) last from (select-virtual [day(ts) day, isin, start_price] day(ts) day, isin, start_price, ts from (select [ts, isin, start_price] from xetra timestamp (ts) where isin = 'DE000A0KRJS4')) sample by 1d",
-                "select day(ts), isin, last(start_price) from xetra where isin='DE000A0KRJS4' sample by 1d",
-                modelOf("xetra")
-                        .timestamp("ts")
-                        .col("isin", ColumnType.SYMBOL)
-                        .col("start_price", ColumnType.DOUBLE)
+                "select-group-by sum(b + a) sum, column, k1, k1 k from (select-virtual [a, b, a + b column, k1] a, b, a + b column, k1, k1 k, timestamp from (select-choose [a, b, k k1] a, b, k k1, timestamp from (select [a, b, k] from x timestamp (timestamp)))) sample by 1m",
+                "select sum(b+a), a+b, k k1, k from x sample by 1m",
+                modelOf("x").col("a", ColumnType.DOUBLE).col("b", ColumnType.SYMBOL).col("k", ColumnType.TIMESTAMP).timestamp()
         );
     }
 
@@ -2276,6 +2284,64 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testInsertAsSelectBadBatchSize() throws Exception {
+        assertSyntaxError(
+                "insert batch 2a hysteresis 100000 into x select * from y",
+                13, "bad long integer",
+                modelOf("x")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.STRING),
+                modelOf("y")
+                        .col("c", ColumnType.INT)
+                        .col("d", ColumnType.STRING)
+        );
+    }
+
+    @Test
+    public void testInsertAsSelectBadHysteresis() throws Exception {
+        assertSyntaxError(
+                "insert batch 2 hysteresis aa into x select * from y",
+                26, "bad long integer",
+                modelOf("x")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.STRING),
+                modelOf("y")
+                        .col("c", ColumnType.INT)
+                        .col("d", ColumnType.STRING)
+        );
+    }
+
+    @Test
+    public void testInsertAsSelectBatchSize() throws SqlException {
+        assertModel(
+                "insert batch 15000 into x select-choose c, d from (select [c, d] from y)",
+                "insert batch 15000 into x select * from y",
+                ExecutionModel.INSERT,
+                modelOf("x")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.STRING),
+                modelOf("y")
+                        .col("c", ColumnType.INT)
+                        .col("d", ColumnType.STRING)
+        );
+    }
+
+    @Test
+    public void testInsertAsSelectBatchSizeAndHysteresis() throws SqlException {
+        assertModel(
+                "insert batch 10000 hysteresis 100000 into x select-choose c, d from (select [c, d] from y)",
+                "insert batch 10000 hysteresis 100000 into x select * from y",
+                ExecutionModel.INSERT,
+                modelOf("x")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.STRING),
+                modelOf("y")
+                        .col("c", ColumnType.INT)
+                        .col("d", ColumnType.STRING)
+        );
+    }
+
+    @Test
     public void testInsertAsSelectColumnCountMismatch() throws Exception {
         assertSyntaxError("insert into x (b) select * from y",
                 12, "column count mismatch",
@@ -2312,6 +2378,34 @@ public class SqlParserTest extends AbstractGriffinTest {
                 modelOf("y")
                         .col("c", ColumnType.INT)
                         .col("d", ColumnType.STRING));
+    }
+
+    @Test
+    public void testInsertAsSelectNegativeBatchSize() throws Exception {
+        assertSyntaxError(
+                "insert batch -25 hysteresis 100000 into x select * from y",
+                14, "must be positive",
+                modelOf("x")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.STRING),
+                modelOf("y")
+                        .col("c", ColumnType.INT)
+                        .col("d", ColumnType.STRING)
+        );
+    }
+
+    @Test
+    public void testInsertAsSelectNegativeHysteresis() throws Exception {
+        assertSyntaxError(
+                "insert batch 2 hysteresis -4 into x select * from y",
+                27, "hysteresis must be a positive integer microseconds",
+                modelOf("x")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.STRING),
+                modelOf("y")
+                        .col("c", ColumnType.INT)
+                        .col("d", ColumnType.STRING)
+        );
     }
 
     @Test
@@ -3204,6 +3298,15 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testLatestByMultipleColumns() throws SqlException {
+        assertQuery(
+                "select-group-by ts, market_type, avg(bid_price) avg from (select [ts, market_type, bid_price] from market_updates timestamp (ts) latest by ts,market_type) sample by 1s",
+                "select ts, market_type, avg(bid_price) FROM market_updates LATEST BY ts, market_type SAMPLE BY 1s",
+                modelOf("market_updates").timestamp("ts").col("market_type", ColumnType.SYMBOL).col("bid_price", ColumnType.DOUBLE)
+        );
+    }
+
+    @Test
     public void testLatestByNonSelectedColumn() throws Exception {
         assertQuery(
                 "select-choose x, y from (select-choose [x, y] x, y from (select [y, x, z] from tab t2 latest by z where x > 100) t2 where y > 0) t1",
@@ -3213,11 +3316,11 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testLatestByMultipleColumns() throws SqlException {
-        assertQuery(
-                "select-group-by ts, market_type, avg(bid_price) avg from (select [ts, market_type, bid_price] from market_updates timestamp (ts) latest by ts,market_type) sample by 1s",
-                "select ts, market_type, avg(bid_price) FROM market_updates LATEST BY ts, market_type SAMPLE BY 1s",
-                modelOf("market_updates").timestamp("ts").col("market_type", ColumnType.SYMBOL).col("bid_price", ColumnType.DOUBLE)
+    public void testLatestBySyntax() throws Exception {
+        assertSyntaxError(
+                "select * from tab latest",
+                24,
+                "by expected"
         );
     }
 
@@ -3410,6 +3513,18 @@ public class SqlParserTest extends AbstractGriffinTest {
                 modelOf("products").col("productId", ColumnType.INT).col("supplier", ColumnType.INT),
                 modelOf("suppliers").col("supplier", ColumnType.INT),
                 modelOf("shippers").col("shipper", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testNonAggFunctionWithAggFunctionSampleBy() throws SqlException {
+        assertQuery(
+                "select-group-by day, isin, last(start_price) last from (select-virtual [day(ts) day, isin, start_price] day(ts) day, isin, start_price, ts from (select [ts, isin, start_price] from xetra timestamp (ts) where isin = 'DE000A0KRJS4')) sample by 1d",
+                "select day(ts), isin, last(start_price) from xetra where isin='DE000A0KRJS4' sample by 1d",
+                modelOf("xetra")
+                        .timestamp("ts")
+                        .col("isin", ColumnType.SYMBOL)
+                        .col("start_price", ColumnType.DOUBLE)
         );
     }
 
@@ -3983,6 +4098,21 @@ public class SqlParserTest extends AbstractGriffinTest {
                         .col("contactId", ColumnType.SYMBOL)
                         .col("groupId", ColumnType.SYMBOL)
                         .timestamp()
+        );
+    }
+
+    @Test
+    public void testOrderByWithLatestBy() throws Exception {
+        assertQuery(
+                "select-choose id, vendor, pickup_datetime from (select [id, vendor, pickup_datetime] from trips timestamp (pickup_datetime) latest by vendor_id where pickup_datetime < '2009-01-01T00:02:19.000000Z') order by pickup_datetime",
+                "SELECT * FROM trips\n" +
+                        "latest by vendor_id\n" +
+                        "WHERE pickup_datetime < '2009-01-01T00:02:19.000000Z'\n" +
+                        "ORDER BY pickup_datetime",
+                modelOf("trips")
+                        .col("id", ColumnType.INT)
+                        .col("vendor", ColumnType.SYMBOL)
+                        .timestamp("pickup_datetime")
         );
     }
 
@@ -5150,7 +5280,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testSubQueryLimitLoHi() throws Exception {
         assertQuery(
-                "select-choose x, y from (select-choose [x, y] x, y from (select [x, y, z] from tab where x > z and x = y) limit 100,200) limit 150",
+                "select-choose x, y from (select [x, y] from (select-choose [y, x] x, y from (select [y, x, z] from tab where x > z) limit 100,200) _xQdbA1 where x = y) limit 150",
                 "(select x x, y y from tab where x > z limit 100,200) where x = y limit 150",
                 modelOf("tab").col("x", ColumnType.INT).col("y", ColumnType.INT).col("z", ColumnType.INT)
         );
@@ -5199,18 +5329,33 @@ public class SqlParserTest extends AbstractGriffinTest {
             }
         };
 
-        try (
-                CairoEngine engine = new CairoEngine(configuration);
-                SqlCompiler compiler = new SqlCompiler(engine)
-        ) {
-            assertSyntaxError(
-                    compiler,
-                    "select * from tab",
-                    14,
-                    "Cannot open file",
-                    modelOf("tab").col("x", ColumnType.INT)
-            );
-        }
+        assertMemoryLeak(() -> {
+            try (
+                    CairoEngine engine = new CairoEngine(configuration);
+                    SqlCompiler compiler = new SqlCompiler(engine)
+            ) {
+                TableModel[] tableModels = new TableModel[]{modelOf("tab").col("x", ColumnType.INT)};
+                try {
+                    try {
+                        for (int i = 0, n = tableModels.length; i < n; i++) {
+                            CairoTestUtils.create(tableModels[i]);
+                        }
+                        compiler.compile("select * from tab", sqlExecutionContext);
+                        Assert.fail("Exception expected");
+                    } catch (SqlException e) {
+                        Assert.assertEquals(14, e.getPosition());
+                        TestUtils.assertContains(e.getFlyweightMessage(), "could not open");
+                    }
+                } finally {
+                    for (int i = 0, n = tableModels.length; i < n; i++) {
+                        TableModel tableModel = tableModels[i];
+                        Path path = tableModel.getPath().of(tableModel.getCairoCfg().getRoot()).concat(tableModel.getName()).slash$();
+                        Assert.assertEquals(0, configuration.getFilesFacade().rmdir(path));
+                        tableModel.close();
+                    }
+                }
+            }
+        });
     }
 
     @Test
@@ -5237,18 +5382,18 @@ public class SqlParserTest extends AbstractGriffinTest {
                         Assert.fail("Exception expected");
                     } catch (SqlException e) {
                         Assert.assertEquals(14, e.getPosition());
-                        TestUtils.assertContains(e.getMessage(), "table is locked");
+                        TestUtils.assertContains(e.getFlyweightMessage(), "table is locked");
                     }
                 } finally {
                     for (int i = 0, n = tableModels.length; i < n; i++) {
                         TableModel tableModel = tableModels[i];
-                        Path path = tableModel.getPath().of(tableModel.getCairoCfg().getRoot()).concat(tableModel.getName()).put(Files.SEPARATOR).$();
-                        Assert.assertTrue(configuration.getFilesFacade().rmdir(path));
+                        Path path = tableModel.getPath().of(tableModel.getCairoCfg().getRoot()).concat(tableModel.getName()).slash$();
+                        Assert.assertEquals(0, configuration.getFilesFacade().rmdir(path));
                         tableModel.close();
                     }
                 }
             } finally {
-                engine.unlock(AllowAllCairoSecurityContext.INSTANCE, "tab", null);
+                engine.unlock(AllowAllCairoSecurityContext.INSTANCE, "tab", null, false);
             }
         });
     }
@@ -5486,15 +5631,6 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testLatestBySyntax() throws Exception {
-        assertSyntaxError(
-                "select * from tab latest",
-                24,
-                "by expected"
-        );
-    }
-
-    @Test
     public void testUnionMoveWhereIntoSubQuery() throws Exception {
         assertQuery(
                 "select-virtual 1 1, 2 2, 3 3 from (long_sequence(1)) union select-choose c.customerId customerId, o.customerId customerId1, o.x x from (select [customerId] from customers c outer join select [customerId, x] from (select-choose [customerId, x] customerId, x from (select [customerId, x] from orders o where x = 10 and customerId = 100) o) o on customerId = c.customerId where customerId = 100) c",
@@ -5709,6 +5845,69 @@ public class SqlParserTest extends AbstractGriffinTest {
         );
     }
 
+    @Test
+    public void testCreateTableWithO3() throws Exception {
+        assertCreateTable(
+                "create table x (a INT, t TIMESTAMP) timestamp(t) partition by DAY",
+                "create table x (a INT, t TIMESTAMP) timestamp(t) partition by DAY WITH o3MaxUncommittedRows=10000, o3CommitHysteresis=250ms;");
+    }
+
+    @Test
+    public void testCreateTableWithInvalidParameter1() throws Exception {
+        assertSyntaxError(
+                "create table x (a INT, t TIMESTAMP) timestamp(t) partition by DAY WITH o3MaxUncommittedRows=10000, o3invalid=250ms",
+                114,
+                "unrecognized o3invalid after WITH");
+    }
+
+    @Test
+    public void testCreateTableWithInvalidParameter2() throws Exception {
+        assertSyntaxError(
+                "create table x (a INT, t TIMESTAMP) timestamp(t) partition by DAY WITH o3MaxUncommittedRows=10000 x o3CommitHysteresis=250ms",
+                98,
+                "unexpected token: x");
+    }
+
+    @Test
+    public void testCreateTableWithPartialParameter1() throws Exception {
+        assertSyntaxError(
+                "create table x (a INT, t TIMESTAMP) timestamp(t) partition by DAY WITH o3MaxUncommittedRows=10000, o3CommitHysteresis=",
+                117,
+                "too few arguments for '=' [found=1,expected=2]");
+    }
+
+    @Test
+    public void testCreateTableWithPartialParameter2() throws Exception {
+        assertSyntaxError(
+                "create table x (a INT, t TIMESTAMP) timestamp(t) partition by DAY WITH o3MaxUncommittedRows=10000, o3CommitHysteresis",
+                117,
+                "expected parameter after WITH");
+    }
+
+    @Test
+    public void testCreateTableWithPartialParameter3() throws Exception {
+        assertSyntaxError(
+                "create table x (a INT, t TIMESTAMP) timestamp(t) partition by DAY WITH o3MaxUncommittedRows=10000,",
+                97,
+                "unexpected token: ,");
+    }
+
+    @Test
+    public void testCreateTableWitInvalidO3MaxUncommittedRows() throws Exception {
+        assertSyntaxError(
+                "create table x (a INT, t TIMESTAMP) timestamp(t) partition by DAY WITH o3MaxUncommittedRows=asif,",
+                97,
+                "could not parse o3MaxUncommittedRows value \"asif\"");
+    }
+
+    @Test
+    public void testCreateTableWitInvalidO3CommitHysteresis() throws Exception {
+        assertSyntaxError(
+                "create table x (a INT, t TIMESTAMP) timestamp(t) partition by DAY WITH o3CommitHysteresis=asif,",
+                99,
+                "invalid interval qualifier asif");
+    }
+
     private static void assertSyntaxError(
             SqlCompiler compiler,
             String query,
@@ -5726,14 +5925,14 @@ public class SqlParserTest extends AbstractGriffinTest {
                     Assert.fail("Exception expected");
                 } catch (SqlException e) {
                     Assert.assertEquals(position, e.getPosition());
-                    TestUtils.assertContains(e.getMessage(), contains);
+                    TestUtils.assertContains(e.getFlyweightMessage(), contains);
                 }
             });
         } finally {
             for (int i = 0, n = tableModels.length; i < n; i++) {
                 TableModel tableModel = tableModels[i];
-                Path path = tableModel.getPath().of(tableModel.getCairoCfg().getRoot()).concat(tableModel.getName()).put(Files.SEPARATOR).$();
-                Assert.assertTrue(configuration.getFilesFacade().rmdir(path));
+                Path path = tableModel.getPath().of(tableModel.getCairoCfg().getRoot()).concat(tableModel.getName()).slash$();
+                Assert.assertEquals(0, configuration.getFilesFacade().rmdir(path));
                 tableModel.close();
             }
         }
@@ -5830,8 +6029,8 @@ public class SqlParserTest extends AbstractGriffinTest {
             Assert.assertTrue(engine.releaseAllReaders());
             for (int i = 0, n = tableModels.length; i < n; i++) {
                 TableModel tableModel = tableModels[i];
-                Path path = tableModel.getPath().of(tableModel.getCairoCfg().getRoot()).concat(tableModel.getName()).put(Files.SEPARATOR).$();
-                Assert.assertTrue(configuration.getFilesFacade().rmdir(path));
+                Path path = tableModel.getPath().of(tableModel.getCairoCfg().getRoot()).concat(tableModel.getName()).slash$();
+                Assert.assertEquals(0, configuration.getFilesFacade().rmdir(path));
                 tableModel.close();
             }
         }

@@ -56,7 +56,7 @@ public class FilesTest {
         touch(new File(r, "d/1.txt"));
         touch(new File(r, "a/b/2.txt"));
         try (Path path = new Path().of(r.getAbsolutePath()).$()) {
-            Assert.assertTrue(Files.rmdir(path));
+            Assert.assertEquals(0, Files.rmdir(path));
             Assert.assertFalse(r.exists());
         }
     }
@@ -225,7 +225,7 @@ public class FilesTest {
         File temp = temporaryFolder.newFile();
         int fileSize = 2 * 1024 * 1024; // in MB
         byte[] page = new byte[1024 * 64];
-        var rnd = new Rnd();
+        Rnd rnd = new Rnd();
 
         for(int i = 0; i < page.length; i++) {
             page[i] = rnd.nextByte();

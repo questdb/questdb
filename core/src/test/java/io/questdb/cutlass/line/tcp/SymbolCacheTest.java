@@ -1,5 +1,7 @@
 package io.questdb.cutlass.line.tcp;
 
+import io.questdb.cairo.vm.MappedReadOnlyMemory;
+import io.questdb.cairo.vm.SinglePageMappedReadOnlyPageMemory;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -7,7 +9,6 @@ import io.questdb.cairo.AbstractCairoTest;
 import io.questdb.cairo.CairoTestUtils;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
-import io.questdb.cairo.ReadOnlyMemory;
 import io.questdb.cairo.TableModel;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
@@ -24,11 +25,13 @@ public class SymbolCacheTest extends AbstractCairoTest {
                     TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY)
                             .col("symCol1", ColumnType.SYMBOL)
                             .col("symCol2", ColumnType.SYMBOL);
-                    SymbolCache cache = new SymbolCache()) {
+                    SymbolCache cache = new SymbolCache()
+            ) {
                 CairoTestUtils.create(model);
-                try (TableWriter writer = new TableWriter(configuration, tableName);
-                        ReadOnlyMemory txMem = new ReadOnlyMemory()) {
-
+                try (
+                        TableWriter writer = new TableWriter(configuration, tableName);
+                        MappedReadOnlyMemory txMem = new SinglePageMappedReadOnlyPageMemory()
+                ) {
                     int symColIndex1 = writer.getColumnIndex("symCol1");
                     int symColIndex2 = writer.getColumnIndex("symCol2");
                     long symCountOffset = TableUtils.getSymbolWriterIndexOffset(symColIndex2);
@@ -109,7 +112,6 @@ public class SymbolCacheTest extends AbstractCairoTest {
                     writer.removeColumn("symCol1");
                     cache.close();
                     txMem.close();
-                    symColIndex1 = -1;
                     symColIndex2 = writer.getColumnIndex("symCol2");
                     symCountOffset = TableUtils.getSymbolWriterIndexOffset(symColIndex2);
                     transientSymCountOffset = TableUtils.getSymbolWriterTransientIndexOffset(symColIndex2);

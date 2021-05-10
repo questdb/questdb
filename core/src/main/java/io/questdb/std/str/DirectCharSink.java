@@ -24,19 +24,18 @@
 
 package io.questdb.std.str;
 
-import io.questdb.std.Mutable;
 import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
 
-public class DirectCharSink extends AbstractCharSink implements CharSequence, Closeable, Mutable {
+public class DirectCharSink extends AbstractCharSink implements MutableCharSink, Closeable {
     private long ptr;
-    private int capacity;
+    private long capacity;
     private long lo;
     private long hi;
 
-    public DirectCharSink(int capacity) {
+    public DirectCharSink(long capacity) {
         ptr = Unsafe.malloc(capacity);
         this.capacity = capacity;
         this.lo = ptr;
@@ -70,33 +69,19 @@ public class DirectCharSink extends AbstractCharSink implements CharSequence, Cl
 
     @Override
     public CharSink put(CharSequence cs) {
-        int l = cs.length();
-        int l2 = l * 2;
+        if (cs != null) {
+            int l = cs.length();
+            int l2 = l * 2;
 
-        if (lo + l2 >= hi) {
-            resize((int) Math.max(capacity * 2L, (lo - ptr + l2) * 2L));
+            if (lo + l2 >= hi) {
+                resize(Math.max(capacity * 2L, (lo - ptr + l2) * 2L));
+            }
+
+            for (int i = 0; i < l; i++) {
+                Unsafe.getUnsafe().putChar(lo + i * 2L, cs.charAt(i));
+            }
+            this.lo += l2;
         }
-
-        for (int i = 0; i < l; i++) {
-            Unsafe.getUnsafe().putChar(lo + i * 2, cs.charAt(i));
-        }
-        this.lo += l2;
-        return this;
-    }
-
-    @Override
-    public CharSink put(char[] chars, int start, int len) {
-        int l2 = len * 2;
-
-        if (lo + l2 >= hi) {
-            resize((int) Math.max(capacity * 2L, (lo - ptr + l2) * 2L));
-        }
-
-        for (int i = 0; i < len; i++) {
-            Unsafe.getUnsafe().putChar(lo + i * 2, chars[i + start]);
-        }
-
-        this.lo += l2;
         return this;
     }
 
@@ -110,18 +95,31 @@ public class DirectCharSink extends AbstractCharSink implements CharSequence, Cl
         return this;
     }
 
+    @Override
+    public CharSink put(char[] chars, int start, int len) {
+        int l2 = len * 2;
+
+        if (lo + l2 >= hi) {
+            resize((int) Math.max(capacity * 2L, (lo - ptr + l2) * 2L));
+        }
+
+        for (int i = 0; i < len; i++) {
+            Unsafe.getUnsafe().putChar(lo + i * 2L, chars[i + start]);
+        }
+
+        this.lo += l2;
+        return this;
+    }
+
     @NotNull
     @Override
     public String toString() {
         return AbstractCharSequence.getString(this);
     }
 
-    private void resize(int cap) {
-        long temp = Unsafe.malloc(cap);
+    private void resize(long cap) {
+        long temp = Unsafe.realloc(ptr, capacity, cap);
         int len = (int) (lo - ptr);
-        Unsafe.getUnsafe().copyMemory(ptr, temp, len);
-        Unsafe.free(ptr, capacity);
-
         this.ptr = temp;
         this.capacity = cap;
         this.lo = ptr + len;

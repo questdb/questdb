@@ -401,7 +401,7 @@ public class CairoLineProtoParserTest extends AbstractCairoTest {
         };
 
         try (Path path = new Path()) {
-            Files.mkdirs(path.of(root).concat("x").put(Files.SEPARATOR).$(), configuration.getMkDirMode());
+            Files.mkdirs(path.of(root).concat("x").slash$(), configuration.getMkDirMode());
             assertThat(expected, lines, "y", configuration);
             Assert.assertEquals(TableUtils.TABLE_RESERVED, TableUtils.exists(configuration.getFilesFacade(), path, root, "x"));
         }
@@ -565,7 +565,7 @@ public class CairoLineProtoParserTest extends AbstractCairoTest {
 
     private void assertTable(CharSequence expected, CharSequence tableName) {
         try (TableReader reader = new TableReader(configuration, tableName)) {
-            assertThat(expected, reader.getCursor(), reader.getMetadata(), true);
+            assertCursorTwoPass(expected, reader.getCursor(), reader.getMetadata());
         }
     }
 

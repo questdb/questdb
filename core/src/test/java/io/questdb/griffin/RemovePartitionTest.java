@@ -74,7 +74,6 @@ public class RemovePartitionTest extends AbstractGriffinTest {
                 reader.reload();
                 cursor.toTop();
 
-
                 String expectedAfterPartitionDelete = "a\tb\tt\n" +
                         "1576838676\t0.08057877795249069\t1970-01-11T00:00:00.000000Z\n" +
                         "-684086147\t0.3806487278648183\t1970-01-11T00:16:40.000000Z\n" +
@@ -213,9 +212,11 @@ public class RemovePartitionTest extends AbstractGriffinTest {
                         "413500238\t0.19676893721907063\t1970-01-12T13:13:20.000000Z\n" +
                         "-227038447\t0.4799415921194079\t1970-01-12T13:30:00.000000Z\n";
 
-                sink.clear();
-                printer.print(cursor, reader.getMetadata(), true);
-                TestUtils.assertEquals(expectedAfterPartitionDelete, sink);
+                TestUtils.assertReader(
+                        expectedAfterPartitionDelete,
+                        reader,
+                        sink
+                );
             }
         });
     }

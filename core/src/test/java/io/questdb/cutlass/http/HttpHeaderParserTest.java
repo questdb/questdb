@@ -89,7 +89,7 @@ public class HttpHeaderParserTest {
                 hp.parse(p, p + v.length(), false);
                 Assert.fail();
             } catch (HttpException e) {
-                TestUtils.assertContains(e.getMessage(), "Malformed Content-Disposition header");
+                TestUtils.assertContains(e.getFlyweightMessage(), "Malformed Content-Disposition header");
             } finally {
                 Unsafe.free(p, v.length());
             }
@@ -106,7 +106,7 @@ public class HttpHeaderParserTest {
                 hp.parse(p, p + v.length(), false);
                 Assert.fail();
             } catch (HttpException e) {
-                TestUtils.assertContains(e.getMessage(), "missing value [key=name]");
+                TestUtils.assertContains(e.getFlyweightMessage(), "missing value [key=name]");
             } finally {
                 Unsafe.free(p, v.length());
             }
@@ -123,7 +123,7 @@ public class HttpHeaderParserTest {
                 hp.parse(p, p + v.length(), false);
                 Assert.fail();
             } catch (HttpException e) {
-                TestUtils.assertContains(e.getMessage(), "unclosed quote");
+                TestUtils.assertContains(e.getFlyweightMessage(), "unclosed quote");
             } finally {
                 Unsafe.free(p, v.length());
             }
@@ -188,7 +188,7 @@ public class HttpHeaderParserTest {
                 hp.parse(p, p + v.length(), false);
                 Assert.fail();
             } catch (HttpException e) {
-                TestUtils.assertContains(e.getMessage(), "Malformed Content-Type header");
+                TestUtils.assertContains(e.getFlyweightMessage(), "Malformed Content-Type header");
             } finally {
                 Unsafe.free(p, v.length());
 
@@ -262,7 +262,7 @@ public class HttpHeaderParserTest {
             hp.parse(p, p + v.length(), true);
             Assert.fail();
         } catch (HttpException e) {
-            TestUtils.assertContains(e.getMessage(), "header is too large");
+            TestUtils.assertContains(e.getFlyweightMessage(), "header is too large");
         } finally {
             Unsafe.free(p, v.length());
         }
@@ -276,7 +276,7 @@ public class HttpHeaderParserTest {
             hp.parse(p, p + v.length(), true);
             Assert.fail();
         } catch (HttpException e) {
-            TestUtils.assertContains(e.getMessage(), "url is too long");
+            TestUtils.assertContains(e.getFlyweightMessage(), "url is too long");
         } finally {
             Unsafe.free(p, v.length());
         }
@@ -292,7 +292,7 @@ public class HttpHeaderParserTest {
                 hp.parse(p, p + v.length(), true);
                 Assert.fail();
             } catch (HttpException e) {
-                TestUtils.assertContains(e.getMessage(), "invalid query encoding");
+                TestUtils.assertContains(e.getFlyweightMessage(), "invalid query encoding");
             } finally {
                 Unsafe.free(p, v.length());
             }
@@ -309,7 +309,7 @@ public class HttpHeaderParserTest {
                 hp.parse(p, p + v.length(), true);
                 Assert.fail();
             } catch (HttpException e) {
-                TestUtils.assertContains(e.getMessage(), "invalid query encoding");
+                TestUtils.assertContains(e.getFlyweightMessage(), "invalid query encoding");
             } finally {
                 Unsafe.free(p, v.length());
             }
@@ -488,6 +488,6 @@ public class HttpHeaderParserTest {
         TestUtils.assertEquals("1", hp.getUrlParam("x"));
         TestUtils.assertEquals("&b", hp.getUrlParam("a"));
         Assert.assertNull(hp.getUrlParam("c"));
-        Assert.assertNull(hp.getHeader("xxx"));
+        Assert.assertNull(hp.getHeader("merge_copy_var_column"));
     }
 }

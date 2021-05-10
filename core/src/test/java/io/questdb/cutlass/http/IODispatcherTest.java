@@ -24,37 +24,7 @@
 
 package io.questdb.cutlass.http;
 
-import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
-
-import java.io.BufferedInputStream;
-import java.io.IOException;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.CyclicBarrier;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicLong;
-import java.util.concurrent.locks.LockSupport;
-
-import org.jetbrains.annotations.NotNull;
-import org.junit.Assert;
-import org.junit.Before;
-import org.junit.Ignore;
-import org.junit.Rule;
-import org.junit.Test;
-import org.junit.rules.TemporaryFolder;
-
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.CairoTestUtils;
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.DefaultCairoConfiguration;
-import io.questdb.cairo.PartitionBy;
-import io.questdb.cairo.RecordCursorPrinter;
-import io.questdb.cairo.TableModel;
-import io.questdb.cairo.TableReader;
-import io.questdb.cairo.TableUtils;
-import io.questdb.cairo.TableWriter;
-import io.questdb.cairo.TestRecord;
+import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cutlass.NetUtils;
@@ -70,32 +40,9 @@ import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.engine.functions.test.TestLatchedCounterFunctionFactory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.mp.MPSequence;
-import io.questdb.mp.RingQueue;
-import io.questdb.mp.SCSequence;
-import io.questdb.mp.SOCountDownLatch;
-import io.questdb.mp.WorkerPool;
-import io.questdb.mp.WorkerPoolConfiguration;
-import io.questdb.network.DefaultIODispatcherConfiguration;
-import io.questdb.network.IOContext;
-import io.questdb.network.IOContextFactory;
-import io.questdb.network.IODispatcher;
-import io.questdb.network.IODispatcherConfiguration;
-import io.questdb.network.IODispatchers;
-import io.questdb.network.IOOperation;
-import io.questdb.network.Net;
-import io.questdb.network.NetworkFacade;
-import io.questdb.network.NetworkFacadeImpl;
-import io.questdb.network.PeerDisconnectedException;
-import io.questdb.network.PeerIsSlowToReadException;
-import io.questdb.std.Chars;
-import io.questdb.std.Files;
-import io.questdb.std.ObjList;
-import io.questdb.std.Os;
-import io.questdb.std.Rnd;
-import io.questdb.std.StationaryMillisClock;
-import io.questdb.std.Unsafe;
-import io.questdb.std.Zip;
+import io.questdb.mp.*;
+import io.questdb.network.*;
+import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.AbstractCharSequence;
@@ -103,15 +50,29 @@ import io.questdb.std.str.ByteSequence;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
+import org.junit.Assert;
+import org.junit.Before;
+import org.junit.Rule;
+import org.junit.Test;
+import org.junit.rules.TemporaryFolder;
+
+import java.io.BufferedInputStream;
+import java.io.InputStream;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.locks.LockSupport;
+
+import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 
 public class IODispatcherTest {
     private static final Log LOG = LogFactory.getLog(IODispatcherTest.class);
     private static final RescheduleContext EmptyRescheduleContext = (retry) -> {
     };
-
-    @Rule
-    public TemporaryFolder temp = new TemporaryFolder();
-    private long configuredMaxQueryResponseRowLimit = Long.MAX_VALUE;
+    private static final RecordCursorPrinter printer = new RecordCursorPrinter();
     private final String ValidImportResponse = "HTTP/1.1 200 OK\r\n" +
             "Server: questDB/1.0\r\n" +
             "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
@@ -136,6 +97,9 @@ public class IODispatcherTest {
             "\r\n" +
             "00\r\n" +
             "\r\n";
+    @Rule
+    public TemporaryFolder temp = new TemporaryFolder();
+    private long configuredMaxQueryResponseRowLimit = Long.MAX_VALUE;
 
     public static void createTestTable(CairoConfiguration configuration, int n) {
         try (TableModel model = new TableModel(configuration, "y", PartitionBy.NONE)) {
@@ -239,6 +203,7 @@ public class IODispatcherTest {
 
                         Assert.assertEquals(0, Net.close(fd));
                         LOG.info().$("closed [fd=").$(fd).$(']').$();
+                        fd = -1;
 
                         contextClosedLatch.await();
 
@@ -250,7 +215,9 @@ public class IODispatcherTest {
                         Net.freeSockAddr(sockAddr);
                     }
                 } finally {
-                    Net.close(fd);
+                    if (fd != -1) {
+                        Net.close(fd);
+                    }
                 }
             }
         });
@@ -270,7 +237,7 @@ public class IODispatcherTest {
 
             try (IODispatcher<HttpConnectionContext> dispatcher = IODispatchers.create(
                     new DefaultIODispatcherConfiguration(),
-                    new IOContextFactory<>() {
+                    new IOContextFactory<HttpConnectionContext>() {
                         @Override
                         public HttpConnectionContext newInstance(long fd, IODispatcher<HttpConnectionContext> dispatcher1) {
                             connectLatch.countDown();
@@ -333,6 +300,7 @@ public class IODispatcherTest {
 
                         Assert.assertEquals(0, Net.close(fd));
                         LOG.info().$("closed [fd=").$(fd).$(']').$();
+                        fd = -1;
 
                         contextClosedLatch.await();
 
@@ -344,7 +312,9 @@ public class IODispatcherTest {
                         Net.freeSockAddr(sockAddr);
                     }
                 } finally {
-                    Net.close(fd);
+                    if (fd != -1) {
+                        Net.close(fd);
+                    }
                 }
 
                 Assert.assertEquals(1, closeCount.get());
@@ -937,6 +907,101 @@ public class IODispatcherTest {
     }
 
     @Test
+    public void testImportEpochTimestamp() throws Exception {
+
+        new HttpQueryTestBuilder()
+                .withTempFolder(temp)
+                .withWorkerCount(2)
+                .withHttpServerConfigBuilder(
+                        new HttpServerConfigurationBuilder()
+                                .withNetwork(NetworkFacadeImpl.INSTANCE)
+                                .withDumpingTraffic(false)
+                                .withAllowDeflateBeforeSend(false)
+                                .withHttpProtocolVersion("HTTP/1.1 ")
+                                .withServerKeepAlive(true)
+                )
+                .run((engine) -> {
+                            SqlExecutionContextImpl executionContext = new SqlExecutionContextImpl(engine, 1);
+                            try (SqlCompiler compiler = new SqlCompiler(engine)) {
+                                compiler.compile("create table test (ts timestamp, value int) timestamp(ts) partition by DAY", executionContext);
+
+                                sendAndReceive(
+                                        NetworkFacadeImpl.INSTANCE,
+                                        "POST /upload?name=test HTTP/1.1\r\n" +
+                                                "Host: localhost:9000\r\n" +
+                                                "User-Agent: curl/7.71.1\r\n" +
+                                                "Accept: */*\r\n" +
+                                                "Content-Length: 372\r\n" +
+                                                "Content-Type: multipart/form-data; boundary=----WebKitFormBoundaryOsOAD9cPKyHuxyBV\r\n" +
+                                                "\r\n" +
+                                                "------WebKitFormBoundaryOsOAD9cPKyHuxyBV\r\n" +
+                                                "Content-Disposition: form-data; name=\"data\"\r\n" +
+                                                "\r\n" +
+                                                "100000000,1000\r\n" +
+                                                "100000001,2000\r\n" +
+                                                "100000001,2000\r\n" +
+                                                "100000001,2000\r\n" +
+                                                "100000001,2000\r\n" +
+                                                "100000001,2000\r\n" +
+                                                "100000001,2000\r\n" +
+                                                "100000001,2000\n" +
+                                                "100000001,2000\r\n" +
+                                                "100000001,2000\r\n" +
+                                                "100000001,2000\r\n" +
+                                                "\r\n" +
+                                                "------WebKitFormBoundaryOsOAD9cPKyHuxyBV--",
+                                        "HTTP/1.1 200 OK\r\n" +
+                                                "Server: questDB/1.0\r\n" +
+                                                "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                                                "Transfer-Encoding: chunked\r\n" +
+                                                "Content-Type: text/plain; charset=utf-8\r\n" +
+                                                "\r\n" +
+                                                "0507\r\n" +
+                                                "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                                                "|      Location:  |                                              test  |        Pattern  | Locale  |      Errors  |\r\n" +
+                                                "|   Partition by  |                                               DAY  |                 |         |              |\r\n" +
+                                                "|      Timestamp  |                                                ts  |                 |         |              |\r\n" +
+                                                "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                                                "|   Rows handled  |                                                11  |                 |         |              |\r\n" +
+                                                "|  Rows imported  |                                                11  |                 |         |              |\r\n" +
+                                                "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                                                "|              0  |                                                ts  |                TIMESTAMP  |           0  |\r\n" +
+                                                "|              1  |                                             value  |                      INT  |           0  |\r\n" +
+                                                "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                                                "\r\n" +
+                                                "00\r\n" +
+                                                "\r\n",
+                                        1,
+                                        0,
+                                        false,
+                                        true
+                                );
+
+                                StringSink sink = new StringSink();
+                                TestUtils.assertSql(
+                                        compiler,
+                                        executionContext,
+                                        "test",
+                                        sink,
+                                        "ts\tvalue\n" +
+                                                "1970-01-01T00:01:40.000000Z\t1000\n" +
+                                                "1970-01-01T00:01:40.000001Z\t2000\n" +
+                                                "1970-01-01T00:01:40.000001Z\t2000\n" +
+                                                "1970-01-01T00:01:40.000001Z\t2000\n" +
+                                                "1970-01-01T00:01:40.000001Z\t2000\n" +
+                                                "1970-01-01T00:01:40.000001Z\t2000\n" +
+                                                "1970-01-01T00:01:40.000001Z\t2000\n" +
+                                                "1970-01-01T00:01:40.000001Z\t2000\n" +
+                                                "1970-01-01T00:01:40.000001Z\t2000\n" +
+                                                "1970-01-01T00:01:40.000001Z\t2000\n" +
+                                                "1970-01-01T00:01:40.000001Z\t2000\n"
+                                );
+                            }
+                        }
+                );
+    }
+
+    @Test
     public void testImportForceUnknownDate() throws Exception {
         testImport(
                 "HTTP/1.1 200 OK\r\n" +
@@ -1125,7 +1190,7 @@ public class IODispatcherTest {
                         "--------------------------27d997ca93d2689d--"
                 , NetworkFacadeImpl.INSTANCE
                 , false
-                , 1 // todo: we need to fix writer queuing and increase request count
+                , 5
         );
     }
 
@@ -1196,7 +1261,7 @@ public class IODispatcherTest {
                     }
                 },
                 false,
-                1 // todo: fix writer queue and increase request count
+                10
         );
     }
 
@@ -1305,8 +1370,6 @@ public class IODispatcherTest {
                         "\r\n" +
                         "--------------------------27d997ca93d2689d--";
 
-                String expectedResponse = ValidImportResponse;
-
 
                 NetworkFacade nf = new NetworkFacadeImpl() {
                     int totalSent = 0;
@@ -1333,7 +1396,7 @@ public class IODispatcherTest {
                     sendAndReceive(
                             nf,
                             request,
-                            expectedResponse,
+                            ValidImportResponse,
                             3,
                             0,
                             false
@@ -1687,186 +1750,6 @@ public class IODispatcherTest {
                             +
                             "00\r\n\r\n";
 
-                    sendAndReceive(nf, request, expectedResponse, 10, 100L, false);
-                } finally {
-                    workerPool.halt();
-                }
-            }
-        });
-    }
-
-    @Test
-    public void testJsonQueryWithCompressedResults1() throws Exception {
-        Zip.init();
-        assertMemoryLeak(() -> {
-            final NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
-            final String baseDir = temp.getRoot().getAbsolutePath();
-            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(nf, baseDir, 256, false, true);
-            final WorkerPool workerPool = new WorkerPool(new WorkerPoolConfiguration() {
-                @Override
-                public int[] getWorkerAffinity() {
-                    return new int[] { -1, -1 };
-                }
-
-                @Override
-                public int getWorkerCount() {
-                    return 2;
-                }
-
-                @Override
-                public boolean haltOnError() {
-                    return false;
-                }
-            });
-            try (
-                    CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir));
-                    HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, false)) {
-                httpServer.bind(new HttpRequestProcessorFactory() {
-                    @Override
-                    public HttpRequestProcessor newInstance() {
-                        return new StaticContentProcessor(httpConfiguration);
-                    }
-
-                    @Override
-                    public String getUrl() {
-                        return HttpServerConfiguration.DEFAULT_PROCESSOR_URL;
-                    }
-                });
-
-                httpServer.bind(new HttpRequestProcessorFactory() {
-                    @Override
-                    public HttpRequestProcessor newInstance() {
-                        return new JsonQueryProcessor(
-                                httpConfiguration.getJsonQueryProcessorConfiguration(),
-                                engine,
-                                null,
-                                workerPool.getWorkerCount());
-                    }
-
-                    @Override
-                    public String getUrl() {
-                        return "/query";
-                    }
-                });
-
-                workerPool.start(LOG);
-
-                try {
-                    // create table with all column types
-                    CairoTestUtils.createTestTable(
-                            engine.getConfiguration(),
-                            30,
-                            new Rnd(),
-                            new TestRecord.ArrayBinarySequence());
-
-                    // send multipart request to server
-                    final String request = "GET /query?query=x HTTP/1.1\r\n" +
-                            "Host: localhost:9001\r\n" +
-                            "Connection: keep-alive\r\n" +
-                            "Cache-Control: max-age=0\r\n" +
-                            "Upgrade-Insecure-Requests: 1\r\n" +
-                            "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
-                            "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n" +
-                            "Accept-Encoding: gzip, deflate, br\r\n" +
-                            "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
-                            "\r\n";
-
-                    ByteArrayResponse expectedResponse;
-                    try (BufferedInputStream is = new BufferedInputStream(getClass().getResourceAsStream(getClass().getSimpleName() + ".testJsonQueryWithCompressedResults1.bin"))) {
-                        byte bytes[] = new byte[20 * 1024];
-                        int len = is.read(bytes);
-                        expectedResponse = new ByteArrayResponse(bytes, len);
-                    }
-                    sendAndReceive(nf, request, expectedResponse, 10, 100L, false);
-                } finally {
-                    workerPool.halt();
-                }
-            }
-        });
-    }
-
-    @Test
-    public void testJsonQueryWithCompressedResults2() throws Exception {
-        Zip.init();
-        assertMemoryLeak(() -> {
-            final NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
-            final String baseDir = temp.getRoot().getAbsolutePath();
-            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(nf, baseDir, 4096, false, true);
-            final WorkerPool workerPool = new WorkerPool(new WorkerPoolConfiguration() {
-                @Override
-                public int[] getWorkerAffinity() {
-                    return new int[] { -1, -1 };
-                }
-
-                @Override
-                public int getWorkerCount() {
-                    return 2;
-                }
-
-                @Override
-                public boolean haltOnError() {
-                    return false;
-                }
-            });
-            try (
-                    CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir));
-                    HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, false)) {
-                httpServer.bind(new HttpRequestProcessorFactory() {
-                    @Override
-                    public HttpRequestProcessor newInstance() {
-                        return new StaticContentProcessor(httpConfiguration);
-                    }
-
-                    @Override
-                    public String getUrl() {
-                        return HttpServerConfiguration.DEFAULT_PROCESSOR_URL;
-                    }
-                });
-
-                httpServer.bind(new HttpRequestProcessorFactory() {
-                    @Override
-                    public HttpRequestProcessor newInstance() {
-                        return new JsonQueryProcessor(
-                                httpConfiguration.getJsonQueryProcessorConfiguration(),
-                                engine,
-                                null,
-                                workerPool.getWorkerCount());
-                    }
-
-                    @Override
-                    public String getUrl() {
-                        return "/query";
-                    }
-                });
-
-                workerPool.start(LOG);
-
-                try {
-                    // create table with all column types
-                    CairoTestUtils.createTestTable(
-                            engine.getConfiguration(),
-                            1000,
-                            new Rnd(),
-                            new TestRecord.ArrayBinarySequence());
-
-                    // send multipart request to server
-                    final String request = "GET /query?query=x HTTP/1.1\r\n" +
-                            "Host: localhost:9001\r\n" +
-                            "Connection: keep-alive\r\n" +
-                            "Cache-Control: max-age=0\r\n" +
-                            "Upgrade-Insecure-Requests: 1\r\n" +
-                            "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
-                            "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n" +
-                            "Accept-Encoding: gzip, deflate, br\r\n" +
-                            "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
-                            "\r\n";
-
-                    ByteArrayResponse expectedResponse;
-                    try (BufferedInputStream is = new BufferedInputStream(getClass().getResourceAsStream(getClass().getSimpleName() + ".testJsonQueryWithCompressedResults2.bin"))) {
-                        byte bytes[] = new byte[100 * 1024];
-                        int len = is.read(bytes);
-                        expectedResponse = new ByteArrayResponse(bytes, len);
-                    }
                     sendAndReceive(nf, request, expectedResponse, 10, 100L, false);
                 } finally {
                     workerPool.halt();
@@ -2789,46 +2672,6 @@ public class IODispatcherTest {
                 });
     }
 
-    private static class QueryThread extends Thread {
-        private final String[][] requests;
-        private final int count;
-        private final CyclicBarrier barrier;
-        private final CountDownLatch latch;
-        private final AtomicInteger errorCounter;
-
-        public QueryThread(String[][] requests, int count, CyclicBarrier barrier, CountDownLatch latch, AtomicInteger errorCounter) {
-            this.requests = requests;
-            this.count = count;
-            this.barrier = barrier;
-            this.latch = latch;
-            this.errorCounter = errorCounter;
-        }
-
-        @Override
-        public void run() {
-            final Rnd rnd = new Rnd();
-            try {
-                new SendAndReceiveRequestBuilder().executeMany(requester -> {
-                    barrier.await();
-                    for (int i = 0; i < count; i++) {
-                        int index = rnd.nextPositiveInt() % requests.length;
-                        try {
-                            requester.execute(requests[index][0], requests[index][1]);
-                        } catch (Throwable e) {
-                            System.out.println("erm: " + index + ", ts=" + Timestamps.toString(Os.currentTimeMicros()));
-                            throw e;
-                        }
-                    }
-                });
-            } catch (Throwable e) {
-                e.printStackTrace();
-                errorCounter.incrementAndGet();
-            } finally {
-                latch.countDown();
-            }
-        }
-    }
-
     @Test
     public void testJsonQueryMultipleRows() throws Exception {
         testJsonQuery(
@@ -3601,6 +3444,188 @@ public class IODispatcherTest {
     }
 
     @Test
+    public void testJsonQueryWithCompressedResults1() throws Exception {
+        Zip.init();
+        assertMemoryLeak(() -> {
+            final NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
+            final String baseDir = temp.getRoot().getAbsolutePath();
+            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(nf, baseDir, 256, false, true);
+            final WorkerPool workerPool = new WorkerPool(new WorkerPoolConfiguration() {
+                @Override
+                public int[] getWorkerAffinity() {
+                    return new int[]{-1, -1};
+                }
+
+                @Override
+                public int getWorkerCount() {
+                    return 2;
+                }
+
+                @Override
+                public boolean haltOnError() {
+                    return false;
+                }
+            });
+            try (
+                    CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir));
+                    HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, false)) {
+                httpServer.bind(new HttpRequestProcessorFactory() {
+                    @Override
+                    public HttpRequestProcessor newInstance() {
+                        return new StaticContentProcessor(httpConfiguration);
+                    }
+
+                    @Override
+                    public String getUrl() {
+                        return HttpServerConfiguration.DEFAULT_PROCESSOR_URL;
+                    }
+                });
+
+                httpServer.bind(new HttpRequestProcessorFactory() {
+                    @Override
+                    public HttpRequestProcessor newInstance() {
+                        return new JsonQueryProcessor(
+                                httpConfiguration.getJsonQueryProcessorConfiguration(),
+                                engine,
+                                null,
+                                workerPool.getWorkerCount());
+                    }
+
+                    @Override
+                    public String getUrl() {
+                        return "/query";
+                    }
+                });
+
+                workerPool.start(LOG);
+
+                try {
+                    // create table with all column types
+                    CairoTestUtils.createTestTable(
+                            engine.getConfiguration(),
+                            30,
+                            new Rnd(),
+                            new TestRecord.ArrayBinarySequence());
+
+                    // send multipart request to server
+                    final String request = "GET /query?query=x HTTP/1.1\r\n" +
+                            "Host: localhost:9001\r\n" +
+                            "Connection: keep-alive\r\n" +
+                            "Cache-Control: max-age=0\r\n" +
+                            "Upgrade-Insecure-Requests: 1\r\n" +
+                            "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
+                            "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n" +
+                            "Accept-Encoding: gzip, deflate, br\r\n" +
+                            "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                            "\r\n";
+
+                    ByteArrayResponse expectedResponse;
+                    try (InputStream is = getClass().getResourceAsStream(getClass().getSimpleName() + ".testJsonQueryWithCompressedResults1.bin")) {
+                        Assert.assertNotNull(is);
+                        byte[] bytes = new byte[20 * 1024];
+                        int len = is.read(bytes);
+                        expectedResponse = new ByteArrayResponse(bytes, len);
+                    }
+                    sendAndReceive(nf, request, expectedResponse, 10, 100L, false);
+                } finally {
+                    workerPool.halt();
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testJsonQueryWithCompressedResults2() throws Exception {
+        Zip.init();
+        assertMemoryLeak(() -> {
+            final NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
+            final String baseDir = temp.getRoot().getAbsolutePath();
+            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(nf, baseDir, 4096, false, true);
+            final WorkerPool workerPool = new WorkerPool(new WorkerPoolConfiguration() {
+                @Override
+                public int[] getWorkerAffinity() {
+                    return new int[]{-1, -1};
+                }
+
+                @Override
+                public int getWorkerCount() {
+                    return 2;
+                }
+
+                @Override
+                public boolean haltOnError() {
+                    return false;
+                }
+            });
+            try (
+                    CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir));
+                    HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, false)) {
+                httpServer.bind(new HttpRequestProcessorFactory() {
+                    @Override
+                    public HttpRequestProcessor newInstance() {
+                        return new StaticContentProcessor(httpConfiguration);
+                    }
+
+                    @Override
+                    public String getUrl() {
+                        return HttpServerConfiguration.DEFAULT_PROCESSOR_URL;
+                    }
+                });
+
+                httpServer.bind(new HttpRequestProcessorFactory() {
+                    @Override
+                    public HttpRequestProcessor newInstance() {
+                        return new JsonQueryProcessor(
+                                httpConfiguration.getJsonQueryProcessorConfiguration(),
+                                engine,
+                                null,
+                                workerPool.getWorkerCount());
+                    }
+
+                    @Override
+                    public String getUrl() {
+                        return "/query";
+                    }
+                });
+
+                workerPool.start(LOG);
+
+                try {
+                    // create table with all column types
+                    CairoTestUtils.createTestTable(
+                            engine.getConfiguration(),
+                            1000,
+                            new Rnd(),
+                            new TestRecord.ArrayBinarySequence());
+
+                    // send multipart request to server
+                    final String request = "GET /query?query=x HTTP/1.1\r\n" +
+                            "Host: localhost:9001\r\n" +
+                            "Connection: keep-alive\r\n" +
+                            "Cache-Control: max-age=0\r\n" +
+                            "Upgrade-Insecure-Requests: 1\r\n" +
+                            "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
+                            "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n" +
+                            "Accept-Encoding: gzip, deflate, br\r\n" +
+                            "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                            "\r\n";
+
+                    ByteArrayResponse expectedResponse;
+                    try (InputStream is = getClass().getResourceAsStream(getClass().getSimpleName() + ".testJsonQueryWithCompressedResults2.bin")) {
+                        Assert.assertNotNull(is);
+                        byte[] bytes = new byte[100 * 1024];
+                        int len = is.read(bytes);
+                        expectedResponse = new ByteArrayResponse(bytes, len);
+                    }
+                    sendAndReceive(nf, request, expectedResponse, 10, 100L, false);
+                } finally {
+                    workerPool.halt();
+                }
+            }
+        });
+    }
+
+    @Test
     public void testJsonQueryWithInterruption() throws Exception {
         assertMemoryLeak(() -> {
             final NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
@@ -3708,7 +3733,6 @@ public class IODispatcherTest {
                         }
                     });
                     long fd = nf.socketTcp(true);
-                    String response;
                     try {
                         long sockAddr = nf.sockaddr("127.0.0.1", 9001);
                         try {
@@ -3721,7 +3745,7 @@ public class IODispatcherTest {
                             long bufLen = request.length();
                             long ptr = Unsafe.malloc(bufLen);
                             try {
-                                response = new SendAndReceiveRequestBuilder()
+                                new SendAndReceiveRequestBuilder()
                                         .withNetworkFacade(nf)
                                         .withPauseBetweenSendAndReceive(0)
                                         .withPrintOnly(false)
@@ -3857,7 +3881,7 @@ public class IODispatcherTest {
 
             try (IODispatcher<HttpConnectionContext> dispatcher = IODispatchers.create(
                     configuration,
-                    new IOContextFactory<>() {
+                    new IOContextFactory<HttpConnectionContext>() {
                         @Override
                         public HttpConnectionContext newInstance(long fd, IODispatcher<HttpConnectionContext> dispatcher1) {
                             openCount.incrementAndGet();
@@ -4712,7 +4736,7 @@ public class IODispatcherTest {
 
             try (IODispatcher<HttpConnectionContext> dispatcher = IODispatchers.create(
                     new DefaultIODispatcherConfiguration(),
-                    new IOContextFactory<>() {
+                    new IOContextFactory<HttpConnectionContext>() {
                         @Override
                         public HttpConnectionContext newInstance(long fd, IODispatcher<HttpConnectionContext> dispatcher1) {
                             connectLatch.countDown();
@@ -4801,6 +4825,7 @@ public class IODispatcherTest {
                         requestReceivedLatch.await();
                         Assert.assertEquals(0, Net.close(fd));
                         LOG.info().$("closed [fd=").$(fd).$(']').$();
+                        fd = -1;
 
                         contextClosedLatch.await();
 
@@ -4814,7 +4839,9 @@ public class IODispatcherTest {
                         Net.freeSockAddr(sockAddr);
                     }
                 } finally {
-                    Net.close(fd);
+                    if (fd != -1) {
+                        Net.close(fd);
+                    }
                 }
 
                 Assert.assertEquals(1, closeCount.get());
@@ -4878,7 +4905,7 @@ public class IODispatcherTest {
 
             try (IODispatcher<HttpConnectionContext> dispatcher = IODispatchers.create(
                     new DefaultIODispatcherConfiguration(),
-                    new IOContextFactory<>() {
+                    new IOContextFactory<HttpConnectionContext>() {
                         @Override
                         public HttpConnectionContext newInstance(long fd, IODispatcher<HttpConnectionContext> dispatcher1) {
                             connectLatch.countDown();
@@ -4986,6 +5013,7 @@ public class IODispatcherTest {
 
                         Assert.assertEquals(0, Net.close(fd));
                         LOG.info().$("closed [fd=").$(fd).$(']').$();
+                        fd = -1;
 
                         contextClosedLatch.await();
 
@@ -4999,7 +5027,9 @@ public class IODispatcherTest {
                         Net.freeSockAddr(sockAddr);
                     }
                 } finally {
-                    Net.close(fd);
+                    if (fd != -1) {
+                        Net.close(fd);
+                    }
                 }
 
                 Assert.assertEquals(1, closeCount.get());
@@ -5038,7 +5068,7 @@ public class IODispatcherTest {
                             return 500;
                         }
                     },
-                    new IOContextFactory<>() {
+                    new IOContextFactory<HttpConnectionContext>() {
                         @Override
                         public HttpConnectionContext newInstance(long fd, IODispatcher<HttpConnectionContext> dispatcher1) {
                             connectLatch.countDown();
@@ -5266,7 +5296,7 @@ public class IODispatcherTest {
 
             final NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
             final AtomicInteger requestsReceived = new AtomicInteger();
-
+            final AtomicBoolean finished = new AtomicBoolean(false);
             try (IODispatcher<HttpConnectionContext> dispatcher = IODispatchers.create(
                     new DefaultIODispatcherConfiguration(),
                     (fd, dispatcher1) -> new HttpConnectionContext(httpServerConfiguration.getHttpContextConfiguration()).of(fd, dispatcher1)
@@ -5361,7 +5391,7 @@ public class IODispatcherTest {
                     new Thread(() -> {
                         long sockAddr = Net.sockaddr("127.0.0.1", 9001);
                         try {
-                            for (int i = 0; i < N; i++) {
+                            for (int i = 0; i < N && !finished.get(); i++) {
                                 long fd = Net.socketTcp(true);
                                 try {
                                     Assert.assertTrue(fd > -1);
@@ -5407,6 +5437,8 @@ public class IODispatcherTest {
 
                 serverRunning.set(false);
                 serverHaltLatch.await();
+            } finally {
+                finished.set(true);
             }
             Assert.assertEquals(N * senderCount, requestsReceived.get());
         });
@@ -5424,7 +5456,6 @@ public class IODispatcherTest {
             if (n > 0) {
                 if (headerCheckRemaining > 0) {
                     for (int i = 0; i < n && headerCheckRemaining > 0; i++) {
-//                        System.out.print(expectedResponseHeader.charAt(expectedHeaderLen - headerCheckRemaining));
                         if (expectedResponseHeader.charAt(expectedHeaderLen - headerCheckRemaining) != (char) Unsafe.getUnsafe().getByte(buffer + i)) {
                             Assert.fail("at " + (expectedHeaderLen - headerCheckRemaining));
                         }
@@ -5455,19 +5486,55 @@ public class IODispatcherTest {
         Assert.assertEquals(requestLen, Net.send(fd, buffer, requestLen));
     }
 
+    private static void sendAndReceive(
+            NetworkFacade nf,
+            String request,
+            CharSequence response,
+            int requestCount,
+            long pauseBetweenSendAndReceive,
+            boolean print
+    ) throws InterruptedException {
+        sendAndReceive(
+                nf,
+                request,
+                response,
+                requestCount,
+                pauseBetweenSendAndReceive,
+                print,
+                false
+        );
+    }
+
+    private static void sendAndReceive(
+            NetworkFacade nf,
+            String request,
+            CharSequence response,
+            int requestCount,
+            long pauseBetweenSendAndReceive,
+            boolean print,
+            boolean expectDisconnect
+    ) throws InterruptedException {
+        new SendAndReceiveRequestBuilder()
+                .withNetworkFacade(nf)
+                .withExpectDisconnect(expectDisconnect)
+                .withPrintOnly(print)
+                .withRequestCount(requestCount)
+                .withPauseBetweenSendAndReceive(pauseBetweenSendAndReceive)
+                .execute(request, response);
+    }
+
     private void assertColumn(CharSequence expected, int index) {
         final String baseDir = temp.getRoot().getAbsolutePath();
         DefaultCairoConfiguration configuration = new DefaultCairoConfiguration(baseDir);
 
         try (TableReader reader = new TableReader(configuration, "telemetry")) {
             final StringSink sink = new StringSink();
-            final RecordCursorPrinter printer = new RecordCursorPrinter(sink);
             sink.clear();
-            printer.printFullColumn(reader.getCursor(), reader.getMetadata(), index, false);
+            printer.printFullColumn(reader.getCursor(), reader.getMetadata(), index, false, sink);
             TestUtils.assertEquals(expected, sink);
             reader.getCursor().toTop();
             sink.clear();
-            printer.printFullColumn(reader.getCursor(), reader.getMetadata(), index, false);
+            printer.printFullColumn(reader.getCursor(), reader.getMetadata(), index, false, sink);
             TestUtils.assertEquals(expected, sink);
         }
     }
@@ -5519,43 +5586,6 @@ public class IODispatcherTest {
                 .build();
         QueryCache.configure(httpConfiguration);
         return httpConfiguration;
-    }
-
-    private static void sendAndReceive(
-            NetworkFacade nf,
-            String request,
-            CharSequence response,
-            int requestCount,
-            long pauseBetweenSendAndReceive,
-            boolean print
-    ) throws InterruptedException {
-        sendAndReceive(
-                nf,
-                request,
-                response,
-                requestCount,
-                pauseBetweenSendAndReceive,
-                print,
-                false
-        );
-    }
-
-    private static void sendAndReceive(
-            NetworkFacade nf,
-            String request,
-            CharSequence response,
-            int requestCount,
-            long pauseBetweenSendAndReceive,
-            boolean print,
-            boolean expectDisconnect
-    ) throws InterruptedException {
-        new SendAndReceiveRequestBuilder()
-                .withNetworkFacade(nf)
-                .withExpectDisconnect(expectDisconnect)
-                .withPrintOnly(print)
-                .withRequestCount(requestCount)
-                .withPauseBetweenSendAndReceive(pauseBetweenSendAndReceive)
-                .execute(request, response);
     }
 
     private void testJsonQuery(int recordCount, String request, String expectedResponse, int requestCount, boolean telemetry) throws Exception {
@@ -5623,6 +5653,46 @@ public class IODispatcherTest {
         Unsafe.free(buf, bufLen);
     }
 
+    private static class QueryThread extends Thread {
+        private final String[][] requests;
+        private final int count;
+        private final CyclicBarrier barrier;
+        private final CountDownLatch latch;
+        private final AtomicInteger errorCounter;
+
+        public QueryThread(String[][] requests, int count, CyclicBarrier barrier, CountDownLatch latch, AtomicInteger errorCounter) {
+            this.requests = requests;
+            this.count = count;
+            this.barrier = barrier;
+            this.latch = latch;
+            this.errorCounter = errorCounter;
+        }
+
+        @Override
+        public void run() {
+            final Rnd rnd = new Rnd();
+            try {
+                new SendAndReceiveRequestBuilder().executeMany(requester -> {
+                    barrier.await();
+                    for (int i = 0; i < count; i++) {
+                        int index = rnd.nextPositiveInt() % requests.length;
+                        try {
+                            requester.execute(requests[index][0], requests[index][1]);
+                        } catch (Throwable e) {
+                            System.out.println("erm: " + index + ", ts=" + Timestamps.toString(Os.currentTimeMicros()));
+                            throw e;
+                        }
+                    }
+                });
+            } catch (Throwable e) {
+                e.printStackTrace();
+                errorCounter.incrementAndGet();
+            } finally {
+                latch.countDown();
+            }
+        }
+    }
+
     private static class HelloContext implements IOContext {
         private final long fd;
         private final long buffer = Unsafe.malloc(1024);
@@ -5672,14 +5742,6 @@ public class IODispatcherTest {
         }
 
         @Override
-        public char charAt(int index) {
-            if (index >= len) {
-                throw new IndexOutOfBoundsException();
-            }
-            return (char) bytes[index];
-        }
-
-        @Override
         public byte byteAt(int index) {
             if (index >= len) {
                 throw new IndexOutOfBoundsException();
@@ -5690,6 +5752,14 @@ public class IODispatcherTest {
         @Override
         public int length() {
             return len;
+        }
+
+        @Override
+        public char charAt(int index) {
+            if (index >= len) {
+                throw new IndexOutOfBoundsException();
+            }
+            return (char) bytes[index];
         }
     }
 }

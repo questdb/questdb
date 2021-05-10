@@ -72,7 +72,7 @@ public class GroupByNotKeyedRecordCursorFactory implements RecordCursorFactory {
         final RecordCursor baseCursor = base.getCursor(executionContext);
         try {
             return cursor.of(baseCursor, executionContext);
-        } catch (CairoException | CairoError e) {
+        } catch (Throwable e) {
             Misc.free(baseCursor);
             throw e;
         }

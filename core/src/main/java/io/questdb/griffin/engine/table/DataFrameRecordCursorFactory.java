@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.*;
+import io.questdb.cairo.vm.ReadOnlyVirtualMemory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
@@ -186,7 +187,7 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
                         }
 
                         if (loRemaining > 0) {
-                            final ReadOnlyColumn col = reader.getColumn(TableReader.getPrimaryColumnIndex(base, columnIndexes.getQuick(i)));
+                            final ReadOnlyVirtualMemory col = reader.getColumn(TableReader.getPrimaryColumnIndex(base, columnIndexes.getQuick(i)));
                             if (col instanceof NullColumn) {
                                 columnPageNextAddress.setQuick(i, 0);
                                 pageNRowsRemaining.setQuick(i, 0);
@@ -242,12 +243,11 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
 
         private PageFrame computeFrame(long min) {
             for (int i = 0; i < columnCount; i++) {
-                final int columnIndex = columnIndexes.getQuick(i);
                 final long top = topsRemaining.getQuick(i);
                 if (top > 0) {
                     assert min <= top;
                     topsRemaining.setQuick(i, top - min);
-                    columnPageAddress.setQuick(columnIndex, 0);
+                    columnPageAddress.setQuick(i, 0);
                     pageSizes.setQuick(i, min);
                 } else {
                     long addr = columnPageNextAddress.getQuick(i);
@@ -288,7 +288,7 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
                     } else if (partitionRemaining > 0) {
                         final int page = pages.getQuick(i);
                         pages.setQuick(i, page + 1);
-                        final ReadOnlyColumn col = reader.getColumn(TableReader.getPrimaryColumnIndex(base, columnIndexes.getQuick(i)));
+                        final ReadOnlyVirtualMemory col = reader.getColumn(TableReader.getPrimaryColumnIndex(base, columnIndexes.getQuick(i)));
                         // page size is liable to change after it is mapped
                         // it is important to map page first and call pageSize() after
                         columnPageNextAddress.setQuick(i, col.getPageAddress(page));

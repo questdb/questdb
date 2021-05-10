@@ -144,7 +144,7 @@ public class GroupByRecordCursorFactory implements RecordCursorFactory {
             long columnOffsets
     ) {
         for (int i = start; i < end; i++) {
-            columnSkewIndex.add(Unsafe.getUnsafe().getInt(columnOffsets + vafList.getQuick(i).getValueOffset() * Integer.BYTES));
+            columnSkewIndex.add(Unsafe.getUnsafe().getInt(columnOffsets + vafList.getQuick(i).getValueOffset() * 4L));
         }
     }
 
@@ -176,7 +176,7 @@ public class GroupByRecordCursorFactory implements RecordCursorFactory {
         }
 
         final RingQueue<VectorAggregateTask> queue = bus.getVectorAggregateQueue();
-        final Sequence pubSeq = bus.getVectorAggregatePubSequence();
+        final Sequence pubSeq = bus.getVectorAggregatePubSeq();
 
         this.entryPool.clear();
         this.activeEntries.clear();
@@ -474,6 +474,11 @@ public class GroupByRecordCursorFactory implements RecordCursorFactory {
             @Override
             public CharSequence getSym(int col) {
                 return parent.getSymbolMapReader(symbolTableSkewIndex.getQuick(col)).valueOf(getInt(col));
+            }
+
+            @Override
+            public CharSequence getSymB(int col) {
+                return parent.getSymbolMapReader(symbolTableSkewIndex.getQuick(col)).valueBOf(getInt(col));
             }
 
             @Override

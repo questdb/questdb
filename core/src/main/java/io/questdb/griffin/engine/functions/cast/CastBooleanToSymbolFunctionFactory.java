@@ -68,8 +68,18 @@ public class CastBooleanToSymbolFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public CharSequence getSymbolB(Record rec) {
+            return arg.getSymbolB(rec);
+        }
+
+        @Override
         public CharSequence valueOf(int symbolKey) {
             return symbolKey == 0 ? "true" : "false";
+        }
+
+        @Override
+        public CharSequence valueBOf(int key) {
+            return valueOf(key);
         }
 
         @Override

@@ -26,7 +26,7 @@
 #include <jni.h>
 
 rosti_t *alloc_rosti(const int32_t *column_types, const int32_t column_count, const uint64_t map_capacity) {
-    uint64_t slot_key_size = 0;
+    int32_t slot_key_size = 0;
     auto value_offsets = reinterpret_cast<int32_t *>(malloc(sizeof(int32_t) * (column_count + 1)));
     value_offsets[0] = 0;
     for (int32_t i = 0; i < column_count; i++) {

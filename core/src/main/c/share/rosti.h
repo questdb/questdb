@@ -35,7 +35,30 @@
 #define MIN std::min
 #define MAX std::max
 
-#include "vcl/vectorclass.h"
+#if (defined(__arm64__) && defined(__APPLE__)) || defined(__aarch64__) || defined(_M_ARM64)
+#define _ARM64
+#endif
+
+#if defined(_ARM64)
+    static inline uint32_t bit_scan_forward(uint32_t a) {
+        uint32_t r;
+        __asm("rbit %w0, %w1; clz %w0, %w0;" : "=r"(r) : "r"(a) : );
+        return r;
+    }
+    static inline uint32_t bit_scan_forward(uint64_t a) {
+#ifdef __APPLE__
+        return __builtin_ffsll(a) - 1;
+#else
+        uint64_t r;
+        __asm("rbit %0, %1; clz %0, %0;" : "=r"(r) : "r"(a) : );
+        return r;
+#endif
+    }
+#define BITS_SHIFT 3
+#else
+    #include "vcl/vectorclass.h"
+    #define BITS_SHIFT 0
+#endif
 
 using ctrl_t = signed char;
 using h2_t = uint8_t;
@@ -107,7 +130,7 @@ public:
     [[nodiscard]] BitMask end() const { return BitMask(0); }
 
     [[nodiscard]] uint32_t TrailingZeros() const {
-        return bit_scan_forward(mask_);
+        return bit_scan_forward(mask_) >> BITS_SHIFT;
     }
 
 private:
@@ -119,6 +142,52 @@ private:
     T mask_;
 };
 
+#if defined(_ARM64)
+inline uint64_t UnalignedLoad64(const void *p) {
+    uint64_t t;
+    memcpy(&t, p, sizeof t);
+    return t;
+}
+
+struct GroupPortableImpl {
+
+  explicit GroupPortableImpl(const ctrl_t* pos)
+      : ctrl(UnalignedLoad64(pos)) {}
+
+  BitMask<uint64_t> Match(h2_t hash) const {
+    // For the technique, see:
+    // http://graphics.stanford.edu/~seander/bithacks.html##ValueInWord
+    // (Determine if a word has a byte equal to n).
+    //
+    // Caveat: there are false positives but:
+    // - they only occur if there is a real match
+    // - they never occur on kEmpty, kDeleted, kSentinel
+    // - they will be handled gracefully by subsequent checks in code
+    //
+    // Example:
+    //   v = 0x1716151413121110
+    //   hash = 0x12
+    //   retval = (v - lsbs) & ~v & msbs = 0x0000000080800000
+    constexpr uint64_t msbs = 0x8080808080808080ULL;
+    constexpr uint64_t lsbs = 0x0101010101010101ULL;
+    auto x = ctrl ^ (lsbs * hash);
+    return BitMask<uint64_t>((x - lsbs) & ~x & msbs);
+  }
+
+  BitMask<uint64_t> MatchEmpty() const {
+    constexpr uint64_t msbs = 0x8080808080808080ULL;
+    return BitMask<uint64_t>((ctrl & (~ctrl << 6)) & msbs);
+  }
+
+  BitMask<uint64_t> MatchEmptyOrDeleted() const {
+    constexpr uint64_t msbs = 0x8080808080808080ULL;
+    return BitMask<uint64_t>((ctrl & (~ctrl << 7)) & msbs);
+  }
+
+  uint64_t ctrl;
+};
+using Group = GroupPortableImpl;
+#else
 struct GroupSse2Impl {
 
     explicit GroupSse2Impl(const ctrl_t *pos) {
@@ -142,8 +211,8 @@ struct GroupSse2Impl {
 
     Vec16c ctrl;
 };
-
 using Group = GroupSse2Impl;
+#endif
 
 //-----------------------------------------
 
@@ -186,7 +255,6 @@ public:
         mask_ = mask;
     }
 
-
     [[nodiscard]] inline uint64_t offset() const { return offset_; }
 
     [[nodiscard]] inline uint64_t offset(uint64_t i) const { return (offset_ + i) & mask_; }
@@ -213,7 +281,6 @@ private:
 inline probe_seq<sizeof(Group)> probe(const rosti_t *map, uint64_t hash) {
     return probe_seq<sizeof(Group)>(H1(hash, map->ctrl_), map->capacity_);
 }
-
 
 // Reset all ctrl bytes back to kEmpty, except the sentinel.
 inline void reset_ctrl(rosti_t *map) {
@@ -256,7 +323,6 @@ inline void set_ctrl(rosti_t *map, uint64_t i, ctrl_t h) {
     map->ctrl_[i] = h;
     map->ctrl_[p] = h;
 }
-
 
 // Probes the raw_hash_set with the probe sequence for hash and returns the
 // pointer to the first empty or deleted slot.

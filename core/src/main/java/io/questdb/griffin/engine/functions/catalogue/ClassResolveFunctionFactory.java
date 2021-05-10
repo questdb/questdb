@@ -60,12 +60,21 @@ public class ClassResolveFunctionFactory implements FunctionFactory {
             throw SqlException.$(nameFunction.getPosition(), "unsupported class");
         }
 
+        if (SqlKeywords.isRegprocKeyword(type) || SqlKeywords.isRegprocedureKeyword(type)) {
+            // return fake OID
+            return new IntConstant(0, 289208840);
+        }
+
         if (SqlKeywords.isTimestampKeyword(type)) {
             return new ToTimestampFunctionFactory.ToTimestampFunction(nameFunction.getPosition(), nameFunction);
         }
 
         if (SqlKeywords.isDateKeyword(type)) {
             return new ToPgDateFunctionFactory.ToPgDateFunction(nameFunction.getPosition(), nameFunction);
+        }
+
+        if (SqlKeywords.isTextArrayKeyword(type)) {
+            return new StringToStringArrayFunction(nameFunction.getPosition(), nameFunction.getStr(null));
         }
 
         throw SqlException.$(args.getQuick(1).getPosition(), "unsupported type");

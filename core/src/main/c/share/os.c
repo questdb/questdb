@@ -48,7 +48,7 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Os_currentTimeNanos
 
     struct timespec timespec;
     clock_gettime(CLOCK_REALTIME, &timespec);
-    return timespec.tv_sec * 100000000L + timespec.tv_nsec;
+    return timespec.tv_sec * 1000000000LL + timespec.tv_nsec;
 }
 
 JNIEXPORT jint JNICALL Java_io_questdb_std_Os_errno
