@@ -73,7 +73,7 @@ public class CopyTest extends AbstractGriffinTest {
 
             compiler.compile("copy x from '/src/test/resources/csv/test-import.csv'", sqlExecutionContext);
 
-            final String expected = "StrSym\tIntSym\tIntCol\tDoubleCol\tIsoDate\tFmt1Date\tFmt2Date\tPhone\tboolean\tlong\n" +
+            final String expected = "StrSym\tIntSym\tInt_Col\tDoubleCol\tIsoDate\tFmt1Date\tFmt2Date\tPhone\tboolean\tlong\n" +
                     "CMP1\t1\t6992\t2.12060110410675\t2015-01-05T19:15:09.000Z\t2015-01-05T19:15:09.000Z\t2015-01-05T00:00:00.000Z\t6992\ttrue\t4952743\n" +
                     "CMP2\t2\t8014\t5.18098710570484\t2015-01-06T19:15:09.000Z\t2015-01-06T19:15:09.000Z\t2015-01-06T00:00:00.000Z\t8014\tfalse\t10918770\n" +
                     "CMP1\t4\t2599\t1.26877639908344\t2015-01-07T19:15:09.000Z\t2015-01-07T19:15:09.000Z\t2015-01-07T00:00:00.000Z\t2599\ttrue\t80790249\n" +

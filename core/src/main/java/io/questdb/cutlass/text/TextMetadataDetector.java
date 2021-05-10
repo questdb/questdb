@@ -209,7 +209,6 @@ public class TextMetadataDetector implements TextLexer.Listener, Mutable, Closea
             char c = seq.charAt(i);
             switch (c) {
                 case ' ':
-                case '_':
                 case '?':
                 case '.':
                 case ',':

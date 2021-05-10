@@ -66,7 +66,7 @@ public class ImportIODispatcherTest {
             "    \"type\": \"STRING\"\r\n" +
             "  },\r\n" +
             "  {\r\n" +
-            "    \"name\": \"PickupDateTime\",\r\n" +
+            "    \"name\": \"Pickup_DateTime\",\r\n" +
             "    \"type\": \"TIMESTAMP\",\r\n" +
             "    \"pattern\": \"yyyy-MM-dd HH:mm:ss\"\r\n" +
             "  }\r\n" +
@@ -135,7 +135,7 @@ public class ImportIODispatcherTest {
             "    \"type\": \"STRING\"\r\n" +
             "  },\r\n" +
             "  {\r\n" +
-            "    \"name\": \"PickupDateTime\",\r\n" +
+            "    \"name\": \"Pickup_DateTime\",\r\n" +
             "    \"type\": \"TIMESTAMP\",\r\n" +
             "    \"pattern\": \"yyyy-MM-dd HH:mm:ss\"\r\n" +
             "  }\r\n" +
@@ -145,7 +145,7 @@ public class ImportIODispatcherTest {
             "Content-Disposition: form-data; name=\"data\"; filename=\"table2.csv\"\r\n" +
             "Content-Type: application/octet-stream\r\n" +
             "\r\n" +
-            "Co1,Col2,Col3,Col4,PickupDateTime\r\n";
+            "Co1,Col2,Col3,Col4,Pickup_DateTime\r\n";
 
     private static final String ValidImportRequest2 = Request2Header +
             "B00008,,,,2017-02-01 00:30:00\r\n" +
@@ -190,8 +190,8 @@ public class ImportIODispatcherTest {
             "|  Rows imported  |                                                24  |                 |         |              |\r\n" +
             "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
             "|              0  |                                              Col1  |                   STRING  |           0  |\r\n" +
-            "|              1  |                                    PickupDateTime  |                TIMESTAMP  |           0  |\r\n" +
-            "|              2  |                                   DropOffDatetime  |                   STRING  |           0  |\r\n" +
+            "|              1  |                                   Pickup_DateTime  |                TIMESTAMP  |           0  |\r\n" +
+            "|              2  |                                  DropOff_datetime  |                   STRING  |           0  |\r\n" +
             "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
             "\r\n" +
             "00\r\n" +
@@ -207,7 +207,7 @@ public class ImportIODispatcherTest {
             "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
             "|      Location:  |                                             trips  |        Pattern  | Locale  |      Errors  |\r\n" +
             "|   Partition by  |                                              NONE  |                 |         |              |\r\n" +
-            "|      Timestamp  |                                    PickupDateTime  |                 |         |              |\r\n" +
+            "|      Timestamp  |                                   Pickup_DateTime  |                 |         |              |\r\n" +
             "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
             "|   Rows handled  |                                                24  |                 |         |              |\r\n" +
             "|  Rows imported  |                                                24  |                 |         |              |\r\n" +
@@ -216,7 +216,7 @@ public class ImportIODispatcherTest {
             "|              1  |                                              Col2  |                   STRING  |           0  |\r\n" +
             "|              2  |                                              Col3  |                   STRING  |           0  |\r\n" +
             "|              3  |                                              Col4  |                   STRING  |           0  |\r\n" +
-            "|              4  |                                    PickupDateTime  |                TIMESTAMP  |           0  |\r\n" +
+            "|              4  |                                   Pickup_DateTime  |                TIMESTAMP  |           0  |\r\n" +
             "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
             "\r\n" +
             "00\r\n" +
@@ -238,8 +238,8 @@ public class ImportIODispatcherTest {
             "|  Rows imported  |                                                24  |                 |         |              |\r\n" +
             "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
             "|              0  |                                              Col1  |                   STRING  |           0  |\r\n" +
-            "|              1  |                                    PickupDateTime  |                TIMESTAMP  |           0  |\r\n" +
-            "|              2  |                                   DropOffDatetime  |                   STRING  |           0  |\r\n" +
+            "|              1  |                                   Pickup_DateTime  |                TIMESTAMP  |           0  |\r\n" +
+            "|              2  |                                  DropOff_datetime  |                   STRING  |           0  |\r\n" +
             "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
             "\r\n" +
             "00\r\n" +
@@ -251,7 +251,7 @@ public class ImportIODispatcherTest {
             "Transfer-Encoding: chunked\r\n" +
             "Content-Type: application/json; charset=utf-8\r\n" +
             "\r\n" +
-            "0170\r\n" +
+            "0172\r\n" +
             "{\"status\":\"OK\"," +
             "\"location\":\"trips\"," +
             "\"rowsRejected\":0," +
@@ -262,14 +262,14 @@ public class ImportIODispatcherTest {
             "\"Existing table PartitionBy is used\"]," +
             "\"columns\":[" +
             "{\"name\":\"Col1\",\"type\":\"STRING\",\"size\":0,\"errors\":0}," +
-            "{\"name\":\"PickupDateTime\",\"type\":\"TIMESTAMP\",\"size\":8,\"errors\":0}," +
-            "{\"name\":\"DropOffDatetime\",\"type\":\"STRING\",\"size\":0,\"errors\":0}" +
+            "{\"name\":\"Pickup_DateTime\",\"type\":\"TIMESTAMP\",\"size\":8,\"errors\":0}," +
+            "{\"name\":\"DropOff_datetime\",\"type\":\"STRING\",\"size\":0,\"errors\":0}" +
             "]}\r\n" +
             "00\r\n" +
             "\r\n";
 
-    private final String DdlCols1 = "(Col1+STRING,PickupDateTime+TIMESTAMP,DropOffDatetime+STRING)";
-    private final String DdlCols2 = "(Col1+STRING,Col2+STRING,Col3+STRING,Col4+STRING,PickupDateTime+TIMESTAMP)+timestamp(PickupDateTime)";
+    private final String DdlCols1 = "(Col1+STRING,Pickup_DateTime+TIMESTAMP,DropOff_datetime+STRING)";
+    private final String DdlCols2 = "(Col1+STRING,Col2+STRING,Col3+STRING,Col4+STRING,Pickup_DateTime+TIMESTAMP)+timestamp(Pickup_DateTime)";
 
     @Test
     public void testImportWithWrongTimestampSpecifiedLoop() throws Exception {
@@ -318,7 +318,7 @@ public class ImportIODispatcherTest {
                                     try {
                                         String timestamp = "";
                                         if (r > 0 && thread > 0) {
-                                            timestamp = "&timestamp=PickupDateTime";
+                                            timestamp = "&timestamp=Pickup_DateTime";
                                         }
                                         String request = requestTemplate
                                                 .replace("POST /upload?name=trips HTTP", "POST /upload?name=" + tableName + timestamp + " HTTP")
@@ -401,10 +401,10 @@ public class ImportIODispatcherTest {
                     CountDownLatch countDownLatch = new CountDownLatch(parallelCount);
                     AtomicInteger success = new AtomicInteger();
 
-                    String ddl1 = "(Col1+SYMBOL+NOCACHE+INDEX,PickupDateTime+TIMESTAMP," +
-                            "DropOffDatetime+SYMBOL)+timestamp(PickupDateTime)";
-                    String ddl2 = "(Col1+SYMBOL+NOCACHE+INDEX,Col2+STRING,Col3+STRING,Col4+STRING,PickupDateTime+TIMESTAMP)" +
-                            "+timestamp(PickupDateTime)";
+                    String ddl1 = "(Col1+SYMBOL+NOCACHE+INDEX,Pickup_DateTime+TIMESTAMP," +
+                            "DropOff_datetime+SYMBOL)+timestamp(Pickup_DateTime)";
+                    String ddl2 = "(Col1+SYMBOL+NOCACHE+INDEX,Col2+STRING,Col3+STRING,Col4+STRING,Pickup_DateTime+TIMESTAMP)" +
+                            "+timestamp(Pickup_DateTime)";
                     String[] ddl = new String[]{ddl1, ddl2};
                     String[] headers = new String[]{Request1Header, Request2Header};
 
@@ -501,7 +501,7 @@ public class ImportIODispatcherTest {
                                     "\r\n");
 
                     String request = requestTemplate
-                            .replace("POST /upload?name=trips HTTP", "POST /upload?name=trips&partitionBy=DAY&timestamp=PickupDateTime HTTP");
+                            .replace("POST /upload?name=trips HTTP", "POST /upload?name=trips&partitionBy=DAY&timestamp=Pickup_DateTime HTTP");
 
                     new SendAndReceiveRequestBuilder().execute(request, WarningValidImportResponse1);
                 });
@@ -529,7 +529,7 @@ public class ImportIODispatcherTest {
                                     "\r\n");
 
                     String request = requestTemplate
-                            .replace("POST /upload?name=trips HTTP", "POST /upload?name=trips&fmt=json&partitionBy=DAY&timestamp=PickupDateTime HTTP");
+                            .replace("POST /upload?name=trips HTTP", "POST /upload?name=trips&fmt=json&partitionBy=DAY&timestamp=Pickup_DateTime HTTP");
 
                     new SendAndReceiveRequestBuilder().execute(request, WarningValidImportResponse1Json);
                 });
