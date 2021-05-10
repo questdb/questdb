@@ -9,6 +9,7 @@ pr:
 variables:
   QDB_LOG_W_FILE_LOCATION: "$(Build.BinariesDirectory)/tests.log"
   ARCHIVED_LOGS: "$(Build.ArtifactStagingDirectory)/questdb-$(Build.SourceBranchName)-$(Build.SourceVersion)-$(System.StageAttempt)-$(Agent.OS)-$(jdk).zip"
+  DIFF_CONVER_THRESHOLD_PCT: 50
 
 stages:
   - stage: RunTestsBranches
@@ -79,17 +80,13 @@ stages:
           - task: CmdLine@2
             displayName: "Diff coverage PR report"
             inputs:
-              script: $JAVA_HOME_11_X64/bin/java -jar $SOURCES/ci/cover-checker-console-1.4.2-jar-with-dependencies.jar \
-                --cover $SOURCES/$COVERAGE_REPORT_PATH \
-                --github-token $SYSTEM_ACCESSTOKEN \
-                --repo "questdb/questdb" \
-                --pr $PR_ID \
-                -type jacoco
+              script: $JAVA_HOME_11_X64/bin/java -jar $SOURCES/ci/cover-checker-console-1.4.2-jar-with-dependencies.jar -c $SOURCES/$COVERAGE_REPORT_PATH --github-token $SYSTEM_ACCESSTOKEN --repo "questdb/questdb" --pr $PR_ID -t $DIFF_CONVER_THRESHOLD_PCT -type jacoco
             env:
               SYSTEM_ACCESSTOKEN: $(System.AccessToken)
               PR_ID: $(System.PullRequest.PullRequestId)
               SOURCES: $(Build.SourcesDirectory)
               COVERAGE_REPORT_PATH: core/CCReport43F6D5EF/jacoco.xml
+              DIFF_CONVER_THRESHOLD_PCT: $(DIFF_CONVER_THRESHOLD_PCT)
             condition: and(eq(variables['Agent.OS'], 'Linux'), eq(variables['jdk'], '1.11'))
           - task: ArchiveFiles@2
             displayName: "Tests failed -- Compress logs"
