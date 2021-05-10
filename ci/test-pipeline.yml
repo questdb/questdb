@@ -77,10 +77,8 @@ stages:
               jdkVersionOption: $(jdk)
               codeCoverageToolOption: JaCoCo
               codeCoverageClassFilter: "$(COVERAGE_DIFF)"
-          - task: CmdLine@2
+          - bash: $JAVA_HOME_11_X64/bin/java -jar $SOURCES/ci/cover-checker-console-1.4.2-jar-with-dependencies.jar -c $SOURCES/$COVERAGE_REPORT_PATH --github-token $SYSTEM_ACCESSTOKEN --repo "questdb/questdb" --pr $PR_ID -t $DIFF_CONVER_THRESHOLD_PCT -type jacoco
             displayName: "Diff coverage PR report"
-            inputs:
-              script: $JAVA_HOME_11_X64/bin/java -jar $SOURCES/ci/cover-checker-console-1.4.2-jar-with-dependencies.jar -c $SOURCES/$COVERAGE_REPORT_PATH --github-token $SYSTEM_ACCESSTOKEN --repo "questdb/questdb" --pr $PR_ID -t $DIFF_CONVER_THRESHOLD_PCT -type jacoco
             env:
               SYSTEM_ACCESSTOKEN: $(System.AccessToken)
               PR_ID: $(System.PullRequest.PullRequestId)
