@@ -1063,7 +1063,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         }
 
         if (n < size) {
-            doSendWithRetries(n, size - n);
+            doSendWithRetries(offset + n, size - n);
         }
         sendBufferPtr = sendBuffer;
         bufferRemainingSize = 0;
