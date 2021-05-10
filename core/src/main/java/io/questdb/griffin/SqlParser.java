@@ -551,7 +551,7 @@ public final class SqlParser {
         }
 
         int o3MaxUncommittedRows = configuration.getO3MaxUncommittedRows();
-        long o3CommitHysteresisInMicros = configuration.getO3CommitHysteresisInMicros();
+        long o3CommitHysteresisInMicros = configuration.getO3CommitHysteresis();
 
         ExpressionNode partitionBy = parseCreateTablePartition(lexer, tok);
         if (partitionBy != null) {

@@ -62,6 +62,7 @@ public class TableWriter implements Closeable {
     public static final int O3_BLOCK_O3 = 1;
     public static final int O3_BLOCK_DATA = 2;
     public static final int O3_BLOCK_MERGE = 3;
+    private static final int MEM_PAGE_SIZE = 16 * Numbers.SIZE_1MB;
     private static final Log LOG = LogFactory.getLog(TableWriter.class);
     private static final CharSequenceHashSet IGNORED_FILES = new CharSequenceHashSet();
     private static final Runnable NOOP = () -> {
@@ -134,6 +135,7 @@ public class TableWriter implements Closeable {
     private LongConsumer appendTimestampSetter;
     private long todoTxn;
     private ContiguousVirtualMemory o3TimestampMem;
+    private ContiguousVirtualMemory o3TimestampMemCpy;
     private final O3ColumnUpdateMethod o3MoveHysteresisRef = this::o3MoveHysteresis0;
     private long lockFd = -1;
     private LongConsumer timestampSetter;
@@ -160,6 +162,7 @@ public class TableWriter implements Closeable {
     private final O3ColumnUpdateMethod o3MoveUncommittedRef = this::o3MoveUncommitted0;
     private long lastPartitionTimestamp;
     private boolean o3InError = false;
+    private final boolean o3QuickSortEnabled;
 
     public TableWriter(CairoConfiguration configuration, CharSequence tableName) {
         this(configuration, tableName, new MessageBusImpl(configuration));
@@ -197,7 +200,7 @@ public class TableWriter implements Closeable {
         this.mkDirMode = configuration.getMkDirMode();
         this.fileOperationRetryCount = configuration.getFileOperationRetryCount();
         this.tableName = Chars.toString(tableName);
-
+        this.o3QuickSortEnabled = configuration.isO3QuickSortEnabled();
         this.o3PartitionUpdateQueue = new RingQueue<O3PartitionUpdateTask>(O3PartitionUpdateTask.CONSTRUCTOR, configuration.getO3PartitionUpdateQueueCapacity());
         this.o3PartitionUpdatePubSeq = new MPSequence(this.o3PartitionUpdateQueue.getCapacity());
         this.o3PartitionUpdateSubSeq = new SCSequence();
@@ -1411,28 +1414,6 @@ public class TableWriter implements Closeable {
         throw CairoException.instance(0).put("Column file does not exist [path=").put(path).put(']');
     }
 
-    //todo: move to c++
-    private static long o3SortVarColumn0(
-            long mergedTimestampsAddr,
-            long valueCount,
-            long srcDataAddr,
-            long srcIndxAddr,
-            long tgtDataAddr,
-            long tgtIndxAddr
-    ) {
-        long offset = 0;
-        for (long l = 0; l < valueCount; l++) {
-            final long row = getTimestampIndexRow(mergedTimestampsAddr, l);
-            final long o1 = Unsafe.getUnsafe().getLong(srcIndxAddr + row * Long.BYTES);
-            final long o2 = Unsafe.getUnsafe().getLong(srcIndxAddr + row * Long.BYTES + Long.BYTES);
-            final long len = o2 - o1;
-            Vect.memcpy(srcDataAddr + o1, tgtDataAddr + offset, len);
-            Unsafe.getUnsafe().putLong(tgtIndxAddr + l * Long.BYTES, offset);
-            offset += len;
-        }
-        return offset;
-    }
-
     private int addColumnToMeta(
             CharSequence name,
             int type,
@@ -1711,16 +1692,16 @@ public class TableWriter implements Closeable {
     private void configureColumn(int type, boolean indexFlag) {
         final AppendOnlyVirtualMemory primary = new AppendOnlyVirtualMemory();
         final AppendOnlyVirtualMemory secondary;
-        final ContiguousVirtualMemory oooPrimary = new ContiguousVirtualMemory(16 * Numbers.SIZE_1MB, Integer.MAX_VALUE);
+        final ContiguousVirtualMemory oooPrimary = new ContiguousVirtualMemory(MEM_PAGE_SIZE, Integer.MAX_VALUE);
         final ContiguousVirtualMemory oooSecondary;
-        final ContiguousVirtualMemory oooPrimary2 = new ContiguousVirtualMemory(16 * Numbers.SIZE_1MB, Integer.MAX_VALUE);
+        final ContiguousVirtualMemory oooPrimary2 = new ContiguousVirtualMemory(MEM_PAGE_SIZE, Integer.MAX_VALUE);
         final ContiguousVirtualMemory oooSecondary2;
         switch (type) {
             case ColumnType.BINARY:
             case ColumnType.STRING:
                 secondary = new AppendOnlyVirtualMemory();
-                oooSecondary = new ContiguousVirtualMemory(16 * Numbers.SIZE_1MB, Integer.MAX_VALUE);
-                oooSecondary2 = new ContiguousVirtualMemory(16 * Numbers.SIZE_1MB, Integer.MAX_VALUE);
+                oooSecondary = new ContiguousVirtualMemory(MEM_PAGE_SIZE, Integer.MAX_VALUE);
+                oooSecondary2 = new ContiguousVirtualMemory(MEM_PAGE_SIZE, Integer.MAX_VALUE);
                 break;
             default:
                 secondary = null;
@@ -1767,6 +1748,7 @@ public class TableWriter implements Closeable {
         final int timestampIndex = metadata.getTimestampIndex();
         if (timestampIndex != -1) {
             o3TimestampMem = o3Columns.getQuick(getPrimaryColumnIndex(timestampIndex));
+            o3TimestampMemCpy = new ContiguousVirtualMemory(MEM_PAGE_SIZE, Integer.MAX_VALUE);
         }
         populateDenseIndexerList();
     }
@@ -1974,6 +1956,7 @@ public class TableWriter implements Closeable {
         } finally {
             Misc.free(txnScoreboard);
             Misc.free(path);
+            Misc.free(o3TimestampMemCpy);
             freeTempMem();
             LOG.info().$("closed '").utf8(tableName).$('\'').$();
         }
@@ -2377,7 +2360,13 @@ public class TableWriter implements Closeable {
             // to this.maxTimestamp, which isn't truncated yet. So we need to truncate it first
             LOG.info().$("sorting o3 [table=").$(tableName).$(']').$();
             final long sortedTimestampsAddr = o3TimestampMem.addressOf(0);
-            Vect.sortLongIndexAscInPlace(sortedTimestampsAddr, o3RowCount);
+            // ensure there is enough size
+            if (o3RowCount > 600 || !o3QuickSortEnabled) {
+                o3TimestampMemCpy.jumpTo(o3TimestampMem.getAppendOffset());
+                Vect.radixSortLongIndexAscInPlace(sortedTimestampsAddr, o3RowCount, o3TimestampMemCpy.addressOf(0));
+            } else {
+                Vect.quickSortLongIndexAscInPlace(sortedTimestampsAddr, o3RowCount);
+            }
 
             // we have three frames:
             // partition logical "lo" and "hi" - absolute bounds (partitionLo, partitionHi)
