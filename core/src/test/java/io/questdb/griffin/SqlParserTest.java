@@ -5846,38 +5846,66 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testBetween() throws Exception {
-        assertQuery("select-choose t from (select [t] from x where t between ('2020-01-01','2021-01-02'))",
-                "x where t between '2020-01-01' and '2021-01-02'",
-                modelOf("x").col("t", ColumnType.TIMESTAMP));
+    public void testCreateTableWithO3() throws Exception {
+        assertCreateTable(
+                "create table x (a INT, t TIMESTAMP) timestamp(t) partition by DAY",
+                "create table x (a INT, t TIMESTAMP) timestamp(t) partition by DAY WITH o3MaxUncommittedRows=10000, o3CommitHysteresis=250ms;");
     }
 
     @Test
-    public void test2Betweens() throws Exception {
-        assertQuery("select-choose t from (select [t, tt] from x where t between ('2020-01-01','2021-01-02') and tt between ('2021-01-02','2021-01-31'))",
-                "select t from x where t between '2020-01-01' and '2021-01-02' and tt between '2021-01-02' and '2021-01-31'",
-                modelOf("x").col("t", ColumnType.TIMESTAMP).col("tt", ColumnType.TIMESTAMP));
+    public void testCreateTableWithInvalidParameter1() throws Exception {
+        assertSyntaxError(
+                "create table x (a INT, t TIMESTAMP) timestamp(t) partition by DAY WITH o3MaxUncommittedRows=10000, o3invalid=250ms",
+                114,
+                "unrecognized o3invalid after WITH");
     }
 
     @Test
-    public void testBetweenWithCast() throws Exception {
-        assertQuery("select-choose t from (select [t] from x where t between (cast('2020-01-01',TIMESTAMP),'2021-01-02'))",
-                "select t from x where t between CAST('2020-01-01' AS TIMESTAMP) and '2021-01-02'",
-                modelOf("x").col("t", ColumnType.TIMESTAMP).col("tt", ColumnType.TIMESTAMP));
+    public void testCreateTableWithInvalidParameter2() throws Exception {
+        assertSyntaxError(
+                "create table x (a INT, t TIMESTAMP) timestamp(t) partition by DAY WITH o3MaxUncommittedRows=10000 x o3CommitHysteresis=250ms",
+                98,
+                "unexpected token: x");
     }
 
     @Test
-    public void testBetweenWithCase() throws Exception {
-        assertQuery("select-virtual case(t between (cast('2020-01-01',TIMESTAMP),'2021-01-02'),'a','b') case from (select [t] from x)",
-                "select case when t between CAST('2020-01-01' AS TIMESTAMP) and '2021-01-02' then 'a' else 'b' end from x",
-                modelOf("x").col("t", ColumnType.TIMESTAMP).col("tt", ColumnType.TIMESTAMP));
+    public void testCreateTableWithPartialParameter1() throws Exception {
+        assertSyntaxError(
+                "create table x (a INT, t TIMESTAMP) timestamp(t) partition by DAY WITH o3MaxUncommittedRows=10000, o3CommitHysteresis=",
+                117,
+                "too few arguments for '=' [found=1,expected=2]");
     }
 
     @Test
-    public void testBetweenInsideCast() throws Exception {
-        assertQuery("select-virtual cast(t between (cast('2020-01-01',TIMESTAMP),'2021-01-02'),INT) + 1 column from (select [t] from x)",
-                "select CAST(t between CAST('2020-01-01' AS TIMESTAMP) and '2021-01-02' AS INT) + 1 from x",
-                modelOf("x").col("t", ColumnType.TIMESTAMP).col("tt", ColumnType.TIMESTAMP));
+    public void testCreateTableWithPartialParameter2() throws Exception {
+        assertSyntaxError(
+                "create table x (a INT, t TIMESTAMP) timestamp(t) partition by DAY WITH o3MaxUncommittedRows=10000, o3CommitHysteresis",
+                117,
+                "expected parameter after WITH");
+    }
+
+    @Test
+    public void testCreateTableWithPartialParameter3() throws Exception {
+        assertSyntaxError(
+                "create table x (a INT, t TIMESTAMP) timestamp(t) partition by DAY WITH o3MaxUncommittedRows=10000,",
+                97,
+                "unexpected token: ,");
+    }
+
+    @Test
+    public void testCreateTableWitInvalidO3MaxUncommittedRows() throws Exception {
+        assertSyntaxError(
+                "create table x (a INT, t TIMESTAMP) timestamp(t) partition by DAY WITH o3MaxUncommittedRows=asif,",
+                97,
+                "could not parse o3MaxUncommittedRows value \"asif\"");
+    }
+
+    @Test
+    public void testCreateTableWitInvalidO3CommitHysteresis() throws Exception {
+        assertSyntaxError(
+                "create table x (a INT, t TIMESTAMP) timestamp(t) partition by DAY WITH o3CommitHysteresis=asif,",
+                99,
+                "invalid interval qualifier asif");
     }
 
     private static void assertSyntaxError(
