@@ -86,7 +86,9 @@ case with up to fourteen workers on an AWS EC2 `m5.8xlarge` instance with
 sixteen cores:
 
 <div align="center">
-  <img alt="A chart comparing the maximum throughput of QuestDB, ClickHouse, TimescaleDB and InfluxDB." src=".github/tsbs-results.png" width="700"/>
+  <a href="https://questdb.io/blog/2021/05/05/questdb-release-6-0-tsbs-benchmark/">
+    <img alt="A chart comparing the maximum throughput of QuestDB, ClickHouse, TimescaleDB and InfluxDB." src=".github/tsbs-results.png" width="700"/>
+  </a>
 </div>
 
 The following table shows query execution time of a billion rows run on a
