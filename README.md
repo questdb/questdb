@@ -81,16 +81,16 @@ You can interact with QuestDB using the following interfaces:
 ## How QuestDB compares to other open source TSDBs
 
 Here are ingestion results of the
-[Time Series Benchmark Suite](https://github.com/timescale/tsbs) with the
-'cpu-only' use case using up to fourteen workers on an AWS EC2 m5.8xlarge
-instance with sixteen cores:
+[Time Series Benchmark Suite](https://github.com/timescale/tsbs) `cpu-only` use
+case with up to fourteen workers on an AWS EC2 `m5.8xlarge` instance with
+sixteen cores:
 
 <div align="center">
   <img alt="A chart comparing the maximum throughput of QuestDB, ClickHouse, TimescaleDB and InfluxDB." src=".github/tsbs-results.png" width="700"/>
 </div>
 
 The following table shows query execution time of a billion rows run on a
-c5.metal instance using 16 of the 96 threads available:
+`c5.metal` instance using 16 of the 96 threads available:
 
 | Query                                                     | Runtime    |
 | --------------------------------------------------------- | ---------- |
