@@ -4,6 +4,7 @@ pr:
   branches:
     include:
       - master
+#        /home/vsts/work/1/s/core/CCReport43F6D5EF/jacoco.xml
 
 variables:
   QDB_LOG_W_FILE_LOCATION: "$(Build.BinariesDirectory)/tests.log"
@@ -75,6 +76,21 @@ stages:
               jdkVersionOption: $(jdk)
               codeCoverageToolOption: JaCoCo
               codeCoverageClassFilter: "$(COVERAGE_DIFF)"
+          - task: CmdLine@2
+              displayName: "Diff coverage PR report"
+              inputs:
+                script: JAVA_HOME_11_X64/bin/java -jar $SOURCES/cover-checker-console-1.4.2-jar-with-dependencies.jar \
+                  --cover $SOURCES/$COVERAGE_REPORT_PATH \
+                  --github-token $SYSTEM_ACCESSTOKEN \
+                  --repo "questdb/questdb" \
+                  --pr $PR_ID \
+                  -type jacoco
+              env:
+                SYSTEM_ACCESSTOKEN: $(System.AccessToken)
+                PR_ID: $(System.PullRequest.PullRequestId)
+                SOURCES: $(Build.SourcesDirectory)
+                $COVERAGE_REPORT_PATH: core/CCReport43F6D5EF/jacoco.xml
+              condition: and(eq(variables['Agent.OS'], 'Linux'), succeeded())
           - task: ArchiveFiles@2
             displayName: "Tests failed -- Compress logs"
             condition: not(succeeded())
