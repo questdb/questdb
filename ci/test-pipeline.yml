@@ -79,7 +79,7 @@ stages:
           - task: CmdLine@2
             displayName: "Diff coverage PR report"
             inputs:
-              script: JAVA_HOME_11_X64/bin/java -jar $SOURCES/cover-checker-console-1.4.2-jar-with-dependencies.jar \
+              script: $JAVA_HOME_11_X64/bin/java -jar $SOURCES/cover-checker-console-1.4.2-jar-with-dependencies.jar \
                 --cover $SOURCES/$COVERAGE_REPORT_PATH \
                 --github-token $SYSTEM_ACCESSTOKEN \
                 --repo "questdb/questdb" \
