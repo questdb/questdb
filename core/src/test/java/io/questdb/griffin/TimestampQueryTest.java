@@ -918,6 +918,16 @@ public class TimestampQueryTest extends AbstractGriffinTest {
             expected = "min\tmax\n" +
                     "2020-01-02T01:00:00.000000Z\t2020-01-02T23:00:00.000000Z\n";
             assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where nts not between '2020-01-' || '02' and dateadd('d', -1, nts)");
+
+            // NOT between in case
+            expected = "sum\n" +
+                    "0\n";
+            assertTimestampTtQuery(expected, "select sum(case when nts not between now() and '2020-01-01' then 1 else 0 end) from tt");
+
+            // Between runtime constant inside case
+            expected = "min\tmax\n" +
+                    "2020-01-02T00:00:00.000000Z\t2020-01-02T23:00:00.000000Z\n";
+            assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where nts between '2020-01-02' and case when 1=1 then now() else now() end");
         });
     }
 

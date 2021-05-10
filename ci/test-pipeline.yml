@@ -4,7 +4,6 @@ pr:
   branches:
     include:
       - master
-#        /home/vsts/work/1/s/core/CCReport43F6D5EF/jacoco.xml
 
 variables:
   QDB_LOG_W_FILE_LOCATION: "$(Build.BinariesDirectory)/tests.log"
