@@ -78,18 +78,19 @@ You can interact with QuestDB using the following interfaces:
 - [InfluxDB](https://questdb.io/docs/reference/api/influxdb/) line protocol for
   high-throughput ingestion on port `9009`
 
-## Performance figures
+## How QuestDB compares to other open source TSDBs
 
-On a CPU with 6 memory channels, QuestDB can scan through 117GB of data per
-second. The following table shows the number operations per second, per thread:
+Here are ingestion results of the
+[Time Series Benchmark Suite](https://github.com/timescale/tsbs) with the
+'cpu-only' use case using up to fourteen workers on an AWS EC2 m5.8xlarge
+instance with sixteen cores:
 
-| Operation | 64-bit double  | 32-bit int     |
-| --------- | -------------- | -------------- |
-| Read      | 120 Million /s | 240 Million /s |
-| Write     | 240 Million /s | 480 Million /s |
+<div align="center">
+  <img alt="A chart comparing the maximum throughput of QuestDB, ClickHouse, TimescaleDB and InfluxDB." src=".github/tsbs-results.png" width="700"/>
+</div>
 
-The following table shows query execution time on a c5.metal instance using 16
-of the 96 threads available:
+The following table shows query execution time of a billion rows run on a
+c5.metal instance using 16 of the 96 threads available:
 
 | Query                                                     | Runtime    |
 | --------------------------------------------------------- | ---------- |
