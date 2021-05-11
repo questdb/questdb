@@ -5880,6 +5880,69 @@ public class SqlParserTest extends AbstractGriffinTest {
                 modelOf("x").col("t", ColumnType.TIMESTAMP).col("tt", ColumnType.TIMESTAMP));
     }
 
+    @Test
+    public void testCreateTableWithO3() throws Exception {
+        assertCreateTable(
+                "create table x (a INT, t TIMESTAMP) timestamp(t) partition by DAY",
+                "create table x (a INT, t TIMESTAMP) timestamp(t) partition by DAY WITH o3MaxUncommittedRows=10000, o3CommitHysteresis=250ms;");
+    }
+
+    @Test
+    public void testCreateTableWithInvalidParameter1() throws Exception {
+        assertSyntaxError(
+                "create table x (a INT, t TIMESTAMP) timestamp(t) partition by DAY WITH o3MaxUncommittedRows=10000, o3invalid=250ms",
+                114,
+                "unrecognized o3invalid after WITH");
+    }
+
+    @Test
+    public void testCreateTableWithInvalidParameter2() throws Exception {
+        assertSyntaxError(
+                "create table x (a INT, t TIMESTAMP) timestamp(t) partition by DAY WITH o3MaxUncommittedRows=10000 x o3CommitHysteresis=250ms",
+                98,
+                "unexpected token: x");
+    }
+
+    @Test
+    public void testCreateTableWithPartialParameter1() throws Exception {
+        assertSyntaxError(
+                "create table x (a INT, t TIMESTAMP) timestamp(t) partition by DAY WITH o3MaxUncommittedRows=10000, o3CommitHysteresis=",
+                117,
+                "too few arguments for '=' [found=1,expected=2]");
+    }
+
+    @Test
+    public void testCreateTableWithPartialParameter2() throws Exception {
+        assertSyntaxError(
+                "create table x (a INT, t TIMESTAMP) timestamp(t) partition by DAY WITH o3MaxUncommittedRows=10000, o3CommitHysteresis",
+                117,
+                "expected parameter after WITH");
+    }
+
+    @Test
+    public void testCreateTableWithPartialParameter3() throws Exception {
+        assertSyntaxError(
+                "create table x (a INT, t TIMESTAMP) timestamp(t) partition by DAY WITH o3MaxUncommittedRows=10000,",
+                97,
+                "unexpected token: ,");
+    }
+
+    @Test
+    public void testCreateTableWitInvalidO3MaxUncommittedRows() throws Exception {
+        assertSyntaxError(
+                "create table x (a INT, t TIMESTAMP) timestamp(t) partition by DAY WITH o3MaxUncommittedRows=asif,",
+                97,
+                "could not parse o3MaxUncommittedRows value \"asif\"");
+    }
+
+    @Test
+    public void testCreateTableWitInvalidO3CommitHysteresis() throws Exception {
+        assertSyntaxError(
+                "create table x (a INT, t TIMESTAMP) timestamp(t) partition by DAY WITH o3CommitHysteresis=asif,",
+                99,
+                "invalid interval qualifier asif");
+    }
+
     private static void assertSyntaxError(
             SqlCompiler compiler,
             String query,

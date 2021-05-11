@@ -140,10 +140,9 @@ inline void radix_shuffle(uint64_t* counts, int64_t* src, int64_t* dest, uint64_
 #endif
 
 template<typename T>
-void radix_sort_long_index_asc_in_place(T *array, uint64_t size) {
+void radix_sort_long_index_asc_in_place(T *array, uint64_t size, T *cpy) {
     rscounts_t counts;
     memset(&counts, 0, 256 * 8 * sizeof(uint64_t));
-    auto *cpy = (T *) malloc(size * sizeof(T));
     uint64_t o8 = 0, o7 = 0, o6 = 0, o5 = 0, o4 = 0, o3 = 0, o2 = 0, o1 = 0;
     uint64_t t8, t7, t6, t5, t4, t3, t2, t1;
     int64_t x;
@@ -208,6 +207,12 @@ void radix_sort_long_index_asc_in_place(T *array, uint64_t size) {
     radix_shuffle<40u>(counts.c3, cpy, array, size);
     radix_shuffle<48u>(counts.c2, array, cpy, size);
     radix_shuffle<56u>(counts.c1, cpy, array, size);
+}
+
+template<typename T>
+inline void radix_sort_long_index_asc_in_place(T *array, uint64_t size) {
+    auto *cpy = (T *) malloc(size * sizeof(T));
+    radix_sort_long_index_asc_in_place(array, size, cpy);
     free(cpy);
 }
 
@@ -481,6 +486,16 @@ Java_io_questdb_std_Vect_sortLongIndexAscInPlace(JNIEnv *env, jclass cl, jlong p
     measure_time(4, [=]() {
         sort<index_t>(reinterpret_cast<index_t *>(pLong), len);
     });
+}
+
+JNIEXPORT void JNICALL
+Java_io_questdb_std_Vect_quickSortLongIndexAscInPlace(JNIEnv *env, jclass cl, jlong pLong, jlong len) {
+    quick_sort_long_index_asc_in_place<index_t>(reinterpret_cast<index_t *>(pLong), 0, len - 1);
+}
+
+JNIEXPORT void JNICALL
+Java_io_questdb_std_Vect_radixSortLongIndexAscInPlace(JNIEnv *env, jclass cl, jlong pLong, jlong len, jlong pCpy) {
+    radix_sort_long_index_asc_in_place<index_t>(reinterpret_cast<index_t *>(pLong), len, reinterpret_cast<index_t *>(pCpy));
 }
 
 JNIEXPORT void JNICALL

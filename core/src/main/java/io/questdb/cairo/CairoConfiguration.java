@@ -229,5 +229,13 @@ public interface CairoConfiguration {
 
     int getO3MaxUncommittedRows();
 
-    long getO3CommitHysteresisInMicros();
+    /**
+     * Default commit hysteresis in microseconds for new tables. This value
+     * can be overridden with 'create table' statement.
+     *
+     * @return hysteresis in microseconds
+     */
+    long getO3CommitHysteresis();
+
+    boolean isO3QuickSortEnabled();
 }

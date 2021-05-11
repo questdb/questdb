@@ -27,6 +27,9 @@ package io.questdb.griffin;
 import io.questdb.WorkerPoolAwareConfiguration;
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.Job;
@@ -76,6 +79,11 @@ public class O3Test extends AbstractO3Test {
             System.err.println(tstData);
             System.err.flush();
         }
+    }
+
+    @Test
+    public void testAppendOrderStabilityParallel() throws Exception {
+        executeWithPool(4, O3Test::testAppendOrderStability);
     }
 
     @Test
@@ -676,7 +684,7 @@ public class O3Test extends AbstractO3Test {
 
             // Insert OOO to create partition dir 2020-01-01.1
             TestUtils.insert(compiler, sqlExecutionContext, "insert into x values(1, 100.0, '2020-01-01T00:01:00')");
-            TestUtils.assertSql(compiler, sqlExecutionContext,"select count() from x", sink,
+            TestUtils.assertSql(compiler, sqlExecutionContext, "select count() from x", sink,
                     "count\n" +
                             "11\n"
             );
@@ -684,7 +692,7 @@ public class O3Test extends AbstractO3Test {
             // Close and open writer. Partition dir 2020-01-01.1 should not be purged
             engine.releaseAllWriters();
             TestUtils.insert(compiler, sqlExecutionContext, "insert into x values(2, 101.0, '2020-01-01T00:02:00')");
-            TestUtils.assertSql(compiler, sqlExecutionContext,"select count() from x", sink,
+            TestUtils.assertSql(compiler, sqlExecutionContext, "select count() from x", sink,
                     "count\n" +
                             "12\n"
             );
@@ -1047,6 +1055,83 @@ public class O3Test extends AbstractO3Test {
         );
 
         assertIndexConsistency(compiler, sqlExecutionContext);
+    }
+
+    private static void testAppendOrderStability(
+            CairoEngine engine,
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
+        compiler.compile(
+                "create table x (" +
+                        "seq long, " +
+                        "sym symbol, " +
+                        "ts timestamp" +
+                        "), index(sym) timestamp (ts) partition by DAY",
+                sqlExecutionContext
+        );
+
+        String[] symbols = {"AA", "BB"};
+        long[] seq = new long[symbols.length];
+
+        // insert some records in order
+        final Rnd rnd = new Rnd();
+        try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x")) {
+            long t = 0;
+            for (int i = 0; i < 1000; i++) {
+                TableWriter.Row r = w.newRow(t++);
+                int index = rnd.nextInt(1);
+                r.putLong(0, seq[index]++);
+                r.putSym(1, symbols[index]);
+                r.append();
+            }
+            w.commitHysteresis();
+
+            // now do out of order
+            for (int i = 0; i < 100_000; i++) {
+                TableWriter.Row r;
+
+                // symbol 0
+
+                r = w.newRow(t + 1);
+                r.putLong(0, seq[0]++);
+                r.putSym(1, symbols[0]);
+                r.append();
+
+                r = w.newRow(t + 1);
+                r.putLong(0, seq[0]++);
+                r.putSym(1, symbols[0]);
+                r.append();
+
+                // symbol 1
+
+                r = w.newRow(t);
+                r.putLong(0, seq[1]++);
+                r.putSym(1, symbols[1]);
+                r.append();
+
+                r = w.newRow(t);
+                r.putLong(0, seq[1]++);
+                r.putSym(1, symbols[1]);
+                r.append();
+
+                t += 2;
+            }
+            w.commit();
+        }
+
+        // now verify that sequence did not get mixed up in the table
+        long[] actualSeq = new long[symbols.length];
+        try (
+                RecordCursorFactory f = compiler.compile("x", sqlExecutionContext).getRecordCursorFactory();
+                RecordCursor cursor = f.getCursor(sqlExecutionContext)
+        ) {
+            final Record record = cursor.getRecord();
+            while (cursor.hasNext()) {
+                int index = record.getInt(1);
+                Assert.assertEquals(record.getLong(0), actualSeq[index]++);
+            }
+        }
     }
 
     private static void testPartitionedOOTopAndBottom0(

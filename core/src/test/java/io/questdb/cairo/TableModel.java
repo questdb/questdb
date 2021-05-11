@@ -187,6 +187,6 @@ public class TableModel implements TableStructure, Closeable {
 
     @Override
     public long getO3CommitHysteresisInMicros() {
-        return cairoCfg.getO3CommitHysteresisInMicros();
+        return cairoCfg.getO3CommitHysteresis();
     }
 }

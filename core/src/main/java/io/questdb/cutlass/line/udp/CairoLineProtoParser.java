@@ -46,7 +46,6 @@ import io.questdb.cutlass.line.CairoLineProtoParserSupport.BadCastException;
 import io.questdb.cutlass.line.CharSequenceCache;
 import io.questdb.cutlass.line.LineProtoParser;
 import io.questdb.cutlass.line.LineProtoTimestampAdapter;
-import io.questdb.cutlass.line.tcp.LineTcpReceiverConfiguration;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.CharSequenceObjHashMap;
@@ -569,7 +568,7 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
 
         @Override
         public long getO3CommitHysteresisInMicros() {
-            return configuration.getO3CommitHysteresisInMicros();
+            return configuration.getO3CommitHysteresis();
         }
 
         TableStructureAdapter of(CharSequenceCache cache) {
