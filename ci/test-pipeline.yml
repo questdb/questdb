@@ -48,7 +48,7 @@ stages:
           - bash: $(SOURCES)/ci/coverage.sh $PR_ID
             displayName: "List of coverage classes PR build"
             env:
-              PR_ID: $(System.PullRequest.PullRequestNumber)
+              PR_ID: $(System.PullRequest.PullRequestId)
               SOURCES: $(Build.SourcesDirectory)
             condition: and(and(eq(variables['Agent.OS'], 'Linux'), eq(variables['jdk'], '1.11')), not(eq(variables['System.PullRequest.PullRequestId'], '')) )
           - task: CmdLine@2
@@ -79,7 +79,7 @@ stages:
             displayName: "Diff coverage PR report"
             env:
               SYSTEM_ACCESSTOKEN: $(GH_TOKEN)
-              PR_ID: $(System.PullRequest.PullRequestNumber)
+              PR_ID: $(System.PullRequest.PullRequestId)
               SOURCES: $(Build.SourcesDirectory)
               COVERAGE_REPORT_PATH: core/CCReport43F6D5EF/jacoco.xml
               DIFF_CONVER_THRESHOLD_PCT: $(DIFF_CONVER_THRESHOLD_PCT)
