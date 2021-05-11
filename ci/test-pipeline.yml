@@ -61,13 +61,6 @@ stages:
             displayName: "Increase shared mem size on Darwin"
             condition: eq(variables['Agent.OS'], 'Darwin')
           - task: Maven@3
-            displayName: "Compile with Maven"
-            inputs:
-              mavenPomFile: "core/pom.xml"
-              mavenOptions: "-Xmx3072m"
-              options: "compile -DskipTests"
-              jdkVersionOption: $(jdk)
-          - task: Maven@3
             displayName: "Run tests with Maven"
             inputs:
               mavenPomFile: "core/pom.xml"
@@ -79,7 +72,7 @@ stages:
           - bash: $JAVA_HOME_11_X64/bin/java -jar $SOURCES/ci/cover-checker-console-1.4.2-jar-with-dependencies.jar -c $SOURCES/$COVERAGE_REPORT_PATH --github-token $SYSTEM_ACCESSTOKEN --repo "questdb/questdb" --pr $PR_ID -t $DIFF_CONVER_THRESHOLD_PCT -type jacoco
             displayName: "Diff coverage PR report"
             env:
-              SYSTEM_ACCESSTOKEN: $(GH_TOKEN)
+              SYSTEM_ACCESSTOKEN: $(System.AccessToken)
               PR_ID: $(System.PullRequest.PullRequestNumber)
               SOURCES: $(Build.SourcesDirectory)
               COVERAGE_REPORT_PATH: core/CCReport43F6D5EF/jacoco.xml
