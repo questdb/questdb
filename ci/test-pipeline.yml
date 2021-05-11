@@ -49,7 +49,7 @@ stages:
             displayName: "List of coverage classes Linux"
             inputs:
               scriptPath: $(Build.SourcesDirectory)/ci/coverage.sh
-            condition: eq(variables['Agent.OS'], 'Linux')
+            condition: and(and(eq(variables['Agent.OS'], 'Linux'), eq(variables['jdk'], '1.11')), not(eq(variables['System.PullRequest.PullRequestId'], '')) )
             env:
               PR_ID: $(System.PullRequest.PullRequestId)
           - task: CmdLine@2
@@ -84,7 +84,7 @@ stages:
               SOURCES: $(Build.SourcesDirectory)
               COVERAGE_REPORT_PATH: core/CCReport43F6D5EF/jacoco.xml
               DIFF_CONVER_THRESHOLD_PCT: $(DIFF_CONVER_THRESHOLD_PCT)
-            condition: and(eq(variables['Agent.OS'], 'Linux'), eq(variables['jdk'], '1.11'))
+            condition: and(and(eq(variables['Agent.OS'], 'Linux'), eq(variables['jdk'], '1.11')), not(eq(variables['System.PullRequest.PullRequestId'], '')) )
           - task: ArchiveFiles@2
             displayName: "Tests failed -- Compress logs"
             condition: not(succeeded())

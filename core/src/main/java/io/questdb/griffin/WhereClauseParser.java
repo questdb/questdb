@@ -315,7 +315,7 @@ final class WhereClauseParser implements Mutable {
         if (m.getColumnIndexQuiet(column) == -1) {
             throw SqlException.invalidColumn(col.position, col.token);
         }
-        return analyzeBetweenInternal(model, col, node, false, functionParser, metadata, executionContext);
+        return analyzeBetween0(model, col, node, false, functionParser, metadata, executionContext);
     }
 
     private boolean analyzeIn(AliasTranslator translator, IntrinsicModel model, ExpressionNode node, RecordMetadata metadata) throws SqlException {
@@ -340,7 +340,7 @@ final class WhereClauseParser implements Mutable {
                 || analyzeInLambda(model, column, metadata, node);
     }
 
-    private boolean analyzeBetweenInternal(
+    private boolean analyzeBetween0(
             IntrinsicModel model,
             ExpressionNode col,
             ExpressionNode between,
@@ -792,7 +792,7 @@ final class WhereClauseParser implements Mutable {
             throw SqlException.invalidColumn(col.position, col.token);
         }
 
-        boolean ok = analyzeBetweenInternal(model, col, node, true, functionParser, metadata, executionContext);
+        boolean ok = analyzeBetween0(model, col, node, true, functionParser, metadata, executionContext);
         if (ok) {
             notNode.intrinsicValue = IntrinsicModel.TRUE;
         } else {
