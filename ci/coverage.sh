@@ -8,5 +8,5 @@ if [ -z "$COV_CLASSES" ]
 then
     echo "##vso[task.setvariable variable=COVERAGE_DIFF;]-:*"
 else
-  echo "##vso[task.setvariable variable=COVERAGE_DIFF;]+:*.$COV_CLASSES"
+    echo "##vso[task.setvariable variable=COVERAGE_DIFF;]+:*.$COV_CLASSES"
 fi
