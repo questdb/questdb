@@ -55,7 +55,7 @@ stages:
           - task: CmdLine@2
             displayName: "Empty list of coverage classes"
             inputs:
-              script: echo "##vso[task.setvariable variable=COVERAGE_DIFF;]-:*"
+              script: echo "##vso[task.setvariable variable=COVERAGE_DIFF;]-:*" && echo "##vso[task.setvariable variable=CODE_COVERAGE_TOOL_OPTION;]None"
             condition: not(and(and(eq(variables['Agent.OS'], 'Linux'), eq(variables['jdk'], '1.11')), not(eq(variables['System.PullRequest.PullRequestId'], '')) ))
           - bash: sudo sysctl -w kern.sysv.shmseg=4096 && sudo sysctl -w kern.sysv.shmall=5120 && sysctl -A | grep shm
             displayName: "Increase shared mem size on Darwin"
@@ -67,12 +67,12 @@ stages:
               mavenOptions: "-Xmx3072m"
               options: "--batch-mode --quiet -Dout=$(Build.SourcesDirectory)/ci/qlog.conf"
               jdkVersionOption: $(jdk)
-              codeCoverageToolOption: JaCoCo
+              codeCoverageToolOption: $(CODE_COVERAGE_TOOL_OPTION)
               codeCoverageClassFilter: "$(COVERAGE_DIFF)"
           - bash: $JAVA_HOME_11_X64/bin/java -jar $SOURCES/ci/cover-checker-console-1.4.2-jar-with-dependencies.jar -c $SOURCES/$COVERAGE_REPORT_PATH --github-token $SYSTEM_ACCESSTOKEN --repo "questdb/questdb" --pr $PR_ID -t $DIFF_CONVER_THRESHOLD_PCT -type jacoco
             displayName: "Diff coverage PR report"
             env:
-              SYSTEM_ACCESSTOKEN: $(System.AccessToken)
+              SYSTEM_ACCESSTOKEN: $(GH_TOKEN)
               PR_ID: $(System.PullRequest.PullRequestNumber)
               SOURCES: $(Build.SourcesDirectory)
               COVERAGE_REPORT_PATH: core/CCReport43F6D5EF/jacoco.xml
