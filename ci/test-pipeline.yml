@@ -79,7 +79,7 @@ stages:
           - bash: $JAVA_HOME_11_X64/bin/java -jar $SOURCES/ci/cover-checker-console-1.4.2-jar-with-dependencies.jar -c $SOURCES/$COVERAGE_REPORT_PATH --github-token $SYSTEM_ACCESSTOKEN --repo "questdb/questdb" --pr $PR_ID -t $DIFF_CONVER_THRESHOLD_PCT -type jacoco
             displayName: "Diff coverage PR report"
             env:
-              SYSTEM_ACCESSTOKEN: $(System.AccessToken)
+              SYSTEM_ACCESSTOKEN: $(GH_TOKEN)
               PR_ID: $(System.PullRequest.PullRequestId)
               SOURCES: $(Build.SourcesDirectory)
               COVERAGE_REPORT_PATH: core/CCReport43F6D5EF/jacoco.xml
