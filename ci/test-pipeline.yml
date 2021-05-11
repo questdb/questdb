@@ -45,7 +45,7 @@ stages:
           - bash: sudo sysctl -w fs.file-max=500000
             displayName: "Increase file count on Linux"
             condition: eq(variables['Agent.OS'], 'Linux')
-          - bash: $(SOURCES)/ci/coverage.sh $PR_ID
+          - bash: $SOURCES/ci/coverage.sh $PR_ID
             displayName: "List of coverage classes PR build"
             env:
               PR_ID: $(System.PullRequest.PullRequestId)
