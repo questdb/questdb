@@ -45,18 +45,17 @@ stages:
           - bash: sudo sysctl -w fs.file-max=500000
             displayName: "Increase file count on Linux"
             condition: eq(variables['Agent.OS'], 'Linux')
-          - task: ShellScript@2
-            displayName: "List of coverage classes Linux"
-            inputs:
-              scriptPath: $(Build.SourcesDirectory)/ci/coverage.sh
-            condition: and(and(eq(variables['Agent.OS'], 'Linux'), eq(variables['jdk'], '1.11')), not(eq(variables['System.PullRequest.PullRequestId'], '')) )
+          - bash: $(SOURCES)/ci/coverage.sh $PR_ID
+            displayName: "List of coverage classes PR build"
             env:
               PR_ID: $(System.PullRequest.PullRequestNumber)
+              SOURCES: $(Build.SourcesDirectory)
+            condition: and(and(eq(variables['Agent.OS'], 'Linux'), eq(variables['jdk'], '1.11')), not(eq(variables['System.PullRequest.PullRequestId'], '')) )
           - task: CmdLine@2
-            displayName: "Empty list of coverage classes Non-Linux"
+            displayName: "Empty list of coverage classes"
             inputs:
               script: echo "##vso[task.setvariable variable=COVERAGE_DIFF;]-:*"
-            condition: not(eq(variables['Agent.OS'], 'Linux'))
+            condition: not(and(and(eq(variables['Agent.OS'], 'Linux'), eq(variables['jdk'], '1.11')), not(eq(variables['System.PullRequest.PullRequestId'], '')) ))
           - bash: sudo sysctl -w kern.sysv.shmseg=4096 && sudo sysctl -w kern.sysv.shmall=5120 && sysctl -A | grep shm
             displayName: "Increase shared mem size on Darwin"
             condition: eq(variables['Agent.OS'], 'Darwin')
@@ -79,7 +78,7 @@ stages:
           - bash: $JAVA_HOME_11_X64/bin/java -jar $SOURCES/ci/cover-checker-console-1.4.2-jar-with-dependencies.jar -c $SOURCES/$COVERAGE_REPORT_PATH --github-token $SYSTEM_ACCESSTOKEN --repo "questdb/questdb" --pr $PR_ID -t $DIFF_CONVER_THRESHOLD_PCT -type jacoco
             displayName: "Diff coverage PR report"
             env:
-              SYSTEM_ACCESSTOKEN: $(System.AccessToken)
+              SYSTEM_ACCESSTOKEN: $(GH_TOKEN)
               PR_ID: $(System.PullRequest.PullRequestNumber)
               SOURCES: $(Build.SourcesDirectory)
               COVERAGE_REPORT_PATH: core/CCReport43F6D5EF/jacoco.xml
