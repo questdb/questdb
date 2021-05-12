@@ -1,16 +1,21 @@
-#
-# For context see
-# https://github.com/questdb/questdb/blob/tsbs/artifacts/tsbs/README.txt
-#
-# The dataset used to run the queries was created with commands (for high-cpu-1) like
-~/tmp/go/bin/tsbs_generate_queries --use-case="cpu-only" --seed=123 --scale=4000 --timestamp-start="2016-01-01T00:00:00Z" --timestamp-end="2016-01-02T00:00:01Z" --queries=1000 --query-type="high-cpu-1" --format="questdb" > /tmp/queries_questdb
-# and should be run against a data set created with a command like
-~/tmp/go/bin/tsbs_generate_data --use-case="cpu-only" --seed=123 --scale=4000 --timestamp-start="2016-01-01T00:00:00Z" --timestamp-end="2016-01-02T00:00:00Z" --log-interval="10s" --format="influx" > /tmp/bigcpu
+# CPU-only queries
 
-#
-# Queries generated
-#
+For context see [the accompanying TSBS QuestDB guide](https://github.com/questdb/questdb/blob/master/artifacts/tsbs/README.md).
+The dataset used to generate the queries was created with commands (for `high-cpu-1`) as follows:
 
+```bash
+~/tmp/go/bin/tsbs_generate_data --use-case="cpu-only" --seed=123 --scale=4000 \
+  --timestamp-start="2016-01-01T00:00:00Z" --timestamp-end="2016-01-02T00:00:00Z" \
+  --log-interval="10s" --format="influx" > /tmp/bigcpu
+
+~/tmp/go/bin/tsbs_generate_queries --use-case="cpu-only" --seed=123 --scale=4000 \
+  --timestamp-start="2016-01-01T00:00:00Z" --timestamp-end="2016-01-02T00:00:01Z" \
+  --queries=1000 --query-type="high-cpu-1" --format="questdb" > /tmp/queries_questdb
+```
+
+**Example generated queries:**
+
+```sql
 -- high-cpu-1
 SELECT *
 FROM cpu
@@ -101,3 +106,4 @@ WHERE hostname IN ('host_249', 'host_1403', 'host_1435', 'host_3539', 'host_3639
  AND timestamp >= '2016-01-01T02:17:08Z'
  AND timestamp < '2016-01-01T03:17:08Z'
  SAMPLE BY 1m
+```
