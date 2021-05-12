@@ -64,15 +64,15 @@ stages:
               jdkVersionOption: $(jdk)
               codeCoverageToolOption: "$(CODE_COVERAGE_TOOL_OPTION)"
               codeCoverageClassFilter: "$(COVERAGE_DIFF)"
-              condition: and(and(eq(variables['Agent.OS'], 'Linux'), eq(variables['jdk'], '1.11')), not(eq(variables['System.PullRequest.PullRequestId'], '')) )
+            condition: and(and(eq(variables['Agent.OS'], 'Linux'), eq(variables['jdk'], '1.11')), not(eq(variables['System.PullRequest.PullRequestId'], '')) )
           - task: Maven@3
-            displayName: "Run tests with Maven without Code Coverage"
+            displayName: "Run tests with Maven"
             inputs:
               mavenPomFile: "core/pom.xml"
               mavenOptions: "-Xmx3072m"
               options: "--batch-mode --quiet -Dout=$(Build.SourcesDirectory)/ci/qlog.conf"
               jdkVersionOption: $(jdk)
-              condition: not(and(and(eq(variables['Agent.OS'], 'Linux'), eq(variables['jdk'], '1.11')), not(eq(variables['System.PullRequest.PullRequestId'], '')) ))
+            condition: not(and(and(eq(variables['Agent.OS'], 'Linux'), eq(variables['jdk'], '1.11')), not(eq(variables['System.PullRequest.PullRequestId'], '')) ))
           - bash: $JAVA_HOME_11_X64/bin/java -jar $SOURCES/ci/cover-checker-console-1.4.2-jar-with-dependencies.jar -c $SOURCES/$COVERAGE_REPORT_PATH --github-token $SYSTEM_ACCESSTOKEN --repo "questdb/questdb" --pr $PR_ID -t $DIFF_CONVER_THRESHOLD_PCT -type jacoco
             displayName: "Diff coverage PR report"
             env:
