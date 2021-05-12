@@ -66,6 +66,13 @@ stages:
             displayName: "Increase shared mem size on Darwin"
             condition: eq(variables['Agent.OS'], 'Darwin')
           - task: Maven@3
+            displayName: "Compile with Maven"
+            inputs:
+              mavenPomFile: "core/pom.xml"
+              mavenOptions: "-Xmx3072m"
+              options: "compile -DskipTests"
+              jdkVersionOption: $(jdk)
+          - task: Maven@3
             displayName: "Run tests with Maven"
             inputs:
               mavenPomFile: "core/pom.xml"
