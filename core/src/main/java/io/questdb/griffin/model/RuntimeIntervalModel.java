@@ -131,34 +131,13 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
 
                 dynamicFunction.init(null, sqlContext);
                 long dynamicValue = getTimestamp(dynamicFunction);
-                if (dynamicValue == Numbers.LONG_NaN) {
-                    // function evaluated to null. return empty set if it's not negated
-                    if (!negated) {
-                        outIntervals.clear();
-                        return;
-                    } else {
-                        checkAddAll(outIntervals);
-                        continue;
-                    }
-                }
-
+                long dynamicValue2 = 0;
                 if (dynamicHiLo == IntervalDynamicIndicator.IS_LO_SEPARATE_DYNAMIC) {
                     // Both ends of BETWEEN are dynamic and different values. Take next dynamic point.
                     i += STATIC_LONGS_PER_DYNAMIC_INTERVAL;
                     dynamicFunction = dynamicRangeList.getQuick(dynamicIndex++);
                     dynamicFunction.init(null, sqlContext);
-                    long dynamicValue2 = getTimestamp(dynamicFunction);
-                    if (dynamicValue2 == Numbers.LONG_NaN) {
-                        if (!negated) {
-                            // function evaluated to null. return empty set if it's not negated
-                            outIntervals.clear();
-                            return;
-                        } else {
-                            checkAddAll(outIntervals);
-                            continue;
-                        }
-                    }
-                    hi = dynamicValue2;
+                    dynamicValue2 = hi = getTimestamp(dynamicFunction);
                     lo = dynamicValue;
                 } else {
                     if ((dynamicHiLo & IntervalDynamicIndicator.IS_HI_DYNAMIC) != 0) {
@@ -166,6 +145,19 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
                     }
                     if ((dynamicHiLo & IntervalDynamicIndicator.IS_LO_DYNAMIC) != 0) {
                         lo = dynamicValue + adjustment;
+                    }
+                }
+
+                if (dynamicValue == Numbers.LONG_NaN || dynamicValue2 == Numbers.LONG_NaN) {
+                    // functions evaluated to null.
+                    if (!negated) {
+                        // return empty set if it's not negated
+                        outIntervals.clear();
+                        return;
+                    } else {
+                        // or full set
+                        checkAddAll(outIntervals);
+                        continue;
                     }
                 }
 

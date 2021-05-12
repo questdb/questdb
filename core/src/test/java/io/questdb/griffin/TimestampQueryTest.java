@@ -959,6 +959,11 @@ public class TimestampQueryTest extends AbstractGriffinTest {
             expected = "min\tmax\n" +
                     "2020-01-01T00:00:00.000000Z\t2020-01-02T23:00:00.000000Z\n";
             assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where nts not between (now() + CAST(NULL AS LONG)) and now()");
+
+            // NOT Between runtime const evaluating to invalid string
+            expected = "min\tmax\n" +
+                    "2020-01-01T00:00:00.000000Z\t2020-01-02T23:00:00.000000Z\n";
+            assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where nts not between to_str(now(), 'yyyy-MM-dd') || '-222' and now()");
         });
     }
 
@@ -1042,7 +1047,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
 
         // Non-impacting additions to WHERE
         assertSql(query + joining + columnName + " not between now() and CAST(NULL as TIMESTAMP)", expected);
-        assertSql(query + joining + columnName + " not between '2200-01-01' and dateadd('y', -1000, now())", expected);
+        assertSql(query + joining + columnName + " between '2200-01-01' and dateadd('y', -10000, now())", expected);
         assertSql(query + joining + columnName + " > dateadd('y', -1000, now())", expected);
         assertSql(query + joining + columnName + " <= dateadd('y', 1000, now())", expected);
         assertSql(query + joining + columnName + " not in '1970-01-01'", expected);

@@ -52,35 +52,27 @@ stages:
               args: $(System.PullRequest.PullRequestNumber)
               failOnStandardError: true
             condition: and(and(eq(variables['Agent.OS'], 'Linux'), eq(variables['jdk'], '1.11')), not(eq(variables['System.PullRequest.PullRequestId'], '')) )
-          - task: CmdLine@2
-            displayName: "Empty list of coverage classes"
-            inputs:
-              script: echo "##vso[task.setvariable variable=COVERAGE_DIFF;]-:*"
-            condition: not(and(and(eq(variables['Agent.OS'], 'Linux'), eq(variables['jdk'], '1.11')), not(eq(variables['System.PullRequest.PullRequestId'], '')) ))
-          - task: CmdLine@2
-            displayName: "Empty coverage option"
-            inputs:
-              script: echo "##vso[task.setvariable variable=CODE_COVERAGE_TOOL_OPTION;]None"
-            condition: not(and(and(eq(variables['Agent.OS'], 'Linux'), eq(variables['jdk'], '1.11')), not(eq(variables['System.PullRequest.PullRequestId'], '')) ))
           - bash: sudo sysctl -w kern.sysv.shmseg=4096 && sudo sysctl -w kern.sysv.shmall=5120 && sysctl -A | grep shm
             displayName: "Increase shared mem size on Darwin"
             condition: eq(variables['Agent.OS'], 'Darwin')
           - task: Maven@3
-            displayName: "Compile with Maven"
-            inputs:
-              mavenPomFile: "core/pom.xml"
-              mavenOptions: "-Xmx3072m"
-              options: "compile -DskipTests"
-              jdkVersionOption: $(jdk)
-          - task: Maven@3
-            displayName: "Run tests with Maven"
+            displayName: "Run tests with Maven with Code Coverage"
             inputs:
               mavenPomFile: "core/pom.xml"
               mavenOptions: "-Xmx3072m"
               options: "--batch-mode --quiet -Dout=$(Build.SourcesDirectory)/ci/qlog.conf"
               jdkVersionOption: $(jdk)
-              codeCoverageToolOption: $(CODE_COVERAGE_TOOL_OPTION)
+              codeCoverageToolOption: "$(CODE_COVERAGE_TOOL_OPTION)"
               codeCoverageClassFilter: "$(COVERAGE_DIFF)"
+              condition: and(and(eq(variables['Agent.OS'], 'Linux'), eq(variables['jdk'], '1.11')), not(eq(variables['System.PullRequest.PullRequestId'], '')) )
+          - task: Maven@3
+            displayName: "Run tests with Maven without Code Coverage"
+            inputs:
+              mavenPomFile: "core/pom.xml"
+              mavenOptions: "-Xmx3072m"
+              options: "--batch-mode --quiet -Dout=$(Build.SourcesDirectory)/ci/qlog.conf"
+              jdkVersionOption: $(jdk)
+              condition: not(and(and(eq(variables['Agent.OS'], 'Linux'), eq(variables['jdk'], '1.11')), not(eq(variables['System.PullRequest.PullRequestId'], '')) ))
           - bash: $JAVA_HOME_11_X64/bin/java -jar $SOURCES/ci/cover-checker-console-1.4.2-jar-with-dependencies.jar -c $SOURCES/$COVERAGE_REPORT_PATH --github-token $SYSTEM_ACCESSTOKEN --repo "questdb/questdb" --pr $PR_ID -t $DIFF_CONVER_THRESHOLD_PCT -type jacoco
             displayName: "Diff coverage PR report"
             env:
