@@ -112,11 +112,11 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
         int size = intervals.size();
         int dynamicStart = size - dynamicRangeList.size() * STATIC_LONGS_PER_DYNAMIC_INTERVAL;
         int dynamicIndex = 0;
-        int operations = 0;
 
         for (int i = dynamicStart; i < size; i += STATIC_LONGS_PER_DYNAMIC_INTERVAL) {
             Function dynamicFunction = dynamicRangeList.getQuick(dynamicIndex++);
             short operation = IntervalUtils.getEncodedOperation(intervals, i);
+            boolean negated = operation > IntervalOperation.NEGATED_BORDERLINE;
             int divider = outIntervals.size();
 
             if (dynamicFunction == null) {
@@ -132,9 +132,14 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
                 dynamicFunction.init(null, sqlContext);
                 long dynamicValue = getTimestamp(dynamicFunction);
                 if (dynamicValue == Numbers.LONG_NaN) {
-                    // function evaluated to null. return empty set
-                    outIntervals.clear();
-                    return;
+                    // function evaluated to null. return empty set if it's not negated
+                    if (!negated) {
+                        outIntervals.clear();
+                        return;
+                    } else {
+                        checkAddAll(outIntervals);
+                        continue;
+                    }
                 }
 
                 if (dynamicHiLo == IntervalDynamicIndicator.IS_LO_SEPARATE_DYNAMIC) {
@@ -143,10 +148,15 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
                     dynamicFunction = dynamicRangeList.getQuick(dynamicIndex++);
                     dynamicFunction.init(null, sqlContext);
                     long dynamicValue2 = getTimestamp(dynamicFunction);
-                    if (dynamicValue == Numbers.LONG_NaN) {
-                        // function evaluated to null. return empty set
-                        outIntervals.clear();
-                        return;
+                    if (dynamicValue2 == Numbers.LONG_NaN) {
+                        if (!negated) {
+                            // function evaluated to null. return empty set if it's not negated
+                            outIntervals.clear();
+                            return;
+                        } else {
+                            checkAddAll(outIntervals);
+                            continue;
+                        }
                     }
                     hi = dynamicValue2;
                     lo = dynamicValue;
@@ -169,9 +179,9 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
                 outIntervals.setQuick(divider, lo);
             }
 
-            if (dynamicStart > 0 || operations++ > 0) {
-                // Do not apply operation (intersect, subtract)
-                // if this is first element and no pre-calculated static intervals exist
+            // Do not apply operation (intersect, subtract)
+            // if this is first element and no pre-calculated static intervals exist
+            if (divider > 0) {
                 switch (operation) {
                     case IntervalOperation.INTERSECT:
                     case IntervalOperation.INTERSECT_BETWEEN:
@@ -188,6 +198,13 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
                         throw new UnsupportedOperationException("Interval operation " + operation + " is not supported");
                 }
             }
+        }
+    }
+
+    private void checkAddAll(LongList outIntervals) {
+        if (outIntervals.size() == 0) {
+            outIntervals.extendAndSet(1, Long.MAX_VALUE);
+            outIntervals.extendAndSet(0, Long.MIN_VALUE);
         }
     }
 

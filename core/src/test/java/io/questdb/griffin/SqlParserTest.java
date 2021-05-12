@@ -5881,6 +5881,20 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testBetweenWithCastAndSum() throws Exception {
+        assertQuery("select-choose tt from (select [tt, t] from x where t between ('2020-01-01',now() + cast(NULL,LONG)))",
+                "select tt from x where t between '2020-01-01' and (now() + CAST(NULL AS LONG))",
+                modelOf("x").col("t", ColumnType.TIMESTAMP).col("tt", ColumnType.TIMESTAMP));
+    }
+
+    @Test
+    public void testBetweenWithCastAndSum2() throws Exception {
+        assertQuery("select-choose tt from (select [tt, t] from x where t between (now() + cast(NULL,LONG),'2020-01-01'))",
+                "select tt from x where t between (now() + CAST(NULL AS LONG)) and '2020-01-01'",
+                modelOf("x").col("t", ColumnType.TIMESTAMP).col("tt", ColumnType.TIMESTAMP));
+    }
+
+    @Test
     public void testCreateTableWithO3() throws Exception {
         assertCreateTable(
                 "create table x (a INT, t TIMESTAMP) timestamp(t) partition by DAY",

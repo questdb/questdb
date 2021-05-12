@@ -371,10 +371,12 @@ class ExpressionParser {
 
                         // enable operation or literal absorb parameters
                         if ((node = opStack.peek()) != null && (node.type == ExpressionNode.LITERAL || (node.type == ExpressionNode.SET_OPERATION))) {
-                            node.paramCount = localParamCount + (node.paramCount == 2 ? 1 : 0);
-                            node.type = ExpressionNode.FUNCTION;
-                            argStackDepth = onNode(listener, node, argStackDepth);
-                            opStack.pop();
+                            if (!SqlKeywords.isBetweenKeyword(node.token) || betweenCount == betweenAndCount) {
+                                node.paramCount = localParamCount + Math.max(0, node.paramCount - 1);
+                                node.type = ExpressionNode.FUNCTION;
+                                argStackDepth = onNode(listener, node, argStackDepth);
+                                opStack.pop();
+                            }
                         } else {
                             // not at function?
                             // peek the op stack to make sure it isn't a repeating brace

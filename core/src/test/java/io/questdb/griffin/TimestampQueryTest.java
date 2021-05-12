@@ -594,30 +594,30 @@ public class TimestampQueryTest extends AbstractGriffinTest {
 
                 final long hour = Timestamps.HOUR_MICROS;
                 final long day = 24 * hour;
-                compareNowRange("select * FROM xts WHERE ts >= '1970' and ts <= '2021'", datesArr, ts -> true, true);
+                compareNowRange("select * FROM xts WHERE ts >= '1970' and ts <= '2021'", datesArr, ts -> true);
 
                 // Scroll now to the end
                 currentMicros = 200L * hour;
-                compareNowRange("select ts FROM xts WHERE ts >= now() - 3600 * 1000 * 1000L", datesArr, ts -> ts >= currentMicros - hour, true);
-                compareNowRange("select ts FROM xts WHERE ts >= now() + 3600 * 1000 * 1000L", datesArr, ts -> ts >= currentMicros + hour, true);
+                compareNowRange("select ts FROM xts WHERE ts >= now() - 3600 * 1000 * 1000L", datesArr, ts -> ts >= currentMicros - hour);
+                compareNowRange("select ts FROM xts WHERE ts >= now() + 3600 * 1000 * 1000L", datesArr, ts -> ts >= currentMicros + hour);
 
                 for (currentMicros = hour; currentMicros < count * hour; currentMicros += day) {
-                    compareNowRange("select ts FROM xts WHERE ts < now()", datesArr, ts -> ts < currentMicros, true);
+                    compareNowRange("select ts FROM xts WHERE ts < now()", datesArr, ts -> ts < currentMicros);
                 }
 
                 for (currentMicros = hour; currentMicros < count * hour; currentMicros += 12 * hour) {
-                    compareNowRange("select ts FROM xts WHERE ts >= now()", datesArr, ts -> ts >= currentMicros, true);
+                    compareNowRange("select ts FROM xts WHERE ts >= now()", datesArr, ts -> ts >= currentMicros);
                 }
 
                 for (currentMicros = 0; currentMicros < count * hour + 4 * day; currentMicros += 5 * hour) {
                     compareNowRange("select ts FROM xts WHERE ts <= dateadd('d', -1, now()) and ts >= dateadd('d', -2, now())",
                             datesArr,
-                            ts -> ts >= (currentMicros - 2 * day) && (ts <= currentMicros - day), true);
+                            ts -> ts >= (currentMicros - 2 * day) && (ts <= currentMicros - day));
                 }
 
                 currentMicros = 100L * hour;
                 compareNowRange("WITH temp AS (SELECT ts FROM xts WHERE ts > dateadd('y', -1, now())) " +
-                        "SELECT ts FROM temp WHERE ts < now()", datesArr, ts -> ts < currentMicros, true);
+                        "SELECT ts FROM temp WHERE ts < now()", datesArr, ts -> ts < currentMicros);
             });
         } finally {
             currentMicros = -1;
@@ -635,7 +635,6 @@ public class TimestampQueryTest extends AbstractGriffinTest {
                 final int skip = 48;
                 final int iterations = 10;
                 final long hour = Timestamps.HOUR_MICROS;
-                final long day = 24 * hour;
 
                 String createStmt = "create table xts (ts Timestamp) timestamp(ts) partition by DAY";
                 compiler.compile(createStmt, sqlExecutionContext);
@@ -662,7 +661,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
                 for (currentMicros = 0; currentMicros < end; currentMicros += 22 * hour) {
                     int results = compareNowRange("select ts FROM xts WHERE ts <= dateadd('h', 2, now()) and ts >= dateadd('h', -1, now())",
                             datesArr,
-                            ts -> ts >= (currentMicros - hour) && (ts <= currentMicros + 2 * hour), true);
+                            ts -> ts >= (currentMicros - hour) && (ts <= currentMicros + 2 * hour));
                     min = Math.min(min, results);
                     max = Math.max(max, results);
                 }
@@ -951,6 +950,15 @@ public class TimestampQueryTest extends AbstractGriffinTest {
             expected = "min\tmax\n" +
                     "2020-01-01T00:00:00.000000Z\t2020-01-02T23:00:00.000000Z\n";
             assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where nts not between CAST(NULL as TIMESTAMP) and now()");
+
+            // Between runtime const evaluating to NULL
+            expected = "dts\tnts\n";
+            assertTimestampTtQuery(expected, "select * from tt where nts between (now() + CAST(NULL AS LONG)) and now()");
+
+            // NOT Between runtime const evaluating to NULL
+            expected = "min\tmax\n" +
+                    "2020-01-01T00:00:00.000000Z\t2020-01-02T23:00:00.000000Z\n";
+            assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where nts not between (now() + CAST(NULL AS LONG)) and now()");
         });
     }
 
@@ -1006,7 +1014,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
         });
     }
 
-    private void assertTimestampTtFailedQuery(String expectedError, String query) throws SqlException {
+    private void assertTimestampTtFailedQuery(String expectedError, String query) {
         assertTimestampTtFailedQuery0(expectedError, query);
         String dtsQuery = query.replace("nts", "dts");
         assertTimestampTtFailedQuery0(expectedError, dtsQuery);
@@ -1022,9 +1030,22 @@ public class TimestampQueryTest extends AbstractGriffinTest {
     }
 
     private void assertTimestampTtQuery(String expected, String query) throws SqlException {
-        assertSql(query, expected);
+        assertQueryWithConditions(query, expected, "nts");
         String dtsQuery = query.replace("nts", "dts");
-        assertSql(dtsQuery, expected);
+        assertQueryWithConditions(dtsQuery, expected, "dts");
+    }
+
+    private void assertQueryWithConditions(String query, String expected, String columnName) throws SqlException {
+        assertSql(query, expected);
+
+        String joining = query.indexOf("where") > 0 ? " and " : " where ";
+
+        // Non-impacting additions to WHERE
+        assertSql(query + joining + columnName + " not between now() and CAST(NULL as TIMESTAMP)", expected);
+        assertSql(query + joining + columnName + " not between '2200-01-01' and dateadd('y', -1000, now())", expected);
+        assertSql(query + joining + columnName + " > dateadd('y', -1000, now())", expected);
+        assertSql(query + joining + columnName + " <= dateadd('y', 1000, now())", expected);
+        assertSql(query + joining + columnName + " not in '1970-01-01'", expected);
     }
 
     @Test
@@ -1066,14 +1087,14 @@ public class TimestampQueryTest extends AbstractGriffinTest {
         );
     }
 
-    private int compareNowRange(String query, List<Object[]> dates, LongPredicate filter, boolean expectSize) throws SqlException {
+    private int compareNowRange(String query, List<Object[]> dates, LongPredicate filter) throws SqlException {
         String queryPlan = "{\"name\":\"DataFrameRecordCursorFactory\", \"cursorFactory\":{\"name\":\"IntervalFwdDataFrameCursorFactory\", \"table\":\"xts\"}}";
         long expectedCount = dates.stream().filter(arr -> filter.test((long) arr[0])).count();
         String expected = "ts\n"
                 + dates.stream().filter(arr -> filter.test((long) arr[0]))
                 .map(arr -> arr[1] + "\n")
                 .collect(Collectors.joining());
-        printSqlResult(expected, query, "ts", null, null, true, true, expectSize, false, queryPlan);
+        printSqlResult(expected, query, "ts", null, null, true, true, true, false, queryPlan);
         return (int) expectedCount;
     }
 }
