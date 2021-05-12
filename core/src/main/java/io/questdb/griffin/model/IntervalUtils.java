@@ -386,7 +386,7 @@ public final class IntervalUtils {
     }
 
     private static long checkTimezoneTail(CharSequence seq, int p, int lim) throws NumericException {
-        if (lim - p == 0) {
+        if (lim == p) {
             return 0;
         }
 
@@ -395,7 +395,7 @@ public final class IntervalUtils {
             return 0;
         }
 
-        if (checkLen(p, lim)) {
+        if (lim - p > 2) {
             int tzSign = parseSign(seq, p++);
             int hour = Numbers.parseInt(seq, p, p += 2);
             checkRange(hour, 0, 23);

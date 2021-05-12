@@ -839,6 +839,9 @@ public class TimestampQueryTest extends AbstractGriffinTest {
                     "2020-01-01T00:00:00.000000Z\t2020-01-01T11:00:00.000000Z\n";
             assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where nts < dateadd('d',-1, '2020-01-02T12:00:00')");
             assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where dateadd('d', -1, '2020-01-02T12:00:00') > nts");
+
+            expected = "dts\tnts\n";
+            assertTimestampTtQuery(expected, "select * from tt where nts > (case when 1=1 THEN dts else now() end)");
         });
     }
 
@@ -1047,6 +1050,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
             assertTimestampTtFailedQuery("Invalid date", "select min(nts), max(nts) from tt where nts between '2020-01-01' and 'invalid'");
             assertTimestampTtFailedQuery("Invalid date", "select min(nts), max(nts) from tt where nts between '2020-01-01' and 'invalid' || 'dd'");
             assertTimestampTtFailedQuery("Invalid column: invalidCol", "select min(nts), max(nts) from tt where invalidCol not between '2020-01-01' and '2020-01-02'");
+            assertTimestampTtFailedQuery("Invalid date", "select min(nts), max(nts) from tt where nts in ('2020-01-01', 'invalid')");
         });
     }
 
