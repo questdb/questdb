@@ -479,6 +479,9 @@ public class TableWriter implements Closeable {
                 if (partitionBy != PartitionBy.NONE) {
                     // run indexer for the whole table
                     final long timestamp = indexHistoricPartitions(indexer, columnName, indexValueBlockSize);
+                    if (timestamp == Numbers.LONG_NaN) {
+                        return;
+                    }
                     path.trimTo(rootLen);
                     setStateForTimestamp(path, timestamp, true);
                 } else {
@@ -1431,6 +1434,8 @@ public class TableWriter implements Closeable {
             ddlMem.putInt(metaMem.getInt(META_OFFSET_TIMESTAMP_INDEX));
             ddlMem.putInt(ColumnType.VERSION);
             ddlMem.putInt(metaMem.getInt(META_OFFSET_TABLE_ID));
+            ddlMem.putInt(metaMem.getInt(META_OFFSET_O3_MAX_UNCOMMITTED_ROWS));
+            ddlMem.putInt(metaMem.getInt(META_OFFSET_O3_COMMIT_HYSTERESIS_IN_MICROS));
             ddlMem.jumpTo(META_OFFSET_COLUMN_TYPES);
             for (int i = 0; i < columnCount; i++) {
                 writeColumnEntry(i);
@@ -1828,6 +1833,8 @@ public class TableWriter implements Closeable {
             ddlMem.putInt(metaMem.getInt(META_OFFSET_TIMESTAMP_INDEX));
             ddlMem.putInt(ColumnType.VERSION);
             ddlMem.putInt(metaMem.getInt(META_OFFSET_TABLE_ID));
+            ddlMem.putInt(metaMem.getInt(META_OFFSET_O3_MAX_UNCOMMITTED_ROWS));
+            ddlMem.putInt(metaMem.getInt(META_OFFSET_O3_COMMIT_HYSTERESIS_IN_MICROS));
             ddlMem.jumpTo(META_OFFSET_COLUMN_TYPES);
             for (int i = 0; i < columnCount; i++) {
                 if (i != columnIndex) {
@@ -2115,52 +2122,56 @@ public class TableWriter implements Closeable {
     }
 
     private long indexHistoricPartitions(SymbolColumnIndexer indexer, CharSequence columnName, int indexValueBlockSize) {
-        final long maxTimestamp = timestampFloorMethod.floor(this.txFile.getMaxTimestamp());
-        long timestamp = txFile.getMinTimestamp();
+        final long ts = this.txFile.getMaxTimestamp();
+        if (ts > Numbers.LONG_NaN) {
+            final long maxTimestamp = timestampFloorMethod.floor(ts);
+            long timestamp = txFile.getMinTimestamp();
 
-        //noinspection TryFinallyCanBeTryWithResources
-        try (final MappedReadOnlyMemory roMem = new SinglePageMappedReadOnlyPageMemory()) {
+            //noinspection TryFinallyCanBeTryWithResources
+            try (final MappedReadOnlyMemory roMem = new SinglePageMappedReadOnlyPageMemory()) {
 
-            while (timestamp < maxTimestamp) {
+                while (timestamp < maxTimestamp) {
 
-                path.trimTo(rootLen);
+                    path.trimTo(rootLen);
 
-                setStateForTimestamp(path, timestamp, true);
+                    setStateForTimestamp(path, timestamp, true);
 
-                if (txFile.attachedPartitionsContains(timestamp) && ff.exists(path.$())) {
+                    if (txFile.attachedPartitionsContains(timestamp) && ff.exists(path.$())) {
 
-                    final int plen = path.length();
+                        final int plen = path.length();
 
-                    TableUtils.dFile(path.trimTo(plen), columnName);
+                        TableUtils.dFile(path.trimTo(plen), columnName);
 
-                    if (ff.exists(path)) {
+                        if (ff.exists(path)) {
 
-                        path.trimTo(plen);
+                            path.trimTo(plen);
 
-                        LOG.info().$("indexing [path=").$(path).$(']').$();
+                            LOG.info().$("indexing [path=").$(path).$(']').$();
 
-                        createIndexFiles(columnName, indexValueBlockSize, plen, true);
+                            createIndexFiles(columnName, indexValueBlockSize, plen, true);
 
-                        final long partitionSize = txFile.getPartitionSizeByPartitionTimestamp(timestamp);
-                        final long columnTop = TableUtils.readColumnTop(ff, path.trimTo(plen), columnName, plen, tempMem16b);
+                            final long partitionSize = txFile.getPartitionSizeByPartitionTimestamp(timestamp);
+                            final long columnTop = TableUtils.readColumnTop(ff, path.trimTo(plen), columnName, plen, tempMem16b);
 
-                        if (partitionSize > columnTop) {
-                            TableUtils.dFile(path.trimTo(plen), columnName);
+                            if (partitionSize > columnTop) {
+                                TableUtils.dFile(path.trimTo(plen), columnName);
 
-                            roMem.of(ff, path, ff.getPageSize(), 0);
-                            roMem.grow((partitionSize - columnTop) << ColumnType.pow2SizeOf(ColumnType.INT));
+                                roMem.of(ff, path, ff.getPageSize(), 0);
+                                roMem.grow((partitionSize - columnTop) << ColumnType.pow2SizeOf(ColumnType.INT));
 
-                            indexer.configureWriter(configuration, path.trimTo(plen), columnName, columnTop);
-                            indexer.index(roMem, columnTop, partitionSize);
+                                indexer.configureWriter(configuration, path.trimTo(plen), columnName, columnTop);
+                                indexer.index(roMem, columnTop, partitionSize);
+                            }
                         }
                     }
+                    timestamp = timestampAddMethod.calculate(timestamp, 1);
                 }
-                timestamp = timestampAddMethod.calculate(timestamp, 1);
+            } finally {
+                indexer.close();
             }
-        } finally {
-            indexer.close();
+            return timestamp;
         }
-        return timestamp;
+        return ts;
     }
 
     private void indexLastPartition(SymbolColumnIndexer indexer, CharSequence columnName, int columnIndex, int indexValueBlockSize) {
@@ -3704,6 +3715,8 @@ public class TableWriter implements Closeable {
             }
             ddlMem.putInt(ColumnType.VERSION);
             ddlMem.putInt(metaMem.getInt(META_OFFSET_TABLE_ID));
+            ddlMem.putInt(metaMem.getInt(META_OFFSET_O3_MAX_UNCOMMITTED_ROWS));
+            ddlMem.putInt(metaMem.getInt(META_OFFSET_O3_COMMIT_HYSTERESIS_IN_MICROS));
             ddlMem.jumpTo(META_OFFSET_COLUMN_TYPES);
 
             for (int i = 0; i < columnCount; i++) {
@@ -3928,6 +3941,8 @@ public class TableWriter implements Closeable {
             ddlMem.putInt(timestampIndex);
             ddlMem.putInt(ColumnType.VERSION);
             ddlMem.putInt(metaMem.getInt(META_OFFSET_TABLE_ID));
+            ddlMem.putInt(metaMem.getInt(META_OFFSET_O3_MAX_UNCOMMITTED_ROWS));
+            ddlMem.putInt(metaMem.getInt(META_OFFSET_O3_COMMIT_HYSTERESIS_IN_MICROS));
             ddlMem.jumpTo(META_OFFSET_COLUMN_TYPES);
 
             for (int i = 0; i < columnCount; i++) {

@@ -16,12 +16,6 @@ public class TableReplicationRecordCursorFactory extends AbstractRecordCursorFac
     private final IntList columnIndexes;
     private final IntList columnSizes;
 
-    private static RecordMetadata createMetadata(CairoEngine engine, CharSequence tableName) {
-        try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName, -1)) {
-            return GenericRecordMetadata.copyOf(reader.getMetadata());
-        }
-    }
-
     public TableReplicationRecordCursorFactory(CairoEngine engine, CharSequence tableName, long maxRowsPerFrame) {
         super(createMetadata(engine, tableName));
         this.maxRowsPerFrame = maxRowsPerFrame;
@@ -41,8 +35,23 @@ public class TableReplicationRecordCursorFactory extends AbstractRecordCursorFac
     }
 
     @Override
+    public void close() {
+        Misc.free(cursor);
+    }
+
+    @Override
+    public RecordCursor getCursor(SqlExecutionContext executionContext) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public TablePageFrameCursor getPageFrameCursor(SqlExecutionContext executionContext) {
         return cursor.of(engine.getReader(executionContext.getCairoSecurityContext(), tableName), maxRowsPerFrame, -1, columnIndexes, columnSizes);
+    }
+
+    @Override
+    public boolean recordCursorSupportsRandomAccess() {
+        return false;
     }
 
     public TablePageFrameCursor getPageFrameCursorFrom(SqlExecutionContext executionContext, int timestampColumnIndex, long nFirstRow) {
@@ -60,23 +69,9 @@ public class TableReplicationRecordCursorFactory extends AbstractRecordCursorFac
         return cursor.of(reader, maxRowsPerFrame, timestampColumnIndex, columnIndexes, columnSizes, partitionIndex, nFirstRow);
     }
 
-    public TablePageFrameCursor getPageFrameCursor(int timestampColumnIndex, int partitionIndex, long partitionRowCount) {
-        return cursor.of(engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName), maxRowsPerFrame, timestampColumnIndex, columnIndexes, columnSizes, partitionIndex,
-                partitionRowCount);
-    }
-
-    @Override
-    public void close() {
-        Misc.free(cursor);
-    }
-
-    @Override
-    public RecordCursor getCursor(SqlExecutionContext executionContext) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public boolean recordCursorSupportsRandomAccess() {
-        return false;
+    private static RecordMetadata createMetadata(CairoEngine engine, CharSequence tableName) {
+        try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName, -1)) {
+            return GenericRecordMetadata.copyOf(reader.getMetadata());
+        }
     }
 }
