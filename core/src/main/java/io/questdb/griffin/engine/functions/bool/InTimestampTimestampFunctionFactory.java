@@ -36,6 +36,7 @@ import io.questdb.griffin.engine.functions.MultiArgFunction;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 
 public class InTimestampTimestampFunctionFactory implements FunctionFactory {
@@ -71,7 +72,7 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
         return new InTimestampVarFunction(position, new ObjList<>(args));
     }
 
-    private LongList parseToTs(ObjList<Function> args) {
+    private LongList parseToTs(ObjList<Function> args) throws SqlException {
         LongList res = new LongList(args.size() - 1);
         res.extendAndSet(args.size() - 2, 0);
 
@@ -86,7 +87,7 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
                     break;
                 case ColumnType.STRING:
                     CharSequence tsValue = func.getStr(null);
-                    val = (tsValue != null) ? IntervalUtils.tryParseTimestamp(tsValue) : Numbers.LONG_NaN;
+                    val = (tsValue != null) ? tryParseTimestamp(tsValue, func.getPosition()) : Numbers.LONG_NaN;
                     break;
             }
             res.setQuick(i - 1, val);
@@ -94,6 +95,14 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
 
         res.sort();
         return res;
+    }
+
+    public static long tryParseTimestamp(CharSequence seq, int position) throws SqlException {
+        try {
+            return IntervalUtils.parseFloorPartialDate(seq, 0, seq.length());
+        } catch (NumericException e) {
+            throw SqlException.invalidDate(position);
+        }
     }
 
     private static class InTimestampVarFunction extends BooleanFunction implements MultiArgFunction {
