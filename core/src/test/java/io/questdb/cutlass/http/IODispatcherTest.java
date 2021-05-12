@@ -5442,9 +5442,6 @@ public class IODispatcherTest {
 
                 serverRunning.set(false);
                 serverHaltLatch.await();
-                if (Files.getOpenFileCount() > 0) {
-                    System.out.println("ok");
-                }
             } finally {
                 finished.set(true);
                 senderHalt.await();
