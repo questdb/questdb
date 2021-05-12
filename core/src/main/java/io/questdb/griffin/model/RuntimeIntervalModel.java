@@ -183,9 +183,7 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
                     case IntervalOperation.SUBTRACT_BETWEEN:
                         IntervalUtils.subtract(outIntervals, divider);
                         break;
-                    case IntervalOperation.UNION:
-                        IntervalUtils.unionInplace(outIntervals, divider);
-                        break;
+                    // UNION cannot be the first thing at the moment.
                     default:
                         throw new UnsupportedOperationException("Interval operation " + operation + " is not supported");
                 }

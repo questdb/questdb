@@ -32,6 +32,7 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BooleanFunction;
+import io.questdb.griffin.engine.functions.MultiArgFunction;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
@@ -45,10 +46,6 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        if (args.size() < 2) {
-            throw SqlException.position(position).put("TIMESTAMP IN function must have at least 1 argument");
-        }
-
         boolean allConst = true;
         for (int i = 1, n = args.size(); i < n; i++) {
             Function func = args.getQuick(i);
@@ -59,10 +56,12 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
                 case ColumnType.STRING:
                     break;
                 default:
-                    // Should never be here, factory should check args types
                     throw SqlException.position(0).put("cannot compare TIMESTAMP with type ").put(ColumnType.nameOf(func.getType()));
             }
-            allConst &= func.isConstant();
+            if (!func.isConstant()) {
+                allConst = false;
+                break;
+            }
         }
 
         if (allConst) {
@@ -78,7 +77,7 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
 
         for (int i = 1, n = args.size(); i < n; i++) {
             Function func = args.getQuick(i);
-            long val;
+            long val = Numbers.LONG_NaN;
             switch (func.getType()) {
                 case ColumnType.TIMESTAMP:
                 case ColumnType.LONG:
@@ -86,11 +85,9 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
                     val = func.getTimestamp(null);
                     break;
                 case ColumnType.STRING:
-                    val = IntervalUtils.tryParseTimestamp(func.getStr(null));
+                    CharSequence tsValue = func.getStr(null);
+                    val = (tsValue != null) ? IntervalUtils.tryParseTimestamp(tsValue) : Numbers.LONG_NaN;
                     break;
-                default:
-                    // Should never be here, factory should check args types
-                    throw new IllegalArgumentException();
             }
             res.setQuick(i - 1, val);
         }
@@ -99,12 +96,17 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
         return res;
     }
 
-    private static class InTimestampVarFunction extends BooleanFunction {
+    private static class InTimestampVarFunction extends BooleanFunction implements MultiArgFunction {
         private final ObjList<Function> args;
 
         public InTimestampVarFunction(int position, ObjList<Function> args) {
             super(position);
             this.args = args;
+        }
+
+        @Override
+        public ObjList<Function> getArgs() {
+            return args;
         }
 
         @Override
@@ -116,7 +118,7 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
 
             for (int i = 1, n = args.size(); i < n; i++) {
                 Function func = args.getQuick(i);
-                long val;
+                long val = Numbers.LONG_NaN;
                 switch (func.getType()) {
                     case ColumnType.TIMESTAMP:
                     case ColumnType.LONG:
@@ -124,11 +126,9 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
                         val = func.getTimestamp(rec);
                         break;
                     case ColumnType.STRING:
-                        val = IntervalUtils.tryParseTimestamp(func.getStr(rec));
+                        CharSequence str = func.getStr(rec);
+                        val = str != null ? IntervalUtils.tryParseTimestamp(str) : Numbers.LONG_NaN;
                         break;
-                    default:
-                        // Should never be here, factory should check args types
-                        throw new IllegalArgumentException();
                 }
                 if (val == ts) {
                     return true;

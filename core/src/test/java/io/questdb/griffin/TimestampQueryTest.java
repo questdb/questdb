@@ -871,6 +871,28 @@ public class TimestampQueryTest extends AbstractGriffinTest {
             expected = "min\tmax\n" +
                     "2020-01-01T00:00:00.000000Z\t2020-01-01T00:00:00.000000Z\n";
             assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where dts in ('2020-01-01', '2020-01-03') ");
+
+            expected = "min\tmax\n" +
+                    "2020-01-02T00:00:00.000000Z\t2020-01-02T23:00:00.000000Z\n";
+            assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where nts in '2020-01' || '-02'");
+
+            expected = "dts\tnts\n" +
+                    "2020-01-02T00:00:00.000000Z\t2020-01-02T00:00:00.000000Z\n";
+            assertTimestampTtQuery(expected, "select * from tt where nts in (NULL, cast('2020-01-05' as TIMESTAMP), '2020-01-02', NULL)");
+
+            expected = "min\tmax\n" +
+                    "2020-01-01T00:00:00.000000Z\t2020-01-02T23:00:00.000000Z\n";
+            assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where nts in (now(),'2020-01-01',1234567,1234567L,CAST('2020-01-01' as TIMESTAMP),NULL,nts)");
+
+            expected = "min\tmax\n" +
+                    "2020-01-01T00:00:00.000000Z\t2020-01-01T00:00:00.000000Z\n";
+            assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where nts in (now(),'2020-01-01')");
+
+            expected = "dts\tnts\n";
+            assertTimestampTtQuery(expected, "select * from tt where CAST(NULL as TIMESTAMP) in ('2020-01-02', now())");
+
+            expected = "dts\tnts\n";
+            assertTimestampTtQuery(expected, "select * from tt where CAST(NULL as TIMESTAMP) in ('2020-01-02', '2020-01-01')");
         });
     }
 
@@ -964,6 +986,11 @@ public class TimestampQueryTest extends AbstractGriffinTest {
             expected = "min\tmax\n" +
                     "2020-01-01T00:00:00.000000Z\t2020-01-02T23:00:00.000000Z\n";
             assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where nts not between to_str(now(), 'yyyy-MM-dd') || '-222' and now()");
+
+            // Between columns
+            expected = "min\tmax\n" +
+                    "2020-01-01T00:00:00.000000Z\t2020-01-02T23:00:00.000000Z\n";
+            assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where nts between nts and dts");
         });
     }
 
@@ -1000,6 +1027,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
                     "from long_sequence(48L)", sqlExecutionContext);
 
             assertTimestampTtFailedQuery("Invalid date", "select min(nts), max(nts) from tt where nts > 'invalid'");
+            assertTimestampTtFailedQuery("cannot compare TIMESTAMP with type DOUBLE", "select min(nts), max(nts) from tt in ('2020-01-01', NaN)");
         });
     }
 
@@ -1016,6 +1044,9 @@ public class TimestampQueryTest extends AbstractGriffinTest {
                     "from long_sequence(48L)", sqlExecutionContext);
 
             assertTimestampTtFailedQuery("Invalid date", "select min(nts), max(nts) from tt where nts between 'invalid' and '2020-01-01'");
+            assertTimestampTtFailedQuery("Invalid date", "select min(nts), max(nts) from tt where nts between '2020-01-01' and 'invalid'");
+            assertTimestampTtFailedQuery("Invalid date", "select min(nts), max(nts) from tt where nts between '2020-01-01' and 'invalid' || 'dd'");
+            assertTimestampTtFailedQuery("Invalid column: invalidCol", "select min(nts), max(nts) from tt where invalidCol not between '2020-01-01' and '2020-01-02'");
         });
     }
 

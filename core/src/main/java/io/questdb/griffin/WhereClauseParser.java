@@ -402,7 +402,10 @@ final class WhereClauseParser implements Mutable {
 
     private static long parseTokenAsTimestamp(ExpressionNode lo) throws SqlException {
         try {
-            return IntervalUtils.parseFloorPartialDate(lo.token, 1, lo.token.length() - 1);
+            if (!SqlKeywords.isNullKeyword(lo.token)) {
+                return IntervalUtils.parseFloorPartialDate(lo.token, 1, lo.token.length() - 1);
+            }
+            return Numbers.LONG_NaN;
         } catch (NumericException ignore) {
             throw SqlException.invalidDate(lo.position);
         }
@@ -779,13 +782,9 @@ final class WhereClauseParser implements Mutable {
     ) throws SqlException {
 
         ExpressionNode node = notNode.rhs;
-
-        if (node.paramCount != 3) {
-            throw SqlException.$(node.position, "Too few arguments for 'between'");
-        }
         ExpressionNode col = node.args.getLast();
         if (col.type != ExpressionNode.LITERAL) {
-            throw SqlException.$(col.position, "Column name expected");
+            return false;
         }
         CharSequence column = translator.translateAlias(col.token);
         if (m.getColumnIndexQuiet(column) == -1) {

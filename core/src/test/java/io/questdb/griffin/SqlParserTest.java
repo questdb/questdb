@@ -5895,6 +5895,14 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testBetweenUnfinished() throws Exception {
+        assertSyntaxError("select tt from x where t between '2020-01-01'",
+                25,
+                "too few arguments for 'between' [found=2,expected=3]",
+                modelOf("x").col("t", ColumnType.TIMESTAMP).col("tt", ColumnType.TIMESTAMP));
+    }
+
+    @Test
     public void testCreateTableWithO3() throws Exception {
         assertCreateTable(
                 "create table x (a INT, t TIMESTAMP) timestamp(t) partition by DAY",
