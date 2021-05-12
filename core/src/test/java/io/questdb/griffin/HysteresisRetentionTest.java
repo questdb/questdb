@@ -85,6 +85,7 @@ public class HysteresisRetentionTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             createTable();
             assertHysteresis();
+            executeInsert("insert into my_table values(to_timestamp('1970-01-01', 'yyyy-dd-MM'), 2000, 'a')");
             executeInsert("insert into my_table values(to_timestamp('1970-01-02', 'yyyy-dd-MM'), 2000, 'a')");
             assertHysteresis();
             compiler.compile("ALTER TABLE my_table DROP PARTITION LIST '1970-01-01'", sqlExecutionContext);

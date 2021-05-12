@@ -292,10 +292,6 @@ public class TableWriter implements Closeable {
         return getPrimaryColumnIndex(index) + 1;
     }
 
-    public static long getTimestampIndexRow(long timestampIndex, long indexRow) {
-        return Unsafe.getUnsafe().getLong(timestampIndex + indexRow * 16 + Long.BYTES);
-    }
-
     public static long getTimestampIndexValue(long timestampIndex, long indexRow) {
         return Unsafe.getUnsafe().getLong(timestampIndex + indexRow * 16);
     }
