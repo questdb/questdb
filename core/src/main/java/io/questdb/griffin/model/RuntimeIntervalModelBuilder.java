@@ -28,6 +28,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.LongList;
 import io.questdb.std.Mutable;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 /**
@@ -53,6 +54,11 @@ public class RuntimeIntervalModelBuilder implements Mutable {
     private final ObjList<Function> dynamicRangeList = new ObjList<>();
     private boolean intervalApplied = false;
 
+    private long betweenBoundary;
+    private Function betweenBoundaryFunc;
+    private boolean betweenBoundarySet;
+    private boolean betweenNegated;
+
     public RuntimeIntrinsicIntervalModel build() {
         return new RuntimeIntervalModel(new LongList(staticIntervals), new ObjList<>(dynamicRangeList));
     }
@@ -62,6 +68,13 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         staticIntervals.clear();
         dynamicRangeList.clear();
         intervalApplied = false;
+        clearBetweenParsing();
+    }
+
+    public void clearBetweenParsing() {
+        betweenBoundarySet = false;
+        betweenBoundaryFunc = null;
+        betweenBoundary = Numbers.LONG_NaN;
     }
 
     public boolean hasIntervalFilters() {
@@ -99,6 +112,100 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         intervalApplied = true;
     }
 
+    public void setBetweenNegated(boolean isNegated) {
+        betweenNegated = isNegated;
+    }
+
+    public void setBetweenBoundary(long timestamp) {
+        if (!betweenBoundarySet) {
+            betweenBoundary = timestamp;
+            betweenBoundarySet = true;
+        } else {
+            if (betweenBoundaryFunc == null) {
+                // Constant interval
+                long lo = Math.min(timestamp, betweenBoundary);
+                long hi = Math.max(timestamp, betweenBoundary);
+                if (hi == Numbers.LONG_NaN || lo == Numbers.LONG_NaN) {
+                    if (!betweenNegated) {
+                        intersectEmpty();
+                    } else {
+                        // NOT BETWEEN with NULL
+                        // to be consistent with non-designated filtering
+                        // do no filtering
+                    }
+                } else {
+                    if (!betweenNegated) {
+                        intersect(lo, hi);
+                    } else {
+                        subtractInterval(lo, hi);
+                    }
+                }
+            } else {
+                intersectBetweenSemiDynamic(betweenBoundaryFunc, timestamp);
+            }
+            betweenBoundarySet = false;
+        }
+    }
+
+    public void setBetweenBoundary(Function timestamp) {
+        if (!betweenBoundarySet) {
+            betweenBoundaryFunc = timestamp;
+            betweenBoundarySet = true;
+        } else {
+            if (betweenBoundaryFunc == null) {
+                intersectBetweenSemiDynamic(timestamp, betweenBoundary);
+            } else {
+                intersectBetweenDynamic(timestamp, betweenBoundaryFunc);
+            }
+            betweenBoundarySet = false;
+        }
+    }
+
+    private void intersectBetweenSemiDynamic(Function funcValue, long constValue) {
+        if (constValue == Numbers.LONG_NaN) {
+            if (!betweenNegated) {
+                intersectEmpty();
+            } else {
+                // NOT BETWEEN with NULL
+                // to be consistent with non-designated filtering
+                // do no filtering
+            }
+            return;
+        }
+
+        if (isEmptySet()) return;
+
+        short operation = betweenNegated ? IntervalOperation.SUBTRACT_BETWEEN : IntervalOperation.INTERSECT_BETWEEN;
+        IntervalUtils.addHiLoInterval(constValue, 0, (short) 0, IntervalDynamicIndicator.IS_HI_DYNAMIC, operation, staticIntervals);
+        dynamicRangeList.add(funcValue);
+        intervalApplied = true;
+    }
+
+    private void intersectBetweenDynamic(Function funcValue1, Function funcValue2) {
+        if (isEmptySet()) return;
+
+        short operation = betweenNegated ? IntervalOperation.SUBTRACT_BETWEEN : IntervalOperation.INTERSECT_BETWEEN;
+        IntervalUtils.addHiLoInterval(0, 0, (short) 0, IntervalDynamicIndicator.IS_LO_SEPARATE_DYNAMIC, operation, staticIntervals);
+        IntervalUtils.addHiLoInterval(0, 0, (short) 0, IntervalDynamicIndicator.IS_LO_SEPARATE_DYNAMIC, operation, staticIntervals);
+        dynamicRangeList.add(funcValue1);
+        dynamicRangeList.add(funcValue2);
+        intervalApplied = true;
+    }
+
+    public void union(long lo, long hi) {
+        if (isEmptySet()) return;
+        if (dynamicRangeList.size() == 0) {
+            staticIntervals.add(lo);
+            staticIntervals.add(hi);
+            if (intervalApplied) {
+                IntervalUtils.unionInplace(staticIntervals, staticIntervals.size() - 2);
+            }
+        } else {
+            throw new UnsupportedOperationException();
+        }
+        intervalApplied = true;
+    }
+
     public void intersectEmpty() {
         clear();
         intervalApplied = true;
@@ -109,6 +216,22 @@ public class RuntimeIntervalModelBuilder implements Mutable {
 
         IntervalUtils.addHiLoInterval(0, 0, (short) 0, IntervalDynamicIndicator.IS_LO_HI_DYNAMIC, IntervalOperation.INTERSECT, staticIntervals);
         dynamicRangeList.add(function);
+        intervalApplied = true;
+    }
+
+    public void intersectTimestamp(CharSequence seq, int lo, int lim, int position) throws SqlException {
+        if (isEmptySet()) return;
+        int size = staticIntervals.size();
+        IntervalUtils.parseSingleTimestamp(seq, lo, lim, position, staticIntervals, IntervalOperation.INTERSECT);
+        if (dynamicRangeList.size() == 0) {
+            IntervalUtils.applyLastEncodedIntervalEx(staticIntervals);
+            if (intervalApplied) {
+                IntervalUtils.intersectInplace(staticIntervals, size);
+            }
+        } else {
+            // else - nothing to do, interval already encoded in staticPeriods as 4 longs
+            dynamicRangeList.add(null);
+        }
         intervalApplied = true;
     }
 

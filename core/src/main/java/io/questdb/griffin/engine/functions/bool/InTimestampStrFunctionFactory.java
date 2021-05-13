@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.lt;
+package io.questdb.griffin.engine.functions.bool;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
@@ -33,73 +33,54 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.griffin.model.IntervalUtils;
-import io.questdb.std.NumericException;
+import io.questdb.griffin.model.IntervalOperation;
+import io.questdb.std.LongList;
 import io.questdb.std.ObjList;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 
-import static io.questdb.std.datetime.microtime.TimestampFormatUtils.TIMESTAMP_FORMAT_MIN_LENGTH;
+import static io.questdb.griffin.model.IntervalUtils.*;
 
-public class LtStrTimestampFunctionFactory implements FunctionFactory {
-
+public class InTimestampStrFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "<(SN)";
-    }
-
-    @Override
-    public boolean isBoolean() {
-        return true;
+        return "in(NS)";
     }
 
     @Override
     public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        Function leftFn = args.getQuick(0);
-        if (leftFn.isConstant()) {
-            try {
-                long leftTimestamp = parseFullOrPartialTimestamp(leftFn.getStr(null));
-                return new LtStrConstantTimestampFunction(position, leftTimestamp, args.getQuick(1));
-            } catch (NumericException e) {
-                throw SqlException.invalidDate(leftFn.getPosition());
-            }
+        Function rightFn = args.getQuick(1);
+        if (rightFn.isConstant()) {
+            return new EqTimestampStrConstantFunction(position, args.getQuick(0), rightFn.getStr(null), rightFn.getPosition());
         }
-        return new LtStrTimestampFunction(position, leftFn, args.getQuick(1));
+        return new EqTimestampStrFunction(position, args.getQuick(0), rightFn);
     }
 
-    private static long parseFullOrPartialTimestamp(CharSequence seq) throws NumericException {
-        if (seq.length() >= TIMESTAMP_FORMAT_MIN_LENGTH) {
-            return TimestampFormatUtils.parseTimestamp(seq);
-        } else {
-            return IntervalUtils.parseCCPartialDate(seq) - 1;
-        }
-    }
+    private static class EqTimestampStrConstantFunction extends NegatableBooleanFunction implements UnaryFunction {
+        private final Function left;
+        private final LongList intervals = new LongList();
 
-    private static class LtStrConstantTimestampFunction extends NegatableBooleanFunction implements UnaryFunction {
-        private final long left;
-        private final Function right;
-
-        public LtStrConstantTimestampFunction(int position, long left, Function right) {
+        public EqTimestampStrConstantFunction(int position, Function left, CharSequence right, int rightPosition) throws SqlException {
             super(position);
             this.left = left;
-            this.right = right;
+            parseAndApplyIntervalEx(right, intervals, rightPosition);
         }
 
         @Override
         public boolean getBool(Record rec) {
-            return negated == (left >= right.getTimestamp(rec));
+            return negated != isInIntervals(intervals, left.getTimestamp(rec));
         }
 
         @Override
         public Function getArg() {
-            return right;
+            return left;
         }
     }
 
-    private static class LtStrTimestampFunction extends NegatableBooleanFunction implements BinaryFunction {
+    private static class EqTimestampStrFunction extends NegatableBooleanFunction implements BinaryFunction {
         private final Function left;
         private final Function right;
+        private final LongList intervals = new LongList();
 
-        public LtStrTimestampFunction(int position, Function left, Function right) {
+        public EqTimestampStrFunction(int position, Function left, Function right) {
             super(position);
             this.left = left;
             this.right = right;
@@ -107,13 +88,14 @@ public class LtStrTimestampFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            CharSequence timestampAsString = left.getStr(rec);
+            CharSequence timestampAsString = right.getStr(rec);
+            intervals.clear();
             try {
-                long leftTimestamp = parseFullOrPartialTimestamp(timestampAsString);
-                return negated == (leftTimestamp >= right.getTimestamp(rec));
-            } catch (NumericException e) {
+                parseAndApplyIntervalEx(timestampAsString, intervals, right.getPosition());
+            } catch (SqlException e) {
                 return false;
             }
+            return negated != isInIntervals(intervals, left.getTimestamp(rec));
         }
 
         @Override
@@ -125,5 +107,10 @@ public class LtStrTimestampFunctionFactory implements FunctionFactory {
         public Function getRight() {
             return right;
         }
+    }
+
+    private static void parseAndApplyIntervalEx(CharSequence seq, LongList out, int position) throws SqlException {
+        parseIntervalEx(seq, 0, seq.length(), position, out, IntervalOperation.INTERSECT);
+        applyLastEncodedIntervalEx(out);
     }
 }

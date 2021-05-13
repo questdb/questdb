@@ -109,9 +109,11 @@ class ExpressionParser {
             int braceCount = 0;
             int bracketCount = 0;
             int betweenCount = 0;
+            int betweenAndCount = 0;
             int caseCount = 0;
             int argStackDepth = 0;
             int castAsCount = 0;
+            int betweenStartCaseCount = 0;
 
             ExpressionNode node;
             CharSequence tok;
@@ -171,7 +173,7 @@ class ExpressionParser {
                         }
                         break;
                     case ',':
-                        if (prevBranch == BRANCH_COMMA || prevBranch == BRANCH_LEFT_BRACE || betweenCount > 0) {
+                        if (prevBranch == BRANCH_COMMA || prevBranch == BRANCH_LEFT_BRACE) {
                             throw missingArgs(position);
                         }
                         thisBranch = BRANCH_COMMA;
@@ -369,10 +371,12 @@ class ExpressionParser {
 
                         // enable operation or literal absorb parameters
                         if ((node = opStack.peek()) != null && (node.type == ExpressionNode.LITERAL || (node.type == ExpressionNode.SET_OPERATION))) {
-                            node.paramCount = localParamCount + (node.paramCount == 2 ? 1 : 0);
-                            node.type = ExpressionNode.FUNCTION;
-                            argStackDepth = onNode(listener, node, argStackDepth);
-                            opStack.pop();
+                            if (!SqlKeywords.isBetweenKeyword(node.token) || betweenCount == betweenAndCount) {
+                                node.paramCount = localParamCount + Math.max(0, node.paramCount - 1);
+                                node.type = ExpressionNode.FUNCTION;
+                                argStackDepth = onNode(listener, node, argStackDepth);
+                                opStack.pop();
+                            }
                         } else {
                             // not at function?
                             // peek the op stack to make sure it isn't a repeating brace
@@ -436,7 +440,8 @@ class ExpressionParser {
                                 processDefaultBranch = true;
                             }
                         } else if (SqlKeywords.isAndKeyword(tok)) {
-                            if (betweenCount == 1) {
+                            if (caseCount == betweenStartCaseCount && betweenCount > betweenAndCount) {
+                                betweenAndCount++;
                                 thisBranch = BRANCH_BETWEEN_END;
                                 while ((node = opStack.pop()) != null && !SqlKeywords.isBetweenKeyword(node.token)) {
                                     argStackDepth = onNode(listener, node, argStackDepth);
@@ -445,8 +450,6 @@ class ExpressionParser {
                                 if (node != null) {
                                     opStack.push(node);
                                 }
-
-                                paramCount++;
                             } else {
                                 processDefaultBranch = true;
                             }
@@ -470,8 +473,12 @@ class ExpressionParser {
                     case 'B':
                         if (SqlKeywords.isBetweenKeyword(tok)) {
                             thisBranch = BRANCH_BETWEEN_START;
+                            if (betweenCount > betweenAndCount) {
+                                // Nested between are not supported
+                                throw SqlException.$(position, "between statements cannot be nested");
+                            }
                             betweenCount++;
-                            paramCount = 0;
+                            betweenStartCaseCount = caseCount;
                         }
                         processDefaultBranch = true;
                         break;
@@ -545,27 +552,7 @@ class ExpressionParser {
                                     break;
                                 }
                             }
-                            if (prevBranch == BRANCH_BETWEEN_END) {
-                                betweenCount--;
-                                opStack.push(expressionNodePool.next().of(ExpressionNode.CONSTANT, GenericLexer.immutableOf(tok), 0, position));
-
-                                final int betweenParamCount = paramCount + 1;
-                                while ((node = opStack.pop()) != null && !SqlKeywords.isBetweenKeyword(node.token)) {
-                                    argStackDepth = onNode(listener, node, argStackDepth);
-                                }
-
-                                if (argStackDepthStack.notEmpty()) {
-                                    argStackDepth += argStackDepthStack.pop();
-                                }
-
-                                // enable operation or literal absorb parameters
-                                if (node.type == ExpressionNode.SET_OPERATION) {
-                                    node.paramCount = betweenParamCount + (node.paramCount == 2 ? 1 : 0);
-                                    node.type = ExpressionNode.FUNCTION;
-                                    argStackDepth = onNode(listener, node, argStackDepth);
-                                }
-                                break;
-                            } else if (prevBranch != BRANCH_DOT && nonLiteralBranches.excludes(prevBranch)) {
+                            if (prevBranch != BRANCH_DOT && nonLiteralBranches.excludes(prevBranch)) {
                                 opStack.push(expressionNodePool.next().of(ExpressionNode.CONSTANT, GenericLexer.immutableOf(tok), 0, position));
                                 break;
                             } else {
@@ -701,16 +688,13 @@ class ExpressionParser {
                         );
                         if (operatorType == OperatorExpression.UNARY) {
                             node.paramCount = 1;
+                        } else if (SqlKeywords.isBetweenKeyword(node.token)) {
+                            node.paramCount = 3;
                         } else {
                             node.paramCount = 2;
                         }
                         opStack.push(node);
                     } else if (caseCount > 0 || nonLiteralBranches.excludes(thisBranch)) {
-
-                        if (betweenCount > 0) {
-                            throw SqlException.$(position, "between/and parameters must be constants");
-                        }
-
                         // here we handle literals, in case of "case" statement some of these literals
                         // are going to flush operation stack
                         if (Chars.toLowerCaseAscii(thisChar) == 'c' && SqlKeywords.isCaseKeyword(tok)) {
