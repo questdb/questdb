@@ -24,13 +24,17 @@
 
 package io.questdb.std.datetime.microtime;
 
+import io.questdb.std.Misc;
 import io.questdb.std.NumericException;
 import io.questdb.std.datetime.DateLocaleFactory;
+import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
+
+import java.util.Date;
 
 public class TimestampsTest {
 
@@ -152,6 +156,19 @@ public class TimestampsTest {
     }
 
     @Test
+    public void testFloorDDMinLong() {
+        // this line seems useless but ran on its own it triggers static load
+        // this load can leave '.' in thread local sink
+        Timestamps.toString(Timestamps.floorDD(Long.MIN_VALUE));
+        System.out.println(new Date(-100000000000000L));
+        Assert.assertEquals("-290308-01-01T19:59:05.224191Z", timestampToStringIncNull(Long.MIN_VALUE));
+        Assert.assertEquals("-290308-01-01T19:59:05.224191Z", timestampToStringIncNull(Timestamps.floorDD(Long.MIN_VALUE)));
+        Assert.assertEquals("-290308-12-21T23:59:59.999Z", timestampToStringIncNull(Timestamps.ceilDD(Long.MIN_VALUE)));
+        Assert.assertEquals("-290308-12-21T19:59:05.224Z", timestampToStringIncNull(Timestamps.floorDD(Long.MIN_VALUE + 1)));
+        Assert.assertEquals("-290308-12-21T23:59:59.999Z", timestampToStringIncNull(Timestamps.ceilDD(Long.MIN_VALUE + 1)));
+    }
+
+    @Test
     public void testFloorHH() throws Exception {
         long micros = TimestampFormatUtils.parseTimestamp("2008-05-12T23:45:51.045Z");
         TimestampFormatUtils.appendDateTime(sink, Timestamps.floorHH(micros));
@@ -163,6 +180,18 @@ public class TimestampsTest {
         long micros = TimestampFormatUtils.parseTimestamp("2008-05-12T23:45:51.045Z");
         TimestampFormatUtils.appendDateTime(sink, Timestamps.floorMM(micros));
         TestUtils.assertEquals("2008-05-01T00:00:00.000Z", sink);
+    }
+
+    @Test
+    public void testFloorMMMinLong() {
+        // this line seems useless but ran on its own it triggers static load
+        // this load can leave '.' in thread local sink
+        Timestamps.toString(Timestamps.floorDD(Long.MIN_VALUE));
+        Assert.assertEquals("", timestampToStringIncNull(Timestamps.floorMM(Long.MIN_VALUE)));
+//        Assert.assertEquals("-290308-12-21T23:59:59.999Z", Timestamps.toString(Timestamps.ceilMM(Long.MIN_VALUE)));
+
+        Assert.assertEquals("-290308-12-21T19:59:05.224Z", Timestamps.toString(Timestamps.floorMM(Long.MIN_VALUE + 1)));
+        Assert.assertEquals("-290308-12-21T23:59:59.999Z", Timestamps.toString(Timestamps.ceilMM(Long.MIN_VALUE + 1)));
     }
 
     @Test
@@ -348,6 +377,11 @@ public class TimestampsTest {
     }
 
     @Test(expected = NumericException.class)
+    public void testParseWrongMicros() throws Exception {
+        TimestampFormatUtils.parseTimestamp("2013-09-30T22:04:34.1024091Z");
+    }
+
+    @Test(expected = NumericException.class)
     public void testParseWrongMinute() throws Exception {
         TimestampFormatUtils.parseTimestamp("2013-09-30T22:61:00.000Z");
     }
@@ -360,11 +394,6 @@ public class TimestampsTest {
     @Test(expected = NumericException.class)
     public void testParseWrongSecond() throws Exception {
         TimestampFormatUtils.parseTimestamp("2013-09-30T22:04:60.000Z");
-    }
-
-    @Test(expected = NumericException.class)
-    public void testParseWrongMicros() throws Exception {
-        TimestampFormatUtils.parseTimestamp("2013-09-30T22:04:34.1024091Z");
     }
 
     @Test
@@ -422,6 +451,13 @@ public class TimestampsTest {
         long micros2 = TimestampFormatUtils.parseTimestamp("2024-04-24T01:49:12.005Z");
         Assert.assertEquals(4, Timestamps.getYearsBetween(micros1, micros2));
         Assert.assertEquals(4, Timestamps.getYearsBetween(micros2, micros1));
+    }
+
+    private static String timestampToStringIncNull(long micros) {
+        CharSink sink = Misc.getThreadLocalBuilder();
+        TimestampFormatUtils.USEC_UTC_FORMAT.format(micros, null, "Z", sink);
+        return sink.toString();
+
     }
 
     private void assertTrue(String date) throws NumericException {
