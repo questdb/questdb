@@ -37,18 +37,9 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     private int errno;
     private boolean cacheable;
     private boolean interruption;
-    private static boolean assertsEnabled;
-
-    static {
-        assertsEnabled = false;
-        try {
-            assert assertsEnabled = true;
-        } catch (AssertionError e) {
-        }
-    }
 
     public static CairoException instance(int errno) {
-        CairoException ex = assertsEnabled ? new CairoException() : tlException.get();
+        CairoException ex = tlException.get();
         ex.message.clear();
         ex.errno = errno;
         ex.cacheable = false;
