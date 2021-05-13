@@ -734,6 +734,19 @@ public final class TableUtils {
         }
     }
 
+    static void openMetaSwapFileByIndex(FilesFacade ff, AppendOnlyVirtualMemory mem, Path path, int rootLen, int swapIndex) {
+        try {
+            path.concat(META_SWAP_FILE_NAME);
+            if (swapIndex > 0) {
+                path.put('.').put(swapIndex);
+            }
+            path.$();
+            mem.of(ff, path, ff.getPageSize());
+        } finally {
+            path.trimTo(rootLen);
+        }
+    }
+
     static String getTodoText(long code) {
         switch ((int) (code & 0xff)) {
             case TODO_TRUNCATE:

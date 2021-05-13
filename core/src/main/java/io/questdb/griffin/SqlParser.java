@@ -260,69 +260,6 @@ public final class SqlParser {
         }
     }
 
-    private long expectMicros(CharSequence tok, int position) throws SqlException {
-        int k = -1;
-
-        final int len = tok.length();
-
-        // look for end of digits
-        for (int i = 0; i < len; i++) {
-            char c = tok.charAt(i);
-            if (c < '0' || c > '9') {
-                k = i;
-                break;
-            }
-        }
-
-        if (k == -1) {
-            throw SqlException.$(position + len, "expected interval qualifier in ").put(tok);
-        }
-
-        try {
-            long interval = Numbers.parseLong(tok, 0, k);
-            int nChars = len - k;
-            if (nChars > 2) {
-                throw SqlException.$(position + k, "expected 1/2 letter interval qualifier in ").put(tok);
-            }
-
-            switch (tok.charAt(k)) {
-                case 's':
-                    if (nChars == 1) {
-                        // seconds
-                        return interval * 1_000_000L;
-                    }
-                    break;
-                case 'm':
-                    if (nChars == 1) {
-                        // minutes
-                        return interval * 60_000_000L;
-                    } else {
-                        if (tok.charAt(k + 1) == 's') {
-                            // millis
-                            return interval * 1_000;
-                        }
-                    }
-                    break;
-                case 'h':
-                    if (nChars == 1) {
-                        // hours
-                        return interval * 3_600_000_000L;
-                    }
-                    break;
-                case 'd':
-                    if (nChars == 1) {
-                        // days
-                        return interval * 86_400_000_000L;
-                    }
-                    break;
-            }
-        } catch (NumericException ex) {
-            // Ignored
-        }
-
-        throw SqlException.$(position + len, "invalid interval qualifier ").put(tok);
-    }
-
     private ExpressionNode expectLiteral(GenericLexer lexer) throws SqlException {
         CharSequence tok = tok(lexer, "literal");
         int pos = lexer.lastTokenPosition();
@@ -571,7 +508,7 @@ public final class SqlParser {
                                 throw SqlException.position(lexer.getPosition()).put(" could not parse o3MaxUncommittedRows value \"").put(expr.rhs.token).put('"');
                             }
                         } else if (isO3CommitHysteresis(expr.lhs.token)) {
-                            o3CommitHysteresisInMicros = expectMicros(expr.rhs.token, lexer.getPosition());
+                            o3CommitHysteresisInMicros = SqlUtil.expectMicros(expr.rhs.token, lexer.getPosition());
                         } else {
                             throw SqlException.position(lexer.getPosition()).put(" unrecognized ").put(expr.lhs.token).put(" after WITH");
                         }

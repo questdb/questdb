@@ -61,7 +61,7 @@ public class TableMetadataCursorFactory implements FunctionFactory {
         designatedTimestampColumn = metadata.getColumnCount() - 1;
         metadata.add(new TableColumnMetadata("partitionBy", ColumnType.STRING, null));
         partitionByColumn = metadata.getColumnCount() - 1;
-        metadata.add(new TableColumnMetadata("maxUncommittedRows", ColumnType.INT, null));
+        metadata.add(new TableColumnMetadata("o3MaxUncommittedRows", ColumnType.INT, null));
         maxUncommittedRowsColumn = metadata.getColumnCount() - 1;
         metadata.add(new TableColumnMetadata("o3CommitHysteresisMicros", ColumnType.LONG, null));
         o3CommitHysteresisMicroSecColumn = metadata.getColumnCount() - 1;

@@ -437,8 +437,8 @@ public class EngineMigrationTest extends AbstractGriffinTest {
         new EngineMigration(engine, configuration).migrateEngineTo(ColumnType.VERSION);
         TestUtils.assertEquals(expected, executeSql(queryNew));
 
-        assertSql("select maxUncommittedRows, o3CommitHysteresisMicros from tables where name = '" + src.getName() + "'",
-                "maxUncommittedRows\to3CommitHysteresisMicros\n" +
+        assertSql("select o3maxUncommittedRows, o3CommitHysteresisMicros from tables where name = '" + src.getName() + "'",
+                "o3maxUncommittedRows\to3CommitHysteresisMicros\n" +
                         +configOverrideMaxUncommittedRows + "\t" + configOverrideO3CommitHysteresisInMicros + "\n");
     }
 
