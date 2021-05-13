@@ -33,8 +33,17 @@ import io.questdb.std.str.StringSink;
 
 public class SqlException extends Exception implements Sinkable, FlyweightMessageContainer {
     private static final ThreadLocal<SqlException> tlException = new ThreadLocal<>(SqlException::new);
+    private static boolean assertsEnabled;
     private final StringSink message = new StringSink();
     private int position;
+
+    static {
+        assertsEnabled = false;
+        try {
+            assert assertsEnabled = true;
+        } catch (AssertionError e) {
+        }
+    }
 
     public static SqlException $(int position, CharSequence message) {
         return position(position).put(message);
@@ -57,7 +66,7 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
     }
 
     public static SqlException position(int position) {
-        SqlException ex = tlException.get();
+        SqlException ex = assertsEnabled ? new SqlException() : tlException.get();
         ex.message.clear();
         ex.position = position;
         return ex;

@@ -38,24 +38,26 @@ public class AlterTableHysteresisTest extends AbstractGriffinTest {
     @Test
     public void setMaxUncommittedRows() throws Exception {
         assertMemoryLeak(() -> {
-            try (TableModel tbl = new TableModel(configuration, "X", PartitionBy.DAY)) {
+            String tableName = "tableSetMaxUncommittedRows";
+            try (TableModel tbl = new TableModel(configuration, tableName, PartitionBy.DAY)) {
                 createX(tbl);
             }
-            try (TableReader rdr = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "X")) {
-                String alterCommand = "ALTER TABLE X SET PARAM o3MaxUncommittedRows = 11111";
+            try (TableReader rdr = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+                String alterCommand = "ALTER TABLE " + tableName + " SET PARAM o3MaxUncommittedRows = 11111";
                 compiler.compile(alterCommand, sqlExecutionContext);
 
-                assertSql("SELECT o3MaxUncommittedRows FROM tables() WHERE name = 'X'", "o3MaxUncommittedRows\n11111\n");
+                assertSql("SELECT o3MaxUncommittedRows FROM tables() WHERE name = '" + tableName + "'",
+                        "o3MaxUncommittedRows\n11111\n");
                 rdr.reload();
                 Assert.assertEquals(11111, rdr.getMetadata().getMaxUncommittedRows());
             }
-            assertX();
+            assertX(tableName);
         });
     }
 
-    private void assertX() throws SqlException {
+    private void assertX(String tableName) throws SqlException {
         engine.releaseAllReaders();
-        assertSql("select * from x",
+        assertSql("select * from " + tableName,
                 "ts\ti\tl\n" +
                         "2020-01-01T02:23:59.900000Z\t1\t1\n" +
                         "2020-01-01T04:47:59.800000Z\t2\t2\n" +
@@ -78,18 +80,20 @@ public class AlterTableHysteresisTest extends AbstractGriffinTest {
     @Test
     public void setCommitHysteresis() throws Exception {
         assertMemoryLeak(() -> {
-            try (TableModel tbl = new TableModel(configuration, "X", PartitionBy.DAY)) {
+            String tableName = "setCommitHysteresisTable";
+            try (TableModel tbl = new TableModel(configuration, tableName, PartitionBy.DAY)) {
                 createX(tbl);
             }
-            try (TableReader rdr = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "X")) {
-                String alterCommand = "ALTER TABLE X SET PARAM o3CommitHysteresis = 111s";
+            try (TableReader rdr = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+                String alterCommand = "ALTER TABLE " + tableName + " SET PARAM o3CommitHysteresis = 111s";
                 compiler.compile(alterCommand, sqlExecutionContext);
 
-                assertSql("SELECT o3CommitHysteresisMicros FROM tables() WHERE name = 'X'", "o3CommitHysteresisMicros\n111000000\n");
+                assertSql("SELECT o3CommitHysteresisMicros FROM tables() WHERE name = '" + tableName + "'",
+                        "o3CommitHysteresisMicros\n111000000\n");
                 rdr.reload();
                 Assert.assertEquals(111000000L, rdr.getMetadata().getO3CommitHysteresisMicros());
             }
-            assertX();
+            assertX(tableName);
         });
     }
 
@@ -194,34 +198,34 @@ public class AlterTableHysteresisTest extends AbstractGriffinTest {
     public void setMaxUncommittedRowsFailsToReopenBackMetaFile() throws Exception {
         assertMemoryLeak(() -> {
             try (TableModel tbl = new TableModel(configuration, "X", PartitionBy.DAY)) {
-                CairoTestUtils.create(tbl.timestamp("ts")
-                        .col("i", ColumnType.INT)
-                        .col("l", ColumnType.LONG));
-
-                ff = new FilesFacadeImpl() {
-                    int attempt = 0;
-
-                    @Override
-                    public long openRO(LPSZ path) {
-                        if (Chars.endsWith(path, TableUtils.META_FILE_NAME) && attempt++ == 1) {
-                            return -1;
-                        }
-                        return super.openRO(path);
-                    }
-
-                };
-                String alterCommand = "ALTER TABLE X SET PARAM o3MaxUncommittedRows = 11111";
-                try {
-                    compiler.compile(alterCommand, sqlExecutionContext);
-                    Assert.fail("Alter table should fail");
-                } catch (CairoError e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "could not open read-only");
-                }
-
-                try (TableReader rdr = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "X")) {
-                    Assert.assertEquals(11111, rdr.getMetadata().getMaxUncommittedRows());
-                }
+                createX(tbl);
             }
+            engine.releaseAllWriters();
+            ff = new FilesFacadeImpl() {
+                int attempt = 0;
+
+                @Override
+                public long openRO(LPSZ path) {
+                    if (Chars.endsWith(path, TableUtils.META_FILE_NAME) && attempt++ == 1) {
+                        return -1;
+                    }
+                    return super.openRO(path);
+                }
+
+            };
+            String alterCommand = "ALTER TABLE X SET PARAM o3MaxUncommittedRows = 11111";
+            try {
+                compiler.compile(alterCommand, sqlExecutionContext);
+                Assert.fail("Alter table should fail");
+            } catch (CairoError e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "could not open read-only");
+            }
+
+            try (TableReader rdr = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "X")) {
+                Assert.assertEquals(11111, rdr.getMetadata().getMaxUncommittedRows());
+            }
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
         });
     }
 
