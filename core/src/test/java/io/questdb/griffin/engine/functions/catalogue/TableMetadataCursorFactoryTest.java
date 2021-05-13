@@ -49,7 +49,7 @@ public class TableMetadataCursorFactoryTest extends AbstractGriffinTest {
 
         assertSql(
                 "tables order by id desc",
-                "id\tname\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3CommitHysteresisMicros\n" +
+                "id\tname\tdesignatedTimestamp\tpartitionBy\to3MaxUncommittedRows\to3CommitHysteresisMicros\n" +
                         "2\ttable2\tts2\tNONE\t1000\t0\n" +
                         "1\ttable1\tts1\tDAY\t1000\t0\n"
         );
@@ -68,7 +68,7 @@ public class TableMetadataCursorFactoryTest extends AbstractGriffinTest {
 
         assertSql(
                 "tables",
-                "id\tname\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3CommitHysteresisMicros\n" +
+                "id\tname\tdesignatedTimestamp\tpartitionBy\to3MaxUncommittedRows\to3CommitHysteresisMicros\n" +
                         "1\ttable1\tts1\tDAY\t83737\t28291\n"
         );
     }
@@ -87,7 +87,7 @@ public class TableMetadataCursorFactoryTest extends AbstractGriffinTest {
 
         assertSql(
                 "tables where name = 'table1'",
-                "id\tname\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3CommitHysteresisMicros\n" +
+                "id\tname\tdesignatedTimestamp\tpartitionBy\to3MaxUncommittedRows\to3CommitHysteresisMicros\n" +
                         "1\ttable1\tts1\tDAY\t1000\t0\n"
         );
     }
@@ -133,7 +133,7 @@ public class TableMetadataCursorFactoryTest extends AbstractGriffinTest {
         }
         assertSql(
                 "tables",
-                "id\tname\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3CommitHysteresisMicros\n" +
+                "id\tname\tdesignatedTimestamp\tpartitionBy\to3MaxUncommittedRows\to3CommitHysteresisMicros\n" +
                         "2\ttable2\tts2\tNONE\t1000\t0\n"
         );
     }
