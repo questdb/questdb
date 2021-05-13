@@ -872,7 +872,7 @@ public class SqlCompiler implements Closeable {
             }
             writer.setMetaO3CommitHysteresis(o3CommitHysteresisInMicros);
         } else {
-            throw SqlException.$(paramNameNamePosition, "unknown parameter '").put(value).put('\'');
+            throw SqlException.$(paramNameNamePosition, "unknown parameter '").put(paramName).put('\'');
         }
     }
 

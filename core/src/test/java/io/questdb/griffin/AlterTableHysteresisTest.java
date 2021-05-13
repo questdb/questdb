@@ -42,7 +42,7 @@ public class AlterTableHysteresisTest extends AbstractGriffinTest {
                 createX(tbl);
             }
             try (TableReader rdr = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "X")) {
-                String alterCommand = "ALTER TABLE X SET PARAM O3MaxUncommittedRows = 11111";
+                String alterCommand = "ALTER TABLE X SET PARAM o3MaxUncommittedRows = 11111";
                 compiler.compile(alterCommand, sqlExecutionContext);
 
                 assertSql("SELECT o3MaxUncommittedRows FROM tables() WHERE name = 'X'", "o3MaxUncommittedRows\n11111\n");
@@ -82,12 +82,30 @@ public class AlterTableHysteresisTest extends AbstractGriffinTest {
                 createX(tbl);
             }
             try (TableReader rdr = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "X")) {
-                String alterCommand = "ALTER TABLE X SET PARAM O3CommitHysteresis = 111s";
+                String alterCommand = "ALTER TABLE X SET PARAM o3CommitHysteresis = 111s";
                 compiler.compile(alterCommand, sqlExecutionContext);
 
                 assertSql("SELECT o3CommitHysteresisMicros FROM tables() WHERE name = 'X'", "o3CommitHysteresisMicros\n111000000\n");
                 rdr.reload();
                 Assert.assertEquals(111000000L, rdr.getMetadata().getO3CommitHysteresisMicros());
+            }
+            assertX();
+        });
+    }
+
+    @Test
+    public void setUnknownParameter() throws Exception {
+        assertMemoryLeak(() -> {
+            try (TableModel tbl = new TableModel(configuration, "X", PartitionBy.DAY)) {
+                createX(tbl);
+            }
+            try (TableReader ignored = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "X")) {
+                try {
+                    compiler.compile("ALTER TABLE X SET PARAM s3CommitHysteresis = 111s", sqlExecutionContext);
+                    Assert.fail();
+                } catch (SqlException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "unknown parameter 's3CommitHysteresis'");
+                }
             }
             assertX();
         });
@@ -112,7 +130,7 @@ public class AlterTableHysteresisTest extends AbstractGriffinTest {
                     }
 
                 };
-                String alterCommand = "ALTER TABLE X SET PARAM O3MaxUncommittedRows = 11111";
+                String alterCommand = "ALTER TABLE X SET PARAM o3MaxUncommittedRows = 11111";
                 try {
                     compiler.compile(alterCommand, sqlExecutionContext);
                     Assert.fail("Alter table should fail");
@@ -150,7 +168,7 @@ public class AlterTableHysteresisTest extends AbstractGriffinTest {
                     }
 
                 };
-                String alterCommand = "ALTER TABLE X SET PARAM O3MaxUncommittedRows = 11111";
+                String alterCommand = "ALTER TABLE X SET PARAM o3MaxUncommittedRows = 11111";
                 try {
                     compiler.compile(alterCommand, sqlExecutionContext);
                     Assert.fail("Alter table should fail");
@@ -192,7 +210,7 @@ public class AlterTableHysteresisTest extends AbstractGriffinTest {
                     }
 
                 };
-                String alterCommand = "ALTER TABLE X SET PARAM O3MaxUncommittedRows = 11111";
+                String alterCommand = "ALTER TABLE X SET PARAM o3MaxUncommittedRows = 11111";
                 try {
                     compiler.compile(alterCommand, sqlExecutionContext);
                     Assert.fail("Alter table should fail");
@@ -209,7 +227,7 @@ public class AlterTableHysteresisTest extends AbstractGriffinTest {
 
     @Test
     public void setCommitHysteresisWrongTimeQualifier() throws Exception {
-        assertFailure("ALTER TABLE X SET PARAM O3CommitHysteresis = 111days",
+        assertFailure("ALTER TABLE X SET PARAM o3CommitHysteresis = 111days",
                 "CREATE TABLE X (ts TIMESTAMP, i INT, l LONG) timestamp(ts) PARTITION BY MONTH",
                 27,
                 "interval qualifier");
@@ -217,7 +235,7 @@ public class AlterTableHysteresisTest extends AbstractGriffinTest {
 
     @Test
     public void setCommitHysteresisWrongTimeQualifier2() throws Exception {
-        assertFailure("ALTER TABLE X SET PARAM O3CommitHysteresis = 111us",
+        assertFailure("ALTER TABLE X SET PARAM o3CommitHysteresis = 111us",
                 "CREATE TABLE X (ts TIMESTAMP, i INT, l LONG) timestamp(ts) PARTITION BY MONTH",
                 29,
                 "interval qualifier");
@@ -225,7 +243,7 @@ public class AlterTableHysteresisTest extends AbstractGriffinTest {
 
     @Test
     public void setCommitHysteresisWrongSetSyntax() throws Exception {
-        assertFailure("ALTER TABLE X SET O3CommitHysteresis = 111ms",
+        assertFailure("ALTER TABLE X SET o3CommitHysteresis = 111ms",
                 "CREATE TABLE X (ts TIMESTAMP, i INT, l LONG) timestamp(ts) PARTITION BY MONTH",
                 18,
                 "'param' expected");
@@ -233,7 +251,7 @@ public class AlterTableHysteresisTest extends AbstractGriffinTest {
 
     @Test
     public void setCommitHysteresisWrongSetSyntax2() throws Exception {
-        assertFailure("ALTER TABLE X PARAM O3CommitHysteresis = 111ms",
+        assertFailure("ALTER TABLE X PARAM o3CommitHysteresis = 111ms",
                 "CREATE TABLE X (ts TIMESTAMP, i INT, l LONG) timestamp(ts) PARTITION BY MONTH",
                 14,
                 "'set' or 'rename' expected");
@@ -241,15 +259,15 @@ public class AlterTableHysteresisTest extends AbstractGriffinTest {
 
     @Test
     public void setMaxUncommittedRowsNegativeValue() throws Exception {
-        assertFailure("ALTER TABLE X SET PARAM O3MaxUncommittedRows = -1",
+        assertFailure("ALTER TABLE X SET PARAM o3MaxUncommittedRows = -1",
                 "CREATE TABLE X (ts TIMESTAMP, i INT, l LONG) timestamp(ts) PARTITION BY MONTH",
                 24,
-                "invalid value [value=-,parameter=O3MaxUncommittedRows]");
+                "invalid value [value=-,parameter=o3MaxUncommittedRows]");
     }
 
     @Test
     public void setMaxUncommittedRowsMissingEquals() throws Exception {
-        assertFailure("ALTER TABLE X SET PARAM O3MaxUncommittedRows 100",
+        assertFailure("ALTER TABLE X SET PARAM o3MaxUncommittedRows 100",
                 "CREATE TABLE X (ts TIMESTAMP, i INT, l LONG) timestamp(ts) PARTITION BY MONTH",
                 45,
                 "'=' expected");
