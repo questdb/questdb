@@ -1,8 +1,11 @@
 import { QuestContext } from "providers"
-import React, { useCallback, useContext, useEffect, useState } from "react"
+import React, { useContext, useEffect, useState } from "react"
 import styled from "styled-components"
 import * as QuestDB from "utils/questdb"
 import { CopyToClipboard } from "react-copy-to-clipboard"
+import { ClipboardCopy } from "@styled-icons/heroicons-outline/ClipboardCopy"
+import { SecondaryButton } from "components"
+import { formatVersion } from "./services"
 
 const Wrapper = styled.div`
   display: flex;
@@ -14,21 +17,15 @@ const Wrapper = styled.div`
     margin-right: 1rem;
   }
 `
-const Copy = styled.div`
-  color: white;
-  background: green;
-  padding: 2px 5px;
-  border-radius: 2px;
+const CopyButton = styled(SecondaryButton)`
+  & > :not(:last-child) {
+    margin-right: 1rem;
+  }
 `
 
 const BuildVersion = () => {
   const { quest } = useContext(QuestContext)
-  const [copied, setCopied] = useState(false)
   const [buildVersion, setBuildVersion] = useState("")
-
-  const handleCopy = useCallback(() => {
-    setCopied(true)
-  }, [])
 
   useEffect(() => {
     void quest.queryRaw("select build", { limit: "0,1000" }).then((result) => {
@@ -40,19 +37,15 @@ const BuildVersion = () => {
     })
   })
 
-  useEffect(() => {
-    let timeout: NodeJS.Timeout
-    if (copied) {
-      timeout = setTimeout(() => setCopied(false), 5000)
-    }
-    return () => clearTimeout(timeout)
-  }, [copied])
+  const version = formatVersion(buildVersion)
 
   return (
     <Wrapper>
-      {copied && <Copy>Copied!</Copy>}
-      <CopyToClipboard onCopy={handleCopy} text={buildVersion}>
-        <a>Build version</a>
+      <CopyToClipboard text={buildVersion}>
+        <CopyButton title="Copy Build Version">
+          <span>{version}</span>
+          <ClipboardCopy size="18px" />
+        </CopyButton>
       </CopyToClipboard>
     </Wrapper>
   )
