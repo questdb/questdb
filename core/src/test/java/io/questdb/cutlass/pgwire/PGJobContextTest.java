@@ -4273,6 +4273,7 @@ nodejs code:
     }
 
     @Test
+    @Ignore
     public void testMultistatement() throws Exception {
         assertMemoryLeak(() -> {
             try (
