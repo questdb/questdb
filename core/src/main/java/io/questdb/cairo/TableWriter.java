@@ -149,7 +149,7 @@ public class TableWriter implements Closeable {
     private long tempMem16b = Unsafe.malloc(16);
     private int metaSwapIndex;
     private int metaPrevIndex;
-    private final FragileCode RECOVER_FROM_TODO_WRITE_FAILURE = this::recoverFrommTodoWriteFailure;
+    private final FragileCode RECOVER_FROM_TODO_WRITE_FAILURE = this::recoverFromTodoWriteFailure;
     private final FragileCode RECOVER_FROM_SYMBOL_MAP_WRITER_FAILURE = this::recoverFromSymbolMapWriterFailure;
     private final FragileCode RECOVER_FROM_SWAP_RENAME_FAILURE = this::recoverFromSwapRenameFailure;
     private final FragileCode RECOVER_FROM_COLUMN_OPEN_FAILURE = this::recoverOpenColumnFailure;
@@ -1065,11 +1065,22 @@ public class TableWriter implements Closeable {
     }
 
     private void finishMetaSwapUpdate() {
+
         // rename _meta to _meta.prev
         this.metaPrevIndex = rename(fileOperationRetryCount);
+        writeRestoreMetaTodo();
 
-        // rename _meta.swp to -_meta
-        restoreMetaFrom(META_SWAP_FILE_NAME, metaSwapIndex);
+        try {
+            // rename _meta.swp to -_meta
+            restoreMetaFrom(META_SWAP_FILE_NAME, metaSwapIndex);
+        } catch (CairoException ex) {
+            try {
+                recoverFromTodoWriteFailure(null);
+            } catch (CairoException ex2) {
+                throwDistressException(ex2);
+            }
+            throw ex;
+        }
 
         try {
             // open _meta file
@@ -3651,7 +3662,7 @@ public class TableWriter implements Closeable {
     }
 
     private void recoverFromSwapRenameFailure(CharSequence columnName) {
-        recoverFrommTodoWriteFailure(columnName);
+        recoverFromTodoWriteFailure(columnName);
         clearTodoLog();
     }
 
@@ -3661,7 +3672,7 @@ public class TableWriter implements Closeable {
         recoverFromSwapRenameFailure(columnName);
     }
 
-    private void recoverFrommTodoWriteFailure(CharSequence columnName) {
+    private void recoverFromTodoWriteFailure(CharSequence columnName) {
         restoreMetaFrom(META_PREV_FILE_NAME, metaPrevIndex);
         openMetaFile(ff, path, rootLen, metaMem);
     }
@@ -4457,21 +4468,24 @@ public class TableWriter implements Closeable {
 
     private void writeRestoreMetaTodo(CharSequence columnName) {
         try {
-            todoMem.putLong(0, ++todoTxn); // write txn, reader will first read txn at offset 24 and then at offset 0
-            Unsafe.getUnsafe().storeFence(); // make sure we do not write hash before writing txn (view from another thread)
-            todoMem.putLong(8, configuration.getDatabaseIdLo()); // write out our instance hashes
-            todoMem.putLong(16, configuration.getDatabaseIdHi());
-            Unsafe.getUnsafe().storeFence();
-            todoMem.putLong(32, 1);
-            todoMem.putLong(40, TODO_RESTORE_META);
-            todoMem.putLong(48, metaPrevIndex);
-            Unsafe.getUnsafe().storeFence();
-            todoMem.putLong(24, todoTxn);
-            todoMem.setSize(56);
-
+            writeRestoreMetaTodo();
         } catch (CairoException e) {
             runFragile(RECOVER_FROM_TODO_WRITE_FAILURE, columnName, e);
         }
+    }
+
+    private void writeRestoreMetaTodo() {
+        todoMem.putLong(0, ++todoTxn); // write txn, reader will first read txn at offset 24 and then at offset 0
+        Unsafe.getUnsafe().storeFence(); // make sure we do not write hash before writing txn (view from another thread)
+        todoMem.putLong(8, configuration.getDatabaseIdLo()); // write out our instance hashes
+        todoMem.putLong(16, configuration.getDatabaseIdHi());
+        Unsafe.getUnsafe().storeFence();
+        todoMem.putLong(32, 1);
+        todoMem.putLong(40, TODO_RESTORE_META);
+        todoMem.putLong(48, metaPrevIndex);
+        Unsafe.getUnsafe().storeFence();
+        todoMem.putLong(24, todoTxn);
+        todoMem.setSize(56);
     }
 
     @FunctionalInterface
