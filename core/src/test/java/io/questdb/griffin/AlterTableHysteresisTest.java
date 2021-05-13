@@ -111,7 +111,7 @@ public class AlterTableHysteresisTest extends AbstractGriffinTest {
                     TestUtils.assertContains(e.getFlyweightMessage(), "unknown parameter 's3CommitHysteresis'");
                 }
             }
-            assertX();
+            assertX("X");
         });
     }
 
