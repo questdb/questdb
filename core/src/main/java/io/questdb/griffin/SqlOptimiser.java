@@ -1778,7 +1778,8 @@ class SqlOptimiser {
                 parseFunctionAndEnumerateColumns(model, executionContext);
                 return;
             } catch (SqlException e) {
-                throw SqlException.$(tableNamePosition, "table does not exist [name=").put(tableName).put(']');
+                throw SqlException.$(tableNamePosition, "" +
+                        "table does not exist [name=").put(tableName).put(']');
             }
         }
 

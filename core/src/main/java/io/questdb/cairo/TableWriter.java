@@ -149,7 +149,7 @@ public class TableWriter implements Closeable {
     private long tempMem16b = Unsafe.malloc(16);
     private int metaSwapIndex;
     private int metaPrevIndex;
-    private final FragileCode RECOVER_FROM_TODO_WRITE_FAILURE = this::recoverFrommTodoWriteFailure;
+    private final FragileCode RECOVER_FROM_TODO_WRITE_FAILURE = this::recoverFromTodoWriteFailure;
     private final FragileCode RECOVER_FROM_SYMBOL_MAP_WRITER_FAILURE = this::recoverFromSymbolMapWriterFailure;
     private final FragileCode RECOVER_FROM_SWAP_RENAME_FAILURE = this::recoverFromSwapRenameFailure;
     private final FragileCode RECOVER_FROM_COLUMN_OPEN_FAILURE = this::recoverOpenColumnFailure;
@@ -1023,6 +1023,75 @@ public class TableWriter implements Closeable {
         this.lifecycleManager = lifecycleManager;
     }
 
+    public void setMetaO3CommitHysteresis(long o3CommitHysteresisInMicros) {
+        try {
+            commit();
+            long metaSize = copyMetadataAndUpdateVersion();
+            openMetaSwapFileByIndex(ff, ddlMem, path, rootLen, this.metaSwapIndex);
+            try {
+                ddlMem.jumpTo(META_OFFSET_O3_COMMIT_HYSTERESIS_IN_MICROS);
+                ddlMem.putLong(o3CommitHysteresisInMicros);
+                ddlMem.jumpTo(metaSize);
+            } finally {
+                ddlMem.close();
+            }
+
+            finishMetaSwapUpdate();
+            metadata.setO3CommitHysteresisInMicros(o3CommitHysteresisInMicros);
+        } finally {
+            ddlMem.close();
+        }
+    }
+
+    public void setMetaO3MaxUncommittedRows(int maxUncommittedRows) {
+        try {
+            commit();
+            long metaSize = copyMetadataAndUpdateVersion();
+            openMetaSwapFileByIndex(ff, ddlMem, path, rootLen, this.metaSwapIndex);
+            try {
+                ddlMem.jumpTo(META_OFFSET_O3_MAX_UNCOMMITTED_ROWS);
+                ddlMem.putInt(maxUncommittedRows);
+                ddlMem.jumpTo(metaSize);
+            } finally {
+                ddlMem.close();
+            }
+
+            finishMetaSwapUpdate();
+            metadata.setO3MaxUncommittedRows(maxUncommittedRows);
+        } finally {
+            ddlMem.close();
+        }
+    }
+
+    private void finishMetaSwapUpdate() {
+
+        // rename _meta to _meta.prev
+        this.metaPrevIndex = rename(fileOperationRetryCount);
+        writeRestoreMetaTodo();
+
+        try {
+            // rename _meta.swp to -_meta
+            restoreMetaFrom(META_SWAP_FILE_NAME, metaSwapIndex);
+        } catch (CairoException ex) {
+            try {
+                recoverFromTodoWriteFailure(null);
+            } catch (CairoException ex2) {
+                throwDistressException(ex2);
+            }
+            throw ex;
+        }
+
+        try {
+            // open _meta file
+            openMetaFile(ff, path, rootLen, metaMem);
+        } catch (CairoException err) {
+            throwDistressException(err);
+        }
+
+        txFile.bumpStructureVersion(this.denseSymbolMapWriters);
+        metadata.setTableVersion();
+    }
+
     public long size() {
         return txFile.getRowCount();
     }
@@ -1103,7 +1172,7 @@ public class TableWriter implements Closeable {
 
         commit();
         // create new _meta.swp
-        this.metaSwapIndex = copyMetadataAndUpdateVersion();
+        copyMetadataAndUpdateVersion();
 
         // close _meta so we can rename it
         metaMem.close();
@@ -1860,16 +1929,17 @@ public class TableWriter implements Closeable {
         }
     }
 
-    private int copyMetadataAndUpdateVersion() {
-        int index;
+    private long copyMetadataAndUpdateVersion() {
         try {
-            index = openMetaSwapFile(ff, ddlMem, path, rootLen, configuration.getMaxSwapFileCount());
+            int index = openMetaSwapFile(ff, ddlMem, path, rootLen, configuration.getMaxSwapFileCount());
             int columnCount = metaMem.getInt(META_OFFSET_COUNT);
 
             ddlMem.putInt(columnCount);
             ddlMem.putInt(metaMem.getInt(META_OFFSET_PARTITION_BY));
             ddlMem.putInt(metaMem.getInt(META_OFFSET_TIMESTAMP_INDEX));
             copyVersionAndHysteresis();
+            ddlMem.putInt(metaMem.getInt(META_OFFSET_O3_MAX_UNCOMMITTED_ROWS));
+            ddlMem.putLong(metaMem.getInt(META_OFFSET_O3_COMMIT_HYSTERESIS_IN_MICROS));
             ddlMem.jumpTo(META_OFFSET_COLUMN_TYPES);
             for (int i = 0; i < columnCount; i++) {
                 writeColumnEntry(i);
@@ -1881,7 +1951,8 @@ public class TableWriter implements Closeable {
                 ddlMem.putStr(columnName);
                 nameOffset += VmUtils.getStorageLength(columnName);
             }
-            return index;
+            this.metaSwapIndex = index;
+            return nameOffset;
         } finally {
             ddlMem.close();
         }
@@ -2180,21 +2251,6 @@ public class TableWriter implements Closeable {
         // set indexer up to continue functioning as normal
         indexer.configureFollowerAndWriter(configuration, path.trimTo(plen), columnName, getPrimaryColumn(columnIndex), columnTop);
         indexer.refreshSourceAndIndex(0, txFile.getTransientRowCount());
-    }
-
-    private boolean isAppendLastPartitionOnly(long sortedTimestampsAddr, long o3TimestampMax) {
-        boolean yep;
-        final long o3Min = getTimestampIndexValue(sortedTimestampsAddr, 0);
-        long o3MinPartitionTimestamp = timestampFloorMethod.floor(o3Min);
-        final boolean last = o3MinPartitionTimestamp == lastPartitionTimestamp;
-        final int index = txFile.findAttachedPartitionIndexByLoTimestamp(o3MinPartitionTimestamp);
-
-        if (timestampCeilMethod.ceil(o3Min) >= o3TimestampMax) {
-            yep = last && (txFile.transientRowCount < 0 || o3Min >= txFile.getMaxTimestamp());
-        } else {
-            yep = false;
-        }
-        return yep;
     }
 
     boolean isSymbolMapWriterCached(int columnIndex) {
@@ -3616,7 +3672,7 @@ public class TableWriter implements Closeable {
     }
 
     private void recoverFromSwapRenameFailure(CharSequence columnName) {
-        recoverFrommTodoWriteFailure(columnName);
+        recoverFromTodoWriteFailure(columnName);
         clearTodoLog();
     }
 
@@ -3626,7 +3682,7 @@ public class TableWriter implements Closeable {
         recoverFromSwapRenameFailure(columnName);
     }
 
-    private void recoverFrommTodoWriteFailure(CharSequence columnName) {
+    private void recoverFromTodoWriteFailure(CharSequence columnName) {
         restoreMetaFrom(META_PREV_FILE_NAME, metaPrevIndex);
         openMetaFile(ff, path, rootLen, metaMem);
     }
@@ -4420,21 +4476,24 @@ public class TableWriter implements Closeable {
 
     private void writeRestoreMetaTodo(CharSequence columnName) {
         try {
-            todoMem.putLong(0, ++todoTxn); // write txn, reader will first read txn at offset 24 and then at offset 0
-            Unsafe.getUnsafe().storeFence(); // make sure we do not write hash before writing txn (view from another thread)
-            todoMem.putLong(8, configuration.getDatabaseIdLo()); // write out our instance hashes
-            todoMem.putLong(16, configuration.getDatabaseIdHi());
-            Unsafe.getUnsafe().storeFence();
-            todoMem.putLong(32, 1);
-            todoMem.putLong(40, TODO_RESTORE_META);
-            todoMem.putLong(48, metaPrevIndex);
-            Unsafe.getUnsafe().storeFence();
-            todoMem.putLong(24, todoTxn);
-            todoMem.setSize(56);
-
+            writeRestoreMetaTodo();
         } catch (CairoException e) {
             runFragile(RECOVER_FROM_TODO_WRITE_FAILURE, columnName, e);
         }
+    }
+
+    private void writeRestoreMetaTodo() {
+        todoMem.putLong(0, ++todoTxn); // write txn, reader will first read txn at offset 24 and then at offset 0
+        Unsafe.getUnsafe().storeFence(); // make sure we do not write hash before writing txn (view from another thread)
+        todoMem.putLong(8, configuration.getDatabaseIdLo()); // write out our instance hashes
+        todoMem.putLong(16, configuration.getDatabaseIdHi());
+        Unsafe.getUnsafe().storeFence();
+        todoMem.putLong(32, 1);
+        todoMem.putLong(40, TODO_RESTORE_META);
+        todoMem.putLong(48, metaPrevIndex);
+        Unsafe.getUnsafe().storeFence();
+        todoMem.putLong(24, todoTxn);
+        todoMem.setSize(56);
     }
 
     @FunctionalInterface
