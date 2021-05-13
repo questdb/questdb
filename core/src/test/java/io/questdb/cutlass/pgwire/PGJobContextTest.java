@@ -64,7 +64,8 @@ import java.util.stream.LongStream;
 import java.util.stream.Stream;
 
 import static io.questdb.std.Numbers.hexDigits;
-import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.*;
+import static org.junit.Assert.assertEquals;
 
 public class PGJobContextTest extends AbstractGriffinTest {
 
@@ -3999,4 +4000,363 @@ nodejs code:
         });
     }
 
+    @Test
+    public void testCursorFetch() throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    final PGWireServer ignored = createPGServer(1);
+                    final Connection connection = getConnection(false, true)
+            ) {
+                connection.setAutoCommit(false);
+                int totalRows = 10000;
+                int fetchSize = 10;
+
+                CallableStatement stmt = connection.prepareCall(
+                        "create table x as (select" +
+                                " cast(x as int) kk, " +
+                                " rnd_int() a," +
+                                " rnd_boolean() b," + // str
+                                " rnd_str(1,1,2) c," + // str
+                                " rnd_double(2) d," +
+                                " rnd_float(2) e," +
+                                " rnd_short(10,1024) f," +
+                                " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                                " rnd_symbol(4,4,4,2) i," + // str
+                                " rnd_long() j," +
+                                " timestamp_sequence(889001, 8890012) k," +
+                                " rnd_byte(2,50) l," +
+                                " rnd_bin(10, 20, 2) m," +
+                                " rnd_str(5,16,2) n," +
+                                " rnd_char() cc," + // str
+                                " rnd_long256() l2" + // str
+                                " from long_sequence("+ totalRows +"))" // str
+                );
+                stmt.execute();
+
+                try (PreparedStatement statement = connection.prepareStatement("x")) {
+                    statement.setFetchSize(fetchSize);
+                    int count = 0;
+                    try (ResultSet rs = statement.executeQuery()) {
+                        while (rs.next()) {
+                            count++;
+                            assertEquals(count, rs.getInt(1));
+                        }
+                    }
+                    Assert.assertEquals(totalRows, count);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testBasicFetch() throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    final PGWireServer ignored = createPGServer(1);
+                    final Connection connection = getConnection(false, true)
+            ) {
+                connection.setAutoCommit(false);
+                int totalRows = 100;
+
+                PreparedStatement tbl = connection.prepareStatement("create table x (a int)");
+                tbl.execute();
+
+                PreparedStatement insert = connection.prepareStatement("insert into x(a) values(?)");
+                for (int i = 0; i < totalRows; i++) {
+                    insert.setInt(1, i);
+                    insert.execute();
+                }
+                connection.commit();
+                PreparedStatement stmt = connection.prepareStatement("x");
+                int[] testSizes = {0, 1, 49, 50, 51, 99, 100, 101};
+                for (int testSize : testSizes) {
+                    stmt.setFetchSize(testSize);
+                    assertEquals(testSize, stmt.getFetchSize());
+
+                    ResultSet rs = stmt.executeQuery();
+                    assertEquals(testSize, rs.getFetchSize());
+
+                    int count = 0;
+                    while (rs.next()) {
+                        assertEquals(count, rs.getInt(1));
+                        ++count;
+                    }
+
+                    assertEquals(totalRows, count);
+                }
+            }
+        });
+    }
+
+    //
+    // Tests for ResultSet.setFetchSize().
+    //
+
+    // test one:
+    // -set fetchsize = 0
+    // -run query (all rows should be fetched)
+    // -set fetchsize = 50 (should have no effect)
+    // -process results
+    @Test
+    public void testResultSetFetchSizeOne() throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    final PGWireServer ignored = createPGServer(1);
+                    final Connection connection = getConnection(false, true)
+            ) {
+                connection.setAutoCommit(false);
+                int totalRows = 100;
+
+                CallableStatement tbl = connection.prepareCall(
+                        "create table x as (select cast(x - 1 as int) a from long_sequence("+ totalRows +"))");
+                tbl.execute();
+
+                PreparedStatement stmt = connection.prepareStatement("x");
+                stmt.setFetchSize(0);
+
+                ResultSet rs = stmt.executeQuery();
+                rs.setFetchSize(50); // Should have no effect.
+
+                int count = 0;
+                while (rs.next()) {
+                    assertEquals(count, rs.getInt(1));
+                    ++count;
+                }
+
+                assertEquals(totalRows, count);
+            }
+        });
+    }
+
+    // test two:
+    // -set fetchsize = 25
+    // -run query (25 rows fetched)
+    // -set fetchsize = 0
+    // -process results:
+    // --process 25 rows
+    // --should do a FETCH ALL to get more data
+    // --process 75 rows
+    @Test
+    public void testResultSetFetchSizeTwo() throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    final PGWireServer ignored = createPGServer(1);
+                    final Connection connection = getConnection(false, true)
+            ) {
+                connection.setAutoCommit(false);
+                int totalRows = 100;
+
+                CallableStatement tbl = connection.prepareCall(
+                        "create table x as (select cast(x - 1 as int) a from long_sequence("+ totalRows +"))");
+                tbl.execute();
+
+                connection.commit();
+                PreparedStatement stmt = connection.prepareStatement("x");
+                stmt.setFetchSize(25);
+                ResultSet rs = stmt.executeQuery();
+                rs.setFetchSize(0);
+
+                int count = 0;
+                while (rs.next()) {
+                    assertEquals(count, rs.getInt(1));
+                    ++count;
+                }
+
+                assertEquals(totalRows, count);
+            }
+        });
+    }
+
+    // test three:
+    // -set fetchsize = 25
+    // -run query (25 rows fetched)
+    // -set fetchsize = 50
+    // -process results:
+    // --process 25 rows. should NOT hit end-of-results here.
+    // --do a FETCH FORWARD 50
+    // --process 50 rows
+    // --do a FETCH FORWARD 50
+    // --process 25 rows. end of results.
+    @Test
+    public void testResultSetFetchSizeThree() throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    final PGWireServer ignored = createPGServer(1);
+                    final Connection connection = getConnection(false, true)
+            ) {
+                connection.setAutoCommit(false);
+                int totalRows = 100;
+
+                CallableStatement tbl = connection.prepareCall(
+                        "create table x as (select cast(x - 1 as int) a from long_sequence("+ totalRows +"))");
+                tbl.execute();
+
+                connection.commit();
+
+                PreparedStatement stmt = connection.prepareStatement("x");
+                stmt.setFetchSize(25);
+                ResultSet rs = stmt.executeQuery();
+                rs.setFetchSize(50);
+
+                int count = 0;
+                while (rs.next()) {
+                    assertEquals(count, rs.getInt(1));
+                    ++count;
+                }
+
+                assertEquals(totalRows, count);
+            }
+        });
+    }
+
+    // test four:
+    // -set fetchsize = 50
+    // -run query (50 rows fetched)
+    // -set fetchsize = 25
+    // -process results:
+    // --process 50 rows.
+    // --do a FETCH FORWARD 25
+    // --process 25 rows
+    // --do a FETCH FORWARD 25
+    // --process 25 rows. end of results.
+    @Test
+    public void testResultSetFetchSizeFour() throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    final PGWireServer ignored = createPGServer(1);
+                    final Connection connection = getConnection(false, true)
+            ) {
+                connection.setAutoCommit(false);
+                int totalRows = 100;
+
+                CallableStatement tbl = connection.prepareCall(
+                        "create table x as (select cast(x - 1 as int) a from long_sequence("+ totalRows +"))");
+                tbl.execute();
+
+                connection.commit();
+                PreparedStatement stmt = connection.prepareStatement("x");
+                stmt.setFetchSize(50);
+                ResultSet rs = stmt.executeQuery();
+                rs.setFetchSize(25);
+
+                int count = 0;
+                while (rs.next()) {
+                    assertEquals(count, rs.getInt(1));
+                    ++count;
+                }
+
+                assertEquals(totalRows, count);
+            }
+        });
+    }
+
+    // Test odd queries that should not be transformed into cursor-based fetches.
+    @Test
+    public void testInsert() throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    final PGWireServer ignored = createPGServer(1);
+                    final Connection connection = getConnection(false, true)
+            ) {
+                int totalRows = 1;
+                PreparedStatement tbl = connection.prepareStatement("create table x (a int)");
+                tbl.execute();
+
+                PreparedStatement insert = connection.prepareStatement("insert into x(a) values(?)");
+                for (int i = 0; i < totalRows; i++) {
+                    insert.setInt(1, i);
+                    insert.setFetchSize(100); // Should be meaningless.
+                    insert.execute();
+                }
+            }
+        });
+    }
+
+    @Test
+    @Ignore
+    public void testMultistatement() throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    final PGWireServer ignored = createPGServer(1);
+                    final Connection connection = getConnection(false, true)
+            ) {
+                connection.setAutoCommit(false);
+                int totalRows = 100;
+
+                CallableStatement tbl = connection.prepareCall(
+                        "create table x as (select cast(x - 1 as int) a from long_sequence("+ totalRows +"))");
+                tbl.execute();
+                connection.commit();
+                // Queries with multiple statements should not be transformed.
+                PreparedStatement stmt = connection.prepareStatement("insert into x(a) values(100); x");
+                stmt.setFetchSize(10);
+
+                assertFalse(stmt.execute()); // INSERT
+                assertTrue(stmt.getMoreResults()); // SELECT
+                ResultSet rs = stmt.getResultSet();
+                int count = 0;
+                while (rs.next()) {
+                    assertEquals(count, rs.getInt(1));
+                    ++count;
+                }
+                assertEquals(totalRows + 1, count);
+            }
+        });
+    }
+
+    // if the driver tries to use a cursor with autocommit on
+    // it will fail because the cursor will disappear partway
+    // through execution
+    @Test
+    public void testNoCursorWithAutoCommit() throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    final PGWireServer ignored = createPGServer(1);
+                    final Connection connection = getConnection(false, true)
+            ) {
+                connection.setAutoCommit(false);
+                int totalRows = 10;
+
+                CallableStatement tbl = connection.prepareCall(
+                        "create table x as (select cast(x - 1 as int) a from long_sequence("+ totalRows +"))");
+                tbl.execute();
+
+                connection.setAutoCommit(true);
+                Statement stmt = connection.createStatement();
+                stmt.setFetchSize(3);
+                ResultSet rs = stmt.executeQuery("x");
+                int count = 0;
+                while (rs.next()) {
+                    assertEquals(count++, rs.getInt(1));
+                }
+                assertEquals(totalRows, count);
+            }
+        });
+    }
+
+    @Test
+    public void testGetRow() throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    final PGWireServer ignored = createPGServer(1);
+                    final Connection connection = getConnection(false, true)
+            ) {
+                connection.setAutoCommit(false);
+                Statement stmt = connection.createStatement();
+                stmt.setFetchSize(1);
+                int totalRows = 10;
+                CallableStatement tbl = connection.prepareCall(
+                        "create table x as (select cast(x as int) a from long_sequence("+ totalRows +"))");
+                tbl.execute();
+                ResultSet rs = stmt.executeQuery("x");
+                int count = 0;
+                while (rs.next()) {
+                    count++;
+                    assertEquals(count, rs.getInt(1));
+                    assertEquals(count, rs.getRow());
+                }
+                assertEquals(totalRows, count);
+            }
+        });
+    }
 }
