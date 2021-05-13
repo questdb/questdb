@@ -5033,6 +5033,30 @@ public class O3Test extends AbstractO3Test {
         );
     }
 
+    @Test
+    public void testInsertNullTimestamp() throws Exception {
+        executeWithPool(2, (engine, compiler, sqlExecutionContext) -> {
+            compiler.compile(
+                    "create table x as (" +
+                            "select" +
+                            " cast(x as int) i," +
+                            " rnd_symbol('msft','ibm', 'googl') sym," +
+                            " timestamp_sequence(10000000000,1000000000L) ts" +
+                            " from long_sequence(100)" +
+                            "), index(sym) timestamp (ts) partition by DAY",
+                    sqlExecutionContext
+            );
+
+            // to_timestamp produces NULL because values does not match the pattern
+            try {
+                TestUtils.insert(compiler, sqlExecutionContext, "insert into x values(0, 'abc', to_timestamp('2019-08-15T16:03:06.595', 'yyyy-MM-dd:HH:mm:ss.SSSUUU'))");
+                Assert.fail();
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "timestamps before 0001-01-01 are not allowed for O3");
+            }
+        });
+    }
+
     private static void testPartitionedDataOODataPbOODataDropColumn0(
             CairoEngine engine,
             SqlCompiler compiler,
