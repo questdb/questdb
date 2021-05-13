@@ -147,6 +147,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     private IODispatcher<PGConnectionContext> dispatcher;
     private Rnd rnd;
     private long rowCount;
+    private boolean completed = true;
     private boolean isEmptyQuery;
     private int transactionState = NO_TRANSACTION;
     private NamedStatementWrapper wrapper;
@@ -1308,7 +1309,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
             case 'S': // sync
                 processSyncActions();
                 prepareReadyForQuery();
-//                prepareForNewQuery();
+                prepareForNewQuery();
                 // fall thru
             case 'H': // flush
                 sendAndReset();
@@ -1425,18 +1426,20 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
 
     private void prepareForNewQuery() {
         LOG.debug().$("prepare for new query").$();
-        isEmptyQuery = false;
-        characterStore.clear();
-        bindVariableService.clear();
-        currentCursor = Misc.free(currentCursor);
-        typesAndInsert = null;
-        typesAndSelect = null;
-        rowCount = 0;
-        queryTag = TAG_OK;
-        queryText = null;
-        wrapper = null;
-        syncActions.clear();
-        sendParameterDescription = false;
+        if(completed) {
+            isEmptyQuery = false;
+            characterStore.clear();
+            bindVariableService.clear();
+            currentCursor = Misc.free(currentCursor);
+            typesAndInsert = null;
+            typesAndSelect = null;
+            rowCount = 0;
+            queryTag = TAG_OK;
+            queryText = null;
+            wrapper = null;
+            syncActions.clear();
+            sendParameterDescription = false;
+        }
     }
 
     private void prepareLoginOk() {
@@ -2033,8 +2036,8 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
             }
         }
 
-        final boolean complete = maxRows <= 0 || rowCount < maxRows;
-        if (complete) {
+        completed = maxRows <= 0 || rowCount < maxRows;
+        if (completed) {
             resumeProcessor = null;
             currentCursor = Misc.free(currentCursor);
             // do not free factory, it will be cached
@@ -2049,7 +2052,6 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
                 this.typesAndSelect = null;
             }
             prepareCommandComplete(true);
-            prepareForNewQuery();
         } else  {
             prepareSuspended();
         }
