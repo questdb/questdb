@@ -108,6 +108,31 @@ public class IntrinsicModel implements Mutable {
         runtimeIntervalBuilder.intersect(lo, hi);
     }
 
+    public void setBetweenBoundary(long timestamp) {
+        runtimeIntervalBuilder.setBetweenBoundary(timestamp);
+    }
+
+    public void setBetweenBoundary(Function timestamp) {
+        runtimeIntervalBuilder.setBetweenBoundary(timestamp);
+    }
+
+    public void setBetweenNegated(boolean isNegated) {
+        runtimeIntervalBuilder.setBetweenNegated(isNegated);
+    }
+
+    public void clearBetweenTempParsing() {
+        runtimeIntervalBuilder.clearBetweenParsing();
+    }
+
+    public void unionIntervals(long lo, long hi) {
+        runtimeIntervalBuilder.union(lo, hi);
+    }
+
+    public void intersectTimestamp(CharSequence seq, int lo, int lim, int position) throws SqlException {
+        runtimeIntervalBuilder.intersectTimestamp(seq, lo, lim, position);
+        if (runtimeIntervalBuilder.isEmptySet()) intrinsicValue = FALSE;
+    }
+
     public void intersectIntervals(CharSequence seq, int lo, int lim, int position) throws SqlException {
         runtimeIntervalBuilder.intersectIntervals(seq, lo, lim, position);
         if (runtimeIntervalBuilder.isEmptySet()) intrinsicValue = FALSE;

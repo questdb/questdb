@@ -5846,6 +5846,63 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testBetween() throws Exception {
+        assertQuery("select-choose t from (select [t] from x where t between ('2020-01-01','2021-01-02'))",
+                "x where t between '2020-01-01' and '2021-01-02'",
+                modelOf("x").col("t", ColumnType.TIMESTAMP));
+    }
+
+    @Test
+    public void test2Betweens() throws Exception {
+        assertQuery("select-choose t from (select [t, tt] from x where t between ('2020-01-01','2021-01-02') and tt between ('2021-01-02','2021-01-31'))",
+                "select t from x where t between '2020-01-01' and '2021-01-02' and tt between '2021-01-02' and '2021-01-31'",
+                modelOf("x").col("t", ColumnType.TIMESTAMP).col("tt", ColumnType.TIMESTAMP));
+    }
+
+    @Test
+    public void testBetweenWithCast() throws Exception {
+        assertQuery("select-choose t from (select [t] from x where t between (cast('2020-01-01',TIMESTAMP),'2021-01-02'))",
+                "select t from x where t between CAST('2020-01-01' AS TIMESTAMP) and '2021-01-02'",
+                modelOf("x").col("t", ColumnType.TIMESTAMP).col("tt", ColumnType.TIMESTAMP));
+    }
+
+    @Test
+    public void testBetweenWithCase() throws Exception {
+        assertQuery("select-virtual case(t between (cast('2020-01-01',TIMESTAMP),'2021-01-02'),'a','b') case from (select [t] from x)",
+                "select case when t between CAST('2020-01-01' AS TIMESTAMP) and '2021-01-02' then 'a' else 'b' end from x",
+                modelOf("x").col("t", ColumnType.TIMESTAMP).col("tt", ColumnType.TIMESTAMP));
+    }
+
+    @Test
+    public void testBetweenInsideCast() throws Exception {
+        assertQuery("select-virtual cast(t between (cast('2020-01-01',TIMESTAMP),'2021-01-02'),INT) + 1 column from (select [t] from x)",
+                "select CAST(t between CAST('2020-01-01' AS TIMESTAMP) and '2021-01-02' AS INT) + 1 from x",
+                modelOf("x").col("t", ColumnType.TIMESTAMP).col("tt", ColumnType.TIMESTAMP));
+    }
+
+    @Test
+    public void testBetweenWithCastAndSum() throws Exception {
+        assertQuery("select-choose tt from (select [tt, t] from x where t between ('2020-01-01',now() + cast(NULL,LONG)))",
+                "select tt from x where t between '2020-01-01' and (now() + CAST(NULL AS LONG))",
+                modelOf("x").col("t", ColumnType.TIMESTAMP).col("tt", ColumnType.TIMESTAMP));
+    }
+
+    @Test
+    public void testBetweenWithCastAndSum2() throws Exception {
+        assertQuery("select-choose tt from (select [tt, t] from x where t between (now() + cast(NULL,LONG),'2020-01-01'))",
+                "select tt from x where t between (now() + CAST(NULL AS LONG)) and '2020-01-01'",
+                modelOf("x").col("t", ColumnType.TIMESTAMP).col("tt", ColumnType.TIMESTAMP));
+    }
+
+    @Test
+    public void testBetweenUnfinished() throws Exception {
+        assertSyntaxError("select tt from x where t between '2020-01-01'",
+                25,
+                "too few arguments for 'between' [found=2,expected=3]",
+                modelOf("x").col("t", ColumnType.TIMESTAMP).col("tt", ColumnType.TIMESTAMP));
+    }
+
+    @Test
     public void testCreateTableWithO3() throws Exception {
         assertCreateTable(
                 "create table x (a INT, t TIMESTAMP) timestamp(t) partition by DAY",

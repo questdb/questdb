@@ -155,7 +155,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
                         100, "2020-01-01", 10
                 );
 
-                String queryOld = "select sum(c1) from src where ts != '2020-01-01'";
+                String queryOld = "select sum(c1) from src where ts not in '2020-01-01'";
                 String queryNew = "select sum(c1) from src";
                 LongList removedTimestamps = new LongList();
                 removedTimestamps.add(TimestampFormatUtils.parseTimestamp("2020-01-01T00:00:00.000Z"));
@@ -437,8 +437,8 @@ public class EngineMigrationTest extends AbstractGriffinTest {
         new EngineMigration(engine, configuration).migrateEngineTo(ColumnType.VERSION);
         TestUtils.assertEquals(expected, executeSql(queryNew));
 
-        assertSql("select maxUncommittedRows, o3CommitHysteresisMicros from tables where name = '" + src.getName() + "'",
-                "maxUncommittedRows\to3CommitHysteresisMicros\n" +
+        assertSql("select o3maxUncommittedRows, o3CommitHysteresisMicros from tables where name = '" + src.getName() + "'",
+                "o3maxUncommittedRows\to3CommitHysteresisMicros\n" +
                         +configOverrideMaxUncommittedRows + "\t" + configOverrideO3CommitHysteresisInMicros + "\n");
     }
 
@@ -462,7 +462,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
             }
 
             setMetadataVersion(tableModel, ff, path, VERSION_TBL_META_HYSTERESIS);
-            downgradeUpdateFileTo(ff, path, VERSION_TBL_META_HYSTERESIS);
+            downgradeUpdateFileTo(ff, path);
         }
     }
 
@@ -487,11 +487,11 @@ public class EngineMigrationTest extends AbstractGriffinTest {
         }
     }
 
-    private void downgradeUpdateFileTo(FilesFacade ff, Path path, int version) {
+    private void downgradeUpdateFileTo(FilesFacade ff, Path path) {
         path.trimTo(0).concat(root).concat(UPGRADE_FILE_NAME);
         if (ff.exists(path.$())) {
             try (PagedMappedReadWriteMemory rwTx = new PagedMappedReadWriteMemory(ff, path.$(), 8)) {
-                rwTx.putInt(0, version - 1);
+                rwTx.putInt(0, EngineMigration.VERSION_TBL_META_HYSTERESIS - 1);
                 rwTx.jumpTo(Integer.BYTES);
             }
         }

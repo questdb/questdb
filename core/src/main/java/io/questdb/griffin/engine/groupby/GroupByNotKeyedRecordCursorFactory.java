@@ -127,6 +127,7 @@ public class GroupByNotKeyedRecordCursorFactory implements RecordCursorFactory {
 
             final Record baseRecord = baseCursor.getRecord();
             final int n = groupByFunctions.size();
+            MultiArgFunction.init(groupByFunctions, baseCursor, executionContext);
 
             if (baseCursor.hasNext()) {
                 GroupByUtils.updateNew(groupByFunctions, n, simpleMapValue, baseRecord);
@@ -141,8 +142,6 @@ public class GroupByNotKeyedRecordCursorFactory implements RecordCursorFactory {
             }
 
             toTop();
-
-            MultiArgFunction.init(groupByFunctions, baseCursor, executionContext);
             return this;
         }
 

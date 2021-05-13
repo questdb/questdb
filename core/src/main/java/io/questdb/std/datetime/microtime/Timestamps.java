@@ -47,8 +47,8 @@ final public class Timestamps {
     public static final int STATE_MINUTE = 5;
     public static final int STATE_END = 6;
     public static final int STATE_SIGN = 7;
+    public static final long AD_01 = -62135596800000000L;
     public static final TimestampFloorMethod FLOOR_DD = Timestamps::floorDD;
-    public static final TimestampCeilMethod CEIL_DD = Timestamps::ceilDD;
     public static final TimestampAddMethod ADD_DD = Timestamps::addDays;
     private static final long AVG_YEAR_MICROS = (long) (365.2425 * DAY_MICROS);
     private static final long YEAR_MICROS = 365 * DAY_MICROS;
@@ -61,12 +61,13 @@ final public class Timestamps {
     private static final int MINUTE_SECONDS = 60;
     private static final int DAYS_0000_TO_1970 = 719527;
     public static final TimestampFloorMethod FLOOR_YYYY = Timestamps::floorYYYY;
-    public static final TimestampCeilMethod CEIL_YYYY = Timestamps::ceilYYYY;
     private static final int[] DAYS_PER_MONTH = {
             31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31
     };
     private static final long[] MIN_MONTH_OF_YEAR_MICROS = new long[12];
     private static final long[] MAX_MONTH_OF_YEAR_MICROS = new long[12];
+    public static final TimestampCeilMethod CEIL_DD = Timestamps::ceilDD;
+    public static final TimestampCeilMethod CEIL_YYYY = Timestamps::ceilYYYY;
     public static final TimestampFloorMethod FLOOR_MM = Timestamps::floorMM;
     public static final TimestampCeilMethod CEIL_MM = Timestamps::ceilMM;
     public static final TimestampAddMethod ADD_MM = Timestamps::addMonths;
@@ -210,7 +211,8 @@ final public class Timestamps {
     }
 
     public static long floorDD(long micros) {
-        return micros - getTimeMicros(micros);
+        long result = micros - getTimeMicros(micros);
+        return Math.min(result, micros);
     }
 
     public static long floorHH(long micros) {
@@ -270,43 +272,6 @@ final public class Timestamps {
         return Math.abs(a - b) / DAY_MICROS;
     }
 
-    public static long getWeeksBetween(long a, long b) {
-        return Math.abs(a - b) / WEEK_MICROS;
-    }
-
-    public static long getSecondsBetween(long a, long b) {
-        return Math.abs(a - b) / SECOND_MICROS;
-    }
-
-    public static long getMinutesBetween(long a, long b) {
-        return Math.abs(a - b) / MINUTE_MICROS;
-    }
-
-    public static long getHoursBetween(long a, long b) {
-        return Math.abs(a - b) / HOUR_MICROS;
-    }
-
-    public static long getPeriodBetween(char type, long start, long end) {
-        switch (type) {
-            case 's':
-                return Timestamps.getSecondsBetween(start, end);
-            case 'm':
-                return Timestamps.getMinutesBetween(start, end);
-            case 'h':
-                return Timestamps.getHoursBetween(start, end);
-            case 'd':
-                return Timestamps.getDaysBetween(start, end);
-            case 'w':
-                return Timestamps.getWeeksBetween(start, end);
-            case 'M':
-                return Timestamps.getMonthsBetween(start, end);
-            case 'y':
-                return Timestamps.getYearsBetween(start, end);
-            default:
-                return Numbers.LONG_NaN;
-        }
-    }
-
     /**
      * Days in a given month. This method expects you to know if month is in leap year.
      *
@@ -326,6 +291,9 @@ final public class Timestamps {
         }
     }
 
+    public static long getHoursBetween(long a, long b) {
+        return Math.abs(a - b) / HOUR_MICROS;
+    }
 
     public static int getMicrosOfSecond(long micros) {
         if (micros > -1) {
@@ -349,6 +317,10 @@ final public class Timestamps {
         } else {
             return HOUR_MINUTES - 1 + (int) (((micros + 1) / MINUTE_MICROS) % HOUR_MINUTES);
         }
+    }
+
+    public static long getMinutesBetween(long a, long b) {
+        return Math.abs(a - b) / MINUTE_MICROS;
     }
 
     /**
@@ -401,12 +373,41 @@ final public class Timestamps {
         }
     }
 
+    public static long getPeriodBetween(char type, long start, long end) {
+        switch (type) {
+            case 's':
+                return Timestamps.getSecondsBetween(start, end);
+            case 'm':
+                return Timestamps.getMinutesBetween(start, end);
+            case 'h':
+                return Timestamps.getHoursBetween(start, end);
+            case 'd':
+                return Timestamps.getDaysBetween(start, end);
+            case 'w':
+                return Timestamps.getWeeksBetween(start, end);
+            case 'M':
+                return Timestamps.getMonthsBetween(start, end);
+            case 'y':
+                return Timestamps.getYearsBetween(start, end);
+            default:
+                return Numbers.LONG_NaN;
+        }
+    }
+
     public static int getSecondOfMinute(long micros) {
         if (micros > -1) {
             return (int) ((micros / SECOND_MICROS) % MINUTE_SECONDS);
         } else {
             return MINUTE_SECONDS - 1 + (int) (((micros + 1) / SECOND_MICROS) % MINUTE_SECONDS);
         }
+    }
+
+    public static long getSecondsBetween(long a, long b) {
+        return Math.abs(a - b) / SECOND_MICROS;
+    }
+
+    public static long getWeeksBetween(long a, long b) {
+        return Math.abs(a - b) / WEEK_MICROS;
     }
 
     /**
@@ -640,7 +641,12 @@ final public class Timestamps {
             }
         }
 
-        return (year * 365L + (leapYears - DAYS_0000_TO_1970)) * DAY_MICROS;
+        long days = year * 365L + (leapYears - DAYS_0000_TO_1970);
+        long micros = days * DAY_MICROS;
+        if (days < 0 & micros > 0) {
+            return Long.MIN_VALUE;
+        }
+        return micros;
     }
 
     private static boolean isDigit(char c) {

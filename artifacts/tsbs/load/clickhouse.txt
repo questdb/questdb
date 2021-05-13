@@ -1,0 +1,31 @@
+#
+# Running clickhouse with tsbs benchmark on amazon m5.8xlarge instance pim-ilp-perf-test
+#
+
+# install packages
+sudo yum install yum-utils
+sudo rpm --import https://repo.clickhouse.tech/CLICKHOUSE-KEY.GPG
+sudo yum-config-manager --add-repo https://repo.clickhouse.tech/rpm/stable/x86_64
+sudo yum install clickhouse-server clickhouse-client
+
+# aws linux 2 package tested
+rpm -ql clickhouse-server-21.4.3.21-2
+
+# start clickhouse-server
+sudo systemctl start clickhouse-server
+
+# cli clieny
+clickhouse-client
+
+# data
+sudo ls -latrh /var/lib/clickhouse/store/
+sudo ls -latrh /var/lib/clickhouse/data/
+
+# run benchmark
+~/tmp/go/bin/tsbs_generate_data --use-case="cpu-only" --seed=123 --scale=4000 --timestamp-start="2016-01-01T00:00:00Z" --timestamp-end="2016-01-02T00:00:00Z" --log-interval="10s" --format="clickhouse" > /tmp/bigcpu
+~/tmp/go/bin/tsbs_load_clickhouse --file /tmp/bigcpu --workers 4
+
+# stop
+sudo systemctl stop clickhouse-server
+sudo systemctl disable clickhouse-server
+sudo rm -rf /var/lib/clickhouse/data/ /var/lib/clickhouse/store/

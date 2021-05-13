@@ -696,7 +696,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "21.583224269349387\tYSBE\t1970-01-07T22:40:00.000000Z\n";
 
         assertQuery(expected,
-                "select * from (x timestamp(k)) where k = '1970-01-07'",
+                "select * from (x timestamp(k)) where k IN '1970-01-07'",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -892,7 +892,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "84.45258177211063\tPEHN\t1970-01-01T03:36:40.000000Z\n" +
                         "97.5019885372507\t\t1970-01-01T03:53:20.000000Z\n" +
                         "49.00510449885239\tPEHN\t1970-01-01T04:10:00.000000Z\n",
-                "select * from x o where k = '1970-01-01T03:36:40;45m' and test_match()",
+                "select * from x o where k IN '1970-01-01T03:36:40;45m' and test_match()",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -912,7 +912,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
         assertQuery("a\tb\tk\n" +
                         "84.45258177211063\tPEHN\t1970-01-01T03:36:40.000000Z\n" +
                         "97.5019885372507\t\t1970-01-01T03:53:20.000000Z\n",
-                "select * from x o where k = '1970-01-01T03:36:40;45m' and a > 50 and test_match()",
+                "select * from x o where k IN '1970-01-01T03:36:40;45m' and a > 50 and test_match()",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -1323,7 +1323,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "84.45258177211063\tPEHN\t1970-01-01T03:36:40.000000Z\n" +
                         "97.5019885372507\t\t1970-01-01T03:53:20.000000Z\n" +
                         "49.00510449885239\tPEHN\t1970-01-01T04:10:00.000000Z\n",
-                "select * from x o where o.b in ('HYRX','PEHN', null) and k = '1970-01-01T03:36:40;45m'",
+                "select * from x o where o.b in ('HYRX','PEHN', null) and k IN '1970-01-01T03:36:40;45m'",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -2391,7 +2391,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     public void testLatestByKeyValueInterval() throws Exception {
         assertQuery("a\tb\tk\n" +
                         "84.45258177211063\tPEHN\t1970-01-16T01:06:40.000000Z\n",
-                "select * from x latest by b where b = 'PEHN' and k = '1970-01-06T18:53:20;11d'",
+                "select * from x latest by b where b = 'PEHN' and k IN '1970-01-06T18:53:20;11d'",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -4249,7 +4249,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "48.820511018586934\tVTJW\t1970-01-12T13:46:40.000000Z\n";
 
         assertQuery(expected,
-                "x where k = '1970-01' order by b asc",
+                "x where k IN '1970-01' order by b asc",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -4321,7 +4321,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n";
 
         assertQuery(expected,
-                "x where k = '1970-01' order by b desc",
+                "x where k IN '1970-01' order by b desc",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -4393,7 +4393,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "42.17768841969397\tVTJW\t1970-01-02T03:46:40.000000Z\n";
 
         assertQuery(expected,
-                "x where k = '1970-01' order by b, k desc",
+                "x where k IN '1970-01' order by b, k desc",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -4464,7 +4464,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n";
 
         assertQuery(expected,
-                "x where k = '1970-01' order by b desc, k",
+                "x where k IN '1970-01' order by b desc, k",
                 "create table x as " +
                         "(" +
                         "select" +

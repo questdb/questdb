@@ -563,7 +563,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                 if (i > 0) {
                     partitionsIn.append(" OR ");
                 }
-                partitionsIn.append("ts = '");
+                partitionsIn.append("ts IN '");
                 partitionsIn.append(partitionList[i]);
                 partitionsIn.append("'");
             }

@@ -53,4 +53,27 @@ public interface MultiArgFunction extends Function {
     }
 
     ObjList<Function> getArgs();
+
+    @Override
+    default boolean isConstant() {
+        ObjList<Function> args = getArgs();
+        for(int i = 0, n = args.size(); i < n; i++) {
+            if (!args.getQuick(i).isConstant()) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    @Override
+    default boolean isRuntimeConstant() {
+        final ObjList<Function> args = getArgs();
+        for (int i = 0, n = args.size(); i < n; i++) {
+            final Function function = args.getQuick(i);
+            if (!function.isRuntimeConstant() && !function.isConstant()) {
+                return false;
+            }
+        }
+        return true;
+    }
 }

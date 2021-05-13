@@ -54,7 +54,7 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
 
         assertQuery(
                 "sym\tspread\n",
-                "select sym, ask-bid spread from x where ts='1970-01-03' order by spread",
+                "select sym, ask-bid spread from x where ts IN '1970-01-03' order by spread",
                 "create table x (\n" +
                         "    sym symbol index,\n" +
                         "    bid int,\n" +
@@ -83,7 +83,7 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
 
         assertQuery(
                 "sym\tmaxp\n",
-                "select sym , max(price) maxp from x where ts='1970-01-04' order by maxp",
+                "select sym , max(price) maxp from x where ts IN '1970-01-04' order by maxp",
                 "create table x (\n" +
                         "    sym symbol index,\n" +
                         "    price double,\n" +
@@ -111,7 +111,7 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
 
         assertQuery(
                 "sym\tmaxp\n",
-                "select sym , min(price) maxp from x where ts='1970-01-04' order by maxp",
+                "select sym , min(price) maxp from x where ts IN '1970-01-04' order by maxp",
                 "create table x (\n" +
                         "    sym symbol index,\n" +
                         "    price double,\n" +

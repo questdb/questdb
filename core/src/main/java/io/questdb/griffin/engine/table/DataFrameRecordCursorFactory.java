@@ -31,6 +31,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -81,7 +82,7 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
         if (pageFrameCursor != null) {
             return pageFrameCursor.of(dataFrameCursor);
         } else if (framingSupported) {
-            pageFrameCursor = new TableReaderPageFrameCursor(columnIndexes, columnSizes);
+            pageFrameCursor = new TableReaderPageFrameCursor(columnIndexes, columnSizes, getMetadata().getTimestampIndex());
             return pageFrameCursor.of(dataFrameCursor);
         } else {
             return null;
@@ -132,11 +133,13 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
         private int partitionIndex;
         private long partitionRemaining = 0L;
         private DataFrameCursor dataFrameCursor;
+        private final int timestampIndex;
 
-        public TableReaderPageFrameCursor(IntList columnIndexes, IntList columnSizes) {
+        public TableReaderPageFrameCursor(IntList columnIndexes, IntList columnSizes, int timestampIndex) {
             this.columnIndexes = columnIndexes;
             this.columnSizes = columnSizes;
             this.columnCount = columnIndexes.size();
+            this.timestampIndex = timestampIndex;
         }
 
         @Override
@@ -157,7 +160,6 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
             DataFrame dataFrame;
             while ((dataFrame = dataFrameCursor.next()) != null) {
                 this.partitionIndex = dataFrame.getPartitionIndex();
-                long partitionSize = reader.openPartition(partitionIndex);
                 final long partitionLo = dataFrame.getRowLo();
                 final long partitionHi = dataFrame.getRowHi();
 
@@ -305,6 +307,14 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
         }
 
         private class TableReaderPageFrame implements PageFrame {
+
+            @Override
+            public long getFirstTimestamp() {
+                if (timestampIndex != -1) {
+                    return Unsafe.getUnsafe().getLong(columnPageAddress.getQuick(timestampIndex));
+                }
+                return Long.MIN_VALUE;
+            }
 
             @Override
             public long getPageAddress(int columnIndex) {
