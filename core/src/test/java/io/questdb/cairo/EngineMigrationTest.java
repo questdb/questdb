@@ -462,7 +462,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
             }
 
             setMetadataVersion(tableModel, ff, path, VERSION_TBL_META_HYSTERESIS);
-            downgradeUpdateFileTo(ff, path, VERSION_TBL_META_HYSTERESIS);
+            downgradeUpdateFileTo(ff, path);
         }
     }
 
@@ -487,11 +487,11 @@ public class EngineMigrationTest extends AbstractGriffinTest {
         }
     }
 
-    private void downgradeUpdateFileTo(FilesFacade ff, Path path, int version) {
+    private void downgradeUpdateFileTo(FilesFacade ff, Path path) {
         path.trimTo(0).concat(root).concat(UPGRADE_FILE_NAME);
         if (ff.exists(path.$())) {
             try (PagedMappedReadWriteMemory rwTx = new PagedMappedReadWriteMemory(ff, path.$(), 8)) {
-                rwTx.putInt(0, version - 1);
+                rwTx.putInt(0, EngineMigration.VERSION_TBL_META_HYSTERESIS - 1);
                 rwTx.jumpTo(Integer.BYTES);
             }
         }
