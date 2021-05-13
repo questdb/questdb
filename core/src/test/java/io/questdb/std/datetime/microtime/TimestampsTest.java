@@ -185,19 +185,6 @@ public class TimestampsTest {
     }
 
     @Test
-    @Ignore
-    public void testFloorMMMinLong() {
-        // this line seems useless but ran on its own it triggers static load
-        // this load can leave '.' in thread local sink
-        Timestamps.toString(Timestamps.floorDD(Long.MIN_VALUE));
-        Assert.assertEquals("", timestampToStringIncNull(Timestamps.floorMM(Long.MIN_VALUE)));
-//        Assert.assertEquals("-290308-12-21T23:59:59.999Z", Timestamps.toString(Timestamps.ceilMM(Long.MIN_VALUE)));
-
-        Assert.assertEquals("-290308-12-21T19:59:05.224Z", Timestamps.toString(Timestamps.floorMM(Long.MIN_VALUE + 1)));
-        Assert.assertEquals("-290308-12-21T23:59:59.999Z", Timestamps.toString(Timestamps.ceilMM(Long.MIN_VALUE + 1)));
-    }
-
-    @Test
     public void testFloorYYYY() throws Exception {
         long micros = TimestampFormatUtils.parseTimestamp("2008-05-12T23:45:51.045Z");
         TimestampFormatUtils.appendDateTime(sink, Timestamps.floorYYYY(micros));

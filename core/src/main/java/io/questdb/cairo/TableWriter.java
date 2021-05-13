@@ -1142,7 +1142,7 @@ public class TableWriter implements Closeable {
      * performance of some applications. UDP receivers use this in order to avoid initial receive buffer contention.
      */
     public void warmUp() {
-        Row r = newRow(txFile.getMaxTimestamp());
+        Row r = newRow(Math.max(Timestamps.AD_01, txFile.getMaxTimestamp()));
         try {
             for (int i = 0; i < columnCount; i++) {
                 r.putByte(i, (byte) 0);
@@ -2382,6 +2382,9 @@ public class TableWriter implements Closeable {
 
             final long srcOooMax;
             final long o3TimestampMin = getTimestampIndexValue(sortedTimestampsAddr, 0);
+            if (o3TimestampMin < Timestamps.AD_01) {
+                throw CairoException.instance(0).put("timestamps before 0001-01-01 are not allowed for O3");
+            }
             if (hysteresis > 0) {
                 final long o3max = getTimestampIndexValue(sortedTimestampsAddr, o3RowCount - 1);
                 long hysteresisThresholdTimestamp = o3max - hysteresis;
@@ -4477,9 +4480,12 @@ public class TableWriter implements Closeable {
         }
 
         private Row getRowSlow(long timestamp) {
-            txFile.setMinTimestamp(timestamp);
-            openFirstPartition(timestamp);
-            return (rowFunction = switchPartitionFunction).newRow(timestamp);
+            if (timestamp >= Timestamps.AD_01) {
+                txFile.setMinTimestamp(timestamp);
+                openFirstPartition(timestamp);
+                return (rowFunction = switchPartitionFunction).newRow(timestamp);
+            }
+            throw CairoException.instance(0).put("timestamp before 0001-01-01 is not allowed");
         }
     }
 
