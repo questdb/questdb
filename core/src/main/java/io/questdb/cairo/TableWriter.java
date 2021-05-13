@@ -1024,6 +1024,35 @@ public class TableWriter implements Closeable {
         this.lifecycleManager = lifecycleManager;
     }
 
+    public void setMaxUncommittedRows(int maxUncommittedRows) {
+        if (maxUncommittedRows >= 0) {
+            int index;
+            try {
+                this.metaSwapIndex = openMetaSwapFile(ff, ddlMem, path, rootLen, configuration.getMaxSwapFileCount());
+                ddlMem.putInt(metaMem.getInt(META_OFFSET_TABLE_ID));
+
+                // close _meta so we can rename it
+                metaMem.close();
+
+                // validate new meta
+                validateSwapMeta(name);
+
+                // rename _meta to _meta.prev
+                renameMetaToMetaPrev(name);
+
+                // after we moved _meta to _meta.prev
+                // we have to have _todo to restore _meta should anything go wrong
+                writeRestoreMetaTodo(name);
+
+                // rename _meta.swp to _meta
+                renameSwapMetaToMeta(name);
+
+            } finally {
+                ddlMem.close();
+            }
+        }
+    }
+
     public long size() {
         return txFile.getRowCount();
     }

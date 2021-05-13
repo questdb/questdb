@@ -145,4 +145,9 @@ public class TableWriterMetadata extends BaseRecordMetadata {
     public long getO3CommitHysteresisInMicros() {
         return o3CommitHysteresisInMicros;
     }
+
+
+    public void setMaxUncommittedRows(int maxUncommittedRows) {
+        o3MaxUncommittedRows = maxUncommittedRows;
+    }
 }

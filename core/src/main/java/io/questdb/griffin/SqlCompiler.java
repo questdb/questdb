@@ -806,8 +806,24 @@ public class SqlCompiler implements Closeable {
                         throw SqlException.$(lexer.lastTokenPosition(), "'column' or 'partition' expected");
                     }
 
+                } else if (SqlKeywords.isSetKeyword(tok)) {
+                    tok = expectToken(lexer, "'param'");
+                    if (SqlKeywords.isParamKeyword(tok)) {
+                        final int paramNameNamePosition = lexer.getPosition();
+                        tok = expectToken(lexer, "param name");
+                        final CharSequence paramName = GenericLexer.immutableOf(tok);
+                        tok = expectToken(lexer, "'='");
+                        if (tok.length() == 1 && tok.charAt(0) == '=') {
+                            CharSequence value = GenericLexer.immutableOf(SqlUtil.fetchNext(lexer));
+                            alterTableSetParam(paramName, value, paramNameNamePosition, writer);
+                        } else {
+                            throw SqlException.$(lexer.lastTokenPosition(), "'=' expected");
+                        }
+                    } else {
+                        throw SqlException.$(lexer.lastTokenPosition(), "'PARAM' expected");
+                    }
                 } else {
-                    throw SqlException.$(lexer.lastTokenPosition(), "'add', 'drop', 'attach' or 'rename' expected");
+                    throw SqlException.$(lexer.lastTokenPosition(), "'add', 'drop', 'attach', 'set' or 'rename' expected");
                 }
             } catch (CairoException e) {
                 LOG.info().$("could not alter table [table=").$(tableName).$(", ex=").$((Sinkable) e).$();
@@ -835,6 +851,22 @@ public class SqlCompiler implements Closeable {
             throw SqlException.$(lexer.lastTokenPosition(), "'table' or 'system' expected");
         }
         return compiledQuery.ofAlter();
+    }
+
+    private void alterTableSetParam(CharSequence paramName, CharSequence value, int paramNameNamePosition, TableWriter writer) throws SqlException {
+        if (SqlKeywords.isO3MaxUncommittedRowsParam(paramName)) {
+            int maxUncommittedRows;
+            try {
+                maxUncommittedRows = Numbers.parseInt(value);
+            } catch (NumericException e) {
+                throw SqlException.$(paramNameNamePosition, "invalid value [value=").put(value).put(",parameter=").put(paramName).put(']');
+            }
+            writer.setMaxUncommittedRows(maxUncommittedRows);
+        } else if (SqlKeywords.isO3CommitHysteresis(paramName)) {
+
+        } else {
+            throw SqlException.$(paramNameNamePosition, "unknown parameter '").put(value).put('\'');
+        }
     }
 
     private void alterTableAddColumn(int tableNamePosition, TableWriter writer) throws SqlException {
