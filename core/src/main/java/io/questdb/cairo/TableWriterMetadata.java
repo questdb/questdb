@@ -35,8 +35,8 @@ public class TableWriterMetadata extends BaseRecordMetadata {
     private int symbolMapCount;
     private int version;
     private final int id;
-    private final int o3MaxUncommittedRows;
-    private final long o3CommitHysteresisInMicros;
+    private int o3MaxUncommittedRows;
+    private long o3CommitHysteresisInMicros;
 
     public TableWriterMetadata(FilesFacade ff, MappedReadOnlyMemory metaMem) {
         this.columnCount = metaMem.getInt(TableUtils.META_OFFSET_COUNT);
@@ -146,8 +146,11 @@ public class TableWriterMetadata extends BaseRecordMetadata {
         return o3CommitHysteresisInMicros;
     }
 
+    public void setO3MaxUncommittedRows(int rows) {
+        this.o3MaxUncommittedRows = rows;
+    }
 
-    public void setMaxUncommittedRows(int maxUncommittedRows) {
-        o3MaxUncommittedRows = maxUncommittedRows;
+    public void setO3CommitHysteresisInMicros(long micros) {
+        this.o3CommitHysteresisInMicros = micros;
     }
 }

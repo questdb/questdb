@@ -854,16 +854,23 @@ public class SqlCompiler implements Closeable {
     }
 
     private void alterTableSetParam(CharSequence paramName, CharSequence value, int paramNameNamePosition, TableWriter writer) throws SqlException {
-        if (SqlKeywords.isO3MaxUncommittedRowsParam(paramName)) {
+        if (isO3MaxUncommittedRowsParam(paramName)) {
             int maxUncommittedRows;
             try {
                 maxUncommittedRows = Numbers.parseInt(value);
             } catch (NumericException e) {
                 throw SqlException.$(paramNameNamePosition, "invalid value [value=").put(value).put(",parameter=").put(paramName).put(']');
             }
-            writer.setMaxUncommittedRows(maxUncommittedRows);
-        } else if (SqlKeywords.isO3CommitHysteresis(paramName)) {
-
+            if (maxUncommittedRows < 0) {
+                throw SqlException.$(paramNameNamePosition, "O3MaxUncommittedRows must be non negative");
+            }
+            writer.setMetaO3MaxUncommittedRows(maxUncommittedRows);
+        } else if (isO3CommitHysteresis(paramName)) {
+            long o3CommitHysteresisInMicros = SqlUtil.expectMicros(value, paramNameNamePosition);
+            if (o3CommitHysteresisInMicros < 0) {
+                throw SqlException.$(paramNameNamePosition, "O3CommitHysteresis must be non negative");
+            }
+            writer.setMetaO3CommitHysteresis(o3CommitHysteresisInMicros);
         } else {
             throw SqlException.$(paramNameNamePosition, "unknown parameter '").put(value).put('\'');
         }

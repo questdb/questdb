@@ -24,13 +24,13 @@
 
 package io.questdb.griffin;
 
-import io.questdb.cairo.CairoTestUtils;
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.PartitionBy;
-import io.questdb.cairo.TableModel;
+import io.questdb.cairo.*;
+import io.questdb.cairo.security.AllowAllCairoSecurityContext;
+import org.junit.Assert;
 import org.junit.Test;
 
 public class AlterTableHysteresisTest extends AbstractGriffinTest {
+
     @Test
     public void setMaxUncommitedRows() throws Exception {
         assertMemoryLeak(() -> {
@@ -39,12 +39,35 @@ public class AlterTableHysteresisTest extends AbstractGriffinTest {
                         .col("i", ColumnType.INT)
                         .col("l", ColumnType.LONG));
 
-                String alterCommand = "ALTER TABLE X SET PARAM MaxUncommittedRows = 11111";
-                compiler.compile(alterCommand, sqlExecutionContext);
+                try (TableReader rdr = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "X")) {
+                    String alterCommand = "ALTER TABLE X SET PARAM O3MaxUncommittedRows = 11111";
+                    compiler.compile(alterCommand, sqlExecutionContext);
 
-                assertSql("SELECT MaxUncommittedRows FROM tables() WHERE name = 'X'", "MaxUncommittedRows\n11111\n");
+                    assertSql("SELECT o3MaxUncommittedRows FROM tables() WHERE name = 'X'", "o3MaxUncommittedRows\n11111\n");
+                    rdr.reload();
+                    Assert.assertEquals(11111, rdr.getMetadata().getMaxUncommittedRows());
+                }
             }
         });
     }
 
+    @Test
+    public void setCommitHysteresis() throws Exception {
+        assertMemoryLeak(() -> {
+            try (TableModel tbl = new TableModel(configuration, "X", PartitionBy.DAY)) {
+                CairoTestUtils.create(tbl.timestamp("ts")
+                        .col("i", ColumnType.INT)
+                        .col("l", ColumnType.LONG));
+
+                try (TableReader rdr = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "X")) {
+                    String alterCommand = "ALTER TABLE X SET PARAM O3CommitHysteresis = 111s";
+                    compiler.compile(alterCommand, sqlExecutionContext);
+
+                    assertSql("SELECT o3CommitHysteresisMicros FROM tables() WHERE name = 'X'", "o3CommitHysteresisMicros\n111000000\n");
+                    rdr.reload();
+                    Assert.assertEquals(111000000L, rdr.getMetadata().getO3CommitHysteresisMicros());
+                }
+            }
+        });
+    }
 }

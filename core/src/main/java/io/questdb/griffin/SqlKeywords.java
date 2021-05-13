@@ -1300,12 +1300,14 @@ public class SqlKeywords {
     }
 
     public static boolean isO3MaxUncommittedRowsParam(CharSequence tok) {
-        if (tok.length() != 18) {
+        if (tok.length() != 20) {
             return false;
         }
 
         int i = 0;
-        return (tok.charAt(i++) | 32) == 'm'
+        return (tok.charAt(i++) | 32) == 'o'
+                && (tok.charAt(i++) | 32) == '3'
+                && (tok.charAt(i++) | 32) == 'm'
                 && (tok.charAt(i++) | 32) == 'a'
                 && (tok.charAt(i++) | 32) == 'x'
                 && (tok.charAt(i++) | 32) == 'u'
@@ -1331,7 +1333,7 @@ public class SqlKeywords {
         }
 
         int i = 0;
-        return (tok.charAt(i++)) == 'o'
+        return (tok.charAt(i++) | 32) == 'o'
                 && (tok.charAt(i++) | 32) == '3'
                 && (tok.charAt(i++) | 32) == 'c'
                 && (tok.charAt(i++) | 32) == 'o'
@@ -1348,6 +1350,6 @@ public class SqlKeywords {
                 && (tok.charAt(i++) | 32) == 'e'
                 && (tok.charAt(i++) | 32) == 's'
                 && (tok.charAt(i++) | 32) == 'i'
-                && (tok.charAt(i)) == 's';
+                && (tok.charAt(i) | 32) == 's';
     }
 }

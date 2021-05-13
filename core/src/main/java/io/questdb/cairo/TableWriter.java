@@ -1024,33 +1024,62 @@ public class TableWriter implements Closeable {
         this.lifecycleManager = lifecycleManager;
     }
 
-    public void setMaxUncommittedRows(int maxUncommittedRows) {
-        if (maxUncommittedRows >= 0) {
-            int index;
+    public void setMetaO3CommitHysteresis(long o3CommitHysteresisInMicros) {
+        try {
+            commit();
+            long metaSize = copyMetadataAndUpdateVersion();
+            openMetaSwapFileByIndex(ff, ddlMem, path, rootLen, this.metaSwapIndex);
             try {
-                this.metaSwapIndex = openMetaSwapFile(ff, ddlMem, path, rootLen, configuration.getMaxSwapFileCount());
-                ddlMem.putInt(metaMem.getInt(META_OFFSET_TABLE_ID));
-
-                // close _meta so we can rename it
-                metaMem.close();
-
-                // validate new meta
-                validateSwapMeta(name);
-
-                // rename _meta to _meta.prev
-                renameMetaToMetaPrev(name);
-
-                // after we moved _meta to _meta.prev
-                // we have to have _todo to restore _meta should anything go wrong
-                writeRestoreMetaTodo(name);
-
-                // rename _meta.swp to _meta
-                renameSwapMetaToMeta(name);
-
+                ddlMem.jumpTo(META_OFFSET_O3_COMMIT_HYSTERESIS_IN_MICROS);
+                ddlMem.putLong(o3CommitHysteresisInMicros);
+                ddlMem.jumpTo(metaSize);
             } finally {
                 ddlMem.close();
             }
+
+            finishMetaSwapUpdate();
+            metadata.setO3CommitHysteresisInMicros(o3CommitHysteresisInMicros);
+        } finally {
+            ddlMem.close();
         }
+    }
+
+    public void setMetaO3MaxUncommittedRows(int maxUncommittedRows) {
+        try {
+            commit();
+            long metaSize = copyMetadataAndUpdateVersion();
+            openMetaSwapFileByIndex(ff, ddlMem, path, rootLen, this.metaSwapIndex);
+            try {
+                ddlMem.jumpTo(META_OFFSET_O3_MAX_UNCOMMITTED_ROWS);
+                ddlMem.putInt(maxUncommittedRows);
+                ddlMem.jumpTo(metaSize);
+            } finally {
+                ddlMem.close();
+            }
+
+            finishMetaSwapUpdate();
+            metadata.setO3MaxUncommittedRows(maxUncommittedRows);
+        } finally {
+            ddlMem.close();
+        }
+    }
+
+    private void finishMetaSwapUpdate() {
+        // rename _meta to _meta.prev
+        this.metaPrevIndex = rename(fileOperationRetryCount);
+
+        // rename _meta.swp to -_meta
+        restoreMetaFrom(META_SWAP_FILE_NAME, metaSwapIndex);
+
+        try {
+            // open _meta file
+            openMetaFile(ff, path, rootLen, metaMem);
+        } catch (CairoException err) {
+            throwDistressException(err);
+        }
+
+        txFile.bumpStructureVersion(this.denseSymbolMapWriters);
+        metadata.setTableVersion();
     }
 
     public long size() {
@@ -1133,7 +1162,7 @@ public class TableWriter implements Closeable {
 
         commit();
         // create new _meta.swp
-        this.metaSwapIndex = copyMetadataAndUpdateVersion();
+        copyMetadataAndUpdateVersion();
 
         // close _meta so we can rename it
         metaMem.close();
@@ -1885,10 +1914,9 @@ public class TableWriter implements Closeable {
         }
     }
 
-    private int copyMetadataAndUpdateVersion() {
-        int index;
+    private long copyMetadataAndUpdateVersion() {
         try {
-            index = openMetaSwapFile(ff, ddlMem, path, rootLen, configuration.getMaxSwapFileCount());
+            int index = openMetaSwapFile(ff, ddlMem, path, rootLen, configuration.getMaxSwapFileCount());
             int columnCount = metaMem.getInt(META_OFFSET_COUNT);
 
             ddlMem.putInt(columnCount);
@@ -1896,6 +1924,8 @@ public class TableWriter implements Closeable {
             ddlMem.putInt(metaMem.getInt(META_OFFSET_TIMESTAMP_INDEX));
             ddlMem.putInt(ColumnType.VERSION);
             ddlMem.putInt(metaMem.getInt(META_OFFSET_TABLE_ID));
+            ddlMem.putInt(metaMem.getInt(META_OFFSET_O3_MAX_UNCOMMITTED_ROWS));
+            ddlMem.putLong(metaMem.getInt(META_OFFSET_O3_COMMIT_HYSTERESIS_IN_MICROS));
             ddlMem.jumpTo(META_OFFSET_COLUMN_TYPES);
             for (int i = 0; i < columnCount; i++) {
                 writeColumnEntry(i);
@@ -1907,7 +1937,8 @@ public class TableWriter implements Closeable {
                 ddlMem.putStr(columnName);
                 nameOffset += VmUtils.getStorageLength(columnName);
             }
-            return index;
+            this.metaSwapIndex = index;
+            return nameOffset;
         } finally {
             ddlMem.close();
         }
@@ -2202,21 +2233,6 @@ public class TableWriter implements Closeable {
         // set indexer up to continue functioning as normal
         indexer.configureFollowerAndWriter(configuration, path.trimTo(plen), columnName, getPrimaryColumn(columnIndex), columnTop);
         indexer.refreshSourceAndIndex(0, txFile.getTransientRowCount());
-    }
-
-    private boolean isAppendLastPartitionOnly(long sortedTimestampsAddr, long o3TimestampMax) {
-        boolean yep;
-        final long o3Min = getTimestampIndexValue(sortedTimestampsAddr, 0);
-        long o3MinPartitionTimestamp = timestampFloorMethod.floor(o3Min);
-        final boolean last = o3MinPartitionTimestamp == lastPartitionTimestamp;
-        final int index = txFile.findAttachedPartitionIndexByLoTimestamp(o3MinPartitionTimestamp);
-
-        if (timestampCeilMethod.ceil(o3Min) >= o3TimestampMax) {
-            yep = last && (txFile.transientRowCount < 0 || o3Min >= txFile.getMaxTimestamp());
-        } else {
-            yep = false;
-        }
-        return yep;
     }
 
     boolean isSymbolMapWriterCached(int columnIndex) {
