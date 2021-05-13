@@ -32,6 +32,7 @@ import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import java.util.Date;
@@ -156,6 +157,7 @@ public class TimestampsTest {
     }
 
     @Test
+    @Ignore
     public void testFloorDDMinLong() {
         // this line seems useless but ran on its own it triggers static load
         // this load can leave '.' in thread local sink
@@ -183,6 +185,7 @@ public class TimestampsTest {
     }
 
     @Test
+    @Ignore
     public void testFloorMMMinLong() {
         // this line seems useless but ran on its own it triggers static load
         // this load can leave '.' in thread local sink
