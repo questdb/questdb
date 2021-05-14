@@ -7,11 +7,9 @@ WORKDIR /build
 
 RUN curl -L "https://www.mirrorservice.org/sites/ftp.apache.org/maven/maven-3/3.6.3/binaries/apache-maven-3.6.3-bin.zip" --output maven.zip \
   && unzip maven.zip \
-  && git clone --progress --verbose https://github.com/questdb/questdb.git
+  && git clone --depth=1 --progress --verbose https://github.com/questdb/questdb.git
 
 WORKDIR /build/questdb
-
-RUN git fetch && git checkout fix_docker_log
 
 RUN ../apache-maven-3.6.3/bin/mvn clean package -DskipTests -P build-web-console,build-binaries,use-built-in-nodejs
 
@@ -44,5 +42,15 @@ EXPOSE 9000/tcp
 EXPOSE 8812/tcp
 EXPOSE 9009/tcp
 
-# Run questdb when the container launches
-CMD ["/app/bin/java", "-Dout=$QDB_LOG_CONF", "-m", "io.questdb/io.questdb.ServerMain", "-d", "/root/.questdb", "-f"]
+#
+# Run QuestDB when the container launches
+#
+# 'conf/log.conf' is a placeholder, it does not exist out of box
+# which make logger use default configuration. However, when user configures
+# a volume with something like:
+#
+# docker run -v "$(pwd):/root/.questdb/"  questdb/questdb
+#
+# then one can create 'log.conf' in the 'conf' dir and override logger fully
+#
+CMD ["/app/bin/java", "-Dout=conf/log.conf", "-m", "io.questdb/io.questdb.ServerMain", "-d", "/root/.questdb", "-f"]

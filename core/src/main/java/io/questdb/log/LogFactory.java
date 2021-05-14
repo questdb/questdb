@@ -119,19 +119,16 @@ public class LogFactory implements Closeable {
             if (is != null) {
                 Properties properties = new Properties();
                 properties.load(is);
-                System.out.println("using resource: "+conf);
                 configureFromProperties(factory, properties, workerPool);
             } else {
                 File f = new File(conf);
                 if (f.canRead()) {
-                    System.out.println("using file: "+conf);
                     try (FileInputStream fis = new FileInputStream(f)) {
                         Properties properties = new Properties();
                         properties.load(fis);
                         configureFromProperties(factory, properties, workerPool);
                     }
                 } else {
-                    System.out.println("using default, cannot find config: " + f.getAbsolutePath());
                     factory.configureDefaultWriter();
                 }
             }
@@ -139,7 +136,6 @@ public class LogFactory implements Closeable {
             if (!DEFAULT_CONFIG.equals(conf)) {
                 throw new LogError("Cannot read " + conf, e);
             } else {
-                System.out.println("using default, on exception");
                 factory.configureDefaultWriter();
             }
         }
