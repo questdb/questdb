@@ -15,13 +15,13 @@ RUN ../apache-maven-3.6.3/bin/mvn clean package -DskipTests -P build-web-console
 
 WORKDIR /build/questdb/core/target
 
-RUN tar xvfz questdb-*-rt-*.tar.gz
+RUN tar xvfz questdb-*-rt-linux-amd64.tar.gz
 
 FROM debian:stretch-slim
 
 WORKDIR /app
 
-COPY --from=0 /build/questdb/core/target/questdb-*-rt-* .
+COPY --from=0 /build/questdb/core/target/questdb-*-rt-linux-amd64 .
 
 WORKDIR /app/bin
 
