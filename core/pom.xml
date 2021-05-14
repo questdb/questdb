@@ -40,7 +40,7 @@
 
     <version>6.0.1-SNAPSHOT</version>
     <groupId>org.questdb</groupId>
-    <artifactId>${questdb.artifactid}</artifactId>
+    <artifactId>questdb</artifactId>
     <packaging>jar</packaging>
 
     <url>https://questdb.io/</url>
@@ -389,6 +389,8 @@
                                         <argument>--no-header-files</argument>
                                         <argument>--no-man-pages</argument>
                                         <argument>--compress=2</argument>
+                                        <argument>--strip-debug</argument>
+                                        <argument>--vm=server</argument>
                                     </arguments>
                                     <workingDirectory>../core</workingDirectory>
                                 </configuration>

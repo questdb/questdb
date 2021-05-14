@@ -56,7 +56,7 @@
         </dependency>
         <dependency>
             <groupId>org.questdb</groupId>
-            <artifactId>${questdb.artifactid}</artifactId>
+            <artifactId>questdb</artifactId>
             <version>6.0.1-SNAPSHOT</version>
         </dependency>
         <dependency>
