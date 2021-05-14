@@ -131,7 +131,7 @@ public class LogFactory implements Closeable {
                         configureFromProperties(factory, properties, workerPool);
                     }
                 } else {
-                    System.out.println("using default, cannot find config");
+                    System.out.println("using default, cannot find config: " + f.getAbsolutePath());
                     factory.configureDefaultWriter();
                 }
             }
