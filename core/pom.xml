@@ -389,6 +389,8 @@
                                         <argument>--no-header-files</argument>
                                         <argument>--no-man-pages</argument>
                                         <argument>--compress=2</argument>
+                                        <argument>--strip-debug</argument>
+                                        <argument>--vm=server</argument>
                                     </arguments>
                                     <workingDirectory>../core</workingDirectory>
                                 </configuration>
