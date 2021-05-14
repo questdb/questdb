@@ -14,97 +14,96 @@ stages:
   - stage: RunTestsBranches
     displayName: "Running tests"
     jobs:
-      jobs:
-        - job: CheckChanges
-          displayName: 'Check changes'
-          pool:
-            vmImage: "ubuntu-latest"
-          steps:
-            - task: ShellScript@2
-              inputs:
-                scriptPath: $(Build.SourcesDirectory)/ci/checkChanges.sh
-                args: $(System.PullRequest.PullRequestNumber)
-              name: check_changes
-              displayName: 'Check changed files'
-        - job: RunOn
-          displayName: "Run Tests"
-          dependsOn: CheckChanges
-          condition: eq(dependencies.CheckChanges.outputs['check_changes.SOURCE_CODE_CHANGED'], 'true')
-          strategy:
-            matrix:
-              linux:
-                imageName: "ubuntu-latest"
-                os: Linux
-                jdk: "1.11"
-              mac:
-                imageName: "macos-latest"
-                os: macOS
-                jdk: "1.11"
-              windows:
-                imageName: "windows-latest"
-                os: Windows
-                jdk: "1.11"
-              linux-jdk8:
-                imageName: "ubuntu-latest"
-                os: Linux
-                jdk: "1.8"
-          pool:
-            vmImage: $(imageName)
-          timeoutInMinutes: 60
-          steps:
-            - checkout: self
-              fetchDepth: 1
-              lfs: false
-              submodules: false
-            - bash: sudo sysctl -w fs.file-max=500000
-              displayName: "Increase file count on Linux"
-              condition: eq(variables['Agent.OS'], 'Linux')
-            - task: ShellScript@2
-              displayName: "List of coverage classes PR build"
-              inputs:
-                scriptPath: $(Build.SourcesDirectory)/ci/coverage.sh
-                args: $(System.PullRequest.PullRequestNumber)
-                failOnStandardError: true
-              condition: and(and(eq(variables['Agent.OS'], 'Linux'), eq(variables['jdk'], '1.11')), not(eq(variables['System.PullRequest.PullRequestId'], '')) )
-            - task: Maven@3
-              displayName: "Run tests with Maven with Code Coverage"
-              inputs:
-                mavenPomFile: "core/pom.xml"
-                mavenOptions: "-Xmx3072m"
-                options: "--batch-mode --quiet -Dout=$(Build.SourcesDirectory)/ci/qlog.conf"
-                jdkVersionOption: $(jdk)
-                codeCoverageToolOption: "$(CODE_COVERAGE_TOOL_OPTION)"
-                codeCoverageClassFilter: "$(COVERAGE_DIFF)"
-              condition: and(and(eq(variables['Agent.OS'], 'Linux'), eq(variables['jdk'], '1.11')), not(eq(variables['System.PullRequest.PullRequestId'], '')) )
-            - task: Maven@3
-              displayName: "Run tests with Maven"
-              inputs:
-                mavenPomFile: "core/pom.xml"
-                mavenOptions: "-Xmx3072m"
-                options: "--batch-mode --quiet -Dout=$(Build.SourcesDirectory)/ci/qlog.conf"
-                jdkVersionOption: $(jdk)
-              condition: not(and(and(eq(variables['Agent.OS'], 'Linux'), eq(variables['jdk'], '1.11')), not(eq(variables['System.PullRequest.PullRequestId'], '')) ))
-            - bash: if [ "$CODE_COVERAGE_TOOL_OPTION" == "JaCoCo" ]; then $JAVA_HOME_11_X64/bin/java -jar $SOURCES/ci/cover-checker-console-1.4.2-jar-with-dependencies.jar -c $SOURCES/$COVERAGE_REPORT_PATH --github-token $SYSTEM_ACCESSTOKEN --repo "questdb/questdb" --pr $PR_ID -t $DIFF_CONVER_THRESHOLD_PCT -type jacoco; fi
-              displayName: "Diff coverage PR report"
-              env:
-                CODE_COVERAGE_TOOL_OPTION: "$(CODE_COVERAGE_TOOL_OPTION)"
-                SYSTEM_ACCESSTOKEN: $(GH_TOKEN)
-                PR_ID: $(System.PullRequest.PullRequestNumber)
-                SOURCES: $(Build.SourcesDirectory)
-                COVERAGE_REPORT_PATH: core/CCReport43F6D5EF/jacoco.xml
-                DIFF_CONVER_THRESHOLD_PCT: $(DIFF_CONVER_THRESHOLD_PCT)
-              condition: and(and(eq(variables['Agent.OS'], 'Linux'), eq(variables['jdk'], '1.11')), not(eq(variables['System.PullRequest.PullRequestId'], '')) )
-            - task: ArchiveFiles@2
-              displayName: "Tests failed -- Compress logs"
-              condition: not(succeeded())
-              inputs:
-                rootFolderOrFile: $(QDB_LOG_W_FILE_LOCATION)
-                includeRootFolder: false
-                archiveFile: $(ARCHIVED_LOGS)
-                quiet: true
-            - task: PublishBuildArtifacts@1
-              displayName: "Tests failed -- Upload logs"
-              condition: not(succeeded())
-              inputs:
-                pathToPublish: $(ARCHIVED_LOGS)
-                artifactName: MavenFailedTestsLogs
+      - job: CheckChanges
+        displayName: 'Check changes'
+        pool:
+          vmImage: "ubuntu-latest"
+        steps:
+          - task: ShellScript@2
+            inputs:
+              scriptPath: $(Build.SourcesDirectory)/ci/checkChanges.sh
+              args: $(System.PullRequest.PullRequestNumber)
+            name: check_changes
+            displayName: 'Check changed files'
+      - job: RunOn
+        displayName: "Run Tests"
+        dependsOn: CheckChanges
+        condition: eq(dependencies.CheckChanges.outputs['check_changes.SOURCE_CODE_CHANGED'], 'true')
+        strategy:
+          matrix:
+            linux:
+              imageName: "ubuntu-latest"
+              os: Linux
+              jdk: "1.11"
+            mac:
+              imageName: "macos-latest"
+              os: macOS
+              jdk: "1.11"
+            windows:
+              imageName: "windows-latest"
+              os: Windows
+              jdk: "1.11"
+            linux-jdk8:
+              imageName: "ubuntu-latest"
+              os: Linux
+              jdk: "1.8"
+        pool:
+          vmImage: $(imageName)
+        timeoutInMinutes: 60
+        steps:
+          - checkout: self
+            fetchDepth: 1
+            lfs: false
+            submodules: false
+          - bash: sudo sysctl -w fs.file-max=500000
+            displayName: "Increase file count on Linux"
+            condition: eq(variables['Agent.OS'], 'Linux')
+          - task: ShellScript@2
+            displayName: "List of coverage classes PR build"
+            inputs:
+              scriptPath: $(Build.SourcesDirectory)/ci/coverage.sh
+              args: $(System.PullRequest.PullRequestNumber)
+              failOnStandardError: true
+            condition: and(and(eq(variables['Agent.OS'], 'Linux'), eq(variables['jdk'], '1.11')), not(eq(variables['System.PullRequest.PullRequestId'], '')) )
+          - task: Maven@3
+            displayName: "Run tests with Maven with Code Coverage"
+            inputs:
+              mavenPomFile: "core/pom.xml"
+              mavenOptions: "-Xmx3072m"
+              options: "--batch-mode --quiet -Dout=$(Build.SourcesDirectory)/ci/qlog.conf"
+              jdkVersionOption: $(jdk)
+              codeCoverageToolOption: "$(CODE_COVERAGE_TOOL_OPTION)"
+              codeCoverageClassFilter: "$(COVERAGE_DIFF)"
+            condition: and(and(eq(variables['Agent.OS'], 'Linux'), eq(variables['jdk'], '1.11')), not(eq(variables['System.PullRequest.PullRequestId'], '')) )
+          - task: Maven@3
+            displayName: "Run tests with Maven"
+            inputs:
+              mavenPomFile: "core/pom.xml"
+              mavenOptions: "-Xmx3072m"
+              options: "--batch-mode --quiet -Dout=$(Build.SourcesDirectory)/ci/qlog.conf"
+              jdkVersionOption: $(jdk)
+            condition: not(and(and(eq(variables['Agent.OS'], 'Linux'), eq(variables['jdk'], '1.11')), not(eq(variables['System.PullRequest.PullRequestId'], '')) ))
+          - bash: if [ "$CODE_COVERAGE_TOOL_OPTION" == "JaCoCo" ]; then $JAVA_HOME_11_X64/bin/java -jar $SOURCES/ci/cover-checker-console-1.4.2-jar-with-dependencies.jar -c $SOURCES/$COVERAGE_REPORT_PATH --github-token $SYSTEM_ACCESSTOKEN --repo "questdb/questdb" --pr $PR_ID -t $DIFF_CONVER_THRESHOLD_PCT -type jacoco; fi
+            displayName: "Diff coverage PR report"
+            env:
+              CODE_COVERAGE_TOOL_OPTION: "$(CODE_COVERAGE_TOOL_OPTION)"
+              SYSTEM_ACCESSTOKEN: $(GH_TOKEN)
+              PR_ID: $(System.PullRequest.PullRequestNumber)
+              SOURCES: $(Build.SourcesDirectory)
+              COVERAGE_REPORT_PATH: core/CCReport43F6D5EF/jacoco.xml
+              DIFF_CONVER_THRESHOLD_PCT: $(DIFF_CONVER_THRESHOLD_PCT)
+            condition: and(and(eq(variables['Agent.OS'], 'Linux'), eq(variables['jdk'], '1.11')), not(eq(variables['System.PullRequest.PullRequestId'], '')) )
+          - task: ArchiveFiles@2
+            displayName: "Tests failed -- Compress logs"
+            condition: not(succeeded())
+            inputs:
+              rootFolderOrFile: $(QDB_LOG_W_FILE_LOCATION)
+              includeRootFolder: false
+              archiveFile: $(ARCHIVED_LOGS)
+              quiet: true
+          - task: PublishBuildArtifacts@1
+            displayName: "Tests failed -- Upload logs"
+            condition: not(succeeded())
+            inputs:
+              pathToPublish: $(ARCHIVED_LOGS)
+              artifactName: MavenFailedTestsLogs
