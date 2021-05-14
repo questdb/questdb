@@ -15,13 +15,13 @@ RUN ../apache-maven-3.6.3/bin/mvn clean package -DskipTests -P build-web-console
 
 WORKDIR /build/questdb/core/target
 
-RUN tar xvfz questdb-*-rt-linux-amd64.tar.gz
+RUN tar xvfz questdb-*-rt-*.tar.gz
 
 FROM debian:stretch-slim
 
 WORKDIR /app
 
-COPY --from=0 /build/questdb/core/target/questdb-*-rt-linux-amd64 .
+COPY --from=0 /build/questdb/core/target/questdb-*-rt-* .
 
 WORKDIR /app/bin
 
@@ -43,4 +43,4 @@ EXPOSE 8812/tcp
 EXPOSE 9009/tcp
 
 # Run questdb when the container launches
-CMD ["/app/bin/java", "-Debug", "-m", "io.questdb/io.questdb.ServerMain", "-d", "/root/.questdb", "-f"]
+CMD ["/app/bin/java", "-Dout=$QDB_LOG_CONF", "-m", "io.questdb/io.questdb.ServerMain", "-d", "/root/.questdb", "-f"]
