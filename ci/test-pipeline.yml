@@ -62,6 +62,8 @@ stages:
         pool:
           vmImage: $(imageName)
         timeoutInMinutes: 60
+        variables:
+          SOURCE_CODE_CHANGED: $[ dependencies.CheckChanges.outputs['check_changes.SOURCE_CODE_CHANGED'] ]
         steps:
           - checkout: self
             fetchDepth: 1
@@ -84,7 +86,7 @@ stages:
               mavenOptions: "-Xmx3072m"
               options: "compile -DskipTests"
               jdkVersionOption: $(jdk)
-            condition: eq(dependencies.CheckChanges.outputs['check_changes.SOURCE_CODE_CHANGED'], 'false')
+            condition: eq(variables['SOURCE_CODE_CHANGED'], 'false')
           - task: Maven@3
             displayName: "Run tests with Maven with Code Coverage"
             inputs:
@@ -100,7 +102,7 @@ stages:
                         and( eq(variables['Agent.OS'],                         'Linux'), eq(variables['jdk'], '1.11') ),
                         not( eq(variables['System.PullRequest.PullRequestId'], ''     ) )
                     ),
-                    eq(dependencies.CheckChanges.outputs['check_changes.SOURCE_CODE_CHANGED'], 'true')
+                    eq(variables['SOURCE_CODE_CHANGED'], 'true')
                 )
           - task: Maven@3
             displayName: "Run tests with Maven"
@@ -117,7 +119,7 @@ stages:
                         not( eq(variables['System.PullRequest.PullRequestId'], ''     ) )
                     )
                   ),
-                  eq(dependencies.CheckChanges.outputs['check_changes.SOURCE_CODE_CHANGED'], 'true')
+                  eq(variables['SOURCE_CODE_CHANGED'], 'true')
                 )
           - bash: if [ "$CODE_COVERAGE_TOOL_OPTION" == "JaCoCo" ]; then $JAVA_HOME_11_X64/bin/java -jar $SOURCES/ci/cover-checker-console-1.4.2-jar-with-dependencies.jar -c $SOURCES/$COVERAGE_REPORT_PATH --github-token $SYSTEM_ACCESSTOKEN --repo "questdb/questdb" --pr $PR_ID -t $DIFF_CONVER_THRESHOLD_PCT -type jacoco; fi
             displayName: "Diff coverage PR report"
@@ -136,7 +138,7 @@ stages:
                       not( eq(variables['System.PullRequest.PullRequestId'], ''     ) )
                   )
                 ),
-                eq(dependencies.CheckChanges.outputs['check_changes.SOURCE_CODE_CHANGED'], 'true')
+                eq(variables['SOURCE_CODE_CHANGED'], 'true')
               )
           - task: ArchiveFiles@2
             displayName: "Tests failed -- Compress logs"
