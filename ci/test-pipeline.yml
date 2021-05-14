@@ -39,7 +39,7 @@ stages:
             name: check_changes
             displayName: 'Check changed files'
       - job: RunOn
-        displayName: "Run Tests"
+        displayName: "on"
         dependsOn: CheckChanges
         strategy:
           matrix:
