@@ -90,7 +90,7 @@ stages:
               mavenOptions: "-Xmx3072m"
               options: "--batch-mode --quiet -Dout=$(Build.SourcesDirectory)/ci/qlog.conf"
               jdkVersionOption: $(jdk)
-            condition: and(not(and(and(eq(variables['Agent.OS'], 'Linux'), eq(variables['jdk'], '1.11')), not(eq(variables['System.PullRequest.PullRequestId'], '')) )), eq(dependencies.CheckChanges.outputs['check_changes.SOURCE_CODE_CHANGED'], 'true'))
+            condition: and(not(and(and(eq(variables['Agent.OS'], 'Linux'), eq(variables['jdk'], '1.11')), not(eq(variables['System.PullRequest.PullRequestId'], '')) )), eq(dependencies.CheckChanges.outputs['check_changes.SOURCE_CODE_CHANGED'], 'true')
           - bash: if [ "$CODE_COVERAGE_TOOL_OPTION" == "JaCoCo" ]; then $JAVA_HOME_11_X64/bin/java -jar $SOURCES/ci/cover-checker-console-1.4.2-jar-with-dependencies.jar -c $SOURCES/$COVERAGE_REPORT_PATH --github-token $SYSTEM_ACCESSTOKEN --repo "questdb/questdb" --pr $PR_ID -t $DIFF_CONVER_THRESHOLD_PCT -type jacoco; fi
             displayName: "Diff coverage PR report"
             env:
@@ -100,7 +100,7 @@ stages:
               SOURCES: $(Build.SourcesDirectory)
               COVERAGE_REPORT_PATH: core/CCReport43F6D5EF/jacoco.xml
               DIFF_CONVER_THRESHOLD_PCT: $(DIFF_CONVER_THRESHOLD_PCT)
-            condition: and(and(and(eq(variables['Agent.OS'], 'Linux'), eq(variables['jdk'], '1.11')), not(eq(variables['System.PullRequest.PullRequestId'], '')) ), eq(dependencies.CheckChanges.outputs['check_changes.SOURCE_CODE_CHANGED'], 'true'))
+            condition: and(and(and(eq(variables['Agent.OS'], 'Linux'), eq(variables['jdk'], '1.11')), not(eq(variables['System.PullRequest.PullRequestId'], '')) ), eq(dependencies.CheckChanges.outputs['check_changes.SOURCE_CODE_CHANGED'], 'true')
           - task: ArchiveFiles@2
             displayName: "Tests failed -- Compress logs"
             condition: not(succeeded())
