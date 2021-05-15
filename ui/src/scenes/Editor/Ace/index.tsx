@@ -23,7 +23,13 @@
  ******************************************************************************/
 
 import { Range } from "ace-builds"
-import React, { useCallback, useEffect, useRef, useState } from "react"
+import React, {
+  useCallback,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+} from "react"
 import ReactAce from "react-ace"
 import { useDispatch, useSelector } from "react-redux"
 import ResizeObserver from "resize-observer-polyfill"
@@ -48,8 +54,7 @@ import {
   savePreferences,
   toTextPosition,
 } from "./utils"
-
-const quest = new QuestDB.Client()
+import { QuestContext } from "providers"
 
 const Content = styled(PaneContent)`
   position: relative;
@@ -76,6 +81,7 @@ enum Command {
 }
 
 const Ace = () => {
+  const { quest } = useContext(QuestContext)
   const [request, setRequest] = useState<Request | undefined>()
   const [value, setValue] = useState("")
   const aceEditor = useRef<ReactAce | null>(null)
@@ -93,7 +99,7 @@ const Ace = () => {
       dispatch(actions.query.stopRunning())
       setRequest(undefined)
     }
-  }, [dispatch, request, running])
+  }, [request, quest, dispatch, running])
 
   useEffect(() => {
     if (!aceEditor.current) {
@@ -192,7 +198,7 @@ const Ace = () => {
         dispatch(actions.query.stopRunning())
       }
     }
-  }, [dispatch, running])
+  }, [quest, dispatch, running])
 
   useEffect(() => {
     if (!aceEditor.current) {
