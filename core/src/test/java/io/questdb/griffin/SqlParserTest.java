@@ -50,9 +50,33 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testOuterJoinRightPredicate() throws SqlException {
+        assertQuery(
+                "select-choose x, y from (select [x] from l outer join (select [y] from r where y > 0) r on r.y = l.x)",
+                "select x, y\n" +
+                        "from l left join r on l.x = r.y\n" +
+                        "where y > 0",
+                modelOf("l").col("x", ColumnType.INT),
+                modelOf("r").col("y", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testOuterJoinRightPredicate1() throws SqlException {
+        assertQuery(
+                "select-choose x, y from (select [x] from l outer join (select [y] from r where y > 0 or y > 10) r on r.y = l.x)",
+                "select x, y\n" +
+                        "from l left join r on l.x = r.y\n" +
+                        "where y > 0 or y > 10",
+                modelOf("l").col("x", ColumnType.INT),
+                modelOf("r").col("y", ColumnType.INT)
+        );
+    }
+
+    @Test
     public void testAliasSecondJoinTable() throws SqlException {
         assertQuery(
-                "select-choose tx.a a, tx.b b from (select [a, b, xid] from x tx outer join select [yid, a, b] from y ty on yid = xid post-join-where ty.a = 1 or ty.b = 2) tx",
+                "select-choose tx.a a, tx.b b from (select [a, b, xid] from x tx outer join (select [yid, a, b] from y ty where a = 1 or b = 2) ty on yid = xid) tx",
                 "select tx.a, tx.b from x as tx left join y as ty on xid = yid where ty.a = 1 or ty.b=2",
                 modelOf("x").col("xid", ColumnType.INT).col("a", ColumnType.INT).col("b", ColumnType.INT),
                 modelOf("y").col("yid", ColumnType.INT).col("a", ColumnType.INT).col("b", ColumnType.INT)
@@ -62,7 +86,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testAliasTopJoinTable() throws SqlException {
         assertQuery(
-                "select-choose tx.a a, tx.b b from (select [a, b, xid] from x tx outer join select [yid] from y ty on yid = xid post-join-where a = 1 or b = 2) tx",
+                "select-choose tx.a a, tx.b b from (select [a, b, xid] from x tx outer join select [yid] from y ty on yid = xid where a = 1 or b = 2) tx",
                 "select tx.a, tx.b from x as tx left join y as ty on xid = yid where tx.a = 1 or tx.b=2",
                 modelOf("x").col("xid", ColumnType.INT).col("a", ColumnType.INT).col("b", ColumnType.INT),
                 modelOf("y").col("yid", ColumnType.INT).col("a", ColumnType.INT).col("b", ColumnType.INT)
