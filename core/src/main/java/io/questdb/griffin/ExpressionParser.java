@@ -556,6 +556,33 @@ class ExpressionParser {
                                 opStack.push(expressionNodePool.next().of(ExpressionNode.CONSTANT, GenericLexer.immutableOf(tok), 0, position));
                                 break;
                             } else {
+                                if (opStack.size() > 0 && prevBranch == BRANCH_LITERAL && thisChar == '\'') {
+                                    ExpressionNode prevNode = opStack.pop();
+                                    // This is postgres syntax to cast string literal to a type
+                                    // timestamp '2005-04-02 12:00:00-07'
+                                    // long '12321312'
+                                    // timestamp with time zone '2005-04-02 12:00:00-07'
+
+                                    // validate type
+                                    final int columnType = ColumnType.columnTypeOf(prevNode.token);
+                                    if (columnType < 0 || columnType > ColumnType.LONG256) {
+                                        throw SqlException.$(prevNode.position, "invalid type");
+                                    } else {
+                                        ExpressionNode stringLiteral = expressionNodePool.next().of(ExpressionNode.CONSTANT, GenericLexer.immutableOf(tok), 0, position);
+                                        onNode(listener, stringLiteral, 0);
+
+                                        prevNode.type = ExpressionNode.CONSTANT;
+                                        onNode(listener, prevNode, 0);
+
+                                        ExpressionNode cast = expressionNodePool.next().of(ExpressionNode.FUNCTION, "cast", 0, prevNode.position);
+                                        cast.paramCount = 2;
+
+                                        onNode(listener, cast, argStackDepth + 2);
+                                        argStackDepth++;
+                                        break;
+                                    }
+                                }
+
                                 if (opStack.size() > 1) {
                                     throw SqlException.$(position, "dangling expression");
                                 }
@@ -857,6 +884,11 @@ class ExpressionParser {
                             opStack.push(expressionNodePool.next().of(ExpressionNode.MEMBER_ACCESS, GenericLexer.unquote(tok), Integer.MIN_VALUE, position));
                         }
                     } else {
+                        ExpressionNode last;
+                        if ((last = this.opStack.peek()) != null && SqlKeywords.isTimestampKeyword(last.token) && (SqlKeywords.isWithKeyword(tok) || SqlKeywords.isTimeKeyword(tok) || SqlKeywords.isZoneKeyword(tok))) {
+                            // Skip "with timezone" part of "timestamp with timeszone" for Postgres compatibility #740, #980
+                            continue;
+                        }
                         // literal can be at start of input, after a bracket or part of an operator
                         // all other cases are illegal and will be considered end-of-input
                         lexer.unparse();
