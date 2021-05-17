@@ -42,6 +42,13 @@ import org.junit.Test;
 public class SqlParserTest extends AbstractGriffinTest {
 
     @Test
+    public void test2Betweens() throws Exception {
+        assertQuery("select-choose t from (select [t, tt] from x where t between ('2020-01-01','2021-01-02') and tt between ('2021-01-02','2021-01-31'))",
+                "select t from x where t between '2020-01-01' and '2021-01-02' and tt between '2021-01-02' and '2021-01-31'",
+                modelOf("x").col("t", ColumnType.TIMESTAMP).col("tt", ColumnType.TIMESTAMP));
+    }
+
+    @Test
     public void testAggregateFunctionExpr() throws SqlException {
         assertQuery(
                 "select-group-by sum(max(x) + 2) sum, f from (select-virtual [x, f(x) f] x, f(x) f from (select [x] from long_sequence(10)))",
@@ -286,6 +293,56 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testBadTableExpression() throws Exception {
         assertSyntaxError(")", 0, "table name expected");
+    }
+
+    @Test
+    public void testBetween() throws Exception {
+        assertQuery("select-choose t from (select [t] from x where t between ('2020-01-01','2021-01-02'))",
+                "x where t between '2020-01-01' and '2021-01-02'",
+                modelOf("x").col("t", ColumnType.TIMESTAMP));
+    }
+
+    @Test
+    public void testBetweenInsideCast() throws Exception {
+        assertQuery("select-virtual cast(t between (cast('2020-01-01',TIMESTAMP),'2021-01-02'),INT) + 1 column from (select [t] from x)",
+                "select CAST(t between CAST('2020-01-01' AS TIMESTAMP) and '2021-01-02' AS INT) + 1 from x",
+                modelOf("x").col("t", ColumnType.TIMESTAMP).col("tt", ColumnType.TIMESTAMP));
+    }
+
+    @Test
+    public void testBetweenUnfinished() throws Exception {
+        assertSyntaxError("select tt from x where t between '2020-01-01'",
+                25,
+                "too few arguments for 'between' [found=2,expected=3]",
+                modelOf("x").col("t", ColumnType.TIMESTAMP).col("tt", ColumnType.TIMESTAMP));
+    }
+
+    @Test
+    public void testBetweenWithCase() throws Exception {
+        assertQuery("select-virtual case(t between (cast('2020-01-01',TIMESTAMP),'2021-01-02'),'a','b') case from (select [t] from x)",
+                "select case when t between CAST('2020-01-01' AS TIMESTAMP) and '2021-01-02' then 'a' else 'b' end from x",
+                modelOf("x").col("t", ColumnType.TIMESTAMP).col("tt", ColumnType.TIMESTAMP));
+    }
+
+    @Test
+    public void testBetweenWithCast() throws Exception {
+        assertQuery("select-choose t from (select [t] from x where t between (cast('2020-01-01',TIMESTAMP),'2021-01-02'))",
+                "select t from x where t between CAST('2020-01-01' AS TIMESTAMP) and '2021-01-02'",
+                modelOf("x").col("t", ColumnType.TIMESTAMP).col("tt", ColumnType.TIMESTAMP));
+    }
+
+    @Test
+    public void testBetweenWithCastAndSum() throws Exception {
+        assertQuery("select-choose tt from (select [tt, t] from x where t between ('2020-01-01',now() + cast(NULL,LONG)))",
+                "select tt from x where t between '2020-01-01' and (now() + CAST(NULL AS LONG))",
+                modelOf("x").col("t", ColumnType.TIMESTAMP).col("tt", ColumnType.TIMESTAMP));
+    }
+
+    @Test
+    public void testBetweenWithCastAndSum2() throws Exception {
+        assertQuery("select-choose tt from (select [tt, t] from x where t between (now() + cast(NULL,LONG),'2020-01-01'))",
+                "select tt from x where t between (now() + CAST(NULL AS LONG)) and '2020-01-01'",
+                modelOf("x").col("t", ColumnType.TIMESTAMP).col("tt", ColumnType.TIMESTAMP));
     }
 
     @Test
@@ -1627,6 +1684,69 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testCreateTableWitInvalidO3CommitHysteresis() throws Exception {
+        assertSyntaxError(
+                "create table x (a INT, t TIMESTAMP) timestamp(t) partition by DAY WITH o3CommitHysteresis=asif,",
+                99,
+                "invalid interval qualifier asif");
+    }
+
+    @Test
+    public void testCreateTableWitInvalidO3MaxUncommittedRows() throws Exception {
+        assertSyntaxError(
+                "create table x (a INT, t TIMESTAMP) timestamp(t) partition by DAY WITH o3MaxUncommittedRows=asif,",
+                97,
+                "could not parse o3MaxUncommittedRows value \"asif\"");
+    }
+
+    @Test
+    public void testCreateTableWithInvalidParameter1() throws Exception {
+        assertSyntaxError(
+                "create table x (a INT, t TIMESTAMP) timestamp(t) partition by DAY WITH o3MaxUncommittedRows=10000, o3invalid=250ms",
+                114,
+                "unrecognized o3invalid after WITH");
+    }
+
+    @Test
+    public void testCreateTableWithInvalidParameter2() throws Exception {
+        assertSyntaxError(
+                "create table x (a INT, t TIMESTAMP) timestamp(t) partition by DAY WITH o3MaxUncommittedRows=10000 x o3CommitHysteresis=250ms",
+                98,
+                "unexpected token: x");
+    }
+
+    @Test
+    public void testCreateTableWithO3() throws Exception {
+        assertCreateTable(
+                "create table x (a INT, t TIMESTAMP) timestamp(t) partition by DAY",
+                "create table x (a INT, t TIMESTAMP) timestamp(t) partition by DAY WITH o3MaxUncommittedRows=10000, o3CommitHysteresis=250ms;");
+    }
+
+    @Test
+    public void testCreateTableWithPartialParameter1() throws Exception {
+        assertSyntaxError(
+                "create table x (a INT, t TIMESTAMP) timestamp(t) partition by DAY WITH o3MaxUncommittedRows=10000, o3CommitHysteresis=",
+                117,
+                "too few arguments for '=' [found=1,expected=2]");
+    }
+
+    @Test
+    public void testCreateTableWithPartialParameter2() throws Exception {
+        assertSyntaxError(
+                "create table x (a INT, t TIMESTAMP) timestamp(t) partition by DAY WITH o3MaxUncommittedRows=10000, o3CommitHysteresis",
+                117,
+                "expected parameter after WITH");
+    }
+
+    @Test
+    public void testCreateTableWithPartialParameter3() throws Exception {
+        assertSyntaxError(
+                "create table x (a INT, t TIMESTAMP) timestamp(t) partition by DAY WITH o3MaxUncommittedRows=10000,",
+                97,
+                "unexpected token: ,");
+    }
+
+    @Test
     public void testCreateUnsupported() throws Exception {
         assertSyntaxError("create object x", 7, "table");
     }
@@ -2709,6 +2829,28 @@ public class SqlParserTest extends AbstractGriffinTest {
                         "        OR  ( c.relkind = 'r' AND n.nspname !~ '^pg_' AND n.nspname <> 'information_schema' ) \n" +
                         "        ) \n" +
                         "ORDER BY TABLE_TYPE,TABLE_SCHEM,TABLE_NAME"
+        );
+    }
+
+    @Test
+    public void testJoinColumnPropagation() throws SqlException {
+        assertQuery(
+                "select-group-by city, max(temp) max from (select [temp, sensorId] from readings timestamp (ts) join select [city, sensId] from (select-choose [city, ID sensId] ID sensId, city from (select [city, ID] from sensors)) _xQdbA1 on sensId = readings.sensorId)",
+                "SELECT city, max(temp)\n" +
+                        "FROM readings\n" +
+                        "JOIN(\n" +
+                        "    SELECT ID sensId, city\n" +
+                        "    FROM sensors)\n" +
+                        "ON readings.sensorId = sensId",
+                modelOf("sensors")
+                        .col("ID", ColumnType.LONG)
+                        .col("make", ColumnType.STRING)
+                        .col("city", ColumnType.STRING),
+                modelOf("readings")
+                        .col("ID", ColumnType.LONG)
+                        .timestamp("ts")
+                        .col("temp", ColumnType.DOUBLE)
+                        .col("sensorId", ColumnType.LONG)
         );
     }
 

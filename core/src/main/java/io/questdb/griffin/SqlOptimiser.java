@@ -324,22 +324,13 @@ class SqlOptimiser {
 
     private void addTopDownColumn(@Transient ExpressionNode node, QueryModel model) {
         if (node != null && node.type == LITERAL) {
-            final ObjList<QueryModel> joinModels = model.getJoinModels();
-            final int joinCount = joinModels.size();
             final CharSequence columnName = node.token;
             final int dotIndex = Chars.indexOf(columnName, '.');
             if (dotIndex == -1) {
                 // When there is no dot in column name it is still possible that column comes from
                 // one of the join models. What we need to do here is to assign column to that model
                 // which already have this column in alias map
-                for (int i = 0; i < joinCount; i++) {
-                    final QueryModel m = joinModels.getQuick(i);
-                    final QueryColumn column = m.getAliasToColumnMap().get(columnName);
-                    if (column != null) {
-                        m.addTopDownColumn(column, columnName);
-                        break;
-                    }
-                }
+                addTopDownColumn(columnName, model);
             } else {
                 int modelIndex = model.getAliasIndex(node.token, 0, dotIndex);
                 if (modelIndex < 0) {
@@ -350,9 +341,32 @@ class SqlOptimiser {
 
                 addTopDownColumn0(
                         node,
-                        joinModels.getQuick(modelIndex),
+                        model.getJoinModels().getQuick(modelIndex),
                         node.token.subSequence(dotIndex + 1, node.token.length())
                 );
+            }
+        }
+    }
+
+    private void addTopDownColumn(CharSequence columnName, QueryModel model) {
+        final ObjList<QueryModel> joinModels = model.getJoinModels();
+        final int joinCount = joinModels.size();
+        for (int i = 0; i < joinCount; i++) {
+            final QueryModel m = joinModels.getQuick(i);
+            final QueryColumn column = m.getAliasToColumnMap().get(columnName);
+            if (column != null) {
+                if (m.getSelectModelType() == QueryModel.SELECT_MODEL_NONE) {
+                    m.addTopDownColumn(
+                            queryColumnPool.next().of(
+                                    columnName,
+                                    nextLiteral(columnName)
+                            ),
+                            columnName
+                    );
+                } else {
+                    m.addTopDownColumn(column, columnName);
+                }
+                break;
             }
         }
     }
