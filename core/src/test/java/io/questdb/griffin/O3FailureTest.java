@@ -211,6 +211,14 @@ public class O3FailureTest extends AbstractO3Test {
             }
             return super.allocate(fd, size);
         }
+
+        @Override
+        public boolean close(long fd) {
+            if (fd == theFd) {
+                theFd = -1;
+            }
+            return super.close(fd);
+        }
     };
 
     @Test
