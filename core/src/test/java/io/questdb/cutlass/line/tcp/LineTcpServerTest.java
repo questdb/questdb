@@ -51,6 +51,7 @@ import org.junit.Test;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.security.PrivateKey;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.LockSupport;
 
 public class LineTcpServerTest extends AbstractCairoTest {
@@ -153,22 +154,22 @@ public class LineTcpServerTest extends AbstractCairoTest {
 
     @Test
     public void testGoodAuthenticated() throws Exception {
-        test(AUTH_KEY_ID1, AUTH_PRIVATE_KEY1, 768, 1_000);
+        test(AUTH_KEY_ID1, AUTH_PRIVATE_KEY1, 768, 1_000, false);
     }
 
     @Test(expected = NetworkError.class)
     public void testInvalidSignature() throws Exception {
-        test(AUTH_KEY_ID1, AUTH_PRIVATE_KEY2, 768, 100);
+        test(AUTH_KEY_ID1, AUTH_PRIVATE_KEY2, 768, 6_000, true);
     }
 
     @Test(expected = NetworkError.class)
     public void testInvalidUser() throws Exception {
-        test(AUTH_KEY_ID2, AUTH_PRIVATE_KEY2, 768, 100);
+        test(AUTH_KEY_ID2, AUTH_PRIVATE_KEY2, 768, 6_000, true);
     }
 
     @Test
     public void testUnauthenticated() throws Exception {
-        test(null, null, 200, 1_000);
+        test(null, null, 200, 1_000, false);
     }
 
     @Test
@@ -367,7 +368,8 @@ public class LineTcpServerTest extends AbstractCairoTest {
             String authKeyId,
             PrivateKey authPrivateKey,
             int msgBufferSize,
-            final int nRows
+            final int nRows,
+            boolean expectDisconnect
     ) throws Exception {
         this.authKeyId = authKeyId;
         this.msgBufferSize = msgBufferSize;
@@ -442,6 +444,10 @@ public class LineTcpServerTest extends AbstractCairoTest {
                         sb.append('\n');
                         sender.$(ts * 1000);
                         sender.flush();
+                        if (expectDisconnect) {
+                            // To prevent all data being buffered before the expected disconnect slow sending
+                            Thread.sleep(100);
+                        }
                         ts += rand.nextInt(1000);
                     }
 
@@ -450,7 +456,11 @@ public class LineTcpServerTest extends AbstractCairoTest {
                         sender.close();
                     }
 
-                    tablesCreated.await();
+                    Assert.assertFalse(expectDisconnect);
+                    boolean ready = tablesCreated.await(TimeUnit.MINUTES.toNanos(1));
+                    if (!ready) {
+                        throw new IllegalStateException("Timeout waiting for tables to be created");
+                    }
 
                     int nRowsWritten;
                     do {
