@@ -1140,7 +1140,6 @@ class SqlOptimiser {
         for (int i = 0, n = columns.size(); i < n; i++) {
             final QueryColumn qc = columns.getQuick(i);
             emitLiteralsTopDown(qc.getAst(), target);
-//            addTopDownColumn(qc.getAlias(), target);
             if (qc instanceof AnalyticColumn) {
                 final AnalyticColumn ac = (AnalyticColumn) qc;
                 emitLiteralsTopDown(ac.getPartitionBy(), target);
