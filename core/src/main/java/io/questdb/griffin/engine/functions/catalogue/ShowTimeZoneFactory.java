@@ -34,7 +34,7 @@ import io.questdb.griffin.SqlExecutionContext;
 
 public class ShowTimeZoneFactory implements RecordCursorFactory {
     private final static GenericRecordMetadata METADATA = new GenericRecordMetadata();
-    private final static StringValueRecord RECORD = new StringValueRecord("Europe/London");
+    private final static StringValueRecord RECORD = new StringValueRecord("UTC"); // All times are UTC
 
 
     static {

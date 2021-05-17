@@ -124,7 +124,9 @@ public class ShowTablesTest extends AbstractGriffinTest {
     @Test
     public void testShowTimeZone() throws Exception {
         assertMemoryLeak(() -> {
-            assertSql("show time zone", "TimeZone\nEurope/London\n");
+            assertQuery(
+                    "TimeZone\nUTC\n",
+                    "show time zone", null, false, sqlExecutionContext, false, true);
         });
     }
 
