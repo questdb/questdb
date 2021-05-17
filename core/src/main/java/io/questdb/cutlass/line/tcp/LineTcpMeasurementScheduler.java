@@ -721,13 +721,11 @@ class LineTcpMeasurementScheduler implements Closeable {
                             job.floatingCharSink.asCharSequence(bufPos, hi);
                             bufPos = hi;
                             final int colType = writer.getMetadata().getColumnType(colIndex);
-                            switch (colType) {
-                                case ColumnType.STRING:
-                                    row.putStr(colIndex, job.floatingCharSink);
-                                    break;
-                                default:
-                                    throw CairoException.instance(0).put("line protocol STRING cannot be inserted into column type ").put(ColumnType.nameOf(colType)).put(") [entityType=")
-                                            .put(entityType).put(", colType=").put(colType).put(']');
+                            if (colType == ColumnType.STRING) {
+                                row.putStr(colIndex, job.floatingCharSink);
+                            } else {
+                                throw CairoException.instance(0).put("line protocol STRING cannot be inserted into column type ").put(ColumnType.nameOf(colType)).put(") [entityType=")
+                                        .put(entityType).put(']');
                             }
                             break;
                         }
