@@ -82,7 +82,7 @@ public class ShowTablesTest extends AbstractGriffinTest {
                 assertQuery("columnName\tcolumnType\ncust_id\tINT\nccy\tSYMBOL\nbalance\tDOUBLE\n", "show", null, false, sqlExecutionContext, false);
                 Assert.fail();
             } catch (SqlException ex) {
-                Assert.assertTrue(ex.toString().contains("expected 'tables' or 'columns'"));
+                Assert.assertTrue(ex.toString().contains("expected 'tables', 'columns' or 'time zone'"));
             }
         });
     }
@@ -121,4 +121,17 @@ public class ShowTablesTest extends AbstractGriffinTest {
         });
     }
 
+    @Test
+    public void testShowTimeZone() throws Exception {
+        assertMemoryLeak(() -> {
+            assertSql("show time zone", "TimeZone\nEurope/London\n");
+        });
+    }
+
+    @Test
+    public void testShowTimeZoneWrongSyntax() throws Exception {
+        assertMemoryLeak(() -> {
+            assertFailure("show time", null, 5, "expected 'tables', 'columns' or 'time zone'");
+        });
+    }
 }

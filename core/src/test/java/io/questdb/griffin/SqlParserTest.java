@@ -6036,6 +6036,37 @@ public class SqlParserTest extends AbstractGriffinTest {
                 modelOf("x").col("t", ColumnType.TIMESTAMP).col("tt", ColumnType.TIMESTAMP));
     }
 
+    @Test
+    public void testInvalidTypeLiteralCast() throws Exception {
+        assertSyntaxError(
+                "select * from x where t > timestamp_with_time_zone '2005-04-02 12:00:00-07'",
+                26,
+                "invalid type",
+                modelOf("x").col("t", ColumnType.TIMESTAMP).col("tt", ColumnType.TIMESTAMP)
+        );
+    }
+
+    @Test
+    public void testInvalidTypeCast() throws Exception {
+        assertSyntaxError(
+                "select cast('2005-04-02 12:00:00-07' as timestamp with time z) col from x",
+                11,
+                "unbalanced (",
+                modelOf("x").col("t", ColumnType.TIMESTAMP).col("tt", ColumnType.TIMESTAMP)
+        );
+    }
+
+
+    @Test
+    public void testInvalidTypeCast2() throws Exception {
+        assertSyntaxError(
+                "select cast('2005-04-02 12:00:00-07' as timestamp with tz) col from x",
+                11,
+                "unbalanced (",
+                modelOf("x").col("t", ColumnType.TIMESTAMP).col("tt", ColumnType.TIMESTAMP)
+        );
+    }
+
     private static void assertSyntaxError(
             SqlCompiler compiler,
             String query,

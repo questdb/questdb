@@ -886,7 +886,7 @@ class ExpressionParser {
                     } else {
                         ExpressionNode last;
                         if ((last = this.opStack.peek()) != null && SqlKeywords.isTimestampKeyword(last.token) && (SqlKeywords.isWithKeyword(tok) || SqlKeywords.isTimeKeyword(tok) || SqlKeywords.isZoneKeyword(tok))) {
-                            // Skip "with timezone" part of "timestamp with timeszone" for Postgres compatibility #740, #980
+                            // Skip "with time zone" part of "timestamp with time zone" for Postgres compatibility #740, #980
                             continue;
                         }
                         // literal can be at start of input, after a bracket or part of an operator
