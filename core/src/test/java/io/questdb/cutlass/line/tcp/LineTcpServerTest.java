@@ -24,10 +24,7 @@
 
 package io.questdb.cutlass.line.tcp;
 
-import io.questdb.cairo.AbstractCairoTest;
-import io.questdb.cairo.TableReader;
-import io.questdb.cairo.TableReaderRecordCursor;
-import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.*;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
@@ -42,6 +39,7 @@ import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.network.Net;
 import io.questdb.network.NetworkError;
 import io.questdb.std.*;
+import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -148,6 +146,10 @@ public class LineTcpServerTest extends AbstractCairoTest {
             return minIdleMsBeforeWriterRelease;
         }
 
+        @Override
+        public MicrosecondClock getMicrosecondClock() {
+            return testMicrosClock;
+        }
     };
 
     private Path path;
@@ -304,6 +306,34 @@ public class LineTcpServerTest extends AbstractCairoTest {
                 String expected = "tag_n_1\ttag_n_2\ttag_n_3\ttag_n_4\ttag_n_5\ttag_n_6\ttag_n_7\ttag_n_8\ttag_n_9\ttag_n_10\ttag_n_11\ttag_n_12\ttag_n_13\ttag_n_14\ttag_n_15\ttag_n_16\ttag_n_17\tvalue\ttimestamp\n" +
                         "1\t2\t3\t4\t5\t6\t7\t8\t9\t10\t11\t12\t13\t14\t15\t16\t17\t42.400000000000006\t2021-04-27T07:40:49.714000Z\n";
                 assertTable(expected, "tableCRASH");
+            });
+        } finally {
+            maxMeasurementSize = defautlMeasurementSize;
+        }
+    }
+
+    @Test
+    public void testWriterAllLongs() throws Exception {
+        currentMicros = 1;
+        try (TableModel m = new TableModel(configuration, "messages", PartitionBy.MONTH)) {
+            m.timestamp("ts")
+                    .col("id", ColumnType.LONG)
+                    .col("author", ColumnType.LONG)
+                    .col("guild", ColumnType.LONG)
+                    .col("channel", ColumnType.LONG)
+                    .col("flags", ColumnType.BYTE);
+            CairoTestUtils.createTableWithVersion(m, ColumnType.VERSION);
+        }
+
+        int defautlMeasurementSize = maxMeasurementSize;
+        String lineData = "messages id=843530699759026177i,author=820703963477180437i,guild=820704412095479830i,channel=820704412095479833i,flags=6i\n";
+        try {
+            maxMeasurementSize = lineData.length();
+            runInContext(() -> {
+                send(lineData, "messages");
+                String expected = "ts\tid\tauthor\tguild\tchannel\tflags\n" +
+                        "1970-01-01T00:00:00.000001Z\t843530699759026177\t820703963477180437\t820704412095479830\t820704412095479833\t6\n";
+                assertTable(expected, "messages");
             });
         } finally {
             maxMeasurementSize = defautlMeasurementSize;
