@@ -33,7 +33,7 @@ import io.questdb.std.ObjList;
 public class SumByteGroupByFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "sum(B)";
+        return "del_sum(B)";
     }
 
     @Override

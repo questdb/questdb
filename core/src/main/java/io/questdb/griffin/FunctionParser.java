@@ -563,8 +563,8 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
                                             (sigArgType == ColumnType.LONG || sigArgType == ColumnType.INT) ||
                                     argType == ColumnType.CHAR &&
                                             sigArgType == ColumnType.STRING ||
-                                    argType == ColumnType.STRING &&
-                                            sigArgType == ColumnType.TIMESTAMP
+                                    (argType == ColumnType.STRING &&
+                                            sigArgType == ColumnType.TIMESTAMP && !factory.isGroupBy())
                                     || undefined;
 
 

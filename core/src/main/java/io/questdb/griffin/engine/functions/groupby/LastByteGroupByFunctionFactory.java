@@ -33,7 +33,7 @@ import io.questdb.std.ObjList;
 public class LastByteGroupByFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "last(B)";
+        return "deleted_last(B)";
     }
 
     @Override

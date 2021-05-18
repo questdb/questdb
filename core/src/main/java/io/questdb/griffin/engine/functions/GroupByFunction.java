@@ -63,6 +63,10 @@ public interface GroupByFunction extends Function {
         throw new UnsupportedOperationException();
     }
 
+    default void setEmtpy(MapValue value) {
+        setNull(value);
+    }
+
     default void setFloat(MapValue mapValue, float value) {
         throw new UnsupportedOperationException();
     }

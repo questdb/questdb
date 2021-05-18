@@ -33,7 +33,7 @@ import io.questdb.std.ObjList;
 public class FirstByteGroupByFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "first(B)";
+        return "deleted_first(B)";
     }
 
     @Override

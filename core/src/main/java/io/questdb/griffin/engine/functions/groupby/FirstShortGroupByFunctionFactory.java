@@ -33,7 +33,7 @@ import io.questdb.std.ObjList;
 public class FirstShortGroupByFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "first(E)";
+        return "deleted_first(E)";
     }
 
     @Override

@@ -25,15 +25,17 @@
 package io.questdb.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.ObjList;
 
-public class MinCharGroupByFunctionFactory implements FunctionFactory {
+public class LastStrGroupByFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "deleted_min(A)";
+        return "deleted_last(S)";
     }
 
     @Override
@@ -43,6 +45,11 @@ public class MinCharGroupByFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new MinCharGroupByFunction(position, args.getQuick(0));
+        return new FirstStrGroupByFunction(position, args.getQuick(0)) {
+            @Override
+            public void computeNext(MapValue mapValue, Record record) {
+                overwriteLast(record);
+            }
+        };
     }
 }

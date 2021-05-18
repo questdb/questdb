@@ -159,6 +159,7 @@ public class SqlCodeGenerator implements Mutable {
                 (position, keyKind, columnIndex, workerCount) -> new CountVectorAggregateFunction(
                         position,
                         keyKind,
+                        columnIndex,
                         ColumnType.pow2SizeOf(type)
                 )
         );
@@ -171,9 +172,11 @@ public class SqlCodeGenerator implements Mutable {
             tempVecConstructorArgIndexes.add(columnIndex);
             return sumConstructors.get(metadata.getColumnType(columnIndex));
         } else if (ast.type == FUNCTION && ast.paramCount == 0 && SqlKeywords.isCountKeyword(ast.token)) {
+            columnIndex = metadata.getTimestampIndex();
             // count() is a no-arg function
-            tempVecConstructorArgIndexes.add(-1);
-            return countConstructors.get(ColumnType.pow2SizeOf(tempKeyIndexesInBase.getQuick(0)));
+            tempVecConstructorArgIndexes.add(columnIndex);
+            int keyType = ColumnType.TIMESTAMP;
+            return countConstructors.get(keyType);
         } else if (isSingleColumnFunction(ast, "ksum")) {
             columnIndex = metadata.getColumnIndex(ast.rhs.token);
             tempVecConstructorArgIndexes.add(columnIndex);

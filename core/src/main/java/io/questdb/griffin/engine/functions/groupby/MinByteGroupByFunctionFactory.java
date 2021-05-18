@@ -33,7 +33,7 @@ import io.questdb.std.ObjList;
 public class MinByteGroupByFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "min(B)";
+        return "deleted_min(B)";
     }
 
     @Override

@@ -24,11 +24,17 @@
 
 package io.questdb.griffin;
 
+import io.questdb.cairo.CairoTestUtils;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableModel;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
+import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -691,7 +697,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
 
             // test with key falling within null columns
             try (
-                    RecordCursorFactory factory = compiler.compile("select s2, sum(val) from tab where t >= '1970-01-04T12:01' and t < '1970-01-07T11:00' order by s2", sqlExecutionContext).getRecordCursorFactory();
+                    RecordCursorFactory factory = compiler.compile("select s2, sum(val) from tab where t >= '1970-01-04T12:01' and t < '1970-01-07T11:00' order by s2", sqlExecutionContext).getRecordCursorFactory()
             ) {
                 Record[] expected = new Record[]{
                         new Record() {
@@ -711,7 +717,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
 
             /// test key on overlap
             try (
-                    RecordCursorFactory factory = compiler.compile("select s2, sum(val) from tab where t >= '1970-01-12T12:01' and t < '1970-01-14T11:00' order by s2", sqlExecutionContext).getRecordCursorFactory();
+                    RecordCursorFactory factory = compiler.compile("select s2, sum(val) from tab where t >= '1970-01-12T12:01' and t < '1970-01-14T11:00' order by s2", sqlExecutionContext).getRecordCursorFactory()
             ) {
                 Record[] expected = new Record[]{
                         new Record() {
@@ -909,5 +915,106 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
                 );
             }
         });
+    }
+
+    @Test
+    public void testMinMaxAggregations() throws Exception {
+        String[] aggregateFunctions = {"max", "min"};
+        TypeVal[] aggregateColTypes = {
+                new TypeVal(ColumnType.BYTE, "NaN:DOUBLE"),
+                new TypeVal(ColumnType.CHAR, "NaN:DOUBLE"),
+                new TypeVal(ColumnType.SHORT, "NaN:DOUBLE"),
+                new TypeVal(ColumnType.INT, "NaN:INT"),
+                new TypeVal(ColumnType.LONG, "NaN:LONG"),
+                new TypeVal(ColumnType.DATE, ":DATE"),
+                new TypeVal(ColumnType.TIMESTAMP, ":TIMESTAMP"),
+                new TypeVal(ColumnType.FLOAT, "NaN:FLOAT"),
+                new TypeVal(ColumnType.DOUBLE, "NaN:DOUBLE")};
+
+        testAggregations(aggregateFunctions, aggregateColTypes);
+    }
+
+    @Test
+    public void testFirstLastAggregations() throws Exception {
+        String[] aggregateFunctions = {"first", "last"};
+        TypeVal[] aggregateColTypes = {
+                new TypeVal(ColumnType.SYMBOL, ":SYMBOL"),
+                new TypeVal(ColumnType.BYTE, "NaN:DOUBLE"),
+                new TypeVal(ColumnType.CHAR, "NaN:DOUBLE"),
+                new TypeVal(ColumnType.SHORT, "NaN:DOUBLE"),
+                new TypeVal(ColumnType.INT, "NaN:INT"),
+                new TypeVal(ColumnType.LONG, "NaN:LONG"),
+                new TypeVal(ColumnType.DATE, ":DATE"),
+                new TypeVal(ColumnType.TIMESTAMP, ":TIMESTAMP"),
+                new TypeVal(ColumnType.FLOAT, "NaN:FLOAT"),
+                new TypeVal(ColumnType.DOUBLE, "NaN:DOUBLE")};
+
+        testAggregations(aggregateFunctions, aggregateColTypes);
+    }
+
+    @Test
+    public void testFirstLastAggregationsNotSupported() throws Exception {
+        String[] aggregateFunctions = {"first"};
+        TypeVal[] aggregateColTypes = {
+                new TypeVal(ColumnType.STRING, ":STRING"),};
+
+        try {
+            testAggregations(aggregateFunctions, aggregateColTypes);
+            Assert.fail();
+        } catch (SqlException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "unexpected argument for function: first");
+        }
+    }
+
+    private void testAggregations(String[] aggregateFunctions, TypeVal[] aggregateColTypes) throws SqlException {
+        StringBuilder sql = new StringBuilder();
+        sql.append("select ");
+        StringBuilder resultHeader = new StringBuilder();
+        StringBuilder resultData = new StringBuilder();
+
+        try (TableModel tt1 = new TableModel(configuration, "tt1", PartitionBy.NONE)) {
+            try (TableModel tt2 = new TableModel(configuration, "tt2", PartitionBy.NONE)) {
+                tt2.timestamp("ts");
+
+                for (TypeVal colType : aggregateColTypes) {
+                    String colName = "c" + ColumnType.nameOf(colType.columnType);
+                    tt1.col(colName, colType.columnType);
+                    tt2.col(colName, colType.columnType);
+                }
+
+                CairoTestUtils.createTable(tt1);
+                CairoTestUtils.createTable(tt2);
+            }
+        }
+
+        for (TypeVal colType : aggregateColTypes) {
+            String colName = "c" + ColumnType.nameOf(colType.columnType);
+
+            for (String func : aggregateFunctions) {
+                sql.setLength(7);
+                resultHeader.setLength(0);
+                resultData.setLength(0);
+
+                sql.append(func).append("(").append(colName).append(") ").append(func).append(ColumnType.nameOf(colType.columnType));
+                sql.append(" from tt1");
+
+                resultHeader.append(func).append(ColumnType.nameOf(colType.columnType));
+                resultData.append(colType.emtpyValue);
+
+                assertSqlWithTypes(sql.toString(),
+                        resultHeader.append("\n").append(resultData).append("\n").toString()
+                );
+            }
+        }
+    }
+
+    private static class TypeVal {
+        public TypeVal(int type, String val) {
+            columnType = type;
+            emtpyValue = val;
+        }
+
+        public int columnType;
+        public String emtpyValue;
     }
 }

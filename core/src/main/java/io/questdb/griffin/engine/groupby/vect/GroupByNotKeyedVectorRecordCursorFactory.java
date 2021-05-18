@@ -104,13 +104,13 @@ public class GroupByNotKeyedVectorRecordCursorFactory implements RecordCursorFac
         while ((frame = cursor.next()) != null) {
             for (int i = 0; i < vafCount; i++) {
                 final VectorAggregateFunction vaf = vafList.getQuick(i);
-                final int columnIndex = vaf.getColumnIndex();
+                int columnIndex = vaf.getColumnIndex();
                 final long pageAddress = frame.getPageAddress(columnIndex);
                 final long pageSize = frame.getPageSize(columnIndex);
                 long seq = pubSeq.next();
                 if (seq < 0) {
                     // diy the func
-                    // vaf need to know which column it is hitting int he frame and will need to
+                    // vaf need to know which column it is hitting in the frame and will need to
                     // aggregate between frames until done
                     vaf.aggregate(pageAddress, pageSize, workerId);
                     ownCount++;

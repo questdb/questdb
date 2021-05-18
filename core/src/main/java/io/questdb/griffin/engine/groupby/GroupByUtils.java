@@ -227,7 +227,6 @@ public class GroupByUtils {
             args.getQuick(i).toTop();
         }
     }
-
     public static void updateExisting(ObjList<GroupByFunction> groupByFunctions, int n, MapValue value, Record record) {
         for (int i = 0; i < n; i++) {
             groupByFunctions.getQuick(i).computeNext(value, record);
@@ -239,6 +238,13 @@ public class GroupByUtils {
             groupByFunctions.getQuick(i).computeFirst(value, record);
         }
     }
+
+    public static void updateEmpty(ObjList<GroupByFunction> groupByFunctions, int n, MapValue value) {
+        for (int i = 0; i < n; i++) {
+            groupByFunctions.getQuick(i).setEmtpy(value);
+        }
+    }
+
 
     public static void validateGroupByColumns(@NotNull QueryModel model, int inferredKeyColumnCount) throws SqlException {
         final ObjList<ExpressionNode> groupByColumns = model.getGroupBy();
