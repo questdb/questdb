@@ -567,6 +567,30 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testColumnConversion2() throws Exception {
+        runInContext(() -> {
+            try (
+                    @SuppressWarnings("resource")
+            TableModel model = new TableModel(configuration, "t_ilp21",
+                    PartitionBy.NONE).col("l", ColumnType.LONG)) {
+                CairoTestUtils.create(model);
+            }
+            microSecondTicks = 1465839830102800L;
+            recvBuffer = "t_ilp21 l=843530699759026177i\n" +
+                    "t_ilp21 l=\"843530699759026178\"\n" +
+                    "t_ilp21 l=843530699759026179i\n";
+            handleContextIO();
+            Assert.assertFalse(disconnected);
+            waitForIOCompletion();
+            closeContext();
+            String expected = "l\n" +
+                    "843530699759026177\n" +
+                    "843530699759026179\n";
+            assertTable(expected, "t_ilp21");
+        });
+    }
+
+    @Test
     public void testColumnNameWithSlash1() throws Exception {
         runInContext(() -> {
             recvBuffer = "weather,location=us-midwest temperature=82 1465839830100400200\n" +
