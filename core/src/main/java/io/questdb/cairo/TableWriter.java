@@ -2929,7 +2929,7 @@ public class TableWriter implements Closeable {
                         sourceOffset,
                         o3IndexMem.addressOf(o3RowCount * 8),
                         0,
-                        o3HysteresisRowCount * 8,
+                        o3HysteresisRowCount,
                         o3IndexMem.addressOf(0)
                 );
                 o3IndexMem.jumpTo(o3HysteresisRowCount * 8);

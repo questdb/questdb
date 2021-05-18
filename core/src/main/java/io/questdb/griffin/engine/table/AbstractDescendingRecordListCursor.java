@@ -69,6 +69,7 @@ abstract class AbstractDescendingRecordListCursor extends AbstractDataFrameRecor
         this.recordA.of(dataFrameCursor.getTableReader());
         this.recordB.of(dataFrameCursor.getTableReader());
         rows.clear();
+        System.out.println("building map");
         buildTreeMap(executionContext);
         index = rows.size() - 1;
     }

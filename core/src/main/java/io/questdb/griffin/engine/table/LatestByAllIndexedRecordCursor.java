@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.table;
 import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.sql.DataFrame;
 import io.questdb.cairo.sql.RowCursor;
+import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntHashSet;
@@ -48,7 +49,7 @@ class LatestByAllIndexedRecordCursor extends AbstractRecordListCursor {
     protected void buildTreeMap(SqlExecutionContext executionContext) {
         found.clear();
 
-        int keyCount = dataFrameCursor.getTableReader().getSymbolMapReader(columnIndex).size() + 1;
+        int keyCount = getSymbolTable(columnIndex).size() + 1;
         int keyLo = 0;
         int keyHi = keyCount;
 
@@ -56,8 +57,11 @@ class LatestByAllIndexedRecordCursor extends AbstractRecordListCursor {
         int localHi = Integer.MIN_VALUE;
 
         DataFrame frame;
+        // frame metadata is based on TableReader, which is "full" metadata
+        // this cursor works with subset of columns, which warrants column index remap
+        int frameColumnIndex = columnIndexes.getQuick(columnIndex);
         while ((frame = this.dataFrameCursor.next()) != null && found.size() < keyCount) {
-            final BitmapIndexReader indexReader = frame.getBitmapIndexReader(columnIndex, BitmapIndexReader.DIR_BACKWARD);
+            final BitmapIndexReader indexReader = frame.getBitmapIndexReader(frameColumnIndex, BitmapIndexReader.DIR_BACKWARD);
             final long rowLo = frame.getRowLo();
             final long rowHi = frame.getRowHi() - 1;
 

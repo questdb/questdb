@@ -63,7 +63,7 @@ class LatestByAllIndexedFilteredRecordCursor extends AbstractRecordListCursor {
         found.clear();
         filter.init(this, executionContext);
 
-        final int keyCount = dataFrameCursor.getTableReader().getSymbolMapReader(columnIndex).size() + 1;
+        final int keyCount = dataFrameCursor.getSymbolTable(columnIndex).size() + 1;
         int keyLo = 0;
         int keyHi = keyCount;
 
@@ -71,8 +71,9 @@ class LatestByAllIndexedFilteredRecordCursor extends AbstractRecordListCursor {
         int localHi = Integer.MIN_VALUE;
 
         DataFrame frame;
+        int frameColumnIndex = columnIndexes.getQuick(columnIndex);
         while ((frame = this.dataFrameCursor.next()) != null && found.size() < keyCount) {
-            final BitmapIndexReader indexReader = frame.getBitmapIndexReader(columnIndex, BitmapIndexReader.DIR_BACKWARD);
+            final BitmapIndexReader indexReader = frame.getBitmapIndexReader(frameColumnIndex, BitmapIndexReader.DIR_BACKWARD);
             final long rowLo = frame.getRowLo();
             final long rowHi = frame.getRowHi() - 1;
             final int partitionIndex = frame.getPartitionIndex();
