@@ -24,80 +24,16 @@
 
 package io.questdb.griffin;
 
-import static io.questdb.griffin.SqlKeywords.CONCAT_FUNC_NAME;
-import static io.questdb.griffin.SqlKeywords.isAllKeyword;
-import static io.questdb.griffin.SqlKeywords.isAsKeyword;
-import static io.questdb.griffin.SqlKeywords.isAscKeyword;
-import static io.questdb.griffin.SqlKeywords.isByKeyword;
-import static io.questdb.griffin.SqlKeywords.isCacheKeyword;
-import static io.questdb.griffin.SqlKeywords.isCapacityKeyword;
-import static io.questdb.griffin.SqlKeywords.isCaseKeyword;
-import static io.questdb.griffin.SqlKeywords.isCastKeyword;
-import static io.questdb.griffin.SqlKeywords.isColonColonKeyword;
-import static io.questdb.griffin.SqlKeywords.isConcatFunction;
-import static io.questdb.griffin.SqlKeywords.isConcatOperator;
-import static io.questdb.griffin.SqlKeywords.isCopyKeyword;
-import static io.questdb.griffin.SqlKeywords.isCountKeyword;
-import static io.questdb.griffin.SqlKeywords.isCreateKeyword;
-import static io.questdb.griffin.SqlKeywords.isDescKeyword;
-import static io.questdb.griffin.SqlKeywords.isDistinctKeyword;
-import static io.questdb.griffin.SqlKeywords.isExceptKeyword;
-import static io.questdb.griffin.SqlKeywords.isFillKeyword;
-import static io.questdb.griffin.SqlKeywords.isFromKeyword;
-import static io.questdb.griffin.SqlKeywords.isGroupKeyword;
-import static io.questdb.griffin.SqlKeywords.isHeaderKeyword;
-import static io.questdb.griffin.SqlKeywords.isIndexKeyword;
-import static io.questdb.griffin.SqlKeywords.isInsertKeyword;
-import static io.questdb.griffin.SqlKeywords.isIntersectKeyword;
-import static io.questdb.griffin.SqlKeywords.isLatestKeyword;
-import static io.questdb.griffin.SqlKeywords.isLeftKeyword;
-import static io.questdb.griffin.SqlKeywords.isLimitKeyword;
-import static io.questdb.griffin.SqlKeywords.isNoCacheKeyword;
-import static io.questdb.griffin.SqlKeywords.isNotJoinKeyword;
-import static io.questdb.griffin.SqlKeywords.isO3CommitHysteresis;
-import static io.questdb.griffin.SqlKeywords.isO3MaxUncommittedRowsParam;
-import static io.questdb.griffin.SqlKeywords.isOnKeyword;
-import static io.questdb.griffin.SqlKeywords.isOrderKeyword;
-import static io.questdb.griffin.SqlKeywords.isOuterKeyword;
-import static io.questdb.griffin.SqlKeywords.isOverKeyword;
-import static io.questdb.griffin.SqlKeywords.isPartitionKeyword;
-import static io.questdb.griffin.SqlKeywords.isRenameKeyword;
-import static io.questdb.griffin.SqlKeywords.isSampleKeyword;
-import static io.questdb.griffin.SqlKeywords.isSelectKeyword;
-import static io.questdb.griffin.SqlKeywords.isTimestampKeyword;
-import static io.questdb.griffin.SqlKeywords.isTrueKeyword;
-import static io.questdb.griffin.SqlKeywords.isUnionKeyword;
-import static io.questdb.griffin.SqlKeywords.isValuesKeyword;
-import static io.questdb.griffin.SqlKeywords.isWhereKeyword;
-import static io.questdb.griffin.SqlKeywords.isWithKeyword;
-
-import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
-
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableUtils;
-import io.questdb.griffin.model.AnalyticColumn;
-import io.questdb.griffin.model.ColumnCastModel;
-import io.questdb.griffin.model.CopyModel;
-import io.questdb.griffin.model.CreateTableModel;
-import io.questdb.griffin.model.ExecutionModel;
-import io.questdb.griffin.model.ExpressionNode;
-import io.questdb.griffin.model.InsertModel;
-import io.questdb.griffin.model.QueryColumn;
-import io.questdb.griffin.model.QueryModel;
-import io.questdb.griffin.model.RenameTableModel;
-import io.questdb.griffin.model.WithClauseModel;
-import io.questdb.std.Chars;
-import io.questdb.std.GenericLexer;
-import io.questdb.std.LowerCaseAsciiCharSequenceHashSet;
-import io.questdb.std.LowerCaseAsciiCharSequenceIntHashMap;
-import io.questdb.std.LowerCaseCharSequenceObjHashMap;
-import io.questdb.std.Numbers;
-import io.questdb.std.NumericException;
-import io.questdb.std.ObjList;
-import io.questdb.std.ObjectPool;
+import io.questdb.griffin.model.*;
+import io.questdb.std.*;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
+
+import static io.questdb.griffin.SqlKeywords.*;
 
 public final class SqlParser {
 
@@ -1326,7 +1262,7 @@ public final class SqlParser {
                 if (isAsKeyword(tok)) {
                     alias = GenericLexer.unquote(GenericLexer.immutableOf(tok(lexer, "alias")));
                 } else {
-                    alias = GenericLexer.immutableOf(tok);
+                    alias = GenericLexer.immutableOf(GenericLexer.unquote(tok));
                 }
                 tok = optTok(lexer);
             } else {

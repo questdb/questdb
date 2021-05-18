@@ -101,9 +101,16 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testAliasWithSpace() throws Exception {
-        assertQuery("select-choose x from (select [x] from x 'b a' where x > 1) 'b a'",
-                "x 'b a' where x > 1",
+    public void testAliasWithKeyword() throws Exception {
+        assertQuery("select-choose x from (select [x] from x as where x > 1) as",
+                "x \"as\" where x > 1",
+                modelOf("x").col("x", ColumnType.INT));
+    }
+
+    @Test
+    public void testColumnAliasDoubleQuoted() throws Exception {
+        assertQuery("select-choose x aaaasssss from (select [x] from x where x > 1)",
+                "select x \"aaaasssss\" from x where x > 1",
                 modelOf("x").col("x", ColumnType.INT));
     }
 
@@ -6011,6 +6018,79 @@ public class SqlParserTest extends AbstractGriffinTest {
         );
     }
 
+    @Test
+    public void testTimestampWithTimezoneCast() throws Exception {
+        assertQuery("select-virtual cast(t,timestamp) cast from (select [t] from x)",
+                "select cast(t as timestamp with time zone) from x",
+                modelOf("x").col("t", ColumnType.TIMESTAMP).col("tt", ColumnType.TIMESTAMP));
+    }
+
+    @Test
+    public void testTimestampWithTimezoneCastInSelect() throws Exception {
+        assertQuery("select-virtual cast('2005-04-02 12:00:00-07',timestamp) col from (x)",
+                "select cast('2005-04-02 12:00:00-07' as timestamp with time zone) col from x",
+                modelOf("x").col("t", ColumnType.TIMESTAMP).col("tt", ColumnType.TIMESTAMP));
+    }
+
+    @Test
+    public void testTimestampWithTimezoneConstPrefix() throws Exception {
+        assertQuery("select-choose t, tt from (select [t, tt] from x where t > cast('2005-04-02 12:00:00-07',timestamp))",
+                "select * from x where t > timestamp with time zone '2005-04-02 12:00:00-07'",
+                modelOf("x").col("t", ColumnType.TIMESTAMP).col("tt", ColumnType.TIMESTAMP));
+    }
+
+    @Test
+    public void testTimestampWithTimezoneConstPrefixInsideCast() throws Exception {
+        assertQuery("select-choose t, tt from (select [t, tt] from x where t > cast(cast('2005-04-02 12:00:00-07',timestamp),DATE))",
+                "select * from x where t > CAST(timestamp with time zone '2005-04-02 12:00:00-07' as DATE)",
+                modelOf("x").col("t", ColumnType.TIMESTAMP).col("tt", ColumnType.TIMESTAMP));
+    }
+
+    @Test
+    public void testTimestampWithTimezoneConstPrefixInInsert() throws Exception {
+        assertInsertQuery("insert into test (test_timestamp, test_value) values (cast('2020-12-31 15:15:51.663+00:00',timestamp), '256')",
+                "insert into test (test_timestamp, test_value) values (timestamp with time zone '2020-12-31 15:15:51.663+00:00', '256')",
+                modelOf("test").col("test_timestamp", ColumnType.TIMESTAMP).col("test_value", ColumnType.STRING));
+    }
+
+    @Test
+    public void testTimestampWithTimezoneConstPrefixInSelect() throws Exception {
+        assertQuery("select-virtual cast('2005-04-02 12:00:00-07',timestamp) alias from (x)",
+                "select timestamp with time zone '2005-04-02 12:00:00-07' \"alias\" from x",
+                modelOf("x").col("t", ColumnType.TIMESTAMP).col("tt", ColumnType.TIMESTAMP));
+    }
+
+    @Test
+    public void testInvalidTypeLiteralCast() throws Exception {
+        assertSyntaxError(
+                "select * from x where t > timestamp_with_time_zone '2005-04-02 12:00:00-07'",
+                26,
+                "invalid type",
+                modelOf("x").col("t", ColumnType.TIMESTAMP).col("tt", ColumnType.TIMESTAMP)
+        );
+    }
+
+    @Test
+    public void testInvalidTypeCast() throws Exception {
+        assertSyntaxError(
+                "select cast('2005-04-02 12:00:00-07' as timestamp with time z) col from x",
+                11,
+                "unbalanced (",
+                modelOf("x").col("t", ColumnType.TIMESTAMP).col("tt", ColumnType.TIMESTAMP)
+        );
+    }
+
+
+    @Test
+    public void testInvalidTypeCast2() throws Exception {
+        assertSyntaxError(
+                "select cast('2005-04-02 12:00:00-07' as timestamp with tz) col from x",
+                11,
+                "unbalanced (",
+                modelOf("x").col("t", ColumnType.TIMESTAMP).col("tt", ColumnType.TIMESTAMP)
+        );
+    }
+
     private static void assertSyntaxError(
             SqlCompiler compiler,
             String query,
@@ -6120,6 +6200,10 @@ public class SqlParserTest extends AbstractGriffinTest {
 
     private void assertQuery(String expected, String query, TableModel... tableModels) throws SqlException {
         assertModel(expected, query, ExecutionModel.QUERY, tableModels);
+    }
+
+    private void assertInsertQuery(String expected, String query, TableModel... tableModels) throws SqlException {
+        assertModel(expected, query, ExecutionModel.INSERT, tableModels);
     }
 
     private void createModelsAndRun(CairoAware runnable, TableModel... tableModels) throws SqlException {

@@ -24,10 +24,7 @@
 
 package io.questdb.cutlass.line.tcp;
 
-import io.questdb.cairo.AbstractCairoTest;
-import io.questdb.cairo.TableReader;
-import io.questdb.cairo.TableReaderRecordCursor;
-import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.*;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
@@ -42,6 +39,7 @@ import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.network.Net;
 import io.questdb.network.NetworkError;
 import io.questdb.std.*;
+import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -51,6 +49,7 @@ import org.junit.Test;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.security.PrivateKey;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.LockSupport;
 
 public class LineTcpServerTest extends AbstractCairoTest {
@@ -147,28 +146,32 @@ public class LineTcpServerTest extends AbstractCairoTest {
             return minIdleMsBeforeWriterRelease;
         }
 
+        @Override
+        public MicrosecondClock getMicrosecondClock() {
+            return testMicrosClock;
+        }
     };
 
     private Path path;
 
     @Test
     public void testGoodAuthenticated() throws Exception {
-        test(AUTH_KEY_ID1, AUTH_PRIVATE_KEY1, 768, 1_000);
+        test(AUTH_KEY_ID1, AUTH_PRIVATE_KEY1, 768, 1_000, false);
     }
 
     @Test(expected = NetworkError.class)
     public void testInvalidSignature() throws Exception {
-        test(AUTH_KEY_ID1, AUTH_PRIVATE_KEY2, 768, 100);
+        test(AUTH_KEY_ID1, AUTH_PRIVATE_KEY2, 768, 6_000, true);
     }
 
     @Test(expected = NetworkError.class)
     public void testInvalidUser() throws Exception {
-        test(AUTH_KEY_ID2, AUTH_PRIVATE_KEY2, 768, 100);
+        test(AUTH_KEY_ID2, AUTH_PRIVATE_KEY2, 768, 6_000, true);
     }
 
     @Test
     public void testUnauthenticated() throws Exception {
-        test(null, null, 200, 1_000);
+        test(null, null, 200, 1_000, false);
     }
 
     @Test
@@ -309,6 +312,34 @@ public class LineTcpServerTest extends AbstractCairoTest {
         }
     }
 
+    @Test
+    public void testWriterAllLongs() throws Exception {
+        currentMicros = 1;
+        try (TableModel m = new TableModel(configuration, "messages", PartitionBy.MONTH)) {
+            m.timestamp("ts")
+                    .col("id", ColumnType.LONG)
+                    .col("author", ColumnType.LONG)
+                    .col("guild", ColumnType.LONG)
+                    .col("channel", ColumnType.LONG)
+                    .col("flags", ColumnType.BYTE);
+            CairoTestUtils.createTableWithVersion(m, ColumnType.VERSION);
+        }
+
+        int defautlMeasurementSize = maxMeasurementSize;
+        String lineData = "messages id=843530699759026177i,author=820703963477180437i,guild=820704412095479830i,channel=820704412095479833i,flags=6i\n";
+        try {
+            maxMeasurementSize = lineData.length();
+            runInContext(() -> {
+                send(lineData, "messages");
+                String expected = "ts\tid\tauthor\tguild\tchannel\tflags\n" +
+                        "1970-01-01T00:00:00.000001Z\t843530699759026177\t820703963477180437\t820704412095479830\t820704412095479833\t6\n";
+                assertTable(expected, "messages");
+            });
+        } finally {
+            maxMeasurementSize = defautlMeasurementSize;
+        }
+    }
+
     private void assertTable(CharSequence expected, CharSequence tableName) {
         try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
             assertCursorTwoPass(expected, reader.getCursor(), reader.getMetadata());
@@ -367,7 +398,8 @@ public class LineTcpServerTest extends AbstractCairoTest {
             String authKeyId,
             PrivateKey authPrivateKey,
             int msgBufferSize,
-            final int nRows
+            final int nRows,
+            boolean expectDisconnect
     ) throws Exception {
         this.authKeyId = authKeyId;
         this.msgBufferSize = msgBufferSize;
@@ -442,6 +474,10 @@ public class LineTcpServerTest extends AbstractCairoTest {
                         sb.append('\n');
                         sender.$(ts * 1000);
                         sender.flush();
+                        if (expectDisconnect) {
+                            // To prevent all data being buffered before the expected disconnect slow sending
+                            Thread.sleep(100);
+                        }
                         ts += rand.nextInt(1000);
                     }
 
@@ -450,7 +486,11 @@ public class LineTcpServerTest extends AbstractCairoTest {
                         sender.close();
                     }
 
-                    tablesCreated.await();
+                    Assert.assertFalse(expectDisconnect);
+                    boolean ready = tablesCreated.await(TimeUnit.MINUTES.toNanos(1));
+                    if (!ready) {
+                        throw new IllegalStateException("Timeout waiting for tables to be created");
+                    }
 
                     int nRowsWritten;
                     do {

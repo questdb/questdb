@@ -24,8 +24,24 @@
 
 package io.questdb.cutlass.line.tcp;
 
+import java.io.Closeable;
+import java.util.Arrays;
+import java.util.concurrent.locks.ReadWriteLock;
+
+import org.jetbrains.annotations.NotNull;
+
 import io.questdb.Telemetry;
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.CairoSecurityContext;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.EntryUnavailableException;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableReaderMetadata;
+import io.questdb.cairo.TableStructure;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriter.Row;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.SymbolTable;
@@ -34,22 +50,30 @@ import io.questdb.cutlass.line.LineProtoTimestampAdapter;
 import io.questdb.cutlass.line.tcp.NewLineProtoParser.ProtoEntity;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.mp.*;
+import io.questdb.mp.FanOut;
+import io.questdb.mp.Job;
+import io.questdb.mp.MPSequence;
+import io.questdb.mp.RingQueue;
+import io.questdb.mp.SCSequence;
+import io.questdb.mp.Sequence;
+import io.questdb.mp.WorkerPool;
 import io.questdb.network.IODispatcher;
 import io.questdb.network.IOOperation;
 import io.questdb.network.IORequestProcessor;
-import io.questdb.std.*;
+import io.questdb.std.CharSequenceIntHashMap;
+import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.std.Chars;
+import io.questdb.std.Misc;
+import io.questdb.std.ObjIntHashMap;
+import io.questdb.std.ObjList;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.DirectCharSink;
 import io.questdb.std.str.FloatingDirectCharSink;
 import io.questdb.std.str.Path;
 import io.questdb.tasks.TelemetryTask;
-import org.jetbrains.annotations.NotNull;
-
-import java.io.Closeable;
-import java.util.Arrays;
-import java.util.concurrent.locks.ReadWriteLock;
 
 class LineTcpMeasurementScheduler implements Closeable {
     private static final Log LOG = LogFactory.getLog(LineTcpMeasurementScheduler.class);
@@ -695,8 +719,14 @@ class LineTcpMeasurementScheduler implements Closeable {
                             bufPos += Integer.BYTES;
                             long hi = bufPos + 2L * len;
                             job.floatingCharSink.asCharSequence(bufPos, hi);
-                            row.putStr(colIndex, job.floatingCharSink);
                             bufPos = hi;
+                            final int colType = writer.getMetadata().getColumnType(colIndex);
+                            if (colType == ColumnType.STRING) {
+                                row.putStr(colIndex, job.floatingCharSink);
+                            } else {
+                                throw CairoException.instance(0).put("line protocol STRING cannot be inserted into column type ").put(ColumnType.nameOf(colType)).put(") [entityType=")
+                                        .put(entityType).put(']');
+                            }
                             break;
                         }
 

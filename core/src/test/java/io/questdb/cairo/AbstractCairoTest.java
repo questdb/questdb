@@ -131,6 +131,7 @@ public class AbstractCairoTest {
         TestUtils.removeTestPath(root);
         configOverrideMaxUncommittedRows = -1;
         configOverrideO3CommitHysteresisInMicros = -1;
+        currentMicros = -1;
     }
 
     protected static void assertMemoryLeak(TestUtils.LeakProneCode code) throws Exception {

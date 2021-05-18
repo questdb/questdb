@@ -33,6 +33,7 @@ import io.questdb.cutlass.text.TextException;
 import io.questdb.cutlass.text.TextLoader;
 import io.questdb.griffin.engine.functions.catalogue.ShowSearchPathCursorFactory;
 import io.questdb.griffin.engine.functions.catalogue.ShowStandardConformingStringsCursorFactory;
+import io.questdb.griffin.engine.functions.catalogue.ShowTimeZoneFactory;
 import io.questdb.griffin.engine.functions.catalogue.ShowTransactionIsolationLevelCursorFactory;
 import io.questdb.griffin.engine.table.ShowColumnsRecordCursorFactory;
 import io.questdb.griffin.engine.table.TableListRecordCursorFactory;
@@ -2020,7 +2021,7 @@ public class SqlCompiler implements Closeable {
     }
 
     private CompiledQuery sqlShow(SqlExecutionContext executionContext) throws SqlException {
-        final CharSequence tok = SqlUtil.fetchNext(lexer);
+        CharSequence tok = SqlUtil.fetchNext(lexer);
         if (null != tok) {
             if (isTablesKeyword(tok)) {
                 return compiledQuery.of(new TableListRecordCursorFactory(configuration.getFilesFacade(), configuration.getRoot()));
@@ -2040,9 +2041,16 @@ public class SqlCompiler implements Closeable {
             if (isSearchPath(tok)) {
                 return compiledQuery.of(new ShowSearchPathCursorFactory());
             }
+
+            if (SqlKeywords.isTimeKeyword(tok)) {
+                tok = SqlUtil.fetchNext(lexer);
+                if (tok != null && SqlKeywords.isZoneKeyword(tok)) {
+                    return compiledQuery.of(new ShowTimeZoneFactory());
+                }
+            }
         }
 
-        throw SqlException.position(lexer.lastTokenPosition()).put("expected 'tables' or 'columns'");
+        throw SqlException.position(lexer.lastTokenPosition()).put("expected 'tables', 'columns' or 'time zone'");
     }
 
     private CompiledQuery sqlShowColumns(SqlExecutionContext executionContext) throws SqlException {
