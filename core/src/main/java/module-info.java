@@ -119,6 +119,7 @@ open module io.questdb {
 //                   '<' operator
             io.questdb.griffin.engine.functions.lt.LtDoubleVVFunctionFactory,
             io.questdb.griffin.engine.functions.lt.LtTimestampFunctionFactory,
+            io.questdb.griffin.engine.functions.lt.LtIntFunctionFactory,
 
 //                   '+' operator
             io.questdb.griffin.engine.functions.math.AddByteFunctionFactory,

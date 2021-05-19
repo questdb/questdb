@@ -552,24 +552,31 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
                     }
 
                     final int argType = arg.getType();
-                    final boolean overloadPossible =
-                            argType >= ColumnType.BYTE &&
-                                    sigArgType >= ColumnType.BYTE &&
-                                    sigArgType <= ColumnType.DOUBLE &&
-                                    argType < sigArgType ||
-                                    argType == ColumnType.DOUBLE &&
-                                            arg.isConstant() &&
-                                            Double.isNaN(arg.getDouble(null)) &&
-                                            (sigArgType == ColumnType.LONG || sigArgType == ColumnType.INT) ||
-                                    argType == ColumnType.CHAR &&
-                                            sigArgType == ColumnType.STRING ||
-                                    (argType == ColumnType.STRING &&
-                                            sigArgType == ColumnType.TIMESTAMP && !factory.isGroupBy())
-                                    || undefined;
 
+                    // Overload with cast to higher precision
+                    boolean overloadPossible = argType >= ColumnType.BYTE &&
+                            sigArgType >= ColumnType.BYTE &&
+                            sigArgType <= ColumnType.DOUBLE &&
+                            argType < sigArgType;
+
+                    // Overload when arg is double NaN to func which accepts INT, LONG
+                    overloadPossible |= argType == ColumnType.DOUBLE &&
+                            arg.isConstant() &&
+                            Double.isNaN(arg.getDouble(null)) &&
+                            (sigArgType == ColumnType.LONG || sigArgType == ColumnType.INT);
+
+                    // Implicit cast from CHAR to STRING
+                    overloadPossible |= argType == ColumnType.CHAR &&
+                            sigArgType == ColumnType.STRING;
+
+                    // Implicit cast from STRING to TIMESTAMP
+                    overloadPossible |= argType == ColumnType.STRING &&
+                            sigArgType == ColumnType.TIMESTAMP && !factory.isGroupBy();
+
+
+                    overloadPossible |= undefined;
 
                     // can we use overload mechanism?
-
                     if (overloadPossible) {
                         switch (match) {
                             case MATCH_NO_MATCH: // no match?
@@ -599,7 +606,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
 
 
                     if (match != MATCH_EXACT_MATCH) {
-                        if (candidateSigArgTypeSum < sigArgTypeSum || bestMatch < match) {
+                        if (candidateSigArgTypeSum > sigArgTypeSum || bestMatch < match) {
                             candidate = factory;
                             candidateDescriptor = descriptor;
                             candidateSigArgCount = sigArgCount;

@@ -37,30 +37,26 @@ import java.util.concurrent.atomic.LongAdder;
 public class CountVectorAggregateFunction extends LongFunction implements VectorAggregateFunction {
     private final LongAdder count = new LongAdder();
     private final CountFunc countFunc;
-    private final int columnIndex;
-    private final int sizeBits;
     private int valueOffset;
 
-    public CountVectorAggregateFunction(int position, int keyKind, int columnIndex, int sizeBits) {
+    public CountVectorAggregateFunction(int position, int keyKind) {
         super(position);
-        this.columnIndex = columnIndex;
-        this.sizeBits = sizeBits;
         countFunc = keyKind == SqlCodeGenerator.GKK_HOUR_INT ? Rosti::keyedHourCount : Rosti::keyedIntCount;
     }
 
     @Override
-    public void aggregate(long address, long addressSize, int workerId) {
-        this.count.add(addressSize >>> sizeBits);
+    public void aggregate(long address, long addressSize, int valueColumnType, int workerId) {
+        this.count.add(addressSize >>> valueColumnType);
     }
 
     @Override
-    public void aggregate(long pRosti, long keyAddress, long valueAddress, long valueAddressSize, int workerId) {
-        countFunc.count(pRosti, keyAddress, valueAddressSize >>> sizeBits, valueOffset);
+    public void aggregate(long pRosti, long keyAddress, long valueAddress, long valueAddressSize, int valueColumnType, int workerId) {
+        countFunc.count(pRosti, keyAddress, valueAddressSize >>> valueColumnType, valueOffset);
     }
 
     @Override
     public int getColumnIndex() {
-        return columnIndex;
+        return -1;
     }
 
     @Override

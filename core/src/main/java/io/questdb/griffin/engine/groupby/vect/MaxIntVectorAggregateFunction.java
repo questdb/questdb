@@ -61,14 +61,14 @@ public class MaxIntVectorAggregateFunction extends IntFunction implements Vector
     }
 
     @Override
-    public void aggregate(long address, long addressSize, int workerId) {
+    public void aggregate(long address, long addressSize, int valueColumnType, int workerId) {
         if (address != 0) {
             max.accumulate(Vect.maxInt(address, addressSize / Integer.BYTES));
         }
     }
 
     @Override
-    public void aggregate(long pRosti, long keyAddress, long valueAddress, long valueAddressSize, int workerId) {
+    public void aggregate(long pRosti, long keyAddress, long valueAddress, long valueAddressSize, int valueColumnType, int workerId) {
         if (valueAddress == 0) {
             distinctFunc.run(pRosti, keyAddress, valueAddressSize / Integer.BYTES);
         } else {

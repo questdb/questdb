@@ -67,7 +67,7 @@ public class SqlCodeGenerator implements Mutable {
     private static final IntObjHashMap<VectorAggregateFunctionConstructor> avgConstructors = new IntObjHashMap<>();
     private static final IntObjHashMap<VectorAggregateFunctionConstructor> minConstructors = new IntObjHashMap<>();
     private static final IntObjHashMap<VectorAggregateFunctionConstructor> maxConstructors = new IntObjHashMap<>();
-    private static final IntObjHashMap<VectorAggregateFunctionConstructor> countConstructors = new IntObjHashMap<>();
+    private static final VectorAggregateFunctionConstructor countConstructor = (position, keyKind, columnIndex, workerCount) -> new CountVectorAggregateFunction(position, keyKind);
     private static final SetRecordCursorFactoryConstructor SET_UNION_CONSTRUCTOR = UnionRecordCursorFactory::new;
     private static final SetRecordCursorFactoryConstructor SET_INTERSECT_CONSTRUCTOR = IntersectRecordCursorFactory::new;
     private static final SetRecordCursorFactoryConstructor SET_EXCEPT_CONSTRUCTOR = ExceptRecordCursorFactory::new;
@@ -154,16 +154,14 @@ public class SqlCodeGenerator implements Mutable {
         return new LtJoinRecordCursorFactory(configuration, metadata, masterFactory, slaveFactory, mapKeyTypes, mapValueTypes, slaveColumnTypes, masterKeySink, slaveKeySink, columnSplit, slaveValueSink, columnIndex);
     }
 
-    private static void addCountConstructor(int type) {
-        countConstructors.put(type,
-                (position, keyKind, columnIndex, workerCount) -> new CountVectorAggregateFunction(
-                        position,
-                        keyKind,
-                        columnIndex,
-                        ColumnType.pow2SizeOf(type)
-                )
-        );
-    }
+//    private static void addCountConstructor(int type) {
+//        countConstructors.put(type,
+//                (position, keyKind, columnIndex, workerCount) -> new CountVectorAggregateFunction(
+//                        position,
+//                        keyKind
+//                )
+//        );
+//    }
 
     private VectorAggregateFunctionConstructor assembleFunctionReference(RecordMetadata metadata, ExpressionNode ast) {
         int columnIndex;
@@ -172,11 +170,18 @@ public class SqlCodeGenerator implements Mutable {
             tempVecConstructorArgIndexes.add(columnIndex);
             return sumConstructors.get(metadata.getColumnType(columnIndex));
         } else if (ast.type == FUNCTION && ast.paramCount == 0 && SqlKeywords.isCountKeyword(ast.token)) {
-            columnIndex = metadata.getTimestampIndex();
+//            columnIndex = tempKeyIndexesInBase.getQuick(0);
+
+//            columnIndex = metadata.getTimestampIndex();
+//            tempVecConstructorArgIndexes.add(columnIndex);
+//            int keyType = ColumnType.TIMESTAMP;
             // count() is a no-arg function
-            tempVecConstructorArgIndexes.add(columnIndex);
-            int keyType = ColumnType.TIMESTAMP;
-            return countConstructors.get(keyType);
+            tempVecConstructorArgIndexes.add(-1);
+            return countConstructor;
+
+//            tempVecConstructorArgIndexes.add(-1);
+//            return countConstructors.get(ColumnType.pow2SizeOf());
+
         } else if (isSingleColumnFunction(ast, "ksum")) {
             columnIndex = metadata.getColumnIndex(ast.rhs.token);
             tempVecConstructorArgIndexes.add(columnIndex);
@@ -2857,11 +2862,10 @@ public class SqlCodeGenerator implements Mutable {
         maxConstructors.put(ColumnType.TIMESTAMP, MaxTimestampVectorAggregateFunction::new);
         maxConstructors.put(ColumnType.INT, MaxIntVectorAggregateFunction::new);
 
-
-        addCountConstructor(ColumnType.DOUBLE);
-        addCountConstructor(ColumnType.LONG);
-        addCountConstructor(ColumnType.DATE);
-        addCountConstructor(ColumnType.TIMESTAMP);
-        addCountConstructor(ColumnType.INT);
+//        addCountConstructor(ColumnType.DOUBLE);
+//        addCountConstructor(ColumnType.LONG);
+//        addCountConstructor(ColumnType.DATE);
+//        addCountConstructor(ColumnType.TIMESTAMP);
+//        addCountConstructor(ColumnType.INT);
     }
 }

@@ -32,7 +32,7 @@ import org.junit.Test;
 
 import static io.questdb.std.datetime.microtime.TimestampFormatUtils.parseUTCTimestamp;
 
-public class LtTimestampFunctionFactoryTest extends AbstractFunctionFactoryTest {
+public class IntTimestampFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Test
     public void testLessThan() throws SqlException, NumericException {

@@ -164,11 +164,11 @@ public final class ColumnType {
         typeWidthPrecedence[CHAR] = 2;
         typeWidthPrecedence[SHORT] = 3;
         typeWidthPrecedence[INT] = 4;
-        typeWidthPrecedence[DATE] = 5;
-        typeWidthPrecedence[TIMESTAMP] = 6;
-        typeWidthPrecedence[LONG] = 7;
-        typeWidthPrecedence[FLOAT] = 8;
-        typeWidthPrecedence[DOUBLE] = 9;
+        typeWidthPrecedence[LONG] = 5;
+        typeWidthPrecedence[FLOAT] = 6;
+        typeWidthPrecedence[DOUBLE] = 7;
+        typeWidthPrecedence[DATE] = 8;
+        typeWidthPrecedence[TIMESTAMP] = 9;
         typeWidthPrecedence[SYMBOL] = 10;
         typeWidthPrecedence[STRING] = 11;
         typeWidthPrecedence[LONG256] = 12;

@@ -61,7 +61,7 @@ public class MaxDoubleVectorAggregateFunction extends DoubleFunction implements 
     }
 
     @Override
-    public void aggregate(long address, long addressSize, int workerId) {
+    public void aggregate(long address, long addressSize, int valueColumnType, int workerId) {
         if (address != 0) {
             final double value = Vect.maxDouble(address, addressSize / Double.BYTES);
             if (value == value) {
@@ -71,7 +71,7 @@ public class MaxDoubleVectorAggregateFunction extends DoubleFunction implements 
     }
 
     @Override
-    public void aggregate(long pRosti, long keyAddress, long valueAddress, long valueAddressSize, int workerId) {
+    public void aggregate(long pRosti, long keyAddress, long valueAddress, long valueAddressSize, int valueColumnType, int workerId) {
         if (valueAddress == 0) {
             distinctFunc.run(pRosti, keyAddress, valueAddressSize/Double.BYTES);
         } else {

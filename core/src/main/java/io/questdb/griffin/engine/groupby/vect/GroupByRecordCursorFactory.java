@@ -206,29 +206,32 @@ public class GroupByRecordCursorFactory implements RecordCursorFactory {
                 final int columnIndex = vaf.getColumnIndex();
                 final long valueAddress;
                 final long valueAddressSize;
+                final int frameDataType;
 
                 if (columnIndex > -1) {
                     valueAddress = frame.getPageAddress(columnIndex);
+                    frameDataType = frame.getColumnSize(columnIndex);
                     valueAddressSize = frame.getPageSize(columnIndex);
                 } else {
                     valueAddress = 0;
+                    frameDataType = frame.getColumnSize(keyColumnIndex);
                     valueAddressSize = frame.getPageSize(keyColumnIndex);
                 }
-                long seq = pubSeq.next();
+                long seq = -1 ;// pubSeq.next();
                 if (seq < 0) {
                     if (keyAddress == 0) {
-                        vaf.aggregate(valueAddress, valueAddressSize, workerId);
+                        vaf.aggregate(valueAddress, valueAddressSize, frameDataType, workerId);
                     } else {
-                        vaf.aggregate(pRosti[workerId], keyAddress, valueAddress, valueAddressSize, workerId);
+                        vaf.aggregate(pRosti[workerId], keyAddress, valueAddress, valueAddressSize, frameDataType, workerId);
                     }
                     ownCount++;
                 } else {
                     if (keyAddress != 0 || valueAddress != 0) {
                         final VectorAggregateEntry entry = entryPool.next();
                         if (keyAddress == 0) {
-                            entry.of(queuedCount++, vaf, null, 0, valueAddress, valueAddressSize, doneLatch);
+                            entry.of(queuedCount++, vaf, null, 0, valueAddress, valueAddressSize, frameDataType, doneLatch);
                         } else {
-                            entry.of(queuedCount++, vaf, pRosti, keyAddress, valueAddress, valueAddressSize, doneLatch);
+                            entry.of(queuedCount++, vaf, pRosti, keyAddress, valueAddress, valueAddressSize, frameDataType, doneLatch);
                         }
                         activeEntries.add(entry);
                         queue.get(seq).entry = entry;

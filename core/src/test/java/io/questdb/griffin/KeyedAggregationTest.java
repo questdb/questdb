@@ -953,7 +953,28 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testFirstLastAggregationsNotSupported() throws Exception {
+    public void testCountAggregations() throws Exception {
+        try (TableModel tt1 = new TableModel(configuration, "tt1", PartitionBy.NONE)) {
+            tt1.col("tts", ColumnType.LONG);
+            CairoTestUtils.createTable(tt1);
+        }
+
+        String expected = "max\tcount\n" +
+                "NaN:LONG\t0:LONG\n";
+        String sql = "select max(tts), count() from tt1";
+
+        assertSqlWithTypes(sql, expected);
+        assertSqlWithTypes(sql + " where now() > '1000-01-01'", expected);
+
+        expected = "count\n" +
+                "0:LONG\n";
+        sql = "select count() from tt1";
+        assertSqlWithTypes(sql, expected);
+        assertSqlWithTypes(sql + " where now() > '1000-01-01'", expected);
+    }
+
+    @Test
+    public void testFirstLastAggregationsNotSupported() {
         String[] aggregateFunctions = {"first"};
         TypeVal[] aggregateColTypes = {
                 new TypeVal(ColumnType.STRING, ":STRING"),};
@@ -973,37 +994,31 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
         StringBuilder resultData = new StringBuilder();
 
         try (TableModel tt1 = new TableModel(configuration, "tt1", PartitionBy.NONE)) {
-            try (TableModel tt2 = new TableModel(configuration, "tt2", PartitionBy.NONE)) {
-                tt2.timestamp("ts");
-
-                for (TypeVal colType : aggregateColTypes) {
-                    String colName = "c" + ColumnType.nameOf(colType.columnType);
-                    tt1.col(colName, colType.columnType);
-                    tt2.col(colName, colType.columnType);
-                }
-
-                CairoTestUtils.createTable(tt1);
-                CairoTestUtils.createTable(tt2);
+            for (TypeVal colType : aggregateColTypes) {
+                tt1.col(colType.colName, colType.columnType);
             }
+
+            CairoTestUtils.createTable(tt1);
         }
 
         for (TypeVal colType : aggregateColTypes) {
-            String colName = "c" + ColumnType.nameOf(colType.columnType);
 
             for (String func : aggregateFunctions) {
                 sql.setLength(7);
                 resultHeader.setLength(0);
                 resultData.setLength(0);
 
-                sql.append(func).append("(").append(colName).append(") ").append(func).append(ColumnType.nameOf(colType.columnType));
+                sql.append(func).append("(").append(colType.funcArg).append(") ").append(func).append(ColumnType.nameOf(colType.columnType));
                 sql.append(" from tt1");
 
                 resultHeader.append(func).append(ColumnType.nameOf(colType.columnType));
                 resultData.append(colType.emtpyValue);
 
-                assertSqlWithTypes(sql.toString(),
-                        resultHeader.append("\n").append(resultData).append("\n").toString()
-                );
+                String expected = resultHeader.append("\n").append(resultData).append("\n").toString();
+                assertSqlWithTypes(sql.toString(), expected);
+
+                // Force to go to not-vector execution
+                assertSqlWithTypes(sql.toString() + " where now() > '1000-01-01'", expected);
             }
         }
     }
@@ -1012,9 +1027,20 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
         public TypeVal(int type, String val) {
             columnType = type;
             emtpyValue = val;
+            this.colName = "c" + ColumnType.nameOf(type);
+            this.funcArg = this.colName;
         }
 
-        public int columnType;
-        public String emtpyValue;
+        public TypeVal(int type, String val, String funcArg) {
+            columnType = type;
+            emtpyValue = val;
+            this.colName = "c" + ColumnType.nameOf(type);
+            this.funcArg = funcArg;
+        }
+
+        public final int columnType;
+        public final String emtpyValue;
+        public final String colName;
+        public final String funcArg;
     }
 }

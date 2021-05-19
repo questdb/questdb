@@ -49,4 +49,6 @@ public interface PageFrame {
      * @return size of page in bytes
      */
     long getPageSize(int columnIndex);
+
+    int getColumnSize(int columnIndex);
 }
