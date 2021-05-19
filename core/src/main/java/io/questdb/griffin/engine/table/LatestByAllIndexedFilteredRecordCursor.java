@@ -63,7 +63,7 @@ class LatestByAllIndexedFilteredRecordCursor extends AbstractRecordListCursor {
         found.clear();
         filter.init(this, executionContext);
 
-        final int keyCount = dataFrameCursor.getSymbolTable(columnIndex).size() + 1;
+        final int keyCount = getSymbolTable(columnIndex).size() + 1;
         int keyLo = 0;
         int keyHi = keyCount;
 

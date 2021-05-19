@@ -27,7 +27,6 @@ package io.questdb.griffin.engine.table;
 import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.sql.DataFrame;
 import io.questdb.cairo.sql.RowCursor;
-import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntHashSet;
