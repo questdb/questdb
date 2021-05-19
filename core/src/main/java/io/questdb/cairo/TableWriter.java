@@ -2562,7 +2562,6 @@ public class TableWriter implements Closeable {
                         latchCount++;
 
                         if (append) {
-//                            assert srcOoo >= srcOooMax || !yep;
                             Path pathToPartition = Path.getThreadLocal(this.path);
                             TableUtils.setPathForPartition(pathToPartition, partitionBy, o3TimestampMin, false);
                             TableUtils.txnPartitionConditionally(pathToPartition, srcNameTxn);
@@ -3315,10 +3314,10 @@ public class TableWriter implements Closeable {
         int queuedCount = 0;
         for (int colIndex = 0; colIndex < columnCount; colIndex++) {
             int columnType = metadata.getColumnType(colIndex);
+            int columnIndex = colIndex != timestampIndex ? colIndex : -colIndex - 1;
             long cursor = pubSeq.next();
 
             // Pass column index as -1 when it's designated timestamp column to o3 move method
-            int columnIndex = colIndex != timestampIndex ? colIndex : -colIndex - 1;
             if (cursor > -1) {
                 try {
                     final O3CallbackTask task = queue.get(cursor);
