@@ -1636,6 +1636,51 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testLatestByAllMixed() throws Exception {
+        assertQuery("b\tk\ta\n" +
+                        "VTJW\t1970-01-04T11:20:00.000000Z\t78.83065830055033\n" +
+                        "HYRX\t1970-01-13T17:33:20.000000Z\t2.6836863013701473\n" +
+                        "PEHN\t1970-01-14T21:20:00.000000Z\t9.76683471072458\n" +
+                        "CPSW\t1970-01-19T12:26:40.000000Z\t51.85631921367574\n" +
+                        "RXGZ\t1970-01-20T16:13:20.000000Z\t50.25890936351257\n" +
+                        "\t1970-01-22T23:46:40.000000Z\t72.604681060764\n",
+                "select b,k,a from x latest by b",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " timestamp_sequence(0, 100000000000) k," +
+                        " rnd_double(0)*100 a1," +
+                        " rnd_double(0)*100 a2," +
+                        " rnd_double(0)*100 a3," +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b" +
+                        " from long_sequence(20)" +
+                        ") timestamp(k) partition by DAY",
+                "k",
+                "insert into x select * from (" +
+                        " select" +
+                        " to_timestamp('2019', 'yyyy') t," +
+                        " rnd_double(0)*100," +
+                        " rnd_double(0)*100," +
+                        " rnd_double(0)*100," +
+                        " rnd_double(0)*100," +
+                        " 'VTJW'" +
+                        " from long_sequence(1)" +
+                        ") timestamp (t)",
+                "b\tk\ta\n" +
+                        "HYRX\t1970-01-13T17:33:20.000000Z\t2.6836863013701473\n" +
+                        "PEHN\t1970-01-14T21:20:00.000000Z\t9.76683471072458\n" +
+                        "CPSW\t1970-01-19T12:26:40.000000Z\t51.85631921367574\n" +
+                        "RXGZ\t1970-01-20T16:13:20.000000Z\t50.25890936351257\n" +
+                        "\t1970-01-22T23:46:40.000000Z\t72.604681060764\n" +
+                        "VTJW\t2019-01-01T00:00:00.000000Z\t6.578761277152223\n",
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
     public void testLatestByAllBool() throws Exception {
         assertQuery("a\tb\tk\n" +
                         "97.55263540567968\ttrue\t1970-01-20T16:13:20.000000Z\n" +
@@ -1785,6 +1830,53 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testLatestByAllIndexedMixed() throws Exception {
+        final String expected = "a\tk\tb\n" +
+                "78.83065830055033\t1970-01-04T11:20:00.000000Z\tVTJW\n" +
+                "2.6836863013701473\t1970-01-13T17:33:20.000000Z\tHYRX\n" +
+                "9.76683471072458\t1970-01-14T21:20:00.000000Z\tPEHN\n" +
+                "51.85631921367574\t1970-01-19T12:26:40.000000Z\tCPSW\n" +
+                "50.25890936351257\t1970-01-20T16:13:20.000000Z\tRXGZ\n" +
+                "72.604681060764\t1970-01-22T23:46:40.000000Z\t\n";
+        assertQuery(expected,
+                "select a,k,b from x latest by b",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " timestamp_sequence(0, 100000000000) k," +
+                        " rnd_double(0)*100 a1," +
+                        " rnd_double(0)*100 a2," +
+                        " rnd_double(0)*100 a3," +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b" +
+                        " from" +
+                        " long_sequence(20)" +
+                        "), index(b) timestamp(k) partition by DAY",
+                "k",
+                "insert into x select * from (" +
+                        " select" +
+                        " to_timestamp('2019', 'yyyy') t," +
+                        " rnd_double(0)*100," +
+                        " rnd_double(0)*100," +
+                        " rnd_double(0)*100," +
+                        " rnd_double(0)*100," +
+                        " 'VTJW'" +
+                        " from long_sequence(1)" +
+                        ") timestamp (t)",
+                "a\tk\tb\n" +
+                        "2.6836863013701473\t1970-01-13T17:33:20.000000Z\tHYRX\n" +
+                        "9.76683471072458\t1970-01-14T21:20:00.000000Z\tPEHN\n" +
+                        "51.85631921367574\t1970-01-19T12:26:40.000000Z\tCPSW\n" +
+                        "50.25890936351257\t1970-01-20T16:13:20.000000Z\tRXGZ\n" +
+                        "72.604681060764\t1970-01-22T23:46:40.000000Z\t\n" +
+                        "6.578761277152223\t2019-01-01T00:00:00.000000Z\tVTJW\n",
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
     public void testLatestByAllIndexedConstantFilter() throws Exception {
         final String expected = "a\tb\tk\n" +
                 "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
@@ -1824,32 +1916,40 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
     @Test
     public void testLatestByAllIndexedFilter() throws Exception {
-        final String expected = "a\tb\tk\n" +
-                "48.820511018586934\tVTJW\t1970-01-12T13:46:40.000000Z\n" +
-                "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
-                "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n";
+        final String expected = "a\tk\tb\n" +
+                "78.83065830055033\t1970-01-04T11:20:00.000000Z\tVTJW\n" +
+                "51.85631921367574\t1970-01-19T12:26:40.000000Z\tCPSW\n" +
+                "50.25890936351257\t1970-01-20T16:13:20.000000Z\tRXGZ\n" +
+                "72.604681060764\t1970-01-22T23:46:40.000000Z\t\n";
         assertQuery(expected,
-                "select * from x latest by b where a > 40",
+                "select a,k,b from x latest by b where a > 40",
                 "create table x as " +
                         "(" +
                         "select" +
+                        " timestamp_sequence(0, 100000000000) k," +
+                        " rnd_double(0)*100 a1," +
+                        " rnd_double(0)*100 a2," +
+                        " rnd_double(0)*100 a3," +
                         " rnd_double(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(0, 100000000000) k" +
+                        " rnd_symbol(5,4,4,1) b" +
                         " from long_sequence(20)" +
                         "), index(b) timestamp(k) partition by DAY",
                 "k",
                 "insert into x select * from (" +
                         " select" +
+                        " to_timestamp('2019', 'yyyy') t," +
                         " rnd_double(0)*100," +
-                        " 'VTJW'," +
-                        " to_timestamp('2019', 'yyyy') t" +
+                        " rnd_double(0)*100," +
+                        " rnd_double(0)*100," +
+                        " rnd_double(0)*100," +
+                        " 'VTJW'" +
                         " from long_sequence(1)" +
                         ") timestamp (t)",
-                "a\tb\tk\n" +
-                        "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
-                        "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
-                        "56.594291398612405\tVTJW\t2019-01-01T00:00:00.000000Z\n",
+                "a\tk\tb\n" +
+                        "78.83065830055033\t1970-01-04T11:20:00.000000Z\tVTJW\n" +
+                        "51.85631921367574\t1970-01-19T12:26:40.000000Z\tCPSW\n" +
+                        "50.25890936351257\t1970-01-20T16:13:20.000000Z\tRXGZ\n" +
+                        "72.604681060764\t1970-01-22T23:46:40.000000Z\t\n",
                 true,
                 true,
                 true

@@ -25,10 +25,7 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.TableReaderSelectedColumnRecord;
-import io.questdb.cairo.sql.DataFrameCursor;
-import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import io.questdb.std.Rows;
@@ -38,7 +35,7 @@ public abstract class AbstractDataFrameRecordCursor implements RecordCursor {
     protected final TableReaderSelectedColumnRecord recordA;
     protected final TableReaderSelectedColumnRecord recordB;
     protected DataFrameCursor dataFrameCursor;
-    private final IntList columnIndexes;
+    protected final IntList columnIndexes;
 
     public AbstractDataFrameRecordCursor(@NotNull IntList columnIndexes) {
         this.columnIndexes = columnIndexes;
@@ -60,7 +57,7 @@ public abstract class AbstractDataFrameRecordCursor implements RecordCursor {
     }
 
     @Override
-    public SymbolTable getSymbolTable(int columnIndex) {
+    public StaticSymbolTable getSymbolTable(int columnIndex) {
         return dataFrameCursor.getSymbolTable(columnIndexes.getQuick(columnIndex));
     }
 
