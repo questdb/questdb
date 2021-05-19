@@ -567,7 +567,7 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
         }
 
         @Override
-        public long getO3CommitHysteresisInMicros() {
+        public long getO3CommitHysteresis() {
             return configuration.getO3CommitHysteresis();
         }
 

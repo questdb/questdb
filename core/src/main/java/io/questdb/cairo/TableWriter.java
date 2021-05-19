@@ -673,7 +673,7 @@ public class TableWriter implements Closeable {
         return true;
     }
     public void commitHysteresis() {
-        commit(defaultCommitMode, metadata.getO3CommitHysteresisInMicros());
+        commit(defaultCommitMode, metadata.getO3CommitHysteresis());
     }
 
     public void commitHysteresis(long lastTimestampHysteresisInMicros) {
@@ -1023,21 +1023,21 @@ public class TableWriter implements Closeable {
         this.lifecycleManager = lifecycleManager;
     }
 
-    public void setMetaO3CommitHysteresis(long o3CommitHysteresisInMicros) {
+    public void setMetaO3CommitHysteresis(long o3CommitHysteresis) {
         try {
             commit();
             long metaSize = copyMetadataAndUpdateVersion();
             openMetaSwapFileByIndex(ff, ddlMem, path, rootLen, this.metaSwapIndex);
             try {
-                ddlMem.jumpTo(META_OFFSET_O3_COMMIT_HYSTERESIS_IN_MICROS);
-                ddlMem.putLong(o3CommitHysteresisInMicros);
+                ddlMem.jumpTo(META_OFFSET_O3_COMMIT_HYSTERESIS);
+                ddlMem.putLong(o3CommitHysteresis);
                 ddlMem.jumpTo(metaSize);
             } finally {
                 ddlMem.close();
             }
 
             finishMetaSwapUpdate();
-            metadata.setO3CommitHysteresisInMicros(o3CommitHysteresisInMicros);
+            metadata.setO3CommitHysteresis(o3CommitHysteresis);
         } finally {
             ddlMem.close();
         }
@@ -1535,7 +1535,7 @@ public class TableWriter implements Closeable {
         ddlMem.putInt(ColumnType.VERSION);
         ddlMem.putInt(metaMem.getInt(META_OFFSET_TABLE_ID));
         ddlMem.putInt(metaMem.getInt(META_OFFSET_O3_MAX_UNCOMMITTED_ROWS));
-        ddlMem.putInt(metaMem.getInt(META_OFFSET_O3_COMMIT_HYSTERESIS_IN_MICROS));
+        ddlMem.putInt(metaMem.getInt(META_OFFSET_O3_COMMIT_HYSTERESIS));
     }
 
     private void bumpMasterRef() {
@@ -1939,7 +1939,7 @@ public class TableWriter implements Closeable {
             ddlMem.putInt(metaMem.getInt(META_OFFSET_TIMESTAMP_INDEX));
             copyVersionAndHysteresis();
             ddlMem.putInt(metaMem.getInt(META_OFFSET_O3_MAX_UNCOMMITTED_ROWS));
-            ddlMem.putLong(metaMem.getInt(META_OFFSET_O3_COMMIT_HYSTERESIS_IN_MICROS));
+            ddlMem.putLong(metaMem.getInt(META_OFFSET_O3_COMMIT_HYSTERESIS));
             ddlMem.jumpTo(META_OFFSET_COLUMN_TYPES);
             for (int i = 0; i < columnCount; i++) {
                 writeColumnEntry(i);

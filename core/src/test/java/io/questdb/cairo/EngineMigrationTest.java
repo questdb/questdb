@@ -339,7 +339,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
     @Test
     public void testMigrateTableSimple() throws Exception {
         configOverrideMaxUncommittedRows = 50001;
-        configOverrideO3CommitHysteresisInMicros = 777777;
+        configOverrideO3CommitHysteresis = 777777;
 
         assertMemoryLeak(() -> {
             try (TableModel src = new TableModel(configuration, "src", PartitionBy.NONE)) {
@@ -357,7 +357,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
     @Test
     public void testCannotUpdateHysteresisMetadata1() throws Exception {
         configOverrideMaxUncommittedRows = 1231231;
-        configOverrideO3CommitHysteresisInMicros = 85754;
+        configOverrideO3CommitHysteresis = 85754;
         assertMemoryLeak(() -> {
             try (TableModel src = new TableModel(configuration, "src", PartitionBy.NONE)) {
                 createPopulateTable(
@@ -385,7 +385,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
                 ff = new FilesFacadeImpl() {
                     @Override
                     public long write(long fd, long buf, long len, long offset) {
-                        if (META_OFFSET_O3_COMMIT_HYSTERESIS_IN_MICROS == offset) {
+                        if (META_OFFSET_O3_COMMIT_HYSTERESIS == offset) {
                             return 0;
                         }
                         return super.write(fd, buf, len, offset);
@@ -437,9 +437,9 @@ public class EngineMigrationTest extends AbstractGriffinTest {
         new EngineMigration(engine, configuration).migrateEngineTo(ColumnType.VERSION);
         TestUtils.assertEquals(expected, executeSql(queryNew));
 
-        assertSql("select o3maxUncommittedRows, o3CommitHysteresisMicros from tables where name = '" + src.getName() + "'",
-                "o3maxUncommittedRows\to3CommitHysteresisMicros\n" +
-                        +configOverrideMaxUncommittedRows + "\t" + configOverrideO3CommitHysteresisInMicros + "\n");
+        assertSql("select o3maxUncommittedRows, o3CommitHysteresis from tables where name = '" + src.getName() + "'",
+                "o3maxUncommittedRows\to3CommitHysteresis\n" +
+                        +configOverrideMaxUncommittedRows + "\t" + configOverrideO3CommitHysteresis + "\n");
     }
 
     private void downgradeMetaDataFile(TableModel tableModel) {
@@ -457,7 +457,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
             ff.close(fd);
             try (PagedMappedReadWriteMemory rwTx = new PagedMappedReadWriteMemory(ff, path.$(), fileSize)) {
                 rwTx.putInt(META_OFFSET_O3_MAX_UNCOMMITTED_ROWS, 0);
-                rwTx.putLong(META_OFFSET_O3_COMMIT_HYSTERESIS_IN_MICROS, 0);
+                rwTx.putLong(META_OFFSET_O3_COMMIT_HYSTERESIS, 0);
                 rwTx.jumpTo(fileSize);
             }
 

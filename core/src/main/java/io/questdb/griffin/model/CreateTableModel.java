@@ -43,7 +43,7 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
     private ExpressionNode timestamp;
     private ExpressionNode partitionBy;
     private int o3MaxUncommittedRows;
-    private long o3CommitHysteresisInMicros;
+    private long o3CommitHysteresisIn;
     private boolean ignoreIfExists = false;
 
     private CreateTableModel() {
@@ -324,11 +324,11 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
     }
 
     @Override
-    public long getO3CommitHysteresisInMicros() {
-        return o3CommitHysteresisInMicros;
+    public long getO3CommitHysteresis() {
+        return o3CommitHysteresisIn;
     }
 
-    public void setO3CommitHysteresisInMicros(long lineTcpCommitHysteresisInMicros) {
-        this.o3CommitHysteresisInMicros = lineTcpCommitHysteresisInMicros;
+    public void setO3CommitHysteresis(long micros) {
+        this.o3CommitHysteresisIn = micros;
     }
 }

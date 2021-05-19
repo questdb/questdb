@@ -49,5 +49,5 @@ public interface TableStructure {
 
     int getO3MaxUncommittedRows();
 
-    long getO3CommitHysteresisInMicros();
+    long getO3CommitHysteresis();
 }

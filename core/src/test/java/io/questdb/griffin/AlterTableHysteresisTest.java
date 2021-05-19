@@ -88,10 +88,10 @@ public class AlterTableHysteresisTest extends AbstractGriffinTest {
                 String alterCommand = "ALTER TABLE " + tableName + " SET PARAM o3CommitHysteresis = 111s";
                 compiler.compile(alterCommand, sqlExecutionContext);
 
-                assertSql("SELECT o3CommitHysteresisMicros FROM tables() WHERE name = '" + tableName + "'",
-                        "o3CommitHysteresisMicros\n111000000\n");
+                assertSql("SELECT o3CommitHysteresis FROM tables() WHERE name = '" + tableName + "'",
+                        "o3CommitHysteresis\n111000000\n");
                 rdr.reload();
-                Assert.assertEquals(111000000L, rdr.getMetadata().getO3CommitHysteresisMicros());
+                Assert.assertEquals(111000000L, rdr.getMetadata().getO3CommitHysteresis());
             }
             assertX(tableName);
         });

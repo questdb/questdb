@@ -424,7 +424,7 @@ public final class SqlParser {
         }
 
         int o3MaxUncommittedRows = configuration.getO3MaxUncommittedRows();
-        long o3CommitHysteresisInMicros = configuration.getO3CommitHysteresis();
+        long o3CommitHysteresis = configuration.getO3CommitHysteresis();
 
         ExpressionNode partitionBy = parseCreateTablePartition(lexer, tok);
         if (partitionBy != null) {
@@ -444,7 +444,7 @@ public final class SqlParser {
                                 throw SqlException.position(lexer.getPosition()).put(" could not parse o3MaxUncommittedRows value \"").put(expr.rhs.token).put('"');
                             }
                         } else if (isO3CommitHysteresis(expr.lhs.token)) {
-                            o3CommitHysteresisInMicros = SqlUtil.expectMicros(expr.rhs.token, lexer.getPosition());
+                            o3CommitHysteresis = SqlUtil.expectMicros(expr.rhs.token, lexer.getPosition());
                         } else {
                             throw SqlException.position(lexer.getPosition()).put(" unrecognized ").put(expr.lhs.token).put(" after WITH");
                         }
@@ -460,7 +460,7 @@ public final class SqlParser {
         }
 
         model.setO3MaxUncommittedRows(o3MaxUncommittedRows);
-        model.setO3CommitHysteresisInMicros(o3CommitHysteresisInMicros);
+        model.setO3CommitHysteresis(o3CommitHysteresis);
 
         if (tok == null || Chars.equals(tok, ';')) {
             return model;

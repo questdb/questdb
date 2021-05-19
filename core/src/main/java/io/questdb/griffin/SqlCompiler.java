@@ -867,11 +867,11 @@ public class SqlCompiler implements Closeable {
             }
             writer.setMetaO3MaxUncommittedRows(maxUncommittedRows);
         } else if (isO3CommitHysteresis(paramName)) {
-            long o3CommitHysteresisInMicros = SqlUtil.expectMicros(value, paramNameNamePosition);
-            if (o3CommitHysteresisInMicros < 0) {
+            long o3CommitHysteresis = SqlUtil.expectMicros(value, paramNameNamePosition);
+            if (o3CommitHysteresis < 0) {
                 throw SqlException.$(paramNameNamePosition, "O3CommitHysteresis must be non negative");
             }
-            writer.setMetaO3CommitHysteresis(o3CommitHysteresisInMicros);
+            writer.setMetaO3CommitHysteresis(o3CommitHysteresis);
         } else {
             throw SqlException.$(paramNameNamePosition, "unknown parameter '").put(paramName).put('\'');
         }
@@ -2409,8 +2409,8 @@ public class SqlCompiler implements Closeable {
         }
 
         @Override
-        public long getO3CommitHysteresisInMicros() {
-            return model.getO3CommitHysteresisInMicros();
+        public long getO3CommitHysteresis() {
+            return model.getO3CommitHysteresis();
         }
 
         TableStructureAdapter of(CreateTableModel model, RecordMetadata metadata, IntIntHashMap typeCast) {

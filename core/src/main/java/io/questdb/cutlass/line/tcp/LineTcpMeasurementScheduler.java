@@ -1312,7 +1312,7 @@ class LineTcpMeasurementScheduler implements Closeable {
         }
 
         @Override
-        public long getO3CommitHysteresisInMicros() {
+        public long getO3CommitHysteresis() {
             return cairoConfiguration.getO3CommitHysteresis();
         }
 

@@ -49,7 +49,7 @@ public class TableMetadataCursorFactoryTest extends AbstractGriffinTest {
 
         assertSql(
                 "tables order by id desc",
-                "id\tname\tdesignatedTimestamp\tpartitionBy\to3MaxUncommittedRows\to3CommitHysteresisMicros\n" +
+                "id\tname\tdesignatedTimestamp\tpartitionBy\to3MaxUncommittedRows\to3CommitHysteresis\n" +
                         "2\ttable2\tts2\tNONE\t1000\t0\n" +
                         "1\ttable1\tts1\tDAY\t1000\t0\n"
         );
@@ -58,7 +58,7 @@ public class TableMetadataCursorFactoryTest extends AbstractGriffinTest {
     @Test
     public void testMetadataQueryDefaultHysterisysParams() throws Exception {
         configOverrideMaxUncommittedRows = 83737;
-        configOverrideO3CommitHysteresisInMicros = 28291;
+        configOverrideO3CommitHysteresis = 28291;
 
         try (TableModel tm1 = new TableModel(configuration, "table1", PartitionBy.DAY)) {
             tm1.col("abc", ColumnType.STRING);
@@ -68,7 +68,7 @@ public class TableMetadataCursorFactoryTest extends AbstractGriffinTest {
 
         assertSql(
                 "tables",
-                "id\tname\tdesignatedTimestamp\tpartitionBy\to3MaxUncommittedRows\to3CommitHysteresisMicros\n" +
+                "id\tname\tdesignatedTimestamp\tpartitionBy\to3MaxUncommittedRows\to3CommitHysteresis\n" +
                         "1\ttable1\tts1\tDAY\t83737\t28291\n"
         );
     }
@@ -87,7 +87,7 @@ public class TableMetadataCursorFactoryTest extends AbstractGriffinTest {
 
         assertSql(
                 "tables where name = 'table1'",
-                "id\tname\tdesignatedTimestamp\tpartitionBy\to3MaxUncommittedRows\to3CommitHysteresisMicros\n" +
+                "id\tname\tdesignatedTimestamp\tpartitionBy\to3MaxUncommittedRows\to3CommitHysteresis\n" +
                         "1\ttable1\tts1\tDAY\t1000\t0\n"
         );
     }
@@ -133,7 +133,7 @@ public class TableMetadataCursorFactoryTest extends AbstractGriffinTest {
         }
         assertSql(
                 "tables",
-                "id\tname\tdesignatedTimestamp\tpartitionBy\to3MaxUncommittedRows\to3CommitHysteresisMicros\n" +
+                "id\tname\tdesignatedTimestamp\tpartitionBy\to3MaxUncommittedRows\to3CommitHysteresis\n" +
                         "2\ttable2\tts2\tNONE\t1000\t0\n"
         );
     }

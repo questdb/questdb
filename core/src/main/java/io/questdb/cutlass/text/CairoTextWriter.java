@@ -396,7 +396,7 @@ public class CairoTextWriter implements Closeable, Mutable {
         }
 
         @Override
-        public long getO3CommitHysteresisInMicros() {
+        public long getO3CommitHysteresis() {
             return configuration.getO3CommitHysteresis();
         }
 

@@ -264,7 +264,7 @@ public class EngineMigration {
             }
 
             Unsafe.getUnsafe().putLong(tempMem, migrationContext.getConfiguration().getO3CommitHysteresis());
-            if (ff.write(migrationContext.metadataFd, tempMem, Long.BYTES, META_OFFSET_O3_COMMIT_HYSTERESIS_IN_MICROS) != Long.BYTES) {
+            if (ff.write(migrationContext.metadataFd, tempMem, Long.BYTES, META_OFFSET_O3_COMMIT_HYSTERESIS) != Long.BYTES) {
                 throw CairoException.instance(ff.errno()).put("Cannot update metadata [path=").put(path).put(']');
             }
         }

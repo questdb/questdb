@@ -47,7 +47,7 @@ public class TableMetadataCursorFactory implements FunctionFactory {
     private static final int nameColumn;
     private static final int partitionByColumn;
     private static final int maxUncommittedRowsColumn;
-    private static final int o3CommitHysteresisMicroSecColumn;
+    private static final int o3CommitHysteresisColumn;
     private static final int designatedTimestampColumn;
     private static final Log LOG = LogFactory.getLog(TableMetadataCursorFactory.class);
 
@@ -63,8 +63,8 @@ public class TableMetadataCursorFactory implements FunctionFactory {
         partitionByColumn = metadata.getColumnCount() - 1;
         metadata.add(new TableColumnMetadata("o3MaxUncommittedRows", ColumnType.INT, null));
         maxUncommittedRowsColumn = metadata.getColumnCount() - 1;
-        metadata.add(new TableColumnMetadata("o3CommitHysteresisMicros", ColumnType.LONG, null));
-        o3CommitHysteresisMicroSecColumn = metadata.getColumnCount() - 1;
+        metadata.add(new TableColumnMetadata("o3CommitHysteresis", ColumnType.LONG, null));
+        o3CommitHysteresisColumn = metadata.getColumnCount() - 1;
         METADATA = metadata;
     }
 
@@ -192,7 +192,7 @@ public class TableMetadataCursorFactory implements FunctionFactory {
             public class TableListRecord implements Record {
                 private int tableId;
                 private int maxUncommittedRows;
-                private long o3CommitHysteresisMicroSec;
+                private long o3CommitHysteresis;
                 private int partitionBy;
 
                 @Override
@@ -229,8 +229,8 @@ public class TableMetadataCursorFactory implements FunctionFactory {
 
                 @Override
                 public long getLong(int col) {
-                    if (col == o3CommitHysteresisMicroSecColumn) {
-                        return o3CommitHysteresisMicroSec;
+                    if (col == o3CommitHysteresisColumn) {
+                        return o3CommitHysteresis;
                     }
                     return Numbers.LONG_NaN;
                 }
@@ -249,7 +249,7 @@ public class TableMetadataCursorFactory implements FunctionFactory {
                         // Pre-read as much as possible to skip record instead of failing on column fetch
                         tableId = metaReader.getId();
                         maxUncommittedRows = metaReader.getMaxUncommittedRows();
-                        o3CommitHysteresisMicroSec = metaReader.getO3CommitHysteresisMicros();
+                        o3CommitHysteresis = metaReader.getO3CommitHysteresis();
                         partitionBy = metaReader.getPartitionBy();
                     } catch (CairoException e) {
                         // perhaps this folder is not a table

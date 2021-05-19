@@ -210,7 +210,7 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
             }
             try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "weather")) {
                 Assert.assertEquals(3, reader.getMetadata().getMaxUncommittedRows());
-                Assert.assertEquals(250_000, reader.getMetadata().getO3CommitHysteresisMicros());
+                Assert.assertEquals(250_000, reader.getMetadata().getO3CommitHysteresis());
             }
             recvBuffer = "weather,location=us-midwest temperature=82 1465839830100400200\n" +
                     "weather,location=us-midwest temperature=83 1465839830100500200\n" +
@@ -236,7 +236,7 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
             assertTable(expected, "weather");
             try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "weather")) {
                 Assert.assertEquals(3, reader.getMetadata().getMaxUncommittedRows());
-                Assert.assertEquals(250_000, reader.getMetadata().getO3CommitHysteresisMicros());
+                Assert.assertEquals(250_000, reader.getMetadata().getO3CommitHysteresis());
             }
         });
     }

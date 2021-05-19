@@ -100,7 +100,7 @@ public class HysteresisRetentionTest extends AbstractGriffinTest {
                 sqlExecutionContext,
                 "tables()",
                 sink,
-                "id\tname\tdesignatedTimestamp\tpartitionBy\to3MaxUncommittedRows\to3CommitHysteresisMicros\n" +
+                "id\tname\tdesignatedTimestamp\tpartitionBy\to3MaxUncommittedRows\to3CommitHysteresis\n" +
                         "1\tmy_table\ttimestamp\tDAY\t250000\t240000000\n"
         );
     }

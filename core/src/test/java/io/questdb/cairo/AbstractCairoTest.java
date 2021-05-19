@@ -57,7 +57,7 @@ public class AbstractCairoTest {
     protected static CairoEngine engine;
     protected static String inputRoot = null;
     protected static FilesFacade ff;
-    protected static long configOverrideO3CommitHysteresisInMicros = -1;
+    protected static long configOverrideO3CommitHysteresis = -1;
     protected static int configOverrideMaxUncommittedRows = -1;
 
     @Rule
@@ -96,7 +96,7 @@ public class AbstractCairoTest {
 
             @Override
             public long getO3CommitHysteresis() {
-                if (configOverrideO3CommitHysteresisInMicros >= 0) return configOverrideO3CommitHysteresisInMicros;
+                if (configOverrideO3CommitHysteresis >= 0) return configOverrideO3CommitHysteresis;
                 return super.getO3CommitHysteresis();
             }
 
@@ -130,7 +130,7 @@ public class AbstractCairoTest {
         engine.clear();
         TestUtils.removeTestPath(root);
         configOverrideMaxUncommittedRows = -1;
-        configOverrideO3CommitHysteresisInMicros = -1;
+        configOverrideO3CommitHysteresis = -1;
         currentMicros = -1;
     }
 
