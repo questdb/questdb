@@ -57,7 +57,7 @@ public class AbstractCairoTest {
     protected static CairoEngine engine;
     protected static String inputRoot = null;
     protected static FilesFacade ff;
-    protected static long configOverrideO3CommitLag = -1;
+    protected static long configOverrideCommitLag = -1;
     protected static int configOverrideMaxUncommittedRows = -1;
 
     @Rule
@@ -95,15 +95,15 @@ public class AbstractCairoTest {
             }
 
             @Override
-            public long getO3CommitLag() {
-                if (configOverrideO3CommitLag >= 0) return configOverrideO3CommitLag;
-                return super.getO3CommitLag();
+            public long getCommitLag() {
+                if (configOverrideCommitLag >= 0) return configOverrideCommitLag;
+                return super.getCommitLag();
             }
 
             @Override
-            public int getO3MaxUncommittedRows() {
+            public int getMaxUncommittedRows() {
                 if (configOverrideMaxUncommittedRows >= 0) return configOverrideMaxUncommittedRows;
-                return super.getO3MaxUncommittedRows();
+                return super.getMaxUncommittedRows();
             }
         };
         engine = new CairoEngine(configuration);
@@ -130,7 +130,7 @@ public class AbstractCairoTest {
         engine.clear();
         TestUtils.removeTestPath(root);
         configOverrideMaxUncommittedRows = -1;
-        configOverrideO3CommitLag = -1;
+        configOverrideCommitLag = -1;
         currentMicros = -1;
     }
 

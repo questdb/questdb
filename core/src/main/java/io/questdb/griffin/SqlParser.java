@@ -423,8 +423,8 @@ public final class SqlParser {
             tok = optTok(lexer);
         }
 
-        int o3MaxUncommittedRows = configuration.getO3MaxUncommittedRows();
-        long o3CommitLag = configuration.getO3CommitLag();
+        int maxUncommittedRows = configuration.getMaxUncommittedRows();
+        long commitLag = configuration.getCommitLag();
 
         ExpressionNode partitionBy = parseCreateTablePartition(lexer, tok);
         if (partitionBy != null) {
@@ -437,14 +437,14 @@ public final class SqlParser {
                 ExpressionNode expr;
                 while ((expr = expr(lexer, (QueryModel) null)) != null) {
                     if (Chars.equals(expr.token, '=')) {
-                        if (isO3MaxUncommittedRowsParam(expr.lhs.token)) {
+                        if (isMaxUncommittedRowsParam(expr.lhs.token)) {
                             try {
-                                o3MaxUncommittedRows = Numbers.parseInt(expr.rhs.token);
+                                maxUncommittedRows = Numbers.parseInt(expr.rhs.token);
                             } catch (NumericException e) {
-                                throw SqlException.position(lexer.getPosition()).put(" could not parse o3MaxUncommittedRows value \"").put(expr.rhs.token).put('"');
+                                throw SqlException.position(lexer.getPosition()).put(" could not parse maxUncommittedRows value \"").put(expr.rhs.token).put('"');
                             }
-                        } else if (isO3CommitLag(expr.lhs.token)) {
-                            o3CommitLag = SqlUtil.expectMicros(expr.rhs.token, lexer.getPosition());
+                        } else if (isCommitLag(expr.lhs.token)) {
+                            commitLag = SqlUtil.expectMicros(expr.rhs.token, lexer.getPosition());
                         } else {
                             throw SqlException.position(lexer.getPosition()).put(" unrecognized ").put(expr.lhs.token).put(" after WITH");
                         }
@@ -459,8 +459,8 @@ public final class SqlParser {
             }
         }
 
-        model.setO3MaxUncommittedRows(o3MaxUncommittedRows);
-        model.setO3CommitLag(o3CommitLag);
+        model.setMaxUncommittedRows(maxUncommittedRows);
+        model.setCommitLag(commitLag);
 
         if (tok == null || Chars.equals(tok, ';')) {
             return model;

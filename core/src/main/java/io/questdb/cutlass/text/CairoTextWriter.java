@@ -391,13 +391,13 @@ public class CairoTextWriter implements Closeable, Mutable {
         }
 
         @Override
-        public int getO3MaxUncommittedRows() {
-            return configuration.getO3MaxUncommittedRows();
+        public int getMaxUncommittedRows() {
+            return configuration.getMaxUncommittedRows();
         }
 
         @Override
-        public long getO3CommitLag() {
-            return configuration.getO3CommitLag();
+        public long getCommitLag() {
+            return configuration.getCommitLag();
         }
 
         TableStructureAdapter of(ObjList<CharSequence> names, ObjList<TypeAdapter> types) throws TextException {

@@ -1114,7 +1114,7 @@ public class O3CommitLagTest extends AbstractO3Test {
                 "), index(sym) timestamp (ts) partition by DAY";
         compiler.compile(sql, sqlExecutionContext);
 
-        sql = "create table y as (select * from x where i<=250) partition by DAY WITH o3MaxUncommittedRows=100, o3CommitLag=10s";
+        sql = "create table y as (select * from x where i<=250) partition by DAY WITH maxUncommittedRows=100, commitLag=10s";
         compiler.compile(sql, sqlExecutionContext);
 
         TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where i<=250", sink);

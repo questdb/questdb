@@ -855,7 +855,7 @@ public class SqlCompiler implements Closeable {
     }
 
     private void alterTableSetParam(CharSequence paramName, CharSequence value, int paramNameNamePosition, TableWriter writer) throws SqlException {
-        if (isO3MaxUncommittedRowsParam(paramName)) {
+        if (isMaxUncommittedRowsParam(paramName)) {
             int maxUncommittedRows;
             try {
                 maxUncommittedRows = Numbers.parseInt(value);
@@ -863,15 +863,15 @@ public class SqlCompiler implements Closeable {
                 throw SqlException.$(paramNameNamePosition, "invalid value [value=").put(value).put(",parameter=").put(paramName).put(']');
             }
             if (maxUncommittedRows < 0) {
-                throw SqlException.$(paramNameNamePosition, "o3MaxUncommittedRows must be non negative");
+                throw SqlException.$(paramNameNamePosition, "maxUncommittedRows must be non negative");
             }
-            writer.setMetaO3MaxUncommittedRows(maxUncommittedRows);
-        } else if (isO3CommitLag(paramName)) {
-            long o3CommitLag = SqlUtil.expectMicros(value, paramNameNamePosition);
-            if (o3CommitLag < 0) {
-                throw SqlException.$(paramNameNamePosition, "o3CommitLag must be non negative");
+            writer.setMetaMaxUncommittedRows(maxUncommittedRows);
+        } else if (isCommitLag(paramName)) {
+            long commitLag = SqlUtil.expectMicros(value, paramNameNamePosition);
+            if (commitLag < 0) {
+                throw SqlException.$(paramNameNamePosition, "commitLag must be non negative");
             }
-            writer.setMetaO3CommitLag(o3CommitLag);
+            writer.setMetaCommitLag(commitLag);
         } else {
             throw SqlException.$(paramNameNamePosition, "unknown parameter '").put(paramName).put('\'');
         }
@@ -2404,13 +2404,13 @@ public class SqlCompiler implements Closeable {
         }
 
         @Override
-        public int getO3MaxUncommittedRows() {
-            return model.getO3MaxUncommittedRows();
+        public int getMaxUncommittedRows() {
+            return model.getMaxUncommittedRows();
         }
 
         @Override
-        public long getO3CommitLag() {
-            return model.getO3CommitLag();
+        public long getCommitLag() {
+            return model.getCommitLag();
         }
 
         TableStructureAdapter of(CreateTableModel model, RecordMetadata metadata, IntIntHashMap typeCast) {

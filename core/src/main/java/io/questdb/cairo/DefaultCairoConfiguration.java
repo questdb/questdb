@@ -527,12 +527,12 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getO3MaxUncommittedRows() {
+    public int getMaxUncommittedRows() {
         return 1000;
     }
 
     @Override
-    public long getO3CommitLag() {
+    public long getCommitLag() {
         return 0;
     }
 }

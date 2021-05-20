@@ -42,8 +42,8 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
     private QueryModel queryModel;
     private ExpressionNode timestamp;
     private ExpressionNode partitionBy;
-    private int o3MaxUncommittedRows;
-    private long o3CommitLag;
+    private int maxUncommittedRows;
+    private long commitLag;
     private boolean ignoreIfExists = false;
 
     private CreateTableModel() {
@@ -315,20 +315,20 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
     }
 
     @Override
-    public int getO3MaxUncommittedRows() {
-        return o3MaxUncommittedRows;
+    public int getMaxUncommittedRows() {
+        return maxUncommittedRows;
     }
 
-    public void setO3MaxUncommittedRows(int lineTcpMaxUncommittedRows) {
-        this.o3MaxUncommittedRows = lineTcpMaxUncommittedRows;
+    public void setMaxUncommittedRows(int maxUncommittedRows) {
+        this.maxUncommittedRows = maxUncommittedRows;
     }
 
     @Override
-    public long getO3CommitLag() {
-        return o3CommitLag;
+    public long getCommitLag() {
+        return commitLag;
     }
 
-    public void setO3CommitLag(long micros) {
-        this.o3CommitLag = micros;
+    public void setCommitLag(long micros) {
+        this.commitLag = micros;
     }
 }

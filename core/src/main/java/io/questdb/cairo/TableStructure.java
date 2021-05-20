@@ -47,7 +47,7 @@ public interface TableStructure {
 
     int getTimestampIndex();
 
-    int getO3MaxUncommittedRows();
+    int getMaxUncommittedRows();
 
-    long getO3CommitLag();
+    long getCommitLag();
 }

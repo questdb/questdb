@@ -265,11 +265,11 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
     }
 
     public int getMaxUncommittedRows() {
-        return metaMem.getInt(TableUtils.META_OFFSET_O3_MAX_UNCOMMITTED_ROWS);
+        return metaMem.getInt(TableUtils.META_OFFSET_MAX_UNCOMMITTED_ROWS);
     }
 
-    public long getO3CommitLag() {
-        return metaMem.getLong(TableUtils.META_OFFSET_O3_COMMIT_LAG);
+    public long getCommitLag() {
+        return metaMem.getLong(TableUtils.META_OFFSET_COMMIT_LAG);
     }
 
     private TableColumnMetadata moveMetadata(int index, TableColumnMetadata metadata) {

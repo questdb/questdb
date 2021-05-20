@@ -666,14 +666,14 @@ public class TableWriter implements Closeable {
     }
 
     public boolean checkMaxAndCommitLag() {
-        if (getO3RowCount() < metadata.getO3MaxUncommittedRows()) {
+        if (getO3RowCount() < metadata.getMaxUncommittedRows()) {
             return false;
         }
         commitWithLag();
         return true;
     }
     public void commitWithLag() {
-        commit(defaultCommitMode, metadata.getO3CommitLag());
+        commit(defaultCommitMode, metadata.getCommitLag());
     }
 
     public void commitWithLag(long lagMicros) {
@@ -1023,33 +1023,33 @@ public class TableWriter implements Closeable {
         this.lifecycleManager = lifecycleManager;
     }
 
-    public void setMetaO3CommitLag(long o3CommitLag) {
+    public void setMetaCommitLag(long commitLag) {
         try {
             commit();
             long metaSize = copyMetadataAndUpdateVersion();
             openMetaSwapFileByIndex(ff, ddlMem, path, rootLen, this.metaSwapIndex);
             try {
-                ddlMem.jumpTo(META_OFFSET_O3_COMMIT_LAG);
-                ddlMem.putLong(o3CommitLag);
+                ddlMem.jumpTo(META_OFFSET_COMMIT_LAG);
+                ddlMem.putLong(commitLag);
                 ddlMem.jumpTo(metaSize);
             } finally {
                 ddlMem.close();
             }
 
             finishMetaSwapUpdate();
-            metadata.setO3CommitLag(o3CommitLag);
+            metadata.setCommitLag(commitLag);
         } finally {
             ddlMem.close();
         }
     }
 
-    public void setMetaO3MaxUncommittedRows(int maxUncommittedRows) {
+    public void setMetaMaxUncommittedRows(int maxUncommittedRows) {
         try {
             commit();
             long metaSize = copyMetadataAndUpdateVersion();
             openMetaSwapFileByIndex(ff, ddlMem, path, rootLen, this.metaSwapIndex);
             try {
-                ddlMem.jumpTo(META_OFFSET_O3_MAX_UNCOMMITTED_ROWS);
+                ddlMem.jumpTo(META_OFFSET_MAX_UNCOMMITTED_ROWS);
                 ddlMem.putInt(maxUncommittedRows);
                 ddlMem.jumpTo(metaSize);
             } finally {
@@ -1057,7 +1057,7 @@ public class TableWriter implements Closeable {
             }
 
             finishMetaSwapUpdate();
-            metadata.setO3MaxUncommittedRows(maxUncommittedRows);
+            metadata.setMaxUncommittedRows(maxUncommittedRows);
         } finally {
             ddlMem.close();
         }
@@ -1534,8 +1534,8 @@ public class TableWriter implements Closeable {
     private void copyVersionAndLagValues() {
         ddlMem.putInt(ColumnType.VERSION);
         ddlMem.putInt(metaMem.getInt(META_OFFSET_TABLE_ID));
-        ddlMem.putInt(metaMem.getInt(META_OFFSET_O3_MAX_UNCOMMITTED_ROWS));
-        ddlMem.putInt(metaMem.getInt(META_OFFSET_O3_COMMIT_LAG));
+        ddlMem.putInt(metaMem.getInt(META_OFFSET_MAX_UNCOMMITTED_ROWS));
+        ddlMem.putInt(metaMem.getInt(META_OFFSET_COMMIT_LAG));
     }
 
     private void bumpMasterRef() {
@@ -1938,8 +1938,8 @@ public class TableWriter implements Closeable {
             ddlMem.putInt(metaMem.getInt(META_OFFSET_PARTITION_BY));
             ddlMem.putInt(metaMem.getInt(META_OFFSET_TIMESTAMP_INDEX));
             copyVersionAndLagValues();
-            ddlMem.putInt(metaMem.getInt(META_OFFSET_O3_MAX_UNCOMMITTED_ROWS));
-            ddlMem.putLong(metaMem.getInt(META_OFFSET_O3_COMMIT_LAG));
+            ddlMem.putInt(metaMem.getInt(META_OFFSET_MAX_UNCOMMITTED_ROWS));
+            ddlMem.putLong(metaMem.getInt(META_OFFSET_COMMIT_LAG));
             ddlMem.jumpTo(META_OFFSET_COLUMN_TYPES);
             for (int i = 0; i < columnCount; i++) {
                 writeColumnEntry(i);
@@ -2408,7 +2408,7 @@ public class TableWriter implements Closeable {
         o3BasketPool.clear();
 
         long o3LagRowCount = 0;
-        long o3MaxUncommittedRows = metadata.getO3MaxUncommittedRows();
+        long maxUncommittedRows = metadata.getMaxUncommittedRows();
 
         final int timestampIndex = metadata.getTimestampIndex();
         this.lastPartitionTimestamp = timestampFloorMethod.floor(partitionTimestampHi);
@@ -2453,9 +2453,9 @@ public class TableWriter implements Closeable {
                             BinarySearch.SCAN_DOWN
                     );
                     o3LagRowCount = o3RowCount - lagThresholdRow - 1;
-                    if (o3LagRowCount > o3MaxUncommittedRows) {
-                        o3LagRowCount = o3MaxUncommittedRows;
-                        srcOooMax = o3RowCount - o3MaxUncommittedRows;
+                    if (o3LagRowCount > maxUncommittedRows) {
+                        o3LagRowCount = maxUncommittedRows;
+                        srcOooMax = o3RowCount - maxUncommittedRows;
                     } else {
                         srcOooMax = lagThresholdRow + 1;
                     }
@@ -2465,7 +2465,7 @@ public class TableWriter implements Closeable {
                 }
                 LOG.debug().$("o3 commit lag [table=").$(tableName)
                         .$(", lag=").$(lag)
-                        .$(", o3MaxUncommittedRows=").$(o3MaxUncommittedRows)
+                        .$(", maxUncommittedRows=").$(maxUncommittedRows)
                         .$(", o3max=").$ts(o3max)
                         .$(", lagThresholdTimestamp=").$ts(lagThresholdTimestamp)
                         .$(", o3LagRowCount=").$(o3LagRowCount)

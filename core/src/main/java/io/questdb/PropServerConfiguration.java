@@ -194,8 +194,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int o3UpdPartitionSizeQueueCapacity;
     private final int o3PurgeDiscoveryQueueCapacity;
     private final int o3PurgeQueueCapacity;
-    private final int o3MaxUncommittedRows;
-    private final long o3CommitLag;
+    private final int maxUncommittedRows;
+    private final long commitLag;
     private final long instanceHashLo;
     private final long instanceHashHi;
     private final int sqlTxnScoreboardEntryCount;
@@ -634,8 +634,8 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.o3UpdPartitionSizeQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.o3.upd.partition.size.queue.capacity", 128));
             this.o3PurgeDiscoveryQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.o3.purge.discovery.queue.capacity", 128));
             this.o3PurgeQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.o3.purge.queue.capacity", 128));
-            this.o3MaxUncommittedRows = getInt(properties, env, "cairo.o3.max.uncommitted.rows", 500_000);
-            this.o3CommitLag = getLong(properties, env, "cairo.o3.commit.lag", 300_000) * 1_000;
+            this.maxUncommittedRows = getInt(properties, env, "cairo.max.uncommitted.rows", 500_000);
+            this.commitLag = getLong(properties, env, "cairo.commit.lag", 300_000) * 1_000;
             this.o3QuickSortEnabled = getBoolean(properties, env, "cairo.o3.quicksort.enabled", false);
             this.sqlAnalyticStorePageSize = Numbers.ceilPow2(getIntSize(properties, env, "cairo.sql.analytic.store.page.size", 1024 * 1024));
             this.sqlAnalyticStoreMaxPages = Numbers.ceilPow2(getIntSize(properties, env, "cairo.sql.analytic.store.max.pages", Integer.MAX_VALUE));
@@ -1853,13 +1853,13 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getO3MaxUncommittedRows() {
-            return o3MaxUncommittedRows;
+        public int getMaxUncommittedRows() {
+            return maxUncommittedRows;
         }
 
         @Override
-        public long getO3CommitLag() {
-            return o3CommitLag;
+        public long getCommitLag() {
+            return commitLag;
         }
 
         @Override

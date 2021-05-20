@@ -1307,13 +1307,13 @@ class LineTcpMeasurementScheduler implements Closeable {
         }
 
         @Override
-        public int getO3MaxUncommittedRows() {
-            return cairoConfiguration.getO3MaxUncommittedRows();
+        public int getMaxUncommittedRows() {
+            return cairoConfiguration.getMaxUncommittedRows();
         }
 
         @Override
-        public long getO3CommitLag() {
-            return cairoConfiguration.getO3CommitLag();
+        public long getCommitLag() {
+            return cairoConfiguration.getCommitLag();
         }
 
         TableStructureAdapter of(CharSequence tableName, NewLineProtoParser protoParser) {

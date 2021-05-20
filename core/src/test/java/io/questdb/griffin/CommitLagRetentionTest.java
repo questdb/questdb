@@ -100,13 +100,13 @@ public class CommitLagRetentionTest extends AbstractGriffinTest {
                 sqlExecutionContext,
                 "tables()",
                 sink,
-                "id\tname\tdesignatedTimestamp\tpartitionBy\to3MaxUncommittedRows\to3CommitLag\n" +
+                "id\tname\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\tcommitLag\n" +
                         "1\tmy_table\ttimestamp\tDAY\t250000\t240000000\n"
         );
     }
 
     private void createTable() throws SqlException {
         compiler.compile("CREATE TABLE my_table (timestamp TIMESTAMP, x long, s symbol) timestamp(timestamp)\n" +
-                "PARTITION BY DAY WITH o3MaxUncommittedRows=250000, o3CommitLag=240s", sqlExecutionContext);
+                "PARTITION BY DAY WITH maxUncommittedRows=250000, commitLag=240s", sqlExecutionContext);
     }
 }

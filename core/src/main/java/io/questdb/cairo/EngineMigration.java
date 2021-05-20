@@ -258,13 +258,13 @@ public class EngineMigration {
             }
             // Metadata file should already be backed up
             long tempMem = migrationContext.getTempMemory(8);
-            Unsafe.getUnsafe().putInt(tempMem, migrationContext.getConfiguration().getO3MaxUncommittedRows());
-            if (ff.write(migrationContext.metadataFd, tempMem, Integer.BYTES, META_OFFSET_O3_MAX_UNCOMMITTED_ROWS) != Integer.BYTES) {
+            Unsafe.getUnsafe().putInt(tempMem, migrationContext.getConfiguration().getMaxUncommittedRows());
+            if (ff.write(migrationContext.metadataFd, tempMem, Integer.BYTES, META_OFFSET_MAX_UNCOMMITTED_ROWS) != Integer.BYTES) {
                 throw CairoException.instance(ff.errno()).put("Cannot update metadata [path=").put(path).put(']');
             }
 
-            Unsafe.getUnsafe().putLong(tempMem, migrationContext.getConfiguration().getO3CommitLag());
-            if (ff.write(migrationContext.metadataFd, tempMem, Long.BYTES, META_OFFSET_O3_COMMIT_LAG) != Long.BYTES) {
+            Unsafe.getUnsafe().putLong(tempMem, migrationContext.getConfiguration().getCommitLag());
+            if (ff.write(migrationContext.metadataFd, tempMem, Long.BYTES, META_OFFSET_COMMIT_LAG) != Long.BYTES) {
                 throw CairoException.instance(ff.errno()).put("Cannot update metadata [path=").put(path).put(']');
             }
         }

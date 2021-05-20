@@ -227,7 +227,7 @@ public interface CairoConfiguration {
 
     int getTxnScoreboardEntryCount();
 
-    int getO3MaxUncommittedRows();
+    int getMaxUncommittedRows();
 
     /**
      * Default commit lag in microseconds for new tables. This value
@@ -235,7 +235,7 @@ public interface CairoConfiguration {
      *
      * @return commit lag in microseconds
      */
-    long getO3CommitLag();
+    long getCommitLag();
 
     boolean isO3QuickSortEnabled();
 }

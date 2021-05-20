@@ -1341,7 +1341,7 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext
         );
 
-        compiler.compile("ALTER TABLE x SET PARAM o3MaxUncommittedRows = 2000000", sqlExecutionContext);
+        compiler.compile("ALTER TABLE x SET PARAM maxUncommittedRows = 2000000", sqlExecutionContext);
 
         compiler.compile(
                 "create table top as (" +
