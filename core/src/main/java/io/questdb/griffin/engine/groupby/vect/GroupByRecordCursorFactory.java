@@ -205,33 +205,33 @@ public class GroupByRecordCursorFactory implements RecordCursorFactory {
                 // argument and it can only derive count via memory size
                 final int columnIndex = vaf.getColumnIndex();
                 final long valueAddress;
-                final long valueAddressSize;
+                final long columnSize;
                 final int frameDataType;
 
                 if (columnIndex > -1) {
                     valueAddress = frame.getPageAddress(columnIndex);
                     frameDataType = frame.getColumnSize(columnIndex);
-                    valueAddressSize = frame.getPageSize(columnIndex);
+                    columnSize = frame.getPageSize(columnIndex);
                 } else {
                     valueAddress = 0;
                     frameDataType = frame.getColumnSize(keyColumnIndex);
-                    valueAddressSize = frame.getPageSize(keyColumnIndex);
+                    columnSize = frame.getPageSize(keyColumnIndex);
                 }
                 long seq = pubSeq.next();
                 if (seq < 0) {
                     if (keyAddress == 0) {
-                        vaf.aggregate(valueAddress, valueAddressSize, frameDataType, workerId);
+                        vaf.aggregate(valueAddress, columnSize, frameDataType, workerId);
                     } else {
-                        vaf.aggregate(pRosti[workerId], keyAddress, valueAddress, valueAddressSize, frameDataType, workerId);
+                        vaf.aggregate(pRosti[workerId], keyAddress, valueAddress, columnSize, frameDataType, workerId);
                     }
                     ownCount++;
                 } else {
                     if (keyAddress != 0 || valueAddress != 0) {
                         final VectorAggregateEntry entry = entryPool.next();
                         if (keyAddress == 0) {
-                            entry.of(queuedCount++, vaf, null, 0, valueAddress, valueAddressSize, frameDataType, doneLatch);
+                            entry.of(queuedCount++, vaf, null, 0, valueAddress, columnSize, frameDataType, doneLatch);
                         } else {
-                            entry.of(queuedCount++, vaf, pRosti, keyAddress, valueAddress, valueAddressSize, frameDataType, doneLatch);
+                            entry.of(queuedCount++, vaf, pRosti, keyAddress, valueAddress, columnSize, frameDataType, doneLatch);
                         }
                         activeEntries.add(entry);
                         queue.get(seq).entry = entry;

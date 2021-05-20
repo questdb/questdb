@@ -45,13 +45,13 @@ public class CountVectorAggregateFunction extends LongFunction implements Vector
     }
 
     @Override
-    public void aggregate(long address, long addressSize, int valueColumnType, int workerId) {
-        this.count.add(addressSize >>> valueColumnType);
+    public void aggregate(long address, long addressSize, int columnSizeHint, int workerId) {
+        this.count.add(addressSize >>> columnSizeHint);
     }
 
     @Override
-    public void aggregate(long pRosti, long keyAddress, long valueAddress, long valueAddressSize, int valueColumnType, int workerId) {
-        countFunc.count(pRosti, keyAddress, valueAddressSize >>> valueColumnType, valueOffset);
+    public void aggregate(long pRosti, long keyAddress, long valueAddress, long valueAddressSize, int columnSizeHint, int workerId) {
+        countFunc.count(pRosti, keyAddress, valueAddressSize >>> columnSizeHint, valueOffset);
     }
 
     @Override

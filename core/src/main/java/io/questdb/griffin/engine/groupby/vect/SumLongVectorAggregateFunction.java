@@ -58,7 +58,7 @@ public class SumLongVectorAggregateFunction extends LongFunction implements Vect
     }
 
     @Override
-    public void aggregate(long address, long addressSize, int valueColumnType, int workerId) {
+    public void aggregate(long address, long addressSize, int columnSizeHint, int workerId) {
         if (address != 0) {
             final long value = Vect.sumLong(address, addressSize / Long.BYTES);
             if (value != Numbers.LONG_NaN) {
@@ -69,7 +69,7 @@ public class SumLongVectorAggregateFunction extends LongFunction implements Vect
     }
 
     @Override
-    public void aggregate(long pRosti, long keyAddress, long valueAddress, long valueAddressSize, int valueColumnType, int workerId) {
+    public void aggregate(long pRosti, long keyAddress, long valueAddress, long valueAddressSize, int columnSizeHint, int workerId) {
         if (valueAddress == 0) {
             distinctFunc.run(pRosti, keyAddress, valueAddressSize / Long.BYTES);
         } else {

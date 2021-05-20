@@ -59,7 +59,7 @@ public final class ColumnType {
     private static final int[] TYPE_SIZE_POW2 = new int[ColumnType.PARAMETER + 1];
     private static final int[] TYPE_SIZE = new int[ColumnType.PARAMETER + 1];
     private static final int[][] overloadPriority = {
-            /* -1 UNDEFINED*/    {DOUBLE, FLOAT, TIMESTAMP, DATE, LONG, INT, CHAR, SHORT, BYTE, BOOLEAN}
+            /* -1 UNDEFINED*/    {DOUBLE, FLOAT, LONG, TIMESTAMP, DATE, INT, CHAR, SHORT, BYTE, BOOLEAN}
             /* 0  BOOLEAN  */, {}
             /* 1  BYTE     */, {SHORT, INT, LONG, FLOAT, DOUBLE}
             /* 2  SHORT    */, {INT, LONG, FLOAT, DOUBLE}

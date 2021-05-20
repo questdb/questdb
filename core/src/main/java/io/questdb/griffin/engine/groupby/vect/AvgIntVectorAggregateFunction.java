@@ -59,7 +59,7 @@ public class AvgIntVectorAggregateFunction extends DoubleFunction implements Vec
     }
 
     @Override
-    public void aggregate(long address, long addressSize, int valueColumnType, int workerId) {
+    public void aggregate(long address, long addressSize, int columnSizeHint, int workerId) {
         if (address != 0) {
             final double value = Vect.avgInt(address, addressSize / Integer.BYTES);
             if (value == value) {
@@ -70,7 +70,7 @@ public class AvgIntVectorAggregateFunction extends DoubleFunction implements Vec
     }
 
     @Override
-    public void aggregate(long pRosti, long keyAddress, long valueAddress, long valueAddressSize, int valueColumnType, int workerId) {
+    public void aggregate(long pRosti, long keyAddress, long valueAddress, long valueAddressSize, int columnSizeHint, int workerId) {
         if (valueAddress == 0) {
             distinctFunc.run(pRosti, keyAddress, valueAddressSize / Integer.BYTES);
         } else {

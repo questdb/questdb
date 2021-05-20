@@ -421,7 +421,6 @@ open module io.questdb {
 //                  'sum' group by function
             io.questdb.griffin.engine.functions.groupby.SumDoubleGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.SumFloatGroupByFunctionFactory,
-            io.questdb.griffin.engine.functions.groupby.SumShortGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.SumIntGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.SumLongGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.KSumDoubleGroupByFunctionFactory,

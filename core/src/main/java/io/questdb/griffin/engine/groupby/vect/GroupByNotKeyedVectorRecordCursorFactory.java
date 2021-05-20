@@ -107,18 +107,18 @@ public class GroupByNotKeyedVectorRecordCursorFactory implements RecordCursorFac
                 final int columnIndex = vaf.getColumnIndex();
                 final long pageAddress = frame.getPageAddress(columnIndex);
                 final long pageSize = frame.getPageSize(columnIndex);
-                final int pageColType = frame.getColumnSize(columnIndex);
+                final int pageColSize = frame.getColumnSize(columnIndex);
                 long seq = pubSeq.next();
                 if (seq < 0) {
                     // diy the func
                     // vaf need to know which column it is hitting in the frame and will need to
                     // aggregate between frames until done
-                    vaf.aggregate(pageAddress, pageSize, pageColType, workerId);
+                    vaf.aggregate(pageAddress, pageSize, pageColSize, workerId);
                     ownCount++;
                 } else {
                     final VectorAggregateEntry entry = entryPool.next();
                     // null pRosti means that we do not need keyed aggregation
-                    entry.of(queuedCount++, vaf, null, 0, pageAddress, pageSize, pageColType, doneLatch);
+                    entry.of(queuedCount++, vaf, null, 0, pageAddress, pageSize, pageColSize, doneLatch);
                     activeEntries.add(entry);
                     queue.get(seq).entry = entry;
                     pubSeq.done(seq);
