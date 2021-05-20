@@ -635,7 +635,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.o3PurgeDiscoveryQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.o3.purge.discovery.queue.capacity", 128));
             this.o3PurgeQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.o3.purge.queue.capacity", 128));
             this.o3MaxUncommittedRows = getInt(properties, env, "cairo.o3.max.uncommitted.rows", 500_000);
-            this.o3CommitLag = getLong(properties, env, "cairo.o3.commit.lag.in.ms", 300_000) * 1_000;
+            this.o3CommitLag = getLong(properties, env, "cairo.o3.commit.lag", 300_000) * 1_000;
             this.o3QuickSortEnabled = getBoolean(properties, env, "cairo.o3.quicksort.enabled", false);
             this.sqlAnalyticStorePageSize = Numbers.ceilPow2(getIntSize(properties, env, "cairo.sql.analytic.store.page.size", 1024 * 1024));
             this.sqlAnalyticStoreMaxPages = Numbers.ceilPow2(getIntSize(properties, env, "cairo.sql.analytic.store.max.pages", Integer.MAX_VALUE));

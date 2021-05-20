@@ -527,6 +527,7 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(256, configuration.getCairoConfiguration().getColumnCastModelPoolCapacity());
             Assert.assertEquals(64, configuration.getCairoConfiguration().getCreateTableModelPoolCapacity());
 
+            Assert.assertEquals(2_000_000, configuration.getCairoConfiguration().getO3CommitLag());
             Assert.assertEquals(100000, configuration.getCairoConfiguration().getO3MaxUncommittedRows());
 
             Assert.assertEquals(167903521, configuration.getLineUdpReceiverConfiguration().getBindIPv4Address());
