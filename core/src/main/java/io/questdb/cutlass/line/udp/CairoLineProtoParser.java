@@ -562,13 +562,13 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
         }
 
         @Override
-        public int getO3MaxUncommittedRows() {
-            return configuration.getO3MaxUncommittedRows();
+        public int getMaxUncommittedRows() {
+            return configuration.getMaxUncommittedRows();
         }
 
         @Override
-        public long getO3CommitHysteresisInMicros() {
-            return configuration.getO3CommitHysteresis();
+        public long getCommitLag() {
+            return configuration.getCommitLag();
         }
 
         TableStructureAdapter of(CharSequenceCache cache) {
