@@ -2548,7 +2548,7 @@ public class SqlCodeGenerator implements Mutable {
                         configuration,
                         myMeta,
                         new FullBwdDataFrameCursorFactory(engine, tableName, model.getTableVersion()),
-                        columnIndexes.getQuick(listColumnFilterA.getColumnIndexFactored(0)),
+                        listColumnFilterA.getColumnIndexFactored(0),
                         null,
                         columnIndexes
                 );

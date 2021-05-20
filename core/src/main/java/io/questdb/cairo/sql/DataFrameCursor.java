@@ -24,7 +24,6 @@
 
 package io.questdb.cairo.sql;
 
-import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.TableReader;
 import org.jetbrains.annotations.Nullable;
 
@@ -46,5 +45,5 @@ public interface DataFrameCursor extends Closeable, SymbolTableSource  {
 
     long size();
 
-    SymbolMapReader getSymbolTable(int columnIndex);
+    StaticSymbolTable getSymbolTable(int columnIndex);
 }
