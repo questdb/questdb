@@ -424,7 +424,7 @@ public final class SqlParser {
         }
 
         int o3MaxUncommittedRows = configuration.getO3MaxUncommittedRows();
-        long o3CommitHysteresis = configuration.getO3CommitHysteresis();
+        long o3CommitLag = configuration.getO3CommitLag();
 
         ExpressionNode partitionBy = parseCreateTablePartition(lexer, tok);
         if (partitionBy != null) {
@@ -443,8 +443,8 @@ public final class SqlParser {
                             } catch (NumericException e) {
                                 throw SqlException.position(lexer.getPosition()).put(" could not parse o3MaxUncommittedRows value \"").put(expr.rhs.token).put('"');
                             }
-                        } else if (isO3CommitHysteresis(expr.lhs.token)) {
-                            o3CommitHysteresis = SqlUtil.expectMicros(expr.rhs.token, lexer.getPosition());
+                        } else if (isO3CommitLag(expr.lhs.token)) {
+                            o3CommitLag = SqlUtil.expectMicros(expr.rhs.token, lexer.getPosition());
                         } else {
                             throw SqlException.position(lexer.getPosition()).put(" unrecognized ").put(expr.lhs.token).put(" after WITH");
                         }
@@ -460,7 +460,7 @@ public final class SqlParser {
         }
 
         model.setO3MaxUncommittedRows(o3MaxUncommittedRows);
-        model.setO3CommitHysteresis(o3CommitHysteresis);
+        model.setO3CommitLag(o3CommitLag);
 
         if (tok == null || Chars.equals(tok, ';')) {
             return model;
@@ -950,13 +950,13 @@ public final class SqlParser {
                 throw SqlException.$(lexer.lastTokenPosition(), "batch size must be positive integer");
             }
 
-            tok = tok(lexer, "into or hysteresis");
-            if (SqlKeywords.isHysteresis(tok)) {
+            tok = tok(lexer, "into or lag");
+            if (SqlKeywords.isLag(tok)) {
                 val = expectLong(lexer);
                 if (val > 0) {
-                    model.setHysteresis(val);
+                    model.setCommitLag(val);
                 } else {
-                    throw SqlException.$(lexer.lastTokenPosition(), "hysteresis must be a positive integer microseconds");
+                    throw SqlException.$(lexer.lastTokenPosition(), "lag must be a positive integer microseconds");
                 }
                 expectTok(lexer, "into");
             }

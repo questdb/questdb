@@ -2168,7 +2168,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                         "t TIMESTAMP, " +
                         "y BOOLEAN) " +
                         "timestamp(t) " +
-                        "partition by DAY WITH o3MaxUncommittedRows=10000, o3CommitHysteresis=250ms;",
+                        "partition by DAY WITH o3MaxUncommittedRows=10000, o3CommitLag=250ms;",
                 sqlExecutionContext);
 
         try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE,
@@ -2180,7 +2180,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                     "{\"columnCount\":3,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"INT\"},{\"index\":1,\"name\":\"t\",\"type\":\"TIMESTAMP\"},{\"index\":2,\"name\":\"y\",\"type\":\"BOOLEAN\"}],\"timestampIndex\":1}",
                     sink);
             Assert.assertEquals(10000, metadata.getO3MaxUncommittedRows());
-            Assert.assertEquals(250000, metadata.getO3CommitHysteresis());
+            Assert.assertEquals(250000, metadata.getO3CommitLag());
         }
     }
 

@@ -339,7 +339,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
     @Test
     public void testMigrateTableSimple() throws Exception {
         configOverrideMaxUncommittedRows = 50001;
-        configOverrideO3CommitHysteresis = 777777;
+        configOverrideO3CommitLag = 777777;
 
         assertMemoryLeak(() -> {
             try (TableModel src = new TableModel(configuration, "src", PartitionBy.NONE)) {
@@ -355,9 +355,9 @@ public class EngineMigrationTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCannotUpdateHysteresisMetadata1() throws Exception {
+    public void testCannotUpdateLagMetadata1() throws Exception {
         configOverrideMaxUncommittedRows = 1231231;
-        configOverrideO3CommitHysteresis = 85754;
+        configOverrideO3CommitLag = 85754;
         assertMemoryLeak(() -> {
             try (TableModel src = new TableModel(configuration, "src", PartitionBy.NONE)) {
                 createPopulateTable(
@@ -385,7 +385,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
                 ff = new FilesFacadeImpl() {
                     @Override
                     public long write(long fd, long buf, long len, long offset) {
-                        if (META_OFFSET_O3_COMMIT_HYSTERESIS == offset) {
+                        if (META_OFFSET_O3_COMMIT_LAG == offset) {
                             return 0;
                         }
                         return super.write(fd, buf, len, offset);
@@ -437,9 +437,9 @@ public class EngineMigrationTest extends AbstractGriffinTest {
         new EngineMigration(engine, configuration).migrateEngineTo(ColumnType.VERSION);
         TestUtils.assertEquals(expected, executeSql(queryNew));
 
-        assertSql("select o3maxUncommittedRows, o3CommitHysteresis from tables where name = '" + src.getName() + "'",
-                "o3maxUncommittedRows\to3CommitHysteresis\n" +
-                        +configOverrideMaxUncommittedRows + "\t" + configOverrideO3CommitHysteresis + "\n");
+        assertSql("select o3maxUncommittedRows, o3CommitLag from tables where name = '" + src.getName() + "'",
+                "o3maxUncommittedRows\to3CommitLag\n" +
+                        +configOverrideMaxUncommittedRows + "\t" + configOverrideO3CommitLag + "\n");
     }
 
     private void downgradeMetaDataFile(TableModel tableModel) {
@@ -447,7 +447,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
         FilesFacade ff = configuration.getFilesFacade();
 
         try (Path path = new Path()) {
-            setMetadataVersion(tableModel, ff, path, VERSION_TBL_META_HYSTERESIS);
+            setMetadataVersion(tableModel, ff, path, VERSION_TBL_META_COMMIT_LAG);
 
             path.concat(root).concat(tableModel.getName()).concat(TableUtils.META_FILE_NAME);
             long fd = ff.openRO(path.$());
@@ -457,11 +457,11 @@ public class EngineMigrationTest extends AbstractGriffinTest {
             ff.close(fd);
             try (PagedMappedReadWriteMemory rwTx = new PagedMappedReadWriteMemory(ff, path.$(), fileSize)) {
                 rwTx.putInt(META_OFFSET_O3_MAX_UNCOMMITTED_ROWS, 0);
-                rwTx.putLong(META_OFFSET_O3_COMMIT_HYSTERESIS, 0);
+                rwTx.putLong(META_OFFSET_O3_COMMIT_LAG, 0);
                 rwTx.jumpTo(fileSize);
             }
 
-            setMetadataVersion(tableModel, ff, path, VERSION_TBL_META_HYSTERESIS);
+            setMetadataVersion(tableModel, ff, path, VERSION_TBL_META_COMMIT_LAG);
             downgradeUpdateFileTo(ff, path);
         }
     }
@@ -491,7 +491,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
         path.trimTo(0).concat(root).concat(UPGRADE_FILE_NAME);
         if (ff.exists(path.$())) {
             try (PagedMappedReadWriteMemory rwTx = new PagedMappedReadWriteMemory(ff, path.$(), 8)) {
-                rwTx.putInt(0, EngineMigration.VERSION_TBL_META_HYSTERESIS - 1);
+                rwTx.putInt(0, EngineMigration.VERSION_TBL_META_COMMIT_LAG - 1);
                 rwTx.jumpTo(Integer.BYTES);
             }
         }

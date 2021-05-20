@@ -396,8 +396,8 @@ public class CairoTextWriter implements Closeable, Mutable {
         }
 
         @Override
-        public long getO3CommitHysteresis() {
-            return configuration.getO3CommitHysteresis();
+        public long getO3CommitLag() {
+            return configuration.getO3CommitLag();
         }
 
         TableStructureAdapter of(ObjList<CharSequence> names, ObjList<TypeAdapter> types) throws TextException {

@@ -46,8 +46,8 @@ import org.junit.Test;
 
 import java.util.Random;
 
-public class O3HysteresisTest extends AbstractO3Test {
-    private final static Log LOG = LogFactory.getLog(O3HysteresisTest.class);
+public class O3CommitLagTest extends AbstractO3Test {
+    private final static Log LOG = LogFactory.getLog(O3CommitLagTest.class);
     private long minTimestamp;
     private long maxTimestamp;
     private RecordToRowCopier copier;
@@ -68,148 +68,148 @@ public class O3HysteresisTest extends AbstractO3Test {
     }
 
     @Test
-    public void testHysteresisEndingAtPartitionBoundaryContended() throws Exception {
-        executeWithPool(0, this::testHysteresisEndingAtPartitionBoundary0);
+    public void testCommitLagEndingAtPartitionBoundaryContended() throws Exception {
+        executeWithPool(0, this::testCommitLagEndingAtPartitionBoundary0);
     }
 
     @Test
-    public void testHysteresisEndingAtPartitionBoundaryParallel() throws Exception {
-        executeWithPool(2, this::testHysteresisEndingAtPartitionBoundary0);
+    public void testCommitLagEndingAtPartitionBoundaryParallel() throws Exception {
+        executeWithPool(2, this::testCommitLagEndingAtPartitionBoundary0);
     }
 
     @Test
-    public void testHysteresisEndingAtPartitionBoundaryPlus1Contended() throws Exception {
-        executeWithPool(0, this::testHysteresisEndingAtPartitionBoundaryPlus10);
+    public void testCommitLagEndingAtPartitionBoundaryPlus1Contended() throws Exception {
+        executeWithPool(0, this::testCommitLagEndingAtPartitionBoundaryPlus10);
     }
 
     @Test
-    public void testHysteresisEndingAtPartitionBoundaryPlus1Parallel() throws Exception {
-        executeWithPool(2, this::testHysteresisEndingAtPartitionBoundaryPlus10);
+    public void testCommitLagEndingAtPartitionBoundaryPlus1Parallel() throws Exception {
+        executeWithPool(2, this::testCommitLagEndingAtPartitionBoundaryPlus10);
     }
 
     @Test
-    public void testHysteresisEndingAtPartitionBoundaryPlus1WithRollbackContended() throws Exception {
-        executeWithPool(0, this::testHysteresisEndingAtPartitionBoundaryPlus1WithRollback0);
+    public void testCommitLagEndingAtPartitionBoundaryPlus1WithRollbackContended() throws Exception {
+        executeWithPool(0, this::testCommitLagEndingAtPartitionBoundaryPlus1WithRollback0);
     }
 
     @Test
-    public void testHysteresisEndingAtPartitionBoundaryPlus1WithRollbackParallel() throws Exception {
-        executeWithPool(2, this::testHysteresisEndingAtPartitionBoundaryPlus1WithRollback0);
+    public void testCommitLagEndingAtPartitionBoundaryPlus1WithRollbackParallel() throws Exception {
+        executeWithPool(2, this::testCommitLagEndingAtPartitionBoundaryPlus1WithRollback0);
     }
 
     @Test
-    public void testHysteresisEndingAtPartitionBoundaryWithRollbackContended() throws Exception {
-        executeWithPool(0, this::testHysteresisEndingAtPartitionBoundaryWithRollback0);
+    public void testCommitLagEndingAtPartitionBoundaryWithRollbackContended() throws Exception {
+        executeWithPool(0, this::testCommitLagEndingAtPartitionBoundaryWithRollback0);
     }
 
     @Test
-    public void testHysteresisEndingAtPartitionBoundaryWithRollbackParallel() throws Exception {
-        executeWithPool(2, this::testHysteresisEndingAtPartitionBoundaryWithRollback0);
+    public void testCommitLagEndingAtPartitionBoundaryWithRollbackParallel() throws Exception {
+        executeWithPool(2, this::testCommitLagEndingAtPartitionBoundaryWithRollback0);
     }
 
     @Test
-    public void testHysteresisStaggeringPartitionsContended() throws Exception {
-        executeWithPool(0, this::testHysteresisStaggeringPartitions0);
+    public void testCommitLagStaggeringPartitionsContended() throws Exception {
+        executeWithPool(0, this::testCommitLagStaggeringPartitions0);
     }
 
     @Test
-    public void testHysteresisStaggeringPartitionsParallel() throws Exception {
-        executeWithPool(2, this::testHysteresisStaggeringPartitions0);
+    public void testCommitLagStaggeringPartitionsParallel() throws Exception {
+        executeWithPool(2, this::testCommitLagStaggeringPartitions0);
     }
 
     @Test
-    public void testHysteresisStaggeringPartitionsWithRollbackContended() throws Exception {
-        executeWithPool(0, this::testHysteresisStaggeringPartitionsWithRollback0);
+    public void testCommitLagStaggeringPartitionsWithRollbackContended() throws Exception {
+        executeWithPool(0, this::testCommitLagStaggeringPartitionsWithRollback0);
     }
 
     @Test
-    public void testHysteresisStaggeringPartitionsWithRollbackParallel() throws Exception {
-        executeWithPool(2, this::testHysteresisStaggeringPartitionsWithRollback0);
+    public void testCommitLagStaggeringPartitionsWithRollbackParallel() throws Exception {
+        executeWithPool(2, this::testCommitLagStaggeringPartitionsWithRollback0);
     }
 
     @Test
-    public void testHysteresisWithInOrderBatchFollowedByO3BatchContended() throws Exception {
-        executeWithPool(0, this::testHysteresisWithInOrderBatchFollowedByO3Batch0);
+    public void testCommitLagWithInOrderBatchFollowedByO3BatchContended() throws Exception {
+        executeWithPool(0, this::testCommitLagWithInOrderBatchFollowedByO3Batch0);
     }
 
     @Test
-    public void testHysteresisWithInOrderBatchFollowedByO3BatchParallel() throws Exception {
-        executeWithPool(2, this::testHysteresisWithInOrderBatchFollowedByO3Batch0);
+    public void testCommitLagWithInOrderBatchFollowedByO3BatchParallel() throws Exception {
+        executeWithPool(2, this::testCommitLagWithInOrderBatchFollowedByO3Batch0);
     }
 
     @Test
-    public void testHysteresisWithLargeO3Contended() throws Exception {
-        executeWithPool(0, this::testHysteresisWithLargeO3);
+    public void testCommitLagWithLargeO3Contended() throws Exception {
+        executeWithPool(0, this::testCommitLagWithLargeO3);
     }
 
     @Test
-    public void testHysteresisWithLargeO3Parallel() throws Exception {
-        executeWithPool(2, this::testHysteresisWithLargeO3);
+    public void testCommitLagWithLargeO3Parallel() throws Exception {
+        executeWithPool(2, this::testCommitLagWithLargeO3);
     }
 
     @Test
-    public void testHysteresisWithinPartitionContended() throws Exception {
-        executeWithPool(0, this::testHysteresisWithinPartition);
+    public void testCommitLagWithinPartitionContended() throws Exception {
+        executeWithPool(0, this::testCommitLagWithinPartition);
     }
 
     @Test
-    public void testHysteresisWithinPartitionParallel() throws Exception {
-        executeWithPool(2, this::testHysteresisWithinPartition);
+    public void testCommitLagWithinPartitionParallel() throws Exception {
+        executeWithPool(2, this::testCommitLagWithinPartition);
     }
 
     @Test
-    public void testHysteresisWithinPartitionWithRollbackContended() throws Exception {
-        executeWithPool(0, this::testHysteresisWithinPartitionWithRollback);
+    public void testCommitLagWithinPartitionWithRollbackContended() throws Exception {
+        executeWithPool(0, this::testCommitLagWithinPartitionWithRollback);
     }
 
     @Test
-    public void testHysteresisWithinPartitionWithRollbackParallel() throws Exception {
-        executeWithPool(2, this::testHysteresisWithinPartitionWithRollback);
+    public void testCommitLagWithinPartitionWithRollbackParallel() throws Exception {
+        executeWithPool(2, this::testCommitLagWithinPartitionWithRollback);
     }
 
     @Test
-    public void testLargeHysteresisWithinPartitionContended() throws Exception {
-        executeWithPool(0, this::testLargeHysteresisWithinPartition);
+    public void testLargeLagWithinPartitionContended() throws Exception {
+        executeWithPool(0, this::testLargeLagWithinPartition);
     }
 
     @Test
-    public void testLargeHysteresisWithRowLimitContended() throws Exception {
-        executeWithPool(0, this::testLargeHysteresisWithRowLimit);
+    public void testLargeLagWithRowLimitContended() throws Exception {
+        executeWithPool(0, this::testLargeLagWithRowLimit);
     }
 
     @Test
-    public void testLargeHysteresisWithinPartitionParallel() throws Exception {
-        executeWithPool(2, this::testLargeHysteresisWithinPartition);
+    public void testLargeLagWithinPartitionParallel() throws Exception {
+        executeWithPool(2, this::testLargeLagWithinPartition);
     }
 
     @Test
-    public void testNoHysteresisContended() throws Exception {
-        executeWithPool(0, this::testNoHysteresis0);
+    public void testNoLagContended() throws Exception {
+        executeWithPool(0, this::testNoLag0);
     }
 
     @Test
-    public void testNoHysteresisEndingAtPartitionBoundaryContended() throws Exception {
-        executeWithPool(0, this::testNoHysteresisEndingAtPartitionBoundary);
+    public void testNoLagEndingAtPartitionBoundaryContended() throws Exception {
+        executeWithPool(0, this::testNoLagEndingAtPartitionBoundary);
     }
 
     @Test
-    public void testNoHysteresisEndingAtPartitionBoundaryParallel() throws Exception {
-        executeWithPool(2, this::testNoHysteresisEndingAtPartitionBoundary);
+    public void testNoLagEndingAtPartitionBoundaryParallel() throws Exception {
+        executeWithPool(2, this::testNoLagEndingAtPartitionBoundary);
     }
 
     @Test
-    public void testNoHysteresisParallel() throws Exception {
-        executeWithPool(2, this::testNoHysteresis0);
+    public void testNoLagParallel() throws Exception {
+        executeWithPool(2, this::testNoLag0);
     }
 
     @Test
-    public void testNoHysteresisWithRollbackContended() throws Exception {
-        executeWithPool(0, this::testNoHysteresisWithRollback);
+    public void testNoLagWithRollbackContended() throws Exception {
+        executeWithPool(0, this::testNoLagWithRollback);
     }
 
     @Test
-    public void testNoHysteresisWithRollbackParallel() throws Exception {
-        executeWithPool(2, this::testNoHysteresisWithRollback);
+    public void testNoLagWithRollbackParallel() throws Exception {
+        executeWithPool(2, this::testNoLagWithRollback);
     }
 
     @Test
@@ -386,7 +386,7 @@ public class O3HysteresisTest extends AbstractO3Test {
         int maxBatchedRows = 10;
         int maxConcurrentBatches = 4;
         int nRowsPerCommit = 100;
-        long lastTimestampHysteresisInMicros = microsBetweenRows * (nRowsPerCommit / 2);
+        long commitLag = microsBetweenRows * (nRowsPerCommit / 2);
 
         String sql = "create table x as (" +
                 "select" +
@@ -429,7 +429,7 @@ public class O3HysteresisTest extends AbstractO3Test {
             batchRowEnd.add(atRow);
         }
 
-        int nCommitsWithHysteresis = 0;
+        int nCommitsWithLag = 0;
         try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "y")) {
             int nHeadBatch = 1;
             int nRowsAppended = 0;
@@ -454,22 +454,22 @@ public class O3HysteresisTest extends AbstractO3Test {
 
                 nRowsAppended += toRow - fromRow;
                 if (nRowsAppended >= nRowsPerCommit) {
-                    LOG.info().$("committing with hysteresis").$();
+                    LOG.info().$("committing with lag").$();
                     nRowsAppended = 0;
-                    writer.commitHysteresis(lastTimestampHysteresisInMicros);
-                    nCommitsWithHysteresis++;
+                    writer.commitWithLag(commitLag);
+                    nCommitsWithLag++;
                 }
             }
             writer.commit();
         }
-        LOG.info().$("committed final state with ").$(nCommitsWithHysteresis).$(" commits with hysteresis").$();
+        LOG.info().$("committed final state with ").$(nCommitsWithLag).$(" commits with lag").$();
 
         TestUtils.printSql(compiler, sqlExecutionContext, "select * from x", sink);
         TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
         TestUtils.assertEquals(sink2, sink);
     }
 
-    private void testHysteresisEndingAtPartitionBoundary0(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException, NumericException {
+    private void testCommitLagEndingAtPartitionBoundary0(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException, NumericException {
         String sql = "create table x as (" +
                 "select" +
                 " cast(x as int) i," +
@@ -504,18 +504,18 @@ public class O3HysteresisTest extends AbstractO3Test {
         try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "y")) {
             sql = "select * from x where i>150 and i<200 order by f";
             insertUncommitted(compiler, sqlExecutionContext, sql, writer);
-            long lastTimestampHysteresisInMicros = maxTimestamp - TimestampFormatUtils.parseTimestamp("1970-01-06T23:59:59.000Z");
-            maxTimestamp -= lastTimestampHysteresisInMicros;
-            writer.commitHysteresis(lastTimestampHysteresisInMicros);
+            long commitLag = maxTimestamp - TimestampFormatUtils.parseTimestamp("1970-01-06T23:59:59.000Z");
+            maxTimestamp -= commitLag;
+            writer.commitWithLag(commitLag);
             TestUtils.printSql(compiler, sqlExecutionContext, "select i, ts from x where ts<=cast(" + maxTimestamp + " as timestamp)", sink);
             TestUtils.printSql(compiler, sqlExecutionContext, "select i, ts from y", sink2);
             TestUtils.assertEquals(sink, sink2);
 
             sql = "select * from x where i>=200 order by f";
             insertUncommitted(compiler, sqlExecutionContext, sql, writer);
-            lastTimestampHysteresisInMicros = (maxTimestamp - minTimestamp) / 2;
-            maxTimestamp -= lastTimestampHysteresisInMicros;
-            writer.commitHysteresis(lastTimestampHysteresisInMicros);
+            commitLag = (maxTimestamp - minTimestamp) / 2;
+            maxTimestamp -= commitLag;
+            writer.commitWithLag(commitLag);
             TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where ts<=cast(" + maxTimestamp + " as timestamp)", sink);
             TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
             TestUtils.assertEquals(sink, sink2);
@@ -528,7 +528,7 @@ public class O3HysteresisTest extends AbstractO3Test {
         TestUtils.assertEquals(sink, sink2);
     }
 
-    private void testHysteresisEndingAtPartitionBoundaryPlus10(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException, NumericException {
+    private void testCommitLagEndingAtPartitionBoundaryPlus10(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException, NumericException {
         String sql = "create table x as (" +
                 "select" +
                 " cast(x as int) i," +
@@ -563,18 +563,18 @@ public class O3HysteresisTest extends AbstractO3Test {
         try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "y")) {
             sql = "select * from x where i>150 and i<200 order by f";
             insertUncommitted(compiler, sqlExecutionContext, sql, writer);
-            long lastTimestampHysteresisInMicros = maxTimestamp - TimestampFormatUtils.parseTimestamp("1970-01-07T00:00:00.000Z");
-            maxTimestamp -= lastTimestampHysteresisInMicros;
-            writer.commitHysteresis(lastTimestampHysteresisInMicros);
+            long commitLag = maxTimestamp - TimestampFormatUtils.parseTimestamp("1970-01-07T00:00:00.000Z");
+            maxTimestamp -= commitLag;
+            writer.commitWithLag(commitLag);
             TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where ts<=cast(" + maxTimestamp + " as timestamp)", sink);
             TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
             TestUtils.assertEquals(sink, sink2);
 
             sql = "select * from x where i>=200 order by f";
             insertUncommitted(compiler, sqlExecutionContext, sql, writer);
-            lastTimestampHysteresisInMicros = (maxTimestamp - minTimestamp) / 2;
-            maxTimestamp -= lastTimestampHysteresisInMicros;
-            writer.commitHysteresis(lastTimestampHysteresisInMicros);
+            commitLag = (maxTimestamp - minTimestamp) / 2;
+            maxTimestamp -= commitLag;
+            writer.commitWithLag(commitLag);
             TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where ts<=cast(" + maxTimestamp + " as timestamp)", sink);
             TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
             TestUtils.assertEquals(sink, sink2);
@@ -587,7 +587,7 @@ public class O3HysteresisTest extends AbstractO3Test {
         TestUtils.assertEquals(sink, sink2);
     }
 
-    private void testHysteresisEndingAtPartitionBoundaryPlus1WithRollback0(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException, NumericException {
+    private void testCommitLagEndingAtPartitionBoundaryPlus1WithRollback0(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException, NumericException {
         String sql = "create table x as (" +
                 "select" +
                 " cast(x as int) i," +
@@ -622,9 +622,9 @@ public class O3HysteresisTest extends AbstractO3Test {
         try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "y")) {
             sql = "select * from x where i>150 and i<200 order by f";
             insertUncommitted(compiler, sqlExecutionContext, sql, writer);
-            long lastTimestampHysteresisInMicros = maxTimestamp - TimestampFormatUtils.parseTimestamp("1970-01-07T00:00:00.000Z");
-            minTimestamp = maxTimestamp - lastTimestampHysteresisInMicros;
-            writer.commitHysteresis(lastTimestampHysteresisInMicros);
+            long commitLag = maxTimestamp - TimestampFormatUtils.parseTimestamp("1970-01-07T00:00:00.000Z");
+            minTimestamp = maxTimestamp - commitLag;
+            writer.commitWithLag(commitLag);
             TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where ts<='1970-01-07T00:00:00.000Z'", sink);
             TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
             TestUtils.assertEquals(sink, sink2);
@@ -635,9 +635,9 @@ public class O3HysteresisTest extends AbstractO3Test {
 
             sql = "select * from x where i>=200 order by f";
             insertUncommitted(compiler, sqlExecutionContext, sql, writer);
-            lastTimestampHysteresisInMicros = (maxTimestamp - minTimestamp) / 2;
-            maxTimestamp -= lastTimestampHysteresisInMicros;
-            writer.commitHysteresis(lastTimestampHysteresisInMicros);
+            commitLag = (maxTimestamp - minTimestamp) / 2;
+            maxTimestamp -= commitLag;
+            writer.commitWithLag(commitLag);
             TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where ts<=cast(" + maxTimestamp + " as timestamp) and (i<=185 or i>=200)", sink);
             TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
             TestUtils.assertEquals(sink, sink2);
@@ -650,7 +650,7 @@ public class O3HysteresisTest extends AbstractO3Test {
         TestUtils.assertEquals(sink, sink2);
     }
 
-    private void testHysteresisEndingAtPartitionBoundaryWithRollback0(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException, NumericException {
+    private void testCommitLagEndingAtPartitionBoundaryWithRollback0(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException, NumericException {
         String sql = "create table x as (" +
                 "select" +
                 " cast(x as int) i," +
@@ -685,9 +685,9 @@ public class O3HysteresisTest extends AbstractO3Test {
         try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "y")) {
             sql = "select * from x where i>150 and i<200 order by f";
             insertUncommitted(compiler, sqlExecutionContext, sql, writer);
-            long lastTimestampHysteresisInMicros = maxTimestamp - TimestampFormatUtils.parseTimestamp("1970-01-06T23:59:59.000Z");
-            minTimestamp = maxTimestamp - lastTimestampHysteresisInMicros;
-            writer.commitHysteresis(lastTimestampHysteresisInMicros);
+            long commitLag = maxTimestamp - TimestampFormatUtils.parseTimestamp("1970-01-06T23:59:59.000Z");
+            minTimestamp = maxTimestamp - commitLag;
+            writer.commitWithLag(commitLag);
             TestUtils.printSql(compiler, sqlExecutionContext, "select i, ts from x where ts<='1970-01-06T23:59:59.000Z'", sink);
             TestUtils.printSql(compiler, sqlExecutionContext, "select i, ts from y", sink2);
             TestUtils.assertEquals(sink, sink2);
@@ -698,9 +698,9 @@ public class O3HysteresisTest extends AbstractO3Test {
 
             sql = "select * from x where i>=200 order by f";
             insertUncommitted(compiler, sqlExecutionContext, sql, writer);
-            lastTimestampHysteresisInMicros = (maxTimestamp - minTimestamp) / 2;
-            maxTimestamp -= lastTimestampHysteresisInMicros;
-            writer.commitHysteresis(lastTimestampHysteresisInMicros);
+            commitLag = (maxTimestamp - minTimestamp) / 2;
+            maxTimestamp -= commitLag;
+            writer.commitWithLag(commitLag);
             TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where ts<=cast(" + maxTimestamp + " as timestamp) and (i<=184 or i>=200)", sink);
             TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
             TestUtils.assertEquals(sink, sink2);
@@ -713,7 +713,7 @@ public class O3HysteresisTest extends AbstractO3Test {
         TestUtils.assertEquals(sink, sink2);
     }
 
-    private void testHysteresisStaggeringPartitions0(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    private void testCommitLagStaggeringPartitions0(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
         String sql = "create table x as (" +
                 "select" +
                 " cast(x as int) i," +
@@ -748,18 +748,18 @@ public class O3HysteresisTest extends AbstractO3Test {
         try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "y")) {
             sql = "select * from x where i>150 and i<200 order by f";
             insertUncommitted(compiler, sqlExecutionContext, sql, writer);
-            long lastTimestampHysteresisInMicros = (maxTimestamp - minTimestamp) / 2;
-            maxTimestamp -= lastTimestampHysteresisInMicros;
-            writer.commitHysteresis(lastTimestampHysteresisInMicros);
+            long commitLag = (maxTimestamp - minTimestamp) / 2;
+            maxTimestamp -= commitLag;
+            writer.commitWithLag(commitLag);
             TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where ts<=cast(" + maxTimestamp + " as timestamp)", sink);
             TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
             TestUtils.assertEquals(sink, sink2);
 
             sql = "select * from x where i>=200 order by f";
             insertUncommitted(compiler, sqlExecutionContext, sql, writer);
-            lastTimestampHysteresisInMicros = (maxTimestamp - minTimestamp) / 2;
-            maxTimestamp -= lastTimestampHysteresisInMicros;
-            writer.commitHysteresis(lastTimestampHysteresisInMicros);
+            commitLag = (maxTimestamp - minTimestamp) / 2;
+            maxTimestamp -= commitLag;
+            writer.commitWithLag(commitLag);
             TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where ts<=cast(" + maxTimestamp + " as timestamp)", sink);
             TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
             TestUtils.assertEquals(sink, sink2);
@@ -772,7 +772,7 @@ public class O3HysteresisTest extends AbstractO3Test {
         TestUtils.assertEquals(sink, sink2);
     }
 
-    private void testHysteresisStaggeringPartitionsWithRollback0(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    private void testCommitLagStaggeringPartitionsWithRollback0(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
         String sql = "create table x as (" +
                 "select" +
                 " cast(x as int) i," +
@@ -807,9 +807,9 @@ public class O3HysteresisTest extends AbstractO3Test {
         try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "y")) {
             sql = "select * from x where i>150 and i<200 order by f";
             insertUncommitted(compiler, sqlExecutionContext, sql, writer);
-            long lastTimestampHysteresisInMicros = (maxTimestamp - minTimestamp) / 2;
-            maxTimestamp -= lastTimestampHysteresisInMicros;
-            writer.commitHysteresis(lastTimestampHysteresisInMicros);
+            long commitLag = (maxTimestamp - minTimestamp) / 2;
+            maxTimestamp -= commitLag;
+            writer.commitWithLag(commitLag);
             TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where ts<=cast(" + maxTimestamp + " as timestamp)", sink);
             TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
             TestUtils.assertEquals(sink, sink2);
@@ -820,9 +820,9 @@ public class O3HysteresisTest extends AbstractO3Test {
 
             sql = "select * from x where i>=200 order by f";
             insertUncommitted(compiler, sqlExecutionContext, sql, writer);
-            lastTimestampHysteresisInMicros = (maxTimestamp - minTimestamp) / 2;
-            maxTimestamp -= lastTimestampHysteresisInMicros;
-            writer.commitHysteresis(lastTimestampHysteresisInMicros);
+            commitLag = (maxTimestamp - minTimestamp) / 2;
+            maxTimestamp -= commitLag;
+            writer.commitWithLag(commitLag);
             TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where ts<=cast(" + maxTimestamp + " as timestamp) and (i<=175 or i>=200)", sink);
             TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
             TestUtils.assertEquals(sink, sink2);
@@ -835,7 +835,7 @@ public class O3HysteresisTest extends AbstractO3Test {
         TestUtils.assertEquals(sink, sink2);
     }
 
-    private void testHysteresisWithInOrderBatchFollowedByO3Batch0(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    private void testCommitLagWithInOrderBatchFollowedByO3Batch0(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
         String sql = "create table x as (" +
                 "select" +
                 " cast(x as int) i," +
@@ -871,9 +871,9 @@ public class O3HysteresisTest extends AbstractO3Test {
             insertUncommitted(compiler, sqlExecutionContext, sql, writer);
             sql = "select * from x where i>=300 order by f";
             insertUncommitted(compiler, sqlExecutionContext, sql, writer);
-            long lastTimestampHysteresisInMicros = (maxTimestamp - minTimestamp) / 2;
-            maxTimestamp -= lastTimestampHysteresisInMicros;
-            writer.commitHysteresis(lastTimestampHysteresisInMicros);
+            long commitLag = (maxTimestamp - minTimestamp) / 2;
+            maxTimestamp -= commitLag;
+            writer.commitWithLag(commitLag);
             TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where ts<=cast(" + maxTimestamp + " as timestamp)", sink);
             TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
             TestUtils.assertEquals(sink, sink2);
@@ -886,7 +886,7 @@ public class O3HysteresisTest extends AbstractO3Test {
         TestUtils.assertEquals(sink2, sink);
     }
 
-    private void testHysteresisWithLargeO3(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    private void testCommitLagWithLargeO3(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
         String sql = "create table x as (" +
                 "select" +
                 " cast(x as int) i," +
@@ -920,9 +920,9 @@ public class O3HysteresisTest extends AbstractO3Test {
         try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "y")) {
             sql = "select * from x where i>250 or (i>50 and i<100) order by f";
             insertUncommitted(compiler, sqlExecutionContext, sql, writer);
-            long lastTimestampHysteresisInMicros = (maxTimestamp - minTimestamp) / 2;
-            maxTimestamp -= lastTimestampHysteresisInMicros;
-            writer.commitHysteresis(lastTimestampHysteresisInMicros);
+            long commitLag = (maxTimestamp - minTimestamp) / 2;
+            maxTimestamp -= commitLag;
+            writer.commitWithLag(commitLag);
             TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where ts<=cast(" + maxTimestamp + " as timestamp)", sink);
             TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
             TestUtils.assertEquals(sink, sink2);
@@ -935,7 +935,7 @@ public class O3HysteresisTest extends AbstractO3Test {
         TestUtils.assertEquals(sink, sink2);
     }
 
-    private void testHysteresisWithinPartition(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    private void testCommitLagWithinPartition(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
         String sql = "create table x as (" +
                 "select" +
                 " cast(x as int) i," +
@@ -969,9 +969,9 @@ public class O3HysteresisTest extends AbstractO3Test {
         try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "y")) {
             sql = "select * from x where i>490 order by f";
             insertUncommitted(compiler, sqlExecutionContext, sql, writer);
-            long lastTimestampHysteresisInMicros = (maxTimestamp - minTimestamp) / 2;
-            maxTimestamp -= lastTimestampHysteresisInMicros;
-            writer.commitHysteresis(lastTimestampHysteresisInMicros);
+            long commitLag = (maxTimestamp - minTimestamp) / 2;
+            maxTimestamp -= commitLag;
+            writer.commitWithLag(commitLag);
             TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where ts<=cast(" + maxTimestamp + " as timestamp)", sink);
             TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
             TestUtils.assertEquals(sink, sink2);
@@ -984,7 +984,7 @@ public class O3HysteresisTest extends AbstractO3Test {
         TestUtils.assertEquals(sink, sink2);
     }
 
-    private void testHysteresisWithinPartitionWithRollback(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    private void testCommitLagWithinPartitionWithRollback(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
         String sql = "create table x as (" +
                 "select" +
                 " cast(x as int) i," +
@@ -1018,9 +1018,9 @@ public class O3HysteresisTest extends AbstractO3Test {
         try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "y")) {
             sql = "select * from x where i>250 order by f";
             insertUncommitted(compiler, sqlExecutionContext, sql, writer);
-            long lastTimestampHysteresisInMicros = (maxTimestamp - minTimestamp) / 2;
-            maxTimestamp -= lastTimestampHysteresisInMicros;
-            writer.commitHysteresis(lastTimestampHysteresisInMicros);
+            long commitLag = (maxTimestamp - minTimestamp) / 2;
+            maxTimestamp -= commitLag;
+            writer.commitWithLag(commitLag);
             TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where ts<=cast(" + maxTimestamp + " as timestamp)", sink);
             TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
             TestUtils.assertEquals(sink, sink2);
@@ -1041,7 +1041,7 @@ public class O3HysteresisTest extends AbstractO3Test {
         TestUtils.assertEquals(sink, sink2);
     }
 
-    private void testLargeHysteresisWithinPartition(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    private void testLargeLagWithinPartition(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
         String sql = "create table x as (" +
                 "select" +
                 " cast(x as int) i," +
@@ -1075,9 +1075,9 @@ public class O3HysteresisTest extends AbstractO3Test {
         try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "y")) {
             sql = "select * from x where i>250 order by f";
             insertUncommitted(compiler, sqlExecutionContext, sql, writer);
-            long lastTimestampHysteresisInMicros = (maxTimestamp - minTimestamp) * 3 / 4;
-            maxTimestamp -= lastTimestampHysteresisInMicros;
-            writer.commitHysteresis(lastTimestampHysteresisInMicros);
+            long commitLag = (maxTimestamp - minTimestamp) * 3 / 4;
+            maxTimestamp -= commitLag;
+            writer.commitWithLag(commitLag);
             TestUtils.printSql(compiler, sqlExecutionContext, "select i, ts from x where ts<=cast(" + maxTimestamp + " as timestamp)", sink);
             TestUtils.printSql(compiler, sqlExecutionContext, "select i, ts from y", sink2);
             TestUtils.assertEquals(sink, sink2);
@@ -1090,7 +1090,7 @@ public class O3HysteresisTest extends AbstractO3Test {
         TestUtils.assertEquals(sink, sink2);
     }
 
-    private void testLargeHysteresisWithRowLimit(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    private void testLargeLagWithRowLimit(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
         String sql = "create table x as (" +
                 "select" +
                 " cast(x as int) i," +
@@ -1114,7 +1114,7 @@ public class O3HysteresisTest extends AbstractO3Test {
                 "), index(sym) timestamp (ts) partition by DAY";
         compiler.compile(sql, sqlExecutionContext);
 
-        sql = "create table y as (select * from x where i<=250) partition by DAY WITH o3MaxUncommittedRows=100, o3CommitHysteresis=10s";
+        sql = "create table y as (select * from x where i<=250) partition by DAY WITH o3MaxUncommittedRows=100, o3CommitLag=10s";
         compiler.compile(sql, sqlExecutionContext);
 
         TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where i<=250", sink);
@@ -1124,9 +1124,9 @@ public class O3HysteresisTest extends AbstractO3Test {
         try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "y")) {
             sql = "select * from x where i>250 order by f";
             insertUncommitted(compiler, sqlExecutionContext, sql, writer);
-            long lastTimestampHysteresisInMicros = (maxTimestamp - minTimestamp) * 3 / 4;
-            maxTimestamp -= lastTimestampHysteresisInMicros;
-            writer.commitHysteresis(lastTimestampHysteresisInMicros);
+            long commitLag = (maxTimestamp - minTimestamp) * 3 / 4;
+            maxTimestamp -= commitLag;
+            writer.commitWithLag(commitLag);
             TestUtils.printSql(compiler, sqlExecutionContext, "select i, ts from x limit 400", sink);
             TestUtils.printSql(compiler, sqlExecutionContext, "select i, ts from y", sink2);
             TestUtils.assertEquals(sink, sink2);
@@ -1137,7 +1137,7 @@ public class O3HysteresisTest extends AbstractO3Test {
         TestUtils.assertEquals(sink, sink2);
     }
 
-    private void testNoHysteresis0(
+    private void testNoLag0(
             CairoEngine engine,
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
@@ -1190,7 +1190,7 @@ public class O3HysteresisTest extends AbstractO3Test {
         TestUtils.assertEquals(sink, sink2);
     }
 
-    private void testNoHysteresisEndingAtPartitionBoundary(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    private void testNoLagEndingAtPartitionBoundary(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
         String sql = "create table x as (" +
                 "select" +
                 " cast(x as int) i," +
@@ -1240,7 +1240,7 @@ public class O3HysteresisTest extends AbstractO3Test {
         TestUtils.assertEquals(sink, sink2);
     }
 
-    private void testNoHysteresisWithRollback(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    private void testNoLagWithRollback(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
         String sql = "create table x as (" +
                 "select" +
                 " cast(x as int) i," +

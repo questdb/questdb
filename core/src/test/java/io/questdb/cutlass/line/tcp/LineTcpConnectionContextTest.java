@@ -203,14 +203,14 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
                     SqlCompiler compiler = new SqlCompiler(engine);
                     SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)) {
                 compiler.compile(
-                        "create table weather (location SYMBOL, temperature DOUBLE, timestamp TIMESTAMP) timestamp(timestamp) partition by DAY WITH o3MaxUncommittedRows=3, o3CommitHysteresis=250ms;",
+                        "create table weather (location SYMBOL, temperature DOUBLE, timestamp TIMESTAMP) timestamp(timestamp) partition by DAY WITH o3MaxUncommittedRows=3, o3CommitLag=250ms;",
                         sqlExecutionContext);
             } catch (SqlException ex) {
                 throw new RuntimeException(ex);
             }
             try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "weather")) {
                 Assert.assertEquals(3, reader.getMetadata().getMaxUncommittedRows());
-                Assert.assertEquals(250_000, reader.getMetadata().getO3CommitHysteresis());
+                Assert.assertEquals(250_000, reader.getMetadata().getO3CommitLag());
             }
             recvBuffer = "weather,location=us-midwest temperature=82 1465839830100400200\n" +
                     "weather,location=us-midwest temperature=83 1465839830100500200\n" +
@@ -236,7 +236,7 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
             assertTable(expected, "weather");
             try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "weather")) {
                 Assert.assertEquals(3, reader.getMetadata().getMaxUncommittedRows());
-                Assert.assertEquals(250_000, reader.getMetadata().getO3CommitHysteresis());
+                Assert.assertEquals(250_000, reader.getMetadata().getO3CommitLag());
             }
         });
     }

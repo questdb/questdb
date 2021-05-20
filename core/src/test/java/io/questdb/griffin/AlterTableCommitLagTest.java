@@ -34,7 +34,7 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class AlterTableHysteresisTest extends AbstractGriffinTest {
+public class AlterTableCommitLagTest extends AbstractGriffinTest {
     @Test
     public void setMaxUncommittedRows() throws Exception {
         assertMemoryLeak(() -> {
@@ -78,20 +78,20 @@ public class AlterTableHysteresisTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void setCommitHysteresis() throws Exception {
+    public void setCommitLag() throws Exception {
         assertMemoryLeak(() -> {
-            String tableName = "setCommitHysteresisTable";
+            String tableName = "setCommitLagTable";
             try (TableModel tbl = new TableModel(configuration, tableName, PartitionBy.DAY)) {
                 createX(tbl);
             }
             try (TableReader rdr = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
-                String alterCommand = "ALTER TABLE " + tableName + " SET PARAM o3CommitHysteresis = 111s";
+                String alterCommand = "ALTER TABLE " + tableName + " SET PARAM o3CommitLag = 111s";
                 compiler.compile(alterCommand, sqlExecutionContext);
 
-                assertSql("SELECT o3CommitHysteresis FROM tables() WHERE name = '" + tableName + "'",
-                        "o3CommitHysteresis\n111000000\n");
+                assertSql("SELECT o3CommitLag FROM tables() WHERE name = '" + tableName + "'",
+                        "o3CommitLag\n111000000\n");
                 rdr.reload();
-                Assert.assertEquals(111000000L, rdr.getMetadata().getO3CommitHysteresis());
+                Assert.assertEquals(111000000L, rdr.getMetadata().getO3CommitLag());
             }
             assertX(tableName);
         });
@@ -105,10 +105,10 @@ public class AlterTableHysteresisTest extends AbstractGriffinTest {
             }
             try (TableReader ignored = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "X")) {
                 try {
-                    compiler.compile("ALTER TABLE X SET PARAM s3CommitHysteresis = 111s", sqlExecutionContext);
+                    compiler.compile("ALTER TABLE X SET PARAM s3CommitLag = 111s", sqlExecutionContext);
                     Assert.fail();
                 } catch (SqlException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "unknown parameter 's3CommitHysteresis'");
+                    TestUtils.assertContains(e.getFlyweightMessage(), "unknown parameter 's3CommitLag'");
                 }
             }
             assertX("X");
@@ -230,32 +230,32 @@ public class AlterTableHysteresisTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void setCommitHysteresisWrongTimeQualifier() throws Exception {
-        assertFailure("ALTER TABLE X SET PARAM o3CommitHysteresis = 111days",
+    public void setCommitLagWrongTimeQualifier() throws Exception {
+        assertFailure("ALTER TABLE X SET PARAM o3CommitLag = 111days",
                 "CREATE TABLE X (ts TIMESTAMP, i INT, l LONG) timestamp(ts) PARTITION BY MONTH",
                 27,
                 "interval qualifier");
     }
 
     @Test
-    public void setCommitHysteresisWrongTimeQualifier2() throws Exception {
-        assertFailure("ALTER TABLE X SET PARAM o3CommitHysteresis = 111us",
+    public void setCommitLagWrongTimeQualifier2() throws Exception {
+        assertFailure("ALTER TABLE X SET PARAM o3CommitLag = 111us",
                 "CREATE TABLE X (ts TIMESTAMP, i INT, l LONG) timestamp(ts) PARTITION BY MONTH",
                 29,
                 "interval qualifier");
     }
 
     @Test
-    public void setCommitHysteresisWrongSetSyntax() throws Exception {
-        assertFailure("ALTER TABLE X SET o3CommitHysteresis = 111ms",
+    public void setCommitLagWrongSetSyntax() throws Exception {
+        assertFailure("ALTER TABLE X SET o3CommitLag = 111ms",
                 "CREATE TABLE X (ts TIMESTAMP, i INT, l LONG) timestamp(ts) PARTITION BY MONTH",
                 18,
                 "'param' expected");
     }
 
     @Test
-    public void setCommitHysteresisWrongSetSyntax2() throws Exception {
-        assertFailure("ALTER TABLE X PARAM o3CommitHysteresis = 111ms",
+    public void setCommitLagWrongSetSyntax2() throws Exception {
+        assertFailure("ALTER TABLE X PARAM o3CommitLag = 111ms",
                 "CREATE TABLE X (ts TIMESTAMP, i INT, l LONG) timestamp(ts) PARTITION BY MONTH",
                 14,
                 "'set' or 'rename' expected");

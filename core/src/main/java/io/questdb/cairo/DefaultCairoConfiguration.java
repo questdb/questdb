@@ -532,7 +532,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public long getO3CommitHysteresis() {
+    public long getO3CommitLag() {
         return 0;
     }
 }

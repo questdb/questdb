@@ -36,7 +36,7 @@ public class TableWriterMetadata extends BaseRecordMetadata {
     private int version;
     private final int id;
     private int o3MaxUncommittedRows;
-    private long o3CommitHysteresis;
+    private long o3CommitLag;
 
     public TableWriterMetadata(FilesFacade ff, MappedReadOnlyMemory metaMem) {
         this.columnCount = metaMem.getInt(TableUtils.META_OFFSET_COUNT);
@@ -44,7 +44,7 @@ public class TableWriterMetadata extends BaseRecordMetadata {
         this.version = metaMem.getInt(TableUtils.META_OFFSET_VERSION);
         this.id = metaMem.getInt(TableUtils.META_OFFSET_TABLE_ID);
         this.o3MaxUncommittedRows = metaMem.getInt(TableUtils.META_OFFSET_O3_MAX_UNCOMMITTED_ROWS);
-        this.o3CommitHysteresis = metaMem.getLong(TableUtils.META_OFFSET_O3_COMMIT_HYSTERESIS);
+        this.o3CommitLag = metaMem.getLong(TableUtils.META_OFFSET_O3_COMMIT_LAG);
         TableUtils.validate(ff, metaMem, columnNameIndexMap);
         this.timestampIndex = metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX);
         this.columnMetadata = new ObjList<>(this.columnCount);
@@ -142,15 +142,15 @@ public class TableWriterMetadata extends BaseRecordMetadata {
         return o3MaxUncommittedRows;
     }
 
-    public long getO3CommitHysteresis() {
-        return o3CommitHysteresis;
+    public long getO3CommitLag() {
+        return o3CommitLag;
     }
 
     public void setO3MaxUncommittedRows(int rows) {
         this.o3MaxUncommittedRows = rows;
     }
 
-    public void setO3CommitHysteresis(long micros) {
-        this.o3CommitHysteresis = micros;
+    public void setO3CommitLag(long micros) {
+        this.o3CommitLag = micros;
     }
 }

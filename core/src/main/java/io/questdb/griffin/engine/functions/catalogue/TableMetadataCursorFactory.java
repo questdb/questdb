@@ -47,7 +47,7 @@ public class TableMetadataCursorFactory implements FunctionFactory {
     private static final int nameColumn;
     private static final int partitionByColumn;
     private static final int maxUncommittedRowsColumn;
-    private static final int o3CommitHysteresisColumn;
+    private static final int o3CommitLagColumn;
     private static final int designatedTimestampColumn;
     private static final Log LOG = LogFactory.getLog(TableMetadataCursorFactory.class);
 
@@ -63,8 +63,8 @@ public class TableMetadataCursorFactory implements FunctionFactory {
         partitionByColumn = metadata.getColumnCount() - 1;
         metadata.add(new TableColumnMetadata("o3MaxUncommittedRows", ColumnType.INT, null));
         maxUncommittedRowsColumn = metadata.getColumnCount() - 1;
-        metadata.add(new TableColumnMetadata("o3CommitHysteresis", ColumnType.LONG, null));
-        o3CommitHysteresisColumn = metadata.getColumnCount() - 1;
+        metadata.add(new TableColumnMetadata("o3CommitLag", ColumnType.LONG, null));
+        o3CommitLagColumn = metadata.getColumnCount() - 1;
         METADATA = metadata;
     }
 
@@ -192,7 +192,7 @@ public class TableMetadataCursorFactory implements FunctionFactory {
             public class TableListRecord implements Record {
                 private int tableId;
                 private int maxUncommittedRows;
-                private long o3CommitHysteresis;
+                private long o3CommitLag;
                 private int partitionBy;
 
                 @Override
@@ -229,8 +229,8 @@ public class TableMetadataCursorFactory implements FunctionFactory {
 
                 @Override
                 public long getLong(int col) {
-                    if (col == o3CommitHysteresisColumn) {
-                        return o3CommitHysteresis;
+                    if (col == o3CommitLagColumn) {
+                        return o3CommitLag;
                     }
                     return Numbers.LONG_NaN;
                 }
@@ -249,7 +249,7 @@ public class TableMetadataCursorFactory implements FunctionFactory {
                         // Pre-read as much as possible to skip record instead of failing on column fetch
                         tableId = metaReader.getId();
                         maxUncommittedRows = metaReader.getMaxUncommittedRows();
-                        o3CommitHysteresis = metaReader.getO3CommitHysteresis();
+                        o3CommitLag = metaReader.getO3CommitLag();
                         partitionBy = metaReader.getPartitionBy();
                     } catch (CairoException e) {
                         // perhaps this folder is not a table
