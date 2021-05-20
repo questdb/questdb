@@ -3489,6 +3489,16 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testLatestByWithOuterFilter() throws SqlException {
+        assertQuery(
+                "select-choose time, uuid from (select-choose [time, uuid] time, uuid from (select [uuid, time] from positions timestamp (time) latest by uuid where time < '2021-05-11T14:00') where uuid = '006cb7c6-e0d5-3fea-87f2-83cf4a75bc28')",
+                "(positions latest by uuid where time < '2021-05-11T14:00') where uuid = '006cb7c6-e0d5-3fea-87f2-83cf4a75bc28'",
+                modelOf("positions").timestamp("time").col("uuid", ColumnType.SYMBOL)
+
+        );
+    }
+
+    @Test
     public void testLatestBySyntax() throws Exception {
         assertSyntaxError(
                 "select * from tab latest",
