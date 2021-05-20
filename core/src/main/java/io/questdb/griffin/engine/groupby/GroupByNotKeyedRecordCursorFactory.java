@@ -134,10 +134,7 @@ public class GroupByNotKeyedRecordCursorFactory implements RecordCursorFactory {
                     GroupByUtils.updateExisting(groupByFunctions, n, simpleMapValue, baseRecord);
                 }
             } else {
-                int jjj = 0;
                 GroupByUtils.updateEmpty(groupByFunctions, n, simpleMapValue);
-//                this.baseCursor = Misc.free(baseCursor);
-//                return EmptyTableRecordCursor.INSTANCE;
             }
 
             toTop();

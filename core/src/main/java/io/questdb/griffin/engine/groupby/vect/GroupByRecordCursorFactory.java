@@ -217,7 +217,7 @@ public class GroupByRecordCursorFactory implements RecordCursorFactory {
                     frameDataType = frame.getColumnSize(keyColumnIndex);
                     valueAddressSize = frame.getPageSize(keyColumnIndex);
                 }
-                long seq = -1 ;// pubSeq.next();
+                long seq = pubSeq.next();
                 if (seq < 0) {
                     if (keyAddress == 0) {
                         vaf.aggregate(valueAddress, valueAddressSize, frameDataType, workerId);

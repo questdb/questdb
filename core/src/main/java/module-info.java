@@ -23,9 +23,6 @@
  ******************************************************************************/
 
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.engine.functions.groupby.FirstCharGroupByFunctionFactory;
-import io.questdb.griffin.engine.functions.groupby.LastCharGroupByFunctionFactory;
-import io.questdb.griffin.engine.functions.groupby.MaxCharGroupByFunctionFactory;
 
 open module io.questdb {
     requires transitive jdk.unsupported;
@@ -424,34 +421,29 @@ open module io.questdb {
 //                  'sum' group by function
             io.questdb.griffin.engine.functions.groupby.SumDoubleGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.SumFloatGroupByFunctionFactory,
-            io.questdb.griffin.engine.functions.groupby.SumByteGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.SumShortGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.SumIntGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.SumLongGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.KSumDoubleGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.NSumDoubleGroupByFunctionFactory,
 //                  'last' group by function
-            io.questdb.griffin.engine.functions.groupby.LastByteGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.LastDoubleGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.LastFloatGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.LastIntGroupByFunctionFactory,
-            LastCharGroupByFunctionFactory,
+            io.questdb.griffin.engine.functions.groupby.LastCharGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.LastSymbolGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.LastTimestampGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.LastDateGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.LastLongGroupByFunctionFactory,
-            io.questdb.griffin.engine.functions.groupby.LastStrGroupByFunctionFactory,
 
 //                  'first' group by function
-            io.questdb.griffin.engine.functions.groupby.FirstByteGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.FirstDoubleGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.FirstFloatGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.FirstIntGroupByFunctionFactory,
-            FirstCharGroupByFunctionFactory,
+            io.questdb.griffin.engine.functions.groupby.FirstCharGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.FirstTimestampGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.FirstLongGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.FirstDateGroupByFunctionFactory,
-            io.questdb.griffin.engine.functions.groupby.FirstStrGroupByFunctionFactory,
 //                  'max' group
             io.questdb.griffin.engine.functions.groupby.MaxDoubleGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.MaxIntGroupByFunctionFactory,
@@ -464,8 +456,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.groupby.MinFloatGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.MinLongGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.MinIntGroupByFunctionFactory,
-            io.questdb.griffin.engine.functions.groupby.MinShortGroupByFunctionFactory,
-            MaxCharGroupByFunctionFactory,
+            io.questdb.griffin.engine.functions.groupby.MaxCharGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.MinCharGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.MinTimestampGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.MinDateGroupByFunctionFactory,

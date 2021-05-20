@@ -677,10 +677,10 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
                         "a3\t104044.11326997768\n";
             } else {
                 expected = "s2\tsum\n" +
-                        "\t520447.6629968707\n" +
-                        "a1\t104308.65839619507\n" +
-                        "a2\t104559.2867475151\n" +
-                        "a3\t104044.11326997809\n";
+                        "\t520447.6629968692\n" +
+                        "a1\t104308.65839619662\n" +
+                        "a2\t104559.28674751727\n" +
+                        "a3\t104044.11326997768\n";
             }
 
             // test with key falling within null columns
@@ -777,6 +777,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
             compiler.compile("alter table tab add column val double ", sqlExecutionContext);
             compiler.compile("insert into tab select rnd_symbol('s1','s2','s3', null), timestamp_sequence(cast('1970-01-13T00:00:00.000000Z' as timestamp), 1000000), rnd_double(2) from long_sequence(1000000)", sqlExecutionContext);
 
+
             // test with key falling within null columns
             assertSql(
                     "select s1, sum(val) from tab where t > '1970-01-04T12:00' and t < '1970-01-07T11:00' order by s1",
@@ -787,14 +788,13 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
                             "s3\tNaN\n"
             );
 
-            /// test key on overlap
             assertSql(
                     "select s1, sum(val) from tab where t > '1970-01-12T12:00' and t < '1970-01-14T11:00' order by s1",
                     "s1\tsum\n" +
-                            "\t13168.088431585855\n" +
-                            "s1\t12972.778275274406\n" +
-                            "s2\t13388.118328291577\n" +
-                            "s3\t12929.344747450818\n"
+                            "\t13168.088431585857\n" +
+                            "s1\t12972.778275274499\n" +
+                            "s2\t13388.118328291552\n" +
+                            "s3\t12929.34474745085\n"
             );
         });
     }
@@ -971,6 +971,22 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
         sql = "select count() from tt1";
         assertSqlWithTypes(sql, expected);
         assertSqlWithTypes(sql + " where now() > '1000-01-01'", expected);
+    }
+
+    @Test
+    public void testCountAggregationWithConst() throws Exception {
+        try (TableModel tt1 = new TableModel(configuration, "tt1", PartitionBy.DAY)) {
+            tt1.col("tts", ColumnType.LONG).timestamp("ts");
+            createPopulateTable(tt1, 100, "2020-01-01", 2);
+        }
+
+        String expected = "ts\tcount\n" +
+                "2020-01-01T00:28:47.990000Z:TIMESTAMP\t51:LONG\n" +
+                "2020-01-02T00:28:47.990000Z:TIMESTAMP\t49:LONG\n";
+
+        String sql = "select ts, count() from tt1 SAMPLE BY d";
+
+        assertSqlWithTypes(sql, expected);
     }
 
     @Test

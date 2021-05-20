@@ -321,21 +321,21 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
 
     @Test
     public void testCharIndexed() throws SqlException {
-        bindVariableService.setInt(0, 'C');
-        bindVariableService.setShort(1, (short) 'A');
+        bindVariableService.setChar(0, 'C');
+        bindVariableService.setChar(1, 'A');
 
-        Function func = expr("$1 - $2")
-                .withFunction(new SubIntFunctionFactory())
+        Function func = expr("$1 || $2")
+                .withFunction(new ConcatFunctionFactory())
                 .$();
 
         func.init(null, sqlExecutionContext);
-        Assert.assertEquals(2, func.getInt(builder.getRecord()));
+        TestUtils.assertEquals("CA", func.getStr(builder.getRecord()));
 
-        bindVariableService.setShort(1, (short) '0');
+        bindVariableService.setChar(1, '0');
 
         func.init(null, sqlExecutionContext);
 
-        Assert.assertEquals(19, func.getInt(builder.getRecord()));
+        TestUtils.assertEquals("C0", func.getStr(builder.getRecord()));
 
         func.close();
     }

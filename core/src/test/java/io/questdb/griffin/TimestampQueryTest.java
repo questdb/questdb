@@ -749,7 +749,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
     @Test
     public void testTimestampInDay1orDay2() throws Exception {
         assertQuery(
-                "min\tmax\n\n",
+                "min\tmax\n\t\n",
                 "select min(nts), max(nts) from tt where nts IN '2020-01-01' or nts IN '2020-01-02'",
                 "create table tt (dts timestamp, nts timestamp) timestamp(dts)",
                 null,
@@ -767,14 +767,14 @@ public class TimestampQueryTest extends AbstractGriffinTest {
     @Test
     public void testTimestampStringComparison() throws Exception {
         assertQuery(
-                "min\tmax\n\n",
+                "min\tmax\n\t\n",
                 "select min(nts), max(nts) from tt where nts = '2020-01-01'",
                 "create table tt (dts timestamp, nts timestamp) timestamp(dts)",
                 null,
                 "insert into tt " +
                         "select timestamp_sequence(1577836800000000L, 60*60*1000000L), timestamp_sequence(1577836800000000L, 60*60*1000000L) " +
                         "from long_sequence(48L)",
-                "min\tmax\n\n" +
+                "min\tmax\n" +
                         "2020-01-01T00:00:00.000000Z\t2020-01-01T00:00:00.000000Z\n",
                 false,
                 false,
@@ -1102,7 +1102,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
 
             String expected = "min\tmax\tcount\n\t\t0\n";
             assertTimestampTtQuery(expected, "select min(nts), max(nts), count() from tt where nts < '2020-01-01'");
-//            assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where '2020-01-01' > nts");
+            assertTimestampTtQuery(expected, "select min(nts), max(nts), count() from tt where '2020-01-01' > nts");
         });
     }
 

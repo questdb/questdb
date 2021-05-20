@@ -154,15 +154,6 @@ public class SqlCodeGenerator implements Mutable {
         return new LtJoinRecordCursorFactory(configuration, metadata, masterFactory, slaveFactory, mapKeyTypes, mapValueTypes, slaveColumnTypes, masterKeySink, slaveKeySink, columnSplit, slaveValueSink, columnIndex);
     }
 
-//    private static void addCountConstructor(int type) {
-//        countConstructors.put(type,
-//                (position, keyKind, columnIndex, workerCount) -> new CountVectorAggregateFunction(
-//                        position,
-//                        keyKind
-//                )
-//        );
-//    }
-
     private VectorAggregateFunctionConstructor assembleFunctionReference(RecordMetadata metadata, ExpressionNode ast) {
         int columnIndex;
         if (ast.type == FUNCTION && ast.paramCount == 1 && SqlKeywords.isSumKeyword(ast.token) && ast.rhs.type == LITERAL) {
@@ -170,18 +161,9 @@ public class SqlCodeGenerator implements Mutable {
             tempVecConstructorArgIndexes.add(columnIndex);
             return sumConstructors.get(metadata.getColumnType(columnIndex));
         } else if (ast.type == FUNCTION && ast.paramCount == 0 && SqlKeywords.isCountKeyword(ast.token)) {
-//            columnIndex = tempKeyIndexesInBase.getQuick(0);
-
-//            columnIndex = metadata.getTimestampIndex();
-//            tempVecConstructorArgIndexes.add(columnIndex);
-//            int keyType = ColumnType.TIMESTAMP;
             // count() is a no-arg function
             tempVecConstructorArgIndexes.add(-1);
             return countConstructor;
-
-//            tempVecConstructorArgIndexes.add(-1);
-//            return countConstructors.get(ColumnType.pow2SizeOf());
-
         } else if (isSingleColumnFunction(ast, "ksum")) {
             columnIndex = metadata.getColumnIndex(ast.rhs.token);
             tempVecConstructorArgIndexes.add(columnIndex);
@@ -2861,11 +2843,5 @@ public class SqlCodeGenerator implements Mutable {
         maxConstructors.put(ColumnType.DATE, MaxDateVectorAggregateFunction::new);
         maxConstructors.put(ColumnType.TIMESTAMP, MaxTimestampVectorAggregateFunction::new);
         maxConstructors.put(ColumnType.INT, MaxIntVectorAggregateFunction::new);
-
-//        addCountConstructor(ColumnType.DOUBLE);
-//        addCountConstructor(ColumnType.LONG);
-//        addCountConstructor(ColumnType.DATE);
-//        addCountConstructor(ColumnType.TIMESTAMP);
-//        addCountConstructor(ColumnType.INT);
     }
 }

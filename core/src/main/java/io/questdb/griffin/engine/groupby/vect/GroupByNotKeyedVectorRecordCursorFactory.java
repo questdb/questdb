@@ -104,18 +104,10 @@ public class GroupByNotKeyedVectorRecordCursorFactory implements RecordCursorFac
         while ((frame = cursor.next()) != null) {
             for (int i = 0; i < vafCount; i++) {
                 final VectorAggregateFunction vaf = vafList.getQuick(i);
-                int columnIndex = vaf.getColumnIndex();
-                final long pageAddress;
-                final long pageSize;
-                final int pageColType;
-
-                if (columnIndex > -1) {
-                    pageAddress = frame.getPageAddress(columnIndex);
-                    pageSize = frame.getPageSize(columnIndex);
-                    pageColType = frame.getColumnSize(columnIndex);
-                } else {
-                    throw new UnsupportedOperationException();
-                }
+                final int columnIndex = vaf.getColumnIndex();
+                final long pageAddress = frame.getPageAddress(columnIndex);
+                final long pageSize = frame.getPageSize(columnIndex);
+                final int pageColType = frame.getColumnSize(columnIndex);
                 long seq = pubSeq.next();
                 if (seq < 0) {
                     // diy the func
