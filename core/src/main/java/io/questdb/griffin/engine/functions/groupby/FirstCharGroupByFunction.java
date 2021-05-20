@@ -29,57 +29,52 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.engine.functions.ByteFunction;
+import io.questdb.griffin.engine.functions.CharFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import org.jetbrains.annotations.NotNull;
 
-public class MinByteGroupByFunction extends ByteFunction implements GroupByFunction, UnaryFunction {
+public class FirstCharGroupByFunction extends CharFunction implements GroupByFunction, UnaryFunction {
     private final Function arg;
     private int valueIndex;
 
-    public MinByteGroupByFunction(int position, @NotNull Function arg) {
+    public FirstCharGroupByFunction(int position, @NotNull Function arg) {
         super(position);
         this.arg = arg;
     }
 
     @Override
     public void computeFirst(MapValue mapValue, Record record) {
-        mapValue.putByte(valueIndex, arg.getByte(record));
+        mapValue.putChar(this.valueIndex, this.arg.getChar(record));
     }
 
     @Override
     public void computeNext(MapValue mapValue, Record record) {
-        byte min = mapValue.getByte(valueIndex);
-        byte next = arg.getByte(record);
-        if (next < min) {
-            mapValue.putByte(valueIndex, next);
-        }
+        // empty
     }
 
     @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(ColumnType.BYTE);
-    }
-
-    @Override
-    public void setByte(MapValue mapValue, byte value) {
-        mapValue.putByte(valueIndex, value);
+        columnTypes.add(ColumnType.SHORT);
     }
 
     @Override
     public void setNull(MapValue mapValue) {
-        mapValue.putByte(valueIndex, (byte) 0);
+        setChar(mapValue, (char) 0);
     }
 
-    @Override
-    public byte getByte(Record rec) {
-        return rec.getByte(valueIndex);
+    public void setChar(MapValue mapValue, char value) {
+        mapValue.putChar(this.valueIndex, value);
     }
 
     @Override
     public Function getArg() {
-        return arg;
+        return this.arg;
+    }
+
+    @Override
+    public char getChar(Record rec) {
+        return rec.getChar(this.valueIndex);
     }
 }

@@ -534,7 +534,6 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
 
                     final int sigArgType = FunctionFactoryDescriptor.toType(sigArgTypeMask);
 
-                    sigArgTypeSum += ColumnType.widthPrecedenceOf(sigArgType);
 
                     if (sigArgType == arg.getType()) {
                         switch (match) {
@@ -553,11 +552,10 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
 
                     final int argType = arg.getType();
 
+                    int overloadDistance = ColumnType.overloadDistance(argType, sigArgType);
+                    sigArgTypeSum += overloadDistance;
                     // Overload with cast to higher precision
-                    boolean overloadPossible = argType >= ColumnType.BYTE &&
-                            sigArgType >= ColumnType.BYTE &&
-                            sigArgType <= ColumnType.DOUBLE &&
-                            argType < sigArgType;
+                    boolean overloadPossible = overloadDistance != ColumnType.NO_OVERLOAD;
 
                     // Overload when arg is double NaN to func which accepts INT, LONG
                     overloadPossible |= argType == ColumnType.DOUBLE &&

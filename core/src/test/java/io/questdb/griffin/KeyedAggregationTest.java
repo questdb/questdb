@@ -677,10 +677,10 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
                         "a3\t104044.11326997768\n";
             } else {
                 expected = "s2\tsum\n" +
-                        "\t520447.6629968692\n" +
-                        "a1\t104308.65839619662\n" +
-                        "a2\t104559.28674751727\n" +
-                        "a3\t104044.11326997768\n";
+                        "\t520447.6629968707\n" +
+                        "a1\t104308.65839619507\n" +
+                        "a2\t104559.2867475151\n" +
+                        "a3\t104044.11326997809\n";
             }
 
             // test with key falling within null columns
@@ -791,10 +791,10 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
             assertSql(
                     "select s1, sum(val) from tab where t > '1970-01-12T12:00' and t < '1970-01-14T11:00' order by s1",
                     "s1\tsum\n" +
-                            "\t13168.088431585857\n" +
-                            "s1\t12972.778275274499\n" +
-                            "s2\t13388.118328291552\n" +
-                            "s3\t12929.34474745085\n"
+                            "\t13168.088431585855\n" +
+                            "s1\t12972.778275274406\n" +
+                            "s2\t13388.118328291577\n" +
+                            "s3\t12929.344747450818\n"
             );
         });
     }
@@ -921,9 +921,9 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
     public void testMinMaxAggregations() throws Exception {
         String[] aggregateFunctions = {"max", "min"};
         TypeVal[] aggregateColTypes = {
-                new TypeVal(ColumnType.BYTE, "NaN:DOUBLE"),
-                new TypeVal(ColumnType.CHAR, "NaN:DOUBLE"),
-                new TypeVal(ColumnType.SHORT, "NaN:DOUBLE"),
+                new TypeVal(ColumnType.BYTE, "NaN:INT"),
+                new TypeVal(ColumnType.CHAR, ":CHAR"),
+                new TypeVal(ColumnType.SHORT, "NaN:INT"),
                 new TypeVal(ColumnType.INT, "NaN:INT"),
                 new TypeVal(ColumnType.LONG, "NaN:LONG"),
                 new TypeVal(ColumnType.DATE, ":DATE"),
@@ -939,9 +939,9 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
         String[] aggregateFunctions = {"first", "last"};
         TypeVal[] aggregateColTypes = {
                 new TypeVal(ColumnType.SYMBOL, ":SYMBOL"),
-                new TypeVal(ColumnType.BYTE, "NaN:DOUBLE"),
-                new TypeVal(ColumnType.CHAR, "NaN:DOUBLE"),
-                new TypeVal(ColumnType.SHORT, "NaN:DOUBLE"),
+                new TypeVal(ColumnType.BYTE, "NaN:INT"),
+                new TypeVal(ColumnType.CHAR, ":CHAR"),
+                new TypeVal(ColumnType.SHORT, "NaN:INT"),
                 new TypeVal(ColumnType.INT, "NaN:INT"),
                 new TypeVal(ColumnType.LONG, "NaN:LONG"),
                 new TypeVal(ColumnType.DATE, ":DATE"),
@@ -1018,7 +1018,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
                 assertSqlWithTypes(sql.toString(), expected);
 
                 // Force to go to not-vector execution
-                assertSqlWithTypes(sql.toString() + " where now() > '1000-01-01'", expected);
+                assertSqlWithTypes(sql + " where now() > '1000-01-01'", expected);
             }
         }
     }
