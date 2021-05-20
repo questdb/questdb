@@ -1,10 +1,5 @@
 import * as ace from "ace-builds"
-
-enum StoreKey {
-  TEXT = "query.text",
-  LINE = "editor.line",
-  COL = "editor.col",
-}
+import { getValue, setValue } from "utils/localStorage"
 
 type Position = Readonly<{
   column: number
@@ -18,14 +13,14 @@ export type Request = Readonly<{
 }>
 
 export const loadPreferences = (editor: ace.Ace.Editor) => {
-  const query = localStorage.getItem(StoreKey.TEXT)
+  const query = getValue("query.text")
 
   if (query) {
     editor.setValue(query)
   }
 
-  const row = parseInt(localStorage.getItem(StoreKey.LINE) || "0", 10)
-  const col = parseInt(localStorage.getItem(StoreKey.COL) || "0", 10)
+  const row = parseInt(getValue("editor.line") ?? "0", 10)
+  const col = parseInt(getValue("editor.col") ?? "0", 10)
 
   if (row && col) {
     setTimeout(() => {
@@ -35,9 +30,9 @@ export const loadPreferences = (editor: ace.Ace.Editor) => {
 }
 
 export const savePreferences = (editor: ace.Ace.Editor) => {
-  localStorage.setItem(StoreKey.TEXT, editor.getValue())
-  localStorage.setItem(StoreKey.LINE, `${editor.getCursorPosition().row + 1}`)
-  localStorage.setItem(StoreKey.COL, `${editor.getCursorPosition().column}`)
+  setValue("query.text", editor.getValue())
+  setValue("editor.line", `${editor.getCursorPosition().row + 1}`)
+  setValue("editor.col", `${editor.getCursorPosition().column}`)
 }
 
 export const getQueryFromCursor = (

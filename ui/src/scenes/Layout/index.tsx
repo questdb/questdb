@@ -34,6 +34,7 @@ import Footer from "../Footer"
 import Modal from "../Modal"
 import Notifications from "../Notifications"
 import Result from "../Result"
+import Settings from "../Settings"
 import SideMenu from "../SideMenu"
 import Schema from "../Schema"
 import Sidebar from "../Sidebar"
@@ -45,6 +46,7 @@ const Top = styled.div`
 
 const Layout = () => {
   const consoleNode = document.getElementById("console")
+  const settingsNode = document.getElementById("settings")
   const notificationsNode = document.getElementById("notifications")
   const sideMenuNode = document.getElementById("sideMenu")
   const modalNode = document.getElementById("modal")
@@ -71,7 +73,6 @@ const Layout = () => {
             fallback={350}
             max={300}
             min={200}
-            name="position" /* "position" is for legacy reasons */
             onChange={handleResultSplitterChange}
           >
             <Top>
@@ -80,7 +81,6 @@ const Layout = () => {
                 fallback={350}
                 max={300}
                 min={200}
-                name="schema"
               >
                 {!sm && <Schema />}
                 <Editor />
@@ -93,6 +93,7 @@ const Layout = () => {
       {notificationsNode && createPortal(<Notifications />, notificationsNode)}
       {sideMenuNode && createPortal(<SideMenu />, sideMenuNode)}
       {modalNode && createPortal(<Modal />, modalNode)}
+      {settingsNode && createPortal(<Settings />, settingsNode)}
     </>
   )
 }
