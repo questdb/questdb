@@ -2955,16 +2955,20 @@ class SqlOptimiser {
                     if (emitCursors(qc.getAst(), cursorModel, null, translatingModel, baseModel, sqlExecutionContext)) {
                         qc = ensureAliasUniqueness(innerVirtualModel, qc);
                     }
-                    addFunction(
-                            qc,
-                            baseModel,
-                            translatingModel,
-                            innerVirtualModel,
-                            analyticModel,
-                            groupByModel,
-                            outerVirtualModel,
-                            distinctModel
-                    );
+                    if (useGroupByModel && qc.getAst().type == ExpressionNode.CONSTANT) {
+                        outerVirtualModel.addBottomUpColumn(qc);
+                        distinctModel.addBottomUpColumn(qc);
+                    } else {
+                        addFunction(
+                                qc,
+                                baseModel,
+                                translatingModel,
+                                innerVirtualModel,
+                                analyticModel,
+                                groupByModel,
+                                outerVirtualModel,
+                                distinctModel);
+                    }
                 }
             }
         }
@@ -3044,7 +3048,7 @@ class SqlOptimiser {
             outerVirtualModel.moveLimitFrom(limitSource);
             outerVirtualModel.moveAliasFrom(limitSource);
             // in this case outer model should be of "choose" type
-            outerVirtualModel.setSelectModelType(QueryModel.SELECT_MODEL_CHOOSE);
+            outerVirtualModel.setSelectModelType(QueryModel.SELECT_MODEL_VIRTUAL);
             root = outerVirtualModel;
         }
 
