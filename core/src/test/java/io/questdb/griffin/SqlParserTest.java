@@ -1684,34 +1684,34 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCreateTableWitInvalidO3CommitHysteresis() throws Exception {
+    public void testCreateTableWitInvalidCommitLag() throws Exception {
         assertSyntaxError(
-                "create table x (a INT, t TIMESTAMP) timestamp(t) partition by DAY WITH o3CommitHysteresis=asif,",
-                99,
+                "create table x (a INT, t TIMESTAMP) timestamp(t) partition by DAY WITH commitLag=asif,",
+                90,
                 "invalid interval qualifier asif");
     }
 
     @Test
-    public void testCreateTableWitInvalidO3MaxUncommittedRows() throws Exception {
+    public void testCreateTableWitInvalidMaxUncommittedRows() throws Exception {
         assertSyntaxError(
-                "create table x (a INT, t TIMESTAMP) timestamp(t) partition by DAY WITH o3MaxUncommittedRows=asif,",
-                97,
-                "could not parse o3MaxUncommittedRows value \"asif\"");
+                "create table x (a INT, t TIMESTAMP) timestamp(t) partition by DAY WITH maxUncommittedRows=asif,",
+                95,
+                "could not parse maxUncommittedRows value \"asif\"");
     }
 
     @Test
     public void testCreateTableWithInvalidParameter1() throws Exception {
         assertSyntaxError(
-                "create table x (a INT, t TIMESTAMP) timestamp(t) partition by DAY WITH o3MaxUncommittedRows=10000, o3invalid=250ms",
-                114,
+                "create table x (a INT, t TIMESTAMP) timestamp(t) partition by DAY WITH maxUncommittedRows=10000, o3invalid=250ms",
+                112,
                 "unrecognized o3invalid after WITH");
     }
 
     @Test
     public void testCreateTableWithInvalidParameter2() throws Exception {
         assertSyntaxError(
-                "create table x (a INT, t TIMESTAMP) timestamp(t) partition by DAY WITH o3MaxUncommittedRows=10000 x o3CommitHysteresis=250ms",
-                98,
+                "create table x (a INT, t TIMESTAMP) timestamp(t) partition by DAY WITH maxUncommittedRows=10000 x commitLag=250ms",
+                96,
                 "unexpected token: x");
     }
 
@@ -1719,30 +1719,30 @@ public class SqlParserTest extends AbstractGriffinTest {
     public void testCreateTableWithO3() throws Exception {
         assertCreateTable(
                 "create table x (a INT, t TIMESTAMP) timestamp(t) partition by DAY",
-                "create table x (a INT, t TIMESTAMP) timestamp(t) partition by DAY WITH o3MaxUncommittedRows=10000, o3CommitHysteresis=250ms;");
+                "create table x (a INT, t TIMESTAMP) timestamp(t) partition by DAY WITH maxUncommittedRows=10000, commitLag=250ms;");
     }
 
     @Test
     public void testCreateTableWithPartialParameter1() throws Exception {
         assertSyntaxError(
-                "create table x (a INT, t TIMESTAMP) timestamp(t) partition by DAY WITH o3MaxUncommittedRows=10000, o3CommitHysteresis=",
-                117,
+                "create table x (a INT, t TIMESTAMP) timestamp(t) partition by DAY WITH maxUncommittedRows=10000, commitLag=",
+                106,
                 "too few arguments for '=' [found=1,expected=2]");
     }
 
     @Test
     public void testCreateTableWithPartialParameter2() throws Exception {
         assertSyntaxError(
-                "create table x (a INT, t TIMESTAMP) timestamp(t) partition by DAY WITH o3MaxUncommittedRows=10000, o3CommitHysteresis",
-                117,
+                "create table x (a INT, t TIMESTAMP) timestamp(t) partition by DAY WITH maxUncommittedRows=10000, commitLag",
+                106,
                 "expected parameter after WITH");
     }
 
     @Test
     public void testCreateTableWithPartialParameter3() throws Exception {
         assertSyntaxError(
-                "create table x (a INT, t TIMESTAMP) timestamp(t) partition by DAY WITH o3MaxUncommittedRows=10000,",
-                97,
+                "create table x (a INT, t TIMESTAMP) timestamp(t) partition by DAY WITH maxUncommittedRows=10000,",
+                95,
                 "unexpected token: ,");
     }
 
@@ -2413,7 +2413,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testInsertAsSelectBadBatchSize() throws Exception {
         assertSyntaxError(
-                "insert batch 2a hysteresis 100000 into x select * from y",
+                "insert batch 2a lag 100000 into x select * from y",
                 13, "bad long integer",
                 modelOf("x")
                         .col("a", ColumnType.INT)
@@ -2425,10 +2425,10 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testInsertAsSelectBadHysteresis() throws Exception {
+    public void testInsertAsSelectBadLag() throws Exception {
         assertSyntaxError(
-                "insert batch 2 hysteresis aa into x select * from y",
-                26, "bad long integer",
+                "insert batch 2 lag aa into x select * from y",
+                19, "bad long integer",
                 modelOf("x")
                         .col("a", ColumnType.INT)
                         .col("b", ColumnType.STRING),
@@ -2454,10 +2454,10 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testInsertAsSelectBatchSizeAndHysteresis() throws SqlException {
+    public void testInsertAsSelectBatchSizeAndLag() throws SqlException {
         assertModel(
-                "insert batch 10000 hysteresis 100000 into x select-choose c, d from (select [c, d] from y)",
-                "insert batch 10000 hysteresis 100000 into x select * from y",
+                "insert batch 10000 lag 100000 into x select-choose c, d from (select [c, d] from y)",
+                "insert batch 10000 lag 100000 into x select * from y",
                 ExecutionModel.INSERT,
                 modelOf("x")
                         .col("a", ColumnType.INT)
@@ -2510,7 +2510,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testInsertAsSelectNegativeBatchSize() throws Exception {
         assertSyntaxError(
-                "insert batch -25 hysteresis 100000 into x select * from y",
+                "insert batch -25 lag 100000 into x select * from y",
                 14, "must be positive",
                 modelOf("x")
                         .col("a", ColumnType.INT)
@@ -2522,10 +2522,10 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testInsertAsSelectNegativeHysteresis() throws Exception {
+    public void testInsertAsSelectNegativeLag() throws Exception {
         assertSyntaxError(
-                "insert batch 2 hysteresis -4 into x select * from y",
-                27, "hysteresis must be a positive integer microseconds",
+                "insert batch 2 lag -4 into x select * from y",
+                20, "lag must be a positive integer microseconds",
                 modelOf("x")
                         .col("a", ColumnType.INT)
                         .col("b", ColumnType.STRING),
@@ -6034,8 +6034,7 @@ public class SqlParserTest extends AbstractGriffinTest {
 
     @Test
     public void testTimestampWithTimezoneConstPrefixInInsert() throws Exception {
-        assertInsertQuery("insert into test (test_timestamp, test_value) values (cast('2020-12-31 15:15:51.663+00:00',timestamp), '256')",
-                "insert into test (test_timestamp, test_value) values (timestamp with time zone '2020-12-31 15:15:51.663+00:00', '256')",
+        assertInsertQuery(
                 modelOf("test").col("test_timestamp", ColumnType.TIMESTAMP).col("test_value", ColumnType.STRING));
     }
 
@@ -6188,8 +6187,13 @@ public class SqlParserTest extends AbstractGriffinTest {
         assertModel(expected, query, ExecutionModel.QUERY, tableModels);
     }
 
-    private void assertInsertQuery(String expected, String query, TableModel... tableModels) throws SqlException {
-        assertModel(expected, query, ExecutionModel.INSERT, tableModels);
+    private void assertInsertQuery(TableModel... tableModels) throws SqlException {
+        assertModel(
+                "insert into test (test_timestamp, test_value) values (cast('2020-12-31 15:15:51.663+00:00',timestamp), '256')",
+                "insert into test (test_timestamp, test_value) values (timestamp with time zone '2020-12-31 15:15:51.663+00:00', '256')",
+                ExecutionModel.INSERT,
+                tableModels
+        );
     }
 
     private void createModelsAndRun(CairoAware runnable, TableModel... tableModels) throws SqlException {
