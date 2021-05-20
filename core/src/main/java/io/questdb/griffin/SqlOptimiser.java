@@ -1136,6 +1136,17 @@ class SqlOptimiser {
         return replaced;
     }
 
+    private boolean checkForAggregates(ExpressionNode node) {
+        while (node != null) {
+            if (null != node.lhs && functionParser.isGroupBy(node.lhs.token)) {
+                return true;
+            }
+            node = node.rhs;
+        }
+
+        return false;
+    }
+
     private void emitColumnLiteralsTopDown(ObjList<QueryColumn> columns, QueryModel target) {
         for (int i = 0, n = columns.size(); i < n; i++) {
             final QueryColumn qc = columns.getQuick(i);
@@ -2777,7 +2788,7 @@ class SqlOptimiser {
         boolean useAnalyticModel = false;
         boolean useGroupByModel = false;
         boolean useOuterModel = false;
-        boolean useDistinctModel = model.isDistinct();
+        final boolean useDistinctModel = model.isDistinct();
 
         final ObjList<QueryColumn> columns = model.getBottomUpColumns();
         final QueryModel baseModel = model.getNestedModel();
@@ -2796,8 +2807,9 @@ class SqlOptimiser {
 
         // cursor model should have all columns that base model has to properly resolve duplicate names
         cursorModel.getAliasToColumnMap().putAll(baseModel.getAliasToColumnMap());
-
         // create virtual columns from select list
+
+        // TODO
         for (int i = 0, k = columns.size(); i < k; i++) {
             QueryColumn qc = columns.getQuick(i);
             final boolean analytic = qc instanceof AnalyticColumn;
@@ -2806,6 +2818,34 @@ class SqlOptimiser {
             if (analytic && qc.getAst().type != ExpressionNode.FUNCTION) {
                 throw SqlException.$(qc.getAst().position, "Analytic function expected");
             }
+
+            if (qc.getAst().type == ExpressionNode.BIND_VARIABLE) {
+                useInnerModel = true;
+            } else if (qc.getAst().type != LITERAL) {
+                if (qc.getAst().type == ExpressionNode.FUNCTION) {
+                    if (analytic) {
+                        useAnalyticModel = true;
+                        continue;
+                    } else if (functionParser.isGroupBy(qc.getAst().token)) {
+                        useGroupByModel = true;
+                        continue;
+                    } else if (functionParser.isCursor(qc.getAst().token)) {
+                        continue;
+                    }
+                }
+                if (checkForAggregates(qc.getAst())) {
+                    useGroupByModel = true;
+                    useOuterModel = true;
+                } else {
+                    useInnerModel = true;
+                }
+            }
+        }
+
+        // create virtual columns from select list
+        for (int i = 0, k = columns.size(); i < k; i++) {
+            QueryColumn qc = columns.getQuick(i);
+            final boolean analytic = qc instanceof AnalyticColumn;
 
             if (qc.getAst().type == LITERAL) {
                 if (Chars.endsWith(qc.getAst().token, '*')) {
@@ -2847,7 +2887,6 @@ class SqlOptimiser {
                         outerVirtualModel,
                         distinctModel
                 );
-                useInnerModel = true;
             } else {
                 // when column is direct call to aggregation function, such as
                 // select sum(x) ...
@@ -2871,7 +2910,6 @@ class SqlOptimiser {
                         final AnalyticColumn ac = (AnalyticColumn) qc;
                         replaceLiteralList(innerVirtualModel, translatingModel, baseModel, ac.getPartitionBy());
                         replaceLiteralList(innerVirtualModel, translatingModel, baseModel, ac.getOrderBy());
-                        useAnalyticModel = true;
                         continue;
                     } else if (functionParser.isGroupBy(qc.getAst().token)) {
                         qc = ensureAliasUniqueness(groupByModel, qc);
@@ -2884,7 +2922,6 @@ class SqlOptimiser {
                         distinctModel.addBottomUpColumn(ref);
                         // pull out literals
                         emitLiterals(qc.getAst(), translatingModel, innerVirtualModel, baseModel, false);
-                        useGroupByModel = true;
                         continue;
                     } else if (functionParser.isCursor(qc.getAst().token)) {
                         addCursorFunctionAsCrossJoin(
@@ -2914,9 +2951,6 @@ class SqlOptimiser {
                     for (int j = beforeSplit, n = groupByModel.getBottomUpColumns().size(); j < n; j++) {
                         emitLiterals(groupByModel.getBottomUpColumns().getQuick(i).getAst(), translatingModel, innerVirtualModel, baseModel, false);
                     }
-
-                    useGroupByModel = true;
-                    useOuterModel = true;
                 } else {
                     if (emitCursors(qc.getAst(), cursorModel, null, translatingModel, baseModel, sqlExecutionContext)) {
                         qc = ensureAliasUniqueness(innerVirtualModel, qc);
@@ -2931,7 +2965,6 @@ class SqlOptimiser {
                             outerVirtualModel,
                             distinctModel
                     );
-                    useInnerModel = true;
                 }
             }
         }
