@@ -1333,6 +1333,22 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         Assert.assertFalse(function.getBool(record));
     }
 
+    @Test
+    public void overloadToUndefinedDoesNotExist() {
+        Assert.assertEquals(ColumnType.overloadDistance(ColumnType.INT, ColumnType.UNDEFINED), ColumnType.NO_OVERLOAD);
+    }
+
+    @Test
+    public void overloadFromCharToDoubleDoesNotExist() {
+        Assert.assertEquals(ColumnType.overloadDistance(ColumnType.CHAR, ColumnType.DOUBLE), ColumnType.NO_OVERLOAD);
+    }
+
+    @Test
+    public void overloadFromShortToIntIsLikelyThanToDouble() {
+        Assert.assertTrue(ColumnType.overloadDistance(ColumnType.SHORT, ColumnType.INT) <
+                ColumnType.overloadDistance(ColumnType.SHORT, ColumnType.DOUBLE));
+    }
+
     private void assertBindVariableTypes(
             String expr,
             FunctionFactory factory,

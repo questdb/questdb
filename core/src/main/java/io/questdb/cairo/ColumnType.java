@@ -106,6 +106,8 @@ public final class ColumnType {
     }
 
     public static int overloadDistance(int from, int to) {
+        // Functions cannot accept UNDEFINED type (signature is not supported), not reason to check to < 0
+        // so it's here to be future proof
         if (to < 0) {
             return NO_OVERLOAD;
         }
