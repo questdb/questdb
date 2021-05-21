@@ -24,11 +24,17 @@
 
 package io.questdb.griffin;
 
+import io.questdb.cairo.CairoTestUtils;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableModel;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
+import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -691,7 +697,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
 
             // test with key falling within null columns
             try (
-                    RecordCursorFactory factory = compiler.compile("select s2, sum(val) from tab where t >= '1970-01-04T12:01' and t < '1970-01-07T11:00' order by s2", sqlExecutionContext).getRecordCursorFactory();
+                    RecordCursorFactory factory = compiler.compile("select s2, sum(val) from tab where t >= '1970-01-04T12:01' and t < '1970-01-07T11:00' order by s2", sqlExecutionContext).getRecordCursorFactory()
             ) {
                 Record[] expected = new Record[]{
                         new Record() {
@@ -711,7 +717,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
 
             /// test key on overlap
             try (
-                    RecordCursorFactory factory = compiler.compile("select s2, sum(val) from tab where t >= '1970-01-12T12:01' and t < '1970-01-14T11:00' order by s2", sqlExecutionContext).getRecordCursorFactory();
+                    RecordCursorFactory factory = compiler.compile("select s2, sum(val) from tab where t >= '1970-01-12T12:01' and t < '1970-01-14T11:00' order by s2", sqlExecutionContext).getRecordCursorFactory()
             ) {
                 Record[] expected = new Record[]{
                         new Record() {
@@ -771,6 +777,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
             compiler.compile("alter table tab add column val double ", sqlExecutionContext);
             compiler.compile("insert into tab select rnd_symbol('s1','s2','s3', null), timestamp_sequence(cast('1970-01-13T00:00:00.000000Z' as timestamp), 1000000), rnd_double(2) from long_sequence(1000000)", sqlExecutionContext);
 
+
             // test with key falling within null columns
             assertSql(
                     "select s1, sum(val) from tab where t > '1970-01-04T12:00' and t < '1970-01-07T11:00' order by s1",
@@ -781,7 +788,6 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
                             "s3\tNaN\n"
             );
 
-            /// test key on overlap
             assertSql(
                     "select s1, sum(val) from tab where t > '1970-01-12T12:00' and t < '1970-01-14T11:00' order by s1",
                     "s1\tsum\n" +
@@ -909,5 +915,160 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
                 );
             }
         });
+    }
+
+    @Test
+    public void testMinMaxAggregations() throws Exception {
+        String[] aggregateFunctions = {"max", "min"};
+        TypeVal[] aggregateColTypes = {
+                new TypeVal(ColumnType.BYTE, "NaN:INT"),
+                new TypeVal(ColumnType.CHAR, ":CHAR"),
+                new TypeVal(ColumnType.SHORT, "NaN:INT"),
+                new TypeVal(ColumnType.INT, "NaN:INT"),
+                new TypeVal(ColumnType.LONG, "NaN:LONG"),
+                new TypeVal(ColumnType.DATE, ":DATE"),
+                new TypeVal(ColumnType.TIMESTAMP, ":TIMESTAMP"),
+                new TypeVal(ColumnType.FLOAT, "NaN:FLOAT"),
+                new TypeVal(ColumnType.DOUBLE, "NaN:DOUBLE")};
+
+        testAggregations(aggregateFunctions, aggregateColTypes);
+    }
+
+    @Test
+    public void testFirstLastAggregations() throws Exception {
+        String[] aggregateFunctions = {"first", "last"};
+        TypeVal[] aggregateColTypes = {
+                new TypeVal(ColumnType.SYMBOL, ":SYMBOL"),
+                new TypeVal(ColumnType.BYTE, "NaN:INT"),
+                new TypeVal(ColumnType.CHAR, ":CHAR"),
+                new TypeVal(ColumnType.SHORT, "NaN:INT"),
+                new TypeVal(ColumnType.INT, "NaN:INT"),
+                new TypeVal(ColumnType.LONG, "NaN:LONG"),
+                new TypeVal(ColumnType.DATE, ":DATE"),
+                new TypeVal(ColumnType.TIMESTAMP, ":TIMESTAMP"),
+                new TypeVal(ColumnType.FLOAT, "NaN:FLOAT"),
+                new TypeVal(ColumnType.DOUBLE, "NaN:DOUBLE")};
+
+        testAggregations(aggregateFunctions, aggregateColTypes);
+    }
+
+    @Test
+    public void testCountAggregationsWithTypes() throws Exception {
+        String[] aggregateFunctions = {"count_distinct"};
+        TypeVal[] aggregateColTypes = {
+                new TypeVal(ColumnType.STRING, "0:LONG"),
+                new TypeVal(ColumnType.SYMBOL, "0:LONG"),
+                new TypeVal(ColumnType.LONG256, "0:LONG"),
+        };
+
+        testAggregations(aggregateFunctions, aggregateColTypes);
+    }
+
+    @Test
+    public void testCountAggregations() throws Exception {
+        try (TableModel tt1 = new TableModel(configuration, "tt1", PartitionBy.NONE)) {
+            tt1.col("tts", ColumnType.LONG);
+            CairoTestUtils.createTable(tt1);
+        }
+
+        String expected = "max\tcount\n" +
+                "NaN:LONG\t0:LONG\n";
+        String sql = "select max(tts), count() from tt1";
+
+        assertSqlWithTypes(sql, expected);
+        assertSqlWithTypes(sql + " where now() > '1000-01-01'", expected);
+
+        expected = "count\n" +
+                "0:LONG\n";
+        sql = "select count() from tt1";
+        assertSqlWithTypes(sql, expected);
+        assertSqlWithTypes(sql + " where now() > '1000-01-01'", expected);
+    }
+
+    @Test
+    public void testCountAggregationWithConst() throws Exception {
+        try (TableModel tt1 = new TableModel(configuration, "tt1", PartitionBy.DAY)) {
+            tt1.col("tts", ColumnType.LONG).timestamp("ts");
+            createPopulateTable(tt1, 100, "2020-01-01", 2);
+        }
+
+        String expected = "ts\tcount\n" +
+                "2020-01-01T00:28:47.990000Z:TIMESTAMP\t51:LONG\n" +
+                "2020-01-02T00:28:47.990000Z:TIMESTAMP\t49:LONG\n";
+
+        String sql = "select ts, count() from tt1 SAMPLE BY d";
+
+        assertSqlWithTypes(sql, expected);
+    }
+
+    @Test
+    public void testFirstLastAggregationsNotSupported() {
+        String[] aggregateFunctions = {"first"};
+        TypeVal[] aggregateColTypes = {
+                new TypeVal(ColumnType.STRING, ":STRING"),};
+
+        try {
+            testAggregations(aggregateFunctions, aggregateColTypes);
+            Assert.fail();
+        } catch (SqlException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "unexpected argument for function: first");
+        }
+    }
+
+    private void testAggregations(String[] aggregateFunctions, TypeVal[] aggregateColTypes) throws SqlException {
+        StringBuilder sql = new StringBuilder();
+        sql.append("select ");
+        StringBuilder resultHeader = new StringBuilder();
+        StringBuilder resultData = new StringBuilder();
+
+        try (TableModel tt1 = new TableModel(configuration, "tt1", PartitionBy.NONE)) {
+            for (TypeVal colType : aggregateColTypes) {
+                tt1.col(colType.colName, colType.columnType);
+            }
+
+            CairoTestUtils.createTable(tt1);
+        }
+
+        for (TypeVal colType : aggregateColTypes) {
+
+            for (String func : aggregateFunctions) {
+                sql.setLength(7);
+                resultHeader.setLength(0);
+                resultData.setLength(0);
+
+                sql.append(func).append("(").append(colType.funcArg).append(") ").append(func).append(ColumnType.nameOf(colType.columnType));
+                sql.append(" from tt1");
+
+                resultHeader.append(func).append(ColumnType.nameOf(colType.columnType));
+                resultData.append(colType.emtpyValue);
+
+                String expected = resultHeader.append("\n").append(resultData).append("\n").toString();
+                assertSqlWithTypes(sql.toString(), expected);
+
+                // Force to go to not-vector execution
+                assertSqlWithTypes(sql + " where now() > '1000-01-01'", expected);
+            }
+        }
+    }
+
+    private static class TypeVal {
+        public TypeVal(int type, String val) {
+            columnType = type;
+            emtpyValue = val;
+            this.colName = "c" + ColumnType.nameOf(type);
+            this.funcArg = this.colName;
+        }
+
+        public TypeVal(int type, String val, String funcArg) {
+            columnType = type;
+            emtpyValue = val;
+            this.colName = "c" + ColumnType.nameOf(type);
+            this.funcArg = funcArg;
+        }
+
+        public final int columnType;
+        public final String emtpyValue;
+        public final String colName;
+        public final String funcArg;
     }
 }

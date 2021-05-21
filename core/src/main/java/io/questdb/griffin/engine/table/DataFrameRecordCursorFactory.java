@@ -325,6 +325,11 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
             public long getPageSize(int columnIndex) {
                 return pageSizes.getQuick(columnIndex);
             }
+
+            @Override
+            public int getColumnSize(int columnIndex) {
+                return columnSizes.getQuick(columnIndex);
+            }
         }
     }
 

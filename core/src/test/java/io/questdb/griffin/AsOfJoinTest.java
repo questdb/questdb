@@ -545,7 +545,10 @@ public class AsOfJoinTest extends AbstractGriffinTest {
             // test
             ex = "tag\thi\tlo\n" +
                     "CC\t24\t20\n";
-            query = "select a.tag, a.x hi, b.x lo from tab a lt join tab b where a.x > b.x + 1";
+            query = "select a.tag, a.x hi, b.x lo " +
+                    "from tab a " +
+                    "lt join tab b " +
+                    "where a.x > b.x + 1";
             printSqlResult(ex, query, null, false, false);
         });
     }

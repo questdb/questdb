@@ -749,7 +749,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
     @Test
     public void testTimestampInDay1orDay2() throws Exception {
         assertQuery(
-                "min\tmax\n",
+                "min\tmax\n\t\n",
                 "select min(nts), max(nts) from tt where nts IN '2020-01-01' or nts IN '2020-01-02'",
                 "create table tt (dts timestamp, nts timestamp) timestamp(dts)",
                 null,
@@ -767,7 +767,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
     @Test
     public void testTimestampStringComparison() throws Exception {
         assertQuery(
-                "min\tmax\n",
+                "min\tmax\n\t\n",
                 "select min(nts), max(nts) from tt where nts = '2020-01-01'",
                 "create table tt (dts timestamp, nts timestamp) timestamp(dts)",
                 null,
@@ -1089,8 +1089,6 @@ public class TimestampQueryTest extends AbstractGriffinTest {
     }
 
     @Test
-    @Ignore
-    // TODO: fix the test, designated and non-designated timestamp filtering should return same result
     public void testMinOnTimestampEmptyResutlSetIsNull() throws Exception {
         assertMemoryLeak(() -> {
             // create table
@@ -1102,9 +1100,9 @@ public class TimestampQueryTest extends AbstractGriffinTest {
                     "select timestamp_sequence(1577836800000000L, 60*60*1000000L), timestamp_sequence(1577836800000000L, 60*60*1000000L) " +
                     "from long_sequence(48L)", sqlExecutionContext);
 
-            String expected = "min\tmax\n\t\n";
-            assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where nts < '2020-01-01'");
-            assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where '2020-01-01' > nts");
+            String expected = "min\tmax\tcount\n\t\t0\n";
+            assertTimestampTtQuery(expected, "select min(nts), max(nts), count() from tt where nts < '2020-01-01'");
+            assertTimestampTtQuery(expected, "select min(nts), max(nts), count() from tt where '2020-01-01' > nts");
         });
     }
 

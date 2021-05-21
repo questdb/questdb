@@ -399,7 +399,7 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
     @Test
     public void testNoKeyGroupBy() throws Exception {
         assertQuery(
-                "column\n",
+                "column\nNaN\n",
                 "select sum(price)/count() from x where price>0",
                 "create table x (\n" +
                         "    sym symbol index,\n" +

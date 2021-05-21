@@ -30,10 +30,10 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.ObjList;
 
-public class MinShortGroupByFunctionFactory implements FunctionFactory {
+public class LastCharGroupByFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "min(E)";
+        return "last(A)";
     }
 
     @Override
@@ -43,6 +43,6 @@ public class MinShortGroupByFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new MinShortGroupByFunction(position, args.getQuick(0));
+        return new LastCharGroupByFunction(position, args.getQuick(0));
     }
 }

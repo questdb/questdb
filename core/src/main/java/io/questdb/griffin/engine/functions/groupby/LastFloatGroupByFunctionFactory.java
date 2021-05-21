@@ -30,10 +30,10 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.ObjList;
 
-public class SumShortGroupByFunctionFactory implements FunctionFactory {
+public class LastFloatGroupByFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "sum(E)";
+        return "last(F)";
     }
 
     @Override
@@ -43,6 +43,6 @@ public class SumShortGroupByFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new SumShortGroupByFunction(position, args.getQuick(0));
+        return new LastFloatGroupByFunction(position, args.getQuick(0));
     }
 }

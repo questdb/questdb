@@ -29,59 +29,57 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.engine.functions.FloatFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
-import io.questdb.griffin.engine.functions.ShortFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import org.jetbrains.annotations.NotNull;
 
-public class SumShortGroupByFunction extends ShortFunction implements GroupByFunction, UnaryFunction {
+public class MaxFloatGroupByFunction extends FloatFunction implements GroupByFunction, UnaryFunction {
     private final Function arg;
     private int valueIndex;
 
-    public SumShortGroupByFunction(int position, @NotNull Function arg) {
+    public MaxFloatGroupByFunction(int position, @NotNull Function arg) {
         super(position);
         this.arg = arg;
     }
 
     @Override
     public void computeFirst(MapValue mapValue, Record record) {
-        mapValue.putShort(valueIndex, arg.getShort(record));
+        mapValue.putFloat(valueIndex, arg.getFloat(record));
     }
 
     @Override
     public void computeNext(MapValue mapValue, Record record) {
-        mapValue.addShort(valueIndex, arg.getShort(record));
+        float max = mapValue.getFloat(valueIndex);
+        float next = arg.getFloat(record);
+        if (next > max) {
+            mapValue.putFloat(valueIndex, next);
+        }
     }
 
     @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(ColumnType.SHORT);
+        columnTypes.add(ColumnType.FLOAT);
+    }
+
+    @Override
+    public void setFloat(MapValue mapValue, float value) {
+        mapValue.putFloat(valueIndex, value);
     }
 
     @Override
     public void setNull(MapValue mapValue) {
-        mapValue.putShort(valueIndex, (short) 0);
+        mapValue.putFloat(valueIndex, Float.NaN);
     }
 
     @Override
-    public void setShort(MapValue mapValue, short value) {
-        mapValue.putShort(valueIndex, value);
-    }
-
-    @Override
-    public short getShort(Record rec) {
-        return rec.getShort(valueIndex);
+    public float getFloat(Record rec) {
+        return rec.getFloat(valueIndex);
     }
 
     @Override
     public Function getArg() {
         return arg;
-    }
-
-
-    @Override
-    public boolean isConstant() {
-        return false;
     }
 }
