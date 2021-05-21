@@ -68,7 +68,7 @@ public class MaxLongVectorAggregateFunction extends LongFunction implements Vect
     }
 
     @Override
-    public void aggregate(long pRosti, long keyAddress, long valueAddress, long valueAddressSize, int columnSizeHint, int workerId) {
+    public void aggregate(long pRosti, long keyAddress, long valueAddress, long valueAddressSize, int columnSizeShr, int workerId) {
         if (valueAddress == 0) {
             distinctFunc.run(pRosti, keyAddress, valueAddressSize / Long.BYTES);
         } else {

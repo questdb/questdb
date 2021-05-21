@@ -204,34 +204,26 @@ public class GroupByRecordCursorFactory implements RecordCursorFactory {
                 // when column index = -1 we assume that vector function does not have value
                 // argument and it can only derive count via memory size
                 final int columnIndex = vaf.getColumnIndex();
-                final long valueAddress;
-                final long columnSize;
-                final int frameDataType;
+                final long valueAddress = columnIndex > -1 ? frame.getPageAddress(columnIndex) : 0;
+                final int pageColIndex = columnIndex > -1 ? columnIndex : keyColumnIndex;
+                final int columnSizeShr = frame.getColumnSize(pageColIndex);
+                final long valueAddressSize = frame.getPageSize(pageColIndex);
 
-                if (columnIndex > -1) {
-                    valueAddress = frame.getPageAddress(columnIndex);
-                    frameDataType = frame.getColumnSize(columnIndex);
-                    columnSize = frame.getPageSize(columnIndex);
-                } else {
-                    valueAddress = 0;
-                    frameDataType = frame.getColumnSize(keyColumnIndex);
-                    columnSize = frame.getPageSize(keyColumnIndex);
-                }
                 long seq = pubSeq.next();
                 if (seq < 0) {
                     if (keyAddress == 0) {
-                        vaf.aggregate(valueAddress, columnSize, frameDataType, workerId);
+                        vaf.aggregate(valueAddress, valueAddressSize, columnSizeShr, workerId);
                     } else {
-                        vaf.aggregate(pRosti[workerId], keyAddress, valueAddress, columnSize, frameDataType, workerId);
+                        vaf.aggregate(pRosti[workerId], keyAddress, valueAddress, valueAddressSize, columnSizeShr, workerId);
                     }
                     ownCount++;
                 } else {
                     if (keyAddress != 0 || valueAddress != 0) {
                         final VectorAggregateEntry entry = entryPool.next();
                         if (keyAddress == 0) {
-                            entry.of(queuedCount++, vaf, null, 0, valueAddress, columnSize, frameDataType, doneLatch);
+                            entry.of(queuedCount++, vaf, null, 0, valueAddress, valueAddressSize, columnSizeShr, doneLatch);
                         } else {
-                            entry.of(queuedCount++, vaf, pRosti, keyAddress, valueAddress, columnSize, frameDataType, doneLatch);
+                            entry.of(queuedCount++, vaf, pRosti, keyAddress, valueAddress, valueAddressSize, columnSizeShr, doneLatch);
                         }
                         activeEntries.add(entry);
                         queue.get(seq).entry = entry;

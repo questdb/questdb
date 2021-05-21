@@ -58,8 +58,10 @@ public final class ColumnType {
     private static final LowerCaseAsciiCharSequenceIntHashMap nameTypeMap = new LowerCaseAsciiCharSequenceIntHashMap();
     private static final int[] TYPE_SIZE_POW2 = new int[ColumnType.PARAMETER + 1];
     private static final int[] TYPE_SIZE = new int[ColumnType.PARAMETER + 1];
+
+    // For function overload the priority is taken from left to right
     private static final int[][] overloadPriority = {
-            /* -1 UNDEFINED*/    {DOUBLE, FLOAT, LONG, TIMESTAMP, DATE, INT, CHAR, SHORT, BYTE, BOOLEAN}
+            /* -1 UNDEFINED*/  {DOUBLE, FLOAT, LONG, TIMESTAMP, DATE, INT, CHAR, SHORT, BYTE, BOOLEAN}
             /* 0  BOOLEAN  */, {}
             /* 1  BYTE     */, {SHORT, INT, LONG, FLOAT, DOUBLE}
             /* 2  SHORT    */, {INT, LONG, FLOAT, DOUBLE}
@@ -74,17 +76,17 @@ public final class ColumnType {
             /* 11 SYMBOL    */, {STRING}
     };
 
-    private static final int[][] overloadPriorityMatrix;
+    private static final int[] overloadPriorityMatrix;
 
     static {
-        overloadPriorityMatrix = new int[MAX + 1][MAX + 1];
+        overloadPriorityMatrix = new int[(MAX + 1) * MAX];
         for (int i = -1; i < MAX; i++) {
             for (int j = 0; j < MAX; j++) {
                 if (i + 1 < overloadPriority.length) {
                     int index = indexOf(overloadPriority[i + 1], j);
-                    overloadPriorityMatrix[i + 1][j] = index >= 0 ? index + 1 : NO_OVERLOAD;
+                    overloadPriorityMatrix[MAX * (i + 1) + j] = index >= 0 ? index + 1 : NO_OVERLOAD;
                 } else {
-                    overloadPriorityMatrix[i + 1][j] = NO_OVERLOAD;
+                    overloadPriorityMatrix[MAX * (i + 1) + j] = NO_OVERLOAD;
                 }
             }
         }
@@ -106,12 +108,10 @@ public final class ColumnType {
     }
 
     public static int overloadDistance(int from, int to) {
-        // Functions cannot accept UNDEFINED type (signature is not supported), not reason to check to < 0
-        // so it's here to be future proof
-        if (to < 0) {
-            return NO_OVERLOAD;
-        }
-        return overloadPriorityMatrix[from + 1][to];
+        // Functions cannot accept UNDEFINED type (signature is not supported)
+        // this check is just in case
+        assert to >= 0;
+        return overloadPriorityMatrix[MAX * (from + 1) + to];
     }
 
     public static int pow2SizeOf(int columnType) {

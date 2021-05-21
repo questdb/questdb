@@ -71,7 +71,7 @@ public class MaxDoubleVectorAggregateFunction extends DoubleFunction implements 
     }
 
     @Override
-    public void aggregate(long pRosti, long keyAddress, long valueAddress, long valueAddressSize, int columnSizeHint, int workerId) {
+    public void aggregate(long pRosti, long keyAddress, long valueAddress, long valueAddressSize, int columnSizeShr, int workerId) {
         if (valueAddress == 0) {
             distinctFunc.run(pRosti, keyAddress, valueAddressSize / Double.BYTES);
         } else {

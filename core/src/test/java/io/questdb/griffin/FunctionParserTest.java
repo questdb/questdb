@@ -1335,7 +1335,15 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
 
     @Test
     public void overloadToUndefinedDoesNotExist() {
-        Assert.assertEquals(ColumnType.overloadDistance(ColumnType.INT, ColumnType.UNDEFINED), ColumnType.NO_OVERLOAD);
+        boolean assertsEnabled = false;
+        assert assertsEnabled = true;
+        if (assertsEnabled) {
+            try {
+                ColumnType.overloadDistance(ColumnType.INT, ColumnType.UNDEFINED);
+                Assert.fail();
+            } catch (AssertionError e) {
+            }
+        }
     }
 
     @Test

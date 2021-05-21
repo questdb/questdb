@@ -33,7 +33,7 @@ public class VectorAggregateEntry extends AbstractLockable implements Mutable {
     private long keyAddress;
     private long valueAddress;
     private long valueCount;
-    private int frameDataType;
+    private int columnSizeShr;
     private VectorAggregateFunction func;
     private CountDownLatchSPI doneLatch;
 
@@ -47,9 +47,9 @@ public class VectorAggregateEntry extends AbstractLockable implements Mutable {
     public boolean run(int workerId) {
         if (tryLock()) {
             if (pRosti != null) {
-                func.aggregate(pRosti[workerId], keyAddress, valueAddress, valueCount, frameDataType, workerId);
+                func.aggregate(pRosti[workerId], keyAddress, valueAddress, valueCount, columnSizeShr, workerId);
             } else {
-                func.aggregate(valueAddress, valueCount, frameDataType, workerId);
+                func.aggregate(valueAddress, valueCount, columnSizeShr, workerId);
             }
             doneLatch.countDown();
             return true;
@@ -64,7 +64,7 @@ public class VectorAggregateEntry extends AbstractLockable implements Mutable {
             long keyPageAddress,
             long valuePageAddress,
             long valuePageCount,
-            int frameDataType,
+            int columnSizeShr,
             CountDownLatchSPI doneLatch
     ) {
         of(sequence);
@@ -73,7 +73,7 @@ public class VectorAggregateEntry extends AbstractLockable implements Mutable {
         this.valueAddress = valuePageAddress;
         this.valueCount = valuePageCount;
         this.func = vaf;
-        this.frameDataType = frameDataType;
+        this.columnSizeShr = columnSizeShr;
         this.doneLatch = doneLatch;
     }
 }

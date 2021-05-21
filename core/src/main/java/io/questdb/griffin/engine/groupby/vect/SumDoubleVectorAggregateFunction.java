@@ -76,7 +76,7 @@ public class SumDoubleVectorAggregateFunction extends DoubleFunction implements 
     }
 
     @Override
-    public void aggregate(long pRosti, long keyAddress, long valueAddress, long valueAddressSize, int columnSizeHint, int workerId) {
+    public void aggregate(long pRosti, long keyAddress, long valueAddress, long valueAddressSize, int columnSizeShr, int workerId) {
         if (valueAddress == 0) {
             // no values? no problem :)
             // create list of distinct key values so that we can show NULL against them

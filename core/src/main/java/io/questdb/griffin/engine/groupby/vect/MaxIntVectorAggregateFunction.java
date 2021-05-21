@@ -68,7 +68,7 @@ public class MaxIntVectorAggregateFunction extends IntFunction implements Vector
     }
 
     @Override
-    public void aggregate(long pRosti, long keyAddress, long valueAddress, long valueAddressSize, int columnSizeHint, int workerId) {
+    public void aggregate(long pRosti, long keyAddress, long valueAddress, long valueAddressSize, int columnSizeShr, int workerId) {
         if (valueAddress == 0) {
             distinctFunc.run(pRosti, keyAddress, valueAddressSize / Integer.BYTES);
         } else {
