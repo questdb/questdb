@@ -76,17 +76,19 @@ public final class ColumnType {
             /* 11 SYMBOL    */, {STRING}
     };
 
+    private static final int OVERLOAD_MATRIX_SIZE = 32;
     private static final int[] overloadPriorityMatrix;
 
     static {
-        overloadPriorityMatrix = new int[(MAX + 1) * MAX];
+        assert OVERLOAD_MATRIX_SIZE > MAX;
+        overloadPriorityMatrix = new int[OVERLOAD_MATRIX_SIZE * OVERLOAD_MATRIX_SIZE];
         for (int i = -1; i < MAX; i++) {
             for (int j = 0; j < MAX; j++) {
                 if (i + 1 < overloadPriority.length) {
                     int index = indexOf(overloadPriority[i + 1], j);
-                    overloadPriorityMatrix[MAX * (i + 1) + j] = index >= 0 ? index + 1 : NO_OVERLOAD;
+                    overloadPriorityMatrix[OVERLOAD_MATRIX_SIZE * (i + 1) + j] = index >= 0 ? index + 1 : NO_OVERLOAD;
                 } else {
-                    overloadPriorityMatrix[MAX * (i + 1) + j] = NO_OVERLOAD;
+                    overloadPriorityMatrix[OVERLOAD_MATRIX_SIZE * (i + 1) + j] = NO_OVERLOAD;
                 }
             }
         }
@@ -111,7 +113,7 @@ public final class ColumnType {
         // Functions cannot accept UNDEFINED type (signature is not supported)
         // this check is just in case
         assert to >= 0;
-        return overloadPriorityMatrix[MAX * (from + 1) + to];
+        return overloadPriorityMatrix[OVERLOAD_MATRIX_SIZE * (from + 1) + to];
     }
 
     public static int pow2SizeOf(int columnType) {
