@@ -67,7 +67,7 @@ public class SqlCodeGenerator implements Mutable {
     private static final IntObjHashMap<VectorAggregateFunctionConstructor> avgConstructors = new IntObjHashMap<>();
     private static final IntObjHashMap<VectorAggregateFunctionConstructor> minConstructors = new IntObjHashMap<>();
     private static final IntObjHashMap<VectorAggregateFunctionConstructor> maxConstructors = new IntObjHashMap<>();
-    private static final IntObjHashMap<VectorAggregateFunctionConstructor> countConstructors = new IntObjHashMap<>();
+    private static final VectorAggregateFunctionConstructor countConstructor = (position, keyKind, columnIndex, workerCount) -> new CountVectorAggregateFunction(position, keyKind);
     private static final SetRecordCursorFactoryConstructor SET_UNION_CONSTRUCTOR = UnionRecordCursorFactory::new;
     private static final SetRecordCursorFactoryConstructor SET_INTERSECT_CONSTRUCTOR = IntersectRecordCursorFactory::new;
     private static final SetRecordCursorFactoryConstructor SET_EXCEPT_CONSTRUCTOR = ExceptRecordCursorFactory::new;
@@ -154,16 +154,6 @@ public class SqlCodeGenerator implements Mutable {
         return new LtJoinRecordCursorFactory(configuration, metadata, masterFactory, slaveFactory, mapKeyTypes, mapValueTypes, slaveColumnTypes, masterKeySink, slaveKeySink, columnSplit, slaveValueSink, columnIndex);
     }
 
-    private static void addCountConstructor(int type) {
-        countConstructors.put(type,
-                (position, keyKind, columnIndex, workerCount) -> new CountVectorAggregateFunction(
-                        position,
-                        keyKind,
-                        ColumnType.pow2SizeOf(type)
-                )
-        );
-    }
-
     private VectorAggregateFunctionConstructor assembleFunctionReference(RecordMetadata metadata, ExpressionNode ast) {
         int columnIndex;
         if (ast.type == FUNCTION && ast.paramCount == 1 && SqlKeywords.isSumKeyword(ast.token) && ast.rhs.type == LITERAL) {
@@ -173,7 +163,7 @@ public class SqlCodeGenerator implements Mutable {
         } else if (ast.type == FUNCTION && ast.paramCount == 0 && SqlKeywords.isCountKeyword(ast.token)) {
             // count() is a no-arg function
             tempVecConstructorArgIndexes.add(-1);
-            return countConstructors.get(ColumnType.pow2SizeOf(tempKeyIndexesInBase.getQuick(0)));
+            return countConstructor;
         } else if (isSingleColumnFunction(ast, "ksum")) {
             columnIndex = metadata.getColumnIndex(ast.rhs.token);
             tempVecConstructorArgIndexes.add(columnIndex);
@@ -2853,12 +2843,5 @@ public class SqlCodeGenerator implements Mutable {
         maxConstructors.put(ColumnType.DATE, MaxDateVectorAggregateFunction::new);
         maxConstructors.put(ColumnType.TIMESTAMP, MaxTimestampVectorAggregateFunction::new);
         maxConstructors.put(ColumnType.INT, MaxIntVectorAggregateFunction::new);
-
-
-        addCountConstructor(ColumnType.DOUBLE);
-        addCountConstructor(ColumnType.LONG);
-        addCountConstructor(ColumnType.DATE);
-        addCountConstructor(ColumnType.TIMESTAMP);
-        addCountConstructor(ColumnType.INT);
     }
 }

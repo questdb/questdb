@@ -29,23 +29,23 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.engine.functions.ByteFunction;
+import io.questdb.griffin.engine.functions.CharFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import org.jetbrains.annotations.NotNull;
 
-public class FirstByteGroupByFunction extends ByteFunction implements GroupByFunction, UnaryFunction {
+public class FirstCharGroupByFunction extends CharFunction implements GroupByFunction, UnaryFunction {
     private final Function arg;
     private int valueIndex;
 
-    public FirstByteGroupByFunction(int position, @NotNull Function arg) {
+    public FirstCharGroupByFunction(int position, @NotNull Function arg) {
         super(position);
         this.arg = arg;
     }
 
     @Override
     public void computeFirst(MapValue mapValue, Record record) {
-        mapValue.putByte(this.valueIndex, this.arg.getByte(record));
+        mapValue.putChar(this.valueIndex, this.arg.getChar(record));
     }
 
     @Override
@@ -54,28 +54,27 @@ public class FirstByteGroupByFunction extends ByteFunction implements GroupByFun
     }
 
     @Override
+    public void pushValueTypes(ArrayColumnTypes columnTypes) {
+        this.valueIndex = columnTypes.getColumnCount();
+        columnTypes.add(ColumnType.SHORT);
+    }
+
+    @Override
+    public void setNull(MapValue mapValue) {
+        setChar(mapValue, (char) 0);
+    }
+
+    public void setChar(MapValue mapValue, char value) {
+        mapValue.putChar(this.valueIndex, value);
+    }
+
+    @Override
     public Function getArg() {
         return this.arg;
     }
 
     @Override
-    public byte getByte(Record rec) {
-        return rec.getByte(this.valueIndex);
-    }
-
-    @Override
-    public void pushValueTypes(ArrayColumnTypes columnTypes) {
-        this.valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(ColumnType.BYTE);
-    }
-
-    @Override
-    public void setNull(MapValue mapValue) {
-        setByte(mapValue, (byte) 0);
-    }
-
-    @Override
-    public void setByte(MapValue mapValue, byte value) {
-        mapValue.putByte(this.valueIndex, value);
+    public char getChar(Record rec) {
+        return rec.getChar(this.valueIndex);
     }
 }

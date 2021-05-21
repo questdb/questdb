@@ -24,25 +24,25 @@
 
 package io.questdb.griffin.engine.functions.groupby;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.sql.Function;
-import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.ObjList;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableModel;
+import io.questdb.griffin.AbstractGriffinTest;
+import io.questdb.griffin.SqlException;
+import io.questdb.std.NumericException;
+import org.junit.Test;
 
-public class LastShortGroupByFunctionFactory implements FunctionFactory {
-    @Override
-    public String getSignature() {
-        return "last(E)";
-    }
+public class MaxFloatGroupByFunctionTest extends AbstractGriffinTest {
+    @Test
+    public void testSampleByWithFill() throws SqlException, NumericException {
+        try (TableModel tm = new TableModel(configuration, "tab", PartitionBy.DAY)) {
+            tm.timestamp("ts").col("ch", ColumnType.FLOAT);
+            createPopulateTable(tm, 100, "2020-01-01", 2);
+        }
 
-    @Override
-    public boolean isGroupBy() {
-        return true;
-    }
-
-    @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new LastShortGroupByFunction(position, args.getQuick(0));
+        assertSql("select ts, min(ch), max(ch), first(ch), last(ch), count() from tab sample by 1m FILL(LINEAR) LIMIT 2",
+                "ts\tmin\tmax\tfirst\tlast\tcount\n" +
+                        "2020-01-01T00:28:00.000000Z\t0.0010\t0.0010\t0.0010\t0.0010\t1\n" +
+                        "2020-01-01T00:29:00.000000Z\t0.0010\t0.0010\t0.0010\t0.0010\t1\n");
     }
 }

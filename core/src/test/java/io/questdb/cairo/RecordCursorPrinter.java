@@ -37,9 +37,15 @@ import io.questdb.std.str.CharSink;
 
 public class RecordCursorPrinter {
     protected final char delimiter;
+    private boolean printTypes;
 
     public RecordCursorPrinter() {
         this.delimiter = '\t';
+    }
+
+    public RecordCursorPrinter withTypes(boolean enabled) {
+        this.printTypes = enabled;
+        return this;
     }
 
     public void print(RecordCursor cursor, RecordMetadata metadata, boolean header, CharSink sink) {
@@ -159,6 +165,9 @@ public class RecordCursorPrinter {
                 break;
             default:
                 break;
+        }
+        if (printTypes) {
+            sink.put(':').put(ColumnType.nameOf(m.getColumnType(i)));
         }
     }
 }

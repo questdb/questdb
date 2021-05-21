@@ -30,10 +30,10 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.ObjList;
 
-public class MinByteGroupByFunctionFactory implements FunctionFactory {
+public class MaxCharGroupByFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "min(B)";
+        return "max(A)";
     }
 
     @Override
@@ -43,6 +43,6 @@ public class MinByteGroupByFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new MinByteGroupByFunction(position, args.getQuick(0));
+        return new MaxCharGroupByFunction(position, args.getQuick(0));
     }
 }

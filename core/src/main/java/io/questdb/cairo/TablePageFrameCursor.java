@@ -291,6 +291,11 @@ public class TablePageFrameCursor implements PageFrameCursor {
             return columnFrameLengths.getQuick(i);
         }
 
+        @Override
+        public int getColumnSize(int columnIndex) {
+            return columnSizes.getQuick(columnIndex);
+        }
+
         public int getPartitionIndex() {
             return partitionIndex;
         }
