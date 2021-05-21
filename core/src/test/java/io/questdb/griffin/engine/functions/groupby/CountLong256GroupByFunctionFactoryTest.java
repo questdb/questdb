@@ -62,12 +62,31 @@ public class CountLong256GroupByFunctionFactoryTest extends AbstractGriffinTest 
                 "count_distinct\n" +
                         "6\n",
                 "select count_distinct(s) from x",
-                "create table x as (select * from (select rnd_symbol('344', 'xx2', '00s', '544', 'rraa', '0llp') s,  timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))",
+                "create table x as (select * from (select rnd_long256(6) s,  timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))",
                 null,
                 false,
                 true,
                 true
         );
+    }
+
+    @Test
+    public void testGroupNotKeyedWithNulls() throws Exception {
+        String expected = "count_distinct\n" +
+                "6\n";
+        assertQuery(
+                expected,
+                "select count_distinct(s) from x",
+                "create table x as (select * from (select rnd_long256(6) s,  timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts)) PARTITION BY YEAR",
+                null,
+                false,
+                true,
+                true
+        );
+
+        executeInsert("insert into x values(cast(null as LONG256), '2021-05-21')");
+        executeInsert("insert into x values(cast(null as LONG256), '1969-01-01')");
+        assertSql("select count_distinct(s) from x", expected);
     }
 
     @Test

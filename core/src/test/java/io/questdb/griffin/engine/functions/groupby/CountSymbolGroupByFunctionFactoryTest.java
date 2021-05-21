@@ -71,6 +71,20 @@ public class CountSymbolGroupByFunctionFactoryTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testGroupNotKeyedWithNull() throws Exception {
+        assertQuery(
+                "count_distinct\n" +
+                        "2\n",
+                "select count_distinct(s) from x",
+                "create table x as (select * from (select rnd_symbol(null, '344', 'xx2', null) s,  timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))",
+                null,
+                false,
+                true,
+                true
+        );
+    }
+
+    @Test
     public void testSampleFillLinear() throws Exception {
         assertQuery(
                 "ts\tcount_distinct\n" +

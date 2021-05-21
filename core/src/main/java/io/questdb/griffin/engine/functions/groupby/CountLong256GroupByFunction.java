@@ -31,10 +31,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.LongFunction;
-import io.questdb.std.Long256;
-import io.questdb.std.Long256HashSet;
-import io.questdb.std.Numbers;
-import io.questdb.std.ObjList;
+import io.questdb.std.*;
 
 public class CountLong256GroupByFunction extends LongFunction implements GroupByFunction {
     private final Function arg;
@@ -58,8 +55,12 @@ public class CountLong256GroupByFunction extends LongFunction implements GroupBy
 
         set.clear();
         Long256 val = arg.getLong256A(record);
-        set.add(val.getLong0(), val.getLong1(), val.getLong2(), val.getLong3());
-        mapValue.putLong(valueIndex, 1L);
+        if (isNotNull(val)) {
+            set.add(val.getLong0(), val.getLong1(), val.getLong2(), val.getLong3());
+            mapValue.putLong(valueIndex, 1L);
+        } else {
+            mapValue.putLong(valueIndex, 0L);
+        }
         mapValue.putInt(valueIndex + 1, setIndex++);
     }
 
@@ -67,12 +68,22 @@ public class CountLong256GroupByFunction extends LongFunction implements GroupBy
     public void computeNext(MapValue mapValue, Record record) {
         final Long256HashSet set = sets.getQuick(mapValue.getInt(valueIndex + 1));
         final Long256 val = arg.getLong256A(record);
-        final int index = set.keyIndex(val.getLong0(), val.getLong1(), val.getLong2(), val.getLong3());
-        if (index < 0) {
-            return;
+        if (isNotNull(val)) {
+            final int index = set.keyIndex(val.getLong0(), val.getLong1(), val.getLong2(), val.getLong3());
+            if (index < 0) {
+                return;
+            }
+            set.addAt(index, val.getLong0(), val.getLong1(), val.getLong2(), val.getLong3());
+            mapValue.addLong(valueIndex, 1);
         }
-        set.addAt(index, val.getLong0(), val.getLong1(), val.getLong2(), val.getLong3());
-        mapValue.addLong(valueIndex, 1);
+    }
+
+    private static boolean isNotNull(Long256 value) {
+        return value != null &&
+                value != Long256Impl.NULL_LONG256 && (value.getLong0() != Numbers.LONG_NaN ||
+                value.getLong1() != Numbers.LONG_NaN ||
+                value.getLong2() != Numbers.LONG_NaN ||
+                value.getLong3() != Numbers.LONG_NaN);
     }
 
     @Override
