@@ -165,7 +165,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         orderByDirection.add(direction);
     }
 
-    public void addParsedWhereNode(ExpressionNode node) {
+    public void addParsedWhereNode(ExpressionNode node, boolean innerPredicate) {
+        node.innerPredicate = innerPredicate;
         parsedWhere.add(node);
     }
 
@@ -665,7 +666,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                     }
                     n = n.lhs;
                 } else {
-                    addParsedWhereNode(n);
+                    addParsedWhereNode(n, false);
                     n = null;
 
                 }

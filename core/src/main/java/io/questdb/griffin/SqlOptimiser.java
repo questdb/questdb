@@ -73,7 +73,6 @@ class SqlOptimiser {
     private final LiteralCollector literalCollector = new LiteralCollector();
     private final IntHashSet tablesSoFar = new IntHashSet();
     private final IntHashSet postFilterRemoved = new IntHashSet();
-    private final IntList nullCounts = new IntList();
     private final ObjList<IntHashSet> postFilterTableRefs = new ObjList<>();
     private final LiteralCheckingVisitor literalCheckingVisitor = new LiteralCheckingVisitor();
     private final LiteralRewritingVisitor literalRewritingVisitor = new LiteralRewritingVisitor();
@@ -449,7 +448,7 @@ class SqlOptimiser {
         }
     }
 
-    private void analyseEquals(QueryModel parent, ExpressionNode node) throws SqlException {
+    private void analyseEquals(QueryModel parent, ExpressionNode node, boolean innerPredicate) throws SqlException {
         traverseNamesAndIndices(parent, node);
 
         int aSize = literalCollectorAIndexes.size();
@@ -475,7 +474,7 @@ class SqlOptimiser {
                     constNameToNode.put(cs, node.lhs);
                     constNameToToken.put(cs, node.token);
                 } else {
-                    parent.addParsedWhereNode(node);
+                    parent.addParsedWhereNode(node, innerPredicate);
                 }
                 break;
             case 1:
@@ -526,11 +525,12 @@ class SqlOptimiser {
                     constNameToNode.put(cs, node.rhs);
                     constNameToToken.put(cs, node.token);
                 } else {
-                    parent.addParsedWhereNode(node);
+                    parent.addParsedWhereNode(node, innerPredicate);
                 }
                 break;
             default:
-                parent.addParsedWhereNode(node);
+                node.innerPredicate = innerPredicate;
+                parent.addParsedWhereNode(node, innerPredicate);
                 break;
         }
     }
@@ -554,7 +554,6 @@ class SqlOptimiser {
         tablesSoFar.clear();
         postFilterRemoved.clear();
         postFilterTableRefs.clear();
-        nullCounts.clear();
 
         literalCollector.withModel(parent);
         ObjList<ExpressionNode> filterNodes = parent.getParsedWhere();
@@ -565,7 +564,6 @@ class SqlOptimiser {
             literalCollector.resetNullCount();
             traversalAlgo.traverse(filterNodes.getQuick(i), literalCollector.to(indexes));
             postFilterTableRefs.add(indexes);
-            nullCounts.add(literalCollector.nullCount);
         }
 
         IntList ordered = parent.getOrderedJoinModels();
@@ -579,21 +577,23 @@ class SqlOptimiser {
                     continue;
                 }
 
+                final ExpressionNode node = filterNodes.getQuick(k);
+
                 IntHashSet refs = postFilterTableRefs.getQuick(k);
                 int rs = refs.size();
                 if (rs == 0) {
                     // condition has no table references
                     // must evaluate as constant
                     postFilterRemoved.add(k);
-                    parent.setConstWhereClause(concatFilters(parent.getConstWhereClause(), filterNodes.getQuick(k)));
+                    parent.setConstWhereClause(concatFilters(parent.getConstWhereClause(), node));
                 } else if (rs == 1 && (
-                        nullCounts.getQuick(k) == 0
+                        node.innerPredicate
                                 // single table reference and this table is not joined via OUTER or ASOF
                                 || joinBarriers.excludes(parent.getJoinModels().getQuick(refs.get(0)).getJoinType()
                         ))) {
                     // get single table reference out of the way right away
                     // we don't have to wait until "our" table comes along
-                    addWhereNode(parent, refs.get(0), filterNodes.getQuick(k));
+                    addWhereNode(parent, refs.get(0), node);
                     postFilterRemoved.add(k);
                 } else {
                     boolean qualifies = true;
@@ -607,7 +607,6 @@ class SqlOptimiser {
                     if (qualifies) {
                         postFilterRemoved.add(k);
                         QueryModel m = parent.getJoinModels().getQuick(index);
-                        final ExpressionNode node = filterNodes.getQuick(k);
                         // it is possible that filter references only top query via alias
                         // we will need to strip these aliases before assigning filter
                         if (index == 0) {
@@ -2001,10 +2000,10 @@ class SqlOptimiser {
             // optimiser can assign there correct nodes
 
             model.setWhereClause(null);
-            processJoinConditions(model, where);
+            processJoinConditions(model, where, false);
 
             for (int i = 1; i < n; i++) {
-                processJoinConditions(model, joinModels.getQuick(i).getJoinCriteria());
+                processJoinConditions(model, joinModels.getQuick(i).getJoinCriteria(), true);
             }
 
             processEmittedJoinClauses(model);
@@ -2119,7 +2118,7 @@ class SqlOptimiser {
      *
      * @param node expression n
      */
-    private void processJoinConditions(QueryModel parent, ExpressionNode node) throws SqlException {
+    private void processJoinConditions(QueryModel parent, ExpressionNode node, boolean innerPredicate) throws SqlException {
         ExpressionNode n = node;
         // pre-order traversal
         sqlNodeStack.clear();
@@ -2127,7 +2126,7 @@ class SqlOptimiser {
             if (n != null) {
                 switch (joinOps.get(n.token)) {
                     case JOIN_OP_EQUAL:
-                        analyseEquals(parent, n);
+                        analyseEquals(parent, n, innerPredicate);
                         n = null;
                         break;
                     case JOIN_OP_AND:
@@ -2137,14 +2136,15 @@ class SqlOptimiser {
                         n = n.lhs;
                         break;
                     case JOIN_OP_OR:
-                        processOrConditions(parent, n);
+                        // stub: use filter
+                        parent.addParsedWhereNode(n, innerPredicate);
                         n = null;
                         break;
                     case JOIN_OP_REGEX:
                         analyseRegex(parent, n);
                         // intentional fallthrough
                     default:
-                        parent.addParsedWhereNode(n);
+                        parent.addParsedWhereNode(n, innerPredicate);
                         n = null;
                         break;
                 }
@@ -2152,44 +2152,6 @@ class SqlOptimiser {
                 n = sqlNodeStack.poll();
             }
         }
-    }
-
-    /**
-     * There are two ways "or" conditions can go:
-     * - all "or" conditions have at least one fields in common
-     * e.g. a.x = b.x or a.x = b.y
-     * this can be implemented as a hash join where master table is "b"
-     * and slave table is "a" keyed on "a.x" so that
-     * if HashTable contains all rows of "a" keyed on "a.x"
-     * hash join algorithm can do:
-     * rows = HashTable.get(b.x);
-     * if (rows == null) {
-     * rows = HashTable.get(b.y);
-     * }
-     * <p>
-     * in this case tables can be reordered as long as "b" is processed
-     * before "a"
-     * <p>
-     * - second possibility is where all "or" conditions are random
-     * in which case query like this:
-     * <p>
-     * from a
-     * join c on a.x = c.x
-     * join b on a.x = b.x or c.y = b.y
-     * <p>
-     * can be rewritten to:
-     * <p>
-     * from a
-     * join c on a.x = c.x
-     * join b on a.x = b.x
-     * union
-     * from a
-     * join c on a.x = c.x
-     * join b on c.y = b.y
-     */
-    private void processOrConditions(QueryModel parent, ExpressionNode node) {
-        // stub: use filter
-        parent.addParsedWhereNode(node);
     }
 
     private void propagateTopDownColumns(QueryModel model) {
