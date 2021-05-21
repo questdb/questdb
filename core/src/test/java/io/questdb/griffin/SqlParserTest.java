@@ -42,7 +42,7 @@ import org.junit.Test;
 public class SqlParserTest extends AbstractGriffinTest {
 
     @Test
-    public void test2Betweens() throws Exception {
+    public void test2Between() throws Exception {
         assertQuery("select-choose t from (select [t, tt] from x where t between ('2020-01-01','2021-01-02') and tt between ('2021-01-02','2021-01-31'))",
                 "select t from x where t between '2020-01-01' and '2021-01-02' and tt between '2021-01-02' and '2021-01-31'",
                 modelOf("x").col("t", ColumnType.TIMESTAMP).col("tt", ColumnType.TIMESTAMP));
@@ -53,6 +53,30 @@ public class SqlParserTest extends AbstractGriffinTest {
         assertQuery(
                 "select-group-by sum(max(x) + 2) sum, f from (select-virtual [x, f(x) f] x, f(x) f from (select [x] from long_sequence(10)))",
                 "select sum(max(x) + 2), f(x) from long_sequence(10)"
+        );
+    }
+
+    @Test
+    public void testOuterJoinRightPredicate() throws SqlException {
+        assertQuery(
+                "select-choose x, y from (select [x] from l outer join select [y] from r on r.y = l.x post-join-where y > 0)",
+                "select x, y\n" +
+                        "from l left join r on l.x = r.y\n" +
+                        "where y > 0",
+                modelOf("l").col("x", ColumnType.INT),
+                modelOf("r").col("y", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testOuterJoinRightPredicate1() throws SqlException {
+        assertQuery(
+                "select-choose x, y from (select [x] from l outer join select [y] from r on r.y = l.x post-join-where y > 0 or y > 10)",
+                "select x, y\n" +
+                        "from l left join r on l.x = r.y\n" +
+                        "where y > 0 or y > 10",
+                modelOf("l").col("x", ColumnType.INT),
+                modelOf("r").col("y", ColumnType.INT)
         );
     }
 
@@ -69,7 +93,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testAliasTopJoinTable() throws SqlException {
         assertQuery(
-                "select-choose tx.a a, tx.b b from (select [a, b, xid] from x tx outer join select [yid] from y ty on yid = xid post-join-where a = 1 or b = 2) tx",
+                "select-choose tx.a a, tx.b b from (select [a, b, xid] from x tx outer join select [yid] from y ty on yid = xid where a = 1 or b = 2) tx",
                 "select tx.a, tx.b from x as tx left join y as ty on xid = yid where tx.a = 1 or tx.b=2",
                 modelOf("x").col("xid", ColumnType.INT).col("a", ColumnType.INT).col("b", ColumnType.INT),
                 modelOf("y").col("yid", ColumnType.INT).col("a", ColumnType.INT).col("b", ColumnType.INT)
@@ -246,10 +270,29 @@ public class SqlParserTest extends AbstractGriffinTest {
         //
         // which means "where" clause for "e" table has to be explicitly as post-join-where
         assertQuery(
-                "select-choose c.customerId customerId, e.blah blah, e.lastName lastName, e.employeeId employeeId, e.timestamp timestamp, o.customerId customerId1 from (select [customerId] from customers c asof join select [blah, lastName, employeeId, timestamp] from (select-virtual ['1' blah, lastName, employeeId, timestamp] '1' blah, lastName, employeeId, timestamp from (select [lastName, employeeId, timestamp] from employees where lastName = 'x') where blah = 'y' order by lastName) e on e.employeeId = c.customerId join select [customerId] from orders o on o.customerId = c.customerId) c",
+                "select-choose c.customerId customerId, e.blah blah, e.lastName lastName, e.employeeId employeeId, e.timestamp timestamp, o.customerId customerId1 from (select [customerId] from customers c asof join select [blah, lastName, employeeId, timestamp] from (select-virtual ['1' blah, lastName, employeeId, timestamp] '1' blah, lastName, employeeId, timestamp from (select [lastName, employeeId, timestamp] from employees) order by lastName) e on e.employeeId = c.customerId post-join-where e.lastName = 'x' and e.blah = 'y' join select [customerId] from orders o on o.customerId = c.customerId) c",
                 "customers c" +
                         " asof join (select '1' blah, lastName, employeeId, timestamp from employees order by lastName) e on c.customerId = e.employeeId" +
                         " join orders o on c.customerId = o.customerId where e.lastName = 'x' and e.blah = 'y'",
+                modelOf("customers")
+                        .col("customerId", ColumnType.SYMBOL),
+                modelOf("employees")
+                        .col("employeeId", ColumnType.STRING)
+                        .col("lastName", ColumnType.STRING)
+                        .col("timestamp", ColumnType.TIMESTAMP),
+                modelOf("orders")
+                        .col("customerId", ColumnType.SYMBOL)
+        );
+    }
+
+    @Test
+    public void testAsOfJoinSubQueryInnerPredicates() throws Exception {
+        // which means "where" clause for "e" table has to be explicitly as post-join-where
+        assertQuery(
+                "select-choose c.customerId customerId, e.blah blah, e.lastName lastName, e.employeeId employeeId, e.timestamp timestamp, o.customerId customerId1 from (select [customerId] from customers c asof join select [blah, lastName, employeeId, timestamp] from (select-virtual ['1' blah, lastName, employeeId, timestamp] '1' blah, lastName, employeeId, timestamp from (select [lastName, employeeId, timestamp] from employees where lastName = 'x') where blah = 'y' order by lastName) e on e.employeeId = c.customerId join select [customerId] from orders o on o.customerId = c.customerId) c",
+                "customers c" +
+                        " asof join (select '1' blah, lastName, employeeId, timestamp from employees order by lastName) e on c.customerId = e.employeeId" +
+                        " join orders o on c.customerId = o.customerId and e.lastName = 'x' and e.blah = 'y'",
                 modelOf("customers")
                         .col("customerId", ColumnType.SYMBOL),
                 modelOf("employees")
@@ -458,7 +501,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testColumnTopToBottom() throws SqlException {
         assertQuery(
-                "select-choose x.i i, x.sym sym, x.amt amt, price, x.timestamp timestamp, y.timestamp timestamp1 from (select [i, sym, amt, timestamp] from x timestamp (timestamp) splice join (select [price, timestamp, sym2, trader] from y timestamp (timestamp) where trader = 'ABC') y on y.sym2 = x.sym)",
+                "select-choose x.i i, x.sym sym, x.amt amt, price, x.timestamp timestamp, y.timestamp timestamp1 from (select [i, sym, amt, timestamp] from x timestamp (timestamp) splice join select [price, timestamp, sym2, trader] from y timestamp (timestamp) on y.sym2 = x.sym post-join-where trader = 'ABC')",
                 "select x.i, x.sym, x.amt, price, x.timestamp, y.timestamp from x splice join y on y.sym2 = x.sym where trader = 'ABC'",
                 modelOf("x")
                         .col("i", ColumnType.INT)
@@ -2239,6 +2282,36 @@ public class SqlParserTest extends AbstractGriffinTest {
                 modelOf("tab")
                         .col("x", ColumnType.DOUBLE)
                         .col("y", ColumnType.DOUBLE)
+        );
+    }
+
+    @Test
+    public void testJoinOnOtherCondition() throws SqlException {
+        assertQuery(
+                "select-choose a.id id, b.id id1, b.c c, b.m m from (select [id] from a outer join (select [id, c, m] from b where c > 0) b on b.id = a.id post-join-where m > 20)",
+                "select * from a left join b on ( a.id=b.id and c > 0) where m > 20",
+                modelOf("a").col("id", ColumnType.INT),
+                modelOf("b").col("id", ColumnType.INT).col("c", ColumnType.INT).col("m", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testJoinOnEqCondition() throws SqlException {
+        assertQuery(
+                "select-choose a.id id, b.id id1, b.c c, b.m m from (select [id] from a outer join (select [id, c, m] from b where c = 2) b on b.id = a.id post-join-where m > 20)",
+                "select * from a left join b on ( a.id=b.id and c = 2) where m > 20",
+                modelOf("a").col("id", ColumnType.INT),
+                modelOf("b").col("id", ColumnType.INT).col("c", ColumnType.INT).col("m", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testJoinOnOrCondition() throws SqlException {
+        assertQuery(
+                "select-choose a.id id, b.id id1, b.c c, b.m m from (select [id] from a outer join (select [id, c, m] from b where c = 2 or c = 10) b on b.id = a.id post-join-where m > 20)",
+                "select * from a left join b on (a.id=b.id and (c = 2 or c = 10)) where m > 20",
+                modelOf("a").col("id", ColumnType.INT),
+                modelOf("b").col("id", ColumnType.INT).col("c", ColumnType.INT).col("m", ColumnType.INT)
         );
     }
 
@@ -4373,7 +4446,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testPGTableListQuery() throws SqlException {
         assertQuery(
-                "select-virtual Schema, Name, switch(relkind,'r','table','v','view','m','materialized view','i','index','S','sequence','s','special','f','foreign table','p','table','I','index') Type, pg_catalog.pg_get_userbyid(relowner) Owner from (select-choose [n.nspname Schema, c.relname Name, c.relkind relkind, c.relowner relowner] n.nspname Schema, c.relname Name, c.relkind relkind, c.relowner relowner from (select [relname, relkind, relowner, relnamespace, oid] from pg_catalog.pg_class() c outer join (select [nspname, oid] from pg_catalog.pg_namespace() n where nspname != 'pg_catalog' and nspname != 'information_schema' and nspname !~ '^pg_toast') n on n.oid = c.relnamespace where relkind in ('r','p','v','m','S','f','') and pg_catalog.pg_table_is_visible(oid)) c) c order by Schema, Name",
+                "select-virtual Schema, Name, switch(relkind,'r','table','v','view','m','materialized view','i','index','S','sequence','s','special','f','foreign table','p','table','I','index') Type, pg_catalog.pg_get_userbyid(relowner) Owner from (select-choose [n.nspname Schema, c.relname Name, c.relkind relkind, c.relowner relowner] n.nspname Schema, c.relname Name, c.relkind relkind, c.relowner relowner from (select [relname, relkind, relowner, relnamespace, oid] from pg_catalog.pg_class() c outer join select [nspname, oid] from pg_catalog.pg_namespace() n on n.oid = c.relnamespace post-join-where n.nspname != 'pg_catalog' and n.nspname != 'information_schema' and n.nspname !~ '^pg_toast' where relkind in ('r','p','v','m','S','f','') and pg_catalog.pg_table_is_visible(oid)) c) c order by Schema, Name",
                 "SELECT n.nspname                              as \"Schema\",\n" +
                         "       c.relname                              as \"Name\",\n" +
                         "       CASE c.relkind\n" +
@@ -4743,7 +4816,7 @@ public class SqlParserTest extends AbstractGriffinTest {
 
     @Test
     public void testSelectAfterOrderBy() throws SqlException {
-        assertQuery("select-distinct Schema from (select-choose [Schema] Schema from (select-virtual [Schema, Name] Schema, Name, switch(relkind,'r','table','v','view','m','materialized view','i','index','S','sequence','s','special','f','foreign table','p','table','I','index') Type, pg_catalog.pg_get_userbyid(relowner) Owner from (select-choose [n.nspname Schema, c.relname Name] n.nspname Schema, c.relname Name, c.relkind relkind, c.relowner relowner from (select [relname, relnamespace, relkind, oid] from pg_catalog.pg_class() c outer join (select [nspname, oid] from pg_catalog.pg_namespace() n where nspname != 'pg_catalog' and nspname != 'information_schema' and nspname !~ '^pg_toast') n on n.oid = c.relnamespace where relkind in ('r','p','v','m','S','f','') and pg_catalog.pg_table_is_visible(oid)) c) c order by Schema, Name))",
+        assertQuery("select-distinct Schema from (select-choose [Schema] Schema from (select-virtual [Schema, Name] Schema, Name, switch(relkind,'r','table','v','view','m','materialized view','i','index','S','sequence','s','special','f','foreign table','p','table','I','index') Type, pg_catalog.pg_get_userbyid(relowner) Owner from (select-choose [n.nspname Schema, c.relname Name] n.nspname Schema, c.relname Name, c.relkind relkind, c.relowner relowner from (select [relname, relnamespace, relkind, oid] from pg_catalog.pg_class() c outer join select [nspname, oid] from pg_catalog.pg_namespace() n on n.oid = c.relnamespace post-join-where n.nspname != 'pg_catalog' and n.nspname != 'information_schema' and n.nspname !~ '^pg_toast' where relkind in ('r','p','v','m','S','f','') and pg_catalog.pg_table_is_visible(oid)) c) c order by Schema, Name))",
                 "select distinct Schema from \n" +
                         "(SELECT n.nspname                              as \"Schema\",\n" +
                         "       c.relname                              as \"Name\",\n" +
@@ -5352,7 +5425,7 @@ public class SqlParserTest extends AbstractGriffinTest {
         //
         // which means "where" clause for "e" table has to be explicitly as post-join-where
         assertQuery(
-                "select-choose c.customerId customerId, e.blah blah, e.lastName lastName, e.employeeId employeeId, e.timestamp timestamp, o.customerId customerId1 from (select [customerId] from customers c splice join select [blah, lastName, employeeId, timestamp] from (select-virtual ['1' blah, lastName, employeeId, timestamp] '1' blah, lastName, employeeId, timestamp from (select [lastName, employeeId, timestamp] from employees where lastName = 'x') where blah = 'y' order by lastName) e on e.employeeId = c.customerId join select [customerId] from orders o on o.customerId = c.customerId) c",
+                "select-choose c.customerId customerId, e.blah blah, e.lastName lastName, e.employeeId employeeId, e.timestamp timestamp, o.customerId customerId1 from (select [customerId] from customers c splice join select [blah, lastName, employeeId, timestamp] from (select-virtual ['1' blah, lastName, employeeId, timestamp] '1' blah, lastName, employeeId, timestamp from (select [lastName, employeeId, timestamp] from employees) order by lastName) e on e.employeeId = c.customerId post-join-where e.lastName = 'x' and e.blah = 'y' join select [customerId] from orders o on o.customerId = c.customerId) c",
                 "customers c" +
                         " splice join (select '1' blah, lastName, employeeId, timestamp from employees order by lastName) e on c.customerId = e.employeeId" +
                         " join orders o on c.customerId = o.customerId where e.lastName = 'x' and e.blah = 'y'",
