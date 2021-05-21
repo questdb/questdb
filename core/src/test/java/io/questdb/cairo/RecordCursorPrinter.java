@@ -167,7 +167,7 @@ public class RecordCursorPrinter {
                 break;
         }
         if (printTypes) {
-            sink.put(":").put(ColumnType.nameOf(m.getColumnType(i)));
+            sink.put(':').put(ColumnType.nameOf(m.getColumnType(i)));
         }
     }
 }
