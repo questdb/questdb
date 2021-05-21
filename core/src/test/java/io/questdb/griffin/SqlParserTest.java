@@ -1353,7 +1353,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testGroupByConstantMatchingColumnName() throws SqlException {
         assertQuery(
-                "select-virtual 'nts' nts, min from (select-group-by [min(nts) min] min(nts) min from (select-virtual [nts] nts from (select [nts] from tt timestamp (dts) where nts > '2020-01-01T00:00:00.000000Z')))",
+                "select-virtual 'nts' nts, min from (select-group-by [min(nts) min] min(nts) min from (select [nts] from tt timestamp (dts) where nts > '2020-01-01T00:00:00.000000Z'))",
                 "select 'nts', min(nts) from tt where nts > '2020-01-01T00:00:00.000000Z'",
                 modelOf("tt").timestamp("dts").col("nts", ColumnType.TIMESTAMP));
     }
@@ -5707,7 +5707,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testUnionColumnMisSelection() throws SqlException {
         assertQuery(
-                "select-virtual ts, futures_price, 0.0 spot_price from (select-group-by [ts, avg(bid_price) futures_price] ts, avg(bid_price) futures_price from (select-virtual [ts, bid_price] ts, bid_price from (select [ts, bid_price, market_type] from market_updates timestamp (ts) where market_type = 'futures')) sample by 1m) union all select-virtual ts, 0.0 futures_price, spot_price from (select-group-by [ts, avg(bid_price) spot_price] ts, avg(bid_price) spot_price from (select-virtual [ts, bid_price] ts, bid_price from (select [ts, bid_price, market_type] from market_updates timestamp (ts) where market_type = 'spot')) sample by 1m)",
+                "select-virtual ts, futures_price, 0.0 spot_price from (select-group-by [ts, avg(bid_price) futures_price] ts, avg(bid_price) futures_price from (select [ts, bid_price, market_type] from market_updates timestamp (ts) where market_type = 'futures') sample by 1m) union all select-virtual ts, 0.0 futures_price, spot_price from (select-group-by [ts, avg(bid_price) spot_price] ts, avg(bid_price) spot_price from (select [ts, bid_price, market_type] from market_updates timestamp (ts) where market_type = 'spot') sample by 1m)",
                 "select \n" +
                         "    ts, \n" +
                         "    avg(bid_price) AS futures_price, \n" +
@@ -5789,7 +5789,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testUnionKeepOrderByWhenSampleByPresent() throws SqlException {
         assertQuery(
-                "select-choose x from (select-choose [x] x, t from (select [x] from a) union select-choose y, t from (select [y, t] from b) union all select-virtual 'a' k, sum from (select-group-by [sum(z) sum] sum(z) sum from (select-virtual [z] z, t from (select-choose [t, z] z, t from (select [t, z] from c order by t)) timestamp (t)) sample by 6h)) order by x",
+                "select-choose x from (select-choose [x] x, t from (select [x] from a) union select-choose y, t from (select [y, t] from b) union all select-virtual 'a' k, sum from (select-group-by [sum(z) sum] sum(z) sum from (select-choose [t, z] z, t from (select [t, z] from c order by t)) timestamp (t) sample by 6h)) order by x",
                 "select x from (select * from a union select * from b union all select 'a' k, sum(z) from (c order by t) timestamp(t) sample by 6h) order by x",
                 modelOf("a").col("x", ColumnType.INT).col("t", ColumnType.TIMESTAMP),
                 modelOf("b").col("y", ColumnType.INT).col("t", ColumnType.TIMESTAMP),
@@ -5827,7 +5827,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testUnionRemoveRedundantOrderBy() throws SqlException {
         assertQuery(
-                "select-choose x from (select-choose [x] x, t from (select [x] from a) union select-choose y, t from (select [y, t] from b) union all select-virtual 1 1, sum from (select-group-by [sum(z) sum] sum(z) sum from (select-virtual [z] z, t from (select-choose [t, z] z, t from (select [t, z] from c order by t)) timestamp (t)) sample by 6h)) order by x",
+                "select-choose x from (select-choose [x] x, t from (select [x] from a) union select-choose y, t from (select [y, t] from b) union all select-virtual 1 1, sum from (select-group-by [sum(z) sum] sum(z) sum from (select-choose [t, z] z, t from (select [t, z] from c order by t)) timestamp (t) sample by 6h)) order by x",
                 "select x from (select * from a union select * from b union all select 1, sum(z) from (c order by t, t) timestamp(t) sample by 6h) order by x",
                 modelOf("a").col("x", ColumnType.INT).col("t", ColumnType.TIMESTAMP),
                 modelOf("b").col("y", ColumnType.INT).col("t", ColumnType.TIMESTAMP),

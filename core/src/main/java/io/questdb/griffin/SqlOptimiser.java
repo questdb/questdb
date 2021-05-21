@@ -2992,6 +2992,18 @@ class SqlOptimiser {
             );
         }
 
+        if (useInnerModel) {
+            final ObjList<QueryColumn> innerColumns = innerVirtualModel.getBottomUpColumns();
+            useInnerModel = false;
+            for (int i = 0, k = innerColumns.size(); i < k; i++) {
+                QueryColumn qc = innerColumns.getQuick(i);
+                if (qc.getAst().type != LITERAL) {
+                    useInnerModel = true;
+                    break;
+                }
+            }
+        }
+
         // check if translating model is redundant, e.g.
         // that it neither chooses between tables nor renames columns
         boolean translationIsRedundant = /*cursorModel.getBottomUpColumns().size() == 0 &&*/ (useInnerModel || useGroupByModel || useAnalyticModel);

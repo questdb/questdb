@@ -650,8 +650,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "select timestamp_sequence(1577836800000000L, 10L), timestamp_sequence(1577836800000000L, 10L) " +
                         "from long_sequence(2L)",
                 "nts\tmin\n" +
-                        "nts\t2020-01-01T00:00:00.000010Z",
-                true,
+                        "nts\t2020-01-01T00:00:00.000010Z\n",
+                false,
                 false,
                 true);
     }
