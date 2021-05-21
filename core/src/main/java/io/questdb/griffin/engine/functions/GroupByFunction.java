@@ -63,7 +63,7 @@ public interface GroupByFunction extends Function {
         throw new UnsupportedOperationException();
     }
 
-    default void setEmtpy(MapValue value) {
+    default void setEmpty(MapValue value) {
         setNull(value);
     }
 

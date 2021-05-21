@@ -242,7 +242,7 @@ public class GroupByUtils {
 
     public static void updateEmpty(ObjList<GroupByFunction> groupByFunctions, int n, MapValue value) {
         for (int i = 0; i < n; i++) {
-            groupByFunctions.getQuick(i).setEmtpy(value);
+            groupByFunctions.getQuick(i).setEmpty(value);
         }
     }
 

@@ -953,6 +953,18 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testCountAggregationsWithTypes() throws Exception {
+        String[] aggregateFunctions = {"count"};
+        TypeVal[] aggregateColTypes = {
+                new TypeVal(ColumnType.STRING, "0:LONG"),
+                new TypeVal(ColumnType.SYMBOL, "0:LONG"),
+                new TypeVal(ColumnType.LONG256, "0:LONG"),
+        };
+
+        testAggregations(aggregateFunctions, aggregateColTypes);
+    }
+
+    @Test
     public void testCountAggregations() throws Exception {
         try (TableModel tt1 = new TableModel(configuration, "tt1", PartitionBy.NONE)) {
             tt1.col("tts", ColumnType.LONG);

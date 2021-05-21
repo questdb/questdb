@@ -56,7 +56,7 @@ public class CountGroupByFunction extends LongFunction implements GroupByFunctio
     }
 
     @Override
-    public void setEmtpy(MapValue mapValue) {
+    public void setEmpty(MapValue mapValue) {
         mapValue.putLong(valueIndex, 0L);
     }
 
