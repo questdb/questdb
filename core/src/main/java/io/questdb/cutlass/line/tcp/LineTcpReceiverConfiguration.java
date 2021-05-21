@@ -45,7 +45,7 @@ public interface LineTcpReceiverConfiguration {
 
     /**
      * Interval in milliseconds to perform writer maintenance. Such maintenance can
-     * incur cost of commit (in case of using "hysteresis"), load rebalance and writer release.
+     * incur cost of commit (in case of using "lag"), load rebalance and writer release.
      *
      * @return interval in milliseconds
      */

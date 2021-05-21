@@ -40,7 +40,7 @@ import static io.questdb.cairo.TableUtils.*;
 
 public class EngineMigration {
     public static final int VERSION_TX_STRUCT_UPDATE_1 = 418;
-    public static final int VERSION_TBL_META_HYSTERESIS = 419;
+    public static final int VERSION_TBL_META_COMMIT_LAG = 419;
 
     // All offsets hardcoded here in case TableUtils offset calculation changes
     // in future code version
@@ -248,7 +248,7 @@ public class EngineMigration {
     }
 
     private static class MigrationActions {
-        public static void addTblMetaHysteresis(MigrationContext migrationContext) {
+        public static void addTblMetaCommitLag(MigrationContext migrationContext) {
             Path path = migrationContext.getTablePath();
             final FilesFacade ff = migrationContext.getFf();
             path.concat(META_FILE_NAME).$();
@@ -258,13 +258,13 @@ public class EngineMigration {
             }
             // Metadata file should already be backed up
             long tempMem = migrationContext.getTempMemory(8);
-            Unsafe.getUnsafe().putInt(tempMem, migrationContext.getConfiguration().getO3MaxUncommittedRows());
-            if (ff.write(migrationContext.metadataFd, tempMem, Integer.BYTES, META_OFFSET_O3_MAX_UNCOMMITTED_ROWS) != Integer.BYTES) {
+            Unsafe.getUnsafe().putInt(tempMem, migrationContext.getConfiguration().getMaxUncommittedRows());
+            if (ff.write(migrationContext.metadataFd, tempMem, Integer.BYTES, META_OFFSET_MAX_UNCOMMITTED_ROWS) != Integer.BYTES) {
                 throw CairoException.instance(ff.errno()).put("Cannot update metadata [path=").put(path).put(']');
             }
 
-            Unsafe.getUnsafe().putLong(tempMem, migrationContext.getConfiguration().getO3CommitHysteresis());
-            if (ff.write(migrationContext.metadataFd, tempMem, Long.BYTES, META_OFFSET_O3_COMMIT_HYSTERESIS_IN_MICROS) != Long.BYTES) {
+            Unsafe.getUnsafe().putLong(tempMem, migrationContext.getConfiguration().getCommitLag());
+            if (ff.write(migrationContext.metadataFd, tempMem, Long.BYTES, META_OFFSET_COMMIT_LAG) != Long.BYTES) {
                 throw CairoException.instance(ff.errno()).put("Cannot update metadata [path=").put(path).put(']');
             }
         }
@@ -474,6 +474,6 @@ public class EngineMigration {
         MIGRATIONS.extendAndSet(ColumnType.VERSION - MIGRATIONS_LIST_OFFSET, null);
         setByVersion(VERSION_THAT_ADDED_TABLE_ID, MigrationActions::assignTableId, 1);
         setByVersion(VERSION_TX_STRUCT_UPDATE_1, MigrationActions::rebuildTransactionFile, 0);
-        setByVersion(VERSION_TBL_META_HYSTERESIS, MigrationActions::addTblMetaHysteresis, 0);
+        setByVersion(VERSION_TBL_META_COMMIT_LAG, MigrationActions::addTblMetaCommitLag, 0);
     }
 }
