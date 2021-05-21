@@ -29,8 +29,8 @@ import java.util.Arrays;
 public class LowerCaseCharSequenceIntHashMap extends AbstractLowerCaseCharSequenceHashSet {
     private static final int NO_ENTRY_VALUE = -1;
     private final int noEntryValue;
-    protected int[] values;
     private final ObjList<CharSequence> list;
+    private int[] values;
 
     public LowerCaseCharSequenceIntHashMap() {
         this(8);
@@ -48,29 +48,11 @@ public class LowerCaseCharSequenceIntHashMap extends AbstractLowerCaseCharSequen
         clear();
     }
 
-    public void clear() {
+    @Override
+    public final void clear() {
         super.clear();
         list.clear();
         Arrays.fill(values, noEntryValue);
-    }
-
-    @Override
-    protected void erase(int index) {
-        keys[index] = noEntryKey;
-        values[index] = noEntryValue;
-    }
-
-    public void removeAt(int index) {
-        if (index < 0) {
-            int index1 = -index - 1;
-            CharSequence key = keys[index1];
-            super.removeAt(index);
-            list.remove(key);
-        }
-    }
-
-    public int valueAt(int index) {
-        return index < 0 ? values[-index - 1] : noEntryValue;
     }
 
     public boolean contains(CharSequence key) {
@@ -81,25 +63,20 @@ public class LowerCaseCharSequenceIntHashMap extends AbstractLowerCaseCharSequen
         return valueAt(keyIndex(key));
     }
 
-    public boolean put(CharSequence key, int value) {
-        return putAt(keyIndex(key), key, value);
-    }
-
-    public boolean putAt(int index, CharSequence key, int value) {
+    @Override
+    public void removeAt(int index) {
         if (index < 0) {
-            values[-index - 1] = value;
-            return false;
+            int index1 = -index - 1;
+            CharSequence key = keys[index1];
+            super.removeAt(index);
+            list.remove(key);
         }
-        putAt0(index, key, value);
-        list.add(key);
-        return true;
     }
 
-    public void putIfAbsent(CharSequence key, int value) {
-        int index = keyIndex(key);
-        if (index > -1) {
-            putAt0(index, key, value);
-        }
+    @Override
+    protected void erase(int index) {
+        keys[index] = noEntryKey;
+        values[index] = noEntryValue;
     }
 
     @Override
@@ -109,7 +86,61 @@ public class LowerCaseCharSequenceIntHashMap extends AbstractLowerCaseCharSequen
         erase(from);
     }
 
-    protected void putAt0(int index, CharSequence key, int value) {
+    public void increment(CharSequence key) {
+        int index = keyIndex(key);
+        if (index < 0) {
+            values[-index - 1] = values[-index - 1] + 1;
+        } else {
+            putAt0(index, Chars.toString(key), 0);
+        }
+    }
+
+    public ObjList<CharSequence> keys() {
+        return list;
+    }
+
+    public boolean put(CharSequence key, int value) {
+        return putAt(keyIndex(key), key, value);
+    }
+
+    public void putAll(LowerCaseCharSequenceIntHashMap other) {
+        CharSequence[] otherKeys = other.keys;
+        int[] otherValues = other.values;
+        for (int i = 0, n = otherKeys.length; i < n; i++) {
+            if (otherKeys[i] != noEntryKey) {
+                put(otherKeys[i], otherValues[i]);
+            }
+        }
+    }
+
+    public boolean putAt(int index, CharSequence key, int value) {
+        if (index < 0) {
+            values[-index - 1] = value;
+            return false;
+        }
+        final String keyString = Chars.toString(key);
+        putAt0(index, keyString, value);
+        list.add(keyString);
+        return true;
+    }
+
+    public void putIfAbsent(CharSequence key, int value) {
+        int index = keyIndex(key);
+        if (index > -1) {
+            putAt0(index, Chars.toString(key), value);
+        }
+    }
+
+    public int valueAt(int index) {
+        int index1 = -index - 1;
+        return index < 0 ? values[index1] : noEntryValue;
+    }
+
+    public int valueQuick(int index) {
+        return get(list.getQuick(index));
+    }
+
+    private void putAt0(int index, CharSequence key, int value) {
         keys[index] = key;
         values[index] = value;
         if (--free == 0) {
@@ -139,9 +170,5 @@ public class LowerCaseCharSequenceIntHashMap extends AbstractLowerCaseCharSequen
                 values[index] = oldValues[i];
             }
         }
-    }
-
-    public ObjList<CharSequence> keys() {
-        return list;
     }
 }

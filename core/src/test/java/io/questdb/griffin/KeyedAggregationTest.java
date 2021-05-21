@@ -1002,6 +1002,23 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testCountCaseInsensitive() throws Exception {
+        try (TableModel tt1 = new TableModel(configuration, "tt1", PartitionBy.DAY)) {
+            tt1.col("tts", ColumnType.LONG).timestamp("ts")
+                    .col("ID", ColumnType.LONG);
+            createPopulateTable(tt1, 100, "2020-01-01", 2);
+        }
+
+        String expected = "ts\tcount\n" +
+                "2020-01-01T00:28:47.990000Z:TIMESTAMP\t1:LONG\n" +
+                "2020-01-01T00:57:35.980000Z:TIMESTAMP\t1:LONG\n";
+
+        String sql = "select ts, count() from tt1 WHERE id > 0 LIMIT 2";
+
+        assertSqlWithTypes(sql, expected);
+    }
+
+    @Test
     public void testFirstLastAggregationsNotSupported() {
         String[] aggregateFunctions = {"first"};
         TypeVal[] aggregateColTypes = {
