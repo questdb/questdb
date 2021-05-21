@@ -2842,6 +2842,8 @@ class SqlOptimiser {
             }
         }
 
+        boolean outerVirtualIsSelectChoose = true;
+
         // create virtual columns from select list
         for (int i = 0, k = columns.size(); i < k; i++) {
             QueryColumn qc = columns.getQuick(i);
@@ -2956,6 +2958,7 @@ class SqlOptimiser {
                         qc = ensureAliasUniqueness(innerVirtualModel, qc);
                     }
                     if (useGroupByModel && qc.getAst().type == ExpressionNode.CONSTANT) {
+                        outerVirtualIsSelectChoose = false;
                         outerVirtualModel.addBottomUpColumn(qc);
                         distinctModel.addBottomUpColumn(qc);
                     } else {
@@ -3047,8 +3050,7 @@ class SqlOptimiser {
             outerVirtualModel.setNestedModel(root);
             outerVirtualModel.moveLimitFrom(limitSource);
             outerVirtualModel.moveAliasFrom(limitSource);
-            // in this case outer model should be of "choose" type
-            outerVirtualModel.setSelectModelType(QueryModel.SELECT_MODEL_VIRTUAL);
+            outerVirtualModel.setSelectModelType(outerVirtualIsSelectChoose ? QueryModel.SELECT_MODEL_CHOOSE : QueryModel.SELECT_MODEL_VIRTUAL);
             root = outerVirtualModel;
         }
 

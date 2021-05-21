@@ -1351,6 +1351,14 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testGroupByConstantMatchingColumnName() throws SqlException {
+        assertQuery(
+                "select-virtual 'nts' nts, min from (select-group-by [min(nts) min] min(nts) min from (select-virtual [nts] nts from (select [nts] from tt timestamp (dts) where nts > '2020-01-01T00:00:00.000000Z')))",
+                "select 'nts', min(nts) from tt where nts > '2020-01-01T00:00:00.000000Z'",
+                modelOf("tt").timestamp("dts").col("nts", ColumnType.TIMESTAMP));
+    }
+
+    @Test
     public void testCreateTableNoCacheIndex() throws SqlException {
         assertCreateTable("create table x (" +
                         "a INT," +
@@ -1980,7 +1988,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testDuplicateColumnsBasicSelect() throws SqlException {
         assertQuery(
-                "select-virtual b, a, k1, k1 k from (select-choose [b, a, k k1] b, a, k k1 from (select [b, a, k] from x timestamp (timestamp)))",
+                "select-choose b, a, k1, k1 k from (select-choose [b, a, k k1] b, a, k k1 from (select [b, a, k] from x timestamp (timestamp)))",
                 "select b, a, k k1, k from x",
                 modelOf("x").col("a", ColumnType.DOUBLE).col("b", ColumnType.SYMBOL).col("k", ColumnType.TIMESTAMP).timestamp()
         );
@@ -4935,7 +4943,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testSelectDuplicateAlias() throws SqlException {
         assertQuery(
-                "select-virtual x, x x1 from (select-choose [x] x from (select [x] from long_sequence(1)))",
+                "select-choose x, x x1 from (select-choose [x] x from (select [x] from long_sequence(1)))",
                 "select x x, x x from long_sequence(1)"
         );
     }
