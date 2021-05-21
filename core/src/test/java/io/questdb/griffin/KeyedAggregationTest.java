@@ -954,7 +954,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
 
     @Test
     public void testCountAggregationsWithTypes() throws Exception {
-        String[] aggregateFunctions = {"count"};
+        String[] aggregateFunctions = {"count_distinct"};
         TypeVal[] aggregateColTypes = {
                 new TypeVal(ColumnType.STRING, "0:LONG"),
                 new TypeVal(ColumnType.SYMBOL, "0:LONG"),

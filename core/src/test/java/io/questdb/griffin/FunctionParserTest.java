@@ -1227,7 +1227,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
     @Test
     public void testUndefinedBindVariableDefineLong256() throws SqlException {
         assertBindVariableTypes(
-                "count($1)",
+                "count_distinct($1)",
                 new CountLong256GroupByFunctionFactory(),
                 "io.questdb.griffin.engine.functions.groupby.CountLong256GroupByFunction",
                 ColumnType.LONG256
