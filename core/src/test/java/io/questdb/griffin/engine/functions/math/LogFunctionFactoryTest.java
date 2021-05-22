@@ -24,35 +24,35 @@
 
 package io.questdb.griffin.engine.functions.math;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.AbstractUnaryLongFunction;
-import io.questdb.std.Numbers;
-import io.questdb.std.ObjList;
+import io.questdb.griffin.AbstractGriffinTest;
+import io.questdb.test.tools.TestUtils;
+import org.junit.Test;
 
-public class SqrtLongFunctionFactory implements FunctionFactory {
-    @Override
-    public String getSignature() {
-        return "sqrt(L)";
+public class LogFunctionFactoryTest extends AbstractGriffinTest {
+
+    @Test
+    public void testLogDouble() throws Exception {
+        assertLog("select log(9989.2233)", "9.209262120872339\n");
     }
 
-    @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new SqrtFunction(position, args.getQuick(0));
+    @Test
+    public void testLogDoubleNull() throws Exception {
+        assertLog("select log(NaN)", "NaN\n");
     }
 
-    private static class SqrtFunction extends AbstractUnaryLongFunction {
-        public SqrtFunction(int position, Function arg) {
-            super(position, arg);
-        }
+    @Test
+    public void testLogInt() throws Exception {
+        assertLog("select log(8965)", "9.101083386039234\n");
+    }
 
-        @Override
-        public long getLong(Record rec) {
-            long value = arg.getLong(rec);
-            return value != Numbers.LONG_NaN ? (long) Math.sqrt(value) : (int) Double.NaN;
-        }
+    private void assertLog(String sql, String expected) throws Exception {
+        assertMemoryLeak(() -> TestUtils.assertSql(
+                compiler,
+                sqlExecutionContext,
+                sql,
+                sink,
+                "log\n" +
+                        expected
+        ));
     }
 }

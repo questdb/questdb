@@ -38,9 +38,6 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
-import java.sql.CallableStatement;
-import java.sql.PreparedStatement;
-
 public class JoinTest extends AbstractGriffinTest {
     @Before
     public void setUp3() {
@@ -3571,8 +3568,6 @@ public class JoinTest extends AbstractGriffinTest {
         });
     }
 
-<<<<<<< HEAD
-=======
     @Test
     public void testAsofJoin() throws Exception {
         assertMemoryLeak(() -> {
@@ -3602,7 +3597,6 @@ public class JoinTest extends AbstractGriffinTest {
         });
     }
 
->>>>>>> upstream/master
 
     @Test
     public void testTypeMismatchFF() throws Exception {

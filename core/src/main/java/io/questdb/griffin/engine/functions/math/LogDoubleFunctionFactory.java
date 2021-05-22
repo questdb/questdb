@@ -40,7 +40,12 @@ public class LogDoubleFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+    public Function newInstance(
+            ObjList<Function> args,
+            int position,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) {
         return new LogFunction(position, args.getQuick(0));
     }
 

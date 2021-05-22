@@ -24,24 +24,30 @@
 
 package io.questdb.griffin.engine.functions.math;
 
-import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.engine.AbstractFunctionFactoryTest;
+import io.questdb.griffin.AbstractGriffinTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
-public class LogShortFunctionFactoryTest extends AbstractFunctionFactoryTest {
+public class SqrtFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
-    public void testPositive() throws SqlException {
-        call(2).andAssert(0, 0.0000000001);
+    public void testSqrtDouble() throws Exception {
+        assertSqrt("select sqrt(4000.32)", "63.2480829749013\n");
     }
 
     @Test
-    public void testNegative() throws SqlException {
-        call(-2).andAssert(0, 0.0000000001);
+    public void testSqrtDoubleNull() throws Exception {
+        assertSqrt("select sqrt(NaN)", "NaN\n");
     }
 
-    @Override
-    protected FunctionFactory getFunctionFactory() { return new LogShortFunctionFactory();
+    private void assertSqrt(String sql, String expected) throws Exception {
+        assertMemoryLeak(() -> TestUtils.assertSql(
+                compiler,
+                sqlExecutionContext,
+                sql,
+                sink,
+                "sqrt\n" +
+                        expected
+        ));
     }
 }
