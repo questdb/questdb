@@ -84,7 +84,7 @@ stages:
             inputs:
               mavenPomFile: "core/pom.xml"
               mavenOptions: "-Xmx3072m"
-              options: "compile -DskipTests"
+              options: "compile -DskipTests -P build-web-console,use-built-in-nodejs"
               jdkVersionOption: $(jdk)
             condition: eq(variables['SOURCE_CODE_CHANGED'], 'false')
           - task: Maven@3
