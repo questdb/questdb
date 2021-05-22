@@ -24,13 +24,9 @@
 
 package io.questdb.griffin.engine.functions.groupby;
 
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.AbstractGriffinTest;
-import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.std.Rnd;
-import io.questdb.test.tools.TestUtils;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -43,19 +39,22 @@ public class AvgDoubleGroupByFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testAll() throws Exception {
+        assertMemoryLeak(() -> assertSql(
+                "select max(x), avg(x), sum(x) from long_sequence(10)",
+                "max\tavg\tsum\n" +
+                        "10\t5.5\t55\n"
+        ));
+    }
+
+    @Test
+    public void testAllWithInfinity() throws Exception {
         assertMemoryLeak(() -> {
-            CompiledQuery cq = compiler.compile("select max(x), avg(x), sum(x) from long_sequence(10)", sqlExecutionContext);
-
-            try (RecordCursorFactory factory = cq.getRecordCursorFactory()) {
-                sink.clear();
-                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    printer.print(cursor, factory.getMetadata(), true);
-                }
-            }
-
-            TestUtils.assertEquals("max\tavg\tsum\n" +
-                            "10\t5.5\t55\n",
-                    sink);
+            compiler.compile("create table test2 as(select case  when rnd_double() > 0.6 then 1.0   else 0.0  end val from long_sequence(100));", sqlExecutionContext);
+            assertSql(
+                    "select sum(1/val) , avg(1/val), max(1/val), min(1/val), ksum(1/val), nsum(1/val) from test2",
+                    "sum\tavg\tmax\tmin\tksum\tnsum\n" +
+                            "44.0\t1.0\tInfinity\t1.0\t44.0\t44.0\n"
+            );
         });
     }
 
@@ -63,33 +62,36 @@ public class AvgDoubleGroupByFunctionFactoryTest extends AbstractGriffinTest {
     public void testAvgWithInfinity() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table test2 as(select case  when rnd_double() > 0.6 then 1.0   else 0.0  end val from long_sequence(100));", sqlExecutionContext);
-            CompiledQuery cq = compiler.compile("select avg(1/val) from test2", sqlExecutionContext);
-
-            try (RecordCursorFactory factory = cq.getRecordCursorFactory()) {
-                sink.clear();
-                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    printer.print(cursor, factory.getMetadata(), true);
-                }
-            }
-            TestUtils.assertEquals("avg\n1.0\n", sink);
+            assertSql(
+                    "select avg(1/val) from test2",
+                    "avg\n1.0\n"
+            );
         });
     }
 
     @Test
-    public void testAllWithInfinity() throws Exception {
+    public void testInterpolatedAvg() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table test2 as(select case  when rnd_double() > 0.6 then 1.0   else 0.0  end val from long_sequence(100));", sqlExecutionContext);
-            CompiledQuery cq = compiler.compile("select sum(1/val) , avg(1/val), max(1/val), min(1/val), ksum(1/val), nsum(1/val) from test2", sqlExecutionContext);
+            compiler.compile("create table fill_options(ts timestamp, price int) timestamp(ts);", sqlExecutionContext);
+            executeInsert("insert into fill_options values(to_timestamp('2020-01-01:10:00:00', 'yyyy-MM-dd:HH:mm:ss'), 1);");
+            executeInsert("insert into fill_options values(to_timestamp('2020-01-01:11:00:00', 'yyyy-MM-dd:HH:mm:ss'), 2);");
+            executeInsert("insert into fill_options values(to_timestamp('2020-01-01:12:00:00', 'yyyy-MM-dd:HH:mm:ss'), 3);");
+            executeInsert("insert into fill_options values(to_timestamp('2020-01-01:14:00:00', 'yyyy-MM-dd:HH:mm:ss'), 5);");
 
-            try (RecordCursorFactory factory = cq.getRecordCursorFactory()) {
-                sink.clear();
-                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    printer.print(cursor, factory.getMetadata(), true);
-                }
-            }
-            TestUtils.assertEquals("sum\tavg\tmax\tmin\tksum\tnsum\n" +
-                            "44.0\t1.0\tInfinity\t1.0\t44.0\t44.0\n",
-                    sink);
+            assertQuery("ts\tmin\tmax\tavg\n" +
+                    "2020-01-01T10:00:00.000000Z\t1\t1\t1.0\n" +
+                    "2020-01-01T11:00:00.000000Z\t2\t2\t2.0\n" +
+                    "2020-01-01T12:00:00.000000Z\t3\t3\t3.0\n" +
+                    "2020-01-01T13:00:00.000000Z\t4\t4\t4.0\n" +
+                    "2020-01-01T14:00:00.000000Z\t5\t5\t5.0\n",
+                    "select ts, min(price) min, max(price) max, avg(price) avg\n" +
+                            "from fill_options\n" +
+                            "sample by 1h\n" +
+                            "fill(linear);",
+                    "ts",
+                    true,
+                    true
+            );
         });
     }
 }

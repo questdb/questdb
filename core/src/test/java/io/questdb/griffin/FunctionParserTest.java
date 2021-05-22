@@ -41,7 +41,10 @@ import io.questdb.griffin.engine.functions.date.ToStrTimestampFunctionFactory;
 import io.questdb.griffin.engine.functions.eq.EqDoubleFunctionFactory;
 import io.questdb.griffin.engine.functions.eq.EqIntFunctionFactory;
 import io.questdb.griffin.engine.functions.eq.EqLongFunctionFactory;
-import io.questdb.griffin.engine.functions.groupby.*;
+import io.questdb.griffin.engine.functions.groupby.CountLong256GroupByFunctionFactory;
+import io.questdb.griffin.engine.functions.groupby.MinDateGroupByFunctionFactory;
+import io.questdb.griffin.engine.functions.groupby.MinFloatGroupByFunctionFactory;
+import io.questdb.griffin.engine.functions.groupby.MinTimestampGroupByFunctionFactory;
 import io.questdb.griffin.engine.functions.math.*;
 import io.questdb.griffin.engine.functions.str.LengthStrFunctionFactory;
 import io.questdb.griffin.engine.functions.str.LengthSymbolFunctionFactory;
@@ -83,7 +86,12 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
 
             @Override
             public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-                return null;
+                return new FloatFunction(position) {
+                    @Override
+                    public float getFloat(Record rec) {
+                        return 123.123f;
+                    }
+                };
             }
         });
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
@@ -91,7 +99,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         metadata.add(new TableColumnMetadata("c", ColumnType.SHORT, null));
         FunctionParser functionParser = createFunctionParser();
         Function f = parseFunction("a + c", metadata, functionParser);
-        Assert.assertEquals(123.123, f.getDouble(null), 0.0001);
+        Assert.assertEquals(123.123f, f.getFloat(null), 0.0001);
     }
 
     @Test
@@ -143,8 +151,8 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
     }
 
     @Test
-    public void testByteAndLongToFloatCast() throws SqlException {
-        assertCastToFloat(363, ColumnType.BYTE, ColumnType.LONG, new Record() {
+    public void testByteAndLongToDoubleCast() throws SqlException {
+        assertCastToDouble(363, ColumnType.BYTE, ColumnType.LONG, new Record() {
 
             @Override
             public byte getByte(int col) {
@@ -870,10 +878,10 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
     }
 
     @Test
-    public void testIntAndShortToFloatCast() throws SqlException {
-        assertCastToFloat(33, ColumnType.INT, ColumnType.SHORT, new Record() {
+    public void testByteAndShortToFloatCast() throws SqlException {
+        assertCastToFloat(33, ColumnType.BYTE, ColumnType.SHORT, new Record() {
             @Override
-            public int getInt(int col) {
+            public byte getByte(int col) {
                 return 12;
             }
 
@@ -986,7 +994,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
             Assert.fail();
         } catch (SqlException e) {
             Assert.assertEquals(0, e.getPosition());
-            TestUtils.assertContains(e.getMessage(), "unexpected argument");
+            TestUtils.assertContains(e.getFlyweightMessage(), "unexpected argument");
         }
     }
 
@@ -1011,8 +1019,8 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
             Assert.fail();
         } catch (SqlException e) {
             Assert.assertEquals(0, e.getPosition());
-            TestUtils.assertContains(e.getMessage(), "unexpected argument");
-            TestUtils.assertContains(e.getMessage(), "constant");
+            TestUtils.assertContains(e.getFlyweightMessage(), "unexpected argument");
+            TestUtils.assertContains(e.getFlyweightMessage(), "constant");
         }
     }
 
@@ -1125,30 +1133,10 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         functions.add(new EqDoubleFunctionFactory());
         functions.add(new EqLongFunctionFactory());
         try (Function f = parseFunction("$2 = $1", null, createFunctionParser())) {
-            TestUtils.assertContains("io.questdb.griffin.engine.functions.eq.EqDoubleFunctionFactory.Func", f.getClass().getCanonicalName());
+            TestUtils.assertContains(f.getClass().getCanonicalName(),"io.questdb.griffin.engine.functions.eq.EqDoubleFunctionFactory.Func");
         }
         Assert.assertEquals(ColumnType.DOUBLE, bindVariableService.getFunction(0).getType());
         Assert.assertEquals(ColumnType.DOUBLE, bindVariableService.getFunction(1).getType());
-    }
-
-    @Test
-    public void testUndefinedBindVariableDefineByte() throws SqlException {
-        assertBindVariableTypes(
-                "min($1)",
-                new MinByteGroupByFunctionFactory(),
-                "io.questdb.griffin.engine.functions.groupby.MinByteGroupByFunction",
-                ColumnType.BYTE
-        );
-    }
-
-    @Test
-    public void testUndefinedBindVariableDefineChar() throws SqlException {
-        assertBindVariableTypes(
-                "min($1)",
-                new MinCharGroupByFunctionFactory(),
-                "io.questdb.griffin.engine.functions.groupby.MinCharGroupByFunction",
-                ColumnType.CHAR
-        );
     }
 
     @Test
@@ -1239,7 +1227,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
     @Test
     public void testUndefinedBindVariableDefineLong256() throws SqlException {
         assertBindVariableTypes(
-                "count($1)",
+                "count_distinct($1)",
                 new CountLong256GroupByFunctionFactory(),
                 "io.questdb.griffin.engine.functions.groupby.CountLong256GroupByFunction",
                 ColumnType.LONG256
@@ -1286,7 +1274,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
         metadata.add(new TableColumnMetadata("a", ColumnType.LONG, null));
         try (Function f = parseFunction("a = $1", metadata, createFunctionParser())) {
-            TestUtils.assertContains("io.questdb.griffin.engine.functions.eq.EqLongFunctionFactory.Func", f.getClass().getCanonicalName());
+            TestUtils.assertContains(f.getClass().getCanonicalName(), "io.questdb.griffin.engine.functions.eq.EqLongFunctionFactory.Func");
         }
         Assert.assertEquals(ColumnType.LONG, bindVariableService.getFunction(0).getType());
     }
@@ -1300,7 +1288,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
         metadata.add(new TableColumnMetadata("a", ColumnType.FLOAT, null));
         try (Function f = parseFunction("a = $1", metadata, createFunctionParser())) {
-            TestUtils.assertContains("io.questdb.griffin.engine.functions.eq.EqDoubleFunctionFactory.Func", f.getClass().getCanonicalName());
+            TestUtils.assertContains(f.getClass().getCanonicalName(),"io.questdb.griffin.engine.functions.eq.EqDoubleFunctionFactory.Func");
         }
         Assert.assertEquals(ColumnType.DOUBLE, bindVariableService.getFunction(0).getType());
     }
@@ -1345,6 +1333,30 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         Assert.assertFalse(function.getBool(record));
     }
 
+    @Test
+    public void overloadToUndefinedDoesNotExist() {
+        boolean assertsEnabled = false;
+        assert assertsEnabled = true;
+        if (assertsEnabled) {
+            try {
+                ColumnType.overloadDistance(ColumnType.INT, ColumnType.UNDEFINED);
+                Assert.fail();
+            } catch (AssertionError e) {
+            }
+        }
+    }
+
+    @Test
+    public void overloadFromCharToDoubleDoesNotExist() {
+        Assert.assertEquals(ColumnType.overloadDistance(ColumnType.CHAR, ColumnType.DOUBLE), ColumnType.NO_OVERLOAD);
+    }
+
+    @Test
+    public void overloadFromShortToIntIsLikelyThanToDouble() {
+        Assert.assertTrue(ColumnType.overloadDistance(ColumnType.SHORT, ColumnType.INT) <
+                ColumnType.overloadDistance(ColumnType.SHORT, ColumnType.DOUBLE));
+    }
+
     private void assertBindVariableTypes(
             String expr,
             FunctionFactory factory,
@@ -1354,7 +1366,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         bindVariableService.clear();
         functions.add(factory);
         try (Function f = parseFunction(expr, null, createFunctionParser())) {
-            TestUtils.assertContains(expectedFunctionClass, f.getClass().getCanonicalName());
+            TestUtils.assertContains(f.getClass().getCanonicalName(), expectedFunctionClass);
         }
 
         for (int i = 0, n = expectedTypes.length; i < n; i++) {
@@ -1408,7 +1420,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
             Assert.fail();
         } catch (SqlException e) {
             Assert.assertEquals(expectedPos, e.getPosition());
-            TestUtils.assertContains(e.getMessage(), expectedMessage);
+            TestUtils.assertContains(e.getFlyweightMessage(), expectedMessage);
         }
     }
 

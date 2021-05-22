@@ -35,6 +35,7 @@ abstract class AbstractRecordListCursor extends AbstractDataFrameRecordCursor {
 
     protected final DirectLongList rows;
     private long index;
+    private long lim;
 
     public AbstractRecordListCursor(DirectLongList rows, @NotNull IntList columnIndexes) {
         super(columnIndexes);
@@ -42,16 +43,9 @@ abstract class AbstractRecordListCursor extends AbstractDataFrameRecordCursor {
     }
 
     @Override
-    public long size() {
-        return rows.size();
-    }
-
-    abstract protected void buildTreeMap(SqlExecutionContext executionContext);
-
-    @Override
     public boolean hasNext() {
-        if (index > -1) {
-            long row = rows.get(index--);
+        if (index < lim) {
+            long row = rows.get(index++);
             recordA.jumpTo(Rows.toPartitionIndex(row), Rows.toLocalRowID(row));
             return true;
         }
@@ -60,8 +54,15 @@ abstract class AbstractRecordListCursor extends AbstractDataFrameRecordCursor {
 
     @Override
     public void toTop() {
-        index = rows.size() - 1;
+        index = 0;
     }
+
+    @Override
+    public long size() {
+        return lim;
+    }
+
+    abstract protected void buildTreeMap(SqlExecutionContext executionContext);
 
     @Override
     void of(DataFrameCursor dataFrameCursor, SqlExecutionContext executionContext) {
@@ -70,6 +71,7 @@ abstract class AbstractRecordListCursor extends AbstractDataFrameRecordCursor {
         this.recordB.of(dataFrameCursor.getTableReader());
         rows.clear();
         buildTreeMap(executionContext);
-        index = rows.size() - 1;
+        index = 0;
+        lim = rows.size();
     }
 }

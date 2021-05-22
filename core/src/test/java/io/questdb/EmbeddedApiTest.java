@@ -76,8 +76,10 @@ public class EmbeddedApiTest {
 
 
             Rnd rnd = new Rnd();
-            try (CairoEngine engine = new CairoEngine(configuration)) {
-                final MessageBusImpl messageBus = new MessageBusImpl(configuration);
+            try (
+                    final CairoEngine engine = new CairoEngine(configuration);
+                    final MessageBusImpl messageBus = new MessageBusImpl(configuration)
+            ) {
                 workerPool.assign(new GroupByJob(messageBus));
                 workerPool.start(log);
                 try {
@@ -100,7 +102,8 @@ public class EmbeddedApiTest {
 
                         try (RecordCursorFactory factory = compiler.compile("select sum(g) from abc", ctx).getRecordCursorFactory()) {
                             try (RecordCursor cursor = factory.getCursor(ctx)) {
-                                final Record record = cursor.getRecord();
+                                final Record ignored = cursor.getRecord();
+                                //noinspection StatementWithEmptyBody
                                 while (cursor.hasNext()) {
                                     // access 'record' instance for field values
                                 }
@@ -120,36 +123,36 @@ public class EmbeddedApiTest {
 
         TestUtils.assertMemoryLeak(() -> {
             // the write part
-            try (CairoEngine engine = new CairoEngine(configuration)) {
-                final SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, 1);
-                try (SqlCompiler compiler = new SqlCompiler(engine)) {
-
-                    compiler.compile("create table abc (a int, b byte, c short, d long, e float, g double, h date, i symbol, j string, k boolean, ts timestamp) timestamp(ts)", ctx);
-
-                    try (TableWriter writer = engine.getWriter(ctx.getCairoSecurityContext(), "abc")) {
-                        for (int i = 0; i < 10; i++) {
-                            TableWriter.Row row = writer.newRow(Os.currentTimeMicros());
-                            row.putInt(0, 123);
-                            row.putByte(1, (byte) 1111);
-                            row.putShort(2, (short) 222);
-                            row.putLong(3, 333);
-                            row.putFloat(4, 4.44f);
-                            row.putDouble(5, 5.55);
-                            row.putDate(6, System.currentTimeMillis());
-                            row.putSym(7, "xyz");
-                            row.putStr(8, "abc");
-                            row.putBool(9, true);
-                            row.append();
-                        }
-                        writer.commit();
+            try (
+                    final CairoEngine engine = new CairoEngine(configuration);
+                    final SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, 1);
+                    final SqlCompiler compiler = new SqlCompiler(engine)
+            ) {
+                compiler.compile("create table abc (a int, b byte, c short, d long, e float, g double, h date, i symbol, j string, k boolean, ts timestamp) timestamp(ts)", ctx);
+                try (TableWriter writer = engine.getWriter(ctx.getCairoSecurityContext(), "abc")) {
+                    for (int i = 0; i < 10; i++) {
+                        TableWriter.Row row = writer.newRow(Os.currentTimeMicros());
+                        row.putInt(0, 123);
+                        row.putByte(1, (byte) 1111);
+                        row.putShort(2, (short) 222);
+                        row.putLong(3, 333);
+                        row.putFloat(4, 4.44f);
+                        row.putDouble(5, 5.55);
+                        row.putDate(6, System.currentTimeMillis());
+                        row.putSym(7, "xyz");
+                        row.putStr(8, "abc");
+                        row.putBool(9, true);
+                        row.append();
                     }
+                    writer.commit();
+                }
 
-                    try (RecordCursorFactory factory = compiler.compile("abc", ctx).getRecordCursorFactory()) {
-                        try (RecordCursor cursor = factory.getCursor(ctx)) {
-                            final Record record = cursor.getRecord();
-                            while (cursor.hasNext()) {
-                                // access 'record' instance for field values
-                            }
+                try (RecordCursorFactory factory = compiler.compile("abc", ctx).getRecordCursorFactory()) {
+                    try (RecordCursor cursor = factory.getCursor(ctx)) {
+                        final Record record = cursor.getRecord();
+                        //noinspection StatementWithEmptyBody
+                        while (cursor.hasNext()) {
+                            // access 'record' instance for field values
                         }
                     }
                 }

@@ -24,13 +24,9 @@
 
 package io.questdb.griffin.engine.functions.groupby;
 
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.AbstractGriffinTest;
-import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.std.Rnd;
-import io.questdb.test.tools.TestUtils;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -44,14 +40,14 @@ public class CountLong256GroupByFunctionFactoryTest extends AbstractGriffinTest 
     @Test
     public void testGroupKeyed() throws Exception {
         assertQuery(
-                "a\tcount\n" +
+                "a\tcount_distinct\n" +
                         "c\t5\n" +
                         "f\t4\n" +
                         "e\t1\n" +
                         "d\t3\n" +
                         "b\t4\n" +
                         "a\t1\n",
-                "select a, count(s) from x",
+                "select a, count_distinct(s) from x",
                 "create table x as (select * from (select rnd_symbol('a','b','c','d','e','f') a, rnd_long256(16) s,  timestamp_sequence(0, 100000) ts from long_sequence(20)) timestamp(ts))",
                 null,
                 true,
@@ -63,10 +59,10 @@ public class CountLong256GroupByFunctionFactoryTest extends AbstractGriffinTest 
     @Test
     public void testGroupNotKeyed() throws Exception {
         assertQuery(
-                "count\n" +
+                "count_distinct\n" +
                         "6\n",
-                "select count(s) from x",
-                "create table x as (select * from (select rnd_symbol('344', 'xx2', '00s', '544', 'rraa', '0llp') s,  timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))",
+                "select count_distinct(s) from x",
+                "create table x as (select * from (select rnd_long256(6) s,  timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))",
                 null,
                 false,
                 true,
@@ -75,9 +71,28 @@ public class CountLong256GroupByFunctionFactoryTest extends AbstractGriffinTest 
     }
 
     @Test
+    public void testGroupNotKeyedWithNulls() throws Exception {
+        String expected = "count_distinct\n" +
+                "6\n";
+        assertQuery(
+                expected,
+                "select count_distinct(s) from x",
+                "create table x as (select * from (select rnd_long256(6) s,  timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts)) PARTITION BY YEAR",
+                null,
+                false,
+                true,
+                true
+        );
+
+        executeInsert("insert into x values(cast(null as LONG256), '2021-05-21')");
+        executeInsert("insert into x values(cast(null as LONG256), '1969-01-01')");
+        assertSql("select count_distinct(s) from x", expected);
+    }
+
+    @Test
     public void testSampleFillLinear() throws Exception {
         assertQuery(
-                "ts\tcount\n" +
+                "ts\tcount_distinct\n" +
                         "1970-01-01T00:00:00.000000Z\t6\n" +
                         "1970-01-01T00:00:01.000000Z\t6\n" +
                         "1970-01-01T00:00:02.000000Z\t6\n" +
@@ -88,7 +103,7 @@ public class CountLong256GroupByFunctionFactoryTest extends AbstractGriffinTest 
                         "1970-01-01T00:00:07.000000Z\t7\n" +
                         "1970-01-01T00:00:08.000000Z\t5\n" +
                         "1970-01-01T00:00:09.000000Z\t7\n",
-                "select ts, count(s) from x sample by 1s fill(linear)",
+                "select ts, count_distinct(s) from x sample by 1s fill(linear)",
                 "create table x as (select * from (select rnd_long256(10) s,  timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))",
                 "ts",
                 true,
@@ -99,29 +114,19 @@ public class CountLong256GroupByFunctionFactoryTest extends AbstractGriffinTest 
 
     @Test
     public void testSampleFillNone() throws Exception {
-        assertMemoryLeak(() -> {
-            final String sql = "with x as (select * from (select rnd_long256(8) s, timestamp_sequence(50000, 100000L/4) ts from long_sequence(100)) timestamp(ts))\n" +
-                    "select ts, count(s) from x sample by 2s";
-            CompiledQuery cq = compiler.compile(sql, sqlExecutionContext);
-
-            try (RecordCursorFactory factory = cq.getRecordCursorFactory()) {
-                sink.clear();
-                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    printer.print(cursor, factory.getMetadata(), true);
-                }
-            }
-
-            TestUtils.assertEquals("ts\tcount\n" +
-                            "1970-01-01T00:00:00.050000Z\t8\n" +
-                            "1970-01-01T00:00:02.050000Z\t8\n",
-                    sink);
-        });
+        assertMemoryLeak(() -> assertSql(
+                "with x as (select * from (select rnd_long256(8) s, timestamp_sequence(50000, 100000L/4) ts from long_sequence(100)) timestamp(ts))\n" +
+                        "select ts, count_distinct(s) from x sample by 2s",
+                "ts\tcount_distinct\n" +
+                        "1970-01-01T00:00:00.050000Z\t8\n" +
+                        "1970-01-01T00:00:02.050000Z\t8\n"
+        ));
     }
 
     @Test
     public void testSampleFillValue() throws Exception {
         assertQuery(
-                "ts\tcount\n" +
+                "ts\tcount_distinct\n" +
                         "1970-01-01T00:00:00.000000Z\t7\n" +
                         "1970-01-01T00:00:01.000000Z\t7\n" +
                         "1970-01-01T00:00:02.000000Z\t7\n" +
@@ -132,7 +137,7 @@ public class CountLong256GroupByFunctionFactoryTest extends AbstractGriffinTest 
                         "1970-01-01T00:00:07.000000Z\t5\n" +
                         "1970-01-01T00:00:08.000000Z\t7\n" +
                         "1970-01-01T00:00:09.000000Z\t5\n",
-                "select ts, count(s) from x sample by 1s fill(99)",
+                "select ts, count_distinct(s) from x sample by 1s fill(99)",
                 "create table x as (select * from (select rnd_long256(8) s,  timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))",
                 "ts",
                 false
@@ -142,7 +147,7 @@ public class CountLong256GroupByFunctionFactoryTest extends AbstractGriffinTest 
     @Test
     public void testSampleKeyed() throws Exception {
         assertQuery(
-                "a\tcount\tts\n" +
+                "a\tcount_distinct\tts\n" +
                         "f\t8\t1970-01-01T00:00:00.000000Z\n" +
                         "e\t4\t1970-01-01T00:00:00.000000Z\n" +
                         "c\t8\t1970-01-01T00:00:00.000000Z\n" +
@@ -155,7 +160,7 @@ public class CountLong256GroupByFunctionFactoryTest extends AbstractGriffinTest 
                         "e\t6\t1970-01-01T00:00:05.000000Z\n" +
                         "a\t4\t1970-01-01T00:00:05.000000Z\n" +
                         "f\t6\t1970-01-01T00:00:05.000000Z\n",
-                "select a, count(s), ts from x sample by 5s",
+                "select a, count_distinct(s), ts from x sample by 5s",
                 "create table x as (select * from (select rnd_symbol('a','b','c','d','e','f') a, rnd_long256(12) s,  timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))",
                 "ts",
                 false

@@ -25,34 +25,19 @@
 package io.questdb.griffin.engine.groupby.vect;
 
 import io.questdb.MessageBus;
-import io.questdb.mp.Job;
-import io.questdb.mp.RingQueue;
-import io.questdb.mp.Sequence;
+import io.questdb.mp.AbstractQueueConsumerJob;
 import io.questdb.tasks.VectorAggregateTask;
 
-public class GroupByJob implements Job {
-    private final RingQueue<VectorAggregateTask> queue;
-    private final Sequence subSeq;
+public class GroupByJob extends AbstractQueueConsumerJob<VectorAggregateTask> {
 
     public GroupByJob(MessageBus messageBus) {
-        this.queue = messageBus.getVectorAggregateQueue();
-        this.subSeq = messageBus.getVectorAggregateSubSequence();
+        super(messageBus.getVectorAggregateQueue(), messageBus.getVectorAggregateSubSeq());
     }
 
     @Override
-    public boolean run(int workerId) {
-        boolean useful = false;
-        while (true) {
-            long cursor = subSeq.next();
-            if (cursor == -1) {
-                return useful;
-            }
-
-            if (cursor != -2) {
-                final VectorAggregateEntry entry = queue.get(cursor).entry;
-                subSeq.done(cursor);
-                useful |= entry.run(workerId);
-            }
-        }
+    protected boolean doRun(int workerId, long cursor) {
+        final VectorAggregateEntry entry = queue.get(cursor).entry;
+        subSeq.done(cursor);
+        return entry.run(workerId);
     }
 }

@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.model;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
@@ -187,7 +188,7 @@ public final class IntervalUtils {
                 int day = Numbers.parseInt(seq, p, p += 2);
                 checkRange(day, 1, Timestamps.getDaysPerMonth(month, l));
                 if (checkLen(p, lim)) {
-                    checkChar(seq, p++, lim, 'T');
+                    checkChar(seq, p++, lim, 'T', ' ');
                     int hour = Numbers.parseInt(seq, p, p += 2);
                     checkRange(hour, 0, 23);
                     if (checkLen(p, lim)) {
@@ -198,11 +199,12 @@ public final class IntervalUtils {
                             checkChar(seq, p++, lim, ':');
                             int sec = Numbers.parseInt(seq, p, p += 2);
                             checkRange(sec, 0, 59);
-                            if (lim - p > 3) {
-                                checkChar(seq, p++, lim, '.');
+                            if (lim - p > 3 && seq.charAt(p) == '.') {
+                                p++;
                                 int ms = Numbers.parseInt(seq, p, p += 3);
-                                if (lim - p > 2) {
+                                if (lim - p > 2 && Character.isDigit(seq.charAt(p))) {
                                     // micros
+                                    int micr = Numbers.parseInt(seq, p, p += 3);
                                     ts = Timestamps.yearMicros(year, l)
                                             + Timestamps.monthOfYearMicros(month, l)
                                             + (day - 1) * Timestamps.DAY_MICROS
@@ -210,7 +212,9 @@ public final class IntervalUtils {
                                             + min * Timestamps.MINUTE_MICROS
                                             + sec * Timestamps.SECOND_MICROS
                                             + ms * Timestamps.MILLI_MICROS
-                                            + Numbers.parseInt(seq, p, p + 3) + 1;
+                                            + micr
+                                            + checkTimezoneTail(seq, p, lim)
+                                            + 1;
                                 } else {
                                     // millis
                                     ts = Timestamps.yearMicros(year, l)
@@ -219,7 +223,8 @@ public final class IntervalUtils {
                                             + hour * Timestamps.HOUR_MICROS
                                             + min * Timestamps.MINUTE_MICROS
                                             + sec * Timestamps.SECOND_MICROS
-                                            + (ms + 1) * Timestamps.MILLI_MICROS;
+                                            + (ms + 1) * Timestamps.MILLI_MICROS
+                                            + checkTimezoneTail(seq, p, lim);
                                 }
                             } else {
                                 // seconds
@@ -228,7 +233,8 @@ public final class IntervalUtils {
                                         + (day - 1) * Timestamps.DAY_MICROS
                                         + hour * Timestamps.HOUR_MICROS
                                         + min * Timestamps.MINUTE_MICROS
-                                        + (sec + 1) * Timestamps.SECOND_MICROS;
+                                        + (sec + 1) * Timestamps.SECOND_MICROS
+                                        + checkTimezoneTail(seq, p, lim);
                             }
                         } else {
                             // minute
@@ -285,7 +291,7 @@ public final class IntervalUtils {
                 int day = Numbers.parseInt(seq, p, p += 2);
                 checkRange(day, 1, Timestamps.getDaysPerMonth(month, l));
                 if (checkLen(p, lim)) {
-                    checkChar(seq, p++, lim, 'T');
+                    checkChar(seq, p++, lim, 'T', ' ');
                     int hour = Numbers.parseInt(seq, p, p += 2);
                     checkRange(hour, 0, 23);
                     if (checkLen(p, lim)) {
@@ -296,29 +302,33 @@ public final class IntervalUtils {
                             checkChar(seq, p++, lim, ':');
                             int sec = Numbers.parseInt(seq, p, p += 2);
                             checkRange(sec, 0, 59);
-                            if (lim - p > 3) {
-                                checkChar(seq, p++, lim, '.');
-                                int ms = Numbers.parseInt(seq, p, p += 3);
-                                if (lim - p > 2) {
-                                    // micros
-                                    ts = Timestamps.yearMicros(year, l)
-                                            + Timestamps.monthOfYearMicros(month, l)
-                                            + (day - 1) * Timestamps.DAY_MICROS
-                                            + hour * Timestamps.HOUR_MICROS
-                                            + min * Timestamps.MINUTE_MICROS
-                                            + sec * Timestamps.SECOND_MICROS
-                                            + ms * Timestamps.MILLI_MICROS
-                                            + Numbers.parseInt(seq, p, p + 3);
-                                } else {
-                                    // millis
-                                    ts = Timestamps.yearMicros(year, l)
-                                            + Timestamps.monthOfYearMicros(month, l)
-                                            + (day - 1) * Timestamps.DAY_MICROS
-                                            + hour * Timestamps.HOUR_MICROS
-                                            + min * Timestamps.MINUTE_MICROS
-                                            + sec * Timestamps.SECOND_MICROS
-                                            + ms * Timestamps.MILLI_MICROS;
+                            if (p < lim && seq.charAt(p) == '.') {
+
+                                p++;
+                                // varlen milli and micros
+                                int micrLim = p + 6;
+                                int mlim = Math.min(lim, micrLim);
+                                int micr = 0;
+                                for(;p < mlim; p++) {
+                                    char c = seq.charAt(p);
+                                    if (c < '0' || c > '9') {
+                                        // Timezone
+                                        break;
+                                    }
+                                    micr *= 10;
+                                    micr += c - '0';
                                 }
+                                micr *= tenPow(micrLim - p);
+
+                                // micros
+                                ts = Timestamps.yearMicros(year, l)
+                                        + Timestamps.monthOfYearMicros(month, l)
+                                        + (day - 1) * Timestamps.DAY_MICROS
+                                        + hour * Timestamps.HOUR_MICROS
+                                        + min * Timestamps.MINUTE_MICROS
+                                        + sec * Timestamps.SECOND_MICROS
+                                        + micr
+                                        + checkTimezoneTail(seq, p, lim);
                             } else {
                                 // seconds
                                 ts = Timestamps.yearMicros(year, l)
@@ -326,7 +336,8 @@ public final class IntervalUtils {
                                         + (day - 1) * Timestamps.DAY_MICROS
                                         + hour * Timestamps.HOUR_MICROS
                                         + min * Timestamps.MINUTE_MICROS
-                                        + sec * Timestamps.SECOND_MICROS;
+                                        + sec * Timestamps.SECOND_MICROS
+                                        + checkTimezoneTail(seq, p, lim);
                             }
                         } else {
                             // minute
@@ -362,6 +373,73 @@ public final class IntervalUtils {
         return ts;
     }
 
+    private static int tenPow(int i) throws NumericException {
+        switch (i) {
+            case 0: return 1;
+            case 1: return 10;
+            case 2: return 100;
+            case 3: return 1000;
+            case 4: return 10000;
+            case 5: return 100000;
+            default: throw NumericException.INSTANCE;
+        }
+    }
+
+    private static long checkTimezoneTail(CharSequence seq, int p, int lim) throws NumericException {
+        if (lim == p) {
+            return 0;
+        }
+
+        if (lim - p < 2) {
+            checkChar(seq, p++, lim, 'Z');
+            return 0;
+        }
+
+        if (lim - p > 2) {
+            int tzSign = parseSign(seq, p++);
+            int hour = Numbers.parseInt(seq, p, p += 2);
+            checkRange(hour, 0, 23);
+
+            if (lim - p == 3) {
+                // Optional : separator between hours and mins in timezone
+                checkChar(seq, p++, lim, ':');
+            }
+
+            if (checkLenStrict(p, lim, 2)) {
+                int min = Numbers.parseInt(seq, p, p + 2);
+                checkRange(min, 0, 59);
+                return tzSign*(hour * Timestamps.HOUR_MICROS + min * Timestamps.MINUTE_MICROS);
+            } else {
+                return tzSign*(hour * Timestamps.HOUR_MICROS);
+            }
+        }
+        throw NumericException.INSTANCE;
+    }
+
+    private static int parseSign(CharSequence seq, int p) throws NumericException {
+        int tzSign;
+        switch (seq.charAt(p)) {
+            case '+':
+                tzSign = 1;
+                break;
+            case '-':
+                tzSign = -1;
+                break;
+            default:
+                throw NumericException.INSTANCE;
+        }
+        return tzSign;
+    }
+
+    public static long tryParseTimestamp(CharSequence seq) throws CairoException {
+        try {
+            return parseFloorPartialDate(seq, 0, seq.length());
+        } catch (NumericException e) {
+            throw CairoException.instance(0).put("Invalid timestamp: ").put(seq);
+        }
+    }
+
+
     public static long parseFloorPartialDate(CharSequence seq) throws NumericException {
         return parseFloorPartialDate(seq, 0, seq.length());
     }
@@ -369,6 +447,94 @@ public final class IntervalUtils {
     public static void subtract(LongList intervals, int divider) {
         IntervalUtils.invert(intervals, divider);
         IntervalUtils.intersectInplace(intervals, divider);
+    }
+
+    /**
+     * Unions two lists of intervals compacted in one list in place.
+     * Intervals to be chronologically ordered and result list will be ordered as well.
+     * <p>
+     * Treat a as 2 lists,
+     * a: first from 0 to divider
+     * b: from divider to the end of list
+     *
+     * @param intervals 2 lists of intervals concatenated in 1
+     */
+    static void unionInplace(LongList intervals, int dividerIndex) {
+        final int sizeA = dividerIndex;
+        final int sizeB = sizeA + (intervals.size() - dividerIndex);
+        int aLower = 0;
+
+        int intervalB = sizeA;
+        int writePoint = 0;
+
+        int aUpperSize = sizeB;
+        int aUpper = sizeB;
+        long aLo = 0, aHi = 0, bLo = 0, bHi = 0;
+
+        while (aLower < sizeA || aUpper < aUpperSize || intervalB < sizeB) {
+
+            // This tries to get either interval from A or from B
+            // where it's available
+            // and union with last interval in writePoint position
+            boolean hasA = aLower < sizeA || aUpper < aUpperSize;
+            if (hasA) {
+                int intervalA = aUpper < aUpperSize ? aUpper : aLower;
+                aLo = intervals.getQuick(intervalA);
+                aHi = intervals.getQuick(intervalA + 1);
+            }
+
+            boolean hasB = intervalB < sizeB;
+            if (hasB) {
+                bLo = intervals.getQuick(intervalB);
+                bHi = intervals.getQuick(intervalB + 1);
+            }
+
+            long nextLo, nextHi;
+
+            if (hasA) {
+                if (hasB && bLo < aLo) {
+                    nextLo = bLo;
+                    nextHi = bHi;
+                    intervalB += 2;
+                } else {
+                    nextLo = aLo;
+                    nextHi = aHi;
+                    if (aUpper < aUpperSize) {
+                        aUpper += 2;
+                    } else {
+                        aLower += 2;
+                    }
+                }
+            } else {
+                nextLo = bLo;
+                nextHi = bHi;
+                intervalB += 2;
+            }
+
+            if (writePoint > 0) {
+                long prevHi = intervals.getQuick(writePoint - 1);
+                if (nextLo <= prevHi) {
+                    // Intersection with previously safed interval
+                    intervals.setQuick(writePoint - 1, Math.max(nextHi, prevHi));
+                    continue;
+                }
+            }
+
+            // new interval to save
+            assert writePoint <= aLower || writePoint >= sizeA;
+            if (writePoint == aLower && aLower < sizeA) {
+                // We cannot keep A position, it will be overwritten
+                // Copy a point to A area instead
+                intervals.add(intervals.getQuick(writePoint));
+                intervals.add(intervals.getQuick(writePoint + 1));
+                aUpperSize = intervals.size();
+                aLower += 2;
+            }
+            intervals.setQuick(writePoint++, nextLo);
+            intervals.setQuick(writePoint++, nextHi);
+        }
+
+        intervals.setPos(writePoint);
     }
 
     /**
@@ -535,8 +701,25 @@ public final class IntervalUtils {
         throw NumericException.INSTANCE;
     }
 
+    private static boolean checkLenStrict(int p, int lim, int len) throws NumericException {
+        if (lim - p == len) {
+            return true;
+        }
+        if (lim <= p) {
+            return false;
+        }
+
+        throw NumericException.INSTANCE;
+    }
+
     private static void checkChar(CharSequence s, int p, int lim, char c) throws NumericException {
         if (p >= lim || s.charAt(p) != c) {
+            throw NumericException.INSTANCE;
+        }
+    }
+
+    private static void checkChar(CharSequence s, int p, int lim, char c1, char c2) throws NumericException {
+        if (p >= lim || (s.charAt(p) != c1 && s.charAt(p) != c2)) {
             throw NumericException.INSTANCE;
         }
     }
@@ -628,7 +811,7 @@ public final class IntervalUtils {
                 }
 
                 try {
-                    long millis = TimestampFormatUtils.tryParse(seq, lo, lim);
+                    long millis = parseFloorPartialDate(seq, lo, lim);
                     addHiLoInterval(millis, millis, operation, out);
                     break;
                 } catch (NumericException e) {
@@ -674,6 +857,20 @@ public final class IntervalUtils {
                 break;
             default:
                 throw SqlException.$(position, "Invalid interval format");
+        }
+    }
+
+    public static void parseSingleTimestamp(CharSequence seq, int lo, int lim, int position, LongList out, short operation) throws SqlException {
+        try {
+            long millis = parseFloorPartialDate(seq, lo, lim);
+            addHiLoInterval(millis, millis, operation, out);
+        } catch (NumericException e) {
+            for (int i = lo; i < lim; i++) {
+                if (seq.charAt(i) == ';') {
+                    throw SqlException.$(position, "Not a date, use IN keyword with intervals");
+                }
+            }
+            throw SqlException.$(position, "Not a date");
         }
     }
 

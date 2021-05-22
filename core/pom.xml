@@ -35,12 +35,12 @@
         <nodejs.version>v12.16.2</nodejs.version>
         <runtime.assembly>none</runtime.assembly>
         <javac.target>11</javac.target>
-        <argLine>-Xmx512m -Dfile.encoding=UTF-8</argLine>
+        <argLine>-Dfile.encoding=UTF-8</argLine>
     </properties>
 
-    <version>6.0.0-SNAPSHOT</version>
+    <version>6.0.2-SNAPSHOT</version>
     <groupId>org.questdb</groupId>
-    <artifactId>${questdb.artifactid}</artifactId>
+    <artifactId>questdb</artifactId>
     <packaging>jar</packaging>
 
     <url>https://questdb.io/</url>
@@ -186,6 +186,19 @@
                 <configuration>
                     <doCheck>false</doCheck>
                     <doUpdate>false</doUpdate>
+                </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <version>2.17</version>
+                <configuration>
+                    <properties>
+                        <property>
+                            <name>listener</name>
+                            <value>io.questdb.TestListener</value>
+                        </property>
+                    </properties>
                 </configuration>
             </plugin>
         </plugins>
@@ -376,6 +389,8 @@
                                         <argument>--no-header-files</argument>
                                         <argument>--no-man-pages</argument>
                                         <argument>--compress=2</argument>
+                                        <argument>--strip-debug</argument>
+                                        <argument>--vm=server</argument>
                                     </arguments>
                                     <workingDirectory>../core</workingDirectory>
                                 </configuration>
@@ -497,7 +512,7 @@
 					<plugin>
 						<groupId>org.jacoco</groupId>
 						<artifactId>jacoco-maven-plugin</artifactId>
-						<version>0.8.5</version>
+						<version>0.8.7</version>
 						<executions>
 							<execution>
 								<id>default-prepare-agent</id>

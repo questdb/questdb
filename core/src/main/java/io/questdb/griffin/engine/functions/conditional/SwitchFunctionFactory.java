@@ -198,6 +198,7 @@ public class SwitchFunctionFactory implements FunctionFactory {
         };
 
         argsToPoke.add(elseB);
+        argsToPoke.add(keyFunction);
 
         return CaseCommon.getCaseFunction(position, valueType, picker, argsToPoke);
     }
@@ -231,6 +232,7 @@ public class SwitchFunctionFactory implements FunctionFactory {
             argsToPoke = new ObjList<>();
             argsToPoke.add(keyFunction);
             argsToPoke.add(elseB);
+            argsToPoke.add(branch);
 
         } else if (n == 5) {
             final boolean a = args.getQuick(1).getBool(null);
@@ -290,6 +292,7 @@ public class SwitchFunctionFactory implements FunctionFactory {
             return elseB;
         };
         argsToPoke.add(elseB);
+        argsToPoke.add(keyFunction);
 
         return CaseCommon.getCaseFunction(position, valueType, picker, argsToPoke);
     }
@@ -350,6 +353,7 @@ public class SwitchFunctionFactory implements FunctionFactory {
             argsToPoke.add(nullFunc);
         }
         argsToPoke.add(elseB);
+        argsToPoke.add(keyFunction);
         return CaseCommon.getCaseFunction(position, valueType, picker, argsToPoke);
     }
 

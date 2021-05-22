@@ -94,8 +94,6 @@ public final class Unsafe {
 
     private static boolean getOrdinaryObjectPointersCompressionStatus(boolean is32BitJVM) {
         class Probe {
-            private int intField;
-
             boolean probe() {
                 long offset = getFieldOffset(Probe.class, "intField");
                 if (offset == 8L) {
@@ -120,17 +118,17 @@ public final class Unsafe {
 
     public static long arrayGetVolatile(long[] array, int index) {
         assert index > -1 && index < array.length;
-        return Unsafe.getUnsafe().getLongVolatile(array, LONG_OFFSET + (index << LONG_SCALE));
+        return Unsafe.getUnsafe().getLongVolatile(array, LONG_OFFSET + ((long) index << LONG_SCALE));
     }
 
     public static void arrayPutOrdered(long[] array, int index, long value) {
         assert index > -1 && index < array.length;
-        Unsafe.getUnsafe().putOrderedLong(array, LONG_OFFSET + (index << LONG_SCALE), value);
+        Unsafe.getUnsafe().putOrderedLong(array, LONG_OFFSET + ((long) index << LONG_SCALE), value);
     }
 
     public static long calloc(long size) {
         long ptr = malloc(size);
-        getUnsafe().setMemory(ptr, size, (byte) 0);
+        Vect.memset(ptr, size, 0);
         return ptr;
     }
 
@@ -194,7 +192,7 @@ public final class Unsafe {
         return ptr;
     }
 
-    static void recordMemAlloc(long size) {
+    public static void recordMemAlloc(long size) {
         MEM_USED.addAndGet(size);
     }
 

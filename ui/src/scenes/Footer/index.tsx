@@ -31,7 +31,8 @@ import { Github } from "@styled-icons/remix-fill/Github"
 import { Link, Text, TransitionDuration } from "components"
 import { selectors } from "store"
 
-import GithubBanner from "../GithubBanner"
+import GithubBanner from "./GithubBanner"
+import BuildVersion from "./BuildVersion"
 
 const Wrapper = styled.div`
   position: absolute;
@@ -43,17 +44,21 @@ const Wrapper = styled.div`
   padding-left: 45px;
 `
 
-const Copyright = styled.div`
+const LeftContainer = styled.div`
   display: flex;
   padding-left: 1rem;
   align-items: center;
   flex: 1;
 `
 
-const Icons = styled.div`
+const RightContainer = styled.div`
   display: flex;
   padding-right: 1rem;
   align-items: center;
+
+  & > *:not(:last-child) {
+    margin-right: 1rem;
+  }
 `
 
 const GithubBannerTransition = createGlobalStyle`
@@ -92,13 +97,13 @@ const Footer = () => {
 
   return (
     <Wrapper id="footer">
-      <GithubBannerTransition />
-      <Copyright>
+      <LeftContainer>
         <Text color="draculaForeground">
           Copyright &copy; 2014-{new Date().getFullYear()} QuestDB
         </Text>
-      </Copyright>
-      <Icons>
+      </LeftContainer>
+      <RightContainer>
+        <BuildVersion />
         <Link
           color="draculaForeground"
           hoverColor="draculaCyan"
@@ -108,7 +113,9 @@ const Footer = () => {
         >
           <Github size="18px" />
         </Link>
-      </Icons>
+      </RightContainer>
+
+      <GithubBannerTransition />
       <CSSTransition
         classNames="github-banner"
         in={showBanner && githubBanner}

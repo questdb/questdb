@@ -69,7 +69,7 @@ public class TimestampAddFunctionFactory implements FunctionFactory {
             }
             return new TimestampConstant(position, Numbers.LONG_NaN);
         }
-        return new AddLongFunc(position, args.getQuick(2), args.getQuick(0), args.getQuick(1));
+        return new DateAddFunc(position, args.getQuick(2), args.getQuick(0), args.getQuick(1));
     }
 
     @FunctionalInterface
@@ -137,12 +137,12 @@ public class TimestampAddFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class AddLongFunc extends TimestampFunction implements TernaryFunction {
+    private static class DateAddFunc extends TimestampFunction implements TernaryFunction {
         final Function left;
         final Function center;
         final Function right;
 
-        public AddLongFunc(int position, Function left, Function center, Function right) {
+        public DateAddFunc(int position, Function left, Function center, Function right) {
             super(position);
             this.left = left;
             this.center = center;

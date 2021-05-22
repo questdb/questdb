@@ -67,7 +67,7 @@ public class SqlCodeGenerator implements Mutable {
     private static final IntObjHashMap<VectorAggregateFunctionConstructor> avgConstructors = new IntObjHashMap<>();
     private static final IntObjHashMap<VectorAggregateFunctionConstructor> minConstructors = new IntObjHashMap<>();
     private static final IntObjHashMap<VectorAggregateFunctionConstructor> maxConstructors = new IntObjHashMap<>();
-    private static final IntObjHashMap<VectorAggregateFunctionConstructor> countConstructors = new IntObjHashMap<>();
+    private static final VectorAggregateFunctionConstructor countConstructor = (position, keyKind, columnIndex, workerCount) -> new CountVectorAggregateFunction(position, keyKind);
     private static final SetRecordCursorFactoryConstructor SET_UNION_CONSTRUCTOR = UnionRecordCursorFactory::new;
     private static final SetRecordCursorFactoryConstructor SET_INTERSECT_CONSTRUCTOR = IntersectRecordCursorFactory::new;
     private static final SetRecordCursorFactoryConstructor SET_EXCEPT_CONSTRUCTOR = ExceptRecordCursorFactory::new;
@@ -154,16 +154,6 @@ public class SqlCodeGenerator implements Mutable {
         return new LtJoinRecordCursorFactory(configuration, metadata, masterFactory, slaveFactory, mapKeyTypes, mapValueTypes, slaveColumnTypes, masterKeySink, slaveKeySink, columnSplit, slaveValueSink, columnIndex);
     }
 
-    private static void addCountConstructor(int type) {
-        countConstructors.put(type,
-                (position, keyKind, columnIndex, workerCount) -> new CountVectorAggregateFunction(
-                        position,
-                        keyKind,
-                        ColumnType.pow2SizeOf(type)
-                )
-        );
-    }
-
     private VectorAggregateFunctionConstructor assembleFunctionReference(RecordMetadata metadata, ExpressionNode ast) {
         int columnIndex;
         if (ast.type == FUNCTION && ast.paramCount == 1 && SqlKeywords.isSumKeyword(ast.token) && ast.rhs.type == LITERAL) {
@@ -173,7 +163,7 @@ public class SqlCodeGenerator implements Mutable {
         } else if (ast.type == FUNCTION && ast.paramCount == 0 && SqlKeywords.isCountKeyword(ast.token)) {
             // count() is a no-arg function
             tempVecConstructorArgIndexes.add(-1);
-            return countConstructors.get(ColumnType.pow2SizeOf(tempKeyIndexesInBase.getQuick(0)));
+            return countConstructor;
         } else if (isSingleColumnFunction(ast, "ksum")) {
             columnIndex = metadata.getColumnIndex(ast.rhs.token);
             tempVecConstructorArgIndexes.add(columnIndex);
@@ -886,7 +876,7 @@ public class SqlCodeGenerator implements Mutable {
                 }
             }
             return master;
-        } catch (CairoException | SqlException e) {
+        } catch (Throwable e) {
             Misc.free(master);
             throw e;
         }
@@ -1792,7 +1782,7 @@ public class SqlCodeGenerator implements Mutable {
                     entityColumnFilter,
                     asm
             );
-        } catch (CairoException e) {
+        } catch (Throwable e) {
             factory.close();
             throw e;
         }
@@ -2027,7 +2017,7 @@ public class SqlCodeGenerator implements Mutable {
                     recordFunctions
             );
 
-        } catch (CairoException | SqlException e) {
+        } catch (Throwable e) {
             Misc.free(factory);
             throw e;
         }
@@ -2385,7 +2375,7 @@ public class SqlCodeGenerator implements Mutable {
                                     orderByKeyColumn = true;
                                 } else if (Chars.equals(orderByAdvice.getQuick(1).token, model.getTimestamp().token)) {
                                     orderByKeyColumn = true;
-                                    if (model.getOrderByDirectionAdvice().getQuick(1) == QueryModel.ORDER_DIRECTION_DESCENDING) {
+                                    if (getOrderByDirectionOrDefault(model,1) == QueryModel.ORDER_DIRECTION_DESCENDING) {
                                         indexDirection = BitmapIndexReader.DIR_BACKWARD;
                                     }
                                 }
@@ -2455,7 +2445,7 @@ public class SqlCodeGenerator implements Mutable {
                                 f,
                                 model.getOrderByAdviceMnemonic(),
                                 orderByKeyColumn,
-                                model.getOrderByDirectionAdvice().getQuick(0),
+                                getOrderByDirectionOrDefault(model, 0),
                                 indexDirection,
                                 columnIndexes
                         );
@@ -2511,7 +2501,7 @@ public class SqlCodeGenerator implements Mutable {
                                 orderByKeyColumn = true;
                             } else if (Chars.equals(orderByAdvice.getQuick(1).token, model.getTimestamp().token)) {
                                 orderByKeyColumn = true;
-                                if (model.getOrderByDirectionAdvice().getQuick(1) == QueryModel.ORDER_DIRECTION_DESCENDING) {
+                                if (getOrderByDirectionOrDefault(model, 1) == QueryModel.ORDER_DIRECTION_DESCENDING) {
                                     indexDirection = BitmapIndexReader.DIR_BACKWARD;
                                 }
                             }
@@ -2523,7 +2513,7 @@ public class SqlCodeGenerator implements Mutable {
                                         myMeta,
                                         dfcFactory,
                                         columnIndex,
-                                        model.getOrderByDirectionAdvice().getQuick(0) == QueryModel.ORDER_DIRECTION_ASCENDING,
+                                        getOrderByDirectionOrDefault(model, 0) == QueryModel.ORDER_DIRECTION_ASCENDING,
                                         indexDirection,
                                         columnIndexes
                                 );
@@ -2558,7 +2548,7 @@ public class SqlCodeGenerator implements Mutable {
                         configuration,
                         myMeta,
                         new FullBwdDataFrameCursorFactory(engine, tableName, model.getTableVersion()),
-                        columnIndexes.getQuick(listColumnFilterA.getColumnIndexFactored(0)),
+                        listColumnFilterA.getColumnIndexFactored(0),
                         null,
                         columnIndexes
                 );
@@ -2574,6 +2564,14 @@ public class SqlCodeGenerator implements Mutable {
                     columnIndexes
             );
         }
+    }
+
+    private static int getOrderByDirectionOrDefault(QueryModel model, int index) {
+        IntList direction = model.getOrderByDirectionAdvice();
+        if (index >= direction.size()) {
+             return 0;
+        }
+        return model.getOrderByDirectionAdvice().getQuick(index);
     }
 
     private RecordCursorFactory generateUnionAllFactory(
@@ -2845,12 +2843,5 @@ public class SqlCodeGenerator implements Mutable {
         maxConstructors.put(ColumnType.DATE, MaxDateVectorAggregateFunction::new);
         maxConstructors.put(ColumnType.TIMESTAMP, MaxTimestampVectorAggregateFunction::new);
         maxConstructors.put(ColumnType.INT, MaxIntVectorAggregateFunction::new);
-
-
-        addCountConstructor(ColumnType.DOUBLE);
-        addCountConstructor(ColumnType.LONG);
-        addCountConstructor(ColumnType.DATE);
-        addCountConstructor(ColumnType.TIMESTAMP);
-        addCountConstructor(ColumnType.INT);
     }
 }

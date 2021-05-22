@@ -57,7 +57,7 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
             Assert.fail();
         } catch (SqlException e) {
             Assert.assertEquals(expectedPosition, e.getPosition());
-            TestUtils.assertContains(e.getMessage(), expectedMsg);
+            TestUtils.assertContains(e.getFlyweightMessage(), expectedMsg);
         }
     }
 
@@ -77,7 +77,7 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
     }
 
     private Invocation callCustomised(String signature, boolean forceConstant, boolean argTypeFromSig, Object... args) throws SqlException {
-        setUp2();
+        setUp();
         toShortRefs = 0;
         toByteRefs = 0;
         toTimestampRefs = 0;
@@ -471,14 +471,6 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
             Assert.assertEquals(expected, function1.getTimestamp(record));
             Assert.assertEquals(expected, function2.getTimestamp(record));
             closeFunctions();
-        }
-
-        public Function getFunction1() {
-            return function1;
-        }
-
-        public Function getFunction2() {
-            return function2;
         }
 
         public Record getRecord() {

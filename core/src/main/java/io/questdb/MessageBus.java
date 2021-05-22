@@ -26,35 +26,77 @@ package io.questdb;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.TableBlockWriter.TableBlockWriterTaskHolder;
-import io.questdb.mp.RingQueue;
-import io.questdb.mp.Sequence;
-import io.questdb.tasks.ColumnIndexerTask;
-import io.questdb.tasks.VectorAggregateTask;
+import io.questdb.mp.*;
+import io.questdb.std.Misc;
+import io.questdb.tasks.*;
 
-public interface MessageBus {
+import java.io.Closeable;
+
+public interface MessageBus extends Closeable {
+    @Override
+    default void close() {
+        Misc.free(getO3PartitionQueue());
+    }
+
+    CairoConfiguration getConfiguration();
+
     Sequence getIndexerPubSequence();
 
     RingQueue<ColumnIndexerTask> getIndexerQueue();
 
     Sequence getIndexerSubSequence();
 
-    RingQueue<VectorAggregateTask> getVectorAggregateQueue();
+    MPSequence getO3PurgeDiscoveryPubSeq();
 
-    Sequence getVectorAggregatePubSequence();
+    RingQueue<O3PurgeDiscoveryTask> getO3PurgeDiscoveryQueue();
 
-    Sequence getVectorAggregateSubSequence();
+    MCSequence getO3PurgeDiscoverySubSeq();
+
+    MPSequence getO3PurgePubSeq();
+
+    RingQueue<O3PurgeTask> getO3PurgeQueue();
+
+    MCSequence getO3PurgeSubSeq();
+
+    MPSequence getO3CopyPubSeq();
+
+    RingQueue<O3CopyTask> getO3CopyQueue();
+
+    MCSequence getO3CopySubSeq();
+
+    MPSequence getO3OpenColumnPubSeq();
+
+    RingQueue<O3OpenColumnTask> getO3OpenColumnQueue();
+
+    MCSequence getO3OpenColumnSubSeq();
+
+    MPSequence getO3PartitionPubSeq();
+
+    RingQueue<O3PartitionTask> getO3PartitionQueue();
+
+    MCSequence getO3PartitionSubSeq();
+
+    MPSequence getO3CallbackPubSeq();
+
+    RingQueue<O3CallbackTask> getO3CallbackQueue();
+
+    MCSequence getO3CallbackSubSeq();
+
+    default Sequence getTableBlockWriterPubSeq() {
+        return null;
+    }
 
     default RingQueue<TableBlockWriterTaskHolder> getTableBlockWriterQueue() {
         return null;
     }
 
-    default Sequence getTableBlockWriterPubSequence() {
+    default Sequence getTableBlockWriterSubSeq() {
         return null;
     }
 
-    default Sequence getTableBlockWriterSubSequence() {
-        return null;
-    }
+    Sequence getVectorAggregatePubSeq();
 
-    CairoConfiguration getConfiguration();
+    RingQueue<VectorAggregateTask> getVectorAggregateQueue();
+
+    Sequence getVectorAggregateSubSeq();
 }

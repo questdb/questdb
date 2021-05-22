@@ -24,6 +24,10 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.vm.MappedReadWriteMemory;
+import io.questdb.cairo.vm.PagedMappedReadWriteMemory;
+import io.questdb.cairo.vm.PagedVirtualMemory;
+import io.questdb.cairo.vm.ReadWriteVirtualMemory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
@@ -36,15 +40,13 @@ import static io.questdb.cairo.TableUtils.*;
 
 public class EngineMigration {
     public static final int VERSION_TX_STRUCT_UPDATE_1 = 418;
+    public static final int VERSION_TBL_META_COMMIT_LAG = 419;
 
     // All offsets hardcoded here in case TableUtils offset calculation changes
     // in future code version
     public static final long TX_STRUCT_UPDATE_1_OFFSET_MAP_WRITER_COUNT = 72;
     public static final long TX_STRUCT_UPDATE_1_META_OFFSET_PARTITION_BY = 4;
-    public static final long TX_STRUCT_UPDATE_1_OFFSET_MIN_TIMESTAMP = 24;
-    public static final long TX_STRUCT_UPDATE_1_OFFSET_MAX_TIMESTAMP = 32;
     public static final String TX_STRUCT_UPDATE_1_ARCHIVE_FILE_NAME = "_archive";
-    public static final String TX_STRUCT_UPDATE_1_BACKUP_NAME = TXN_FILE_NAME + ".v" + (VERSION_TX_STRUCT_UPDATE_1 - 1);
 
     private static final Log LOG = LogFactory.getLog(EngineMigration.class);
     private static final ObjList<MigrationAction> MIGRATIONS = new ObjList<>();
@@ -64,9 +66,9 @@ public class EngineMigration {
         int tempMemSize = 8;
         long mem = Unsafe.malloc(tempMemSize);
 
-        try (VirtualMemory virtualMem = new VirtualMemory(ff.getPageSize(), 8);
+        try (PagedVirtualMemory virtualMem = new PagedVirtualMemory(ff.getPageSize(), 8);
              Path path = new Path();
-             ReadWriteMemory rwMemory = new ReadWriteMemory()) {
+             PagedMappedReadWriteMemory rwMemory = new PagedMappedReadWriteMemory()) {
 
             MigrationContext context = new MigrationContext(mem, tempMemSize, virtualMem, rwMemory);
             path.of(configuration.getRoot());
@@ -116,9 +118,9 @@ public class EngineMigration {
         return MIGRATIONS_CRITICALITY.getQuick(version - MIGRATIONS_LIST_OFFSET);
     }
 
-    static void setByVersion(int version, MigrationAction action, int criticality) {
+    private static void setByVersion(int version, MigrationAction action, int criticality) {
         MIGRATIONS.setQuick(version - MIGRATIONS_LIST_OFFSET, action);
-        MIGRATIONS_CRITICALITY.setQuick(version - MIGRATIONS_LIST_OFFSET, criticality);
+        MIGRATIONS_CRITICALITY.extendAndSet(version - MIGRATIONS_LIST_OFFSET, criticality);
     }
 
     private boolean upgradeTables(MigrationContext context, int latestVersion) {
@@ -153,8 +155,10 @@ public class EngineMigration {
                                         LOG.info().$("upgrading [path=").$(path).$(",fromVersion=").$(currentTableVersion)
                                                 .$(",toVersion=").$(latestVersion).I$();
 
-                                        path.trimTo(plen);
                                         copyPath.trimTo(plen);
+                                        backupFile(ff, path, copyPath, TableUtils.META_FILE_NAME, currentTableVersion);
+
+                                        path.trimTo(plen);
                                         context.of(path, copyPath, fd);
 
                                         for (int i = currentTableVersion + 1; i <= latestVersion; i++) {
@@ -209,12 +213,62 @@ public class EngineMigration {
         return updateSuccess;
     }
 
+    private static void backupFile(FilesFacade ff, Path src, Path toTemp, String backupName, int version) {
+        // make a copy
+        int copyPathLen = toTemp.length();
+        try {
+            toTemp.concat(backupName).put(".v").put(version);
+            for (int i = 1; ff.exists(toTemp.$()); i++) {
+                // if backup file already exists
+                // add .<num> at the end until file name is unique
+                LOG.info().$("back up file exists, [path=").$(toTemp).I$();
+                toTemp.trimTo(copyPathLen);
+                toTemp.concat(backupName).put(".v").put(version).put(".").put(i);
+            }
+
+            LOG.info().$("back up coping file [from=").$(src).$(",to=").$(toTemp).I$();
+            if (ff.copy(src.$(), toTemp.$()) < 0) {
+                throw CairoException.instance(ff.errno()).put("Cannot backup transaction file [to=").put(toTemp).put(']');
+            }
+        } finally {
+            toTemp.trimTo(copyPathLen);
+        }
+    }
+
     @FunctionalInterface
     interface MigrationAction {
         void migrate(MigrationContext context);
     }
 
+    static int readIntAtOffset(FilesFacade ff, Path path, long tempMem4b, long fd) {
+        if (ff.read(fd, tempMem4b, Integer.BYTES, EngineMigration.TX_STRUCT_UPDATE_1_META_OFFSET_PARTITION_BY) != Integer.BYTES) {
+            throw CairoException.instance(ff.errno()).put("Cannot read: ").put(path);
+        }
+        return Unsafe.getUnsafe().getInt(tempMem4b);
+    }
+
     private static class MigrationActions {
+        public static void addTblMetaCommitLag(MigrationContext migrationContext) {
+            Path path = migrationContext.getTablePath();
+            final FilesFacade ff = migrationContext.getFf();
+            path.concat(META_FILE_NAME).$();
+            if (!ff.exists(path)) {
+                LOG.error().$("meta file does not exist, nothing to migrate [path=").$(path).I$();
+                return;
+            }
+            // Metadata file should already be backed up
+            long tempMem = migrationContext.getTempMemory(8);
+            Unsafe.getUnsafe().putInt(tempMem, migrationContext.getConfiguration().getMaxUncommittedRows());
+            if (ff.write(migrationContext.metadataFd, tempMem, Integer.BYTES, META_OFFSET_MAX_UNCOMMITTED_ROWS) != Integer.BYTES) {
+                throw CairoException.instance(ff.errno()).put("Cannot update metadata [path=").put(path).put(']');
+            }
+
+            Unsafe.getUnsafe().putLong(tempMem, migrationContext.getConfiguration().getCommitLag());
+            if (ff.write(migrationContext.metadataFd, tempMem, Long.BYTES, META_OFFSET_COMMIT_LAG) != Long.BYTES) {
+                throw CairoException.instance(ff.errno()).put("Cannot update metadata [path=").put(path).put(']');
+            }
+        }
+
         private static void assignTableId(MigrationContext migrationContext) {
             long mem = migrationContext.getTempMemory(8);
             FilesFacade ff = migrationContext.getFf();
@@ -242,28 +296,13 @@ public class EngineMigration {
                 LOG.error().$("tx file does not exist, nothing to migrate [path=").$(path).I$();
                 return;
             }
-
-            // make a copy
-            Path copyPath = migrationContext.getTablePath2();
-            copyPath.concat(TX_STRUCT_UPDATE_1_BACKUP_NAME).$();
-            if (ff.exists(copyPath)) {
-                LOG.info().$("back tx file exists, [path=").$(copyPath).I$();
-                int copyPathLen = copyPath.length();
-                for (int i = 1; ff.exists(copyPath.$()); i++) {
-                    copyPath.trimTo(copyPathLen);
-                    copyPath.put(".").put(i);
-                }
-            }
-            LOG.info().$("back up coping tx file [from=").$(path).$(",to=").$(copyPath).I$();
-            if (ff.copy(path, copyPath) < 0) {
-                throw CairoException.instance(ff.errno()).put("Cannot backup transaction file [to=").put(copyPath).put(']');
-            }
+            backupFile(ff, path, migrationContext.getTablePath2(), TXN_FILE_NAME, VERSION_TX_STRUCT_UPDATE_1 - 1);
 
             LOG.debug().$("opening for rw [path=").$(path).I$();
-            ReadWriteMemory txMem = migrationContext.creteRwMemoryOf(ff, path.$(), ff.getPageSize());
+            MappedReadWriteMemory txMem = migrationContext.createRwMemoryOf(ff, path.$(), ff.getPageSize());
             long tempMem8b = migrationContext.getTempMemory(8);
 
-            VirtualMemory txFileUpdate = migrationContext.getTempVirtualMem();
+            PagedVirtualMemory txFileUpdate = migrationContext.getTempVirtualMem();
             txFileUpdate.clear();
             txFileUpdate.jumpTo(0);
 
@@ -280,7 +319,7 @@ public class EngineMigration {
                 long partitionSegmentOffset = txFileUpdate.getAppendOffset();
                 txFileUpdate.putInt(0);
 
-                int partitionBy = readIntAtOffset(ff, path, tempMem8b, TX_STRUCT_UPDATE_1_META_OFFSET_PARTITION_BY, migrationContext.getMetadataFd());
+                int partitionBy = readIntAtOffset(ff, path, tempMem8b, migrationContext.getMetadataFd());
                 if (partitionBy != PartitionBy.NONE) {
                     path.trimTo(pathDirLen);
                     writeAttachedPartitions(ff, tempMem8b, path, txMem, partitionBy, symbolsCount, txFileUpdate);
@@ -309,14 +348,16 @@ public class EngineMigration {
                 FilesFacade ff,
                 long tempMem8b,
                 Path path,
-                ReadWriteMemory txMem,
+                MappedReadWriteMemory txMem,
                 int partitionBy,
                 int symbolsCount,
-                VirtualMemory writeTo) {
+                PagedVirtualMemory writeTo
+        ) {
             int rootLen = path.length();
 
-            long minTimestamp = txMem.getLong(TX_STRUCT_UPDATE_1_OFFSET_MIN_TIMESTAMP);
-            long maxTimestamp = txMem.getLong(TX_STRUCT_UPDATE_1_OFFSET_MAX_TIMESTAMP);
+            long minTimestamp = txMem.getLong(TX_OFFSET_MIN_TIMESTAMP);
+            long maxTimestamp = txMem.getLong(TX_OFFSET_MAX_TIMESTAMP);
+            long transientCount = txMem.getLong(TX_OFFSET_TRANSIENT_ROW_COUNT);
 
             Timestamps.TimestampFloorMethod timestampFloorMethod = getPartitionFloor(partitionBy);
             Timestamps.TimestampAddMethod timestampAddMethod = getPartitionAdd(partitionBy);
@@ -324,7 +365,7 @@ public class EngineMigration {
             final long tsLimit = timestampFloorMethod.floor(maxTimestamp);
             for (long ts = timestampFloorMethod.floor(minTimestamp); ts < tsLimit; ts = timestampAddMethod.calculate(ts, 1)) {
                 path.trimTo(rootLen);
-                setPathForPartition(path, partitionBy, ts);
+                setPathForPartition(path, partitionBy, ts, false);
                 if (ff.exists(path.concat(TX_STRUCT_UPDATE_1_ARCHIVE_FILE_NAME).$())) {
                     if (!removedPartitionsIncludes(ts, txMem, symbolsCount)) {
                         long partitionSize = TableUtils.readLongAtOffset(ff, path, tempMem8b, 0);
@@ -332,14 +373,19 @@ public class EngineMigration {
                         // Update tx file with 4 longs per partition
                         writeTo.putLong(ts);
                         writeTo.putLong(partitionSize);
-                        writeTo.putLong(0L);
+                        writeTo.putLong(-1L);
                         writeTo.putLong(0L);
                     }
                 }
             }
+            // last partition
+            writeTo.putLong(tsLimit);
+            writeTo.putLong(transientCount);
+            writeTo.putLong(-1);
+            writeTo.putLong(0);
         }
 
-        private static boolean removedPartitionsIncludes(long ts, ReadWriteMemory txMem, int symbolsCount) {
+        private static boolean removedPartitionsIncludes(long ts, ReadWriteVirtualMemory txMem, int symbolsCount) {
             long removedPartitionLo = TX_STRUCT_UPDATE_1_OFFSET_MAP_WRITER_COUNT + (symbolsCount + 1L) * Integer.BYTES;
             long removedPartitionCount = txMem.getInt(removedPartitionLo);
             long removedPartitionsHi = removedPartitionLo + Long.BYTES * removedPartitionCount;
@@ -354,27 +400,24 @@ public class EngineMigration {
         }
     }
 
-    static int readIntAtOffset(FilesFacade ff, Path path, long tempMem4b, long offset, long fd) {
-        if (ff.read(fd, tempMem4b, Integer.BYTES, offset) != Integer.BYTES) {
-            throw CairoException.instance(ff.errno()).put("Cannot read: ").put(path);
-        }
-        return Unsafe.getUnsafe().getInt(tempMem4b);
-    }
-
     class MigrationContext {
         private final long tempMemory;
         private final int tempMemoryLen;
-        private final VirtualMemory tempVirtualMem;
-        private final ReadWriteMemory rwMemory;
+        private final PagedVirtualMemory tempVirtualMem;
+        private final MappedReadWriteMemory rwMemory;
         private Path tablePath;
         private long metadataFd;
         private Path tablePath2;
 
-        public MigrationContext(long mem, int tempMemSize, VirtualMemory tempVirtualMem, ReadWriteMemory rwMemory) {
+        public MigrationContext(long mem, int tempMemSize, PagedVirtualMemory tempVirtualMem, MappedReadWriteMemory rwMemory) {
             this.tempMemory = mem;
             this.tempMemoryLen = tempMemSize;
             this.tempVirtualMem = tempVirtualMem;
             this.rwMemory = rwMemory;
+        }
+
+        public CairoConfiguration getConfiguration() {
+            return configuration;
         }
 
         public FilesFacade getFf() {
@@ -389,7 +432,7 @@ public class EngineMigration {
             return (int) engine.getNextTableId();
         }
 
-        public ReadWriteMemory creteRwMemoryOf(FilesFacade ff, Path path, long pageSize) {
+        public MappedReadWriteMemory createRwMemoryOf(FilesFacade ff, Path path, long pageSize) {
             // re-use same rwMemory
             // assumption that it is re-usable after the close() and then of()  methods called.
             rwMemory.of(ff, path, pageSize);
@@ -415,7 +458,7 @@ public class EngineMigration {
                     + " is available");
         }
 
-        public VirtualMemory getTempVirtualMem() {
+        public PagedVirtualMemory getTempVirtualMem() {
             return tempVirtualMem;
         }
 
@@ -431,5 +474,6 @@ public class EngineMigration {
         MIGRATIONS.extendAndSet(ColumnType.VERSION - MIGRATIONS_LIST_OFFSET, null);
         setByVersion(VERSION_THAT_ADDED_TABLE_ID, MigrationActions::assignTableId, 1);
         setByVersion(VERSION_TX_STRUCT_UPDATE_1, MigrationActions::rebuildTransactionFile, 0);
+        setByVersion(VERSION_TBL_META_COMMIT_LAG, MigrationActions::addTblMetaCommitLag, 0);
     }
 }

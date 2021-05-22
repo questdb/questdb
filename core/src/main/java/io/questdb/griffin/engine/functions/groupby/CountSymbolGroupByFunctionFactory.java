@@ -33,7 +33,7 @@ import io.questdb.std.ObjList;
 public class CountSymbolGroupByFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "count(K)";
+        return "count_distinct(K)";
     }
 
     @Override

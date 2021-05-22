@@ -35,7 +35,10 @@ import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.network.ServerDisconnectException;
 import org.jetbrains.annotations.NotNull;
-import org.junit.*;
+import org.junit.Assert;
+import org.junit.ComparisonFailure;
+import org.junit.Rule;
+import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 
 import java.util.Arrays;
@@ -117,9 +120,9 @@ public class RetryIODispatcherTest {
             "|   Rows handled  |                                                24  |                 |         |              |\r\n" +
             "|  Rows imported  |                                                24  |                 |         |              |\r\n" +
             "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
-            "|              0  |                                DispatchingBaseNum  |                   STRING  |           0  |\r\n" +
-            "|              1  |                                    PickupDateTime  |                     DATE  |           0  |\r\n" +
-            "|              2  |                                   DropOffDatetime  |                   STRING  |           0  |\r\n" +
+            "|              0  |                              Dispatching_base_num  |                   STRING  |           0  |\r\n" +
+            "|              1  |                                   Pickup_DateTime  |                     DATE  |           0  |\r\n" +
+            "|              2  |                                  DropOff_datetime  |                   STRING  |           0  |\r\n" +
             "|              3  |                                      PUlocationID  |                   STRING  |           0  |\r\n" +
             "|              4  |                                      DOlocationID  |                   STRING  |           0  |\r\n" +
             "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
@@ -291,9 +294,7 @@ public class RetryIODispatcherTest {
         }
     }
 
-    // TODO: fix HTTP server to deliver failed response before aborting connection on failed csv uploads
     @Test
-    @Ignore
     public void testImportsCreateAsSelectAndDrop() throws Exception {
         new HttpQueryTestBuilder()
                 .withTempFolder(temp)
@@ -330,7 +331,9 @@ public class RetryIODispatcherTest {
                                 "GET /query?query=drop+table+%22fhv_tripdata_2017-02.csv%22&count=true HTTP/1.1\r\n",
                                 "0c\r\n" +
                                         "{\"ddl\":\"OK\"}\r\n" +
-                                        "00\r\n");
+                                        "00\r\n" +
+                                        "\r\n"
+                        );
                     }
                 });
     }
@@ -376,7 +379,7 @@ public class RetryIODispatcherTest {
                     assertNRowsInserted(validRequestRecordCount);
 
                     for (int n = 0; n < fds.length; n++) {
-                        Assert.assertFalse(fds[n] == -1);
+                        Assert.assertNotEquals(fds[n], -1);
                         NetworkFacadeImpl.INSTANCE.close(fds[n]);
                     }
 
@@ -673,7 +676,7 @@ public class RetryIODispatcherTest {
                                     "00\r\n" +
                                     "\r\n");
                     for (int n = 0; n < fds.length; n++) {
-                        Assert.assertFalse(fds[n] == -1);
+                        Assert.assertNotEquals(fds[n], -1);
                         NetworkFacadeImpl.INSTANCE.close(fds[n]);
                     }
 

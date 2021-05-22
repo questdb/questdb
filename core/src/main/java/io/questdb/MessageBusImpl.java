@@ -26,12 +26,8 @@ package io.questdb;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.TableBlockWriter.TableBlockWriterTaskHolder;
-import io.questdb.mp.MCSequence;
-import io.questdb.mp.MPSequence;
-import io.questdb.mp.RingQueue;
-import io.questdb.mp.Sequence;
-import io.questdb.tasks.ColumnIndexerTask;
-import io.questdb.tasks.VectorAggregateTask;
+import io.questdb.mp.*;
+import io.questdb.tasks.*;
 import org.jetbrains.annotations.NotNull;
 
 public class MessageBusImpl implements MessageBus {
@@ -47,26 +43,93 @@ public class MessageBusImpl implements MessageBus {
     private final MPSequence tableBlockWriterPubSeq;
     private final MCSequence tableBlockWriterSubSeq;
 
+    private final RingQueue<O3CallbackTask> o3CallbackQueue;
+    private final MPSequence o3CallbackPubSeq;
+    private final MCSequence o3CallbackSubSeq;
+
+    private final RingQueue<O3PurgeDiscoveryTask> o3PurgeDiscoveryQueue;
+    private final MPSequence o3PurgeDiscoveryPubSeq;
+    private final MCSequence o3PurgeDiscoverySubSeq;
+
+    private final RingQueue<O3PurgeTask> o3PurgeQueue;
+    private final MPSequence o3PurgePubSeq;
+    private final MCSequence o3PurgeSubSeq;
+
+    private final RingQueue<O3PartitionTask> o3PartitionQueue;
+    private final MPSequence o3PartitionPubSeq;
+    private final MCSequence o3PartitionSubSeq;
+
+    private final RingQueue<O3OpenColumnTask> o3OpenColumnQueue;
+    private final MPSequence o3OpenColumnPubSeq;
+    private final MCSequence o3OpenColumnSubSeq;
+
+    private final RingQueue<O3CopyTask> o3CopyQueue;
+    private final MPSequence o3CopyPubSeq;
+    private final MCSequence o3CopySubSeq;
+
     private final CairoConfiguration configuration;
 
     public MessageBusImpl(@NotNull CairoConfiguration configuration) {
         this.configuration = configuration;
-
-        this.indexerQueue = new RingQueue<>(ColumnIndexerTask::new, 1024);
+        this.indexerQueue = new RingQueue<>(ColumnIndexerTask::new, configuration.getColumnIndexerQueueCapacity());
         this.indexerPubSeq = new MPSequence(indexerQueue.getCapacity());
         this.indexerSubSeq = new MCSequence(indexerQueue.getCapacity());
+        indexerPubSeq.then(indexerSubSeq).then(indexerPubSeq);
 
-        this.vectorAggregateQueue = new RingQueue<>(VectorAggregateTask::new, 1024);
+        this.vectorAggregateQueue = new RingQueue<>(VectorAggregateTask::new, configuration.getVectorAggregateQueueCapacity());
         this.vectorAggregatePubSeq = new MPSequence(vectorAggregateQueue.getCapacity());
         this.vectorAggregateSubSeq = new MCSequence(vectorAggregateQueue.getCapacity());
-
-        indexerPubSeq.then(indexerSubSeq).then(indexerPubSeq);
         vectorAggregatePubSeq.then(vectorAggregateSubSeq).then(vectorAggregatePubSeq);
 
-        this.tableBlockWriterQueue = new RingQueue<>(TableBlockWriterTaskHolder::new, configuration.getTableBlockWriterQueueSize());
+        this.tableBlockWriterQueue = new RingQueue<>(TableBlockWriterTaskHolder::new, configuration.getTableBlockWriterQueueCapacity());
         this.tableBlockWriterPubSeq = new MPSequence(tableBlockWriterQueue.getCapacity());
         this.tableBlockWriterSubSeq = new MCSequence(tableBlockWriterQueue.getCapacity());
         tableBlockWriterPubSeq.then(tableBlockWriterSubSeq).then(tableBlockWriterPubSeq);
+
+        this.o3CallbackQueue = new RingQueue<>(O3CallbackTask::new, configuration.getO3CallbackQueueCapacity());
+        this.o3CallbackPubSeq = new MPSequence(this.o3CallbackQueue.getCapacity());
+        this.o3CallbackSubSeq = new MCSequence(this.o3CallbackQueue.getCapacity());
+        o3CallbackPubSeq.then(o3CallbackSubSeq).then(o3CallbackPubSeq);
+
+        this.o3PartitionQueue = new RingQueue<>(O3PartitionTask::new, configuration.getO3PartitionQueueCapacity());
+        this.o3PartitionPubSeq = new MPSequence(this.o3PartitionQueue.getCapacity());
+        this.o3PartitionSubSeq = new MCSequence(this.o3PartitionQueue.getCapacity());
+        o3PartitionPubSeq.then(o3PartitionSubSeq).then(o3PartitionPubSeq);
+
+        this.o3OpenColumnQueue = new RingQueue<>(O3OpenColumnTask::new, configuration.getO3OpenColumnQueueCapacity());
+        this.o3OpenColumnPubSeq = new MPSequence(this.o3OpenColumnQueue.getCapacity());
+        this.o3OpenColumnSubSeq = new MCSequence(this.o3OpenColumnQueue.getCapacity());
+        o3OpenColumnPubSeq.then(o3OpenColumnSubSeq).then(o3OpenColumnPubSeq);
+
+        this.o3CopyQueue = new RingQueue<>(O3CopyTask::new, configuration.getO3CopyQueueCapacity());
+        this.o3CopyPubSeq = new MPSequence(this.o3CopyQueue.getCapacity());
+        this.o3CopySubSeq = new MCSequence(this.o3CopyQueue.getCapacity());
+        o3CopyPubSeq.then(o3CopySubSeq).then(o3CopyPubSeq);
+
+        this.o3PurgeDiscoveryQueue = new RingQueue<>(O3PurgeDiscoveryTask::new, configuration.getO3PurgeDiscoveryQueueCapacity());
+        this.o3PurgeDiscoveryPubSeq = new MPSequence(this.o3PurgeDiscoveryQueue.getCapacity());
+        this.o3PurgeDiscoverySubSeq = new MCSequence(this.o3PurgeDiscoveryQueue.getCapacity());
+        this.o3PurgeDiscoveryPubSeq.then(this.o3PurgeDiscoverySubSeq).then(o3PurgeDiscoveryPubSeq);
+
+        this.o3PurgeQueue = new RingQueue<>(O3PurgeTask::new, configuration.getO3PurgeQueueCapacity());
+        this.o3PurgePubSeq = new MPSequence(this.o3PurgeQueue.getCapacity());
+        this.o3PurgeSubSeq = new MCSequence(this.o3PurgeQueue.getCapacity());
+        this.o3PurgePubSeq.then(this.o3PurgeSubSeq).then(this.o3PurgePubSeq);
+    }
+
+    @Override
+    public MPSequence getO3CallbackPubSeq() {
+        return o3CallbackPubSeq;
+    }
+
+    @Override
+    public RingQueue<O3CallbackTask> getO3CallbackQueue() {
+        return o3CallbackQueue;
+    }
+
+    @Override
+    public MCSequence getO3CallbackSubSeq() {
+        return o3CallbackSubSeq;
     }
 
     @Override
@@ -95,12 +158,12 @@ public class MessageBusImpl implements MessageBus {
     }
 
     @Override
-    public Sequence getVectorAggregatePubSequence() {
+    public Sequence getVectorAggregatePubSeq() {
         return vectorAggregatePubSeq;
     }
 
     @Override
-    public Sequence getVectorAggregateSubSequence() {
+    public Sequence getVectorAggregateSubSeq() {
         return vectorAggregateSubSeq;
     }
 
@@ -110,12 +173,87 @@ public class MessageBusImpl implements MessageBus {
     }
 
     @Override
-    public Sequence getTableBlockWriterPubSequence() {
+    public Sequence getTableBlockWriterPubSeq() {
         return tableBlockWriterPubSeq;
     }
 
     @Override
-    public Sequence getTableBlockWriterSubSequence() {
+    public Sequence getTableBlockWriterSubSeq() {
         return tableBlockWriterSubSeq;
+    }
+
+    @Override
+    public MPSequence getO3PartitionPubSeq() {
+        return o3PartitionPubSeq;
+    }
+
+    @Override
+    public RingQueue<O3PartitionTask> getO3PartitionQueue() {
+        return o3PartitionQueue;
+    }
+
+    @Override
+    public MCSequence getO3PartitionSubSeq() {
+        return o3PartitionSubSeq;
+    }
+
+    @Override
+    public MPSequence getO3CopyPubSeq() {
+        return o3CopyPubSeq;
+    }
+
+    @Override
+    public RingQueue<O3CopyTask> getO3CopyQueue() {
+        return o3CopyQueue;
+    }
+
+    @Override
+    public MCSequence getO3CopySubSeq() {
+        return o3CopySubSeq;
+    }
+
+    @Override
+    public MPSequence getO3OpenColumnPubSeq() {
+        return o3OpenColumnPubSeq;
+    }
+
+    @Override
+    public RingQueue<O3OpenColumnTask> getO3OpenColumnQueue() {
+        return o3OpenColumnQueue;
+    }
+
+    @Override
+    public MCSequence getO3OpenColumnSubSeq() {
+        return o3OpenColumnSubSeq;
+    }
+
+    @Override
+    public RingQueue<O3PurgeDiscoveryTask> getO3PurgeDiscoveryQueue() {
+        return o3PurgeDiscoveryQueue;
+    }
+
+    @Override
+    public MPSequence getO3PurgeDiscoveryPubSeq() {
+        return o3PurgeDiscoveryPubSeq;
+    }
+
+    @Override
+    public MCSequence getO3PurgeDiscoverySubSeq() {
+        return o3PurgeDiscoverySubSeq;
+    }
+
+    @Override
+    public MPSequence getO3PurgePubSeq() {
+        return o3PurgePubSeq;
+    }
+
+    @Override
+    public RingQueue<O3PurgeTask> getO3PurgeQueue() {
+        return o3PurgeQueue;
+    }
+
+    @Override
+    public MCSequence getO3PurgeSubSeq() {
+        return o3PurgeSubSeq;
     }
 }

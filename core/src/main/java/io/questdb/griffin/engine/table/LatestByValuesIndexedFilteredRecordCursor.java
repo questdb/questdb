@@ -89,5 +89,6 @@ class LatestByValuesIndexedFilteredRecordCursor extends AbstractRecordListCursor
                 }
             }
         }
+        rows.sortAsUnsigned();
     }
 }

@@ -51,7 +51,7 @@ public class BindVariableServiceImplTest {
             bindVariableService.setBin(0, null);
             Assert.fail();
         } catch (SqlException e) {
-            TestUtils.assertContains("bind variable at 0 is already defined as LONG", e.getFlyweightMessage());
+            TestUtils.assertContains(e.getFlyweightMessage(),"bind variable at 0 is already defined as LONG");
         }
     }
 
@@ -62,7 +62,7 @@ public class BindVariableServiceImplTest {
             bindVariableService.setBin("a", null);
             Assert.fail();
         } catch (SqlException e) {
-            TestUtils.assertContains("bind variable 'a' is already defined as LONG", e.getFlyweightMessage());
+            TestUtils.assertContains(e.getFlyweightMessage(), "bind variable 'a' is already defined as LONG");
         }
     }
 
@@ -73,7 +73,7 @@ public class BindVariableServiceImplTest {
             bindVariableService.setBoolean(0, false);
             Assert.fail();
         } catch (SqlException e) {
-            TestUtils.assertContains("bind variable at 0 is defined as LONG and cannot accept BOOLEAN", e.getFlyweightMessage());
+            TestUtils.assertContains(e.getFlyweightMessage(),"bind variable at 0 is defined as LONG and cannot accept BOOLEAN");
         }
     }
 
@@ -84,7 +84,7 @@ public class BindVariableServiceImplTest {
             bindVariableService.setBoolean("a", false);
             Assert.fail();
         } catch (SqlException e) {
-            TestUtils.assertContains("bind variable 'a' is defined as LONG and cannot accept BOOLEAN", e.getFlyweightMessage());
+            TestUtils.assertContains(e.getFlyweightMessage(), "bind variable 'a' is defined as LONG and cannot accept BOOLEAN");
         }
     }
 
@@ -98,7 +98,7 @@ public class BindVariableServiceImplTest {
             bindVariableService.setInt(0, 123);
             Assert.fail();
         } catch (SqlException e) {
-            TestUtils.assertContains(" bind variable at 0 is defined as BOOLEAN and cannot accept INT", e.getFlyweightMessage());
+            TestUtils.assertContains(e.getFlyweightMessage(), "bind variable at 0 is defined as BOOLEAN and cannot accept INT");
         }
     }
 
@@ -109,7 +109,7 @@ public class BindVariableServiceImplTest {
             bindVariableService.setChar(2, 'o');
             Assert.fail();
         } catch (SqlException e) {
-            TestUtils.assertContains("bind variable at 2 is defined as INT and cannot accept CHAR", e.getFlyweightMessage());
+            TestUtils.assertContains(e.getFlyweightMessage(), "bind variable at 2 is defined as INT and cannot accept CHAR");
         }
     }
 
@@ -120,7 +120,7 @@ public class BindVariableServiceImplTest {
             bindVariableService.setChar("a", 'k');
             Assert.fail();
         } catch (SqlException e) {
-            TestUtils.assertContains("bind variable 'a' is defined as LONG and cannot accept CHAR", e.getFlyweightMessage());
+            TestUtils.assertContains(e.getFlyweightMessage(), "bind variable 'a' is defined as LONG and cannot accept CHAR");
         }
     }
 
@@ -180,7 +180,7 @@ public class BindVariableServiceImplTest {
             bindVariableService.setDouble(2, 5.4);
             Assert.fail();
         } catch (SqlException e) {
-            TestUtils.assertContains("bind variable at 2 is defined as INT and cannot accept DOUBLE", e.getFlyweightMessage());
+            TestUtils.assertContains(e.getFlyweightMessage(), "bind variable at 2 is defined as INT and cannot accept DOUBLE");
         }
     }
 
@@ -191,7 +191,7 @@ public class BindVariableServiceImplTest {
             bindVariableService.setDouble("a", 5.4);
             Assert.fail();
         } catch (SqlException e) {
-            TestUtils.assertContains("bind variable 'a' is defined as INT and cannot accept DOUBLE", e.getFlyweightMessage());
+            TestUtils.assertContains(e.getFlyweightMessage(), "bind variable 'a' is defined as INT and cannot accept DOUBLE");
         }
     }
 
@@ -244,7 +244,7 @@ public class BindVariableServiceImplTest {
             bindVariableService.setFloat(1, 5);
             Assert.fail();
         } catch (SqlException e) {
-            TestUtils.assertContains("bind variable at 1 is defined as LONG and cannot accept FLOAT", e.getFlyweightMessage());
+            TestUtils.assertContains(e.getFlyweightMessage(), "bind variable at 1 is defined as LONG and cannot accept FLOAT");
         }
     }
 
@@ -255,7 +255,7 @@ public class BindVariableServiceImplTest {
             bindVariableService.setFloat("a", 5);
             Assert.fail();
         } catch (SqlException e) {
-            TestUtils.assertContains("bind variable 'a' is defined as LONG and cannot accept FLOAT", e.getFlyweightMessage());
+            TestUtils.assertContains(e.getFlyweightMessage(), "bind variable 'a' is defined as LONG and cannot accept FLOAT");
         }
     }
 
@@ -442,7 +442,7 @@ public class BindVariableServiceImplTest {
         try {
             bindVariableService.setStr(0, "21.2");
         } catch (SqlException e) {
-            TestUtils.assertContains("bind variable at 0 is defined as BINARY and cannot accept STRING", e.getFlyweightMessage());
+            TestUtils.assertContains(e.getFlyweightMessage(),"bind variable at 0 is defined as BINARY and cannot accept STRING");
         }
     }
 
@@ -453,7 +453,7 @@ public class BindVariableServiceImplTest {
             bindVariableService.setByte(0, (byte) 10);
             Assert.fail();
         } catch (SqlException e) {
-            TestUtils.assertContains("bind variable at 0 is defined as BOOLEAN and cannot accept BYTE", e.getFlyweightMessage());
+            TestUtils.assertContains(e.getFlyweightMessage(),"bind variable at 0 is defined as BOOLEAN and cannot accept BYTE");
         }
     }
 
@@ -464,7 +464,7 @@ public class BindVariableServiceImplTest {
             bindVariableService.setLong256(0, 888, 777, 6666, 5555);
             Assert.fail();
         } catch (SqlException e) {
-            TestUtils.assertContains("bind variable at 0 is defined as BOOLEAN and cannot accept LONG256", e.getFlyweightMessage());
+            TestUtils.assertContains(e.getFlyweightMessage(), "bind variable at 0 is defined as BOOLEAN and cannot accept LONG256");
         }
     }
 
@@ -587,7 +587,7 @@ public class BindVariableServiceImplTest {
             bindVariableService.setStr(0, "xyz");
             Assert.fail();
         } catch (SqlException e) {
-            TestUtils.assertContains("could not parse [value='xyz', as=FLOAT, index=0]", e.getFlyweightMessage());
+            TestUtils.assertContains(e.getFlyweightMessage(), "could not parse [value='xyz', as=FLOAT, index=0]");
         }
     }
 
@@ -729,8 +729,13 @@ public class BindVariableServiceImplTest {
     @Test
     public void testSetTimestampToStr() throws SqlException {
         bindVariableService.define(0, ColumnType.TIMESTAMP, 0);
-        bindVariableService.setStr(0, "21");
-        Assert.assertEquals(21, bindVariableService.getFunction(0).getTimestamp(null));
+        try {
+            bindVariableService.setStr(0, "21");
+            Assert.fail();
+        } catch (SqlException e) {
+            // Number string is not allowed to be set as timestamp
+            // ISO formatted timestamp string is OK, but not number
+        }
         bindVariableService.setStr(0, null);
         Assert.assertEquals(Numbers.LONG_NaN, bindVariableService.getFunction(0).getTimestamp(null));
         bindVariableService.setStr(0, "2019-10-31 15:05:22+08:00");
@@ -752,7 +757,7 @@ public class BindVariableServiceImplTest {
             bindVariableService.setStr(0, "ok");
             Assert.fail();
         } catch (SqlException e) {
-            TestUtils.assertContains("could not parse [value='ok', as=LONG, index=0]", e.getFlyweightMessage());
+            TestUtils.assertContains(e.getFlyweightMessage(), "could not parse [value='ok', as=LONG, index=0]");
         }
     }
 
@@ -763,7 +768,7 @@ public class BindVariableServiceImplTest {
             bindVariableService.setStr("a", "ok");
             Assert.fail();
         } catch (SqlException e) {
-            TestUtils.assertContains("could not parse [value='ok', as=LONG, index=-1]", e.getFlyweightMessage());
+            TestUtils.assertContains(e.getFlyweightMessage(), "could not parse [value='ok', as=LONG, index=-1]");
         }
     }
 

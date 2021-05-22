@@ -34,8 +34,6 @@ import java.util.concurrent.locks.LockSupport;
 
 public class Worker extends Thread {
     private final static long RUNNING_OFFSET = Unsafe.getFieldOffset(Worker.class, "running");
-    // private static final long YIELD_THRESHOLD = 10L;
-    // private static final long SLEEP_THRESHOLD = 10000L;
     private final static AtomicInteger COUNTER = new AtomicInteger();
     private final ObjHashSet<? extends Job> jobs;
     private final SOCountDownLatch haltLatch;
@@ -154,13 +152,14 @@ public class Worker extends Thread {
     }
 
     private void onError(int i, Throwable e) throws Throwable {
-        if (haltOnError) {
-            throw e;
-        }
+        // Log error even when halt on error is set
         if (log != null) {
             log.error().$("unhandled error [job=").$(jobs.get(i).toString()).$(", ex=").$(e).$(']').$();
         } else {
             e.printStackTrace();
+        }
+        if (haltOnError) {
+            throw e;
         }
     }
 

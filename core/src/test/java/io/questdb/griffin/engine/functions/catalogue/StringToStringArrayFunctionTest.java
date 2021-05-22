@@ -140,7 +140,7 @@ public class StringToStringArrayFunctionTest {
             Assert.fail();
         } catch (SqlException e) {
             Assert.assertEquals(5, e.getPosition());
-            TestUtils.assertContains(e.getMessage(), expectedMsg);
+            TestUtils.assertContains(e.getFlyweightMessage(), expectedMsg);
         }
     }
 }

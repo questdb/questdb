@@ -332,6 +332,27 @@
         "code",
         "tool"
       ]
+    },
+    {
+      "login": "tiagostutz",
+      "name": "Tiago de Oliveira Stutz",
+      "avatar_url": "https://avatars.githubusercontent.com/u/3986989?v=4",
+      "profile": "https://github.com/tiagostutz",
+      "contributions": [
+        "userTesting",
+        "bug",
+        "projectManagement"
+      ]
+    },
+    {
+      "login": "Lyncee59",
+      "name": "Guillaume",
+      "avatar_url": "https://avatars.githubusercontent.com/u/13176504?v=4",
+      "profile": "https://github.com/Lyncee59",
+      "contributions": [
+        "ideas",
+        "code"
+      ]
     }
   ],
   "badgeTemplate": "[![All Contributors](https://img.shields.io/badge/all_contributors-<%= contributors.length %>-orange.svg)](#contributors)",

@@ -118,12 +118,7 @@ public class DefaultLineTcpReceiverConfiguration implements LineTcpReceiverConfi
     }
 
     @Override
-    public int getMaxUncommittedRows() {
-        return 1000;
-    }
-
-    @Override
-    public long getMaintenanceJobHysteresisInMs() {
+    public long getMaintenanceInterval() {
         return 100;
     }
 
@@ -143,7 +138,7 @@ public class DefaultLineTcpReceiverConfiguration implements LineTcpReceiverConfi
     }
 
     @Override
-    public long getMinIdleMsBeforeWriterRelease() {
+    public long getWriterIdleTimeout() {
         return 30_000;
     }
 }

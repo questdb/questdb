@@ -27,10 +27,8 @@ package io.questdb.griffin.engine.functions.regex;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.AbstractGriffinTest;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.std.Rnd;
-import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -42,21 +40,16 @@ public class NotMatchCharFunctionFactoryTest extends AbstractGriffinTest {
         SharedRandom.RANDOM.set(new Rnd());
     }
 
-
     @Test
     public void testCheckCharacter() throws Exception {
         assertMemoryLeak(() -> {
-
-
             compiler.compile("create table x as (select rnd_str() name from long_sequence(2000))", sqlExecutionContext);
 
             try (RecordCursorFactory factory = compiler.compile("select * from x where name !~ 'H'", sqlExecutionContext).getRecordCursorFactory()) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     sink.clear();
-                    printer.print(cursor, factory.getMetadata(), true);
+                    printer.print(cursor, factory.getMetadata(), true, sink);
                     Assert.assertEquals(sink.toString().indexOf('H'),-1);
-                    sink.clear();
-
                 }
             }
         });

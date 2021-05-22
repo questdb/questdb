@@ -179,6 +179,23 @@ public final class SqlParser {
         }
     }
 
+    private long expectLong(GenericLexer lexer) throws SqlException {
+        CharSequence tok = tok(lexer, "long integer");
+        boolean negative;
+        if (Chars.equals(tok, '-')) {
+            negative = true;
+            tok = tok(lexer, "long integer");
+        } else {
+            negative = false;
+        }
+        try {
+            long result = Numbers.parseLong(tok);
+            return negative ? -result : result;
+        } catch (NumericException e) {
+            throw err(lexer, "bad long integer");
+        }
+    }
+
     private ExpressionNode expectLiteral(GenericLexer lexer) throws SqlException {
         CharSequence tok = tok(lexer, "literal");
         int pos = lexer.lastTokenPosition();
@@ -406,6 +423,9 @@ public final class SqlParser {
             tok = optTok(lexer);
         }
 
+        int maxUncommittedRows = configuration.getMaxUncommittedRows();
+        long commitLag = configuration.getCommitLag();
+
         ExpressionNode partitionBy = parseCreateTablePartition(lexer, tok);
         if (partitionBy != null) {
             if (PartitionBy.fromString(partitionBy.token) == -1) {
@@ -413,7 +433,34 @@ public final class SqlParser {
             }
             model.setPartitionBy(partitionBy);
             tok = optTok(lexer);
+            if (tok != null && isWithKeyword(tok)) {
+                ExpressionNode expr;
+                while ((expr = expr(lexer, (QueryModel) null)) != null) {
+                    if (Chars.equals(expr.token, '=')) {
+                        if (isMaxUncommittedRowsParam(expr.lhs.token)) {
+                            try {
+                                maxUncommittedRows = Numbers.parseInt(expr.rhs.token);
+                            } catch (NumericException e) {
+                                throw SqlException.position(lexer.getPosition()).put(" could not parse maxUncommittedRows value \"").put(expr.rhs.token).put('"');
+                            }
+                        } else if (isCommitLag(expr.lhs.token)) {
+                            commitLag = SqlUtil.expectMicros(expr.rhs.token, lexer.getPosition());
+                        } else {
+                            throw SqlException.position(lexer.getPosition()).put(" unrecognized ").put(expr.lhs.token).put(" after WITH");
+                        }
+                        tok = optTok(lexer);
+                        if (null != tok && Chars.equals(tok, ',')) {
+                            continue;
+                        }
+                        break;
+                    }
+                    throw SqlException.position(lexer.getPosition()).put(" expected parameter after WITH");
+                }
+            }
         }
+
+        model.setMaxUncommittedRows(maxUncommittedRows);
+        model.setCommitLag(commitLag);
 
         if (tok == null || Chars.equals(tok, ';')) {
             return model;
@@ -892,12 +939,36 @@ public final class SqlParser {
     }
 
     private ExecutionModel parseInsert(GenericLexer lexer) throws SqlException {
-        expectTok(lexer, "into");
 
         final InsertModel model = insertModelPool.next();
+        CharSequence tok = tok(lexer, "into or batch");
+        if (SqlKeywords.isBatch(tok)) {
+            long val = expectLong(lexer);
+            if (val > 0) {
+                model.setBatchSize(val);
+            } else {
+                throw SqlException.$(lexer.lastTokenPosition(), "batch size must be positive integer");
+            }
+
+            tok = tok(lexer, "into or lag");
+            if (SqlKeywords.isLag(tok)) {
+                val = expectLong(lexer);
+                if (val > 0) {
+                    model.setCommitLag(val);
+                } else {
+                    throw SqlException.$(lexer.lastTokenPosition(), "lag must be a positive integer microseconds");
+                }
+                expectTok(lexer, "into");
+            }
+        }
+
+        if (!SqlKeywords.isInto(tok)) {
+            throw SqlException.$(lexer.lastTokenPosition(), "'into' expected");
+        }
+
         model.setTableName(expectLiteral(lexer));
 
-        CharSequence tok = tok(lexer, "'(' or 'select'");
+        tok = tok(lexer, "'(' or 'select'");
 
         if (Chars.equals(tok, '(')) {
             do {
@@ -1191,7 +1262,7 @@ public final class SqlParser {
                 if (isAsKeyword(tok)) {
                     alias = GenericLexer.unquote(GenericLexer.immutableOf(tok(lexer, "alias")));
                 } else {
-                    alias = GenericLexer.immutableOf(tok);
+                    alias = GenericLexer.immutableOf(GenericLexer.unquote(tok));
                 }
                 tok = optTok(lexer);
             } else {

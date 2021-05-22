@@ -31,6 +31,7 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class LtTimestampFunctionFactory implements FunctionFactory {
@@ -62,9 +63,14 @@ public class LtTimestampFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return negated
-                    ? left.getTimestamp(rec) >= right.getTimestamp(rec)
-                    : left.getTimestamp(rec) < right.getTimestamp(rec);
+            long left = this.left.getTimestamp(rec);
+            if (left != Numbers.LONG_NaN) {
+                long right = this.right.getTimestamp(rec);
+                if (right != Numbers.LONG_NaN) {
+                    return negated == (left >= right);
+                }
+            }
+            return false;
         }
 
         @Override

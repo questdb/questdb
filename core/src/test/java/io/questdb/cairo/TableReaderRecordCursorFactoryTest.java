@@ -42,7 +42,7 @@ import org.junit.Test;
 public class TableReaderRecordCursorFactoryTest extends AbstractCairoTest {
     @Test
     public void testFactory() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             final int N = 100;
             // separate two symbol columns with primitive. It will make problems apparent if index does not shift correctly
             try (TableModel model = new TableModel(configuration, "x", PartitionBy.DAY).
@@ -81,59 +81,54 @@ public class TableReaderRecordCursorFactoryTest extends AbstractCairoTest {
                 }
                 writer.commit();
             }
+            final RecordMetadata metadata;
+            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", -1)) {
+                metadata = GenericRecordMetadata.copyOf(reader.getMetadata());
+            }
 
+            IntList columnIndexes = new IntList();
+            IntList columnSizes = new IntList();
 
-            try (CairoEngine engine = new CairoEngine(configuration)) {
-
-                final RecordMetadata metadata;
-                try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", -1)) {
-                    metadata = GenericRecordMetadata.copyOf(reader.getMetadata());
-                }
-
-                IntList columnIndexes = new IntList();
-                IntList columnSizes = new IntList();
-
-                for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-                    columnIndexes.add(i);
-                    columnSizes.add(Numbers.msb(ColumnType.sizeOf(metadata.getColumnType(i))));
-                }
-                try (RecordCursorFactory factory = new TableReaderRecordCursorFactory(
-                        metadata,
-                        engine,
-                        "x",
-                        TableUtils.ANY_TABLE_VERSION,
-                        columnIndexes,
-                        columnSizes,
-                        false
-                )) {
-                    long count = 0;
-                    final SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
-                            .with(
-                                    AllowAllCairoSecurityContext.INSTANCE,
-                                    new BindVariableServiceImpl(engine.getConfiguration()),
-                                    null,
-                                    -1,
-                                    null
-                            );
-                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                        final Record record = cursor.getRecord();
-                        rnd.reset();
-                        while (cursor.hasNext()) {
-                            TestUtils.assertEquals(rnd.nextChars(20), record.getStr(0));
-                            TestUtils.assertEquals(symbols[rnd.nextPositiveInt() % N], record.getSym(1));
-                            Assert.assertEquals(rnd.nextInt(), record.getInt(2));
-                            TestUtils.assertEquals(symbols[rnd.nextPositiveInt() % N], record.getSym(3));
-                            count++;
-                        }
-                        sink.clear();
-                        factory.getMetadata().toJson(sink);
-                        TestUtils.assertEquals(expectedMetadata, sink);
+            for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+                columnIndexes.add(i);
+                columnSizes.add(Numbers.msb(ColumnType.sizeOf(metadata.getColumnType(i))));
+            }
+            try (RecordCursorFactory factory = new TableReaderRecordCursorFactory(
+                    metadata,
+                    engine,
+                    "x",
+                    TableUtils.ANY_TABLE_VERSION,
+                    columnIndexes,
+                    columnSizes,
+                    false
+            )) {
+                long count = 0;
+                final SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
+                        .with(
+                                AllowAllCairoSecurityContext.INSTANCE,
+                                new BindVariableServiceImpl(engine.getConfiguration()),
+                                null,
+                                -1,
+                                null
+                        );
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    final Record record = cursor.getRecord();
+                    rnd.reset();
+                    while (cursor.hasNext()) {
+                        TestUtils.assertEquals(rnd.nextChars(20), record.getStr(0));
+                        TestUtils.assertEquals(symbols[rnd.nextPositiveInt() % N], record.getSym(1));
+                        Assert.assertEquals(rnd.nextInt(), record.getInt(2));
+                        TestUtils.assertEquals(symbols[rnd.nextPositiveInt() % N], record.getSym(3));
+                        count++;
                     }
-                    Assert.assertEquals(0, engine.getBusyReaderCount());
-                    Assert.assertEquals(M, count);
-
-                    Assert.assertTrue(factory.recordCursorSupportsRandomAccess());
+                    sink.clear();
+                    factory.getMetadata().toJson(sink);
+                    TestUtils.assertEquals(expectedMetadata, sink);
                 }
+                Assert.assertEquals(0, engine.getBusyReaderCount());
+                Assert.assertEquals(M, count);
+
+                Assert.assertTrue(factory.recordCursorSupportsRandomAccess());
             }
         });
     }

@@ -27,6 +27,8 @@ package io.questdb.cairo;
 import io.questdb.cairo.sql.AnalyticSPI;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.vm.ContiguousVirtualMemory;
+import io.questdb.cairo.vm.VmUtils;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.Mutable;
@@ -235,7 +237,7 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
             mem.putLong(rowToDataOffset(recordOffset), varAppendOffset);
             recordOffset += 8;
             mem.putStr(varAppendOffset, value);
-            varAppendOffset += value.length() * 2 + 4;
+            varAppendOffset += VmUtils.getStorageLength(value.length());
         } else {
             putNull();
         }
@@ -247,7 +249,7 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
         mem.putLong(rowToDataOffset(recordOffset), varAppendOffset);
         recordOffset += 8;
         mem.putStr(varAppendOffset, value, lo, len);
-        varAppendOffset += len * 2 + 4;
+        varAppendOffset += VmUtils.getStorageLength(len);
     }
 
     @Override

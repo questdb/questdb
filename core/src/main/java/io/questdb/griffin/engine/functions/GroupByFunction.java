@@ -63,6 +63,10 @@ public interface GroupByFunction extends Function {
         throw new UnsupportedOperationException();
     }
 
+    default void setEmpty(MapValue value) {
+        setNull(value);
+    }
+
     default void setFloat(MapValue mapValue, float value) {
         throw new UnsupportedOperationException();
     }

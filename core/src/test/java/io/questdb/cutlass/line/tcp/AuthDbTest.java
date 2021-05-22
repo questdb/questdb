@@ -41,7 +41,7 @@ public class AuthDbTest {
 
         sig.initSign(secretKey);
         sig.update(challenge.getBytes());
-        byte sig2[] = sig.sign();
+        byte[] sig2 = sig.sign();
         sig.initVerify(publicKey);
         sig.update(challenge.getBytes());
         boolean verified = sig.verify(sig2);

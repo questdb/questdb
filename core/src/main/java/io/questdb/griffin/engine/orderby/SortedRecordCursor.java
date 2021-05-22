@@ -98,7 +98,7 @@ class SortedRecordCursor implements DelegatingRecordCursor {
                 chain.put(record);
             }
             chainCursor.toTop();
-        } catch (CairoException ex) {
+        } catch (Throwable ex) {
             base.close();
             throw ex;
         }

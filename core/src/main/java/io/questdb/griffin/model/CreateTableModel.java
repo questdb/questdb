@@ -42,6 +42,8 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
     private QueryModel queryModel;
     private ExpressionNode timestamp;
     private ExpressionNode partitionBy;
+    private int maxUncommittedRows;
+    private long commitLag;
     private boolean ignoreIfExists = false;
 
     private CreateTableModel() {
@@ -310,5 +312,23 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
         } else {
             columnBits.setQuick(index, Numbers.encodeLowHighInts(flags & ~COLUMN_FLAG_INDEXED, Numbers.ceilPow2(indexValueBlockSize)));
         }
+    }
+
+    @Override
+    public int getMaxUncommittedRows() {
+        return maxUncommittedRows;
+    }
+
+    public void setMaxUncommittedRows(int maxUncommittedRows) {
+        this.maxUncommittedRows = maxUncommittedRows;
+    }
+
+    @Override
+    public long getCommitLag() {
+        return commitLag;
+    }
+
+    public void setCommitLag(long micros) {
+        this.commitLag = micros;
     }
 }

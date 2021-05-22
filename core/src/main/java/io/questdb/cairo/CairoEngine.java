@@ -31,6 +31,7 @@ import io.questdb.cairo.pool.ReaderPool;
 import io.questdb.cairo.pool.WriterPool;
 import io.questdb.cairo.pool.WriterSource;
 import io.questdb.cairo.sql.ReaderOutOfDateException;
+import io.questdb.cairo.vm.AppendOnlyVirtualMemory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.*;
@@ -55,9 +56,9 @@ public class CairoEngine implements Closeable, WriterSource {
     private final RingQueue<TelemetryTask> telemetryQueue;
     private final MPSequence telemetryPubSeq;
     private final SCSequence telemetrySubSeq;
-    private final long tableIndexFd;
-    private final long tableIndexMem;
-    private final long tableIndexMemSize;
+    private final long tableIdMemSize;
+    private long tableIdFd = -1;
+    private long tableIdMem = 0;
 
     public CairoEngine(CairoConfiguration configuration) {
         this.configuration = configuration;
@@ -69,44 +70,80 @@ public class CairoEngine implements Closeable, WriterSource {
         this.telemetryPubSeq = new MPSequence(telemetryQueue.getCapacity());
         this.telemetrySubSeq = new SCSequence();
         telemetryPubSeq.then(telemetrySubSeq).then(telemetryPubSeq);
+        this.tableIdMemSize = Files.PAGE_SIZE;
+        openTableId();
+        try {
+            new EngineMigration(this, configuration).migrateEngineTo(ColumnType.VERSION);
+        } catch (Throwable e) {
+            close();
+            throw e;
+        }
+    }
 
-        final FilesFacade ff = configuration.getFilesFacade();
-        try (Path path = new Path().of(configuration.getRoot()).concat("_tab_index.d").$()) {
-            this.tableIndexMemSize = Files.PAGE_SIZE;
-            tableIndexFd = TableUtils.openFileRWOrFail(ff, path);
-            final long fileSize = ff.length(tableIndexFd);
-            if (fileSize < Long.BYTES) {
-                if (!ff.allocate(tableIndexFd, Files.PAGE_SIZE)) {
-                    ff.close(tableIndexFd);
-                    throw CairoException.instance(ff.errno()).put("Could not allocate [file=").put(path).put(", actual=").put(fileSize).put(", desired=").put(this.tableIndexMemSize).put(']');
-                }
-            }
-
-            this.tableIndexMem = ff.mmap(tableIndexFd, tableIndexMemSize, 0, Files.MAP_RW);
-            if (tableIndexMem == -1) {
-                ff.close(tableIndexFd);
-                throw CairoException.instance(ff.errno()).put("Could not mmap [file=").put(path).put(']');
-            }
-            try {
-                new EngineMigration(this, configuration).migrateEngineTo(ColumnType.VERSION);
-            } catch (CairoException e) {
-                close();
-                throw e;
+    public void openTableId() {
+        freeTableId();
+        FilesFacade ff = configuration.getFilesFacade();
+        Path path = Path.getThreadLocal(configuration.getRoot()).concat(TableUtils.TAB_INDEX_FILE_NAME).$();
+        tableIdFd = TableUtils.openFileRWOrFail(ff, path);
+        final long fileSize = ff.length(tableIdFd);
+        if (fileSize < Long.BYTES) {
+            if (!ff.allocate(tableIdFd, Files.PAGE_SIZE)) {
+                ff.close(tableIdFd);
+                throw CairoException.instance(ff.errno()).put("Could not allocate [file=").put(path).put(", actual=").put(fileSize).put(", desired=").put(this.tableIdMemSize).put(']');
             }
         }
+
+        this.tableIdMem = ff.mmap(tableIdFd, tableIdMemSize, 0, Files.MAP_RW);
+        if (tableIdMem == -1) {
+            ff.close(tableIdFd);
+            throw CairoException.instance(ff.errno()).put("Could not mmap [file=").put(path).put(']');
+        }
+    }
+
+    public boolean clear() {
+        boolean b1 = readerPool.releaseAll();
+        boolean b2 = writerPool.releaseAll();
+        return b1 & b2;
     }
 
     @Override
     public void close() {
         Misc.free(writerPool);
         Misc.free(readerPool);
-        configuration.getFilesFacade().munmap(tableIndexMem, tableIndexMemSize);
-        configuration.getFilesFacade().close(tableIndexFd);
+        freeTableId();
+        Misc.free(messageBus);
+    }
+
+    public void createTable(
+            CairoSecurityContext securityContext,
+            AppendOnlyVirtualMemory mem,
+            Path path,
+            TableStructure struct
+    ) {
+        if (lock(securityContext, struct.getTableName())) {
+            if (writerPool.exists(struct.getTableName())) {
+                throw EntryUnavailableException.INSTANCE;
+            }
+            boolean newTable = false;
+            try {
+                createTableUnsafe(
+                        securityContext,
+                        mem,
+                        path,
+                        struct
+                );
+                newTable = true;
+            } finally {
+                unlock(securityContext, struct.getTableName(), null, newTable);
+            }
+        } else {
+            throw EntryUnavailableException.INSTANCE;
+        }
     }
 
     public void createTableUnsafe(
             CairoSecurityContext securityContext,
-            AppendMemory mem,
+            AppendOnlyVirtualMemory mem,
             Path path,
             TableStructure struct
     ) {
@@ -122,25 +159,14 @@ public class CairoEngine implements Closeable, WriterSource {
         );
     }
 
-    public void createTable(
-            CairoSecurityContext securityContext,
-            AppendMemory mem,
-            Path path,
-            TableStructure struct
-    ) {
-        if (lock(securityContext, struct.getTableName())) {
-            try {
-                createTableUnsafe(
-                        securityContext,
-                        mem,
-                        path,
-                        struct
-                );
-            } finally {
-                unlock(securityContext, struct.getTableName(), null);
-            }
-        } else {
-            throw EntryUnavailableException.INSTANCE;
+    public void freeTableId() {
+        if (tableIdMem != 0) {
+            configuration.getFilesFacade().munmap(tableIdMem, tableIdMemSize);
+            tableIdMem = 0;
+        }
+        if (tableIdFd != -1) {
+            configuration.getFilesFacade().close(tableIdFd);
+            tableIdFd = -1;
         }
     }
 
@@ -172,10 +198,10 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public long getNextTableId() {
         long next;
-        long x = Unsafe.getUnsafe().getLong(tableIndexMem);
+        long x = Unsafe.getUnsafe().getLong(tableIdMem);
         do {
             next = x;
-            x = Os.compareAndSwap(tableIndexMem, next, next + 1);
+            x = Os.compareAndSwap(tableIdMem, next, next + 1);
         } while (next != x);
         return next + 1;
     }
@@ -216,6 +242,9 @@ public class CairoEngine implements Closeable, WriterSource {
             int lo,
             int hi
     ) {
+        if (writerPool.exists(tableName)) {
+            return TableUtils.TABLE_EXISTS;
+        }
         return TableUtils.exists(configuration.getFilesFacade(), path, configuration.getRoot(), tableName, lo, hi);
     }
 
@@ -260,6 +289,7 @@ public class CairoEngine implements Closeable, WriterSource {
         if (writerPool.lock(tableName)) {
             boolean locked = readerPool.lock(tableName);
             if (locked) {
+                LOG.info().$("locked [table=`").$(tableName).$("`, thread=").$(Thread.currentThread().getId()).$(']').$();
                 return true;
             }
             writerPool.unlock(tableName);
@@ -301,8 +331,8 @@ public class CairoEngine implements Closeable, WriterSource {
         return readerPool.releaseAll();
     }
 
-    public boolean releaseAllWriters() {
-        return writerPool.releaseAll();
+    public void releaseAllWriters() {
+        writerPool.releaseAll();
     }
 
     public boolean releaseInactive() {
@@ -320,23 +350,23 @@ public class CairoEngine implements Closeable, WriterSource {
         if (lock(securityContext, tableName)) {
             try {
                 path.of(configuration.getRoot()).concat(tableName).$();
-                if (!configuration.getFilesFacade().rmdir(path)) {
-                    int error = configuration.getFilesFacade().errno();
-                    LOG.error().$("remove failed [tableName='").utf8(tableName).$("', error=").$(error).$(']').$();
-                    throw CairoException.instance(error).put("Table remove failed");
+                int errno;
+                if ((errno = configuration.getFilesFacade().rmdir(path)) != 0) {
+                    LOG.error().$("remove failed [tableName='").utf8(tableName).$("', error=").$(errno).$(']').$();
+                    throw CairoException.instance(errno).put("Table remove failed");
                 }
                 return;
             } finally {
-                unlock(securityContext, tableName, null);
+                unlock(securityContext, tableName, null, false);
             }
         }
         throw CairoException.instance(configuration.getFilesFacade().errno()).put("Could not lock '").put(tableName).put('\'');
     }
 
-    public boolean removeDirectory(@Transient Path path, CharSequence dir) {
+    public int removeDirectory(@Transient Path path, CharSequence dir) {
         path.of(configuration.getRoot()).concat(dir);
         final FilesFacade ff = configuration.getFilesFacade();
-        return ff.rmdir(path.put(Files.SEPARATOR).$());
+        return ff.rmdir(path.slash$());
     }
 
     public void rename(
@@ -351,7 +381,7 @@ public class CairoEngine implements Closeable, WriterSource {
             try {
                 rename0(path, tableName, otherPath, newName);
             } finally {
-                unlock(securityContext, tableName, null);
+                unlock(securityContext, tableName, null, false);
             }
         } else {
             LOG.error().$("cannot lock and rename [from='").$(tableName).$("', to='").$(newName).$("']").$();
@@ -362,16 +392,18 @@ public class CairoEngine implements Closeable, WriterSource {
     // This is not thread safe way to reset table ID back to 0
     // It is useful for testing only
     public void resetTableId() {
-        Unsafe.getUnsafe().putLong(tableIndexMem, 0);
+        Unsafe.getUnsafe().putLong(tableIdMem, 0);
     }
 
     public void unlock(
             CairoSecurityContext securityContext,
             CharSequence tableName,
-            @Nullable TableWriter writer
+            @Nullable TableWriter writer,
+            boolean newTable
     ) {
         readerPool.unlock(tableName);
-        writerPool.unlock(tableName, writer);
+        writerPool.unlock(tableName, writer, newTable);
+        LOG.info().$("unlocked [table=`").$(tableName).$("`]").$();
     }
 
     public void unlockReaders(CharSequence tableName) {

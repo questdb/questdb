@@ -24,30 +24,46 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.vm.AppendOnlyVirtualMemory;
+import io.questdb.cairo.vm.MappedReadOnlyMemory;
+import io.questdb.cairo.vm.SinglePageMappedReadOnlyPageMemory;
+import io.questdb.cairo.vm.VmUtils;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
 
 import java.io.Closeable;
 
 public class TableReaderMetadata extends BaseRecordMetadata implements Closeable {
-    private final ReadOnlyColumn metaMem;
+    private final MappedReadOnlyMemory metaMem;
     private final Path path;
     private final FilesFacade ff;
     private final CharSequenceIntHashMap tmpValidationMap = new CharSequenceIntHashMap();
-    private final int id;
-    private ReadOnlyMemory transitionMeta;
+    private int id;
+    private MappedReadOnlyMemory transitionMeta;
+
+    public TableReaderMetadata(FilesFacade ff) {
+        this.path = new Path();
+        this.ff = ff;
+        this.metaMem = new SinglePageMappedReadOnlyPageMemory();
+        this.columnMetadata = new ObjList<>(columnCount);
+        this.columnNameIndexMap = new CharSequenceIntHashMap();
+    }
 
     public TableReaderMetadata(FilesFacade ff, Path path) {
-        this.ff = ff;
-        this.path = new Path().of(path).$();
+        this(ff);
+        of(path);
+    }
+
+    public TableReaderMetadata of(Path path) {
+        this.path.of(path).$();
         try {
-            this.metaMem = new OnePageMemory(ff, path, ff.length(path));
+            this.metaMem.of(ff, path, ff.length(path));
             this.columnCount = metaMem.getInt(TableUtils.META_OFFSET_COUNT);
-            this.columnNameIndexMap = new CharSequenceIntHashMap(columnCount);
+            this.columnNameIndexMap.clear();
             TableUtils.validate(ff, metaMem, this.columnNameIndexMap);
             this.timestampIndex = metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX);
             this.id = metaMem.getInt(TableUtils.META_OFFSET_TABLE_ID);
-            this.columnMetadata = new ObjList<>(columnCount);
+            this.columnMetadata.clear();
             long offset = TableUtils.getColumnNameOffset(columnCount);
 
             // don't create strings in this loop, we already have them in columnNameIndexMap
@@ -64,12 +80,13 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
                                 null
                         )
                 );
-                offset += ReadOnlyMemory.getStorageLength(name);
+                offset += VmUtils.getStorageLength(name);
             }
-        } catch (CairoException e) {
+        } catch (Throwable e) {
             close();
             throw e;
         }
+        return this;
     }
 
     public static void freeTransitionIndex(long address) {
@@ -87,7 +104,7 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
 
         final int columnCount = Unsafe.getUnsafe().getInt(pTransitionIndex + 4);
         final long index = pTransitionIndex + 8;
-        final long stateAddress = index + columnCount * 8;
+        final long stateAddress = index + columnCount * 8L;
 
 
         if (columnCount > this.columnCount) {
@@ -95,7 +112,7 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
             this.columnCount = columnCount;
         }
 
-        Unsafe.getUnsafe().setMemory(stateAddress, columnCount, (byte) 0);
+        Vect.memset(stateAddress, columnCount, 0);
 
         // this is a silly exercise in walking the index
         for (int i = 0; i < columnCount; i++) {
@@ -107,7 +124,7 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
 
             Unsafe.getUnsafe().putByte(stateAddress + i, (byte) -1);
 
-            int copyFrom = Unsafe.getUnsafe().getInt(index + i * 8);
+            int copyFrom = Unsafe.getUnsafe().getInt(index + i * 8L);
 
             // don't copy entries to themselves
             if (copyFrom == i + 1) {
@@ -124,7 +141,7 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
                 columnNameIndexMap.put(tmp.getName(), i);
                 tmp = moveMetadata(i, tmp);
 
-                int copyTo = Unsafe.getUnsafe().getInt(index + i * 8 + 4);
+                int copyTo = Unsafe.getUnsafe().getInt(index + i * 8L + 4);
 
                 // now we copied entry, what do we do with value that was already there?
                 // do we copy it somewhere else?
@@ -140,7 +157,7 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
 
                     columnNameIndexMap.put(tmp.getName(), copyTo - 1);
                     tmp = moveMetadata(copyTo - 1, tmp);
-                    copyTo = Unsafe.getUnsafe().getInt(index + (copyTo - 1) * 8 + 4);
+                    copyTo = Unsafe.getUnsafe().getInt(index + (copyTo - 1) * 8L + 4);
                 }
             } else {
                 // new instance
@@ -166,7 +183,7 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
         this.timestampIndex = metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX);
     }
 
-    public void cloneTo(AppendMemory mem) {
+    public void cloneTo(AppendOnlyVirtualMemory mem) {
         long len = ff.length(metaMem.getFd());
         for (long p = 0; p < len; p++) {
             mem.putByte(metaMem.getByte(p));
@@ -181,11 +198,11 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
 
     public long createTransitionIndex() {
         if (transitionMeta == null) {
-            transitionMeta = new ReadOnlyMemory();
+            transitionMeta = new SinglePageMappedReadOnlyPageMemory();
         }
 
         transitionMeta.of(ff, path, ff.getPageSize(), ff.length(path));
-        try (ReadOnlyMemory metaMem = transitionMeta) {
+        try (MappedReadOnlyMemory metaMem = transitionMeta) {
 
             tmpValidationMap.clear();
             TableUtils.validate(ff, metaMem, tmpValidationMap);
@@ -214,16 +231,16 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
             long offset = TableUtils.getColumnNameOffset(columnCount);
             for (int i = 0; i < columnCount; i++) {
                 CharSequence name = metaMem.getStr(offset);
-                offset += ReadOnlyMemory.getStorageLength(name);
+                offset += VmUtils.getStorageLength(name);
                 int oldPosition = columnNameIndexMap.get(name);
                 // write primary (immutable) index
                 if (oldPosition > -1
                         && TableUtils.getColumnType(metaMem, i) == TableUtils.getColumnType(this.metaMem, oldPosition)
                         && TableUtils.isColumnIndexed(metaMem, i) == TableUtils.isColumnIndexed(this.metaMem, oldPosition)) {
-                    Unsafe.getUnsafe().putInt(index + i * 8, oldPosition + 1);
-                    Unsafe.getUnsafe().putInt(index + oldPosition * 8 + 4, i + 1);
+                    Unsafe.getUnsafe().putInt(index + i * 8L, oldPosition + 1);
+                    Unsafe.getUnsafe().putInt(index + oldPosition * 8L + 4, i + 1);
                 } else {
-                    Unsafe.getUnsafe().putLong(index + i * 8, 0);
+                    Unsafe.getUnsafe().putLong(index + i * 8L, 0);
                 }
             }
             return pTransitionIndex;
@@ -247,6 +264,14 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
         return metaMem.getInt(TableUtils.META_OFFSET_VERSION);
     }
 
+    public int getMaxUncommittedRows() {
+        return metaMem.getInt(TableUtils.META_OFFSET_MAX_UNCOMMITTED_ROWS);
+    }
+
+    public long getCommitLag() {
+        return metaMem.getLong(TableUtils.META_OFFSET_COMMIT_LAG);
+    }
+
     private TableColumnMetadata moveMetadata(int index, TableColumnMetadata metadata) {
         return columnMetadata.getAndSetQuick(index, metadata);
     }
@@ -256,7 +281,7 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
         CharSequence name = null;
         for (int i = 0; i <= index; i++) {
             name = metaMem.getStr(offset);
-            offset += ReadOnlyMemory.getStorageLength(name);
+            offset += VmUtils.getStorageLength(name);
         }
         assert name != null;
         return new TableColumnMetadata(

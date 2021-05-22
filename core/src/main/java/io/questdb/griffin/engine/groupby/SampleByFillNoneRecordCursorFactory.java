@@ -76,7 +76,7 @@ public class SampleByFillNoneRecordCursorFactory implements RecordCursorFactory 
                     timestampIndex,
                     timestampSampler
             );
-        } catch (CairoException e) {
+        } catch (Throwable e) {
             Misc.free(map);
             Misc.freeObjList(recordFunctions);
             throw e;
@@ -100,7 +100,7 @@ public class SampleByFillNoneRecordCursorFactory implements RecordCursorFactory 
             }
             Misc.free(baseCursor);
             return EmptyTableNoSizeRecordCursor.INSTANCE;
-        } catch (CairoException ex) {
+        } catch (Throwable ex) {
             Misc.free(baseCursor);
             throw ex;
         }
@@ -123,7 +123,7 @@ public class SampleByFillNoneRecordCursorFactory implements RecordCursorFactory 
             // init all record function for this cursor, in case functions require metadata and/or symbol tables
             Function.init(recordFunctions, baseCursor, executionContext);
             return cursor;
-        } catch (CairoException ex) {
+        } catch (Throwable ex) {
             baseCursor.close();
             throw ex;
         }

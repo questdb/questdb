@@ -24,7 +24,36 @@
 
 package io.questdb;
 
+import java.io.Closeable;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.net.Inet4Address;
+import java.net.InetAddress;
+import java.net.NetworkInterface;
+import java.net.SocketException;
+import java.net.URL;
+import java.util.Collections;
+import java.util.Date;
+import java.util.Enumeration;
+import java.util.Properties;
+import java.util.ServiceLoader;
+import java.util.concurrent.locks.LockSupport;
+import java.util.jar.Attributes;
+import java.util.jar.Manifest;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipInputStream;
+
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.O3CallbackJob;
+import io.questdb.cairo.O3CopyJob;
+import io.questdb.cairo.O3OpenColumnJob;
+import io.questdb.cairo.O3PartitionJob;
+import io.questdb.cairo.O3PurgeDiscoveryJob;
+import io.questdb.cairo.O3PurgeJob;
+import io.questdb.cairo.O3Utils;
 import io.questdb.cutlass.http.HttpServer;
 import io.questdb.cutlass.json.JsonException;
 import io.questdb.cutlass.line.tcp.LineTcpServer;
@@ -38,18 +67,14 @@ import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.NetworkError;
-import io.questdb.std.*;
+import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
+import io.questdb.std.Os;
+import io.questdb.std.Vect;
 import io.questdb.std.datetime.millitime.Dates;
+import io.questdb.std.str.Path;
 import sun.misc.Signal;
-
-import java.io.*;
-import java.net.*;
-import java.util.*;
-import java.util.concurrent.locks.LockSupport;
-import java.util.jar.Attributes;
-import java.util.jar.Manifest;
-import java.util.zip.ZipEntry;
-import java.util.zip.ZipInputStream;
 
 public class ServerMain {
     private static final String VERSION_TXT = "version.txt";
@@ -95,23 +120,7 @@ public class ServerMain {
 
         readServerConfiguration(rootDirectory, properties, log, buildInformation);
 
-        // create database directory
-        try (io.questdb.std.str.Path path = new io.questdb.std.str.Path()) {
-            path.of(configuration.getCairoConfiguration().getRoot());
-            if (!Chars.endsWith(path, io.questdb.std.Files.SEPARATOR)) {
-                // this would end trailing path separator
-                path.concat("");
-            }
-            path.$();
-
-            if (io.questdb.std.Files.mkdirs(path, configuration.getCairoConfiguration().getMkDirMode()) != 0) {
-                log.error().$("could not create database root [dir=").$(path).$(']').$();
-                System.exit(30);
-            } else {
-                log.info().$("database root [dir=").$(path).$(']').$();
-            }
-        }
-
+        log.info().$("open database [id=").$(configuration.getCairoConfiguration().getDatabaseIdLo()).$('.').$(configuration.getCairoConfiguration().getDatabaseIdHi()).$(']').$();
         log.info().$("platform [bit=").$(System.getProperty("sun.arch.data.model")).$(']').$();
         switch (Os.type) {
             case Os.WINDOWS:
@@ -120,8 +129,11 @@ public class ServerMain {
             case Os.LINUX_AMD64:
                 log.info().$("OS: linux-amd64").$(Vect.getSupportedInstructionSetName()).$();
                 break;
-            case Os.OSX:
+            case Os.OSX_AMD64:
                 log.info().$("OS: apple-amd64").$(Vect.getSupportedInstructionSetName()).$();
+                break;
+            case Os.OSX_ARM64:
+                log.info().$("OS: apple-silicon").$(Vect.getSupportedInstructionSetName()).$();
                 break;
             case Os.LINUX_ARM64:
                 log.info().$("OS: linux-arm64").$(Vect.getSupportedInstructionSetName()).$();
@@ -151,6 +163,15 @@ public class ServerMain {
         if (configuration.getCairoConfiguration().getTelemetryConfiguration().getEnabled()) {
             workerPool.assign(telemetryJob);
         }
+
+        workerPool.assignCleaner(Path.CLEANER);
+        workerPool.assign(new O3CallbackJob(cairoEngine.getMessageBus()));
+        workerPool.assign(new O3PartitionJob(cairoEngine.getMessageBus()));
+        workerPool.assign(new O3OpenColumnJob(cairoEngine.getMessageBus()));
+        workerPool.assign(new O3CopyJob(cairoEngine.getMessageBus()));
+        workerPool.assign(new O3PurgeDiscoveryJob(cairoEngine.getMessageBus(), workerPool.getWorkerCount()));
+        workerPool.assign(new O3PurgeJob(cairoEngine.getMessageBus()));
+        O3Utils.initBuf(workerPool.getWorkerCount() + 1);
 
         try {
             initQuestDb(workerPool, cairoEngine, log);
@@ -415,6 +436,47 @@ public class ServerMain {
         Misc.freeObjList(instancesToClean);
     }
 
+    private static CharSequence getQuestDbVersion(final Attributes manifestAttributes) {
+        final CharSequence version = manifestAttributes.getValue("Implementation-Version");
+        return version != null ? version : "[DEVELOPMENT]";
+    }
+
+    private static CharSequence getJdkVersion(final Attributes manifestAttributes) {
+        final CharSequence version = manifestAttributes.getValue("Build-Jdk");
+        return version != null ? version : "Unknown Version";
+    }
+
+    private static CharSequence getCommitHash(final Attributes manifestAttributes) {
+        final CharSequence version = manifestAttributes.getValue("Build-Commit-Hash");
+        return version != null ? version : "Unknown Version";
+    }
+
+    private static BuildInformation fetchBuildInformation() throws IOException {
+        final Attributes manifestAttributes = getManifestAttributes();
+
+        return new BuildInformationHolder(
+                getQuestDbVersion(manifestAttributes),
+                getJdkVersion(manifestAttributes),
+                getCommitHash(manifestAttributes)
+        );
+    }
+
+    private static Attributes getManifestAttributes() throws IOException {
+        final Enumeration<URL> resources = ServerMain.class.getClassLoader()
+                .getResources("META-INF/MANIFEST.MF");
+        while (resources.hasMoreElements()) {
+            try (InputStream is = resources.nextElement().openStream()) {
+                final Manifest manifest = new Manifest(is);
+                final Attributes attributes = manifest.getMainAttributes();
+                if ("org.questdb".equals(attributes.getValue("Implementation-Vendor-Id"))) {
+                    return manifest.getMainAttributes();
+                }
+            }
+        }
+
+        return new Attributes();
+    }
+
     protected HttpServer createHttpServer(final WorkerPool workerPool, final Log log, final CairoEngine cairoEngine, FunctionFactoryCache functionFactoryCache) {
         return HttpServer.create(
                 configuration.getHttpServerConfiguration(),
@@ -456,46 +518,5 @@ public class ServerMain {
             final Log log
     ) {
         workerPool.start(log);
-    }
-
-    private static CharSequence getQuestDbVersion(final Attributes manifestAttributes) {
-        final CharSequence version = manifestAttributes.getValue("Implementation-Version");
-        return version != null ? version : "[DEVELOPMENT]";
-    }
-
-    private static CharSequence getJdkVersion(final Attributes manifestAttributes) {
-        final CharSequence version = manifestAttributes.getValue("Build-Jdk");
-        return version != null ? version : "Unknown Version";
-    }
-
-    private static CharSequence getCommitHash(final Attributes manifestAttributes) {
-        final CharSequence version = manifestAttributes.getValue("Build-Commit-Hash");
-        return version != null ? version : "Unknown Version";
-    }
-
-    private static BuildInformation fetchBuildInformation() throws IOException {
-        final Attributes manifestAttributes = getManifestAttributes();
-
-        return new BuildInformationHolder(
-                getQuestDbVersion(manifestAttributes),
-                getJdkVersion(manifestAttributes),
-                getCommitHash(manifestAttributes)
-        );
-    }
-
-    private static Attributes getManifestAttributes() throws IOException {
-        final Enumeration<URL> resources = ServerMain.class.getClassLoader()
-                                                           .getResources("META-INF/MANIFEST.MF");
-        while (resources.hasMoreElements()) {
-            try (InputStream is = resources.nextElement().openStream()) {
-                final Manifest manifest = new Manifest(is);
-                final Attributes attributes = manifest.getMainAttributes();
-                if ("org.questdb".equals(attributes.getValue("Implementation-Vendor-Id"))) {
-                    return manifest.getMainAttributes();
-                }
-            }
-        }
-
-        return new Attributes();
     }
 }

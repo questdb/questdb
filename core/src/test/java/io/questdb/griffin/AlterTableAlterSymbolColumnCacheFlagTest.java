@@ -86,7 +86,7 @@ public class AlterTableAlterSymbolColumnCacheFlagTest extends AbstractGriffinTes
                 "googl\n" +
                 "msft\n";
 
-        final RecordCursorPrinter printer = new SingleColumnRecordCursorPrinter(sink, 1);
+        final RecordCursorPrinter printer = new SingleColumnRecordCursorPrinter(1);
 
         assertMemoryLeak(() -> {
 
@@ -99,7 +99,7 @@ public class AlterTableAlterSymbolColumnCacheFlagTest extends AbstractGriffinTes
             try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "x")) {
                 //check cursor before altering symbol column
                 sink.clear();
-                printer.print(reader.getCursor(), reader.getMetadata(), true);
+                printer.print(reader.getCursor(), reader.getMetadata(), true, sink);
                 Assert.assertEquals(expectedChronological, sink.toString());
 
                 try (TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x")) {
@@ -109,12 +109,12 @@ public class AlterTableAlterSymbolColumnCacheFlagTest extends AbstractGriffinTes
                 Assert.assertTrue(reader.reload());
                 //check cursor after reload
                 sink.clear();
-                printer.print(reader.getCursor(), reader.getMetadata(), true);
+                printer.print(reader.getCursor(), reader.getMetadata(), true, sink);
                 Assert.assertEquals(expectedChronological, sink.toString());
 
                 try (TableReader reader2 = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "x")) {
                     sink.clear();
-                    printer.print(reader2.getCursor(), reader2.getMetadata(), true);
+                    printer.print(reader2.getCursor(), reader2.getMetadata(), true, sink);
                     Assert.assertEquals(expectedChronological, sink.toString());
                 }
             }
@@ -127,7 +127,7 @@ public class AlterTableAlterSymbolColumnCacheFlagTest extends AbstractGriffinTes
 
     @Test
     public void testAlterSymbolCacheFlagToTrueCheckOpenReaderWithCursor() throws Exception {
-        final RecordCursorPrinter printer = new SingleColumnRecordCursorPrinter(sink, 1);
+        final RecordCursorPrinter printer = new SingleColumnRecordCursorPrinter(1);
 
         assertMemoryLeak(() -> {
             compiler.compile("create table x (i int, sym symbol nocache) ;", sqlExecutionContext);
@@ -173,7 +173,7 @@ public class AlterTableAlterSymbolColumnCacheFlagTest extends AbstractGriffinTes
             try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "x")) {
                 //check cursor before altering symbol column
                 sink.clear();
-                printer.print(reader.getCursor(), reader.getMetadata(), true);
+                printer.print(reader.getCursor(), reader.getMetadata(), true, sink);
                 Assert.assertEquals(expectedChronological, sink.toString());
 
                 try (TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x")) {
@@ -183,12 +183,12 @@ public class AlterTableAlterSymbolColumnCacheFlagTest extends AbstractGriffinTes
                 Assert.assertTrue(reader.reload());
                 //check cursor after reload
                 sink.clear();
-                printer.print(reader.getCursor(), reader.getMetadata(), true);
+                printer.print(reader.getCursor(), reader.getMetadata(), true, sink);
                 Assert.assertEquals(expectedChronological, sink.toString());
 
                 try (TableReader reader2 = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "x")) {
                     sink.clear();
-                    printer.print(reader2.getCursor(), reader2.getMetadata(), true);
+                    printer.print(reader2.getCursor(), reader2.getMetadata(), true, sink);
                     Assert.assertEquals(expectedChronological, sink.toString());
                 }
 
@@ -258,20 +258,20 @@ public class AlterTableAlterSymbolColumnCacheFlagTest extends AbstractGriffinTes
 
         private final int columnIndex;
 
-        public SingleColumnRecordCursorPrinter(CharSink sink, int columnIndex) {
-            super(sink);
+        public SingleColumnRecordCursorPrinter(int columnIndex) {
+            super();
             this.columnIndex = columnIndex;
         }
 
         @Override
-        public void print(Record r, RecordMetadata m) {
-            printColumn(r, m, columnIndex);
+        public void print(Record r, RecordMetadata m, CharSink sink) {
+            printColumn(r, m, columnIndex, sink);
             sink.put("\n");
             sink.flush();
         }
 
         @Override
-        public void printHeader(RecordMetadata metadata) {
+        public void printHeader(RecordMetadata metadata, CharSink sink) {
             sink.put(metadata.getColumnName(columnIndex));
             sink.put('\n');
         }

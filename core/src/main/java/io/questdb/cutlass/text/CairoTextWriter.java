@@ -26,6 +26,7 @@ package io.questdb.cutlass.text;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.vm.AppendOnlyVirtualMemory;
 import io.questdb.cutlass.text.types.*;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -41,7 +42,7 @@ public class CairoTextWriter implements Closeable, Mutable {
     private final CairoConfiguration configuration;
     private final CairoEngine engine;
     private final LongList columnErrorCounts = new LongList();
-    private final AppendMemory appendMemory = new AppendMemory();
+    private final AppendOnlyVirtualMemory appendMemory = new AppendOnlyVirtualMemory();
     private final Path path;
     private final TableStructureAdapter tableStructureAdapter = new TableStructureAdapter();
     private final TypeManager typeManager;
@@ -387,6 +388,16 @@ public class CairoTextWriter implements Closeable, Mutable {
         @Override
         public int getTimestampIndex() {
             return timestampIndex;
+        }
+
+        @Override
+        public int getMaxUncommittedRows() {
+            return configuration.getMaxUncommittedRows();
+        }
+
+        @Override
+        public long getCommitLag() {
+            return configuration.getCommitLag();
         }
 
         TableStructureAdapter of(ObjList<CharSequence> names, ObjList<TypeAdapter> types) throws TextException {

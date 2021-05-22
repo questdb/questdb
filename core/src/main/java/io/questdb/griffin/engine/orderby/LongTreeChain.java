@@ -24,7 +24,7 @@
 
 package io.questdb.griffin.engine.orderby;
 
-import io.questdb.cairo.ContiguousVirtualMemory;
+import io.questdb.cairo.vm.ContiguousVirtualMemory;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.griffin.engine.AbstractRedBlackTree;

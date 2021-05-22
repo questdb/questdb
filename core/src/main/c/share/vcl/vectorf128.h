@@ -526,6 +526,14 @@ public:
     void store(float * p) const {
         _mm_storeu_ps(p, xmm);
     }
+    // Member function to store into array (unaligned) with non-temporal memory hint
+    void store_nt(float * p) const {
+        _mm_stream_ps(p, xmm);
+    }
+    // Required alignment for store_nt call in bytes
+    static constexpr int store_nt_alignment() {
+        return 16;
+    }
     // Member function to store into array, aligned by 16
     // "store_a" is faster than "store" on older Intel processors (Pentium 4, Pentium M, Core 1,
     // Merom, Wolfdale) and Atom, but not on other processors from Intel, AMD or VIA.
@@ -1516,6 +1524,14 @@ public:
     void store(double * p) const {
         _mm_storeu_pd(p, xmm);
     }
+    // Member function to store into array (unaligned) with non-temporal memory hint
+    void store_nt(double * p) const {
+        _mm_stream_pd(p, xmm);
+    }
+    // Required alignment for store_nt call in bytes
+    static constexpr int store_nt_alignment() {
+        return 16;
+    }
     // Member function to store into array, aligned by 16
     // "store_a" is faster than "store" on older Intel processors (Pentium 4, Pentium M, Core 1,
     // Merom, Wolfdale) and Atom, but not on other processors from Intel, AMD or VIA.
@@ -1952,23 +1968,23 @@ static inline Vec2db is_nan(Vec2d const a) {
     // assume that compiler does not optimize this away with -ffinite-math-only:
     return Vec2db(_mm_fpclass_pd_mask(a, 0x81));
 }
-//#elif defined(__GNUC__) && !defined(__INTEL_COMPILER) && !defined(__clang__) 
+//#elif defined(__GNUC__) && !defined(__INTEL_COMPILER) && !defined(__clang__)
 //__attribute__((optimize("-fno-unsafe-math-optimizations")))
 //static inline Vec2db is_nan(Vec2d const a) {
 //    return a != a; // not safe with -ffinite-math-only compiler option
 //}
-#elif (defined(__GNUC__) || defined(__clang__)) && !defined(__INTEL_COMPILER)
-static inline Vec2db is_nan(Vec2d const a) {
-    __m128d aa = a;
-    __m128i unordered;
-    __asm volatile("vcmppd $3,  %1, %1, %0" : "=x" (unordered) :  "x" (aa) );
-    return Vec2db(unordered);
-}
+//#elif (defined(__GNUC__) || defined(__clang__)) && !defined(__INTEL_COMPILER)
+//static inline Vec2db is_nan(Vec2d const a) {
+//    __m128d aa = a;
+//    __m128i unordered;
+//    __asm volatile("vcmppd $3,  %1, %1, %0" : "=x" (unordered) :  "x" (aa) );
+//    return Vec2db(unordered);
+//}
 #else
 static inline Vec2db is_nan(Vec2d const a) {
     // assume that compiler does not optimize this away with -ffinite-math-only:
-    return _mm_cmp_pd(a, a, 3); // compare unordered
-    // return a != a; // This is not safe with -ffinite-math-only, -ffast-math, or /fp:fast compiler option
+//    return _mm_cmp_pd(a, a, 3); // compare unordered
+     return a != a; // This is not safe with -ffinite-math-only, -ffast-math, or /fp:fast compiler option
 }
 #endif
 

@@ -2634,23 +2634,27 @@ public class CastTest extends AbstractGriffinTest {
 
     @Test
     public void testFloatToLong() throws Exception {
+        compiler.compile("create table rndfloat as (select rnd_float(2) fl from long_sequence(10))", sqlExecutionContext);
+        engine.releaseAllReaders();
+        engine.releaseAllWriters();
+
         assertQuery(
-                "a\n",
-                "select a from tab",
-                "create table tab (a long)",
+                "fl\ta\n",
+                "tab",
+                "create table tab (fl DOUBLE, a LONG)",
                 null,
-                "insert into tab select cast(rnd_float(2)*10000000000l as long) from long_sequence(10)",
-                "a\n" +
-                        "8043223552\n" +
-                        "NaN\n" +
-                        "848696256\n" +
-                        "2991990528\n" +
-                        "NaN\n" +
-                        "9344604160\n" +
-                        "1312335744\n" +
-                        "7905675264\n" +
-                        "NaN\n" +
-                        "2245233664\n",
+                "insert into tab select fl, cast(fl*10000000000l as long) from rndfloat",
+                "fl\ta\n" +
+                        "0.804322361946106\t8043223619\n" +
+                        "NaN\tNaN\n" +
+                        "0.0848696231842041\t848696231\n" +
+                        "0.29919904470443726\t2991990447\n" +
+                        "NaN\tNaN\n" +
+                        "0.934460461139679\t9344604611\n" +
+                        "0.1312335729598999\t1312335729\n" +
+                        "0.7905675172805786\t7905675172\n" +
+                        "NaN\tNaN\n" +
+                        "0.2245233654975891\t2245233654\n",
                 true,
                 true,
                 true
@@ -2907,7 +2911,7 @@ public class CastTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testFloatToTimestamp() throws Exception {
+    public void testFloatToTimestampViaDouble() throws Exception {
         assertQuery(
                 "a\n",
                 "select a from tab",
@@ -2915,14 +2919,14 @@ public class CastTest extends AbstractGriffinTest {
                 null,
                 "insert into tab select cast(rnd_float(2)*100000000 as timestamp) from long_sequence(10)",
                 "a\n" +
-                        "1970-01-01T00:01:20.432240Z\n" +
+                        "1970-01-01T00:01:20.432236Z\n" +
                         "\n" +
                         "1970-01-01T00:00:08.486962Z\n" +
                         "1970-01-01T00:00:29.919904Z\n" +
                         "\n" +
-                        "1970-01-01T00:01:33.446048Z\n" +
+                        "1970-01-01T00:01:33.446046Z\n" +
                         "1970-01-01T00:00:13.123357Z\n" +
-                        "1970-01-01T00:01:19.056752Z\n" +
+                        "1970-01-01T00:01:19.056751Z\n" +
                         "\n" +
                         "1970-01-01T00:00:22.452336Z\n",
                 true,

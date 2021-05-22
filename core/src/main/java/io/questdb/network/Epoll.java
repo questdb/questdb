@@ -46,10 +46,7 @@ public final class Epoll implements Closeable {
         this.events = _rPtr = Unsafe.calloc(EpollAccessor.SIZEOF_EVENT * (long) capacity);
         // todo: this can be unsuccessful
         this.epollFd = epf.epollCreate();
-        if (this.epollFd != -1) {
-            assert Files.auditOpen(epollFd);
-            Files.bumpFileCount();
-        }
+        Files.bumpFileCount(this.epollFd);
     }
 
     @Override

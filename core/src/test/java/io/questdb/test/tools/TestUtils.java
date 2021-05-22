@@ -24,16 +24,26 @@
 
 package io.questdb.test.tools;
 
-import io.questdb.std.BinarySequence;
-import io.questdb.std.Chars;
-import io.questdb.std.Files;
-import io.questdb.std.Unsafe;
+import io.questdb.cairo.*;
+import io.questdb.cairo.sql.*;
+import io.questdb.griffin.CompiledQuery;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.model.IntervalUtils;
+import io.questdb.std.*;
+import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.str.MutableCharSink;
 import io.questdb.std.str.Path;
 import org.junit.Assert;
 
 import java.io.*;
 
 public final class TestUtils {
+
+    private static final RecordCursorPrinter printer = new RecordCursorPrinter();
+
+    private static final RecordCursorPrinter printerWithTypes = new RecordCursorPrinter().withTypes(true);
 
     private TestUtils() {
     }
@@ -43,6 +53,116 @@ public final class TestUtils {
             return;
         }
         Assert.fail("'" + _this.toString() + "' does not contain: " + that);
+    }
+
+    public static void assertEquals(RecordCursor cursorExpected, RecordMetadata metadataExpected, RecordCursor cursorActual, RecordMetadata metadataActual) {
+        assertEquals(metadataExpected, metadataActual);
+        Record r = cursorExpected.getRecord();
+        Record l = cursorActual.getRecord();
+        long rowIndex = 0;
+        while (cursorExpected.hasNext()) {
+            if (!cursorActual.hasNext()) {
+                Assert.fail("Actual cursor does not have record at " + rowIndex);
+            }
+            rowIndex++;
+            for (int i = 0; i < metadataExpected.getColumnCount(); i++) {
+                String columnName = metadataExpected.getColumnName(i);
+                try {
+                    switch (metadataExpected.getColumnType(i)) {
+                        case ColumnType.DATE:
+                            Assert.assertEquals(r.getDate(i), l.getDate(i));
+                            break;
+                        case ColumnType.TIMESTAMP:
+                            Assert.assertEquals(r.getTimestamp(i), l.getTimestamp(i));
+                            break;
+                        case ColumnType.DOUBLE:
+                            Assert.assertEquals(r.getDouble(i), l.getDouble(i), Numbers.MAX_SCALE);
+                            break;
+                        case ColumnType.FLOAT:
+                            Assert.assertEquals(r.getFloat(i), l.getFloat(i), 4);
+                            break;
+                        case ColumnType.INT:
+                            Assert.assertEquals(r.getInt(i), l.getInt(i));
+                            break;
+                        case ColumnType.STRING:
+                            TestUtils.assertEquals(r.getStr(i), l.getStr(i));
+                            break;
+                        case ColumnType.SYMBOL:
+                            Assert.assertEquals(r.getSym(i), l.getSym(i));
+                            break;
+                        case ColumnType.SHORT:
+                            Assert.assertEquals(r.getShort(i), l.getShort(i));
+                            break;
+                        case ColumnType.CHAR:
+                            Assert.assertEquals(r.getChar(i), l.getChar(i));
+                            break;
+                        case ColumnType.LONG:
+                            Assert.assertEquals(r.getLong(i), l.getLong(i));
+                            break;
+                        case ColumnType.BYTE:
+                            Assert.assertEquals(r.getByte(i), l.getByte(i));
+                            break;
+                        case ColumnType.BOOLEAN:
+                            Assert.assertEquals(r.getBool(i), l.getBool(i));
+                            break;
+                        case ColumnType.BINARY:
+                            Assert.assertTrue(areEqual(r.getBin(i), l.getBin(i)));
+                            break;
+                        case ColumnType.LONG256:
+                            assertEquals(r.getLong256A(i), l.getLong256A(i));
+                            break;
+                        default:
+                            // Unknown record type.
+                            assert false;
+                            break;
+                    }
+                } catch (AssertionError e) {
+                    throw new AssertionError(String.format("Row %d column %s %s", rowIndex, columnName, e.getMessage()));
+                }
+            }
+        }
+
+        Assert.assertFalse("Expected cursor misses record " + rowIndex, cursorActual.hasNext());
+    }
+
+    private static void assertEquals(Long256 expected, Long256 actual) {
+        if (expected == actual) return;
+        if (actual == null) {
+            Assert.fail("Expected " + toHexString(expected) +", but was: null");
+        }
+
+        if (expected.getLong0() != actual.getLong0()
+                || expected.getLong1() != actual.getLong1()
+                || expected.getLong2() != actual.getLong2()
+                || expected.getLong3() != actual.getLong3()) {
+                    Assert.assertEquals(toHexString(expected), toHexString(actual));
+                }
+    }
+
+    private static String toHexString(Long256 expected) {
+        return Long.toHexString(expected.getLong0()) + " " +
+                Long.toHexString(expected.getLong1()) + " " +
+                Long.toHexString(expected.getLong2()) + " " +
+                Long.toHexString(expected.getLong3());
+    }
+
+    public static boolean areEqual(BinarySequence a, BinarySequence b) {
+        if (a == b) return true;
+        if (a == null || b == null) return false;
+
+        if (a.length() != b.length()) return false;
+        for (int i = 0; i < a.length(); i++) {
+            if (a.byteAt(i) != b.byteAt(i)) return false;
+        }
+        return true;
+    }
+
+    private static void assertEquals(RecordMetadata metadataExpected, RecordMetadata metadataActual) {
+        Assert.assertEquals("Column count must be same", metadataExpected.getColumnCount(), metadataActual.getColumnCount());
+        for (int i = 0, n = metadataExpected.getColumnCount(); i < n; i++) {
+            Assert.assertEquals("Column name " + i, metadataExpected.getColumnName(i), metadataActual.getColumnName(i));
+            Assert.assertEquals("Column type " + i, metadataExpected.getColumnType(i), metadataActual.getColumnType(i));
+        }
     }
 
     public static void assertEquals(File a, File b) {
@@ -118,11 +238,20 @@ public final class TestUtils {
                             if (b == 13) {
                                 continue;
                             }
-                            Assert.assertEquals(b, Unsafe.getUnsafe().getByte(strp++));
+                            byte bb= Unsafe.getUnsafe().getByte(strp);
+                            strp++;
+                            if (b != bb) {
+                                Assert.fail(
+                                        "expected: '" + (char) (bb) + "'(" + bb + ")" +
+                                                ", actual: '" + (char) (b) + "'(" + b + ")" +
+                                                ", at: " + (offset + i - 1));
+                            }
                         }
 
                         offset += reada;
                     }
+
+                    Assert.assertEquals(strp - str, actual.length());
                 } finally {
                     Unsafe.free(bufa, 4096);
                     Unsafe.free(str, actual.length());
@@ -188,7 +317,7 @@ public final class TestUtils {
                 length++;
                 byte1 = expectedStream.read();
                 byte2 = actualStream.read();
-            } while (byte1 == byte2 && byte1 > 0 && byte2 > 0);
+            } while (byte1 == byte2 && byte1 > 0);
 
             if (byte1 != byte2) {
                 Assert.fail("Files are different at offset " + (length - 1));
@@ -197,11 +326,13 @@ public final class TestUtils {
     }
 
     public static void assertMemoryLeak(LeakProneCode runnable) throws Exception {
+        Path.clearThreadLocals();
         long mem = Unsafe.getMemUsed();
         long fileCount = Files.getOpenFileCount();
         runnable.run();
-        Assert.assertEquals(mem, Unsafe.getMemUsed());
+        Path.clearThreadLocals();
         Assert.assertEquals(fileCount, Files.getOpenFileCount());
+        Assert.assertEquals(mem, Unsafe.getMemUsed());
     }
 
     public static void copyMimeTypes(String targetDir) throws IOException {
@@ -250,6 +381,94 @@ public final class TestUtils {
         }
     }
 
+    public static void assertCursor(CharSequence expected, RecordCursor cursor, RecordMetadata metadata, boolean header, MutableCharSink sink) {
+        printCursor(cursor, metadata, header, sink, printer);
+        assertEquals(expected, sink);
+    }
+
+    public static void insert(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, CharSequence insertSql) throws SqlException {
+        CompiledQuery compiledQuery = compiler.compile(insertSql, sqlExecutionContext);
+        Assert.assertNotNull(compiledQuery.getInsertStatement());
+        final InsertStatement insertStatement = compiledQuery.getInsertStatement();
+        try (InsertMethod insertMethod = insertStatement.createMethod(sqlExecutionContext)) {
+            insertMethod.execute();
+            insertMethod.commit();
+        }
+    }
+
+    public static void assertSql(
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext,
+            CharSequence sql,
+            MutableCharSink sink,
+            CharSequence expected
+    ) throws SqlException {
+        printSql(
+                compiler,
+                sqlExecutionContext,
+                sql,
+                sink
+        );
+        assertEquals(expected, sink);
+    }
+
+    public static void assertSqlWithTypes(
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext,
+            CharSequence sql,
+            MutableCharSink sink,
+            CharSequence expected
+    ) throws SqlException {
+        printSqlWithTypes(
+                compiler,
+                sqlExecutionContext,
+                sql,
+                sink
+        );
+        assertEquals(expected, sink);
+    }
+
+    public static void assertReader(CharSequence expected, TableReader reader, MutableCharSink sink) {
+        assertCursor(
+                expected,
+                reader.getCursor(),
+                reader.getMetadata(),
+                true,
+                sink
+        );
+    }
+
+    public static void printCursor(RecordCursor cursor, RecordMetadata metadata, boolean header, MutableCharSink sink, RecordCursorPrinter printer) {
+        sink.clear();
+        printer.print(cursor, metadata, header, sink);
+    }
+
+    public static void printSql(
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext,
+            CharSequence sql,
+            MutableCharSink sink
+    ) throws SqlException {
+        try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                printCursor(cursor, factory.getMetadata(), true, sink, printer);
+            }
+        }
+    }
+
+    public static void printSqlWithTypes(
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext,
+            CharSequence sql,
+            MutableCharSink sink
+    ) throws SqlException {
+        try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                printCursor(cursor, factory.getMetadata(), true, sink, printerWithTypes);
+            }
+        }
+    }
+
     public static void assertEqualsIgnoreCase(CharSequence expected, CharSequence actual) {
         assertEqualsIgnoreCase(null, expected, actual);
     }
@@ -286,6 +505,113 @@ public final class TestUtils {
             int dot = version.indexOf(".");
             if(dot != -1) { version = version.substring(0, dot); }
         } return Integer.parseInt(version);
+    }
+
+    public static void createTestPath(CharSequence root) {
+        try (Path path = new Path().of(root).$()) {
+            if (Files.exists(path)) {
+                return;
+            }
+            Files.mkdirs(path.of(root).slash$(), 509);
+        }
+    }
+
+    public static void removeTestPath(CharSequence root) {
+        Path path = Path.getThreadLocal(root);
+        Files.rmdir(path.slash$());
+    }
+
+
+    public static void createPopulateTable(
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext,
+            TableModel tableModel,
+            int totalRows,
+            String startDate,
+            int partitionCount) throws NumericException, SqlException {
+        createPopulateTable(tableModel.getTableName(), compiler, sqlExecutionContext, tableModel, totalRows, startDate, partitionCount);
+    }
+
+    public static void createPopulateTable(
+            CharSequence tableName,
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext,
+            TableModel tableModel,
+            int totalRows,
+            String startDate,
+            int partitionCount) throws NumericException, SqlException {
+        long fromTimestamp = IntervalUtils.parseFloorPartialDate(startDate);
+
+        long increment = 0;
+        if (tableModel.getPartitionBy() != PartitionBy.NONE) {
+            Timestamps.TimestampAddMethod partitionAdd = TableUtils.getPartitionAdd(tableModel.getPartitionBy());
+            long toTs = partitionAdd.calculate(fromTimestamp, partitionCount) - fromTimestamp - Timestamps.SECOND_MICROS;
+            increment = totalRows > 0 ? Math.max(toTs / totalRows, 1) : 0;
+        }
+
+        StringBuilder sql = new StringBuilder();
+        sql.append("create table ").append(tableName).append(" as (").append(Misc.EOL).append("select").append(Misc.EOL);
+        for (int i = 0; i < tableModel.getColumnCount(); i++) {
+            int colType = tableModel.getColumnType(i);
+            CharSequence colName = tableModel.getColumnName(i);
+            switch (colType) {
+                case ColumnType.INT:
+                    sql.append("cast(x as int) ").append(colName);
+                    break;
+                case ColumnType.STRING:
+                    sql.append("CAST(x as STRING) ").append(colName);
+                    break;
+                case ColumnType.LONG:
+                    sql.append("x ").append(colName);
+                    break;
+                case ColumnType.DOUBLE:
+                    sql.append("x / 1000.0 ").append(colName);
+                    break;
+                case ColumnType.TIMESTAMP:
+                    sql.append("CAST(").append(fromTimestamp).append("L AS TIMESTAMP) + x * ").append(increment).append("  ").append(colName);
+                    break;
+                case ColumnType.SYMBOL:
+                    sql.append("rnd_symbol(4,4,4,2) ").append(colName);
+                    break;
+                case ColumnType.BOOLEAN:
+                    sql.append("rnd_boolean() ").append(colName);
+                    break;
+                case ColumnType.FLOAT:
+                    sql.append("CAST(x / 1000.0 AS FLOAT) ").append(colName);
+                    break;
+                case ColumnType.DATE:
+                    sql.append("CAST(").append(fromTimestamp).append("L AS DATE) ").append(colName);
+                    break;
+                case ColumnType.LONG256:
+                    sql.append("CAST(x AS LONG256) ").append(colName);
+                    break;
+                case ColumnType.BYTE:
+                    sql.append("CAST(x AS BYTE) ").append(colName);
+                    break;
+                case ColumnType.CHAR:
+                    sql.append("CAST(x AS CHAR) ").append(colName);
+                    break;
+                case ColumnType.SHORT:
+                    sql.append("CAST(x AS SHORT) ").append(colName);
+                    break;
+                default:
+                    throw new UnsupportedOperationException();
+            }
+            if (i < tableModel.getColumnCount() - 1) {
+                sql.append("," + Misc.EOL);
+            }
+        }
+
+        sql.append(Misc.EOL + "from long_sequence(").append(totalRows).append(")");
+        sql.append(")" + Misc.EOL);
+        if (tableModel.getTimestampIndex() != -1) {
+            CharSequence timestampCol = tableModel.getColumnName(tableModel.getTimestampIndex());
+            sql.append(" timestamp(").append(timestampCol).append(")");
+        }
+        if (tableModel.getPartitionBy() != PartitionBy.NONE) {
+            sql.append(" Partition By ").append(PartitionBy.toString(tableModel.getPartitionBy()));
+        }
+        compiler.compile(sql.toString(), sqlExecutionContext);
     }
 
     @FunctionalInterface

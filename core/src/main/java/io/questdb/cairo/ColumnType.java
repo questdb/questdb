@@ -30,7 +30,7 @@ import io.questdb.std.LowerCaseAsciiCharSequenceIntHashMap;
 
 public final class ColumnType {
     // column type version as written to the metadata file
-    public static final int VERSION = 418;
+    public static final int VERSION = 419;
     public static final int VERSION_THAT_ADDED_TABLE_ID = 417;
 
     public static final int UNDEFINED = -1;
@@ -49,17 +49,50 @@ public final class ColumnType {
     public static final int LONG256 = 12;
     public static final int BINARY = 13;
     public static final int PARAMETER = 14;
-    public static final int VAR_ARG = 16;
     public static final int CURSOR = 15;
+    public static final int VAR_ARG = 16;
     public static final int RECORD = 17;
     public static final int MAX = RECORD;
+    public static final int NO_OVERLOAD = 10000;
     private static final IntObjHashMap<String> typeNameMap = new IntObjHashMap<>();
     private static final LowerCaseAsciiCharSequenceIntHashMap nameTypeMap = new LowerCaseAsciiCharSequenceIntHashMap();
     private static final int[] TYPE_SIZE_POW2 = new int[ColumnType.PARAMETER + 1];
     private static final int[] TYPE_SIZE = new int[ColumnType.PARAMETER + 1];
-    // this list governs the order of types being chosen for
-    // the undefined functions
-    private static final byte[] typeWidthPrecedence = new byte[MAX + 1];
+
+    // For function overload the priority is taken from left to right
+    private static final int[][] overloadPriority = {
+            /* -1 UNDEFINED*/  {DOUBLE, FLOAT, LONG, TIMESTAMP, DATE, INT, CHAR, SHORT, BYTE, BOOLEAN}
+            /* 0  BOOLEAN  */, {}
+            /* 1  BYTE     */, {SHORT, INT, LONG, FLOAT, DOUBLE}
+            /* 2  SHORT    */, {INT, LONG, FLOAT, DOUBLE}
+            /* 3  CHAR     */, {STRING}
+            /* 4  INT      */, {LONG, DOUBLE, TIMESTAMP, DATE}
+            /* 5  LONG     */, {DOUBLE, TIMESTAMP, DATE}
+            /* 6  DATE     */, {TIMESTAMP, LONG}
+            /* 7  TIMESTAMP*/, {LONG}
+            /* 8  FLOAT    */, {DOUBLE}
+            /* 9  DOUBLE    */, {}
+            /* 10 STRING    */, {} // STRING can be cast to TIMESTAMP, but it's handled in a  special way
+            /* 11 SYMBOL    */, {STRING}
+    };
+
+    private static final int OVERLOAD_MATRIX_SIZE = 32;
+    private static final int[] overloadPriorityMatrix;
+
+    static {
+        assert OVERLOAD_MATRIX_SIZE > MAX;
+        overloadPriorityMatrix = new int[OVERLOAD_MATRIX_SIZE * OVERLOAD_MATRIX_SIZE];
+        for (int i = -1; i < MAX; i++) {
+            for (int j = 0; j < MAX; j++) {
+                if (i + 1 < overloadPriority.length) {
+                    int index = indexOf(overloadPriority[i + 1], j);
+                    overloadPriorityMatrix[OVERLOAD_MATRIX_SIZE * (i + 1) + j] = index >= 0 ? index + 1 : NO_OVERLOAD;
+                } else {
+                    overloadPriorityMatrix[OVERLOAD_MATRIX_SIZE * (i + 1) + j] = NO_OVERLOAD;
+                }
+            }
+        }
+    }
 
     private ColumnType() {
     }
@@ -68,16 +101,19 @@ public final class ColumnType {
         return nameTypeMap.get(name);
     }
 
-    public static int widthPrecedenceOf(int type) {
-        return typeWidthPrecedence[type];
-    }
-
     public static String nameOf(int columnType) {
         final int index = typeNameMap.keyIndex(columnType);
         if (index > -1) {
             return "unknown";
         }
         return typeNameMap.valueAtQuick(index);
+    }
+
+    public static int overloadDistance(int from, int to) {
+        // Functions cannot accept UNDEFINED type (signature is not supported)
+        // this check is just in case
+        assert to >= 0;
+        return overloadPriorityMatrix[OVERLOAD_MATRIX_SIZE * (from + 1) + to];
     }
 
     public static int pow2SizeOf(int columnType) {
@@ -158,21 +194,14 @@ public final class ColumnType {
         TYPE_SIZE[ColumnType.DATE] = Long.BYTES;
         TYPE_SIZE[ColumnType.TIMESTAMP] = Long.BYTES;
         TYPE_SIZE[ColumnType.LONG256] = Long256.BYTES;
+    }
 
-        typeWidthPrecedence[BOOLEAN] = 0;
-        typeWidthPrecedence[BYTE] = 1;
-        typeWidthPrecedence[CHAR] = 2;
-        typeWidthPrecedence[SHORT] = 3;
-        typeWidthPrecedence[INT] = 4;
-        typeWidthPrecedence[DATE] = 5;
-        typeWidthPrecedence[TIMESTAMP] = 6;
-        typeWidthPrecedence[LONG] = 7;
-        typeWidthPrecedence[FLOAT] = 8;
-        typeWidthPrecedence[DOUBLE] = 9;
-        typeWidthPrecedence[SYMBOL] = 10;
-        typeWidthPrecedence[STRING] = 11;
-        typeWidthPrecedence[LONG256] = 12;
-        typeWidthPrecedence[BINARY] = 13;
-        typeWidthPrecedence[VAR_ARG] = 14;
+    private static int indexOf(int[] list, int value) {
+        for (int i = 0; i < list.length; i++) {
+            if (list[i] == value) {
+                return i;
+            }
+        }
+        return -1;
     }
 }

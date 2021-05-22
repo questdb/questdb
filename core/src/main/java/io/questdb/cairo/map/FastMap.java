@@ -570,9 +570,9 @@ public class FastMap implements Map {
             Unsafe.getUnsafe().putInt(appendAddress, len);
             appendAddress += 4;
             for (int i = 0; i < len; i++) {
-                Unsafe.getUnsafe().putChar(appendAddress + (i << 1), value.charAt(i));
+                Unsafe.getUnsafe().putChar(appendAddress + ((long) i << 1), value.charAt(i));
             }
-            appendAddress += len << 1;
+            appendAddress += (long) len << 1;
             writeOffset();
         }
 
@@ -583,9 +583,9 @@ public class FastMap implements Map {
             Unsafe.getUnsafe().putInt(appendAddress, len);
             appendAddress += 4;
             for (int i = lo; i < hi; i++) {
-                Unsafe.getUnsafe().putChar(appendAddress + ((i - lo) << 1), value.charAt(i));
+                Unsafe.getUnsafe().putChar(appendAddress + ((long) (i - lo) << 1), value.charAt(i));
             }
-            appendAddress += len << 1;
+            appendAddress += (long) len << 1;
             writeOffset();
         }
 
@@ -601,9 +601,9 @@ public class FastMap implements Map {
             Unsafe.getUnsafe().putInt(appendAddress, len);
             appendAddress += 4;
             for (int i = 0; i < len; i++) {
-                Unsafe.getUnsafe().putChar(appendAddress + (i << 1), Character.toLowerCase(value.charAt(i)));
+                Unsafe.getUnsafe().putChar(appendAddress + ((long) i << 1), Character.toLowerCase(value.charAt(i)));
             }
-            appendAddress += len << 1;
+            appendAddress += (long) len << 1;
             writeOffset();
         }
 
@@ -614,9 +614,9 @@ public class FastMap implements Map {
             Unsafe.getUnsafe().putInt(appendAddress, len);
             appendAddress += 4;
             for (int i = lo; i < hi; i++) {
-                Unsafe.getUnsafe().putChar(appendAddress + ((i - lo) << 1), Character.toLowerCase(value.charAt(i)));
+                Unsafe.getUnsafe().putChar(appendAddress + ((long) (i - lo) << 1), Character.toLowerCase(value.charAt(i)));
             }
-            appendAddress += len << 1;
+            appendAddress += (long) len << 1;
             writeOffset();
         }
 

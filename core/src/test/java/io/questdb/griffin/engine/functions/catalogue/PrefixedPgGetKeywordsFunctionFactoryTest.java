@@ -25,16 +25,18 @@
 package io.questdb.griffin.engine.functions.catalogue;
 
 import io.questdb.griffin.AbstractGriffinTest;
+import io.questdb.std.str.StringSink;
 import org.junit.Test;
 
 public class PrefixedPgGetKeywordsFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testPrefixedPgGetKeywordsFunc() throws Exception {
-        String expected = "word\tcatcode\tcatdesc\n";
+        sink.clear();
+        sink.put("word\tcatcode\tcatdesc\n");
         for (CharSequence keyword : Constants.KEYWORDS) {
-            expected += (keyword + "\t\t\n");
+            sink.put(keyword).put('\t').put('\t').put('\n');
         }
-        assertQuery(expected, "pg_catalog.pg_get_keywords;", null, false, sqlExecutionContext, false, true);
+        assertQuery(sink.toString(), "pg_catalog.pg_get_keywords;", null, false, sqlExecutionContext, false, true);
     }
 }

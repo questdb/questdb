@@ -163,7 +163,7 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_munmap0
  * Signature: (JJJI)J
  */
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_mmap0
-        (JNIEnv *, jclass, jlong, jlong, jlong, jint);
+        (JNIEnv *, jclass, jlong, jlong, jlong, jint, jlong);
 
 /*
  * Class:     com_questdb_std_Files

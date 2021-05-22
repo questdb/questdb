@@ -24,43 +24,33 @@
 
 package io.questdb.cutlass.line.tcp;
 
-import java.net.URL;
-import java.nio.charset.StandardCharsets;
-import java.security.PrivateKey;
-import java.util.Random;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.function.Supplier;
-
-import org.junit.Assert;
-import org.junit.Test;
-
-import io.questdb.cairo.AbstractCairoTest;
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.EntryUnavailableException;
-import io.questdb.cairo.TableReader;
-import io.questdb.cairo.TableReaderRecordCursor;
-import io.questdb.cairo.TableUtils;
-import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.*;
+import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cutlass.line.LineProtoSender;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
-import io.questdb.mp.SynchronizedJob;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.network.DefaultIODispatcherConfiguration;
 import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.network.Net;
 import io.questdb.network.NetworkError;
-import io.questdb.std.Misc;
-import io.questdb.std.Os;
-import io.questdb.std.Unsafe;
+import io.questdb.std.*;
+import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
-import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
+import org.junit.Test;
+
+import java.net.URL;
+import java.nio.charset.StandardCharsets;
+import java.security.PrivateKey;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.LockSupport;
 
 public class LineTcpServerTest extends AbstractCairoTest {
     private final static Log LOG = LogFactory.getLog(LineTcpServerTest.class);
@@ -68,16 +58,15 @@ public class LineTcpServerTest extends AbstractCairoTest {
     private final static PrivateKey AUTH_PRIVATE_KEY1 = AuthDb.importPrivateKey("5UjEMuA0Pj5pjK8a-fa24dyIf-Es5mYny3oE_Wmus48");
     private final static String AUTH_KEY_ID2 = "testUser2";
     private final static PrivateKey AUTH_PRIVATE_KEY2 = AuthDb.importPrivateKey("lwJi3TSb4G6UcHxFJmPhOTWa4BLwJOOiK76wT6Uk7pI");
-    private static final AtomicInteger N_TEST = new AtomicInteger();
     private static final long TEST_TIMEOUT_IN_MS = 120000;
+    private int maxMeasurementSize = 50;
 
-    private Path path;
-    private WorkerPool sharedWorkerPool = new WorkerPool(new WorkerPoolConfiguration() {
-        private final int[] affinity = { -1, -1 };
+    private final WorkerPool sharedWorkerPool = new WorkerPool(new WorkerPoolConfiguration() {
+        private final int[] affinity = {-1, -1};
 
         @Override
-        public boolean haltOnError() {
-            return true;
+        public int[] getWorkerAffinity() {
+            return affinity;
         }
 
         @Override
@@ -86,17 +75,15 @@ public class LineTcpServerTest extends AbstractCairoTest {
         }
 
         @Override
-        public int[] getWorkerAffinity() {
-            return affinity;
+        public boolean haltOnError() {
+            return true;
         }
     });
-
-    private final int bindIp = 0;
     private final int bindPort = 9002; // Dont clash with other tests since they may run in parallel
-    private IODispatcherConfiguration ioDispatcherConfiguration = new DefaultIODispatcherConfiguration() {
+    private final IODispatcherConfiguration ioDispatcherConfiguration = new DefaultIODispatcherConfiguration() {
         @Override
         public int getBindIPv4Address() {
-            return bindIp;
+            return 0;
         }
 
         @Override
@@ -107,15 +94,10 @@ public class LineTcpServerTest extends AbstractCairoTest {
     private String authKeyId = null;
     private int msgBufferSize = 1024;
     private long minIdleMsBeforeWriterRelease = 30000;
-    private LineTcpReceiverConfiguration lineConfiguration = new DefaultLineTcpReceiverConfiguration() {
+    private final LineTcpReceiverConfiguration lineConfiguration = new DefaultLineTcpReceiverConfiguration() {
         @Override
         public IODispatcherConfiguration getNetDispatcherConfiguration() {
             return ioDispatcherConfiguration;
-        }
-
-        @Override
-        public int getWriterQueueCapacity() {
-            return 4;
         }
 
         @Override
@@ -125,17 +107,17 @@ public class LineTcpServerTest extends AbstractCairoTest {
 
         @Override
         public int getMaxMeasurementSize() {
-            return 50;
+            return maxMeasurementSize;
+        }
+
+        @Override
+        public int getWriterQueueCapacity() {
+            return 4;
         }
 
         @Override
         public int getNUpdatesPerLoadRebalance() {
             return 100;
-        }
-
-        @Override
-        public int getMaxUncommittedRows() {
-            return 50;
         }
 
         @Override
@@ -145,65 +127,66 @@ public class LineTcpServerTest extends AbstractCairoTest {
         }
 
         @Override
+        public long getMaintenanceInterval() {
+            return 25;
+        }
+
+        @Override
         public String getAuthDbPath() {
             if (null == authKeyId) {
                 return null;
             }
             URL u = getClass().getResource("authDb.txt");
+            assert u != null;
             return u.getFile();
         }
 
         @Override
-        public long getMaintenanceJobHysteresisInMs() {
-            return 25;
-        };
+        public long getWriterIdleTimeout() {
+            return minIdleMsBeforeWriterRelease;
+        }
 
         @Override
-        public long getMinIdleMsBeforeWriterRelease() {
-            return minIdleMsBeforeWriterRelease;
-        };
-
+        public MicrosecondClock getMicrosecondClock() {
+            return testMicrosClock;
+        }
     };
-    private CairoEngine engine;
+
+    private Path path;
 
     @Test
-    public void testUnauthenticated() {
-        test(null, null, 200, 1_000);
-    }
-
-    @Test
-    public void testGoodAuthenticated() {
-        test(AUTH_KEY_ID1, AUTH_PRIVATE_KEY1, 768, 1_000);
+    public void testGoodAuthenticated() throws Exception {
+        test(AUTH_KEY_ID1, AUTH_PRIVATE_KEY1, 768, 1_000, false);
     }
 
     @Test(expected = NetworkError.class)
-    public void testInvalidUser() {
-        test(AUTH_KEY_ID2, AUTH_PRIVATE_KEY2, 768, 100);
+    public void testInvalidSignature() throws Exception {
+        test(AUTH_KEY_ID1, AUTH_PRIVATE_KEY2, 768, 6_000, true);
     }
 
     @Test(expected = NetworkError.class)
-    public void testInvalidSignature() {
-        test(AUTH_KEY_ID1, AUTH_PRIVATE_KEY2, 768, 100);
+    public void testInvalidUser() throws Exception {
+        test(AUTH_KEY_ID2, AUTH_PRIVATE_KEY2, 768, 6_000, true);
+    }
+
+    @Test
+    public void testUnauthenticated() throws Exception {
+        test(null, null, 200, 1_000, false);
     }
 
     @Test
     public void testWriterRelease1() throws Exception {
         runInContext(() -> {
+
             String lineData = "weather,location=us-midwest temperature=82 1465839830100400200\n" +
                     "weather,location=us-midwest temperature=83 1465839830100500200\n" +
                     "weather,location=us-eastcoast temperature=81 1465839830101400200\n";
-            send(lineData);
-
-            TableWriter writer = waitForWriterRelease("weather", 3);
-            writer.close();
+            send(lineData, "weather");
 
             lineData = "weather,location=us-midwest temperature=85 1465839830102300200\n" +
                     "weather,location=us-eastcoast temperature=89 1465839830102400200\n" +
                     "weather,location=us-westcost temperature=82 1465839830102500200\n";
-            send(lineData);
-
-            writer = waitForWriterRelease("weather", 6);
-            writer.close();
+            send(lineData, "weather");
 
             String expected = "location\ttemperature\ttimestamp\n" +
                     "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n" +
@@ -222,19 +205,16 @@ public class LineTcpServerTest extends AbstractCairoTest {
             String lineData = "weather,location=us-midwest temperature=82 1465839830100400200\n" +
                     "weather,location=us-midwest temperature=83 1465839830100500200\n" +
                     "weather,location=us-eastcoast temperature=81 1465839830101400200\n";
-            send(lineData);
+            send(lineData, "weather");
 
-            TableWriter writer = waitForWriterRelease("weather", 3);
-            writer.truncate();
-            writer.close();
+            try (TableWriter w = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "weather")) {
+                w.truncate();
+            }
 
             lineData = "weather,location=us-midwest temperature=85 1465839830102300200\n" +
                     "weather,location=us-eastcoast temperature=89 1465839830102400200\n" +
                     "weather,location=us-westcost temperature=82 1465839830102500200\n";
-            send(lineData);
-
-            writer = waitForWriterRelease("weather", 3);
-            writer.close();
+            send(lineData, "weather");
 
             String expected = "location\ttemperature\ttimestamp\n" +
                     "us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\n" +
@@ -250,19 +230,14 @@ public class LineTcpServerTest extends AbstractCairoTest {
             String lineData = "weather,location=us-midwest temperature=82 1465839830100400200\n" +
                     "weather,location=us-midwest temperature=83 1465839830100500200\n" +
                     "weather,location=us-eastcoast temperature=81 1465839830101400200\n";
-            send(lineData);
+            send(lineData, "weather");
 
-            TableWriter writer = waitForWriterRelease("weather", 3);
-            writer.close();
             engine.remove(AllowAllCairoSecurityContext.INSTANCE, path, "weather");
 
             lineData = "weather,location=us-midwest temperature=85 1465839830102300200\n" +
                     "weather,location=us-eastcoast temperature=89 1465839830102400200\n" +
                     "weather,location=us-westcost temperature=82 1465839830102500200\n";
-            send(lineData);
-
-            writer = waitForWriterRelease("weather", 3);
-            writer.close();
+            send(lineData, "weather");
 
             String expected = "location\ttemperature\ttimestamp\n" +
                     "us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\n" +
@@ -278,19 +253,14 @@ public class LineTcpServerTest extends AbstractCairoTest {
             String lineData = "weather,location=us-midwest temperature=82 1465839830100400200\n" +
                     "weather,location=us-midwest temperature=83 1465839830100500200\n" +
                     "weather,location=us-eastcoast temperature=81 1465839830101400200\n";
-            send(lineData);
+            send(lineData, "weather");
 
-            TableWriter writer = waitForWriterRelease("weather", 3);
-            writer.close();
             engine.remove(AllowAllCairoSecurityContext.INSTANCE, path, "weather");
 
             lineData = "weather,loc=us-midwest temp=85 1465839830102300200\n" +
                     "weather,loc=us-eastcoast temp=89 1465839830102400200\n" +
                     "weather,loc=us-westcost temp=82 1465839830102500200\n";
-            send(lineData);
-
-            writer = waitForWriterRelease("weather", 3);
-            writer.close();
+            send(lineData, "weather");
 
             String expected = "loc\ttemp\ttimestamp\n" +
                     "us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\n" +
@@ -306,19 +276,13 @@ public class LineTcpServerTest extends AbstractCairoTest {
             String lineData = "weather,location=us-midwest temperature=82 1465839830100400200\n" +
                     "weather,location=us-midwest temperature=83 1465839830100500200\n" +
                     "weather,location=us-eastcoast temperature=81 1465839830101400200\n";
-            send(lineData);
-
-            TableWriter writer = waitForWriterRelease("weather", 3);
-            writer.close();
+            send(lineData, "weather");
             engine.remove(AllowAllCairoSecurityContext.INSTANCE, path, "weather");
 
             lineData = "weather,location=us-midwest,source=sensor1 temp=85 1465839830102300200\n" +
                     "weather,location=us-eastcoast,source=sensor2 temp=89 1465839830102400200\n" +
                     "weather,location=us-westcost,source=sensor1 temp=82 1465839830102500200\n";
-            send(lineData);
-
-            writer = waitForWriterRelease("weather", 3);
-            writer.close();
+            send(lineData, "weather");
 
             String expected = "location\tsource\ttemp\ttimestamp\n" +
                     "us-midwest\tsensor1\t85.0\t2016-06-13T17:43:50.102300Z\n" +
@@ -328,203 +292,244 @@ public class LineTcpServerTest extends AbstractCairoTest {
         });
     }
 
-    private void runInContext(Runnable r) throws Exception {
-        minIdleMsBeforeWriterRelease = 250;
-        TestUtils.assertMemoryLeak(() -> {
-            try (CairoEngine engine = new CairoEngine(configuration)) {
-                path = new Path(4096);
-                LineTcpServerTest.this.engine = engine;
-                LineTcpServer tcpServer = LineTcpServer.create(lineConfiguration, sharedWorkerPool, LOG, engine);
-                sharedWorkerPool.start(LOG);
+    @Test
+    public void testWriter17Fields() throws Exception {
+        int defautlMeasurementSize = maxMeasurementSize;
+        String lineData = "tableCRASH,tag_n_1=1,tag_n_2=2,tag_n_3=3,tag_n_4=4,tag_n_5=5,tag_n_6=6," +
+                "tag_n_7=7,tag_n_8=8,tag_n_9=9,tag_n_10=10,tag_n_11=11,tag_n_12=12,tag_n_13=13," +
+                "tag_n_14=14,tag_n_15=15,tag_n_16=16,tag_n_17=17 value=42.4 1619509249714000000\n";
+        try {
+            maxMeasurementSize = lineData.length();
+            runInContext(() -> {
+                send(lineData, "tableCRASH");
 
-                r.run();
-
-                sharedWorkerPool.halt();
-                engine.releaseAllReaders();
-                engine.releaseAllWriters();
-                Misc.free(tcpServer);
-            } finally {
-                LineTcpServerTest.this.engine = null;
-                path.close();
-            }
-        });
-    }
-
-    private void send(String lineData) {
-        int ipv4address = Net.parseIPv4("127.0.0.1");
-        long sockaddr = Net.sockaddr(ipv4address, bindPort);
-        long fd = Net.socketTcp(true);
-        if (Net.connect(fd, sockaddr) != 0) {
-            throw NetworkError.instance(Os.errno(), "could not connect to ").ip(ipv4address);
-        }
-        byte[] lineDataBytes = lineData.getBytes(StandardCharsets.UTF_8);
-        long bufaddr = Unsafe.malloc(lineDataBytes.length);
-        for (int n = 0; n < lineDataBytes.length; n++) {
-            Unsafe.getUnsafe().putByte(bufaddr + n, lineDataBytes[n]);
-        }
-        int rc = Net.send(fd, bufaddr, lineDataBytes.length);
-        Unsafe.free(bufaddr, lineDataBytes.length);
-        Net.close(fd);
-        Net.freeSockAddr(sockaddr);
-
-        Assert.assertEquals(lineDataBytes.length, rc);
-    }
-
-    private TableWriter waitForWriterRelease(String tableName, int nMinRows) {
-        int status = TableUtils.TABLE_DOES_NOT_EXIST;
-        int nRows = 0;
-        long startEpochMillis = System.currentTimeMillis();
-        while (true) {
-            if (status != TableUtils.TABLE_EXISTS) {
-                status = engine.getStatus(AllowAllCairoSecurityContext.INSTANCE, path, tableName, 0, tableName.length());
-            } else if (nRows < nMinRows) {
-                try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
-                    nRows = (int) reader.size();
-                } catch (EntryLockedException e) {
-                    //
-                }
-            } else {
-                try {
-                    return engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName);
-                } catch (EntryUnavailableException ex) {
-                    //
-                }
-            }
-
-            long epochMillis = System.currentTimeMillis();
-            if (epochMillis - startEpochMillis > 15000000) {
-                Assert.fail("Timed out waiting for writer release");
-            }
-            try {
-                Thread.sleep(lineConfiguration.getMaintenanceJobHysteresisInMs());
-            } catch (InterruptedException e) {
-                Assert.fail("Interrupted out waiting for writer release");
-            }
-        }
-    }
-
-    private void test(String authKeyId, PrivateKey authPrivateKey, int msgBufferSize, final int nRows) {
-        int nTest = N_TEST.incrementAndGet();
-        this.authKeyId = authKeyId;
-        this.msgBufferSize = msgBufferSize;
-
-        final String[] tables = { "weather1-" + nTest, "weather2-" + nTest, "weather3-" + nTest };
-        final String[] locations = { "london", "paris", "rome" };
-
-        final Random rand = new Random(0);
-        final StringBuilder[] expectedSbs = new StringBuilder[tables.length];
-
-        long startEpochMs = System.currentTimeMillis();
-        try (CairoEngine engine = new CairoEngine(configuration)) {
-            LineTcpServer tcpServer = LineTcpServer.create(lineConfiguration, sharedWorkerPool, LOG, engine);
-
-            SOCountDownLatch tablesCreated = new SOCountDownLatch();
-            tablesCreated.setCount(tables.length);
-            Supplier<Path> pathSupplier = Path::new;
-            sharedWorkerPool.assign(new SynchronizedJob() {
-                private final ThreadLocal<Path> tlPath = ThreadLocal.withInitial(pathSupplier);
-
-                @Override
-                public boolean runSerially() {
-                    int nTable = tables.length - tablesCreated.getCount();
-                    if (nTable < tables.length) {
-                        String tableName = tables[nTable];
-                        int status = engine.getStatus(AllowAllCairoSecurityContext.INSTANCE, tlPath.get(), tableName);
-                        if (status == TableUtils.TABLE_EXISTS) {
-                            tablesCreated.countDown();
-                        }
-                        return true;
-                    }
-
-                    return false;
-                }
+                String expected = "tag_n_1\ttag_n_2\ttag_n_3\ttag_n_4\ttag_n_5\ttag_n_6\ttag_n_7\ttag_n_8\ttag_n_9\ttag_n_10\ttag_n_11\ttag_n_12\ttag_n_13\ttag_n_14\ttag_n_15\ttag_n_16\ttag_n_17\tvalue\ttimestamp\n" +
+                        "1\t2\t3\t4\t5\t6\t7\t8\t9\t10\t11\t12\t13\t14\t15\t16\t17\t42.400000000000006\t2021-04-27T07:40:49.714000Z\n";
+                assertTable(expected, "tableCRASH");
             });
-            sharedWorkerPool.start(LOG);
+        } finally {
+            maxMeasurementSize = defautlMeasurementSize;
+        }
+    }
 
-            try {
-                final LineProtoSender[] senders = new LineProtoSender[tables.length];
-                for (int n = 0; n < senders.length; n++) {
-                    if (null != authKeyId) {
-                        AuthenticatedLineTCPProtoSender sender = new AuthenticatedLineTCPProtoSender(authKeyId, authPrivateKey, Net.parseIPv4("127.0.0.1"), bindPort, 4096);
-                        sender.authenticate();
-                        senders[n] = sender;
-                    } else {
-                        senders[n] = new LineTCPProtoSender(Net.parseIPv4("127.0.0.1"), bindPort, 4096);
-                    }
-                    StringBuilder sb = new StringBuilder((nRows + 1) * lineConfiguration.getMaxMeasurementSize());
-                    sb.append("location\ttemp\ttimestamp\n");
-                    expectedSbs[n] = sb;
-                }
-
-                long ts = Os.currentTimeMicros();
-                StringSink tsSink = new StringSink();
-                for (int nRow = 0; nRow < nRows; nRow++) {
-                    int nTable = nRow < tables.length ? nRow : rand.nextInt(tables.length);
-                    LineProtoSender sender = senders[nTable];
-                    StringBuilder sb = expectedSbs[nTable];
-                    String tableName = tables[nTable];
-                    sender.metric(tableName);
-                    String location = locations[rand.nextInt(locations.length)];
-                    sb.append(location);
-                    sb.append('\t');
-                    sender.tag("location", location);
-                    int temp = rand.nextInt(100);
-                    sb.append(temp);
-                    sb.append('\t');
-                    sender.field("temp", temp);
-                    tsSink.clear();
-                    TimestampFormatUtils.appendDateTimeUSec(tsSink, ts);
-                    sb.append(tsSink.toString());
-                    sb.append('\n');
-                    sender.$(ts * 1000);
-                    sender.flush();
-                    ts += rand.nextInt(1000);
-                }
-
-                for (int n = 0; n < senders.length; n++) {
-                    LineProtoSender sender = senders[n];
-                    sender.close();
-                }
-
-                boolean created = tablesCreated.await(TEST_TIMEOUT_IN_MS * 1_000_000);
-                Assert.assertTrue(created);
-                int nRowsWritten;
-                do {
-                    nRowsWritten = 0;
-                    long timeTakenMs = System.currentTimeMillis() - startEpochMs;
-                    if (timeTakenMs > TEST_TIMEOUT_IN_MS) {
-                        LOG.error().$("after ").$(timeTakenMs).$("ms tables only had ").$(nRowsWritten).$(" rows out of ").$(nRows).$();
-                        break;
-                    }
-
-                    Thread.yield();
-                    for (int n = 0; n < tables.length; n++) {
-                        String tableName = tables[n];
-                        try (TableReader reader = new TableReader(configuration, tableName)) {
-                            TableReaderRecordCursor cursor = reader.getCursor();
-                            while (cursor.hasNext()) {
-                                nRowsWritten++;
-                            }
-                        }
-                    }
-                } while (nRowsWritten < nRows);
-                LOG.info().$(nRowsWritten).$(" rows written").$();
-            } finally {
-                sharedWorkerPool.halt();
-                Misc.free(tcpServer);
-            }
+    @Test
+    public void testWriterAllLongs() throws Exception {
+        currentMicros = 1;
+        try (TableModel m = new TableModel(configuration, "messages", PartitionBy.MONTH)) {
+            m.timestamp("ts")
+                    .col("id", ColumnType.LONG)
+                    .col("author", ColumnType.LONG)
+                    .col("guild", ColumnType.LONG)
+                    .col("channel", ColumnType.LONG)
+                    .col("flags", ColumnType.BYTE);
+            CairoTestUtils.createTableWithVersion(m, ColumnType.VERSION);
         }
 
-        for (int n = 0; n < tables.length; n++) {
-            String tableName = tables[n];
-            LOG.info().$("checking table ").$(tableName).$();
-            assertTable(expectedSbs[n].toString(), tableName);
+        int defautlMeasurementSize = maxMeasurementSize;
+        String lineData = "messages id=843530699759026177i,author=820703963477180437i,guild=820704412095479830i,channel=820704412095479833i,flags=6i\n";
+        try {
+            maxMeasurementSize = lineData.length();
+            runInContext(() -> {
+                send(lineData, "messages");
+                String expected = "ts\tid\tauthor\tguild\tchannel\tflags\n" +
+                        "1970-01-01T00:00:00.000001Z\t843530699759026177\t820703963477180437\t820704412095479830\t820704412095479833\t6\n";
+                assertTable(expected, "messages");
+            });
+        } finally {
+            maxMeasurementSize = defautlMeasurementSize;
         }
     }
 
     private void assertTable(CharSequence expected, CharSequence tableName) {
-        try (TableReader reader = new TableReader(configuration, tableName)) {
-            assertThat(expected, reader.getCursor(), reader.getMetadata(), true);
+        try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+            assertCursorTwoPass(expected, reader.getCursor(), reader.getMetadata());
         }
+    }
+
+    private void runInContext(Runnable r) throws Exception {
+        minIdleMsBeforeWriterRelease = 250;
+        assertMemoryLeak(() -> {
+            path = new Path(4096);
+            try {
+                LineTcpServer tcpServer = LineTcpServer.create(lineConfiguration, sharedWorkerPool, LOG, engine);
+                sharedWorkerPool.start(LOG);
+                r.run();
+                sharedWorkerPool.halt();
+                Misc.free(tcpServer);
+            } finally {
+                Misc.free(path);
+            }
+        });
+    }
+
+    private void send(String lineData, String tableName) {
+        SOCountDownLatch releaseLatch = new SOCountDownLatch(1);
+        engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
+            if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN && Chars.equals(tableName, name)) {
+                releaseLatch.countDown();
+            }
+        });
+
+        try {
+
+            int ipv4address = Net.parseIPv4("127.0.0.1");
+            long sockaddr = Net.sockaddr(ipv4address, bindPort);
+            long fd = Net.socketTcp(true);
+            if (Net.connect(fd, sockaddr) != 0) {
+                throw NetworkError.instance(Os.errno(), "could not connect to ").ip(ipv4address);
+            }
+            byte[] lineDataBytes = lineData.getBytes(StandardCharsets.UTF_8);
+            long bufaddr = Unsafe.malloc(lineDataBytes.length);
+            for (int n = 0; n < lineDataBytes.length; n++) {
+                Unsafe.getUnsafe().putByte(bufaddr + n, lineDataBytes[n]);
+            }
+            int rc = Net.send(fd, bufaddr, lineDataBytes.length);
+            Unsafe.free(bufaddr, lineDataBytes.length);
+            Net.close(fd);
+            Net.freeSockAddr(sockaddr);
+            Assert.assertEquals(lineDataBytes.length, rc);
+            releaseLatch.await();
+        } finally {
+            engine.setPoolListener(null);
+        }
+    }
+
+    private void test(
+            String authKeyId,
+            PrivateKey authPrivateKey,
+            int msgBufferSize,
+            final int nRows,
+            boolean expectDisconnect
+    ) throws Exception {
+        this.authKeyId = authKeyId;
+        this.msgBufferSize = msgBufferSize;
+        assertMemoryLeak(() -> {
+            final String[] locations = {"london", "paris", "rome"};
+
+            final CharSequenceHashSet tables = new CharSequenceHashSet();
+            tables.add("weather1");
+            tables.add("weather2");
+            tables.add("weather3");
+
+            SOCountDownLatch tablesCreated = new SOCountDownLatch();
+            tablesCreated.setCount(tables.size());
+
+            final Rnd rand = new Rnd();
+            final StringBuilder[] expectedSbs = new StringBuilder[tables.size()];
+
+            engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
+                if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN) {
+                    if (tables.contains(name)) {
+                        tablesCreated.countDown();
+                    }
+                }
+            });
+
+            minIdleMsBeforeWriterRelease = 100;
+            try (LineTcpServer ignored = LineTcpServer.create(lineConfiguration, sharedWorkerPool, LOG, engine)) {
+                long startEpochMs = System.currentTimeMillis();
+                sharedWorkerPool.assignCleaner(Path.CLEANER);
+                sharedWorkerPool.start(LOG);
+
+                try {
+                    final LineProtoSender[] senders = new LineProtoSender[tables.size()];
+                    for (int n = 0; n < senders.length; n++) {
+                        if (null != authKeyId) {
+                            AuthenticatedLineTCPProtoSender sender = new AuthenticatedLineTCPProtoSender(
+                                    authKeyId,
+                                    authPrivateKey,
+                                    Net.parseIPv4("127.0.0.1"),
+                                    bindPort,
+                                    4096
+                            );
+                            sender.authenticate();
+                            senders[n] = sender;
+                        } else {
+                            senders[n] = new LineTCPProtoSender(Net.parseIPv4("127.0.0.1"), bindPort, 4096);
+                        }
+                        StringBuilder sb = new StringBuilder((nRows + 1) * lineConfiguration.getMaxMeasurementSize());
+                        sb.append("location\ttemp\ttimestamp\n");
+                        expectedSbs[n] = sb;
+                    }
+
+                    long ts = Os.currentTimeMicros();
+                    StringSink tsSink = new StringSink();
+                    for (int nRow = 0; nRow < nRows; nRow++) {
+                        int nTable = nRow < tables.size() ? nRow : rand.nextInt(tables.size());
+                        LineProtoSender sender = senders[nTable];
+                        StringBuilder sb = expectedSbs[nTable];
+                        CharSequence tableName = tables.get(nTable);
+                        sender.metric(tableName);
+                        String location = locations[rand.nextInt(locations.length)];
+                        sb.append(location);
+                        sb.append('\t');
+                        sender.tag("location", location);
+                        int temp = rand.nextInt(100);
+                        sb.append(temp);
+                        sb.append('\t');
+                        sender.field("temp", temp);
+                        tsSink.clear();
+                        TimestampFormatUtils.appendDateTimeUSec(tsSink, ts);
+                        sb.append(tsSink);
+                        sb.append('\n');
+                        sender.$(ts * 1000);
+                        sender.flush();
+                        if (expectDisconnect) {
+                            // To prevent all data being buffered before the expected disconnect slow sending
+                            Thread.sleep(100);
+                        }
+                        ts += rand.nextInt(1000);
+                    }
+
+                    for (int n = 0; n < senders.length; n++) {
+                        LineProtoSender sender = senders[n];
+                        sender.close();
+                    }
+
+                    Assert.assertFalse(expectDisconnect);
+                    boolean ready = tablesCreated.await(TimeUnit.MINUTES.toNanos(1));
+                    if (!ready) {
+                        throw new IllegalStateException("Timeout waiting for tables to be created");
+                    }
+
+                    int nRowsWritten;
+                    do {
+                        nRowsWritten = 0;
+                        long timeTakenMs = System.currentTimeMillis() - startEpochMs;
+                        if (timeTakenMs > TEST_TIMEOUT_IN_MS) {
+                            LOG.error().$("after ").$(timeTakenMs).$("ms tables only had ").$(nRowsWritten).$(" rows out of ").$(nRows).$();
+                            break;
+                        }
+                        Thread.yield();
+                        for (int n = 0; n < tables.size(); n++) {
+                            CharSequence tableName = tables.get(n);
+                            while (true) {
+                                try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+                                    TableReaderRecordCursor cursor = reader.getCursor();
+                                    while (cursor.hasNext()) {
+                                        nRowsWritten++;
+                                    }
+                                    break;
+                                } catch (EntryLockedException ex) {
+                                    LOG.info().$("retrying read for ").$(tableName).$();
+                                    LockSupport.parkNanos(1);
+                                }
+                            }
+                        }
+                    } while (nRowsWritten < nRows);
+                    LOG.info().$(nRowsWritten).$(" rows written").$();
+                } finally {
+                    sharedWorkerPool.halt();
+                }
+            } finally {
+                engine.setPoolListener(null);
+            }
+
+            for (int n = 0; n < tables.size(); n++) {
+                CharSequence tableName = tables.get(n);
+                LOG.info().$("checking table ").$(tableName).$();
+                assertTable(expectedSbs[n], tableName);
+            }
+        });
     }
 }
