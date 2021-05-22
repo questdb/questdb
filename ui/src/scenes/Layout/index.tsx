@@ -38,6 +38,7 @@ import Settings from "../Settings"
 import SideMenu from "../SideMenu"
 import Schema from "../Schema"
 import Sidebar from "../Sidebar"
+import { LocalStorageProvider } from "providers/LocalStorageProvider"
 
 const Top = styled.div`
   position: relative;
@@ -63,7 +64,7 @@ const Layout = () => {
   }, [])
 
   return (
-    <>
+    <LocalStorageProvider>
       <Sidebar />
       <Footer />
       {consoleNode &&
@@ -94,7 +95,7 @@ const Layout = () => {
       {sideMenuNode && createPortal(<SideMenu />, sideMenuNode)}
       {modalNode && createPortal(<Modal />, modalNode)}
       {settingsNode && createPortal(<Settings />, settingsNode)}
-    </>
+    </LocalStorageProvider>
   )
 }
 

@@ -1,7 +1,8 @@
-import React, { ChangeEvent, useCallback, useState } from "react"
+import React, { ChangeEvent, useCallback, useContext } from "react"
 import styled from "styled-components"
 import { Input, Text } from "components"
-import { getValue, setValue } from "utils/localStorage"
+import { LocalStorageContext } from "providers/LocalStorageProvider"
+import { StoreKey } from "utils/localStorage/types"
 
 const Wrapper = styled.div`
   & > :last-child:not(:first-child) {
@@ -10,14 +11,14 @@ const Wrapper = styled.div`
 `
 
 const Duration = () => {
-  const persistedValue = getValue("notification.enabled") ?? "5"
-  const [duration, setDuration] = useState<string>(persistedValue)
+  const { notificationDelay, updateSettings } = useContext(LocalStorageContext)
 
-  const handleChange = useCallback((e: ChangeEvent<HTMLInputElement>) => {
-    const value = e.target.value
-    setDuration(value)
-    setValue("notification.delay", value)
-  }, [])
+  const handleChange = useCallback(
+    (e: ChangeEvent<HTMLInputElement>) => {
+      updateSettings(StoreKey.NOTIFICATION_DELAY, e.target.value)
+    },
+    [updateSettings],
+  )
 
   return (
     <Wrapper>
@@ -28,7 +29,7 @@ const Duration = () => {
         step="1"
         style={{ width: "60px" }}
         type="number"
-        value={duration}
+        value={notificationDelay}
       />
       <Text color="draculaForeground">seconds</Text>
     </Wrapper>

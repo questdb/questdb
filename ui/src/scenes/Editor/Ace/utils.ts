@@ -1,5 +1,4 @@
 import * as ace from "ace-builds"
-import { getValue, setValue } from "utils/localStorage"
 
 type Position = Readonly<{
   column: number
@@ -11,29 +10,6 @@ export type Request = Readonly<{
   row: number
   column: number
 }>
-
-export const loadPreferences = (editor: ace.Ace.Editor) => {
-  const query = getValue("query.text")
-
-  if (query) {
-    editor.setValue(query)
-  }
-
-  const row = parseInt(getValue("editor.line") ?? "0", 10)
-  const col = parseInt(getValue("editor.col") ?? "0", 10)
-
-  if (row && col) {
-    setTimeout(() => {
-      editor.gotoLine(row, col, false)
-    }, 10)
-  }
-}
-
-export const savePreferences = (editor: ace.Ace.Editor) => {
-  setValue("query.text", editor.getValue())
-  setValue("editor.line", `${editor.getCursorPosition().row + 1}`)
-  setValue("editor.col", `${editor.getCursorPosition().column}`)
-}
 
 export const getQueryFromCursor = (
   editor: ace.Ace.Editor,

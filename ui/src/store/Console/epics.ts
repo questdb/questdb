@@ -38,6 +38,7 @@ import {
 } from "types"
 import { fromFetch } from "utils"
 import { getValue, setValue } from "utils/localStorage"
+import { StoreKey } from "utils/localStorage/types"
 
 type AuthPayload = Readonly<
   Partial<{
@@ -71,7 +72,7 @@ export const triggerRefreshTokenOnBootstrap: Epic<
   action$.pipe(
     ofType<StoreAction, BootstrapAction>(ConsoleAT.BOOTSTRAP),
     switchMap(() => {
-      const authPayload = localStorage.getItem("AUTH_PAYLOAD")
+      const authPayload = getValue(StoreKey.AUTH_PAYLOAD)
 
       if (authPayload != null) {
         return of(actions.console.refreshAuthToken(true))
@@ -87,7 +88,7 @@ export const refreshToken: Epic<StoreAction, ConsoleAction, StoreShape> = (
   action$.pipe(
     ofType<StoreAction, RefreshAuthTokenAction>(ConsoleAT.REFRESH_AUTH_TOKEN),
     switchMap((action) => {
-      const authPayload = getValue("AUTH_PAYLOAD")
+      const authPayload = getValue(StoreKey.AUTH_PAYLOAD)
 
       if (authPayload != null) {
         try {
@@ -102,7 +103,7 @@ export const refreshToken: Epic<StoreAction, ConsoleAction, StoreShape> = (
           const fetch$ = fromFetch<AuthPayload>(refreshRoute).pipe(
             tap((response) => {
               if (!response.error) {
-                setValue("AUTH_PAYLOAD", JSON.stringify(response.data))
+                setValue(StoreKey.AUTH_PAYLOAD, JSON.stringify(response.data))
               }
             }),
             switchMap(() => of(actions.console.refreshAuthToken(false))),
