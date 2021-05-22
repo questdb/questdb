@@ -39,6 +39,8 @@ import SideMenu from "../SideMenu"
 import Schema from "../Schema"
 import Sidebar from "../Sidebar"
 import { LocalStorageProvider } from "providers/LocalStorageProvider"
+import { QuestProvider } from "providers"
+
 
 const Top = styled.div`
   position: relative;
@@ -65,37 +67,39 @@ const Layout = () => {
 
   return (
     <LocalStorageProvider>
-      <Sidebar />
-      <Footer />
-      {consoleNode &&
-        createPortal(
-          <Splitter
-            direction="vertical"
-            fallback={350}
-            max={300}
-            min={200}
-            onChange={handleResultSplitterChange}
-          >
-            <Top>
-              <Splitter
-                direction="horizontal"
-                fallback={350}
-                max={300}
-                min={200}
-              >
-                {!sm && <Schema />}
-                <Editor />
-              </Splitter>
-            </Top>
-            <Result />
-          </Splitter>,
-          consoleNode,
-        )}
-      {notificationsNode && createPortal(<Notifications />, notificationsNode)}
-      {sideMenuNode && createPortal(<SideMenu />, sideMenuNode)}
-      {modalNode && createPortal(<Modal />, modalNode)}
-      {settingsNode && createPortal(<Settings />, settingsNode)}
-    </LocalStorageProvider>
+      <QuestProvider>
+        <Sidebar />
+        <Footer />
+        {consoleNode &&
+          createPortal(
+            <Splitter
+              direction="vertical"
+              fallback={350}
+              max={300}
+              min={200}
+              onChange={handleResultSplitterChange}
+            >
+              <Top>
+                <Splitter
+                  direction="horizontal"
+                  fallback={350}
+                  max={300}
+                  min={200}
+                >
+                  {!sm && <Schema />}
+                  <Editor />
+                </Splitter>
+              </Top>
+              <Result />
+            </Splitter>,
+            consoleNode,
+          )}
+        {notificationsNode && createPortal(<Notifications />, notificationsNode)}
+        {sideMenuNode && createPortal(<SideMenu />, sideMenuNode)}
+        {modalNode && createPortal(<Modal />, modalNode)}
+        {settingsNode && createPortal(<Settings />, settingsNode)}
+      </LocalStorageProvider>
+    </QuestProvider>
   )
 }
 

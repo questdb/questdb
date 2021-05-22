@@ -41,7 +41,6 @@ import io.questdb.test.tools.TestUtils;
 import io.questdb.test.tools.TestUtils.LeakProneCode;
 import org.junit.Assert;
 import org.junit.BeforeClass;
-import org.junit.Ignore;
 import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -498,7 +497,14 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
     }
 
     private void replicateTable(
-            String sourceTableName, String destTableName, long nFirstRow, boolean commit, long maxRowsPerFrame, boolean cancel, boolean commitAllAtOnce, int nThreads
+            String sourceTableName,
+            String destTableName,
+            long nFirstRow,
+            boolean commit,
+            long maxRowsPerFrame,
+            boolean cancel,
+            boolean commitAllAtOnce,
+            int nThreads
     ) {
         LOG.info().$("Replicating [sourceTableName=").$(sourceTableName).$(", destTableName=").$(destTableName).$(", nFirstRow=").$(nFirstRow).$(", commit=").$(commit)
                 .$(", maxRowsPerFrame=").$(maxRowsPerFrame).$(", cancel=").$(cancel).$(", commitAllAtOnce=").$(commitAllAtOnce).$(", nThreads=").$(nThreads).$(']').$();

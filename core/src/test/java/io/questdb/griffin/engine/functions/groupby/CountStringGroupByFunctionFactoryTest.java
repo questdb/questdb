@@ -40,14 +40,14 @@ public class CountStringGroupByFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testGroupKeyed() throws Exception {
         assertQuery(
-                "a\tcount\n" +
+                "a\tcount_distinct\n" +
                         "a\t4\n" +
                         "b\t4\n" +
                         "f\t3\n" +
                         "c\t3\n" +
                         "e\t2\n" +
                         "d\t1\n",
-                "select a, count(s) from x",
+                "select a, count_distinct(s) from x",
                 "create table x as (select * from (select rnd_symbol('a','b','c','d','e','f') a, rnd_str('344', 'xx2', '00s', '544', 'rraa', '0llp') s,  timestamp_sequence(0, 100000) ts from long_sequence(20)) timestamp(ts))",
                 null,
                 true,
@@ -59,10 +59,24 @@ public class CountStringGroupByFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testGroupNotKeyed() throws Exception {
         assertQuery(
-                "count\n" +
+                "count_distinct\n" +
                         "6\n",
-                "select count(s) from x",
+                "select count_distinct(s) from x",
                 "create table x as (select * from (select rnd_symbol('344', 'xx2', '00s', '544', 'rraa', '0llp') s,  timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))",
+                null,
+                false,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testGroupNotKeyedWithNulls() throws Exception {
+        assertQuery(
+                "count_distinct\n" +
+                        "4\n",
+                "select count_distinct(s) from x",
+                "create table x as (select * from (select rnd_symbol(null, 'xx2', '00s', '544', 'rraa', null) s,  timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))",
                 null,
                 false,
                 true,
@@ -73,7 +87,7 @@ public class CountStringGroupByFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testSampleFillLinear() throws Exception {
         assertQuery(
-                "ts\tcount\n" +
+                "ts\tcount_distinct\n" +
                         "1970-01-01T00:00:00.000000Z\t5\n" +
                         "1970-01-01T00:00:01.000000Z\t5\n" +
                         "1970-01-01T00:00:02.000000Z\t6\n" +
@@ -84,7 +98,7 @@ public class CountStringGroupByFunctionFactoryTest extends AbstractGriffinTest {
                         "1970-01-01T00:00:07.000000Z\t5\n" +
                         "1970-01-01T00:00:08.000000Z\t6\n" +
                         "1970-01-01T00:00:09.000000Z\t5\n",
-                "select ts, count(s) from x sample by 1s fill(linear)",
+                "select ts, count_distinct(s) from x sample by 1s fill(linear)",
                 "create table x as (select * from (select rnd_str('344', 'xx2', '00s', '544', 'rraa', '0llp') s,  timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))",
                 "ts",
                 true,
@@ -97,10 +111,10 @@ public class CountStringGroupByFunctionFactoryTest extends AbstractGriffinTest {
     public void testSampleFillNone() throws Exception {
         assertMemoryLeak(() -> {
             final String sql = "with x as (select * from (select rnd_str('344', 'xx2', '00s', '544', 'rraa', '0llp') s,  timestamp_sequence(400000000, 300000) ts from long_sequence(100)) timestamp(ts))\n" +
-                    "select ts, count(s) from x sample by 2s";
+                    "select ts, count_distinct(s) from x sample by 2s";
             assertSql(
                     sql,
-                    "ts\tcount\n" +
+                    "ts\tcount_distinct\n" +
                             "1970-01-01T00:06:40.000000Z\t4\n" +
                             "1970-01-01T00:06:42.000000Z\t4\n" +
                             "1970-01-01T00:06:44.000000Z\t4\n" +
@@ -123,7 +137,7 @@ public class CountStringGroupByFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testSampleFillValue() throws Exception {
         assertQuery(
-                "ts\tcount\n" +
+                "ts\tcount_distinct\n" +
                         "1970-01-01T00:00:00.000000Z\t5\n" +
                         "1970-01-01T00:00:01.000000Z\t5\n" +
                         "1970-01-01T00:00:02.000000Z\t6\n" +
@@ -134,7 +148,7 @@ public class CountStringGroupByFunctionFactoryTest extends AbstractGriffinTest {
                         "1970-01-01T00:00:07.000000Z\t5\n" +
                         "1970-01-01T00:00:08.000000Z\t6\n" +
                         "1970-01-01T00:00:09.000000Z\t5\n",
-                "select ts, count(s) from x sample by 1s fill(99)",
+                "select ts, count_distinct(s) from x sample by 1s fill(99)",
                 "create table x as (select * from (select rnd_str('344', 'xx2', '00s', '544', 'rraa', '0llp') s,  timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))",
                 "ts",
                 false
@@ -144,7 +158,7 @@ public class CountStringGroupByFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testSampleKeyed() throws Exception {
         assertQuery(
-                "a\tcount\tts\n" +
+                "a\tcount_distinct\tts\n" +
                         "a\t3\t1970-01-01T00:00:00.000000Z\n" +
                         "b\t2\t1970-01-01T00:00:00.000000Z\n" +
                         "f\t1\t1970-01-01T00:00:00.000000Z\n" +
@@ -197,7 +211,7 @@ public class CountStringGroupByFunctionFactoryTest extends AbstractGriffinTest {
                         "e\t1\t1970-01-01T00:00:09.000000Z\n" +
                         "a\t1\t1970-01-01T00:00:09.000000Z\n" +
                         "f\t1\t1970-01-01T00:00:09.000000Z\n",
-                "select a, count(s), ts from x sample by 1s",
+                "select a, count_distinct(s), ts from x sample by 1s",
                 "create table x as (select * from (select rnd_symbol('a','b','c','d','e','f') a, rnd_str('344', 'xx2', '00s', '544', 'rraa', '0llp') s,  timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))",
                 "ts",
                 false

@@ -23,7 +23,13 @@
  ******************************************************************************/
 
 import { Range } from "ace-builds"
-import React, { useCallback, useEffect, useRef, useState } from "react"
+import React, {
+  useCallback,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+} from "react"
 import ReactAce from "react-ace"
 import { useDispatch, useSelector } from "react-redux"
 import ResizeObserver from "resize-observer-polyfill"
@@ -47,8 +53,7 @@ import {
   toTextPosition,
 } from "./utils"
 import { usePreferences } from "./usePreferences"
-
-const quest = new QuestDB.Client()
+import { QuestContext } from "providers"
 
 const Content = styled(PaneContent)`
   position: relative;
@@ -76,6 +81,7 @@ enum Command {
 
 const Ace = () => {
   const { loadPreferences, savePreferences } = usePreferences()
+  const { quest } = useContext(QuestContext)
   const [request, setRequest] = useState<Request | undefined>()
   const [value, setValue] = useState("")
   const aceEditor = useRef<ReactAce | null>(null)
@@ -93,7 +99,7 @@ const Ace = () => {
       dispatch(actions.query.stopRunning())
       setRequest(undefined)
     }
-  }, [dispatch, request, running])
+  }, [request, quest, dispatch, running])
 
   // Save preferences when we run a query
   useEffect(() => {
@@ -196,7 +202,7 @@ const Ace = () => {
         dispatch(actions.query.stopRunning())
       }
     }
-  }, [dispatch, running])
+  }, [quest, dispatch, running])
 
   useEffect(() => {
     if (!aceEditor.current) {

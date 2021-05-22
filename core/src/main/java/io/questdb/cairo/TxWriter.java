@@ -29,6 +29,7 @@ import io.questdb.cairo.vm.PagedMappedReadWriteMemory;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
+import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
 
 import java.io.Closeable;
@@ -274,9 +275,9 @@ public final class TxWriter extends TxReader implements Closeable {
     }
 
     public void setMinTimestamp(long timestamp) {
-        minTimestamp = timestamp;
-        if (prevMinTimestamp == Long.MAX_VALUE) {
-            prevMinTimestamp = minTimestamp;
+            minTimestamp = timestamp;
+            if (prevMinTimestamp == Long.MAX_VALUE) {
+                prevMinTimestamp = minTimestamp;
         }
     }
 

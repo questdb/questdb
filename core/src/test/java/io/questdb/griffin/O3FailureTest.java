@@ -196,6 +196,14 @@ public class O3FailureTest extends AbstractO3Test {
         long theFd;
 
         @Override
+        public boolean close(long fd) {
+            if (fd == theFd) {
+                theFd = -1;
+            }
+            return super.close(fd);
+        }
+
+        @Override
         public long openRW(LPSZ name) {
             long fd = super.openRW(name);
             if (Chars.endsWith(name, "x" + Files.SEPARATOR + "1970-01-07" + Files.SEPARATOR + "m.i")) {
@@ -712,6 +720,42 @@ public class O3FailureTest extends AbstractO3Test {
     }
 
     @Test
+    public void testOutOfFileHandles() throws Exception {
+        counter.set(1536);
+        executeWithPool(4, O3FailureTest::testOutOfFileHandles0, new FilesFacadeImpl() {
+            @Override
+            public boolean close(long fd) {
+                counter.incrementAndGet();
+                return super.close(fd);
+            }
+
+            @Override
+            public long openAppend(LPSZ name) {
+                if (counter.decrementAndGet() < 0) {
+                    return -1;
+                }
+                return super.openAppend(name);
+            }
+
+            @Override
+            public long openRO(LPSZ name) {
+                if (counter.decrementAndGet() < 0) {
+                    return -1;
+                }
+                return super.openRO(name);
+            }
+
+            @Override
+            public long openRW(LPSZ name) {
+                if (counter.decrementAndGet() < 0) {
+                    return -1;
+                }
+                return super.openRW(name);
+            }
+        });
+    }
+
+    @Test
     public void testPartitionedAllocateLastPartitionFail() throws Exception {
         counter.set(2);
         executeWithoutPool(O3FailureTest::testPartitionedDataAppendOOPrependOODataFailRetry0, ffFailToAllocateIndex);
@@ -983,42 +1027,6 @@ public class O3FailureTest extends AbstractO3Test {
     public void testPartitionedOpenTimestampFailContended() throws Exception {
         counter.set(3);
         executeWithPool(0, O3FailureTest::testPartitionedDataAppendOOPrependOODataFailRetry0, ffOpenFailure);
-    }
-
-    @Test
-    public void testOutOfFileHandles() throws Exception {
-        counter.set(1536);
-        executeWithPool(4, O3FailureTest::testOutOfFileHandles0, new FilesFacadeImpl() {
-            @Override
-            public long openRW(LPSZ name) {
-                if (counter.decrementAndGet() < 0) {
-                    return -1;
-                }
-                return super.openRW(name);
-            }
-
-            @Override
-            public long openRO(LPSZ name) {
-                if (counter.decrementAndGet() < 0) {
-                    return -1;
-                }
-                return super.openRO(name);
-            }
-
-            @Override
-            public long openAppend(LPSZ name) {
-                if (counter.decrementAndGet() < 0) {
-                    return -1;
-                }
-                return super.openAppend(name);
-            }
-
-            @Override
-            public boolean close(long fd) {
-                counter.incrementAndGet();
-                return super.close(fd);
-            }
-        });
     }
 
     @Test
@@ -2502,18 +2510,6 @@ public class O3FailureTest extends AbstractO3Test {
 
     }
 
-    private void executeWithoutPool(O3Runnable runnable, FilesFacade ff) throws Exception {
-        executeVanilla(() -> {
-            final CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
-                @Override
-                public FilesFacade getFilesFacade() {
-                    return ff;
-                }
-            };
-            execute(null, runnable, configuration);
-        });
-    }
-
     private static void testOutOfFileHandles0(
             CairoEngine engine,
             SqlCompiler compiler,
@@ -2677,7 +2673,19 @@ public class O3FailureTest extends AbstractO3Test {
 
             pool1.halt();
             pool2.halt();
-            Assert.assertEquals(2, errorCount.get());
+            Assert.assertTrue(errorCount.get() > 0);
         }
+    }
+
+    private void executeWithoutPool(O3Runnable runnable, FilesFacade ff) throws Exception {
+        executeVanilla(() -> {
+            final CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+                @Override
+                public FilesFacade getFilesFacade() {
+                    return ff;
+                }
+            };
+            execute(null, runnable, configuration);
+        });
     }
 }

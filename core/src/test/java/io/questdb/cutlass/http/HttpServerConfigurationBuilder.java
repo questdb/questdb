@@ -50,6 +50,7 @@ public class HttpServerConfigurationBuilder {
     private int rerunProcessingQueueSize = 4096;
     private int receiveBufferSize = 1024 * 1024;
     private long multipartIdleSpinCount = -1;
+    private Runnable onPeerDisconnect = HttpContextConfiguration.NONE;
 
     public HttpServerConfigurationBuilder withNetwork(NetworkFacade nf) {
         this.nf = nf;
@@ -93,6 +94,11 @@ public class HttpServerConfigurationBuilder {
 
     public HttpServerConfigurationBuilder withRerunProcessingQueueSize(int rerunProcessingQueueSize) {
         this.rerunProcessingQueueSize = rerunProcessingQueueSize;
+        return this;
+    }
+
+    public HttpServerConfigurationBuilder withOnPeerDisconnect(Runnable runnable) {
+        this.onPeerDisconnect = runnable;
         return this;
     }
 
@@ -257,6 +263,11 @@ public class HttpServerConfigurationBuilder {
                     @Override
                     public String getHttpVersion() {
                         return httpProtocolVersion;
+                    }
+
+                    @Override
+                    public Runnable onPeerDisconnect() {
+                        return onPeerDisconnect;
                     }
                 };
             }

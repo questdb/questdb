@@ -30,9 +30,11 @@ import io.questdb.cairo.sql.*;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.griffin.engine.functions.bind.IndexedParameterLinkFunction;
 import io.questdb.griffin.engine.functions.bind.NamedParameterLinkFunction;
+import io.questdb.griffin.engine.functions.cast.CastStrToTimestampFunctionFactory;
 import io.questdb.griffin.engine.functions.columns.*;
 import io.questdb.griffin.engine.functions.constants.*;
 import io.questdb.griffin.model.ExpressionNode;
+import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
@@ -532,7 +534,6 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
 
                     final int sigArgType = FunctionFactoryDescriptor.toType(sigArgTypeMask);
 
-                    sigArgTypeSum += ColumnType.widthPrecedenceOf(sigArgType);
 
                     if (sigArgType == arg.getType()) {
                         switch (match) {
@@ -550,22 +551,30 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
                     }
 
                     final int argType = arg.getType();
-                    final boolean overloadPossible =
-                            argType >= ColumnType.BYTE &&
-                                    sigArgType >= ColumnType.BYTE &&
-                                    sigArgType <= ColumnType.DOUBLE &&
-                                    argType < sigArgType ||
-                                    argType == ColumnType.DOUBLE &&
-                                            arg.isConstant() &&
-                                            Double.isNaN(arg.getDouble(null)) &&
-                                            (sigArgType == ColumnType.LONG || sigArgType == ColumnType.INT) ||
-                                    argType == ColumnType.CHAR &&
-                                            sigArgType == ColumnType.STRING
-                                    || undefined;
 
+                    int overloadDistance = ColumnType.overloadDistance(argType, sigArgType);
+                    sigArgTypeSum += overloadDistance;
+                    // Overload with cast to higher precision
+                    boolean overloadPossible = overloadDistance != ColumnType.NO_OVERLOAD;
+
+                    // Overload when arg is double NaN to func which accepts INT, LONG
+                    overloadPossible |= argType == ColumnType.DOUBLE &&
+                            arg.isConstant() &&
+                            Double.isNaN(arg.getDouble(null)) &&
+                            (sigArgType == ColumnType.LONG || sigArgType == ColumnType.INT);
+
+                    // Implicit cast from CHAR to STRING
+                    overloadPossible |= argType == ColumnType.CHAR &&
+                            sigArgType == ColumnType.STRING;
+
+                    // Implicit cast from STRING to TIMESTAMP
+                    overloadPossible |= argType == ColumnType.STRING &&
+                            sigArgType == ColumnType.TIMESTAMP && !factory.isGroupBy();
+
+
+                    overloadPossible |= undefined;
 
                     // can we use overload mechanism?
-
                     if (overloadPossible) {
                         switch (match) {
                             case MATCH_NO_MATCH: // no match?
@@ -595,7 +604,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
 
 
                     if (match != MATCH_EXACT_MATCH) {
-                        if (candidateSigArgTypeSum < sigArgTypeSum || bestMatch < match) {
+                        if (candidateSigArgTypeSum > sigArgTypeSum || bestMatch < match) {
                             candidate = factory;
                             candidateDescriptor = descriptor;
                             candidateSigArgCount = sigArgCount;
@@ -653,8 +662,31 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
             }
         }
 
+        // convert arguments if necessary
+        for (int k = 0; k < candidateSigArgCount; k++) {
+            final Function arg = args.getQuick(k);
+            final int sigArgType = FunctionFactoryDescriptor.toType(candidateDescriptor.getArgTypeMask(k));
+            if (arg.getType() == ColumnType.STRING && sigArgType == ColumnType.TIMESTAMP) {
+                int position = arg.getPosition();
+                if (arg.isConstant()) {
+                    long timestamp = convertToTimestamp(arg.getStr(null), position);
+                    args.set(k, new TimestampConstant(position, timestamp));
+                } else {
+                    args.set(k, new CastStrToTimestampFunctionFactory.Func(position, arg));
+                }
+            }
+        }
+
         LOG.debug().$("call ").$(node).$(" -> ").$(candidate.getSignature()).$();
         return checkAndCreateFunction(candidate, args, node.position, configuration);
+    }
+
+    private long convertToTimestamp(CharSequence str, int position) throws SqlException {
+        try {
+            return IntervalUtils.parseFloorPartialDate(str);
+        } catch (NumericException e) {
+            throw SqlException.invalidDate(position);
+        }
     }
 
     private Function functionToConstant(Function function) {

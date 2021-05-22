@@ -38,9 +38,9 @@
         <argLine>-Dfile.encoding=UTF-8</argLine>
     </properties>
 
-    <version>6.0.1-SNAPSHOT</version>
+    <version>6.0.2-SNAPSHOT</version>
     <groupId>org.questdb</groupId>
-    <artifactId>${questdb.artifactid}</artifactId>
+    <artifactId>questdb</artifactId>
     <packaging>jar</packaging>
 
     <url>https://questdb.io/</url>
@@ -389,6 +389,8 @@
                                         <argument>--no-header-files</argument>
                                         <argument>--no-man-pages</argument>
                                         <argument>--compress=2</argument>
+                                        <argument>--strip-debug</argument>
+                                        <argument>--vm=server</argument>
                                     </arguments>
                                     <workingDirectory>../core</workingDirectory>
                                 </configuration>
@@ -510,7 +512,7 @@
 					<plugin>
 						<groupId>org.jacoco</groupId>
 						<artifactId>jacoco-maven-plugin</artifactId>
-						<version>0.8.5</version>
+						<version>0.8.7</version>
 						<executions>
 							<execution>
 								<id>default-prepare-agent</id>

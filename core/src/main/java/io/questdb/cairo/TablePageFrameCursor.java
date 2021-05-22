@@ -56,10 +56,6 @@ public class TablePageFrameCursor implements PageFrameCursor {
     private int columnBase;
     private boolean checkNFrameRowsForColumnTops;
 
-    public TablePageFrameCursor() {
-        super();
-    }
-
     @Override
     public void close() {
         if (null != reader) {
@@ -68,35 +64,6 @@ public class TablePageFrameCursor implements PageFrameCursor {
             columnIndexes = null;
             columnSizes = null;
         }
-    }
-
-    @Override
-    public SymbolMapReader getSymbolMapReader(int i) {
-        return reader.getSymbolMapReader(columnIndexes.getQuick(i));
-    }
-
-    TablePageFrameCursor of(
-            TableReader reader, long maxRowsPerFrame, int timestampColumnIndex, IntList columnIndexes, IntList columnSizes, int partitionIndex, long partitionRowCount
-    ) {
-        of(reader, maxRowsPerFrame, timestampColumnIndex, columnIndexes, columnSizes);
-        this.partitionIndex = partitionIndex - 1;
-        frameFirstRow = partitionRowCount;
-
-        return this;
-    }
-
-    public TablePageFrameCursor of(TableReader reader, long maxRowsPerFrame, int timestampColumnIndex, IntList columnIndexes, IntList columnSizes) {
-        this.reader = reader;
-        this.maxRowsPerFrame = maxRowsPerFrame;
-        this.columnIndexes = columnIndexes;
-        this.columnSizes = columnSizes;
-        columnCount = columnIndexes.size();
-        this.timestampColumnIndex = timestampColumnIndex;
-        columnFrameAddresses.seed(columnCount, 0);
-        columnFrameLengths.seed(columnCount, 0);
-        columnTops.seed(columnCount, 0);
-        toTop();
-        return this;
     }
 
     @Override
@@ -218,48 +185,6 @@ public class TablePageFrameCursor implements PageFrameCursor {
         return null;
     }
 
-    private long calculateBinaryPagePosition(final ReadOnlyVirtualMemory col, final ReadOnlyVirtualMemory binLenCol, long row, long maxRows) {
-    	assert row > 0 && row <= maxRows;
-
-        if (row < maxRows) {
-            long binLenOffset = row << 3;
-            return binLenCol.getLong(binLenOffset);
-        }
-
-        long binLenOffset = (row -1) << 3;
-        long prevBinOffset = binLenCol.getLong(binLenOffset);
-        long binLen =  col.getInt(prevBinOffset);
-        long sz;
-        if (binLen == TableUtils.NULL_LEN) {
-            sz = Long.BYTES;
-        } else {
-            sz = Long.BYTES + binLen;
-        }
-        
-        return prevBinOffset + sz;
-    }
-
-    private long calculateStringPagePosition(final ReadOnlyVirtualMemory col, final ReadOnlyVirtualMemory strLenCol, long row, long maxRows) {
-        assert row > 0 && row <= maxRows;
-
-        if (row < maxRows) {
-            long strLenOffset = row << 3;
-            return strLenCol.getLong(strLenOffset);
-        }
-
-        long strLenOffset = (row -1) << 3;
-        long prevStrOffset = strLenCol.getLong(strLenOffset);
-        long strLen = col.getInt(prevStrOffset);
-        long sz;
-        if (strLen == TableUtils.NULL_LEN) {
-            sz = VmUtils.STRING_LENGTH_BYTES;
-        } else {
-            sz = VmUtils.STRING_LENGTH_BYTES + 2 * strLen;
-        }
-
-        return prevStrOffset + sz;
-    }
-
     @Override
     public void toTop() {
         partitionIndex = -1;
@@ -273,7 +198,88 @@ public class TablePageFrameCursor implements PageFrameCursor {
         return reader.size();
     }
 
+    @Override
+    public SymbolMapReader getSymbolMapReader(int i) {
+        return reader.getSymbolMapReader(columnIndexes.getQuick(i));
+    }
+
+    public TablePageFrameCursor of(TableReader reader, long maxRowsPerFrame, int timestampColumnIndex, IntList columnIndexes, IntList columnSizes) {
+        this.reader = reader;
+        this.maxRowsPerFrame = maxRowsPerFrame;
+        this.columnIndexes = columnIndexes;
+        this.columnSizes = columnSizes;
+        columnCount = columnIndexes.size();
+        this.timestampColumnIndex = timestampColumnIndex;
+        columnFrameAddresses.seed(columnCount, 0);
+        columnFrameLengths.seed(columnCount, 0);
+        columnTops.seed(columnCount, 0);
+        toTop();
+        return this;
+    }
+
+    private long calculateBinaryPagePosition(final ReadOnlyVirtualMemory col, final ReadOnlyVirtualMemory binLenCol, long row, long maxRows) {
+        assert row > 0 && row <= maxRows;
+
+        if (row < maxRows) {
+            long binLenOffset = row << 3;
+            return binLenCol.getLong(binLenOffset);
+        }
+
+        long binLenOffset = (row - 1) << 3;
+        long prevBinOffset = binLenCol.getLong(binLenOffset);
+        long binLen = col.getInt(prevBinOffset);
+        long sz;
+        if (binLen == TableUtils.NULL_LEN) {
+            sz = Long.BYTES;
+        } else {
+            sz = Long.BYTES + binLen;
+        }
+
+        return prevBinOffset + sz;
+    }
+
+    private long calculateStringPagePosition(final ReadOnlyVirtualMemory col, final ReadOnlyVirtualMemory strLenCol, long row, long maxRows) {
+        assert row > 0 && row <= maxRows;
+
+        if (row < maxRows) {
+            long strLenOffset = row << 3;
+            return strLenCol.getLong(strLenOffset);
+        }
+
+        long strLenOffset = (row - 1) << 3;
+        long prevStrOffset = strLenCol.getLong(strLenOffset);
+        long strLen = col.getInt(prevStrOffset);
+        long sz;
+        if (strLen == TableUtils.NULL_LEN) {
+            sz = VmUtils.STRING_LENGTH_BYTES;
+        } else {
+            sz = VmUtils.STRING_LENGTH_BYTES + 2 * strLen;
+        }
+
+        return prevStrOffset + sz;
+    }
+
+    TablePageFrameCursor of(
+            TableReader reader,
+            long maxRowsPerFrame,
+            int timestampColumnIndex,
+            IntList columnIndexes,
+            IntList columnSizes,
+            int partitionIndex,
+            long partitionRowCount
+    ) {
+        of(reader, maxRowsPerFrame, timestampColumnIndex, columnIndexes, columnSizes);
+        this.partitionIndex = partitionIndex - 1;
+        frameFirstRow = partitionRowCount;
+        return this;
+    }
+
     public class ReplicationPageFrame implements PageFrame {
+
+        @Override
+        public long getFirstTimestamp() {
+            return firstTimestamp;
+        }
 
         @Override
         public long getPageAddress(int i) {
@@ -281,17 +287,17 @@ public class TablePageFrameCursor implements PageFrameCursor {
         }
 
         @Override
-        public long getFirstTimestamp() {
-            return firstTimestamp;
+        public long getPageSize(int i) {
+            return columnFrameLengths.getQuick(i);
+        }
+
+        @Override
+        public int getColumnSize(int columnIndex) {
+            return columnSizes.getQuick(columnIndex);
         }
 
         public int getPartitionIndex() {
             return partitionIndex;
-        }
-
-        @Override
-        public long getPageSize(int i) {
-            return columnFrameLengths.getQuick(i);
         }
     }
 }

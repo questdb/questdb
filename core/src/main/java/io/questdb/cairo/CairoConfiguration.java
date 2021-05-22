@@ -227,15 +227,15 @@ public interface CairoConfiguration {
 
     int getTxnScoreboardEntryCount();
 
-    int getO3MaxUncommittedRows();
+    int getMaxUncommittedRows();
 
     /**
-     * Default commit hysteresis in microseconds for new tables. This value
+     * Default commit lag in microseconds for new tables. This value
      * can be overridden with 'create table' statement.
      *
-     * @return hysteresis in microseconds
+     * @return commit lag in microseconds
      */
-    long getO3CommitHysteresis();
+    long getCommitLag();
 
     boolean isO3QuickSortEnabled();
 }

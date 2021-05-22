@@ -194,8 +194,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int o3UpdPartitionSizeQueueCapacity;
     private final int o3PurgeDiscoveryQueueCapacity;
     private final int o3PurgeQueueCapacity;
-    private final int o3MaxUncommittedRows;
-    private final long o3CommitHystersis;
+    private final int maxUncommittedRows;
+    private final long commitLag;
     private final long instanceHashLo;
     private final long instanceHashHi;
     private final int sqlTxnScoreboardEntryCount;
@@ -634,8 +634,8 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.o3UpdPartitionSizeQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.o3.upd.partition.size.queue.capacity", 128));
             this.o3PurgeDiscoveryQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.o3.purge.discovery.queue.capacity", 128));
             this.o3PurgeQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.o3.purge.queue.capacity", 128));
-            this.o3MaxUncommittedRows = getInt(properties, env, "cairo.o3.max.uncommitted.rows", 500_000);
-            this.o3CommitHystersis = getLong(properties, env, "cairo.o3.commit.hysteresis.in.ms", 300_000) * 1_000;
+            this.maxUncommittedRows = getInt(properties, env, "cairo.max.uncommitted.rows", 500_000);
+            this.commitLag = getLong(properties, env, "cairo.commit.lag", 300_000) * 1_000;
             this.o3QuickSortEnabled = getBoolean(properties, env, "cairo.o3.quicksort.enabled", false);
             this.sqlAnalyticStorePageSize = Numbers.ceilPow2(getIntSize(properties, env, "cairo.sql.analytic.store.page.size", 1024 * 1024));
             this.sqlAnalyticStoreMaxPages = Numbers.ceilPow2(getIntSize(properties, env, "cairo.sql.analytic.store.max.pages", Integer.MAX_VALUE));
@@ -711,7 +711,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.lineTcpIOWorkerSleepThreshold = getLong(properties, env, "line.tcp.io.worker.sleep.threshold", 10000);
                 this.lineTcpNUpdatesPerLoadRebalance = getInt(properties, env, "line.tcp.n.updates.per.load.balance", 10_000_000);
                 this.lineTcpMaxLoadRatio = getDouble(properties, env, "line.tcp.max.load.ratio", 1.9);
-                this.lineTcpMaintenanceInterval = getInt(properties, env, "line.tcp.maintenance.job.hysteresis.in.ms", 30_000);
+                this.lineTcpMaintenanceInterval = getInt(properties, env, "line.tcp.maintenance.job.interval", 30_000);
                 this.lineTcpAuthDbPath = getString(properties, env, "line.tcp.auth.db.path", null);
                 String defaultPartitionByProperty = getString(properties, env, "line.tcp.default.partition.by", "DAY");
                 this.lineDefaultPartitionBy = PartitionBy.fromString(defaultPartitionByProperty);
@@ -1853,13 +1853,13 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getO3MaxUncommittedRows() {
-            return o3MaxUncommittedRows;
+        public int getMaxUncommittedRows() {
+            return maxUncommittedRows;
         }
 
         @Override
-        public long getO3CommitHysteresis() {
-            return o3CommitHystersis;
+        public long getCommitLag() {
+            return commitLag;
         }
 
         @Override

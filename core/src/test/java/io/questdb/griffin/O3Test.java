@@ -631,33 +631,38 @@ public class O3Test extends AbstractO3Test {
     }
 
     @Test
-    public void testVanillaHysteresis() throws Exception {
-        executeVanilla(O3Test::testVanillaHysteresis0);
+    public void testVanillaCommitLag() throws Exception {
+        executeVanilla(O3Test::testVanillaCommitLag0);
     }
 
     @Test
-    public void testVanillaHysteresisContended() throws Exception {
-        executeWithPool(0, O3Test::testVanillaHysteresis0);
+    public void testVanillaCommitLagContended() throws Exception {
+        executeWithPool(0, O3Test::testVanillaCommitLag0);
     }
 
     @Test
-    public void testVanillaHysteresisParallel() throws Exception {
-        executeWithPool(4, O3Test::testVanillaHysteresis0);
+    public void testLargeCommitLagContended() throws Exception {
+        executeWithPool(0, O3Test::testLargeCommitLag0);
     }
 
     @Test
-    public void testVanillaHysteresisSinglePartition() throws Exception {
-        executeVanilla(O3Test::testVanillaHysteresisSinglePartition0);
+    public void testVanillaCommitLagParallel() throws Exception {
+        executeWithPool(4, O3Test::testVanillaCommitLag0);
     }
 
     @Test
-    public void testVanillaHysteresisSinglePartitionContended() throws Exception {
-        executeWithPool(0, O3Test::testVanillaHysteresisSinglePartition0);
+    public void testVanillaCommitLagSinglePartition() throws Exception {
+        executeVanilla(O3Test::testVanillaCommitLagSinglePartition0);
     }
 
     @Test
-    public void testVanillaHysteresisSinglePartitionParallel() throws Exception {
-        executeWithPool(4, O3Test::testVanillaHysteresisSinglePartition0);
+    public void testVanillaCommitLagSinglePartitionContended() throws Exception {
+        executeWithPool(0, O3Test::testVanillaCommitLagSinglePartition0);
+    }
+
+    @Test
+    public void testVanillaCommitLagSinglePartitionParallel() throws Exception {
+        executeWithPool(4, O3Test::testVanillaCommitLagSinglePartition0);
     }
 
     @Test
@@ -1085,7 +1090,7 @@ public class O3Test extends AbstractO3Test {
                 r.putSym(1, symbols[index]);
                 r.append();
             }
-            w.commitHysteresis();
+            w.commitWithLag();
 
             // now do out of order
             for (int i = 0; i < 100_000; i++) {
@@ -1233,7 +1238,7 @@ public class O3Test extends AbstractO3Test {
         assertIndexConsistency(compiler, sqlExecutionContext);
     }
 
-    private static void testVanillaHysteresis0(
+    private static void testVanillaCommitLag0(
             CairoEngine engine,
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
@@ -1279,7 +1284,7 @@ public class O3Test extends AbstractO3Test {
                         " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
                         " rnd_symbol(4,4,4,2) ik," +
                         " rnd_long() j," +
-                        // the formula below creates hysteresis-friendly timestamp distribution
+                        // the formula below creates lag-friendly timestamp distribution
                         " cast(500000000000L + ((x-1)/4) * 1000000L + (4-(x-1)%4)*80009  as timestamp) ts," +
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m," +
@@ -1298,14 +1303,88 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext,
                 "create table y as (x union all top)",
                 "y order by ts",
-                "insert batch 100000 hysteresis 180000000 into x select * from top",
+                "insert batch 100000 lag 180000000 into x select * from top",
                 "x"
         );
 
         assertIndexConsistency(compiler, sqlExecutionContext);
     }
 
-    private static void testVanillaHysteresisSinglePartition0(
+    private static void testLargeCommitLag0(
+            CairoEngine engine,
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
+        compiler.compile(
+                "create table x as (" +
+                        "select" +
+                        " cast(x as int) i," +
+                        " rnd_symbol('msft','ibm', 'googl') sym," +
+                        " round(rnd_double(0)*100, 3) amt," +
+                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                        " rnd_boolean() b," +
+                        " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                        " rnd_double(2) d," +
+                        " rnd_float(2) e," +
+                        " rnd_short(10,1024) f," +
+                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                        " rnd_symbol(4,4,4,2) ik," +
+                        " rnd_long() j," +
+                        " timestamp_sequence(500000000000L,1000000L) ts," +
+                        " rnd_byte(2,50) l," +
+                        " rnd_bin(10, 20, 2) m," +
+                        " rnd_str(5,16,2) n," +
+                        " rnd_char() t," +
+                        " rnd_long256() l256" +
+                        " from long_sequence(0)" +
+                        "), index(sym) timestamp (ts) partition by MONTH",
+                sqlExecutionContext
+        );
+
+        compiler.compile("ALTER TABLE x SET PARAM maxUncommittedRows = 2000000", sqlExecutionContext);
+
+        compiler.compile(
+                "create table top as (" +
+                        "select" +
+                        " cast(x as int) i," +
+                        " rnd_symbol('msft','ibm', 'googl') sym," +
+                        " round(rnd_double(0)*100, 3) amt," +
+                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                        " rnd_boolean() b," +
+                        " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                        " rnd_double(2) d," +
+                        " rnd_float(2) e," +
+                        " rnd_short(10,1024) f," +
+                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                        " rnd_symbol(4,4,4,2) ik," +
+                        " rnd_long() j," +
+                        // the formula below creates lag-friendly timestamp distribution
+                        " cast(500000000000L + ((x-1)/4) * 1000L + (4-(x-1)%4)*89  as timestamp) ts," +
+                        " rnd_byte(2,50) l," +
+                        " rnd_bin(10, 20, 2) m," +
+                        " rnd_str(5,16,2) n," +
+                        " rnd_char() t," +
+                        " rnd_long256() l256" +
+                        " from long_sequence(2096128)" +
+                        ")",
+                sqlExecutionContext
+        );
+
+        // create third table, which will contain both X and 1AM
+        assertO3DataCursors(
+                engine,
+                compiler,
+                sqlExecutionContext,
+                "create table y as (x union all top)",
+                "y order by ts",
+                "insert batch 2000000 lag 180000000 into x select * from top",
+                "x"
+        );
+
+        assertIndexConsistency(compiler, sqlExecutionContext);
+    }
+
+    private static void testVanillaCommitLagSinglePartition0(
             CairoEngine engine,
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
@@ -1351,7 +1430,7 @@ public class O3Test extends AbstractO3Test {
                         " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
                         " rnd_symbol(4,4,4,2) ik," +
                         " rnd_long() j," +
-                        // the formula below creates hysteresis-friendly timestamp distribution
+                        // the formula below creates lag-friendly timestamp distribution
                         " cast(500000000000L + ((x-1)/4) * 1000000L + (4-(x-1)%4)*80009  as timestamp) ts," +
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m," +
@@ -1369,10 +1448,10 @@ public class O3Test extends AbstractO3Test {
                 compiler,
                 sqlExecutionContext,
                 "create table y as (x union all top)",
-                // combination of row count in "top" table, batch size and hysteresis value land
+                // combination of row count in "top" table, batch size and lag value land
                 // rows into single partition, which causes internal state to corrupt
                 // please do not change these values unless you know what you're doing
-                "insert batch 100 hysteresis 300000000 into x select * from top"
+                "insert batch 100 lag 300000000 into x select * from top"
         );
 
         assertIndexConsistency(compiler, sqlExecutionContext);
@@ -5031,6 +5110,30 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext,
                 "/o3/testPartitionedDataOODataPbOOData_Index.txt"
         );
+    }
+
+    @Test
+    public void testInsertNullTimestamp() throws Exception {
+        executeWithPool(2, (engine, compiler, sqlExecutionContext) -> {
+            compiler.compile(
+                    "create table x as (" +
+                            "select" +
+                            " cast(x as int) i," +
+                            " rnd_symbol('msft','ibm', 'googl') sym," +
+                            " timestamp_sequence(10000000000,1000000000L) ts" +
+                            " from long_sequence(100)" +
+                            "), index(sym) timestamp (ts) partition by DAY",
+                    sqlExecutionContext
+            );
+
+            // to_timestamp produces NULL because values does not match the pattern
+            try {
+                TestUtils.insert(compiler, sqlExecutionContext, "insert into x values(0, 'abc', to_timestamp('2019-08-15T16:03:06.595', 'yyyy-MM-dd:HH:mm:ss.SSSUUU'))");
+                Assert.fail();
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "timestamps before 0001-01-01 are not allowed for O3");
+            }
+        });
     }
 
     private static void testPartitionedDataOODataPbOODataDropColumn0(

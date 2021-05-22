@@ -1,0 +1,29 @@
+#
+# Running timescale with tsbs benchmark on amazon m5.8xlarge instance pim-ilp-perf-test
+#
+
+# postgres client
+sudo yum install postgresql.x86_64
+
+# docker
+sudo yum install docker
+sudo systemctl enable docker
+sudo systemctl start docker
+
+# timescale in docker
+sudo docker pull timescale/timescaledb:2.2.0-pg13
+POSTGRES_PASSWORD=`dd if=/dev/urandom count=5 | sha1sum | awk '{print $1}'`
+TIMESCALE_DOCKER_ID=`sudo docker run -d --name timescaledb -p 127.0.0.1:5432:5432 -e POSTGRES_PASSWORD=${POSTGRES_PASSWORD} timescale/timescaledb:2.2.0-pg13`
+PGPASSWORD=${POSTGRES_PASSWORD} psql -h 127.0.0.1 -p 5432 -U postgres
+
+# run tsbs
+~/tmp/go/bin/tsbs_generate_data --use-case="cpu-only" --seed=123 --scale=4000 --timestamp-start="2016-01-01T00:00:00Z" --timestamp-end="2016-01-02T00:00:00Z" --log-interval="10s" --format="timescaledb" > /tmp/bigcpu3
+~/tmp/go/bin/tsbs_load_timescaledb --pass ${POSTGRES_PASSWORD} --file /tmp/bigcpu3 --workers 4
+
+# stop everything
+sudo docker stop ${TIMESCALE_DOCKER_ID}
+sudo docker rm ${TIMESCALE_DOCKER_ID}
+sudo docker volume rm $(sudo docker volume ls -q)
+sudo docker ps
+sudo systemctl stop docker
+sudo systemctl disable docker

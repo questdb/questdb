@@ -33,7 +33,7 @@ import io.questdb.std.ObjList;
 public class CountLong256GroupByFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "count(H)";
+        return "count_distinct(H)";
     }
 
     @Override

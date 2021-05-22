@@ -523,14 +523,14 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
 
     private void assertPartitionResult(String expectedBeforeDrop, String intervalSearch) throws SqlException {
         assertSql(
-                "select count() from x where timestamp = '" + intervalSearch + "'",
+                "select count() from x where timestamp in '" + intervalSearch + "'",
                 expectedBeforeDrop
         );
     }
 
     private void assertPartitionResultForTimestampColumnNameTs(String expectedBeforeDrop, String intervalSearch) throws SqlException {
         assertSql(
-                "select count() from x where ts = '" + intervalSearch + "'",
+                "select count() from x where ts in '" + intervalSearch + "'",
                 expectedBeforeDrop
         );
     }

@@ -883,6 +883,16 @@ public class AbstractGriffinTest extends AbstractCairoTest {
         );
     }
 
+    protected void assertSqlWithTypes(CharSequence sql, CharSequence expected) throws SqlException {
+        TestUtils.assertSqlWithTypes(
+                compiler,
+                sqlExecutionContext,
+                sql,
+                sink,
+                expected
+        );
+    }
+
     protected void createPopulateTable(
             TableModel tableModel,
             int totalRows,

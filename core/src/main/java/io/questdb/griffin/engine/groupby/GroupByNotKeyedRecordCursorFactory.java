@@ -24,12 +24,9 @@
 
 package io.questdb.griffin.engine.groupby;
 
-import io.questdb.cairo.CairoError;
-import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionInterruptor;
-import io.questdb.griffin.engine.EmptyTableRecordCursor;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.MultiArgFunction;
 import io.questdb.std.Misc;
@@ -127,22 +124,20 @@ public class GroupByNotKeyedRecordCursorFactory implements RecordCursorFactory {
 
             final Record baseRecord = baseCursor.getRecord();
             final int n = groupByFunctions.size();
+            MultiArgFunction.init(groupByFunctions, baseCursor, executionContext);
 
             if (baseCursor.hasNext()) {
                 GroupByUtils.updateNew(groupByFunctions, n, simpleMapValue, baseRecord);
-            } else {
-                this.baseCursor = Misc.free(baseCursor);
-                return EmptyTableRecordCursor.INSTANCE;
-            }
 
-            while (baseCursor.hasNext()) {
-                interruptor.checkInterrupted();
-                GroupByUtils.updateExisting(groupByFunctions, n, simpleMapValue, baseRecord);
+                while (baseCursor.hasNext()) {
+                    interruptor.checkInterrupted();
+                    GroupByUtils.updateExisting(groupByFunctions, n, simpleMapValue, baseRecord);
+                }
+            } else {
+                GroupByUtils.updateEmpty(groupByFunctions, n, simpleMapValue);
             }
 
             toTop();
-
-            MultiArgFunction.init(groupByFunctions, baseCursor, executionContext);
             return this;
         }
 

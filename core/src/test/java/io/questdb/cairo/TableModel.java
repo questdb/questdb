@@ -181,12 +181,12 @@ public class TableModel implements TableStructure, Closeable {
     }
 
     @Override
-    public int getO3MaxUncommittedRows() {
-        return cairoCfg.getO3MaxUncommittedRows();
+    public int getMaxUncommittedRows() {
+        return cairoCfg.getMaxUncommittedRows();
     }
 
     @Override
-    public long getO3CommitHysteresisInMicros() {
-        return cairoCfg.getO3CommitHysteresis();
+    public long getCommitLag() {
+        return cairoCfg.getCommitLag();
     }
 }

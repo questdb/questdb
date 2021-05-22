@@ -56,8 +56,8 @@
         </dependency>
         <dependency>
             <groupId>org.questdb</groupId>
-            <artifactId>${questdb.artifactid}</artifactId>
-            <version>6.0.1-SNAPSHOT</version>
+            <artifactId>questdb</artifactId>
+            <version>6.0.2-SNAPSHOT</version>
         </dependency>
         <dependency>
             <groupId>org.apache.logging.log4j</groupId>
