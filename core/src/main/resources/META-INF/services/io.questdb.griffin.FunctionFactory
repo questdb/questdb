@@ -498,3 +498,13 @@ io.questdb.griffin.engine.functions.analytic.RowNumberFunctionFactory
 
 # metadata functions
 io.questdb.griffin.engine.functions.metadata.BuildFunctionFactory
+
+# Bitwise operators
+io.questdb.griffin.engine.functions.math.BitwiseAndLongFunctionFactory
+io.questdb.griffin.engine.functions.math.BitwiseOrLongFunctionFactory
+io.questdb.griffin.engine.functions.math.BitwiseXorLongFunctionFactory
+io.questdb.griffin.engine.functions.math.BitwiseNotLongFunctionFactory
+io.questdb.griffin.engine.functions.math.BitwiseAndIntFunctionFactory
+io.questdb.griffin.engine.functions.math.BitwiseOrIntFunctionFactory
+io.questdb.griffin.engine.functions.math.BitwiseXorIntFunctionFactory
+io.questdb.griffin.engine.functions.math.BitwiseNotIntFunctionFactory

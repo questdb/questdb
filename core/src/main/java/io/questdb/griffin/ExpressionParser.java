@@ -679,7 +679,7 @@ class ExpressionParser {
 
                         int operatorType = op.type;
 
-                        if (thisChar == '-') {
+                        if (thisChar == '-' || thisChar == '~') {
                             switch (prevBranch) {
                                 case BRANCH_OPERATOR:
                                 case BRANCH_LEFT_BRACE:
