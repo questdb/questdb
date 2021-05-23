@@ -869,8 +869,8 @@ public class O3Test extends AbstractO3Test {
             pool2.halt();
 
             Assert.assertEquals(0, errorCount.get());
-            assertSqlCursors(compiler, executionContext, "z order by ts", "x", LOG);
-            assertSqlCursors(compiler, executionContext, "z order by ts", "x1", LOG);
+            TestUtils.assertSqlCursors(compiler, executionContext, "z order by ts", "x", LOG);
+            TestUtils.assertSqlCursors(compiler, executionContext, "z order by ts", "x1", LOG);
         }
     }
 
