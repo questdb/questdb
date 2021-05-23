@@ -38,9 +38,6 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
-import java.sql.CallableStatement;
-import java.sql.PreparedStatement;
-
 public class JoinTest extends AbstractGriffinTest {
     @Before
     public void setUp3() {

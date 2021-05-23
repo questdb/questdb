@@ -508,7 +508,7 @@ public class ExpressionParserTest extends AbstractCairoTest {
 
     @Test
     public void testComplexUnary2() throws Exception {
-        x("ab^-", "-a^b");
+        x("a-b^", "-a^b");
     }
 
     @Test

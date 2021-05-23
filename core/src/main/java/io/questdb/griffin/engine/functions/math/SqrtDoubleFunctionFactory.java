@@ -29,46 +29,38 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.DoubleFunction;
+import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.ObjList;
 
-public class PowDoubleFunctionFactory implements FunctionFactory {
+public class SqrtDoubleFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "power(DD)";
+        return "sqrt(D)";
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration1, SqlExecutionContext sqlExecutionContext) {
-        return new SubtractIntVVFunc(position, args.getQuick(0), args.getQuick(1));
+    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+        return new SqrtFunction(position, args.getQuick(0));
     }
 
-    private static class SubtractIntVVFunc extends DoubleFunction implements BinaryFunction {
-        final Function left;
-        final Function right;
+    private static class SqrtFunction extends DoubleFunction implements UnaryFunction {
+        final Function function;
 
-        public SubtractIntVVFunc(int position, Function left, Function right) {
+        public SqrtFunction(int position, Function function) {
             super(position);
-            this.left = left;
-            this.right = right;
+            this.function = function;
         }
 
         @Override
-        public Function getLeft() {
-            return left;
-        }
-
-        @Override
-        public Function getRight() {
-            return right;
+        public Function getArg() {
+            return function;
         }
 
         @Override
         public double getDouble(Record rec) {
-            double l = left.getDouble(rec);
-            double r = right.getDouble(rec);
-            return Math.pow(l, r);
+            double value = function.getDouble(rec);
+            return Math.sqrt(value);
         }
     }
 }

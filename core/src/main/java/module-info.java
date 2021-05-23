@@ -23,6 +23,7 @@
  ******************************************************************************/
 
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.engine.functions.math.*;
 
 open module io.questdb {
     requires transitive jdk.unsupported;
@@ -153,6 +154,8 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.math.AbsShortFunctionFactory,
             io.questdb.griffin.engine.functions.math.AbsLongFunctionFactory,
             io.questdb.griffin.engine.functions.math.AbsDoubleFunctionFactory,
+            io.questdb.griffin.engine.functions.math.LogDoubleFunctionFactory,
+            io.questdb.griffin.engine.functions.math.SqrtDoubleFunctionFactory,
 //                    # '~=',
             io.questdb.griffin.engine.functions.regex.MatchStrFunctionFactory,
             io.questdb.griffin.engine.functions.regex.MatchCharFunctionFactory,
@@ -530,6 +533,16 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.analytic.RowNumberFunctionFactory,
 
             // metadata functions
-            io.questdb.griffin.engine.functions.metadata.BuildFunctionFactory
+            io.questdb.griffin.engine.functions.metadata.BuildFunctionFactory,
+
+            // bit operations
+            BitwiseAndLongFunctionFactory,
+            BitwiseOrLongFunctionFactory,
+            BitwiseNotLongFunctionFactory,
+            BitwiseXorLongFunctionFactory,
+            BitwiseAndIntFunctionFactory,
+            BitwiseOrIntFunctionFactory,
+            BitwiseNotIntFunctionFactory,
+            BitwiseXorIntFunctionFactory
             ;
 }

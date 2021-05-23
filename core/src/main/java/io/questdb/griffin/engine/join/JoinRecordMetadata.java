@@ -146,7 +146,6 @@ public class JoinRecordMetadata extends BaseRecordMetadata implements Closeable 
             key.putStrLowerCase(columnName, 0, dot);
             key.putStrLowerCase(columnName, dot + 1, columnName.length());
         }
-
         MapValue value = key.findValue();
         if (value != null) {
             return value.getInt(0);
