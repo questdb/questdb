@@ -28,27 +28,29 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
-import io.questdb.griffin.engine.functions.DoubleFunction;
+import io.questdb.griffin.engine.functions.IntFunction;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
-public class PowDoubleFunctionFactory implements FunctionFactory {
+public class BitwiseOrIntFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "power(DD)";
+        return "|(II)";
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration1, SqlExecutionContext sqlExecutionContext) {
-        return new SubtractIntVVFunc(position, args.getQuick(0), args.getQuick(1));
+    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        return new BitOrIntFunction(position, args.getQuick(0), args.getQuick(1));
     }
 
-    private static class SubtractIntVVFunc extends DoubleFunction implements BinaryFunction {
-        final Function left;
-        final Function right;
+    public static final class BitOrIntFunction extends IntFunction implements BinaryFunction {
+        private final Function left;
+        private final Function right;
 
-        public SubtractIntVVFunc(int position, Function left, Function right) {
+        public BitOrIntFunction(int position, Function left, Function right) {
             super(position);
             this.left = left;
             this.right = right;
@@ -65,10 +67,10 @@ public class PowDoubleFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public double getDouble(Record rec) {
-            double l = left.getDouble(rec);
-            double r = right.getDouble(rec);
-            return Math.pow(l, r);
+        public int getInt(Record rec) {
+            final int l = left.getInt(rec);
+            final int r = right.getInt(rec);
+            return l != Numbers.INT_NaN && r != Numbers.INT_NaN ? l | r : Numbers.INT_NaN;
         }
     }
 }
