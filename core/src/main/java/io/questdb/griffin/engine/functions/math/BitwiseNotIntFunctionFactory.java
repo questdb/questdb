@@ -28,47 +28,41 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.BinaryFunction;
-import io.questdb.griffin.engine.functions.DoubleFunction;
+import io.questdb.griffin.engine.functions.IntFunction;
+import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
-public class PowDoubleFunctionFactory implements FunctionFactory {
+public class BitwiseNotIntFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "power(DD)";
+        return "~(I)";
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration1, SqlExecutionContext sqlExecutionContext) {
-        return new SubtractIntVVFunc(position, args.getQuick(0), args.getQuick(1));
+    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        return new BitNotIntFunction(position, args.getQuick(0));
     }
 
-    private static class SubtractIntVVFunc extends DoubleFunction implements BinaryFunction {
-        final Function left;
-        final Function right;
+    public static final class BitNotIntFunction extends IntFunction implements UnaryFunction {
+        private final Function value;
 
-        public SubtractIntVVFunc(int position, Function left, Function right) {
+        public BitNotIntFunction(int position, Function value) {
             super(position);
-            this.left = left;
-            this.right = right;
+            this.value = value;
         }
 
         @Override
-        public Function getLeft() {
-            return left;
+        public Function getArg() {
+            return value;
         }
 
         @Override
-        public Function getRight() {
-            return right;
-        }
-
-        @Override
-        public double getDouble(Record rec) {
-            double l = left.getDouble(rec);
-            double r = right.getDouble(rec);
-            return Math.pow(l, r);
+        public int getInt(Record rec) {
+            final int val = value.getInt(rec);
+            return val != Numbers.INT_NaN ? ~val : Numbers.INT_NaN;
         }
     }
 }
