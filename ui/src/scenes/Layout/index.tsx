@@ -41,7 +41,6 @@ import Sidebar from "../Sidebar"
 import { LocalStorageProvider } from "providers/LocalStorageProvider"
 import { QuestProvider } from "providers"
 
-
 const Top = styled.div`
   position: relative;
   overflow: hidden;
@@ -94,12 +93,13 @@ const Layout = () => {
             </Splitter>,
             consoleNode,
           )}
-        {notificationsNode && createPortal(<Notifications />, notificationsNode)}
+        {notificationsNode &&
+          createPortal(<Notifications />, notificationsNode)}
         {sideMenuNode && createPortal(<SideMenu />, sideMenuNode)}
         {modalNode && createPortal(<Modal />, modalNode)}
         {settingsNode && createPortal(<Settings />, settingsNode)}
-      </LocalStorageProvider>
-    </QuestProvider>
+      </QuestProvider>
+    </LocalStorageProvider>
   )
 }
 
