@@ -40,12 +40,6 @@ import org.jetbrains.annotations.Nullable;
 
 public abstract class SymbolFunction implements ScalarFunction, SymbolTable {
 
-    private final int position;
-
-    public SymbolFunction(int position) {
-        this.position = position;
-    }
-
     @Override
     public final BinarySequence getBin(Record rec) {
         throw new UnsupportedOperationException();
@@ -104,11 +98,6 @@ public abstract class SymbolFunction implements ScalarFunction, SymbolTable {
     @Override
     public Long256 getLong256B(Record rec) {
         throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public int getPosition() {
-        return position;
     }
 
     @Override

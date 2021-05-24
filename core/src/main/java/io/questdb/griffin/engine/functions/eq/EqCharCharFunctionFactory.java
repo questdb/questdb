@@ -31,6 +31,7 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
+import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class EqCharCharFunctionFactory implements FunctionFactory {
@@ -45,7 +46,7 @@ public class EqCharCharFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         // there are optimisation opportunities
         // 1. when one of args is constant null comparison can boil down to checking
         //    length of non-constant (must be -1)
@@ -54,15 +55,14 @@ public class EqCharCharFunctionFactory implements FunctionFactory {
         Function chrFunc1 = args.getQuick(0);
         Function chrFunc2 = args.getQuick(1);
 
-        return new Func(position, chrFunc1, chrFunc2);
+        return new Func(chrFunc1, chrFunc2);
     }
 
     private static class Func extends NegatableBooleanFunction implements BinaryFunction {
         private final Function chrFunc1;
         private final Function chrFunc2;
 
-        public Func(int position, Function chrFunc1, Function chrFunc2) {
-            super(position);
+        public Func(Function chrFunc1, Function chrFunc2) {
             this.chrFunc1 = chrFunc1;
             this.chrFunc2 = chrFunc2;
         }

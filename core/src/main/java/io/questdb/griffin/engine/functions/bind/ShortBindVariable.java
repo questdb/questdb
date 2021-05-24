@@ -32,10 +32,6 @@ import io.questdb.std.Mutable;
 class ShortBindVariable extends ShortFunction implements ScalarFunction, Mutable {
     short value;
 
-    public ShortBindVariable() {
-        super(0);
-    }
-
     @Override
     public short getShort(Record rec) {
         return value;

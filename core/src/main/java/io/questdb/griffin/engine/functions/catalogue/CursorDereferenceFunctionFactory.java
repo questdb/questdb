@@ -34,6 +34,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.IntFunction;
+import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class CursorDereferenceFunctionFactory implements FunctionFactory {
@@ -43,7 +44,13 @@ public class CursorDereferenceFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
         Function cursorFunction = args.getQuick(0);
         Function columnNameFunction = args.getQuick(1);
         RecordMetadata metadata = cursorFunction.getMetadata();
@@ -51,7 +58,7 @@ public class CursorDereferenceFunctionFactory implements FunctionFactory {
         final CharSequence columnName = columnNameFunction.getStr(null);
         final int columnIndex = metadata.getColumnIndexQuiet(columnName);
         if (columnIndex == -1) {
-            throw SqlException.invalidColumn(columnNameFunction.getPosition(), columnName);
+            throw SqlException.invalidColumn(argPositions.getQuick(1), columnName);
         }
         final int columnType = metadata.getColumnType(columnIndex);
 
@@ -64,7 +71,7 @@ public class CursorDereferenceFunctionFactory implements FunctionFactory {
             );
         }
 
-        throw SqlException.$(columnNameFunction.getPosition(), "unsupported column type: ").put(ColumnType.nameOf(columnType));
+        throw SqlException.$(argPositions.getQuick(1), "unsupported column type: ").put(ColumnType.nameOf(columnType));
     }
 
     private static class IntColumnFunction extends IntFunction implements BinaryFunction {
@@ -78,7 +85,7 @@ public class CursorDereferenceFunctionFactory implements FunctionFactory {
                 Function columnNameFunction,
                 int columnIndex
         ) {
-            super(position);
+            super();
             this.cursorFunction = cursorFunction;
             this.columnNameFunction = columnNameFunction;
             this.columnIndex = columnIndex;

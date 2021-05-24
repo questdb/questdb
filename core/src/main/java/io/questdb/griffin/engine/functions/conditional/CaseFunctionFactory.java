@@ -31,6 +31,7 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.constants.Constants;
+import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 
@@ -41,18 +42,27 @@ public class CaseFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(@Transient ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    public Function newInstance(
+            int position,
+            @Transient ObjList<Function> args,
+            @Transient IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
         int n = args.size();
         int returnType = -1;
         final ObjList<Function> vars = new ObjList<>(n);
         final ObjList<Function> argsToPoke = new ObjList<>(n);
 
         Function elseBranch;
+        int elseBranchPosition;
         if (n % 2 == 1) {
             elseBranch = args.getQuick(n - 1);
+            elseBranchPosition = argPositions.getQuick(n -1);
             n--;
         } else {
             elseBranch = null;
+            elseBranchPosition = 0;
         }
 
         // compute return type in this loop
@@ -61,10 +71,10 @@ public class CaseFunctionFactory implements FunctionFactory {
             Function value = args.getQuick(i + 1);
 
             if (bool.getType() != ColumnType.BOOLEAN) {
-                throw SqlException.position(bool.getPosition()).put("BOOLEAN expected, found ").put(ColumnType.nameOf(bool.getType()));
+                throw SqlException.position(argPositions.getQuick(i)).put("BOOLEAN expected, found ").put(ColumnType.nameOf(bool.getType()));
             }
 
-            returnType = CaseCommon.getCommonType(returnType, value.getType(), value.getPosition());
+            returnType = CaseCommon.getCommonType(returnType, value.getType(), argPositions.getQuick(i+1));
 
             vars.add(bool);
             vars.add(value);
@@ -74,7 +84,7 @@ public class CaseFunctionFactory implements FunctionFactory {
         }
 
         if (elseBranch != null) {
-            returnType = CaseCommon.getCommonType(returnType, elseBranch.getType(), elseBranch.getPosition());
+            returnType = CaseCommon.getCommonType(returnType, elseBranch.getType(), elseBranchPosition);
             argsToPoke.add(elseBranch);
         }
 
@@ -82,6 +92,7 @@ public class CaseFunctionFactory implements FunctionFactory {
         for (int i = 1; i < n; i += 2) {
             vars.setQuick(i, CaseCommon.getCastFunction(
                     vars.getQuick(i),
+                    argPositions.getQuick(i),
                     returnType,
                     configuration,
                     sqlExecutionContext
@@ -89,7 +100,7 @@ public class CaseFunctionFactory implements FunctionFactory {
         }
 
         if (elseBranch != null) {
-            elseBranch = CaseCommon.getCastFunction(elseBranch, returnType, configuration, sqlExecutionContext);
+            elseBranch = CaseCommon.getCastFunction(elseBranch, elseBranchPosition, returnType, configuration, sqlExecutionContext);
         }
 
         final int argsLen = vars.size();

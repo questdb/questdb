@@ -34,6 +34,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.std.Chars;
+import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 
@@ -44,17 +45,21 @@ public class RndStringListFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
         if (args == null) {
-            return new RndStrFunction(position, 3, 10, 1);
+            return new RndStrFunction(3, 10, 1);
         }
 
         final ObjList<String> symbols = new ObjList<>(args.size());
-        copyConstants(args, symbols);
-        return new Func(position, symbols);
+        copyConstants(args, argPositions, symbols);
+        return new Func(symbols);
     }
 
-    static void copyConstants(ObjList<Function> args, ObjList<String> symbols) throws SqlException {
+    static void copyConstants(
+            ObjList<Function> args,
+            IntList argPositions,
+            ObjList<String> symbols
+    ) throws SqlException {
         for (int i = 0, n = args.size(); i < n; i++) {
             final Function f = args.getQuick(i);
             if (f.isConstant()) {
@@ -67,7 +72,7 @@ public class RndStringListFunctionFactory implements FunctionFactory {
                     continue;
                 }
             }
-            throw SqlException.$(f.getPosition(), "STRING constant expected");
+            throw SqlException.$(argPositions.getQuick(i), "STRING constant expected");
         }
     }
 
@@ -76,8 +81,7 @@ public class RndStringListFunctionFactory implements FunctionFactory {
         private final int count;
         private Rnd rnd;
 
-        public Func(int position, ObjList<String> symbols) {
-            super(position);
+        public Func(ObjList<String> symbols) {
             this.symbols = symbols;
             this.count = symbols.size();
         }

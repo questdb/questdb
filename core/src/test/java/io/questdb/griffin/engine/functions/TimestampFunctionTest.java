@@ -34,7 +34,7 @@ import org.junit.Test;
 public class TimestampFunctionTest {
     // assert that all type casts that are not possible will throw exception
 
-    private static final TimestampFunction function = new TimestampFunction(25) {
+    private static final TimestampFunction function = new TimestampFunction() {
         @Override
         public long getTimestamp(Record rec) {
             return 145000L;
@@ -68,7 +68,7 @@ public class TimestampFunctionTest {
 
     @Test
     public void testGetNullDate() {
-        final TimestampFunction function = new TimestampFunction(25) {
+        final TimestampFunction function = new TimestampFunction() {
             @Override
             public long getTimestamp(Record rec) {
                 return Numbers.LONG_NaN;
@@ -99,11 +99,6 @@ public class TimestampFunctionTest {
     @Test
     public void testGetLong() {
         Assert.assertEquals(145000, function.getLong(null));
-    }
-
-    @Test
-    public void testGetPosition() {
-        Assert.assertEquals(25, function.getPosition());
     }
 
     @Test(expected = UnsupportedOperationException.class)

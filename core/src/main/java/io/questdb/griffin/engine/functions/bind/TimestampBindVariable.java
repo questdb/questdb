@@ -33,10 +33,6 @@ import io.questdb.std.Numbers;
 class TimestampBindVariable extends TimestampFunction implements ScalarFunction, Mutable {
     long value;
 
-    public TimestampBindVariable() {
-        super(0);
-    }
-
     @Override
     public void clear() {
         this.value = Numbers.LONG_NaN;

@@ -32,10 +32,6 @@ import io.questdb.std.Mutable;
 class FloatBindVariable extends FloatFunction implements ScalarFunction, Mutable {
     float value;
 
-    public FloatBindVariable() {
-        super(0);
-    }
-
     @Override
     public void clear() {
         this.value = Float.NaN;

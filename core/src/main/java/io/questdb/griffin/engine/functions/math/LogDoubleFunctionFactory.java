@@ -31,6 +31,7 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class LogDoubleFunctionFactory implements FunctionFactory {
@@ -41,19 +42,17 @@ public class LogDoubleFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(
-            ObjList<Function> args,
-            int position,
-            CairoConfiguration configuration,
+            int position, ObjList<Function> args,
+            IntList argPositions, CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        return new LogFunction(position, args.getQuick(0));
+        return new LogFunction(args.getQuick(0));
     }
 
     private static class LogFunction extends DoubleFunction implements UnaryFunction {
         final Function function;
 
-        public LogFunction(int position, Function function) {
-            super(position);
+        public LogFunction(Function function) {
             this.function = function;
         }
 

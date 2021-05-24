@@ -39,8 +39,7 @@ public class FirstDateGroupByFunction extends DateFunction implements GroupByFun
     private final Function arg;
     private int valueIndex;
 
-    public FirstDateGroupByFunction(int position, @NotNull Function arg) {
-        super(position);
+    public FirstDateGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
     }
 

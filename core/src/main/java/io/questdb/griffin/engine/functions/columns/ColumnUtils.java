@@ -22,34 +22,8 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.constants;
+package io.questdb.griffin.engine.functions.columns;
 
-import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.engine.functions.StrFunction;
-import io.questdb.std.str.CharSink;
-
-public class NullStrConstant extends StrFunction implements ConstantFunction {
-
-    public NullStrConstant(int position) {
-        super(position);
-    }
-
-    @Override
-    public CharSequence getStr(Record rec) {
-        return null;
-    }
-
-    @Override
-    public CharSequence getStrB(Record rec) {
-        return null;
-    }
-
-    @Override
-    public void getStr(Record rec, CharSink sink) {
-    }
-
-    @Override
-    public int getStrLen(Record rec) {
-        return -1;
-    }
+public class ColumnUtils {
+    static int STATIC_COLUMN_COUNT = 32;
 }

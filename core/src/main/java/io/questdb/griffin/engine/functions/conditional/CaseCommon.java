@@ -40,6 +40,7 @@ public class CaseCommon {
     private static final LongIntHashMap typeEscalationMap = new LongIntHashMap();
     private static final LongObjHashMap<FunctionFactory> castFactories = new LongObjHashMap<>();
     private static final ThreadLocal<ObjList<Function>> tlArgs = new ThreadLocal<>(ObjList::new);
+    private static final ThreadLocal<IntList> tlArgPositions = new ThreadLocal<>(IntList::new);
 
     static {
         // self for all
@@ -263,20 +264,20 @@ public class CaseCommon {
 
     static {
         constructors.set(0, ColumnType.MAX, null);
-        constructors.extendAndSet(ColumnType.STRING, StrCaseFunction::new);
+        constructors.extendAndSet(ColumnType.STRING, (position1, picker1, args1) -> new StrCaseFunction(picker1, args1));
         constructors.extendAndSet(ColumnType.INT, IntCaseFunction::new);
-        constructors.extendAndSet(ColumnType.LONG, LongCaseFunction::new);
-        constructors.extendAndSet(ColumnType.BYTE, ByteCaseFunction::new);
-        constructors.extendAndSet(ColumnType.BOOLEAN, BooleanCaseFunction::new);
-        constructors.extendAndSet(ColumnType.SHORT, ShortCaseFunction::new);
-        constructors.extendAndSet(ColumnType.CHAR, CharCaseFunction::new);
-        constructors.extendAndSet(ColumnType.FLOAT, FloatCaseFunction::new);
-        constructors.extendAndSet(ColumnType.DOUBLE, DoubleCaseFunction::new);
-        constructors.extendAndSet(ColumnType.LONG256, Long256CaseFunction::new);
-        constructors.extendAndSet(ColumnType.SYMBOL, StrCaseFunction::new);
-        constructors.extendAndSet(ColumnType.DATE, DateCaseFunction::new);
-        constructors.extendAndSet(ColumnType.TIMESTAMP, TimestampCaseFunction::new);
-        constructors.extendAndSet(ColumnType.BINARY, BinCaseFunction::new);
+        constructors.extendAndSet(ColumnType.LONG, (position2, picker2, args2) -> new LongCaseFunction(picker2, args2));
+        constructors.extendAndSet(ColumnType.BYTE, (position2, picker2, args2) -> new ByteCaseFunction(picker2, args2));
+        constructors.extendAndSet(ColumnType.BOOLEAN, (position1, picker1, args1) -> new BooleanCaseFunction(picker1, args1));
+        constructors.extendAndSet(ColumnType.SHORT, (position3, picker3, args3) -> new ShortCaseFunction(picker3, args3));
+        constructors.extendAndSet(ColumnType.CHAR, (position2, picker2, args2) -> new CharCaseFunction(picker2, args2));
+        constructors.extendAndSet(ColumnType.FLOAT, (position1, picker1, args1) -> new FloatCaseFunction(picker1, args1));
+        constructors.extendAndSet(ColumnType.DOUBLE, (position1, picker1, args1) -> new DoubleCaseFunction(picker1, args1));
+        constructors.extendAndSet(ColumnType.LONG256, (position1, picker1, args1) -> new Long256CaseFunction(picker1, args1));
+        constructors.extendAndSet(ColumnType.SYMBOL, (position, picker, args) -> new StrCaseFunction(picker, args));
+        constructors.extendAndSet(ColumnType.DATE, (position, picker, args) -> new DateCaseFunction(picker, args));
+        constructors.extendAndSet(ColumnType.TIMESTAMP, (position, picker, args) -> new TimestampCaseFunction(picker, args));
+        constructors.extendAndSet(ColumnType.BINARY, (position, picker, args) -> new BinCaseFunction(picker, args));
     }
 
     static int getCommonType(int commonType, int valueType, int valuePos) throws SqlException {
@@ -293,6 +294,7 @@ public class CaseCommon {
 
     static Function getCastFunction(
             Function arg,
+            int argPosition,
             int toType,
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
@@ -303,7 +305,11 @@ public class CaseCommon {
             ObjList<Function> args = tlArgs.get();
             args.clear();
             args.add(arg);
-            return fact.newInstance(args, 0, configuration, sqlExecutionContext);
+
+            IntList argPositions = tlArgPositions.get();
+            argPositions.clear();
+            argPositions.add(argPosition);
+            return fact.newInstance(0, args, argPositions, configuration, sqlExecutionContext);
         }
 
         return arg;

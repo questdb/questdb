@@ -35,7 +35,7 @@ import org.junit.Test;
 public class BooleanFunctionTest {
     // assert that all type casts that are not possible will throw exception
 
-    private static final BooleanFunction functionA = new BooleanFunction(25) {
+    private static final BooleanFunction functionA = new BooleanFunction() {
         @Override
         public boolean getBool(Record rec) {
             return false;
@@ -46,7 +46,7 @@ public class BooleanFunctionTest {
         }
     };
 
-    private static final BooleanFunction functionB = new BooleanFunction(25) {
+    private static final BooleanFunction functionB = new BooleanFunction() {
         @Override
         public boolean getBool(Record rec) {
             return true;
@@ -60,7 +60,7 @@ public class BooleanFunctionTest {
     @Test
     public void testChar() {
         Assert.assertEquals('F', functionA.getChar(null));
-        final BooleanFunction function = new BooleanFunction(25) {
+        final BooleanFunction function = new BooleanFunction() {
             @Override
             public boolean getBool(Record rec) {
                 return true;
@@ -113,11 +113,6 @@ public class BooleanFunctionTest {
     public void testGetLong() {
         Assert.assertEquals(1, functionA.getLong(null));
         Assert.assertEquals(0, functionB.getLong(null));
-    }
-
-    @Test
-    public void testGetPosition() {
-        Assert.assertEquals(25, functionA.getPosition());
     }
 
     @Test(expected = UnsupportedOperationException.class)

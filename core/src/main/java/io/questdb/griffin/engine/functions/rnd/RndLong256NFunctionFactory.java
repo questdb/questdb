@@ -43,8 +43,8 @@ public class RndLong256NFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new RndFunction(position, args.getQuick(0).getInt(null));
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+        return new RndFunction(args.getQuick(0).getInt(null));
     }
 
     private static class RndFunction extends Long256Function implements Function {
@@ -54,8 +54,7 @@ public class RndLong256NFunctionFactory implements FunctionFactory {
         private final long[] values;
         private Rnd rnd;
 
-        public RndFunction(int position, int count) {
-            super(position);
+        public RndFunction(int count) {
             this.values = new long[count * 4];
         }
 

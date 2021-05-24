@@ -120,8 +120,7 @@ public class GroupByFunctionTest {
             return null;
         }
 
-        @Override
-        public int getPosition() {
+        private int getPosition() {
             return 0;
         }
 

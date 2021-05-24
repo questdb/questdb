@@ -35,10 +35,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.SymbolConstant;
-import io.questdb.std.Chars;
-import io.questdb.std.IntIntHashMap;
-import io.questdb.std.Misc;
-import io.questdb.std.ObjList;
+import io.questdb.std.*;
 import io.questdb.std.str.StringSink;
 
 public class CastFloatToSymbolFunctionFactory implements FunctionFactory {
@@ -48,14 +45,14 @@ public class CastFloatToSymbolFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         final Function arg = args.getQuick(0);
         if (arg.isConstant()) {
             final StringSink sink = Misc.getThreadLocalBuilder();
             sink.put(arg.getFloat(null), 4);
-            return new SymbolConstant(position, Chars.toString(sink), 0);
+            return SymbolConstant.newInstance(sink);
         }
-        return new Func(position, arg);
+        return new Func(arg);
     }
 
     private static class Func extends SymbolFunction implements UnaryFunction {
@@ -65,8 +62,7 @@ public class CastFloatToSymbolFunctionFactory implements FunctionFactory {
         private final ObjList<String> symbols = new ObjList<>();
         private int next = 1;
 
-        public Func(int position, Function arg) {
-            super(position);
+        public Func(Function arg) {
             this.arg = arg;
             symbols.add(null);
         }

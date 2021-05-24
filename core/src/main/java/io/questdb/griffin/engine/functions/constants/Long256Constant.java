@@ -33,12 +33,11 @@ import io.questdb.std.str.CharSink;
 public class Long256Constant extends Long256Function implements ConstantFunction {
     private final Long256Impl value = new Long256Impl();
 
-    public Long256Constant(int position, Long256 that) {
-        this(position, that.getLong0(), that.getLong1(), that.getLong2(), that.getLong3());
+    public Long256Constant(Long256 that) {
+        this(that.getLong0(), that.getLong1(), that.getLong2(), that.getLong3());
     }
 
-    public Long256Constant(int position, long a, long b, long c, long d) {
-        super(position);
+    public Long256Constant(long a, long b, long c, long d) {
         value.setLong0(a);
         value.setLong1(b);
         value.setLong2(c);

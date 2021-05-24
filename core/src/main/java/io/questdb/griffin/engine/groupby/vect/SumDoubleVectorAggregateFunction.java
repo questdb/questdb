@@ -47,8 +47,7 @@ public class SumDoubleVectorAggregateFunction extends DoubleFunction implements 
     private final KeyValueFunc keyValueFunc;
     private int valueOffset;
 
-    public SumDoubleVectorAggregateFunction(int position, int keyKind, int columnIndex, int workerCount) {
-        super(position);
+    public SumDoubleVectorAggregateFunction(int keyKind, int columnIndex, int workerCount) {
         this.columnIndex = columnIndex;
         this.sum = new double[workerCount * Misc.CACHE_LINE_SIZE];
         this.count = new long[workerCount * Misc.CACHE_LINE_SIZE];

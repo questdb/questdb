@@ -121,10 +121,10 @@ final class WhereClauseParser implements Mutable {
                     return true;
                 }
                 Function function = functionParser.parseFunction(b, m, executionContext);
-                checkFunctionCanBeTimestamp(m, executionContext, function);
+                checkFunctionCanBeTimestamp(m, executionContext, function, b.position);
 
                 if (function.isConstant()) {
-                    long value = getTimestampFromConstFunction(function);
+                    long value = getTimestampFromConstFunction(function, b.position);
                     if (value == Numbers.LONG_NaN) {
                         // make it empty set
                         model.intersectEmpty();
@@ -253,10 +253,10 @@ final class WhereClauseParser implements Mutable {
             return true;
         } else if (isFunc(compareWithNode)) {
             Function function = functionParser.parseFunction(compareWithNode, metadata, executionContext);
-            checkFunctionCanBeTimestamp(metadata, executionContext, function);
+            checkFunctionCanBeTimestamp(metadata, executionContext, function, compareWithNode.position);
 
             if (function.isConstant()) {
-                lo = getTimestampFromConstFunction(function);
+                lo = getTimestampFromConstFunction(function, compareWithNode.position);
                 if (lo == Numbers.LONG_NaN) {
                     // make it empty set
                     model.intersectEmpty();
@@ -281,20 +281,28 @@ final class WhereClauseParser implements Mutable {
                 || compareWithNode.type == ExpressionNode.OPERATION;
     }
 
-    private static long getTimestampFromConstFunction(Function function) throws SqlException {
+    private static long getTimestampFromConstFunction(
+            Function function,
+            int functionPosition
+    ) throws SqlException {
         if (function.getType() != ColumnType.STRING) {
             return function.getTimestamp(null);
         }
         CharSequence str = function.getStr(null);
-        return parseStringAsTimestamp(str, function.getPosition());
+        return parseStringAsTimestamp(str, functionPosition);
     }
 
-    private void checkFunctionCanBeTimestamp(RecordMetadata metadata, SqlExecutionContext executionContext, Function function) throws SqlException {
+    private void checkFunctionCanBeTimestamp(
+            RecordMetadata metadata,
+            SqlExecutionContext executionContext,
+            Function function,
+            int functionPosition
+    ) throws SqlException {
         if (function.getType() == ColumnType.UNDEFINED) {
             int timestampType = metadata.getColumnType(metadata.getTimestampIndex());
             function.assignType(timestampType, executionContext.getBindVariableService());
         } else if (!canCastToTimestamp(function.getType())) {
-            throw SqlException.invalidDate(function.getPosition());
+            throw SqlException.invalidDate(functionPosition);
         }
     }
 
@@ -374,18 +382,24 @@ final class WhereClauseParser implements Mutable {
         return false;
     }
 
-    private boolean translateBetweenToTimestampModel(IntrinsicModel model, FunctionParser functionParser, RecordMetadata metadata, SqlExecutionContext executionContext, ExpressionNode lo) throws SqlException {
-        if (lo.type == ExpressionNode.CONSTANT) {
-            model.setBetweenBoundary(parseTokenAsTimestamp(lo));
+    private boolean translateBetweenToTimestampModel(
+            IntrinsicModel model,
+            FunctionParser functionParser,
+            RecordMetadata metadata,
+            SqlExecutionContext executionContext,
+            ExpressionNode node
+    ) throws SqlException {
+        if (node.type == ExpressionNode.CONSTANT) {
+            model.setBetweenBoundary(parseTokenAsTimestamp(node));
             return true;
-        } else if (isFunc(lo)) {
-            Function f1 = functionParser.parseFunction(lo, metadata, executionContext);
-            checkFunctionCanBeTimestamp(metadata, executionContext, f1);
-            if (f1.isConstant()) {
-                long timestamp = getTimestampFromConstFunction(f1);
+        } else if (isFunc(node)) {
+            Function function = functionParser.parseFunction(node, metadata, executionContext);
+            checkFunctionCanBeTimestamp(metadata, executionContext, function, node.position);
+            if (function.isConstant()) {
+                long timestamp = getTimestampFromConstFunction(function, node.position);
                 model.setBetweenBoundary(timestamp);
-            } else if (f1.isRuntimeConstant()) {
-                model.setBetweenBoundary(f1);
+            } else if (function.isRuntimeConstant()) {
+                model.setBetweenBoundary(function);
             } else {
                 return false;
             }
@@ -549,10 +563,10 @@ final class WhereClauseParser implements Mutable {
             return true;
         } else if (isFunc(compareWithNode)) {
             Function function = functionParser.parseFunction(compareWithNode, metadata, executionContext);
-            checkFunctionCanBeTimestamp(metadata, executionContext, function);
+            checkFunctionCanBeTimestamp(metadata, executionContext, function, compareWithNode.position);
 
             if (function.isConstant()) {
-                long hi = getTimestampFromConstFunction(function);
+                long hi = getTimestampFromConstFunction(function, compareWithNode.position);
                 if (hi == Numbers.LONG_NaN) {
                     model.intersectEmpty();
                 } else {

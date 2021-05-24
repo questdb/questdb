@@ -110,8 +110,7 @@ public class IndexedParameterLinkFunction implements ScalarFunction {
         getBase().getLong256(rec, sink);
     }
 
-    @Override
-    public int getPosition() {
+    private int getPosition() {
         return position;
     }
 

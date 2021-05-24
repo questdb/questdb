@@ -39,8 +39,7 @@ public class KSumDoubleGroupByFunction extends DoubleFunction implements GroupBy
     private final Function arg;
     private int valueIndex;
 
-    public KSumDoubleGroupByFunction(int position, @NotNull Function arg) {
-        super(position);
+    public KSumDoubleGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
     }
 

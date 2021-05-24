@@ -32,6 +32,7 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.IntFunction;
+import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
@@ -44,14 +45,14 @@ public class RndIntCCFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
 
         int lo = args.getQuick(0).getInt(null);
         int hi = args.getQuick(1).getInt(null);
         int nanRate = args.getQuick(2).getInt(null);
 
         if (nanRate < 0) {
-            throw SqlException.$(args.getQuick(2).getPosition(), "invalid NaN rate");
+            throw SqlException.$(argPositions.getQuick(2), "invalid NaN rate");
         }
 
         if (lo < hi) {
@@ -68,7 +69,7 @@ public class RndIntCCFunctionFactory implements FunctionFactory {
         private Rnd rnd;
 
         public RndFunction(int position, int lo, int hi, int nanRate) {
-            super(position);
+            super();
             this.lo = lo;
             this.range = hi - lo + 1;
             this.nanRate = nanRate + 1;

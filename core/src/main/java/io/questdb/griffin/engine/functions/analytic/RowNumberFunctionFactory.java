@@ -38,6 +38,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.analytic.AnalyticContext;
 import io.questdb.griffin.engine.analytic.AnalyticFunction;
 import io.questdb.griffin.engine.functions.LongFunction;
+import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
@@ -54,7 +55,7 @@ public class RowNumberFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         final AnalyticContext analyticContext = sqlExecutionContext.getAnalyticContext();
 
         if (analyticContext.getPartitionByRecord() != null) {
@@ -64,7 +65,6 @@ public class RowNumberFunctionFactory implements FunctionFactory {
                     LONG_COLUMN_TYPE
             );
             return new RowNumberFunction(
-                    position,
                     map,
                     analyticContext.getPartitionByRecord(),
                     analyticContext.getPartitionBySink()
@@ -79,8 +79,7 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         private final RecordSink partitionBySink;
         private int columnIndex;
 
-        public RowNumberFunction(int position, Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink) {
-            super(position);
+        public RowNumberFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink) {
             this.map = map;
             this.partitionByRecord = partitionByRecord;
             this.partitionBySink = partitionBySink;

@@ -32,6 +32,7 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.DateFunction;
+import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
@@ -43,17 +44,17 @@ public class RndDateCCCFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
         final long lo = args.getQuick(0).getDate(null);
         final long hi = args.getQuick(1).getDate(null);
         final int nanRate = args.getQuick(2).getInt(null);
 
         if (nanRate < 0) {
-            throw SqlException.$(args.getQuick(2).getPosition(), "invalid NaN rate");
+            throw SqlException.$(argPositions.getQuick(2), "invalid NaN rate");
         }
 
         if (lo < hi) {
-            return new Func(position, lo, hi, nanRate);
+            return new Func(lo, hi, nanRate);
         }
 
         throw SqlException.$(position, "invalid range");
@@ -65,8 +66,7 @@ public class RndDateCCCFunctionFactory implements FunctionFactory {
         private final int nanRate;
         private Rnd rnd;
 
-        public Func(int position, long lo, long hi, int nanRate) {
-            super(position);
+        public Func(long lo, long hi, int nanRate) {
             this.lo = lo;
             this.range = hi - lo + 1;
             this.nanRate = nanRate + 1;

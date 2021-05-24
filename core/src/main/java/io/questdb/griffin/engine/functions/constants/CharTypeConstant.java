@@ -32,10 +32,6 @@ public class CharTypeConstant extends CharFunction implements TypeConstant {
 
     public static final CharTypeConstant INSTANCE = new CharTypeConstant();
 
-    private CharTypeConstant() {
-        super(0);
-    }
-
     @Override
     public char getChar(Record rec) {
         return 0;

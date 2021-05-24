@@ -34,12 +34,6 @@ import io.questdb.std.str.CharSink;
 
 public abstract class BooleanFunction implements ScalarFunction {
 
-    private final int position;
-
-    public BooleanFunction(int position) {
-        this.position = position;
-    }
-
     @Override
     public final BinarySequence getBin(Record rec) {
         throw new UnsupportedOperationException();
@@ -98,11 +92,6 @@ public abstract class BooleanFunction implements ScalarFunction {
     @Override
     public final Long256 getLong256B(Record rec) {
         throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public int getPosition() {
-        return position;
     }
 
     @Override
