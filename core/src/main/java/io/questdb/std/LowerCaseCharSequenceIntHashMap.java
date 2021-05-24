@@ -98,11 +98,15 @@ public class LowerCaseCharSequenceIntHashMap extends AbstractLowerCaseCharSequen
         return true;
     }
 
-    public void putIfAbsent(CharSequence key, int value) {
+    public boolean putIfAbsent(CharSequence key, int value) {
         int index = keyIndex(key);
         if (index > -1) {
-            putAt0(index, Chars.toString(key), value);
+            String keyStr = Chars.toString(key);
+            putAt0(index, keyStr, value);
+            list.add(keyStr);
+            return true;
         }
+        return false;
     }
 
     @Override
