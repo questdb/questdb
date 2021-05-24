@@ -2382,6 +2382,182 @@ nodejs code:
     }
 
     @Test
+    public void testSingleInClause() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final PGWireServer ignored = createPGServer(1)) {
+                try (final Connection connection = getConnection(false, false)) {
+                    try (PreparedStatement statement = connection.prepareStatement(createDatesTblStmt)) {
+                        statement.execute();
+                    }
+
+                    try (PreparedStatement statement = connection.prepareStatement("select ts FROM xts WHERE ts in ?")) {
+                        sink.clear();
+                        String date = "1970-01-01";
+                        statement.setString(1, date);
+                        statement.executeQuery();
+                        try (ResultSet rs = statement.executeQuery()) {
+                            String expected = datesArr.stream()
+                                    .filter(arr -> (long) arr[0] < Timestamps.HOUR_MICROS * 24)
+                                    .map(arr -> arr[1] + "\n")
+                                    .collect(Collectors.joining());
+
+                            assertResultSet("ts[TIMESTAMP]\n" + expected, sink, rs);
+                        }
+                    }
+
+
+                    // NOT IN
+                    try (PreparedStatement statement = connection.prepareStatement("select ts FROM xts WHERE ts not in ?")) {
+                        sink.clear();
+                        String date = "1970-01-01";
+                        statement.setString(1, date);
+                        statement.executeQuery();
+                        try (ResultSet rs = statement.executeQuery()) {
+                            String expected = datesArr.stream()
+                                    .filter(arr -> (long) arr[0] >= Timestamps.HOUR_MICROS * 24)
+                                    .map(arr -> arr[1] + "\n")
+                                    .collect(Collectors.joining());
+
+                            assertResultSet("ts[TIMESTAMP]\n" + expected, sink, rs);
+                        }
+                    }
+
+                    // IN NULL
+                    try (PreparedStatement statement = connection.prepareStatement("select ts FROM xts WHERE ts in ?")) {
+                        sink.clear();
+                        String date = null;
+                        statement.setString(1, date);
+                        statement.executeQuery();
+                        try (ResultSet rs = statement.executeQuery()) {
+                            String expected = "";
+                            assertResultSet("ts[TIMESTAMP]\n" + expected, sink, rs);
+                        }
+                    }
+
+                    // NOT IN NULL
+                    try (PreparedStatement statement = connection.prepareStatement("select ts FROM xts WHERE ts not in ?")) {
+                        sink.clear();
+                        String date = null;
+                        statement.setString(1, date);
+                        statement.executeQuery();
+                        try (ResultSet rs = statement.executeQuery()) {
+                            String expected = datesArr.stream()
+                                    .map(arr -> arr[1] + "\n")
+                                    .collect(Collectors.joining());
+
+                            assertResultSet("ts[TIMESTAMP]\n" + expected, sink, rs);
+                        }
+                    }
+
+                    // NULL in not null
+                    try (PreparedStatement statement = connection.prepareStatement("select ts FROM xts WHERE cast(NULL as TIMESTAMP) in ?")) {
+                        sink.clear();
+                        String date = "1970-01-01";
+                        statement.setString(1, date);
+                        statement.executeQuery();
+                        try (ResultSet rs = statement.executeQuery()) {
+                            String expected = "";
+                            assertResultSet("ts[TIMESTAMP]\n" + expected, sink, rs);
+                        }
+                    }
+
+                    try (PreparedStatement statement = connection.prepareStatement("drop table xts")) {
+                        statement.execute();
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testSingleInClauseNonDedicatedTimestamp() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final PGWireServer ignored = createPGServer(1)) {
+                try (final Connection connection = getConnection(false, false)) {
+                    try (PreparedStatement statement = connection.prepareStatement(
+                            "create table xts as (select timestamp_sequence(0, 3600L * 1000 * 1000) ts from long_sequence(" + count + "))")) {
+                        statement.execute();
+                    }
+
+                    try (PreparedStatement statement = connection.prepareStatement("select ts FROM xts WHERE ts in ?")) {
+                        sink.clear();
+                        String date = "1970-01-01";
+                        statement.setString(1, date);
+                        statement.executeQuery();
+                        try (ResultSet rs = statement.executeQuery()) {
+                            String expected = datesArr.stream()
+                                    .filter(arr -> (long) arr[0] < Timestamps.HOUR_MICROS * 24)
+                                    .map(arr -> arr[1] + "\n")
+                                    .collect(Collectors.joining());
+
+                            assertResultSet("ts[TIMESTAMP]\n" + expected, sink, rs);
+                        }
+                    }
+
+                    // NOT IN
+                    try (PreparedStatement statement = connection.prepareStatement("select ts FROM xts WHERE ts not in ?")) {
+                        sink.clear();
+                        String date = "1970-01-01";
+                        statement.setString(1, date);
+                        statement.executeQuery();
+                        try (ResultSet rs = statement.executeQuery()) {
+                            String expected = datesArr.stream()
+                                    .filter(arr -> (long) arr[0] >= Timestamps.HOUR_MICROS * 24)
+                                    .map(arr -> arr[1] + "\n")
+                                    .collect(Collectors.joining());
+
+                            assertResultSet("ts[TIMESTAMP]\n" + expected, sink, rs);
+                        }
+                    }
+
+                    // IN NULL
+                    try (PreparedStatement statement = connection.prepareStatement("select ts FROM xts WHERE ts in ?")) {
+                        sink.clear();
+                        String date = null;
+                        statement.setString(1, date);
+                        statement.executeQuery();
+                        try (ResultSet rs = statement.executeQuery()) {
+                            String expected = "";
+                            assertResultSet("ts[TIMESTAMP]\n" + expected, sink, rs);
+                        }
+                    }
+
+                    // NOT IN NULL
+                    try (PreparedStatement statement = connection.prepareStatement("select ts FROM xts WHERE ts not in ?")) {
+                        sink.clear();
+                        String date = null;
+                        statement.setString(1, date);
+                        statement.executeQuery();
+                        try (ResultSet rs = statement.executeQuery()) {
+                            String expected = datesArr.stream()
+                                    .map(arr -> arr[1] + "\n")
+                                    .collect(Collectors.joining());
+
+                            assertResultSet("ts[TIMESTAMP]\n" + expected, sink, rs);
+                        }
+                    }
+
+                    // NULL in not null
+                    try (PreparedStatement statement = connection.prepareStatement("select ts FROM xts WHERE cast(NULL as TIMESTAMP) in ?")) {
+                        sink.clear();
+                        String date = "1970-01-01";
+                        statement.setString(1, date);
+                        statement.executeQuery();
+                        try (ResultSet rs = statement.executeQuery()) {
+                            String expected = "";
+                            assertResultSet("ts[TIMESTAMP]\n" + expected, sink, rs);
+                        }
+                    }
+
+                    try (PreparedStatement statement = connection.prepareStatement("drop table xts")) {
+                        statement.execute();
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testPreparedStatementWithBindVariablesSetWrongOnDifferentConnection() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final PGWireServer ignored = createPGServer(1)) {

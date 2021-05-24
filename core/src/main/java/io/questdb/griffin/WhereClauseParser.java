@@ -122,22 +122,7 @@ final class WhereClauseParser implements Mutable {
                 }
                 Function function = functionParser.parseFunction(b, m, executionContext);
                 checkFunctionCanBeTimestamp(m, executionContext, function);
-
-                if (function.isConstant()) {
-                    long value = getTimestampFromConstFunction(function);
-                    if (value == Numbers.LONG_NaN) {
-                        // make it empty set
-                        model.intersectEmpty();
-                    } else {
-                        model.intersectIntervals(value, value);
-                    }
-                    node.intrinsicValue = IntrinsicModel.TRUE;
-                    return true;
-                } else if (function.isRuntimeConstant()) {
-                    model.intersectEquals(function);
-                    node.intrinsicValue = IntrinsicModel.TRUE;
-                    return true;
-                }
+                return analyzeTimestampEqualsFunction(model, node, function);
             } else {
                 CharSequence column = translator.translateAlias(a.token);
                 int index = m.getColumnIndexQuiet(column);
@@ -204,6 +189,25 @@ final class WhereClauseParser implements Mutable {
                         return false;
                 }
             }
+        }
+        return false;
+    }
+
+    private boolean analyzeTimestampEqualsFunction(IntrinsicModel model, ExpressionNode node, Function function) throws SqlException {
+        if (function.isConstant()) {
+            long value = getTimestampFromConstFunction(function);
+            if (value == Numbers.LONG_NaN) {
+                // make it empty set
+                model.intersectEmpty();
+            } else {
+                model.intersectIntervals(value, value);
+            }
+            node.intrinsicValue = IntrinsicModel.TRUE;
+            return true;
+        } else if (function.isRuntimeConstant()) {
+            model.intersectEquals(function);
+            node.intrinsicValue = IntrinsicModel.TRUE;
+            return true;
         }
         return false;
     }
@@ -298,6 +302,14 @@ final class WhereClauseParser implements Mutable {
         }
     }
 
+    private boolean checkFunctionCanBeTimestampInterval(SqlExecutionContext executionContext, Function function) throws SqlException {
+        int type = function.getType();
+        if (type == ColumnType.UNDEFINED) {
+            function.assignType(ColumnType.STRING, executionContext.getBindVariableService());
+        }
+        return type == ColumnType.STRING || type == ColumnType.UNDEFINED;
+    }
+
     private boolean analyzeBetween(
             AliasTranslator translator,
             IntrinsicModel model,
@@ -318,7 +330,7 @@ final class WhereClauseParser implements Mutable {
         return analyzeBetween0(model, col, node, false, functionParser, metadata, executionContext);
     }
 
-    private boolean analyzeIn(AliasTranslator translator, IntrinsicModel model, ExpressionNode node, RecordMetadata metadata) throws SqlException {
+    private boolean analyzeIn(AliasTranslator translator, IntrinsicModel model, ExpressionNode node, RecordMetadata metadata, FunctionParser functionParser, SqlExecutionContext executionContext) throws SqlException {
 
         if (node.paramCount < 2) {
             throw SqlException.$(node.position, "Too few arguments for 'in'");
@@ -335,7 +347,7 @@ final class WhereClauseParser implements Mutable {
         if (metadata.getColumnIndexQuiet(column) == -1) {
             throw SqlException.invalidColumn(col.position, col.token);
         }
-        return analyzeInInterval(model, col, node, false)
+        return analyzeInInterval(model, col, node, false, functionParser, metadata, executionContext)
                 || analyzeListOfValues(model, column, metadata, node)
                 || analyzeInLambda(model, column, metadata, node);
     }
@@ -419,7 +431,7 @@ final class WhereClauseParser implements Mutable {
         }
     }
 
-    private boolean analyzeInInterval(IntrinsicModel model, ExpressionNode col, ExpressionNode in, boolean isNegated) throws SqlException {
+    private boolean analyzeInInterval(IntrinsicModel model, ExpressionNode col, ExpressionNode in, boolean isNegated, FunctionParser functionParser, RecordMetadata metadata, SqlExecutionContext executionContext) throws SqlException {
         if (!isTimestamp(col)) {
             return false;
         }
@@ -435,6 +447,35 @@ final class WhereClauseParser implements Mutable {
                 }
                 in.intrinsicValue = IntrinsicModel.TRUE;
                 return true;
+            } else if (isFunc(lo)) {
+                // Single value ts in $1 - treat string literal as an interval, not single Timestamp point
+                Function f1 = functionParser.parseFunction(lo, metadata, executionContext);
+                if (checkFunctionCanBeTimestampInterval(executionContext, f1)) {
+                    if (f1.isConstant()) {
+                        CharSequence funcVal = f1.getStr(null);
+                        if (!isNegated) {
+                            model.intersectIntervals(funcVal, 0, funcVal.length(), lo.position);
+                        } else {
+                            model.subtractIntervals(funcVal, 0, funcVal.length(), lo.position);
+                        }
+                    } else if (f1.isRuntimeConstant()) {
+                        if (!isNegated) {
+                            model.intersectRuntimeIntervals(f1);
+                        } else {
+                            model.subtractRuntimeIntervals(f1);
+                        }
+                    } else {
+                        return false;
+                    }
+
+                    in.intrinsicValue = IntrinsicModel.TRUE;
+                    return true;
+                } else {
+                    checkFunctionCanBeTimestamp(metadata, executionContext, f1);
+                    // This is IN (TIMESTAMP) one value which is timestamp and not a STRING
+                    // This is same as equals
+                    return analyzeTimestampEqualsFunction(model, in, f1);
+                }
             }
         } else {
             // Multiple values treat as multiple Timestamp points
@@ -741,7 +782,7 @@ final class WhereClauseParser implements Mutable {
         return false;
     }
 
-    private boolean analyzeNotIn(AliasTranslator translator, IntrinsicModel model, ExpressionNode notNode, RecordMetadata m) throws SqlException {
+    private boolean analyzeNotIn(AliasTranslator translator, IntrinsicModel model, ExpressionNode notNode, RecordMetadata m, FunctionParser functionParser, RecordMetadata metadata, SqlExecutionContext executionContext) throws SqlException {
 
         ExpressionNode node = notNode.rhs;
 
@@ -761,7 +802,7 @@ final class WhereClauseParser implements Mutable {
             throw SqlException.invalidColumn(col.position, col.token);
         }
 
-        boolean ok = analyzeInInterval(model, col, node, true);
+        boolean ok = analyzeInInterval(model, col, node, true, functionParser, metadata, executionContext);
         if (ok) {
             notNode.intrinsicValue = IntrinsicModel.TRUE;
         } else {
@@ -1014,7 +1055,7 @@ final class WhereClauseParser implements Mutable {
     private boolean removeAndIntrinsics(AliasTranslator translator, IntrinsicModel model, ExpressionNode node, RecordMetadata m, FunctionParser functionParser, RecordMetadata metadata, SqlExecutionContext executionContext) throws SqlException {
         switch (intrinsicOps.get(node.token)) {
             case INTRINSIC_OP_IN:
-                return analyzeIn(translator, model, node, m);
+                return analyzeIn(translator, model, node, m, functionParser, executionContext);
             case INTRINSIC_OP_GREATER:
                 return analyzeGreater(model, node, false, functionParser, metadata, executionContext);
             case INTRINSIC_OP_GREATER_EQ:
@@ -1028,7 +1069,7 @@ final class WhereClauseParser implements Mutable {
             case INTRINSIC_OP_NOT_EQ:
                 return analyzeNotEquals(translator, model, node, m);
             case INTRINSIC_OP_NOT:
-                return (isInKeyword(node.rhs.token) && analyzeNotIn(translator, model, node, m))
+                return (isInKeyword(node.rhs.token) && analyzeNotIn(translator, model, node, m, functionParser, metadata, executionContext))
                         || (isBetweenKeyword(node.rhs.token) && analyzeNotBetween(translator, model, node, m, functionParser, metadata, executionContext));
             case INTRINSIC_OP_BETWEEN:
                 return analyzeBetween(translator, model, node, m, functionParser, metadata, executionContext);

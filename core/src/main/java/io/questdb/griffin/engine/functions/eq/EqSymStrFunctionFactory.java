@@ -144,7 +144,9 @@ public class EqSymStrFunctionFactory implements FunctionFactory {
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
             arg.init(symbolTableSource, executionContext);
-            valueIndex = arg.getStaticSymbolTable().keyOf(constant);
+            StaticSymbolTable staticSymbolTable = arg.getStaticSymbolTable();
+            assert staticSymbolTable != null : "Static symbol table is null for func with static isSymbolTableStatic returning true";
+            valueIndex = staticSymbolTable.keyOf(constant);
             exists = valueIndex != SymbolTable.VALUE_NOT_FOUND;
         }
     }

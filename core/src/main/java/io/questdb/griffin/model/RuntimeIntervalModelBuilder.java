@@ -112,6 +112,13 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         intervalApplied = true;
     }
 
+    public void intersectDynamicInterval(Function intervalStrFunction) {
+        if (isEmptySet()) return;
+        IntervalUtils.addHiLoInterval(0L, 0L, IntervalOperation.INTERSECT_INTERVALS, staticIntervals);
+        dynamicRangeList.add(intervalStrFunction);
+        intervalApplied = true;
+    }
+
     public void setBetweenNegated(boolean isNegated) {
         betweenNegated = isNegated;
     }
@@ -128,11 +135,12 @@ public class RuntimeIntervalModelBuilder implements Mutable {
                 if (hi == Numbers.LONG_NaN || lo == Numbers.LONG_NaN) {
                     if (!betweenNegated) {
                         intersectEmpty();
-                    } else {
+                    }
+                    // else {
                         // NOT BETWEEN with NULL
                         // to be consistent with non-designated filtering
                         // do no filtering
-                    }
+                    //  }
                 } else {
                     if (!betweenNegated) {
                         intersect(lo, hi);
@@ -161,15 +169,23 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         }
     }
 
+    public void subtractRuntimeInterval(Function intervalStrFunction) {
+        if (isEmptySet()) return;
+        IntervalUtils.addHiLoInterval(0L, 0L, IntervalOperation.SUBTRACT_INTERVALS, staticIntervals);
+        dynamicRangeList.add(intervalStrFunction);
+        intervalApplied = true;
+    }
+
     private void intersectBetweenSemiDynamic(Function funcValue, long constValue) {
         if (constValue == Numbers.LONG_NaN) {
             if (!betweenNegated) {
                 intersectEmpty();
-            } else {
+            }
+           // else {
                 // NOT BETWEEN with NULL
                 // to be consistent with non-designated filtering
                 // do no filtering
-            }
+            // }
             return;
         }
 
