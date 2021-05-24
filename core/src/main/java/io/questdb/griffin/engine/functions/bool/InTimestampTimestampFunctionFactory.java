@@ -70,7 +70,7 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
 
         if (args.size() == 2 && args.get(1).getType() == ColumnType.STRING) {
             // special case - one argument and it a string
-            return new InTimestampStrFunctionFactory.EqTimestampStrFunction(position, args.get(0), args.get(1));
+            return new InTimestampStrFunctionFactory.EqTimestampStrFunction(args.get(0), args.get(1));
         }
 
         // have to copy, args is mutable

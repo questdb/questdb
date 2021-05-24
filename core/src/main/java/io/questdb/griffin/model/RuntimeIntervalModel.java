@@ -177,14 +177,14 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
                     CharSequence strValue = dynamicFunction.getStr(null);
                     if (operation == IntervalOperation.INTERSECT_INTERVALS) {
                         // This is intersect
-                        if (parseIntervalFails(outIntervals, strValue, dynamicFunction.getPosition())){
+                        if (parseIntervalFails(outIntervals, strValue)){
                             // return empty set
                             outIntervals.clear();
                             return;
                         }
                     } else {
                         // This is subtract
-                        if (parseIntervalFails(outIntervals, strValue, dynamicFunction.getPosition())){
+                        if (parseIntervalFails(outIntervals, strValue)){
                             // full set
                             negatedNothing(outIntervals, divider);
                             continue;
@@ -216,10 +216,10 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
         }
     }
 
-    private boolean parseIntervalFails(LongList outIntervals, CharSequence strValue, int position) {
+    private boolean parseIntervalFails(LongList outIntervals, CharSequence strValue) {
         if (strValue  != null) {
             try {
-                IntervalUtils.parseIntervalEx(strValue, 0, strValue.length(), position, outIntervals, IntervalOperation.INTERSECT);
+                IntervalUtils.parseIntervalEx(strValue, 0, strValue.length(), 0, outIntervals, IntervalOperation.INTERSECT);
                 IntervalUtils.applyLastEncodedIntervalEx(outIntervals);
             } catch (SqlException e) {
                 return true;

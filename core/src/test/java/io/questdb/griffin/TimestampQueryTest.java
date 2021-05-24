@@ -896,6 +896,9 @@ public class TimestampQueryTest extends AbstractGriffinTest {
 
             expected = "dts\tnts\n";
             assertTimestampTtQuery(expected, "select * from tt where CAST(NULL as TIMESTAMP) in ('2020-01-02', '2020-01-01')");
+
+            expected = "dts\tnts\n";
+            assertTimestampTtQuery(expected, "select * from tt where nts in now()");
         });
     }
 

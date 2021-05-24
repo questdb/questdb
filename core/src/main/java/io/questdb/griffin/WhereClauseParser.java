@@ -122,7 +122,7 @@ final class WhereClauseParser implements Mutable {
                 }
                 Function function = functionParser.parseFunction(b, m, executionContext);
                 checkFunctionCanBeTimestamp(m, executionContext, function, b.position);
-                return analyzeTimestampEqualsFunction(model, node, function);
+                return analyzeTimestampEqualsFunction(model, node, function, b.position);
             } else {
                 CharSequence column = translator.translateAlias(a.token);
                 int index = m.getColumnIndexQuiet(column);
@@ -193,9 +193,9 @@ final class WhereClauseParser implements Mutable {
         return false;
     }
 
-    private boolean analyzeTimestampEqualsFunction(IntrinsicModel model, ExpressionNode node, Function function) throws SqlException {
+    private boolean analyzeTimestampEqualsFunction(IntrinsicModel model, ExpressionNode node, Function function, int functionPosition) throws SqlException {
         if (function.isConstant()) {
-            long value = getTimestampFromConstFunction(function);
+            long value = getTimestampFromConstFunction(function, functionPosition);
             if (value == Numbers.LONG_NaN) {
                 // make it empty set
                 model.intersectEmpty();
@@ -452,25 +452,25 @@ final class WhereClauseParser implements Mutable {
 
         if (in.paramCount == 2) {
             // Single value ts in '2010-01-01' - treat string literal as an interval, not single Timestamp point
-            ExpressionNode lo = in.rhs;
-            if (lo.type == ExpressionNode.CONSTANT) {
+            ExpressionNode inArg = in.rhs;
+            if (inArg.type == ExpressionNode.CONSTANT) {
                 if (!isNegated) {
-                    model.intersectIntervals(lo.token, 1, lo.token.length() - 1, lo.position);
+                    model.intersectIntervals(inArg.token, 1, inArg.token.length() - 1, inArg.position);
                 } else {
-                    model.subtractIntervals(lo.token, 1, lo.token.length() - 1, lo.position);
+                    model.subtractIntervals(inArg.token, 1, inArg.token.length() - 1, inArg.position);
                 }
                 in.intrinsicValue = IntrinsicModel.TRUE;
                 return true;
-            } else if (isFunc(lo)) {
+            } else if (isFunc(inArg)) {
                 // Single value ts in $1 - treat string literal as an interval, not single Timestamp point
-                Function f1 = functionParser.parseFunction(lo, metadata, executionContext);
+                Function f1 = functionParser.parseFunction(inArg, metadata, executionContext);
                 if (checkFunctionCanBeTimestampInterval(executionContext, f1)) {
                     if (f1.isConstant()) {
                         CharSequence funcVal = f1.getStr(null);
                         if (!isNegated) {
-                            model.intersectIntervals(funcVal, 0, funcVal.length(), lo.position);
+                            model.intersectIntervals(funcVal, 0, funcVal.length(), inArg.position);
                         } else {
-                            model.subtractIntervals(funcVal, 0, funcVal.length(), lo.position);
+                            model.subtractIntervals(funcVal, 0, funcVal.length(), inArg.position);
                         }
                     } else if (f1.isRuntimeConstant()) {
                         if (!isNegated) {
@@ -485,10 +485,10 @@ final class WhereClauseParser implements Mutable {
                     in.intrinsicValue = IntrinsicModel.TRUE;
                     return true;
                 } else {
-                    checkFunctionCanBeTimestamp(metadata, executionContext, f1);
+                    checkFunctionCanBeTimestamp(metadata, executionContext, f1, inArg.position);
                     // This is IN (TIMESTAMP) one value which is timestamp and not a STRING
                     // This is same as equals
-                    return analyzeTimestampEqualsFunction(model, in, f1);
+                    return analyzeTimestampEqualsFunction(model, in, f1, inArg.position);
                 }
             }
         } else {
