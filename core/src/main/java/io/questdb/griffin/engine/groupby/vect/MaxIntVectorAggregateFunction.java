@@ -48,7 +48,7 @@ public class MaxIntVectorAggregateFunction extends IntFunction implements Vector
     private final KeyValueFunc keyValueFunc;
     private int valueOffset;
 
-    public MaxIntVectorAggregateFunction(int position, int keyKind, int columnIndex, int workerCount) {
+    public MaxIntVectorAggregateFunction(int keyKind, int columnIndex, int workerCount) {
         super();
         this.columnIndex = columnIndex;
         if (keyKind == GKK_HOUR_INT) {
