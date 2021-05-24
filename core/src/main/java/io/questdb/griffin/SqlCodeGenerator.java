@@ -1796,6 +1796,14 @@ public class SqlCodeGenerator implements Mutable {
 
         final RecordCursorFactory factory = generateSubQuery(model, executionContext);
         try {
+            if (factory.recordCursorSupportsRandomAccess() && factory.getMetadata().getTimestampIndex() != -1) {
+                return new DistinctTimeSeriesRecordCursorFactory(
+                        configuration,
+                        factory,
+                        entityColumnFilter,
+                        asm
+                );
+            }
             return new DistinctRecordCursorFactory(
                     configuration,
                     factory,

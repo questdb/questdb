@@ -340,7 +340,7 @@ public class O3CommitLagTest extends AbstractO3Test {
                 ordered.commit();
             }
 
-            assertSqlCursors(compiler, sqlExecutionContext, "ordered", "o3", LOG);
+            TestUtils.assertSqlCursors(compiler, sqlExecutionContext, "ordered", "o3", LOG);
             start += idCount * iterations;
         }
     }
