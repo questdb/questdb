@@ -642,7 +642,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     @Test
     public void testGroupByConstantMatchingColumnName() throws Exception {
         assertQuery(
-                "nts\tmin\n",
+                "nts\tmin\nnts\t\n",
                 "select 'nts', min(nts) from tt where nts > '2020-01-01T00:00:00.000000Z'",
                 "create table tt (dts timestamp, nts timestamp) timestamp(dts)",
                 null,
