@@ -29,16 +29,16 @@ import { CodeSSlash } from "@styled-icons/remix-line/CodeSSlash"
 import { Upload2 } from "@styled-icons/remix-line/Upload2"
 import { Settings2 } from "@styled-icons/evaicons-solid/Settings2"
 
-import { PopperHover, PrimaryToggleButton, Text, Tooltip } from "components"
+import { PopperHover, PrimaryToggleButton, Tooltip } from "components"
 import { selectors } from "store"
 import { color } from "utils"
 
 const Wrapper = styled.div`
   display: flex;
   height: calc(100% - 4rem);
-  flex: 0 0 8rem;
+  flex: 0 0 4.5rem;
   flex-direction: column;
-  border-right: 1px solid rgba(0, 0, 0, 0.1);
+
   background: ${color("draculaBackgroundDarker")};
 `
 
@@ -64,7 +64,7 @@ type NavigationProps = Readonly<{
 const Navigation = styled(PrimaryToggleButton)<NavigationProps>`
   display: flex;
   flex-direction: column;
-  flex: 0 0 8rem;
+  flex: 0 0 5rem;
   align-items: center;
   justify-content: center;
 
@@ -158,7 +158,6 @@ const Sidebar = () => {
             selected={selected === "console"}
           >
             <CodeSSlash size="18px" />
-            <Text color="draculaForeground">Console</Text>
           </Navigation>
         }
       >
@@ -178,7 +177,6 @@ const Sidebar = () => {
                 selected={selected === "import"}
               >
                 <Upload2 size="18px" />
-                <Text color="draculaForeground">Import</Text>
               </Navigation>
             </DisabledNavigation>
           ) : (
@@ -188,7 +186,6 @@ const Sidebar = () => {
               selected={selected === "import"}
             >
               <Upload2 size="18px" />
-              <Text color="draculaForeground">Import</Text>
             </Navigation>
           )
         }
@@ -220,7 +217,6 @@ const Sidebar = () => {
                 selected={selected === "settings"}
               >
                 <Settings2 size="18px" />
-                <Text color="draculaForeground">Settings</Text>
               </Navigation>
             </DisabledNavigation>
           ) : (
@@ -230,7 +226,6 @@ const Sidebar = () => {
               selected={selected === "settings"}
             >
               <Settings2 size="18px" />
-              <Text color="draculaForeground">Settings</Text>
             </Navigation>
           )
         }

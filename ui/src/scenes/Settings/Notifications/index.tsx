@@ -11,17 +11,8 @@ const Wrapper = styled.div`
   justify-content: flex-start;
   align-items: flex-start;
   width: 100%;
-  padding: 2rem;
 `
-const Title = styled.div`
-  display: flex;
-  flex-direction: row;
-  justify-content: flex-start;
-  align-items: center;
-  width: 100%;
-  padding: 2rem;
-  background: ${color("draculaSelection")};
-`
+
 const SettingGroup = styled.div`
   display: flex;
   flex-direction: row;
@@ -30,7 +21,10 @@ const SettingGroup = styled.div`
   width: 100%;
   padding: 2rem;
   background: ${color("draculaBackground")};
-  border-bottom: 1px dotted ${color("draculaSelection")};
+
+  &:not(:last-child) {
+    border-bottom: 1px dotted ${color("draculaSelection")};
+  }
 `
 const SettingControl = styled.div`
   width: 250px;
@@ -38,11 +32,6 @@ const SettingControl = styled.div`
 
 const Notifications = () => (
   <Wrapper>
-    <Title>
-      <Text color="draculaForeground" size="xl">
-        Notifications
-      </Text>
-    </Title>
     <SettingGroup>
       <SettingControl>
         <Toggler />
