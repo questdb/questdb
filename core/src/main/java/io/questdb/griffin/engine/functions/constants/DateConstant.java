@@ -26,13 +26,18 @@ package io.questdb.griffin.engine.functions.constants;
 
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.DateFunction;
+import io.questdb.std.Numbers;
 
 public class DateConstant extends DateFunction implements ConstantFunction {
+    public static final DateConstant NULL = new DateConstant(Numbers.LONG_NaN);
     private final long value;
 
-    public DateConstant(int position, long value) {
-        super(position);
+    public DateConstant(long value) {
         this.value = value;
+    }
+
+    public static DateConstant getInstance(long value) {
+        return value != Numbers.LONG_NaN ? new DateConstant(value) : NULL;
     }
 
     @Override

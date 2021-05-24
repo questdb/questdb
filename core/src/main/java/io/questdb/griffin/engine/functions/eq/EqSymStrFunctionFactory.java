@@ -33,6 +33,7 @@ import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Chars;
+import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class EqSymStrFunctionFactory implements FunctionFactory {
@@ -47,7 +48,7 @@ public class EqSymStrFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         // there are optimisation opportunities
         // 1. when one of args is constant null comparison can boil down to checking
         //    length of non-constant (must be -1)
@@ -58,32 +59,31 @@ public class EqSymStrFunctionFactory implements FunctionFactory {
 
         // SYMBOL cannot be constant
         if (strFunc.isConstant()) {
-            return createHalfConstantFunc(position, strFunc, symFunc);
+            return createHalfConstantFunc(strFunc, symFunc);
         }
-        return new Func(position, symFunc, strFunc);
+        return new Func(symFunc, strFunc);
     }
 
-    private Function createHalfConstantFunc(int position, Function constFunc, Function varFunc) {
+    private Function createHalfConstantFunc(Function constFunc, Function varFunc) {
         CharSequence constValue = constFunc.getStr(null);
         SymbolFunction func = (SymbolFunction) varFunc;
         if (func.getStaticSymbolTable() != null) {
-            return new ConstCheckColumnFunc(position, func, constValue);
+            return new ConstCheckColumnFunc(func, constValue);
         } else {
             if (constValue == null) {
-                return new NullCheckFunc(position, varFunc);
+                return new NullCheckFunc(varFunc);
             }
             if (func.isSymbolTableStatic()) {
-                return new ConstSymIntCheckFunc(position, func, constValue);
+                return new ConstSymIntCheckFunc(func, constValue);
             }
-            return new ConstCheckFunc(position, func, constValue);
+            return new ConstCheckFunc(func, constValue);
         }
     }
 
     private static class NullCheckFunc extends NegatableBooleanFunction implements UnaryFunction {
         private final Function arg;
 
-        public NullCheckFunc(int position, Function arg) {
-            super(position);
+        public NullCheckFunc(Function arg) {
             this.arg = arg;
         }
 
@@ -102,8 +102,7 @@ public class EqSymStrFunctionFactory implements FunctionFactory {
         private final Function arg;
         private final CharSequence constant;
 
-        public ConstCheckFunc(int position, Function arg, CharSequence constant) {
-            super(position);
+        public ConstCheckFunc(Function arg, CharSequence constant) {
             this.arg = arg;
             this.constant = constant;
         }
@@ -125,8 +124,7 @@ public class EqSymStrFunctionFactory implements FunctionFactory {
         private int valueIndex;
         private boolean exists;
 
-        public ConstSymIntCheckFunc(int position, SymbolFunction arg, CharSequence constant) {
-            super(position);
+        public ConstSymIntCheckFunc(SymbolFunction arg, CharSequence constant) {
             this.arg = arg;
             this.constant = constant;
         }
@@ -156,8 +154,7 @@ public class EqSymStrFunctionFactory implements FunctionFactory {
         private final CharSequence constant;
         private int valueIndex;
 
-        public ConstCheckColumnFunc(int position, SymbolFunction arg, CharSequence constant) {
-            super(position);
+        public ConstCheckColumnFunc(SymbolFunction arg, CharSequence constant) {
             this.arg = arg;
             this.constant = constant;
         }
@@ -190,8 +187,7 @@ public class EqSymStrFunctionFactory implements FunctionFactory {
         private final Function left;
         private final Function right;
 
-        public Func(int position, Function left, Function right) {
-            super(position);
+        public Func(Function left, Function right) {
             this.left = left;
             this.right = right;
         }

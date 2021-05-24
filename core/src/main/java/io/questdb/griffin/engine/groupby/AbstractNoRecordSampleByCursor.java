@@ -95,10 +95,6 @@ public abstract class AbstractNoRecordSampleByCursor implements DelegatingRecord
 
     protected class TimestampFunc extends TimestampFunction implements Function {
 
-        public TimestampFunc(int position) {
-            super(position);
-        }
-
         @Override
         public long getTimestamp(Record rec) {
             return lastTimestamp + baselineOffset;

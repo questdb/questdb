@@ -29,14 +29,17 @@ import io.questdb.griffin.engine.functions.BooleanFunction;
 
 public class BooleanConstant extends BooleanFunction implements ConstantFunction {
 
-    public static final BooleanConstant TRUE = new BooleanConstant(0, true);
-    public static final BooleanConstant FALSE = new BooleanConstant(0, false);
+    public static final BooleanConstant TRUE = new BooleanConstant(true);
+    public static final BooleanConstant FALSE = new BooleanConstant(false);
 
     private final boolean value;
 
-    public BooleanConstant(int position, boolean value) {
-        super(position);
+    private BooleanConstant(boolean value) {
         this.value = value;
+    }
+
+    public static BooleanConstant of(boolean value) {
+        return value ? TRUE : FALSE;
     }
 
     @Override

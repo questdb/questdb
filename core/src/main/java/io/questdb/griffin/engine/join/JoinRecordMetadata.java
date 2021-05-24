@@ -30,8 +30,8 @@ import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.std.CharSequenceIntHashMap;
 import io.questdb.std.Chars;
+import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.CharSink;
@@ -49,7 +49,7 @@ public class JoinRecordMetadata extends BaseRecordMetadata implements Closeable 
         this.map = new FastMap(configuration.getSqlJoinMetadataPageSize(), keyTypes, valueTypes, columnCount * 2, 0.6, configuration.getSqlJoinMetadataMaxResizes());
         this.timestampIndex = -1;
         this.columnCount = 0;
-        this.columnNameIndexMap = new CharSequenceIntHashMap(columnCount);
+        this.columnNameIndexMap = new LowerCaseCharSequenceIntHashMap(columnCount);
         this.columnMetadata = new ObjList<>(columnCount);
         this.refCount = 1;
     }

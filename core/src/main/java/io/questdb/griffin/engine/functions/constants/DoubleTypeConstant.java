@@ -32,10 +32,6 @@ public class DoubleTypeConstant extends DoubleFunction implements TypeConstant {
 
     public static final DoubleTypeConstant INSTANCE = new DoubleTypeConstant();
 
-    private DoubleTypeConstant() {
-        super(0);
-    }
-
     @Override
     public double getDouble(Record rec) {
         return Double.NaN;

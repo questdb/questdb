@@ -29,7 +29,7 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class ByteFunctionTest {
-    private static final ByteFunction function = new ByteFunction(25) {
+    private static final ByteFunction function = new ByteFunction() {
         @Override
         public byte getByte(Record rec) {
             return 0;
@@ -60,11 +60,6 @@ public class ByteFunctionTest {
     @Test(expected = UnsupportedOperationException.class)
     public void testGetDate() {
         function.getDate(null);
-    }
-
-    @Test
-    public void testGetPosition() {
-        Assert.assertEquals(25, function.getPosition());
     }
 
     @Test(expected = UnsupportedOperationException.class)

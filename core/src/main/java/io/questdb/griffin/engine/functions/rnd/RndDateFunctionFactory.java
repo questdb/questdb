@@ -31,6 +31,7 @@ import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.DateFunction;
+import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 
@@ -41,8 +42,8 @@ public class RndDateFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new Func(position);
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+        return new Func();
     }
 
     private static class Func extends DateFunction implements Function {
@@ -50,8 +51,7 @@ public class RndDateFunctionFactory implements FunctionFactory {
         private final long range;
         private Rnd rnd;
 
-        public Func(int position) {
-            super(position);
+        public Func() {
             this.lo = 0;
             this.range = 10_000_000;
         }

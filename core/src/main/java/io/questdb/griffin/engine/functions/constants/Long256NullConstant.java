@@ -31,8 +31,11 @@ import io.questdb.std.Long256Impl;
 import io.questdb.std.str.CharSink;
 
 public final class Long256NullConstant extends Long256Function implements ConstantFunction {
-    Long256NullConstant() {
-        super(0);
+
+    public static final Long256NullConstant INSTANCE = new Long256NullConstant();
+
+    @Override
+    public void getLong256(Record rec, CharSink sink) {
     }
 
     @Override
@@ -43,9 +46,5 @@ public final class Long256NullConstant extends Long256Function implements Consta
     @Override
     public Long256 getLong256B(Record rec) {
         return Long256Impl.NULL_LONG256;
-    }
-
-    @Override
-    public void getLong256(Record rec, CharSink sink) {
     }
 }

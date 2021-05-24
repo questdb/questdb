@@ -34,10 +34,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.*;
 import io.questdb.griffin.model.IntervalOperation;
 import io.questdb.griffin.model.IntervalUtils;
-import io.questdb.std.LongList;
-import io.questdb.std.Numbers;
-import io.questdb.std.NumericException;
-import io.questdb.std.ObjList;
+import io.questdb.std.*;
 
 import static io.questdb.griffin.model.IntervalUtils.*;
 
@@ -48,7 +45,7 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
         boolean allConst = true;
         for (int i = 1, n = args.size(); i < n; i++) {
             Function func = args.getQuick(i);
@@ -68,7 +65,7 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
         }
 
         if (allConst) {
-            return new InTimestampConstFunction(position, args.getQuick(0), parseToTs(args));
+            return new InTimestampConstFunction(args.getQuick(0), parseToTs(args, argPositions));
         }
 
         if (args.size() == 2 && args.get(1).getType() == ColumnType.STRING) {
@@ -77,10 +74,10 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
         }
 
         // have to copy, args is mutable
-        return new InTimestampVarFunction(position, new ObjList<>(args));
+        return new InTimestampVarFunction(new ObjList<>(args));
     }
 
-    private LongList parseToTs(ObjList<Function> args) throws SqlException {
+    private LongList parseToTs(ObjList<Function> args, IntList argPositions) throws SqlException {
         LongList res = new LongList(args.size() - 1);
         res.extendAndSet(args.size() - 2, 0);
 
@@ -95,7 +92,7 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
                     break;
                 case ColumnType.STRING:
                     CharSequence tsValue = func.getStr(null);
-                    val = (tsValue != null) ? tryParseTimestamp(tsValue, func.getPosition()) : Numbers.LONG_NaN;
+                    val = (tsValue != null) ? tryParseTimestamp(tsValue, argPositions.getQuick(i)) : Numbers.LONG_NaN;
                     break;
             }
             res.setQuick(i - 1, val);
@@ -116,8 +113,7 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
     private static class InTimestampVarFunction extends NegatableBooleanFunction implements MultiArgFunction {
         private final ObjList<Function> args;
 
-        public InTimestampVarFunction(int position, ObjList<Function> args) {
-            super(position);
+        public InTimestampVarFunction(ObjList<Function> args) {
             this.args = args;
         }
 
@@ -159,8 +155,7 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
         private final Function tsFunc;
         private final LongList inList;
 
-        public InTimestampConstFunction(int position, Function tsFunc, LongList longList) {
-            super(position);
+        public InTimestampConstFunction(Function tsFunc, LongList longList) {
             this.tsFunc = tsFunc;
             this.inList = longList;
         }

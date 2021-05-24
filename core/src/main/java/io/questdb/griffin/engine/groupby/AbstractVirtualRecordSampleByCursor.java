@@ -45,7 +45,7 @@ public abstract class AbstractVirtualRecordSampleByCursor extends AbstractNoReco
         for (int i = 0, n = recordFunctions.size(); i < n; i++) {
             Function f = recordFunctions.getQuick(i);
             if (f == null) {
-                recordFunctions.setQuick(i, new TimestampFunc(0));
+                recordFunctions.setQuick(i, new TimestampFunc());
             }
         }
     }

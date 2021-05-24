@@ -38,8 +38,7 @@ public class FirstDoubleGroupByFunction extends DoubleFunction implements GroupB
     private final Function arg;
     private int valueIndex;
 
-    public FirstDoubleGroupByFunction(int position, @NotNull Function arg) {
-        super(position);
+    public FirstDoubleGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
     }
 

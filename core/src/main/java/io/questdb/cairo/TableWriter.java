@@ -97,7 +97,7 @@ public class TableWriter implements Closeable {
     private final CharSequence tableName;
     private final TableWriterMetadata metadata;
     private final CairoConfiguration configuration;
-    private final CharSequenceIntHashMap validationMap = new CharSequenceIntHashMap();
+    private final LowerCaseCharSequenceIntHashMap validationMap = new LowerCaseCharSequenceIntHashMap();
     private final FragileCode RECOVER_FROM_META_RENAME_FAILURE = this::recoverFromMetaRenameFailure;
     private final SOCountDownLatch indexLatch = new SOCountDownLatch();
     private final LongList indexSequences = new LongList();

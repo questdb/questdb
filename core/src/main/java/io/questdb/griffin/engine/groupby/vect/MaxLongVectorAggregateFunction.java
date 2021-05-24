@@ -48,8 +48,7 @@ public class MaxLongVectorAggregateFunction extends LongFunction implements Vect
     private final KeyValueFunc keyValueFunc;
     private int valueOffset;
 
-    public MaxLongVectorAggregateFunction(int position, int keyKind, int columnIndex, int workerCount) {
-        super(position);
+    public MaxLongVectorAggregateFunction(int keyKind, int columnIndex, int workerCount) {
         this.columnIndex = columnIndex;
         if (keyKind == GKK_HOUR_INT) {
             this.distinctFunc = Rosti::keyedHourDistinct;

@@ -30,7 +30,7 @@ import org.junit.Test;
 public class ShortConstantTest {
     @Test
     public void testConstant() {
-        ShortConstant constant = new ShortConstant(22, (short) 143);
+        ShortConstant constant = new ShortConstant((short) 143);
         Assert.assertEquals(143, constant.getShort(null));
         Assert.assertTrue(constant.isConstant());
     }

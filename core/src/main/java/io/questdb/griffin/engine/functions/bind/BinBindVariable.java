@@ -34,7 +34,6 @@ public class BinBindVariable extends BinFunction implements ScalarFunction {
     BinarySequence value;
 
     public BinBindVariable(BinarySequence value) {
-        super(0);
         this.value = value;
     }
 

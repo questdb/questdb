@@ -1107,7 +1107,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             final int primaryIndex = getPrimaryColumnIndex(columnBase, columnIndex);
             final int secondaryIndex = primaryIndex + 1;
 
-            MappedReadOnlyMemory mem1 = columns.getQuick(primaryIndex);
+            MappedReadOnlyMemory mem1 =  columns.getQuick(primaryIndex);
             MappedReadOnlyMemory mem2 = columns.getQuick(secondaryIndex);
 
             if (ff.exists(TableUtils.dFile(path.trimTo(plen), name))) {

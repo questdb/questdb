@@ -31,6 +31,7 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class RoundDoubleZeroScaleFunctionFactory implements FunctionFactory {
@@ -40,15 +41,14 @@ public class RoundDoubleZeroScaleFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new RoundDoubleZeroScaleFunction(position, args.getQuick(0));
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+        return new RoundDoubleZeroScaleFunction(args.getQuick(0));
     }
 
     static class RoundDoubleZeroScaleFunction extends DoubleFunction implements UnaryFunction {
         private final Function arg;
 
-        public RoundDoubleZeroScaleFunction(int position, Function arg) {
-            super(position);
+        public RoundDoubleZeroScaleFunction(Function arg) {
             this.arg = arg;
         }
 

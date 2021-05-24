@@ -39,8 +39,7 @@ public class SumLongGroupByFunction extends LongFunction implements GroupByFunct
     private final Function arg;
     private int valueIndex;
 
-    public SumLongGroupByFunction(int position, @NotNull Function arg) {
-        super(position);
+    public SumLongGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
     }
 

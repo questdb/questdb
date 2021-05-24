@@ -40,7 +40,7 @@ public class MaxIntGroupByFunction extends IntFunction implements GroupByFunctio
     private int valueIndex;
 
     public MaxIntGroupByFunction(int position, @NotNull Function arg) {
-        super(position);
+        super();
         this.arg = arg;
     }
 

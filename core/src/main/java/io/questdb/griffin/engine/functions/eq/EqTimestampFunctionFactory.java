@@ -31,6 +31,7 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
+import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class EqTimestampFunctionFactory implements FunctionFactory {
@@ -46,16 +47,15 @@ public class EqTimestampFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new EqTimestampFunction(position, args.getQuick(0), args.getQuick(1));
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+        return new EqTimestampFunction(args.getQuick(0), args.getQuick(1));
     }
 
     private static class EqTimestampFunction extends NegatableBooleanFunction implements BinaryFunction {
         private final Function left;
         private final Function right;
 
-        public EqTimestampFunction(int position, Function left, Function right) {
-            super(position);
+        public EqTimestampFunction(Function left, Function right) {
             this.left = left;
             this.right = right;
         }

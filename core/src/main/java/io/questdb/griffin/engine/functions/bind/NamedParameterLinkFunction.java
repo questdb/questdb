@@ -109,8 +109,7 @@ public class NamedParameterLinkFunction implements ScalarFunction {
         return getBase().getLong256B(rec);
     }
 
-    @Override
-    public int getPosition() {
+    private int getPosition() {
         return position;
     }
 

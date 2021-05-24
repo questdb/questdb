@@ -32,6 +32,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Chars;
+import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
 
@@ -42,8 +43,8 @@ public class ToLowercaseFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(final ObjList<Function> args, final int position, final CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new ToLowercaseFunc(position, args.get(0));
+    public Function newInstance(final int position, final ObjList<Function> args, IntList argPositions, final CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+        return new ToLowercaseFunc(args.get(0));
     }
 
     private static class ToLowercaseFunc extends StrFunction implements UnaryFunction {
@@ -53,8 +54,7 @@ public class ToLowercaseFunctionFactory implements FunctionFactory {
 
         private final StringSink sinkB = new StringSink();
 
-        public ToLowercaseFunc(final int position, final Function arg) {
-            super(position);
+        public ToLowercaseFunc(final Function arg) {
             this.arg = arg;
         }
 

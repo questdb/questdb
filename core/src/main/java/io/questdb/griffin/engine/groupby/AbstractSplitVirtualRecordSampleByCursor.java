@@ -42,7 +42,7 @@ public abstract class AbstractSplitVirtualRecordSampleByCursor extends AbstractN
         super(recordFunctions, timestampIndex, timestampSampler, groupByFunctions);
         this.record = new SplitVirtualRecord(recordFunctions, placeholderFunctions);
         assert recordFunctions.size() == placeholderFunctions.size();
-        final TimestampFunc timestampFunc = new TimestampFunc(0);
+        final TimestampFunc timestampFunc = new TimestampFunc();
         for (int i = 0, n = recordFunctions.size(); i < n; i++) {
             Function f = recordFunctions.getQuick(i);
             if (f == null) {

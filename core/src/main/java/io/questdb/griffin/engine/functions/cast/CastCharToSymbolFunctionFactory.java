@@ -35,10 +35,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.SymbolConstant;
-import io.questdb.std.Chars;
-import io.questdb.std.IntIntHashMap;
-import io.questdb.std.Misc;
-import io.questdb.std.ObjList;
+import io.questdb.std.*;
 import io.questdb.std.str.StringSink;
 
 public class CastCharToSymbolFunctionFactory implements FunctionFactory {
@@ -48,18 +45,18 @@ public class CastCharToSymbolFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         final Function arg = args.getQuick(0);
         if (arg.isConstant()) {
             final char value = arg.getChar(null);
             if (value == 0) {
-                return new SymbolConstant(position, null, SymbolTable.VALUE_IS_NULL);
+                return SymbolConstant.NULL;
             }
             final StringSink sink = Misc.getThreadLocalBuilder();
             sink.put(value);
-            return new SymbolConstant(position, Chars.toString(sink), 0);
+            return SymbolConstant.newInstance(Chars.toString(sink));
         }
-        return new Func(position, arg);
+        return new Func(arg);
     }
 
     private static class Func extends SymbolFunction implements UnaryFunction {
@@ -69,8 +66,7 @@ public class CastCharToSymbolFunctionFactory implements FunctionFactory {
         private final ObjList<String> symbols = new ObjList<>();
         private int next = 1;
 
-        public Func(int position, Function arg) {
-            super(position);
+        public Func(Function arg) {
             this.arg = arg;
             symbols.add(null);
         }
@@ -78,6 +74,25 @@ public class CastCharToSymbolFunctionFactory implements FunctionFactory {
         @Override
         public Function getArg() {
             return arg;
+        }
+
+        @Override
+        public int getInt(Record rec) {
+            final char value = arg.getChar(rec);
+            if (value == 0) {
+                return SymbolTable.VALUE_IS_NULL;
+            }
+
+            final int keyIndex = symbolTableShortcut.keyIndex(value);
+            if (keyIndex < 0) {
+                return symbolTableShortcut.valueAt(keyIndex) - 1;
+            }
+
+            symbolTableShortcut.putAt(keyIndex, value, next);
+            sink.clear();
+            sink.put(value);
+            symbols.add(Chars.toString(sink));
+            return next++ - 1;
         }
 
         @Override
@@ -106,32 +121,12 @@ public class CastCharToSymbolFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public CharSequence valueOf(int symbolKey) {
-            return symbols.getQuick(TableUtils.toIndexKey(symbolKey));
-        }
-
-        @Override
-        public CharSequence valueBOf(int key) {
-            return valueOf(key);
-        }
-
-        @Override
-        public int getInt(Record rec) {
-            final char value = arg.getChar(rec);
-            if (value == 0) {
-                return SymbolTable.VALUE_IS_NULL;
-            }
-
-            final int keyIndex = symbolTableShortcut.keyIndex(value);
-            if (keyIndex < 0) {
-                return symbolTableShortcut.valueAt(keyIndex) - 1;
-            }
-
-            symbolTableShortcut.putAt(keyIndex, value, next);
-            sink.clear();
-            sink.put(value);
-            symbols.add(Chars.toString(sink));
-            return next++ - 1;
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
+            arg.init(symbolTableSource, executionContext);
+            symbolTableShortcut.clear();
+            symbols.clear();
+            symbols.add(null);
+            next = 1;
         }
 
         @Override
@@ -140,12 +135,13 @@ public class CastCharToSymbolFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
-            arg.init(symbolTableSource, executionContext);
-            symbolTableShortcut.clear();
-            symbols.clear();
-            symbols.add(null);
-            next = 1;
+        public CharSequence valueOf(int symbolKey) {
+            return symbols.getQuick(TableUtils.toIndexKey(symbolKey));
+        }
+
+        @Override
+        public CharSequence valueBOf(int key) {
+            return valueOf(key);
         }
     }
 }

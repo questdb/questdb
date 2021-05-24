@@ -48,8 +48,7 @@ public class MaxDoubleVectorAggregateFunction extends DoubleFunction implements 
     private final KeyValueFunc keyValueFunc;
     private int valueOffset;
 
-    public MaxDoubleVectorAggregateFunction(int position, int keyKind, int columnIndex, int workerCount) {
-        super(position);
+    public MaxDoubleVectorAggregateFunction(int keyKind, int columnIndex, int workerCount) {
         this.columnIndex = columnIndex;
         if (keyKind == GKK_HOUR_INT) {
             this.distinctFunc = Rosti::keyedHourDistinct;

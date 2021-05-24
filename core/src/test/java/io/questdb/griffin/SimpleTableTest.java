@@ -22,34 +22,23 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.constants;
+package io.questdb.griffin;
 
-import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.engine.functions.StrFunction;
-import io.questdb.std.str.CharSink;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableModel;
+import io.questdb.std.NumericException;
+import org.junit.Test;
 
-public class NullStrConstant extends StrFunction implements ConstantFunction {
+public class SimpleTableTest extends AbstractGriffinTest {
+    @Test
+    public void testWhereIsColumnNameInsensitive() throws SqlException, NumericException {
+        try (TableModel tm = new TableModel(configuration, "tab1", PartitionBy.NONE)) {
+            tm.timestamp("ts").col("ID", ColumnType.INT);
+            createPopulateTable(tm, 2, "2020-01-01", 1);
+        }
 
-    public NullStrConstant(int position) {
-        super(position);
-    }
-
-    @Override
-    public CharSequence getStr(Record rec) {
-        return null;
-    }
-
-    @Override
-    public CharSequence getStrB(Record rec) {
-        return null;
-    }
-
-    @Override
-    public void getStr(Record rec, CharSink sink) {
-    }
-
-    @Override
-    public int getStrLen(Record rec) {
-        return -1;
+        assertSql("select ts from tab1 where id > 1", "ts\n" +
+                "2020-01-01T00:00:00.000000Z\n");
     }
 }

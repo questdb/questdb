@@ -33,10 +33,6 @@ import io.questdb.std.Numbers;
 class DateBindVariable extends DateFunction implements ScalarFunction, Mutable {
     long value;
 
-    public DateBindVariable() {
-        super(0);
-    }
-
     @Override
     public void clear() {
         this.value = Numbers.LONG_NaN;

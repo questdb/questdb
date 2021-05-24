@@ -32,6 +32,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
@@ -42,7 +43,7 @@ public class BitwiseNotIntFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
         return new BitNotIntFunction(position, args.getQuick(0));
     }
 
@@ -50,7 +51,7 @@ public class BitwiseNotIntFunctionFactory implements FunctionFactory {
         private final Function value;
 
         public BitNotIntFunction(int position, Function value) {
-            super(position);
+            super();
             this.value = value;
         }
 

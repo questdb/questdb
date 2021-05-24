@@ -39,8 +39,7 @@ public class NSumDoubleGroupByFunction extends DoubleFunction implements GroupBy
     private final Function arg;
     private int valueIndex;
 
-    public NSumDoubleGroupByFunction(int position, @NotNull Function arg) {
-        super(position);
+    public NSumDoubleGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
     }
 

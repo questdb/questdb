@@ -34,8 +34,7 @@ public class SymbolColumn extends SymbolFunction implements ScalarFunction {
     private final boolean symbolTableStatic;
     private SymbolTable symbolTable;
 
-    public SymbolColumn(int position, int columnIndex, boolean symbolTableStatic) {
-        super(position);
+    public SymbolColumn(int columnIndex, boolean symbolTableStatic) {
         this.columnIndex = columnIndex;
         this.symbolTableStatic = symbolTableStatic;
     }

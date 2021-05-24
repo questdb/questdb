@@ -38,8 +38,7 @@ public class FirstFloatGroupByFunction extends FloatFunction implements GroupByF
     private final Function arg;
     private int valueIndex;
 
-    public FirstFloatGroupByFunction(int position, @NotNull Function arg) {
-        super(position);
+    public FirstFloatGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
     }
 
