@@ -34,6 +34,7 @@ import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.model.IntervalOperation;
+import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.ObjList;
 
@@ -46,20 +47,33 @@ public class InTimestampStrFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
         Function rightFn = args.getQuick(1);
         if (rightFn.isConstant()) {
-            return new EqTimestampStrConstantFunction(position, args.getQuick(0), rightFn.getStr(null), rightFn.getPosition());
+            return new EqTimestampStrConstantFunction(
+                    args.getQuick(0),
+                    rightFn.getStr(null),
+                    argPositions.getQuick(1)
+            );
         }
-        return new EqTimestampStrFunction(position, args.getQuick(0), rightFn);
+        return new EqTimestampStrFunction(args.getQuick(0), rightFn);
     }
 
     private static class EqTimestampStrConstantFunction extends NegatableBooleanFunction implements UnaryFunction {
         private final Function left;
         private final LongList intervals = new LongList();
 
-        public EqTimestampStrConstantFunction(int position, Function left, CharSequence right, int rightPosition) throws SqlException {
-            super(position);
+        public EqTimestampStrConstantFunction(
+                Function left,
+                CharSequence right,
+                int rightPosition
+        ) throws SqlException {
             this.left = left;
             parseAndApplyIntervalEx(right, intervals, rightPosition);
         }
@@ -80,8 +94,7 @@ public class InTimestampStrFunctionFactory implements FunctionFactory {
         private final Function right;
         private final LongList intervals = new LongList();
 
-        public EqTimestampStrFunction(int position, Function left, Function right) {
-            super(position);
+        public EqTimestampStrFunction(Function left, Function right) {
             this.left = left;
             this.right = right;
         }
@@ -91,7 +104,8 @@ public class InTimestampStrFunctionFactory implements FunctionFactory {
             CharSequence timestampAsString = right.getStr(rec);
             intervals.clear();
             try {
-                parseAndApplyIntervalEx(timestampAsString, intervals, right.getPosition());
+                // we are ignoring exception contents here, so we do not need exact position
+                parseAndApplyIntervalEx(timestampAsString, intervals, 0);
             } catch (SqlException e) {
                 return false;
             }

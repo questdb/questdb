@@ -38,8 +38,7 @@ public class MapSymbolColumn extends SymbolFunction {
     private final boolean symbolTableStatic;
     private SymbolTable symbolTable;
 
-    public MapSymbolColumn(int position, int mapColumnIndex, int cursorColumnIndex, boolean symbolTableStatic) {
-        super(position);
+    public MapSymbolColumn(int mapColumnIndex, int cursorColumnIndex, boolean symbolTableStatic) {
         this.mapColumnIndex = mapColumnIndex;
         this.cursorColumnIndex = cursorColumnIndex;
         this.symbolTableStatic = symbolTableStatic;

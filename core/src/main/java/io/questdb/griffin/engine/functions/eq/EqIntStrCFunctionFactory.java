@@ -32,6 +32,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.ConstantFunction;
+import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
@@ -48,15 +49,15 @@ public class EqIntStrCFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         try {
             final CharSequence value = args.getQuick(1).getStr(null);
             if (value == null) {
-                return new Func(position, args.getQuick(0), Numbers.INT_NaN);
+                return new Func(args.getQuick(0), Numbers.INT_NaN);
             }
-            return new Func(position, args.getQuick(0), Numbers.parseInt(value));
+            return new Func(args.getQuick(0), Numbers.parseInt(value));
         } catch (NumericException e) {
-            return new NegatedAwareBooleanConstantFunc(args.getQuick(1).getPosition());
+            return new NegatedAwareBooleanConstantFunc();
         }
     }
 
@@ -64,8 +65,7 @@ public class EqIntStrCFunctionFactory implements FunctionFactory {
         private final Function left;
         private final int right;
 
-        public Func(int position, Function left, int right) {
-            super(position);
+        public Func(Function left, int right) {
             this.left = left;
             this.right = right;
         }
@@ -82,11 +82,6 @@ public class EqIntStrCFunctionFactory implements FunctionFactory {
     }
 
     private static class NegatedAwareBooleanConstantFunc extends NegatableBooleanFunction implements ConstantFunction {
-
-        public NegatedAwareBooleanConstantFunc(int position) {
-            super(position);
-        }
-
         @Override
         public boolean getBool(Record rec) {
             return negated;

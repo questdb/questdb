@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
+import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class VarcharCastHelperFunctionFactory implements FunctionFactory {
@@ -38,7 +39,7 @@ public class VarcharCastHelperFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new StrConstant(position, null);
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+        return new StrConstant(null);
     }
 }

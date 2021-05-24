@@ -31,6 +31,7 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class SqrtDoubleFunctionFactory implements FunctionFactory {
@@ -40,15 +41,14 @@ public class SqrtDoubleFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new SqrtFunction(position, args.getQuick(0));
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+        return new SqrtFunction(args.getQuick(0));
     }
 
     private static class SqrtFunction extends DoubleFunction implements UnaryFunction {
         final Function function;
 
-        public SqrtFunction(int position, Function function) {
-            super(position);
+        public SqrtFunction(Function function) {
             this.function = function;
         }
 

@@ -45,8 +45,7 @@ public class SumTimestampVectorAggregateFunction extends TimestampFunction imple
     private final KeyValueFunc keyValueFunc;
     private int valueOffset;
 
-    public SumTimestampVectorAggregateFunction(int position, int keyKind, int columnIndex, int workerCount) {
-        super(position);
+    public SumTimestampVectorAggregateFunction(int keyKind, int columnIndex, int workerCount) {
         this.columnIndex = columnIndex;
         if (keyKind == GKK_HOUR_INT) {
             distinctFunc = Rosti::keyedHourDistinct;

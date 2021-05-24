@@ -33,6 +33,7 @@ import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.std.Chars;
+import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.CharSink;
 
@@ -43,19 +44,18 @@ public class CastSymbolToStrFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         Function func = args.getQuick(0);
         if (func.isConstant()) {
-            return new StrConstant(position, Chars.toString(func.getSymbol(null)));
+            return new StrConstant(Chars.toString(func.getSymbol(null)));
         }
-        return new Func(position, args.getQuick(0));
+        return new Func(args.getQuick(0));
     }
 
     private static class Func extends StrFunction implements UnaryFunction {
         private final Function arg;
 
-        public Func(int position, Function arg) {
-            super(position);
+        public Func(Function arg) {
             this.arg = arg;
         }
 

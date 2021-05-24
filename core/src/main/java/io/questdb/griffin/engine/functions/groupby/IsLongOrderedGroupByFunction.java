@@ -39,8 +39,7 @@ public class IsLongOrderedGroupByFunction extends BooleanFunction implements Gro
     private int valueIndex;
     private int flagIndex;
 
-    public IsLongOrderedGroupByFunction(int position, @NotNull Function arg) {
-        super(position);
+    public IsLongOrderedGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
     }
 

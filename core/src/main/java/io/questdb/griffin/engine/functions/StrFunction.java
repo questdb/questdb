@@ -35,12 +35,6 @@ import io.questdb.std.Long256;
 import io.questdb.std.str.CharSink;
 
 public abstract class StrFunction implements ScalarFunction {
-    private final int position;
-
-    public StrFunction(int position) {
-        this.position = position;
-    }
-
     @Override
     public final BinarySequence getBin(Record rec) {
         throw new UnsupportedOperationException();
@@ -104,11 +98,6 @@ public abstract class StrFunction implements ScalarFunction {
     @Override
     public final Long256 getLong256B(Record rec) {
         throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public int getPosition() {
-        return position;
     }
 
     @Override

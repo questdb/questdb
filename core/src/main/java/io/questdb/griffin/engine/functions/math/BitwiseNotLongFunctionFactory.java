@@ -32,7 +32,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.griffin.engine.functions.constants.LongConstant;
+import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
@@ -43,15 +43,14 @@ public class BitwiseNotLongFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        return new BitNotLongFunction(position, args.getQuick(0));
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        return new BitNotLongFunction(args.getQuick(0));
     }
 
     public static final class BitNotLongFunction extends LongFunction implements UnaryFunction {
         private final Function value;
 
-        public BitNotLongFunction(int position, Function value) {
-            super(position);
+        public BitNotLongFunction(Function value) {
             this.value = value;
         }
 

@@ -32,6 +32,7 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.FloatFunction;
+import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 
@@ -43,12 +44,12 @@ public class RndFloatCFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
         int nanRate = args.getQuick(0).getInt(null);
         if (nanRate < 0) {
-            throw SqlException.$(args.getQuick(0).getPosition(), "invalid NaN rate");
+            throw SqlException.$(argPositions.getQuick(0), "invalid NaN rate");
         }
-        return new RndFunction(position, nanRate);
+        return new RndFunction(nanRate);
     }
 
     private static class RndFunction extends FloatFunction implements Function {
@@ -56,8 +57,7 @@ public class RndFloatCFunctionFactory implements FunctionFactory {
         private final int nanRate;
         private Rnd rnd;
 
-        public RndFunction(int position, int nanRate) {
-            super(position);
+        public RndFunction(int nanRate) {
             this.nanRate = nanRate + 1;
         }
 

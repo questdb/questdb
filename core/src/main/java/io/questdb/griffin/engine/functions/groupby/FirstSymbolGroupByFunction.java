@@ -39,8 +39,7 @@ public class FirstSymbolGroupByFunction extends SymbolFunction implements GroupB
     private final SymbolFunction arg;
     private int valueIndex;
 
-    public FirstSymbolGroupByFunction(int position, @NotNull SymbolFunction arg) {
-        super(position);
+    public FirstSymbolGroupByFunction(@NotNull SymbolFunction arg) {
         this.arg = arg;
     }
 

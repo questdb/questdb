@@ -32,6 +32,7 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.griffin.engine.functions.constants.TimestampConstant;
+import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
@@ -43,13 +44,19 @@ public class TimestampShuffleFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) {
         final long start = args.getQuick(0).getTimestamp(null);
         final long end = args.getQuick(1).getTimestamp(null);
         if (start == Numbers.LONG_NaN || end == Numbers.LONG_NaN) {
-            return new TimestampConstant(args.getQuick(0).getPosition(), Numbers.LONG_NaN);
+            return TimestampConstant.NULL;
         }
-        return new TimestampShuffleFunction(position, start, end);
+        return new TimestampShuffleFunction(start, end);
     }
 
     private static class TimestampShuffleFunction extends TimestampFunction {
@@ -57,8 +64,7 @@ public class TimestampShuffleFunctionFactory implements FunctionFactory {
         private final long end;
         private Rnd rnd;
 
-        public TimestampShuffleFunction(int position, long start, long end) {
-            super(position);
+        public TimestampShuffleFunction(long start, long end) {
             this.start = start;
             this.end = end;
         }

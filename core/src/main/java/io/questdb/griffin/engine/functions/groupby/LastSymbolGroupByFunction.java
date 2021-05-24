@@ -31,7 +31,7 @@ import org.jetbrains.annotations.NotNull;
 
 public class LastSymbolGroupByFunction extends FirstSymbolGroupByFunction {
     public LastSymbolGroupByFunction(int position, @NotNull SymbolFunction arg) {
-        super(position, arg);
+        super(arg);
     }
 
     @Override

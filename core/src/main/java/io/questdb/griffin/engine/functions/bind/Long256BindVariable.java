@@ -36,10 +36,6 @@ import io.questdb.std.str.CharSink;
 class Long256BindVariable extends Long256Function implements ScalarFunction, Mutable {
     final Long256Impl value = new Long256Impl();
 
-    public Long256BindVariable() {
-        super(0);
-    }
-
     @Override
     public void getLong256(Record rec, CharSink sink) {
         final long a = value.getLong0();

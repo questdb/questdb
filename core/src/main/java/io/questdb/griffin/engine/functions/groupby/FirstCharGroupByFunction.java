@@ -38,8 +38,7 @@ public class FirstCharGroupByFunction extends CharFunction implements GroupByFun
     private final Function arg;
     private int valueIndex;
 
-    public FirstCharGroupByFunction(int position, @NotNull Function arg) {
-        super(position);
+    public FirstCharGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
     }
 

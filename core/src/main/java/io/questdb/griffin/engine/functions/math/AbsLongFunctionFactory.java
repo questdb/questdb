@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.AbstractUnaryLongFunction;
+import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class AbsLongFunctionFactory implements FunctionFactory {
@@ -39,13 +40,13 @@ public class AbsLongFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         return new AbsFunction(position, args.getQuick(0));
     }
 
     private static class AbsFunction extends AbstractUnaryLongFunction {
         public AbsFunction(int position, Function arg) {
-            super(position, arg);
+            super(arg);
         }
 
         @Override

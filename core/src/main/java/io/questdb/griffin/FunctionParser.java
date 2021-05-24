@@ -54,7 +54,9 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
     private static final int MATCH_EXACT_MATCH = 3;
 
     private final ObjList<Function> mutableArgs = new ObjList<>();
-    private final ArrayDeque<Function> stack = new ArrayDeque<>();
+    private final IntList mutableArgPositions = new IntList();
+    private final ArrayDeque<Function> functionStack = new ArrayDeque<>();
+    private final IntStack positionStack = new IntStack();
     private final PostOrderTreeTraversalAlgo traverseAlgo = new PostOrderTreeTraversalAlgo();
     private final CairoConfiguration configuration;
     private final ArrayDeque<RecordMetadata> metadataStack = new ArrayDeque<>();
@@ -79,35 +81,35 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
 
         switch (metadata.getColumnType(index)) {
             case ColumnType.BOOLEAN:
-                return new BooleanColumn(position, index);
+                return BooleanColumn.newInstance(index);
             case ColumnType.BYTE:
-                return new ByteColumn(position, index);
+                return ByteColumn.newInstance(index);
             case ColumnType.SHORT:
-                return new ShortColumn(position, index);
+                return ShortColumn.newInstance(index);
             case ColumnType.CHAR:
-                return new CharColumn(position, index);
+                return CharColumn.newInstance(index);
             case ColumnType.INT:
-                return new IntColumn(position, index);
+                return IntColumn.newInstance(index);
             case ColumnType.LONG:
-                return new LongColumn(position, index);
+                return LongColumn.newInstance(index);
             case ColumnType.FLOAT:
-                return new FloatColumn(position, index);
+                return FloatColumn.newInstance(index);
             case ColumnType.DOUBLE:
-                return new DoubleColumn(position, index);
+                return DoubleColumn.newInstance(index);
             case ColumnType.STRING:
-                return new StrColumn(position, index);
+                return StrColumn.newInstance(index);
             case ColumnType.SYMBOL:
-                return new SymbolColumn(position, index, metadata.isSymbolTableStatic(index));
+                return new SymbolColumn(index, metadata.isSymbolTableStatic(index));
             case ColumnType.BINARY:
-                return new BinColumn(position, index);
+                return BinColumn.newInstance(index);
             case ColumnType.DATE:
-                return new DateColumn(position, index);
+                return DateColumn.newInstance(index);
             case ColumnType.TIMESTAMP:
-                return new TimestampColumn(position, index);
+                return TimestampColumn.newInstance(index);
             case ColumnType.RECORD:
-                return new RecordColumn(position, index, metadata.getMetadata(index));
+                return new RecordColumn(index, metadata.getMetadata(index));
             default:
-                return new Long256Column(position, index);
+                return Long256Column.newInstance(index);
         }
     }
 
@@ -119,10 +121,10 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
                 case '$':
                     return parseIndexedParameter(position, name);
                 default:
-                    return new StrConstant(position, name);
+                    return new StrConstant(name);
             }
         }
-        return new NullStrConstant(position);
+        return StrConstant.NULL;
     }
 
     public Function createBindVariable0(int position, CharSequence name) throws SqlException {
@@ -130,19 +132,6 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
             return parseIndexedParameter(position, name);
         }
         return createNamedParameter(position, name);
-    }
-
-    private Function parseIndexedParameter(int position, CharSequence name) throws SqlException {
-        // get variable index from token
-        try {
-            final int variableIndex = Numbers.parseInt(name, 1, name.length());
-            if (variableIndex < 1) {
-                throw SqlException.$(position, "invalid bind variable index [value=").put(variableIndex).put(']');
-            }
-            return createIndexParameter(variableIndex - 1, position);
-        } catch (NumericException e) {
-            throw SqlException.$(position, "invalid bind variable index [value=").put(name).put(']');
-        }
     }
 
     public Function createIndexParameter(int variableIndex, int position) throws SqlException {
@@ -235,7 +224,9 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
         try {
             this.metadata = metadata;
             traverseAlgo.traverse(node, this);
-            final Function function = stack.poll();
+            final Function function = functionStack.poll();
+            positionStack.pop();
+            assert positionStack.size() == functionStack.size();
             if (function != null && function.isConstant() && (function instanceof ScalarFunction)) {
                 try {
                     return functionToConstant(function);
@@ -263,32 +254,37 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
         if (argCount == 0) {
             switch (node.type) {
                 case ExpressionNode.LITERAL:
-                    stack.push(createColumn(node.position, node.token));
+                    functionStack.push(createColumn(node.position, node.token));
                     break;
                 case ExpressionNode.BIND_VARIABLE:
-                    stack.push(createBindVariable0(node.position, node.token));
+                    functionStack.push(createBindVariable0(node.position, node.token));
                     break;
                 case ExpressionNode.MEMBER_ACCESS:
-                    stack.push(new StrConstant(node.position, node.token));
+                    functionStack.push(new StrConstant(node.token));
                     break;
                 case ExpressionNode.CONSTANT:
-                    stack.push(createConstant(node.position, node.token));
+                    functionStack.push(createConstant(node.position, node.token));
                     break;
                 case ExpressionNode.QUERY:
-                    stack.push(createCursorFunction(node));
+                    functionStack.push(createCursorFunction(node));
                     break;
                 default:
                     // lookup zero arg function from symbol table
-                    stack.push(createFunction(node, null));
+                    functionStack.push(createFunction(node, null, null));
                     break;
             }
+            positionStack.push(node.position);
         } else {
             mutableArgs.clear();
             mutableArgs.setPos(argCount);
+            mutableArgPositions.clear();
+            mutableArgPositions.setPos(argCount);
             for (int n = 0; n < argCount; n++) {
-                mutableArgs.setQuick(n, stack.poll());
+                mutableArgs.setQuick(n, functionStack.poll());
+                mutableArgPositions.setQuick(n, positionStack.pop());
             }
-            stack.push(createFunction(node, mutableArgs));
+            functionStack.push(createFunction(node, mutableArgs, mutableArgPositions));
+            positionStack.push(node.position);
         }
     }
 
@@ -352,12 +348,13 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
     private Function checkAndCreateFunction(
             FunctionFactory factory,
             @Transient ObjList<Function> args,
+            @Transient IntList argPositions,
             int position,
             CairoConfiguration configuration
     ) throws SqlException {
         Function function;
         try {
-            function = factory.newInstance(args, position, configuration, sqlExecutionContext);
+            function = factory.newInstance(position, args, argPositions, configuration, sqlExecutionContext);
         } catch (SqlException e) {
             throw e;
         } catch (Throwable e) {
@@ -372,6 +369,14 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
         return function;
     }
 
+    private long convertToTimestamp(CharSequence str, int position) throws SqlException {
+        try {
+            return IntervalUtils.parseFloorPartialDate(str);
+        } catch (NumericException e) {
+            throw SqlException.invalidDate(position);
+        }
+    }
+
     private Function createColumn(int position, CharSequence columnName) throws SqlException {
         return createColumn(position, columnName, metadata);
     }
@@ -381,53 +386,53 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
         final int len = tok.length();
 
         if (isNullKeyword(tok)) {
-            return new NullStrConstant(position);
+            return StrConstant.NULL;
         }
 
         if (Chars.isQuoted(tok)) {
             if (len == 3) {
                 // this is 'x' - char
-                return new CharConstant(position, tok.charAt(1));
+                return CharConstant.newInstance(tok.charAt(1));
             }
 
             if (len == 2) {
                 // empty
-                return new CharConstant(position, (char) 0);
+                return CharConstant.ZERO;
             }
-            return new StrConstant(position, tok);
+            return new StrConstant(tok);
         }
 
         // special case E'str'
         // we treat it like normal string for now
         if (len > 2 && tok.charAt(0) == 'E' && tok.charAt(1) == '\'') {
-            return new StrConstant(position, Chars.toString(tok, 2, len - 1));
+            return new StrConstant(Chars.toString(tok, 2, len - 1));
         }
 
         if (SqlKeywords.isTrueKeyword(tok)) {
-            return new BooleanConstant(position, true);
+            return BooleanConstant.TRUE;
         }
 
         if (SqlKeywords.isFalseKeyword(tok)) {
-            return new BooleanConstant(position, false);
+            return BooleanConstant.FALSE;
         }
 
         try {
-            return new IntConstant(position, Numbers.parseInt(tok));
+            return IntConstant.newInstance(Numbers.parseInt(tok));
         } catch (NumericException ignore) {
         }
 
         try {
-            return new LongConstant(position, Numbers.parseLong(tok));
+            return LongConstant.newInstance(Numbers.parseLong(tok));
         } catch (NumericException ignore) {
         }
 
         try {
-            return new DoubleConstant(position, Numbers.parseDouble(tok));
+            return DoubleConstant.newInstance(Numbers.parseDouble(tok));
         } catch (NumericException ignore) {
         }
 
         try {
-            return new FloatConstant(position, Numbers.parseFloat(tok));
+            return FloatConstant.newInstance(Numbers.parseFloat(tok));
         } catch (NumericException ignore) {
         }
 
@@ -444,10 +449,14 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
 
     private Function createCursorFunction(ExpressionNode node) throws SqlException {
         assert node.queryModel != null;
-        return new CursorFunction(node.position, sqlCodeGenerator.generate(node.queryModel, sqlExecutionContext));
+        return new CursorFunction(sqlCodeGenerator.generate(node.queryModel, sqlExecutionContext));
     }
 
-    private Function createFunction(ExpressionNode node, @Transient ObjList<Function> args) throws SqlException {
+    private Function createFunction(
+            ExpressionNode node,
+            @Transient ObjList<Function> args,
+            @Transient IntList argPositions
+    ) throws SqlException {
         final ObjList<FunctionFactoryDescriptor> overload = functionFactoryCache.getOverloadList(node.token);
         if (overload == null) {
             throw invalidFunction(node, args);
@@ -504,7 +513,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
 
             if (argCount == 0 && sigArgCount == 0) {
                 // this is no-arg function, match right away
-                return checkAndCreateFunction(factory, args, node.position, configuration);
+                return checkAndCreateFunction(factory, args, argPositions, node.position, configuration);
             }
 
             // otherwise, is number of arguments the same?
@@ -632,7 +641,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
             for (int k = candidateSigArgCount; k < argCount; k++) {
                 Function func = args.getQuick(k);
                 if (!func.isConstant()) {
-                    throw SqlException.$(func.getPosition(), "constant expected");
+                    throw SqlException.$(argPositions.getQuick(k), "constant expected");
                 }
             }
         }
@@ -643,9 +652,9 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
             final int sigArgType = FunctionFactoryDescriptor.toType(candidateDescriptor.getArgTypeMask(k));
             if (arg.getType() == ColumnType.DOUBLE && arg.isConstant() && Double.isNaN(arg.getDouble(null))) {
                 if (sigArgType == ColumnType.LONG) {
-                    args.setQuick(k, new LongConstant(arg.getPosition(), Numbers.LONG_NaN));
+                    args.setQuick(k, LongConstant.NULL);
                 } else if (sigArgType == ColumnType.INT) {
-                    args.setQuick(k, new IntConstant(arg.getPosition(), Numbers.INT_NaN));
+                    args.setQuick(k, IntConstant.NULL);
                 }
             }
         }
@@ -667,10 +676,10 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
             final Function arg = args.getQuick(k);
             final int sigArgType = FunctionFactoryDescriptor.toType(candidateDescriptor.getArgTypeMask(k));
             if (arg.getType() == ColumnType.STRING && sigArgType == ColumnType.TIMESTAMP) {
-                int position = arg.getPosition();
+                int position = argPositions.getQuick(k);
                 if (arg.isConstant()) {
                     long timestamp = convertToTimestamp(arg.getStr(null), position);
-                    args.set(k, new TimestampConstant(position, timestamp));
+                    args.set(k, TimestampConstant.newInstance(timestamp));
                 } else {
                     args.set(k, new CastStrToTimestampFunctionFactory.Func(position, arg));
                 }
@@ -678,100 +687,87 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
         }
 
         LOG.debug().$("call ").$(node).$(" -> ").$(candidate.getSignature()).$();
-        return checkAndCreateFunction(candidate, args, node.position, configuration);
-    }
-
-    private long convertToTimestamp(CharSequence str, int position) throws SqlException {
-        try {
-            return IntervalUtils.parseFloorPartialDate(str);
-        } catch (NumericException e) {
-            throw SqlException.invalidDate(position);
-        }
+        return checkAndCreateFunction(candidate, args, argPositions, node.position, configuration);
     }
 
     private Function functionToConstant(Function function) {
-        final int position = function.getPosition();
         switch (function.getType()) {
             case ColumnType.INT:
                 if (function instanceof IntConstant) {
                     return function;
                 } else {
-                    return new IntConstant(position, function.getInt(null));
+                    return IntConstant.newInstance(function.getInt(null));
                 }
             case ColumnType.BOOLEAN:
                 if (function instanceof BooleanConstant) {
                     return function;
                 } else {
-                    return new BooleanConstant(position, function.getBool(null));
+                    return BooleanConstant.of(function.getBool(null));
                 }
             case ColumnType.BYTE:
                 if (function instanceof ByteConstant) {
                     return function;
                 } else {
-                    return new ByteConstant(position, function.getByte(null));
+                    return ByteConstant.newInstance(function.getByte(null));
                 }
             case ColumnType.SHORT:
                 if (function instanceof ShortConstant) {
                     return function;
                 } else {
-                    return new ShortConstant(position, function.getShort(null));
+                    return ShortConstant.newInstance(function.getShort(null));
                 }
             case ColumnType.CHAR:
                 if (function instanceof CharConstant) {
                     return function;
                 } else {
-                    return new CharConstant(position, function.getChar(null));
+                    return CharConstant.newInstance(function.getChar(null));
                 }
             case ColumnType.FLOAT:
                 if (function instanceof FloatConstant) {
                     return function;
                 } else {
-                    return new FloatConstant(position, function.getFloat(null));
+                    return FloatConstant.newInstance(function.getFloat(null));
                 }
             case ColumnType.DOUBLE:
                 if (function instanceof DoubleConstant) {
                     return function;
                 } else {
-                    return new DoubleConstant(position, function.getDouble(null));
+                    return DoubleConstant.newInstance(function.getDouble(null));
                 }
             case ColumnType.LONG:
                 if (function instanceof LongConstant) {
                     return function;
                 } else {
-                    return new LongConstant(position, function.getLong(null));
+                    return LongConstant.newInstance(function.getLong(null));
                 }
             case ColumnType.LONG256:
                 if (function instanceof Long256Constant) {
                     return function;
                 } else {
-                    return new Long256Constant(position, function.getLong256A(null));
+                    return new Long256Constant(function.getLong256A(null));
                 }
             case ColumnType.DATE:
                 if (function instanceof DateConstant) {
                     return function;
                 } else {
-                    return new DateConstant(position, function.getDate(null));
+                    return DateConstant.getInstance(function.getDate(null));
                 }
             case ColumnType.STRING:
-                if (function instanceof StrConstant || function instanceof NullStrConstant) {
+                if (function instanceof StrConstant) {
                     return function;
                 } else {
-                    final CharSequence value = function.getStr(null);
-                    if (value == null) {
-                        return new NullStrConstant(position);
-                    }
-                    return new StrConstant(position, value);
+                    return StrConstant.newInstance(function.getStr(null));
                 }
             case ColumnType.SYMBOL:
                 if (function instanceof SymbolConstant) {
                     return function;
                 }
-                return new SymbolConstant(position, Chars.toString(function.getSymbol(null)), 0);
+                return SymbolConstant.newInstance(function.getSymbol(null));
             case ColumnType.TIMESTAMP:
                 if (function instanceof TimestampConstant) {
                     return function;
                 } else {
-                    return new TimestampConstant(position, function.getTimestamp(null));
+                    return TimestampConstant.newInstance(function.getTimestamp(null));
                 }
             default:
                 return function;
@@ -785,6 +781,19 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
             throw SqlException.$(0, "bind variable service is not provided");
         }
         return bindVariableService;
+    }
+
+    private Function parseIndexedParameter(int position, CharSequence name) throws SqlException {
+        // get variable index from token
+        try {
+            final int variableIndex = Numbers.parseInt(name, 1, name.length());
+            if (variableIndex < 1) {
+                throw SqlException.$(position, "invalid bind variable index [value=").put(variableIndex).put(']');
+            }
+            return createIndexParameter(variableIndex - 1, position);
+        } catch (NumericException e) {
+            throw SqlException.$(position, "invalid bind variable index [value=").put(name).put(']');
+        }
     }
 
     static {

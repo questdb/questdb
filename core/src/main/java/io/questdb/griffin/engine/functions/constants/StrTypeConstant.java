@@ -33,10 +33,6 @@ public class StrTypeConstant extends StrFunction implements TypeConstant {
 
     public static final StrTypeConstant INSTANCE = new StrTypeConstant();
 
-    private StrTypeConstant() {
-        super(0);
-    }
-
     @Override
     public CharSequence getStr(Record rec) {
         return null;

@@ -31,10 +31,7 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.Long256Function;
 import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.std.Long256;
-import io.questdb.std.Long256Impl;
-import io.questdb.std.Numbers;
-import io.questdb.std.ObjList;
+import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
 
 public class CastBooleanToLong256FunctionFactory implements FunctionFactory {
@@ -44,8 +41,8 @@ public class CastBooleanToLong256FunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new Func(position, args.getQuick(0));
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+        return new Func(args.getQuick(0));
     }
 
     private static class Func extends Long256Function implements UnaryFunction {
@@ -53,8 +50,7 @@ public class CastBooleanToLong256FunctionFactory implements FunctionFactory {
         private final Long256Impl long256a = new Long256Impl();
         private final Long256Impl long256b = new Long256Impl();
 
-        public Func(int position, Function arg) {
-            super(position);
+        public Func(Function arg) {
             this.arg = arg;
         }
 

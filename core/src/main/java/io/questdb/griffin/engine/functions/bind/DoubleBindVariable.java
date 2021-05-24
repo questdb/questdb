@@ -32,10 +32,6 @@ import io.questdb.std.Mutable;
 class DoubleBindVariable extends DoubleFunction implements ScalarFunction, Mutable {
     double value;
 
-    public DoubleBindVariable() {
-        super(0);
-    }
-
     @Override
     public double getDouble(Record rec) {
         return value;

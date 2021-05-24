@@ -31,6 +31,7 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.StrFunction;
+import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.CharSink;
@@ -43,8 +44,8 @@ public class SubStrFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new Func(position, args.getQuick(0), args.getQuick(1));
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+        return new Func(args.getQuick(0), args.getQuick(1));
     }
 
     private static class Func extends StrFunction implements BinaryFunction {
@@ -54,8 +55,7 @@ public class SubStrFunctionFactory implements FunctionFactory {
         private final Function var;
         private final Function start;
 
-        public Func(int position, Function var, Function start) {
-            super(position);
+        public Func(Function var, Function start) {
             this.var = var;
             this.start = start;
         }

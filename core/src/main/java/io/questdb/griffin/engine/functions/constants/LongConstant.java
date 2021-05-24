@@ -26,13 +26,27 @@ package io.questdb.griffin.engine.functions.constants;
 
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.LongFunction;
+import io.questdb.std.Numbers;
 
 public class LongConstant extends LongFunction implements ConstantFunction {
+    public final static LongConstant NULL = new LongConstant(Numbers.LONG_NaN);
+    public final static LongConstant ZERO = new LongConstant(0);
     private final long value;
 
-    public LongConstant(int position, long value) {
-        super(position);
+    public LongConstant(long value) {
         this.value = value;
+    }
+
+    public static LongConstant newInstance(long value) {
+        if (value == 0) {
+            return LongConstant.ZERO;
+        }
+
+        if (value != Numbers.LONG_NaN) {
+            return new LongConstant(value);
+        }
+
+        return LongConstant.NULL;
     }
 
     @Override

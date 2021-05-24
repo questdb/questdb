@@ -32,6 +32,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.SymbolConstant;
+import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class CastBooleanToSymbolFunctionFactory implements FunctionFactory {
@@ -41,19 +42,18 @@ public class CastBooleanToSymbolFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         final Function arg = args.getQuick(0);
         if (arg.isConstant()) {
-            return new SymbolConstant(position, arg.getSymbol(null), 0);
+            return SymbolConstant.newInstance(arg.getSymbol(null));
         }
-        return new Func(position, arg);
+        return new Func(arg);
     }
 
     private static class Func extends SymbolFunction implements UnaryFunction {
         private final Function arg;
 
-        public Func(int position, Function arg) {
-            super(position);
+        public Func(Function arg) {
             this.arg = arg;
         }
 

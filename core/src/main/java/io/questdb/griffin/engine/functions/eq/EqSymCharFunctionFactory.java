@@ -36,6 +36,7 @@ import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Chars;
+import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.SingleCharCharSequence;
 
@@ -52,8 +53,8 @@ public class EqSymCharFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(
-            ObjList<Function> args,
-            int position, CairoConfiguration configuration,
+            int position, ObjList<Function> args,
+            IntList argPositions, CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext) {
         // there are optimisation opportunities
         // 1. when one of args is constant null comparison can boil down to checking
@@ -66,21 +67,20 @@ public class EqSymCharFunctionFactory implements FunctionFactory {
         if (chrFunc.isConstant()) {
             final char constValue = chrFunc.getChar(null);
             if (symFunc.getStaticSymbolTable() != null) {
-                return new ConstCheckColumnFunc(position, symFunc, constValue);
+                return new ConstCheckColumnFunc(symFunc, constValue);
             } else {
-                return new ConstCheckFunc(position, symFunc, constValue);
+                return new ConstCheckFunc(symFunc, constValue);
             }
         }
 
-        return new Func(position, symFunc, chrFunc);
+        return new Func(symFunc, chrFunc);
     }
 
     private static class ConstCheckFunc extends NegatableBooleanFunction implements UnaryFunction {
         private final Function arg;
         private final char constant;
 
-        public ConstCheckFunc(int position, Function arg, char constant) {
-            super(position);
+        public ConstCheckFunc(Function arg, char constant) {
             this.arg = arg;
             this.constant = constant;
         }
@@ -101,8 +101,7 @@ public class EqSymCharFunctionFactory implements FunctionFactory {
         private final char constant;
         private int valueIndex;
 
-        public ConstCheckColumnFunc(int position, SymbolFunction arg, char constant) {
-            super(position);
+        public ConstCheckColumnFunc(SymbolFunction arg, char constant) {
             this.arg = arg;
             this.constant = constant;
         }
@@ -130,8 +129,7 @@ public class EqSymCharFunctionFactory implements FunctionFactory {
         private final Function symFunc;
         private final Function chrFunc;
 
-        public Func(int position, Function symFunc, Function chrFunc) {
-            super(position);
+        public Func(Function symFunc, Function chrFunc) {
             this.symFunc = symFunc;
             this.chrFunc = chrFunc;
         }

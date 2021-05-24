@@ -34,8 +34,7 @@ class BooleanCaseFunction extends BooleanFunction implements MultiArgFunction {
     private final CaseFunctionPicker picker;
     private final ObjList<Function> args;
 
-    public BooleanCaseFunction(int position, CaseFunctionPicker picker, ObjList<Function> args) {
-        super(position);
+    public BooleanCaseFunction(CaseFunctionPicker picker, ObjList<Function> args) {
         this.picker = picker;
         this.args = args;
     }
