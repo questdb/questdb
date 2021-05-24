@@ -25,6 +25,7 @@
 package io.questdb.std;
 
 
+import io.questdb.std.str.StringSink;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -32,6 +33,29 @@ import java.util.HashMap;
 import java.util.Map;
 
 public class LowerCaseCharSequenceIntHashMapTest {
+
+    @Test
+    public void testPutMutableCharSequence() {
+        final LowerCaseCharSequenceIntHashMap lowerCaseMap = new LowerCaseCharSequenceIntHashMap();
+
+        StringSink ss = new StringSink();
+        ss.put("a");
+
+        lowerCaseMap.putIfAbsent(ss, 1);
+
+        ss.clear();
+        ss.put("Bb");
+
+        lowerCaseMap.putIfAbsent(ss, 2);
+
+        Assert.assertEquals(1, lowerCaseMap.get("A"));
+        Assert.assertEquals(2, lowerCaseMap.get("bb"));
+
+        ObjList<CharSequence>  keys =  lowerCaseMap.keys();
+        Assert.assertEquals(2, keys.size());
+        Assert.assertEquals("a", keys.get(0));
+        Assert.assertEquals("Bb", keys.get(1));
+    }
 
     @Test
     public void testSaturation() {
@@ -51,7 +75,7 @@ public class LowerCaseCharSequenceIntHashMapTest {
             } else {
                 Assert.assertTrue(keyIndex < 0);
                 // this should fail to put
-                lowerCaseMap.putIfAbsent(str, value);
+                Assert.assertFalse(lowerCaseMap.putIfAbsent(str, value));
                 lowerCaseMap.putAt(keyIndex, str, referenceMap.get(str));
             }
         }
