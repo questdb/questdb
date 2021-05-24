@@ -49,6 +49,11 @@ public class AttributeCatalogueFunctionFactory implements FunctionFactory {
     }
 
     @Override
+    public boolean isRuntimeConstant() {
+        return true;
+    }
+
+    @Override
     public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         return new CursorFunction(
                 position,

@@ -2957,7 +2957,8 @@ class SqlOptimiser {
                     if (emitCursors(qc.getAst(), cursorModel, null, translatingModel, baseModel, sqlExecutionContext)) {
                         qc = ensureAliasUniqueness(innerVirtualModel, qc);
                     }
-                    if (useGroupByModel && qc.getAst().type == ExpressionNode.CONSTANT) {
+                    if (useGroupByModel
+                            && (qc.getAst().type == ExpressionNode.CONSTANT || (qc.getAst().type == ExpressionNode.FUNCTION && functionParser.isRuntimeConstant(qc.getAst().token)))) {
                         outerVirtualIsSelectChoose = false;
                         outerVirtualModel.addBottomUpColumn(qc);
                         distinctModel.addBottomUpColumn(qc);

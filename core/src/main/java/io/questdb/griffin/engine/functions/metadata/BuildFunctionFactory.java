@@ -42,6 +42,11 @@ public class BuildFunctionFactory implements FunctionFactory {
     }
 
     @Override
+    public boolean isRuntimeConstant() {
+        return true;
+    }
+
+    @Override
     public Function newInstance(final ObjList<Function> args,
                                 final int position,
                                 final CairoConfiguration configuration,

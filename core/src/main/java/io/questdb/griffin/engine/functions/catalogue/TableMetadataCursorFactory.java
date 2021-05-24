@@ -74,6 +74,11 @@ public class TableMetadataCursorFactory implements FunctionFactory {
     }
 
     @Override
+    public boolean isRuntimeConstant() {
+        return true;
+    }
+
+    @Override
     public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
         return new CursorFunction(
                 position,

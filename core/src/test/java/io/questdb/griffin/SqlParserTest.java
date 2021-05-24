@@ -1359,6 +1359,14 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testGroupByConstantFunctionMatchingColumnName() throws SqlException {
+        assertQuery(
+                "select-virtual now() now, min from (select-group-by [min(nts) min] min(nts) min from (select [nts] from tt timestamp (dts) where nts > '2020-01-01T00:00:00.000000Z'))",
+                "select now(), min(nts) from tt where nts > '2020-01-01T00:00:00.000000Z'",
+                modelOf("tt").timestamp("dts").col("nts", ColumnType.TIMESTAMP));
+    }
+
+    @Test
     public void testCreateTableNoCacheIndex() throws SqlException {
         assertCreateTable("create table x (" +
                         "a INT," +
