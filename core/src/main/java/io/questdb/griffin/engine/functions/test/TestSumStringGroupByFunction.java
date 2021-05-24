@@ -45,8 +45,7 @@ public class TestSumStringGroupByFunction extends StrFunction implements GroupBy
     private final long mem = Unsafe.malloc(1024);
     private int valueIndex;
 
-    public TestSumStringGroupByFunction(int position, @NotNull Function arg) {
-        super(position);
+    public TestSumStringGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
     }
 

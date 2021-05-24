@@ -31,6 +31,7 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.DoubleFunction;
+import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class PowDoubleFunctionFactory implements FunctionFactory {
@@ -40,18 +41,24 @@ public class PowDoubleFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration1, SqlExecutionContext sqlExecutionContext) {
-        return new SubtractIntVVFunc(position, args.getQuick(0), args.getQuick(1));
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration1, SqlExecutionContext sqlExecutionContext) {
+        return new SubtractIntVVFunc(args.getQuick(0), args.getQuick(1));
     }
 
     private static class SubtractIntVVFunc extends DoubleFunction implements BinaryFunction {
         final Function left;
         final Function right;
 
-        public SubtractIntVVFunc(int position, Function left, Function right) {
-            super(position);
+        public SubtractIntVVFunc(Function left, Function right) {
             this.left = left;
             this.right = right;
+        }
+
+        @Override
+        public double getDouble(Record rec) {
+            double l = left.getDouble(rec);
+            double r = right.getDouble(rec);
+            return Math.pow(l, r);
         }
 
         @Override
@@ -62,13 +69,6 @@ public class PowDoubleFunctionFactory implements FunctionFactory {
         @Override
         public Function getRight() {
             return right;
-        }
-
-        @Override
-        public double getDouble(Record rec) {
-            double l = left.getDouble(rec);
-            double r = right.getDouble(rec);
-            return Math.pow(l, r);
         }
     }
 }

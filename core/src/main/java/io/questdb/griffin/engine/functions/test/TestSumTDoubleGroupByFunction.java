@@ -41,8 +41,7 @@ public class TestSumTDoubleGroupByFunction extends DoubleFunction implements Gro
     private final long mem = Unsafe.malloc(1024);
     private int valueIndex;
 
-    public TestSumTDoubleGroupByFunction(int position, @NotNull Function arg) {
-        super(position);
+    public TestSumTDoubleGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
     }
 

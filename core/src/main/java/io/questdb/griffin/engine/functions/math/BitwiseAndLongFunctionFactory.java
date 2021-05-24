@@ -32,6 +32,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.LongFunction;
+import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
@@ -42,16 +43,15 @@ public class BitwiseAndLongFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        return new BitAndLongFunction(position, args.getQuick(0), args.getQuick(1));
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        return new BitAndLongFunction(args.getQuick(0), args.getQuick(1));
     }
 
     public static final class BitAndLongFunction extends LongFunction implements BinaryFunction {
         private final Function left;
         private final Function right;
 
-        public BitAndLongFunction(int position, Function left, Function right) {
-            super(position);
+        public BitAndLongFunction(Function left, Function right) {
             this.left = left;
             this.right = right;
         }

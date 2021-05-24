@@ -35,6 +35,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.std.Chars;
+import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 
@@ -45,14 +46,20 @@ public class RndSymbolFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
         final int count = args.getQuick(0).getInt(null);
         final int lo = args.getQuick(1).getInt(null);
         final int hi = args.getQuick(2).getInt(null);
         final int nullRate = args.getQuick(3).getInt(null);
 
         if (count < 1) {
-            throw SqlException.$(args.getQuick(0).getPosition(), "invalid symbol count");
+            throw SqlException.$(argPositions.getQuick(0), "invalid symbol count");
         }
 
         if (lo > hi || lo < 1) {
@@ -60,10 +67,10 @@ public class RndSymbolFunctionFactory implements FunctionFactory {
         }
 
         if (nullRate < 0) {
-            throw SqlException.position(args.getQuick(3).getPosition()).put("rate must be positive");
+            throw SqlException.position(argPositions.getQuick(3)).put("rate must be positive");
         }
 
-        return new Func(position, count, lo, hi, nullRate);
+        return new Func(count, lo, hi, nullRate);
     }
 
     private static final class Func extends SymbolFunction implements Function {
@@ -74,8 +81,7 @@ public class RndSymbolFunctionFactory implements FunctionFactory {
         private final ObjList<String> symbols;
         private Rnd rnd;
 
-        public Func(int position, int count, int lo, int hi, int nullRate) {
-            super(position);
+        public Func(int count, int lo, int hi, int nullRate) {
             this.count = count;
             this.lo = lo;
             this.hi = hi;

@@ -28,11 +28,15 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.ByteFunction;
 
 public class ByteConstant extends ByteFunction implements ConstantFunction {
+    public static final ByteConstant ZERO = new ByteConstant((byte) 0);
     private final byte value;
 
-    public ByteConstant(int position, byte value) {
-        super(position);
+    public ByteConstant(byte value) {
         this.value = value;
+    }
+
+    public static ByteConstant newInstance(byte value) {
+        return value != 0 ? new ByteConstant(value) : ZERO;
     }
 
     @Override

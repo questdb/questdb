@@ -32,8 +32,7 @@ public class RecordColumn extends RecordFunction  {
     private final int columnIndex;
     private final RecordMetadata metadata;
 
-    public RecordColumn(int position, int columnIndex, RecordMetadata metadata) {
-        super(position);
+    public RecordColumn(int columnIndex, RecordMetadata metadata) {
         this.columnIndex = columnIndex;
         this.metadata = metadata;
     }

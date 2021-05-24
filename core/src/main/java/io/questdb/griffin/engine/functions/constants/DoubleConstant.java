@@ -28,11 +28,16 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 
 public class DoubleConstant extends DoubleFunction implements ConstantFunction {
+    public static final DoubleConstant NULL = new DoubleConstant(Double.NaN);
+
     private final double value;
 
-    public DoubleConstant(int position, double value) {
-        super(position);
+    public DoubleConstant(double value) {
         this.value = value;
+    }
+
+    public static DoubleConstant newInstance(double value) {
+        return  value == value ? new DoubleConstant(value) : DoubleConstant.NULL;
     }
 
     @Override

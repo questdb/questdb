@@ -49,7 +49,7 @@ public class MaxIntVectorAggregateFunction extends IntFunction implements Vector
     private int valueOffset;
 
     public MaxIntVectorAggregateFunction(int position, int keyKind, int columnIndex, int workerCount) {
-        super(position);
+        super();
         this.columnIndex = columnIndex;
         if (keyKind == GKK_HOUR_INT) {
             this.distinctFunc = Rosti::keyedHourDistinct;

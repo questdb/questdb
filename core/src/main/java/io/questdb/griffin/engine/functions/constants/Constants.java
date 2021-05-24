@@ -25,9 +25,7 @@
 package io.questdb.griffin.engine.functions.constants;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.TypeConstant;
-import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public final class Constants {
@@ -35,20 +33,20 @@ public final class Constants {
     private static final ObjList<TypeConstant> typeConstants = new ObjList<>();
 
     static {
-        Constants.nullConstants.extendAndSet(ColumnType.INT, new IntConstant(0, Numbers.INT_NaN));
-        Constants.nullConstants.extendAndSet(ColumnType.STRING, new StrConstant(0, null));
-        Constants.nullConstants.extendAndSet(ColumnType.SYMBOL, new SymbolConstant(0, null, SymbolTable.VALUE_IS_NULL));
-        Constants.nullConstants.extendAndSet(ColumnType.LONG, new LongConstant(0, Numbers.LONG_NaN));
-        Constants.nullConstants.extendAndSet(ColumnType.DATE, new DateConstant(0, Numbers.LONG_NaN));
-        Constants.nullConstants.extendAndSet(ColumnType.TIMESTAMP, new TimestampConstant(0, Numbers.LONG_NaN));
-        Constants.nullConstants.extendAndSet(ColumnType.BYTE, new ByteConstant(0, (byte) 0));
-        Constants.nullConstants.extendAndSet(ColumnType.SHORT, new ShortConstant(0, (short) 0));
-        Constants.nullConstants.extendAndSet(ColumnType.CHAR, new CharConstant(0, (char) 0));
-        Constants.nullConstants.extendAndSet(ColumnType.BOOLEAN, new BooleanConstant(0, false));
-        Constants.nullConstants.extendAndSet(ColumnType.DOUBLE, new DoubleConstant(0, Double.NaN));
-        Constants.nullConstants.extendAndSet(ColumnType.FLOAT, new FloatConstant(0, Float.NaN));
-        Constants.nullConstants.extendAndSet(ColumnType.BINARY, new NullBinConstant());
-        Constants.nullConstants.extendAndSet(ColumnType.LONG256, new Long256NullConstant());
+        Constants.nullConstants.extendAndSet(ColumnType.INT, IntConstant.NULL);
+        Constants.nullConstants.extendAndSet(ColumnType.STRING, StrConstant.NULL);
+        Constants.nullConstants.extendAndSet(ColumnType.SYMBOL, SymbolConstant.NULL);
+        Constants.nullConstants.extendAndSet(ColumnType.LONG, LongConstant.NULL);
+        Constants.nullConstants.extendAndSet(ColumnType.DATE, DateConstant.NULL);
+        Constants.nullConstants.extendAndSet(ColumnType.TIMESTAMP, TimestampConstant.NULL);
+        Constants.nullConstants.extendAndSet(ColumnType.BYTE, ByteConstant.ZERO);
+        Constants.nullConstants.extendAndSet(ColumnType.SHORT, ShortConstant.ZERO);
+        Constants.nullConstants.extendAndSet(ColumnType.CHAR, CharConstant.ZERO);
+        Constants.nullConstants.extendAndSet(ColumnType.BOOLEAN, BooleanConstant.FALSE);
+        Constants.nullConstants.extendAndSet(ColumnType.DOUBLE, DoubleConstant.NULL);
+        Constants.nullConstants.extendAndSet(ColumnType.FLOAT, FloatConstant.NULL);
+        Constants.nullConstants.extendAndSet(ColumnType.BINARY, NullBinConstant.INSTANCE);
+        Constants.nullConstants.extendAndSet(ColumnType.LONG256, Long256NullConstant.INSTANCE);
 
         Constants.typeConstants.extendAndSet(ColumnType.INT, IntTypeConstant.INSTANCE);
         Constants.typeConstants.extendAndSet(ColumnType.STRING, StrTypeConstant.INSTANCE);

@@ -42,8 +42,7 @@ public class CountStringGroupByFunction extends LongFunction implements GroupByF
     private int valueIndex;
     private int setIndex = 0;
 
-    public CountStringGroupByFunction(int position, Function arg) {
-        super(position);
+    public CountStringGroupByFunction(Function arg) {
         this.arg = arg;
     }
 

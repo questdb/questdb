@@ -34,12 +34,6 @@ import io.questdb.std.Long256;
 import io.questdb.std.str.CharSink;
 
 public abstract class StrArrayFunction implements Function {
-    private final int position;
-
-    public StrArrayFunction(int position) {
-        this.position = position;
-    }
-
     @Override
     public final BinarySequence getBin(Record rec) {
         throw new UnsupportedOperationException();
@@ -103,11 +97,6 @@ public abstract class StrArrayFunction implements Function {
     @Override
     public final Long256 getLong256B(Record rec) {
         throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public int getPosition() {
-        return position;
     }
 
     @Override

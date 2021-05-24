@@ -32,7 +32,7 @@ import org.junit.Test;
 public class DateFunctionTest {
     // assert that all type casts that are not possible will throw exception
 
-    private static final DateFunction function = new DateFunction(25) {
+    private static final DateFunction function = new DateFunction() {
         @Override
         public long getDate(Record rec) {
             return 163;
@@ -79,11 +79,6 @@ public class DateFunctionTest {
         Assert.assertEquals(163, function.getLong(null));
     }
 
-    @Test
-    public void testGetPosition() {
-        Assert.assertEquals(25, function.getPosition());
-    }
-
     @Test(expected = UnsupportedOperationException.class)
     public void testGetRecordCursorFactory() {
         function.getRecordCursorFactory();
@@ -126,7 +121,7 @@ public class DateFunctionTest {
 
     @Test
     public void testGetNullTimestamp() {
-        final DateFunction function = new DateFunction(25) {
+        final DateFunction function = new DateFunction() {
             @Override
             public long getDate(Record rec) {
                 return Numbers.LONG_NaN;

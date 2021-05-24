@@ -48,8 +48,7 @@ public class MaxDateVectorAggregateFunction extends DateFunction implements Vect
     private final KeyValueFunc keyValueFunc;
     private int valueOffset;
 
-    public MaxDateVectorAggregateFunction(int position, int keyKind, int columnIndex, int workerCount) {
-        super(position);
+    public MaxDateVectorAggregateFunction(int keyKind, int columnIndex, int workerCount) {
         this.columnIndex = columnIndex;
         if (keyKind == GKK_HOUR_INT) {
             this.distinctFunc = Rosti::keyedHourDistinct;

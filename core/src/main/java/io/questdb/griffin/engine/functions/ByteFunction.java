@@ -34,12 +34,6 @@ import io.questdb.std.str.CharSink;
 
 public abstract class ByteFunction implements ScalarFunction {
 
-    private final int position;
-
-    public ByteFunction(int position) {
-        this.position = position;
-    }
-
     @Override
     public final Long256 getLong256A(Record rec) {
         throw new UnsupportedOperationException();
@@ -93,11 +87,6 @@ public abstract class ByteFunction implements ScalarFunction {
     @Override
     public long getLong(Record rec) {
         return getByte(rec);
-    }
-
-    @Override
-    public int getPosition() {
-        return position;
     }
 
     @Override

@@ -32,10 +32,6 @@ import io.questdb.std.Mutable;
 class ByteBindVariable extends ByteFunction implements ScalarFunction, Mutable {
     byte value;
 
-    public ByteBindVariable() {
-        super(0);
-    }
-
     @Override
     public byte getByte(Record rec) {
         return value;

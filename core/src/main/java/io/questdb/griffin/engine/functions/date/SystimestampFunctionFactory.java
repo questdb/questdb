@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.TimestampFunction;
+import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 
@@ -40,16 +41,15 @@ public class SystimestampFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new Func(position, configuration.getMicrosecondClock());
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+        return new Func(configuration.getMicrosecondClock());
     }
 
     private static class Func extends TimestampFunction implements Function {
 
         private final MicrosecondClock clock;
 
-        public Func(int position, MicrosecondClock clock) {
-            super(position);
+        public Func(MicrosecondClock clock) {
             this.clock = clock;
         }
 

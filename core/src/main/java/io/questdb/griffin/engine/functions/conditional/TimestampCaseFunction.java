@@ -34,8 +34,7 @@ class TimestampCaseFunction extends TimestampFunction implements MultiArgFunctio
     private final CaseFunctionPicker picker;
     private final ObjList<Function> args;
 
-    public TimestampCaseFunction(int position, CaseFunctionPicker picker, ObjList<Function> args) {
-        super(position);
+    public TimestampCaseFunction(CaseFunctionPicker picker, ObjList<Function> args) {
         this.picker = picker;
         this.args = args;
     }

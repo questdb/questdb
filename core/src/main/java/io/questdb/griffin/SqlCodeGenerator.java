@@ -67,7 +67,7 @@ public class SqlCodeGenerator implements Mutable {
     private static final IntObjHashMap<VectorAggregateFunctionConstructor> avgConstructors = new IntObjHashMap<>();
     private static final IntObjHashMap<VectorAggregateFunctionConstructor> minConstructors = new IntObjHashMap<>();
     private static final IntObjHashMap<VectorAggregateFunctionConstructor> maxConstructors = new IntObjHashMap<>();
-    private static final VectorAggregateFunctionConstructor countConstructor = (position, keyKind, columnIndex, workerCount) -> new CountVectorAggregateFunction(position, keyKind);
+    private static final VectorAggregateFunctionConstructor countConstructor = (position, keyKind, columnIndex, workerCount) -> new CountVectorAggregateFunction(keyKind);
     private static final SetRecordCursorFactoryConstructor SET_UNION_CONSTRUCTOR = UnionRecordCursorFactory::new;
     private static final SetRecordCursorFactoryConstructor SET_INTERSECT_CONSTRUCTOR = IntersectRecordCursorFactory::new;
     private static final SetRecordCursorFactoryConstructor SET_EXCEPT_CONSTRUCTOR = ExceptRecordCursorFactory::new;
@@ -96,6 +96,8 @@ public class SqlCodeGenerator implements Mutable {
     private final IntList tempVecConstructorArgIndexes = new IntList();
     private final IntList tempKeyKinds = new IntList();
     private final ObjObjHashMap<IntList, ObjList<AnalyticFunction>> grouppedAnalytic = new ObjObjHashMap<>();
+    private final IntList recordFunctionPositions = new IntList();
+    private final IntList groupByFunctionPositions = new IntList();
     private boolean fullFatJoins = false;
 
     public SqlCodeGenerator(
@@ -152,6 +154,14 @@ public class SqlCodeGenerator implements Mutable {
                                                            RecordValueSink slaveValueSink,
                                                            IntList columnIndex) {
         return new LtJoinRecordCursorFactory(configuration, metadata, masterFactory, slaveFactory, mapKeyTypes, mapValueTypes, slaveColumnTypes, masterKeySink, slaveKeySink, columnSplit, slaveValueSink, columnIndex);
+    }
+
+    private static int getOrderByDirectionOrDefault(QueryModel model, int index) {
+        IntList direction = model.getOrderByDirectionAdvice();
+        if (index >= direction.size()) {
+            return 0;
+        }
+        return model.getOrderByDirectionAdvice().getQuick(index);
     }
 
     private VectorAggregateFunctionConstructor assembleFunctionReference(RecordMetadata metadata, ExpressionNode ast) {
@@ -1070,7 +1080,7 @@ public class SqlCodeGenerator implements Mutable {
         final Function hiFunc;
 
         if (limitLo == null) {
-            loFunc = new LongConstant(0, 0L);
+            loFunc = LongConstant.ZERO;
         } else {
             loFunc = functionParser.parseFunction(limitLo, EmptyRecordMetadata.INSTANCE, executionContext);
             final int type = loFunc.getType();
@@ -1269,6 +1279,8 @@ public class SqlCodeGenerator implements Mutable {
                             keyTypes,
                             valueTypes,
                             entityColumnFilter,
+                            recordFunctionPositions,
+                            groupByFunctionPositions,
                             timestampIndex
                     );
                 }
@@ -1283,17 +1295,21 @@ public class SqlCodeGenerator implements Mutable {
                         functionParser,
                         executionContext,
                         groupByFunctions,
+                        groupByFunctionPositions,
                         valueTypes
                 );
 
                 final ObjList<Function> recordFunctions = new ObjList<>(columnCount);
                 final GenericRecordMetadata groupByMetadata = new GenericRecordMetadata();
+
                 GroupByUtils.prepareGroupByRecordFunctions(
                         model,
                         metadata,
                         listColumnFilterA,
                         groupByFunctions,
+                        groupByFunctionPositions,
                         recordFunctions,
+                        recordFunctionPositions,
                         groupByMetadata,
                         keyTypes,
                         valueTypes.getColumnCount(),
@@ -1367,6 +1383,7 @@ public class SqlCodeGenerator implements Mutable {
                                 groupByMetadata,
                                 groupByFunctions,
                                 recordFunctions,
+                                recordFunctionPositions,
                                 valueTypes.getColumnCount(),
                                 timestampIndex
                         );
@@ -1383,6 +1400,7 @@ public class SqlCodeGenerator implements Mutable {
                             groupByMetadata,
                             groupByFunctions,
                             recordFunctions,
+                            recordFunctionPositions,
                             timestampIndex
                     );
                 }
@@ -1397,6 +1415,7 @@ public class SqlCodeGenerator implements Mutable {
                             groupByMetadata,
                             groupByFunctions,
                             recordFunctions,
+                            recordFunctionPositions,
                             valueTypes.getColumnCount(),
                             timestampIndex
                     );
@@ -1414,6 +1433,7 @@ public class SqlCodeGenerator implements Mutable {
                         groupByMetadata,
                         groupByFunctions,
                         recordFunctions,
+                        recordFunctionPositions,
                         timestampIndex
                 );
             } catch (SqlException | CairoException e) {
@@ -1977,6 +1997,7 @@ public class SqlCodeGenerator implements Mutable {
                     functionParser,
                     executionContext,
                     groupByFunctions,
+                    groupByFunctionPositions,
                     valueTypes
             );
 
@@ -1987,7 +2008,9 @@ public class SqlCodeGenerator implements Mutable {
                     metadata,
                     listColumnFilterA,
                     groupByFunctions,
+                    groupByFunctionPositions,
                     recordFunctions,
+                    recordFunctionPositions,
                     groupByMetadata,
                     keyTypes,
                     valueTypes.getColumnCount(),
@@ -2375,7 +2398,7 @@ public class SqlCodeGenerator implements Mutable {
                                     orderByKeyColumn = true;
                                 } else if (Chars.equals(orderByAdvice.getQuick(1).token, model.getTimestamp().token)) {
                                     orderByKeyColumn = true;
-                                    if (getOrderByDirectionOrDefault(model,1) == QueryModel.ORDER_DIRECTION_DESCENDING) {
+                                    if (getOrderByDirectionOrDefault(model, 1) == QueryModel.ORDER_DIRECTION_DESCENDING) {
                                         indexDirection = BitmapIndexReader.DIR_BACKWARD;
                                     }
                                 }
@@ -2564,14 +2587,6 @@ public class SqlCodeGenerator implements Mutable {
                     columnIndexes
             );
         }
-    }
-
-    private static int getOrderByDirectionOrDefault(QueryModel model, int index) {
-        IntList direction = model.getOrderByDirectionAdvice();
-        if (index >= direction.size()) {
-             return 0;
-        }
-        return model.getOrderByDirectionAdvice().getQuick(index);
     }
 
     private RecordCursorFactory generateUnionAllFactory(
@@ -2817,31 +2832,31 @@ public class SqlCodeGenerator implements Mutable {
     }
 
     static {
-        sumConstructors.put(ColumnType.DOUBLE, SumDoubleVectorAggregateFunction::new);
-        sumConstructors.put(ColumnType.INT, SumIntVectorAggregateFunction::new);
-        sumConstructors.put(ColumnType.LONG, SumLongVectorAggregateFunction::new);
-        sumConstructors.put(ColumnType.DATE, SumDateVectorAggregateFunction::new);
-        sumConstructors.put(ColumnType.TIMESTAMP, SumTimestampVectorAggregateFunction::new);
+        sumConstructors.put(ColumnType.DOUBLE, (position6, keyKind6, columnIndex6, workerCount6) -> new SumDoubleVectorAggregateFunction(keyKind6, columnIndex6, workerCount6));
+        sumConstructors.put(ColumnType.INT, (position6, keyKind6, columnIndex6, workerCount6) -> new SumIntVectorAggregateFunction(keyKind6, columnIndex6, workerCount6));
+        sumConstructors.put(ColumnType.LONG, (position5, keyKind5, columnIndex5, workerCount5) -> new SumLongVectorAggregateFunction(keyKind5, columnIndex5, workerCount5));
+        sumConstructors.put(ColumnType.DATE, (position4, keyKind4, columnIndex4, workerCount4) -> new SumDateVectorAggregateFunction(keyKind4, columnIndex4, workerCount4));
+        sumConstructors.put(ColumnType.TIMESTAMP, (position6, keyKind6, columnIndex6, workerCount6) -> new SumTimestampVectorAggregateFunction(keyKind6, columnIndex6, workerCount6));
 
-        ksumConstructors.put(ColumnType.DOUBLE, KSumDoubleVectorAggregateFunction::new);
-        nsumConstructors.put(ColumnType.DOUBLE, NSumDoubleVectorAggregateFunction::new);
+        ksumConstructors.put(ColumnType.DOUBLE, (position6, keyKind6, columnIndex6, workerCount6) -> new KSumDoubleVectorAggregateFunction(keyKind6, columnIndex6, workerCount6));
+        nsumConstructors.put(ColumnType.DOUBLE, (position3, keyKind3, columnIndex3, workerCount3) -> new NSumDoubleVectorAggregateFunction(keyKind3, columnIndex3, workerCount3));
 
-        avgConstructors.put(ColumnType.DOUBLE, AvgDoubleVectorAggregateFunction::new);
-        avgConstructors.put(ColumnType.LONG, AvgLongVectorAggregateFunction::new);
-        avgConstructors.put(ColumnType.TIMESTAMP, AvgLongVectorAggregateFunction::new);
-        avgConstructors.put(ColumnType.DATE, AvgLongVectorAggregateFunction::new);
-        avgConstructors.put(ColumnType.INT, AvgIntVectorAggregateFunction::new);
+        avgConstructors.put(ColumnType.DOUBLE, (position6, keyKind6, columnIndex6, workerCount6) -> new AvgDoubleVectorAggregateFunction(keyKind6, columnIndex6, workerCount6));
+        avgConstructors.put(ColumnType.LONG, (position5, keyKind5, columnIndex5, workerCount5) -> new AvgLongVectorAggregateFunction(keyKind5, columnIndex5, workerCount5));
+        avgConstructors.put(ColumnType.TIMESTAMP, (position4, keyKind4, columnIndex4, workerCount4) -> new AvgLongVectorAggregateFunction(keyKind4, columnIndex4, workerCount4));
+        avgConstructors.put(ColumnType.DATE, (position3, keyKind3, columnIndex3, workerCount3) -> new AvgLongVectorAggregateFunction(keyKind3, columnIndex3, workerCount3));
+        avgConstructors.put(ColumnType.INT, (position2, keyKind2, columnIndex2, workerCount2) -> new AvgIntVectorAggregateFunction(keyKind2, columnIndex2, workerCount2));
 
-        minConstructors.put(ColumnType.DOUBLE, MinDoubleVectorAggregateFunction::new);
-        minConstructors.put(ColumnType.LONG, MinLongVectorAggregateFunction::new);
-        minConstructors.put(ColumnType.DATE, MinDateVectorAggregateFunction::new);
-        minConstructors.put(ColumnType.TIMESTAMP, MinTimestampVectorAggregateFunction::new);
+        minConstructors.put(ColumnType.DOUBLE, (position2, keyKind2, columnIndex2, workerCount2) -> new MinDoubleVectorAggregateFunction(keyKind2, columnIndex2, workerCount2));
+        minConstructors.put(ColumnType.LONG, (position1, keyKind1, columnIndex1, workerCount1) -> new MinLongVectorAggregateFunction(keyKind1, columnIndex1, workerCount1));
+        minConstructors.put(ColumnType.DATE, (position1, keyKind1, columnIndex1, workerCount1) -> new MinDateVectorAggregateFunction(keyKind1, columnIndex1, workerCount1));
+        minConstructors.put(ColumnType.TIMESTAMP, (position, keyKind, columnIndex, workerCount) -> new MinTimestampVectorAggregateFunction(keyKind, columnIndex, workerCount));
         minConstructors.put(ColumnType.INT, MinIntVectorAggregateFunction::new);
 
-        maxConstructors.put(ColumnType.DOUBLE, MaxDoubleVectorAggregateFunction::new);
-        maxConstructors.put(ColumnType.LONG, MaxLongVectorAggregateFunction::new);
-        maxConstructors.put(ColumnType.DATE, MaxDateVectorAggregateFunction::new);
-        maxConstructors.put(ColumnType.TIMESTAMP, MaxTimestampVectorAggregateFunction::new);
+        maxConstructors.put(ColumnType.DOUBLE, (position1, keyKind1, columnIndex1, workerCount1) -> new MaxDoubleVectorAggregateFunction(keyKind1, columnIndex1, workerCount1));
+        maxConstructors.put(ColumnType.LONG, (position, keyKind, columnIndex, workerCount) -> new MaxLongVectorAggregateFunction(keyKind, columnIndex, workerCount));
+        maxConstructors.put(ColumnType.DATE, (position, keyKind, columnIndex, workerCount) -> new MaxDateVectorAggregateFunction(keyKind, columnIndex, workerCount));
+        maxConstructors.put(ColumnType.TIMESTAMP, (position, keyKind, columnIndex, workerCount) -> new MaxTimestampVectorAggregateFunction(keyKind, columnIndex, workerCount));
         maxConstructors.put(ColumnType.INT, MaxIntVectorAggregateFunction::new);
     }
 }

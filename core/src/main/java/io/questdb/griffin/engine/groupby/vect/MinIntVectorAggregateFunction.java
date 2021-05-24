@@ -50,7 +50,7 @@ public class MinIntVectorAggregateFunction extends IntFunction implements Vector
     private int valueOffset;
 
     public MinIntVectorAggregateFunction(int position, int keyKind, int columnIndex, int workerCount) {
-        super(position);
+        super();
         this.columnIndex = columnIndex;
         if (keyKind == GKK_HOUR_INT) {
             this.distinctFunc = Rosti::keyedHourDistinct;

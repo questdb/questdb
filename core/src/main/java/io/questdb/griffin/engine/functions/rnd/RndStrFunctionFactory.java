@@ -32,6 +32,7 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.StrFunction;
+import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 
@@ -43,20 +44,20 @@ public class RndStrFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
 
         int lo = args.getQuick(0).getInt(null);
         int hi = args.getQuick(1).getInt(null);
         int nullRate = args.getQuick(2).getInt(null);
 
         if (nullRate < 0) {
-            throw SqlException.position(args.getQuick(2).getPosition()).put("rate must be positive");
+            throw SqlException.position(argPositions.getQuick(2)).put("rate must be positive");
         }
 
         if (lo < hi && lo > 0) {
-            return new RndStrFunction(position, lo, hi, nullRate + 1);
+            return new RndStrFunction(lo, hi, nullRate + 1);
         } else if (lo == hi) {
-            return new FixedFunction(position, lo, nullRate + 1);
+            return new FixedFunction(lo, nullRate + 1);
         }
 
         throw SqlException.position(position).put("invalid range");
@@ -67,8 +68,7 @@ public class RndStrFunctionFactory implements FunctionFactory {
         private final int nullRate;
         private Rnd rnd;
 
-        public FixedFunction(int position, int len, int nullRate) {
-            super(position);
+        public FixedFunction(int len, int nullRate) {
             this.len = len;
             this.nullRate = nullRate;
         }

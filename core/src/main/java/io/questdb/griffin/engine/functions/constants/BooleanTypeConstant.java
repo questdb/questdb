@@ -32,10 +32,6 @@ public class BooleanTypeConstant extends BooleanFunction implements TypeConstant
 
     public static final BooleanTypeConstant INSTANCE = new BooleanTypeConstant();
 
-    private BooleanTypeConstant() {
-        super(0);
-    }
-
     @Override
     public boolean getBool(Record rec) {
         return false;

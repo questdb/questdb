@@ -33,10 +33,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
-import io.questdb.std.CharSequenceHashSet;
-import io.questdb.std.Chars;
-import io.questdb.std.IntHashSet;
-import io.questdb.std.ObjList;
+import io.questdb.std.*;
 
 public class InSymbolCursorFunctionFactory implements FunctionFactory {
     @Override
@@ -45,7 +42,7 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
         SymbolFunction symbolFunction = (SymbolFunction) args.getQuick(0);
         Function cursorFunction = args.getQuick(1);
 
@@ -60,9 +57,9 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
         final Record.CharSequenceFunction func = zeroColumnType == ColumnType.STRING ? Record.GET_STR : Record.GET_SYM;
 
         if (symbolFunction.getStaticSymbolTable() != null) {
-            return new SymbolInCursorFunction(position, symbolFunction, cursorFunction, func);
+            return new SymbolInCursorFunction(symbolFunction, cursorFunction, func);
         }
-        return new StrInCursorFunction(position, symbolFunction, cursorFunction, func);
+        return new StrInCursorFunction(symbolFunction, cursorFunction, func);
     }
 
     private static class SymbolInCursorFunction extends BooleanFunction implements BinaryFunction {
@@ -72,8 +69,7 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
         private final IntHashSet symbolKeys = new IntHashSet();
         private final Record.CharSequenceFunction func;
 
-        public SymbolInCursorFunction(int position, SymbolFunction valueArg, Function cursorArg, Record.CharSequenceFunction func) {
-            super(position);
+        public SymbolInCursorFunction(SymbolFunction valueArg, Function cursorArg, Record.CharSequenceFunction func) {
             this.valueArg = valueArg;
             this.cursorArg = cursorArg;
             this.func = func;
@@ -125,8 +121,7 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
         private final Record.CharSequenceFunction func;
         private CharSequenceHashSet valueSet;
 
-        public StrInCursorFunction(int position, Function valueArg, Function cursorArg, Record.CharSequenceFunction func) {
-            super(position);
+        public StrInCursorFunction(Function valueArg, Function cursorArg, Record.CharSequenceFunction func) {
             this.valueArg = valueArg;
             this.cursorArg = cursorArg;
             this.valueSet = valueSetA;

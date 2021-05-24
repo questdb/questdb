@@ -38,8 +38,7 @@ public class MaxFloatGroupByFunction extends FloatFunction implements GroupByFun
     private final Function arg;
     private int valueIndex;
 
-    public MaxFloatGroupByFunction(int position, @NotNull Function arg) {
-        super(position);
+    public MaxFloatGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
     }
 

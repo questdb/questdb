@@ -31,6 +31,7 @@ import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.ByteFunction;
+import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 
@@ -42,9 +43,9 @@ public class RndByteFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
 
-        return new RndFunction(position);
+        return new RndFunction();
 
     }
 
@@ -53,8 +54,7 @@ public class RndByteFunctionFactory implements FunctionFactory {
         private final byte range;
         private Rnd rnd;
 
-        public RndFunction(int position) {
-            super(position);
+        public RndFunction() {
             this.lo = 20;
             this.range = (byte) (127 - lo + 1);
         }

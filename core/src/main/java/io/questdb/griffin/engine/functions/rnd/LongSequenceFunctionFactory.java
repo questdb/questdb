@@ -34,6 +34,7 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.CursorFunction;
+import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 
@@ -46,14 +47,13 @@ public class LongSequenceFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
         Function countFunc;
         final Function seedLoFunc;
         final Function seedHiFunc;
         final int argCount = args.size();
         if (argCount == 1 && SqlCompiler.isAssignableFrom(ColumnType.LONG, (countFunc = args.getQuick(0)).getType())) {
             return new CursorFunction(
-                    position,
                     new LongSequenceCursorFactory(METADATA, countFunc.getLong(null))
             );
         }
@@ -65,7 +65,6 @@ public class LongSequenceFunctionFactory implements FunctionFactory {
                         && SqlCompiler.isAssignableFrom(ColumnType.LONG, (seedHiFunc = args.getQuick(2)).getType())
         ) {
             return new CursorFunction(
-                    position,
                     new SeedingLongSequenceCursorFactory(
                             METADATA,
                             countFunc.getLong(null),

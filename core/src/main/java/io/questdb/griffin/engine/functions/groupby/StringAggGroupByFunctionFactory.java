@@ -34,6 +34,7 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.StrFunction;
+import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.DirectCharSink;
 
@@ -50,8 +51,8 @@ public class StringAggGroupByFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new StringAggGroupByFunction(position, args.getQuick(0), args.getQuick(1).getChar(null));
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+        return new StringAggGroupByFunction(args.getQuick(0), args.getQuick(1).getChar(null));
     }
 
     private static class StringAggGroupByFunction extends StrFunction implements GroupByFunction {
@@ -61,8 +62,7 @@ public class StringAggGroupByFunctionFactory implements FunctionFactory {
         private final DirectCharSink sink = new DirectCharSink(INITIAL_SINK_CAPACITY);
         private boolean nullValue = true;
 
-        public StringAggGroupByFunction(int position, Function arg, char delimiter) {
-            super(position);
+        public StringAggGroupByFunction(Function arg, char delimiter) {
             this.arg = arg;
             this.delimiter = delimiter;
         }

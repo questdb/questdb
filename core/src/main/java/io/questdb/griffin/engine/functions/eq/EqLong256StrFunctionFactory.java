@@ -32,10 +32,9 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.std.Long256;
-import io.questdb.std.Long256FromCharSequenceDecoder;
-import io.questdb.std.NumericException;
-import io.questdb.std.ObjList;
+import io.questdb.std.*;
+
+import java.lang.ThreadLocal;
 
 public class EqLong256StrFunctionFactory implements FunctionFactory {
     private static final ThreadLocal<Long256Decoder> DECODER = ThreadLocal.withInitial(Long256Decoder::new);
@@ -51,12 +50,12 @@ public class EqLong256StrFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
         final CharSequence hexLong256 = args.getQuick(1).getStr(null);
         try {
-            return DECODER.get().newInstance(position, args.getQuick(0), hexLong256);
+            return DECODER.get().newInstance(args.getQuick(0), hexLong256);
         } catch (NumericException e) {
-            throw SqlException.position(args.getQuick(1).getPosition()).put("invalid hex value for long256");
+            throw SqlException.position(argPositions.getQuick(1)).put("invalid hex value for long256");
         }
     }
 
@@ -67,8 +66,7 @@ public class EqLong256StrFunctionFactory implements FunctionFactory {
         private final long long2;
         private final long long3;
 
-        public Func(int position, Function arg, long long0, long long1, long long2, long long3) {
-            super(position);
+        public Func(Function arg, long long0, long long1, long long2, long long3) {
             this.arg = arg;
             this.long0 = long0;
             this.long1 = long1;
@@ -105,9 +103,9 @@ public class EqLong256StrFunctionFactory implements FunctionFactory {
             long3 = l3;
         }
 
-        private Func newInstance(int position, Function arg, CharSequence hexLong256) throws NumericException {
+        private Func newInstance(Function arg, CharSequence hexLong256) throws NumericException {
             decode(hexLong256, 2, hexLong256.length(), this);
-            return new Func(position, arg, long0, long1, long2, long3);
+            return new Func(arg, long0, long1, long2, long3);
         }
 
     }

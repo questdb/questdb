@@ -32,10 +32,6 @@ import io.questdb.std.Numbers;
 public class TimestampTypeConstant extends TimestampFunction implements TypeConstant {
     public static final TimestampTypeConstant INSTANCE = new TimestampTypeConstant();
 
-    private TimestampTypeConstant() {
-        super(0);
-    }
-
     @Override
     public long getTimestamp(Record rec) {
         return Numbers.LONG_NaN;

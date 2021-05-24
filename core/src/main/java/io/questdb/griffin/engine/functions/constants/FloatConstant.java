@@ -28,11 +28,15 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.FloatFunction;
 
 public class FloatConstant extends FloatFunction implements ConstantFunction {
+    public static final FloatConstant NULL = new FloatConstant(Float.NaN);
     private final float value;
 
-    public FloatConstant(int position, float value) {
-        super(position);
+    public FloatConstant(float value) {
         this.value = value;
+    }
+
+    public static FloatConstant newInstance(float value) {
+        return value == value ? new FloatConstant(value) : NULL;
     }
 
     @Override

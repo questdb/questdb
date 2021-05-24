@@ -33,10 +33,6 @@ import io.questdb.std.BinarySequence;
 public final class BinTypeConstant extends BinFunction implements TypeConstant {
     public final static BinTypeConstant INSTANCE = new BinTypeConstant();
 
-    private BinTypeConstant() {
-        super(0);
-    }
-
     @Override
     public BinarySequence getBin(Record rec) {
         return null;
