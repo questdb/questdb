@@ -30,7 +30,7 @@ import org.junit.Test;
 public class DateConstantTest {
     @Test
     public void testConstant() {
-        DateConstant constant = new DateConstant(0, 123);
+        DateConstant constant = new DateConstant(123);
         Assert.assertTrue(constant.isConstant());
         Assert.assertEquals(123, constant.getDate(null));
     }

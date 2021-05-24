@@ -34,8 +34,7 @@ class DateCaseFunction extends DateFunction implements MultiArgFunction {
     private final CaseFunctionPicker picker;
     private final ObjList<Function> args;
 
-    public DateCaseFunction(int position, CaseFunctionPicker picker, ObjList<Function> args) {
-        super(position);
+    public DateCaseFunction(CaseFunctionPicker picker, ObjList<Function> args) {
         this.picker = picker;
         this.args = args;
     }

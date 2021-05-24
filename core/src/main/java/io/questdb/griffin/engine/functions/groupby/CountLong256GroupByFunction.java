@@ -39,8 +39,7 @@ public class CountLong256GroupByFunction extends LongFunction implements GroupBy
     private int valueIndex;
     private int setIndex;
 
-    public CountLong256GroupByFunction(int position, Function arg) {
-        super(position);
+    public CountLong256GroupByFunction(Function arg) {
         this.arg = arg;
     }
 

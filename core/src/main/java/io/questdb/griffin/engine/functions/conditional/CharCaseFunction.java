@@ -34,8 +34,7 @@ class CharCaseFunction extends CharFunction implements MultiArgFunction {
     private final CaseFunctionPicker picker;
     private final ObjList<Function> args;
 
-    public CharCaseFunction(int position, CaseFunctionPicker picker, ObjList<Function> args) {
-        super(position);
+    public CharCaseFunction(CaseFunctionPicker picker, ObjList<Function> args) {
         this.picker = picker;
         this.args = args;
     }

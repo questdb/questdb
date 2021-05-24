@@ -43,8 +43,8 @@ public class RndLong256FunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new RndFunction(position);
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+        return new RndFunction();
     }
 
     private static class RndFunction extends Long256Function implements Function {
@@ -52,10 +52,6 @@ public class RndLong256FunctionFactory implements FunctionFactory {
         private final Long256Impl long256A = new Long256Impl();
         private final Long256Impl long256B = new Long256Impl();
         private Rnd rnd;
-
-        public RndFunction(int position) {
-            super(position);
-        }
 
         @Override
         public Long256 getLong256A(Record rec) {

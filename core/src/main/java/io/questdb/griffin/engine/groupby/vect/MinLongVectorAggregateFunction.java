@@ -49,8 +49,7 @@ public class MinLongVectorAggregateFunction extends LongFunction implements Vect
     private final KeyValueFunc keyValueFunc;
     private int valueOffset;
 
-    public MinLongVectorAggregateFunction(int position, int keyKind, int columnIndex, int workerCount) {
-        super(position);
+    public MinLongVectorAggregateFunction(int keyKind, int columnIndex, int workerCount) {
         this.columnIndex = columnIndex;
         if (keyKind == GKK_HOUR_INT) {
             this.distinctFunc = Rosti::keyedHourDistinct;

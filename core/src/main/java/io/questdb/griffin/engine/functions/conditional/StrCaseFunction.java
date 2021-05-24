@@ -35,8 +35,7 @@ class StrCaseFunction extends StrFunction implements MultiArgFunction {
     private final CaseFunctionPicker picker;
     private final ObjList<Function> args;
 
-    public StrCaseFunction(int position, CaseFunctionPicker picker, ObjList<Function> args) {
-        super(position);
+    public StrCaseFunction(CaseFunctionPicker picker, ObjList<Function> args) {
         this.picker = picker;
         this.args = args;
     }

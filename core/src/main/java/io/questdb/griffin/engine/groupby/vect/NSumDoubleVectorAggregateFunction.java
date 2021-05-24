@@ -50,8 +50,7 @@ public class NSumDoubleVectorAggregateFunction extends DoubleFunction implements
     private double transientC;
     private long transientCount;
 
-    public NSumDoubleVectorAggregateFunction(int position, int keyKind, int columnIndex, int workerCount) {
-        super(position);
+    public NSumDoubleVectorAggregateFunction(int keyKind, int columnIndex, int workerCount) {
         this.columnIndex = columnIndex;
         this.sum = new double[workerCount * Misc.CACHE_LINE_SIZE];
         this.count = new long[workerCount * Misc.CACHE_LINE_SIZE];

@@ -33,6 +33,7 @@ import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Chars;
+import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class EqStrFunctionFactory implements FunctionFactory {
@@ -47,7 +48,7 @@ public class EqStrFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         // there are optimisation opportunities
         // 1. when one of args is constant null comparison can boil down to checking
         //    length of non-constant (must be -1)
@@ -57,31 +58,30 @@ public class EqStrFunctionFactory implements FunctionFactory {
         Function b = args.getQuick(1);
 
         if (a.isConstant() && !b.isConstant()) {
-            return createHalfConstantFunc(position, a, b);
+            return createHalfConstantFunc(a, b);
         }
 
         if (!a.isConstant() && b.isConstant()) {
-            return createHalfConstantFunc(position, b, a);
+            return createHalfConstantFunc(b, a);
         }
 
-        return new Func(position, a, b);
+        return new Func(a, b);
     }
 
-    private Function createHalfConstantFunc(int position, Function constFunc, Function varFunc) {
+    private Function createHalfConstantFunc(Function constFunc, Function varFunc) {
         CharSequence constValue = constFunc.getStr(null);
 
         if (constValue == null) {
-            return new NullCheckFunc(position, varFunc);
+            return new NullCheckFunc(varFunc);
         }
 
-        return new ConstCheckFunc(position, varFunc, constValue);
+        return new ConstCheckFunc(varFunc, constValue);
     }
 
     private static class NullCheckFunc extends NegatableBooleanFunction implements UnaryFunction {
         private final Function arg;
 
-        public NullCheckFunc(int position, Function arg) {
-            super(position);
+        public NullCheckFunc(Function arg) {
             this.arg = arg;
         }
 
@@ -100,8 +100,7 @@ public class EqStrFunctionFactory implements FunctionFactory {
         private final Function arg;
         private final CharSequence constant;
 
-        public ConstCheckFunc(int position, Function arg, CharSequence constant) {
-            super(position);
+        public ConstCheckFunc(Function arg, CharSequence constant) {
             this.arg = arg;
             this.constant = constant;
         }
@@ -121,8 +120,7 @@ public class EqStrFunctionFactory implements FunctionFactory {
         private final Function left;
         private final Function right;
 
-        public Func(int position, Function left, Function right) {
-            super(position);
+        public Func(Function left, Function right) {
             this.left = left;
             this.right = right;
         }

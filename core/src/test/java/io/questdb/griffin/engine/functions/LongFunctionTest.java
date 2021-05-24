@@ -31,7 +31,7 @@ import org.junit.Test;
 public class LongFunctionTest {
     // assert that all type casts that are not possible will throw exception
 
-    private static final LongFunction function = new LongFunction(25) {
+    private static final LongFunction function = new LongFunction() {
         @Override
         public long getLong(Record rec) {
             return 149;
@@ -66,11 +66,6 @@ public class LongFunctionTest {
     @Test(expected = UnsupportedOperationException.class)
     public void testGetInt() {
         function.getInt(null);
-    }
-
-    @Test
-    public void testGetPosition() {
-        Assert.assertEquals(25, function.getPosition());
     }
 
     @Test(expected = UnsupportedOperationException.class)

@@ -134,7 +134,7 @@ public class RecordChainTest extends AbstractCairoTest {
             long[] cols = new long[metadata.columnCount];
 
             final ObjList<Function> funcs = new ObjList<>();
-            funcs.add(new LongFunction(0) {
+            funcs.add(new LongFunction() {
                 @Override
                 public long getLong(Record rec) {
                     return cols[0];
@@ -142,7 +142,7 @@ public class RecordChainTest extends AbstractCairoTest {
             });
 
             funcs.add(null);
-            funcs.add(new IntFunction(0) {
+            funcs.add(new IntFunction() {
                 @Override
                 public int getInt(Record rec) {
                     return (int) cols[2];

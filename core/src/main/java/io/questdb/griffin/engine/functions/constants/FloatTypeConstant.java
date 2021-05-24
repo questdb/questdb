@@ -32,10 +32,6 @@ public class FloatTypeConstant extends FloatFunction implements TypeConstant {
 
     public static final FloatTypeConstant INSTANCE = new FloatTypeConstant();
 
-    private FloatTypeConstant() {
-        super(0);
-    }
-
     @Override
     public float getFloat(Record rec) {
         return Float.NaN;

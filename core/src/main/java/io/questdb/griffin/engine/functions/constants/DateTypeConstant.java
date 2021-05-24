@@ -32,10 +32,6 @@ import io.questdb.std.Numbers;
 public class DateTypeConstant extends DateFunction implements TypeConstant {
     public static final DateTypeConstant INSTANCE = new DateTypeConstant();
 
-    private DateTypeConstant() {
-        super(0);
-    }
-
     @Override
     public long getDate(Record rec) {
         return Numbers.LONG_NaN;

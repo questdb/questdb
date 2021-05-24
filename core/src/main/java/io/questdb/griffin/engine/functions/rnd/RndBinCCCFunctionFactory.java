@@ -33,6 +33,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinFunction;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 
@@ -43,13 +44,19 @@ public class RndBinCCCFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
         final long lo = args.getQuick(0).getLong(null);
         final long hi = args.getQuick(1).getLong(null);
         final int nullRate = args.getQuick(2).getInt(null);
 
         if (nullRate < 0) {
-            throw SqlException.$(args.getQuick(2).getPosition(), "invalid null rate");
+            throw SqlException.$(argPositions.getQuick(2), "invalid null rate");
         }
 
         if (lo > hi) {
@@ -57,15 +64,15 @@ public class RndBinCCCFunctionFactory implements FunctionFactory {
         }
 
         if (lo < 1) {
-            throw SqlException.$(args.getQuick(0).getPosition(), "minimum has to be grater than 0");
+            throw SqlException.$(argPositions.getQuick(0), "minimum has to be grater than 0");
         }
 
         if (lo < hi) {
-            return new VarLenFunction(position, lo, hi, nullRate);
+            return new VarLenFunction(lo, hi, nullRate);
         }
 
         // lo == hi
-        return new FixLenFunction(position, lo, nullRate);
+        return new FixLenFunction(lo, nullRate);
     }
 
     private static final class VarLenFunction extends BinFunction implements Function {
@@ -74,8 +81,7 @@ public class RndBinCCCFunctionFactory implements FunctionFactory {
         private final long range;
         private final int nullRate;
 
-        public VarLenFunction(int position, long lo, long hi, int nullRate) {
-            super(position);
+        public VarLenFunction(long lo, long hi, int nullRate) {
             this.lo = lo;
             this.range = hi - lo + 1;
             this.nullRate = nullRate + 1;
@@ -105,8 +111,7 @@ public class RndBinCCCFunctionFactory implements FunctionFactory {
         private final Sequence sequence = new Sequence();
         private final int nullRate;
 
-        public FixLenFunction(int position, long len, int nullRate) {
-            super(position);
+        public FixLenFunction(long len, int nullRate) {
             this.nullRate = nullRate + 1;
             this.sequence.len = len;
         }

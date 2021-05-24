@@ -32,6 +32,7 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class LikeCharFunctionFactory implements FunctionFactory {
@@ -41,9 +42,8 @@ public class LikeCharFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         return new MatchFunction(
-                position,
                 args.getQuick(0),
                 args.getQuick(1).getChar(null)
         );
@@ -53,8 +53,7 @@ public class LikeCharFunctionFactory implements FunctionFactory {
         private final Function value;
         private final char expected;
 
-        public MatchFunction(int position, Function value, char expected) {
-            super(position);
+        public MatchFunction(Function value, char expected) {
             this.value = value;
             this.expected = expected;
         }

@@ -31,6 +31,7 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.EmptyTableRecordCursorFactory;
 import io.questdb.griffin.engine.functions.CursorFunction;
+import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public abstract class AbstractEmptyCatalogueFunctionFactory implements FunctionFactory {
@@ -53,7 +54,7 @@ public abstract class AbstractEmptyCatalogueFunctionFactory implements FunctionF
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new CursorFunction(position, new EmptyTableRecordCursorFactory(metadata));
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+        return new CursorFunction(new EmptyTableRecordCursorFactory(metadata));
     }
 }

@@ -33,6 +33,7 @@ import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.DoubleConstant;
+import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
@@ -46,21 +47,21 @@ public class RoundUpDoubleFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         Function scale = args.getQuick(1);
         if (scale.isConstant()) {
             int scaleValue = scale.getInt(null);
             if (scaleValue != Numbers.INT_NaN) {
                 if (scaleValue > -1 && scaleValue < Numbers.pow10max) {
-                    return new FuncPosConst(position, args.getQuick(0), scaleValue);
+                    return new FuncPosConst(args.getQuick(0), scaleValue);
                 }
                 if (scaleValue < 0 && scaleValue > -Numbers.pow10max) {
-                    return new FuncNegConst(position, args.getQuick(0), -scaleValue);
+                    return new FuncNegConst(args.getQuick(0), -scaleValue);
                 }
             }
-            return new DoubleConstant(position, Double.NaN);
+            return DoubleConstant.NULL;
         }
-        return new Func(position, args.getQuick(0), args.getQuick(1));
+        return new Func(args.getQuick(0), args.getQuick(1));
     }
 
 
@@ -68,8 +69,7 @@ public class RoundUpDoubleFunctionFactory implements FunctionFactory {
         private final Function arg;
         private final int scale;
 
-        public FuncPosConst(int position, Function arg, int r) {
-            super(position);
+        public FuncPosConst(Function arg, int r) {
             this.arg = arg;
             this.scale = r;
         }
@@ -95,8 +95,7 @@ public class RoundUpDoubleFunctionFactory implements FunctionFactory {
         private final Function arg;
         private final int scale;
 
-        public FuncNegConst(int position, Function arg, int r) {
-            super(position);
+        public FuncNegConst(Function arg, int r) {
             this.arg = arg;
             this.scale = r;
         }
@@ -123,8 +122,7 @@ public class RoundUpDoubleFunctionFactory implements FunctionFactory {
         private final Function left;
         private final Function right;
 
-        public Func(int position, Function left, Function right) {
-            super(position);
+        public Func(Function left, Function right) {
             this.left = left;
             this.right = right;
         }

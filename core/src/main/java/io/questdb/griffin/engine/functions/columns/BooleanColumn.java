@@ -27,12 +27,30 @@ package io.questdb.griffin.engine.functions.columns;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.griffin.engine.functions.BooleanFunction;
+import io.questdb.std.ObjList;
+
+import static io.questdb.griffin.engine.functions.columns.ColumnUtils.STATIC_COLUMN_COUNT;
 
 public class BooleanColumn extends BooleanFunction implements ScalarFunction {
+    private static final ObjList<BooleanColumn> COLUMNS = new ObjList<>(STATIC_COLUMN_COUNT);
+
+    static {
+        COLUMNS.setPos(STATIC_COLUMN_COUNT);
+        for (int i = 0; i < STATIC_COLUMN_COUNT; i++) {
+            COLUMNS.setQuick(i, new BooleanColumn(i));
+        }
+    }
+
     private final int columnIndex;
 
-    public BooleanColumn(int position, int columnIndex) {
-        super(position);
+    public static BooleanColumn newInstance(int columnIndex) {
+        if (columnIndex < STATIC_COLUMN_COUNT) {
+            return COLUMNS.getQuick(columnIndex);
+        }
+        return new BooleanColumn(columnIndex);
+    }
+
+    public BooleanColumn(int columnIndex) {
         this.columnIndex = columnIndex;
     }
 

@@ -32,6 +32,7 @@ import io.questdb.griffin.engine.AbstractFunctionFactoryTest;
 import io.questdb.griffin.engine.functions.bool.InTimestampStrFunctionFactory;
 import io.questdb.griffin.engine.functions.columns.StrColumn;
 import io.questdb.griffin.engine.functions.columns.TimestampColumn;
+import io.questdb.std.IntList;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import org.junit.Assert;
@@ -67,9 +68,14 @@ public class EqTimestampStrFunctionFactoryTest extends AbstractFunctionFactoryTe
         CharSequence invalidTimestamp = "abc";
         FunctionFactory factory = getFunctionFactory();
         ObjList<Function> args = new ObjList<>();
-        args.add(new TimestampColumn(0, 0));
-        args.add(new StrColumn(1, 5));
-        Function function = factory.newInstance(args, 3, configuration, sqlExecutionContext);
+        args.add(TimestampColumn.newInstance(0));
+        args.add(StrColumn.newInstance(5));
+
+        IntList argPositions = new IntList();
+        argPositions.add(0);
+        argPositions.add(1);
+
+        Function function = factory.newInstance(3, args, argPositions, configuration, sqlExecutionContext);
         Assert.assertFalse(function.getBool(new Record() {
             @Override
             public CharSequence getStr(int col) {

@@ -78,8 +78,6 @@ public interface Function extends Closeable {
 
     Long256 getLong256B(Record rec);
 
-    int getPosition();
-
     // when function returns factory it becomes factory
     // on other words this is not a tear-away instance
     RecordCursorFactory getRecordCursorFactory();

@@ -1710,7 +1710,12 @@ public class SqlCompiler implements Closeable {
                     if (index > -1) {
                         final ExpressionNode node = model.getColumnValues().getQuick(i);
 
-                        final Function function = functionParser.parseFunction(node, GenericRecordMetadata.EMPTY, executionContext);
+                        final Function function = functionParser.parseFunction(
+                                node,
+                                GenericRecordMetadata.EMPTY,
+                                executionContext
+                        );
+
                         validateAndConsume(
                                 model,
                                 valueFunctions,
@@ -1719,6 +1724,7 @@ public class SqlCompiler implements Closeable {
                                 i,
                                 index,
                                 function,
+                                node.position,
                                 executionContext.getBindVariableService()
                         );
 
@@ -1751,6 +1757,7 @@ public class SqlCompiler implements Closeable {
                             i,
                             i,
                             function,
+                            node.position,
                             executionContext.getBindVariableService()
                     );
 
@@ -2229,6 +2236,7 @@ public class SqlCompiler implements Closeable {
             int bottomUpColumnIndex,
             int metadataColumnIndex,
             Function function,
+            int functionPosition,
             BindVariableService bindVariableService
     ) throws SqlException {
 
@@ -2248,7 +2256,7 @@ public class SqlCompiler implements Closeable {
         }
 
         throw SqlException.inconvertibleTypes(
-                function.getPosition(),
+                functionPosition,
                 function.getType(),
                 model.getColumnValues().getQuick(bottomUpColumnIndex).token,
                 metadata.getColumnType(metadataColumnIndex),

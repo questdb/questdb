@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class HaversineDistDegreeGroupByFunctionFactory implements FunctionFactory {
@@ -42,7 +43,7 @@ public class HaversineDistDegreeGroupByFunctionFactory implements FunctionFactor
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new HaversineDistDegreeGroupByFunction(position, args.getQuick(0), args.getQuick(1), args.getQuick(2));
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+        return new HaversineDistDegreeGroupByFunction(args.getQuick(0), args.getQuick(1), args.getQuick(2));
     }
 }

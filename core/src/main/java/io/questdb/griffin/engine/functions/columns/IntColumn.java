@@ -27,17 +27,34 @@ package io.questdb.griffin.engine.functions.columns;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.griffin.engine.functions.IntFunction;
+import io.questdb.std.ObjList;
+
+import static io.questdb.griffin.engine.functions.columns.ColumnUtils.STATIC_COLUMN_COUNT;
 
 public class IntColumn extends IntFunction implements ScalarFunction {
+    private static final ObjList<IntColumn> COLUMNS = new ObjList<>(STATIC_COLUMN_COUNT);
     private final int columnIndex;
 
-    public IntColumn(int position, int columnIndex) {
-        super(position);
+    public IntColumn(int columnIndex) {
         this.columnIndex = columnIndex;
+    }
+
+    public static IntColumn newInstance(int columnIndex) {
+        if (columnIndex < STATIC_COLUMN_COUNT) {
+            return COLUMNS.getQuick(columnIndex);
+        }
+        return new IntColumn(columnIndex);
     }
 
     @Override
     public int getInt(Record rec) {
         return rec.getInt(columnIndex);
+    }
+
+    static {
+        COLUMNS.setPos(STATIC_COLUMN_COUNT);
+        for (int i = 0; i < STATIC_COLUMN_COUNT; i++) {
+            COLUMNS.setQuick(i, new IntColumn(i));
+        }
     }
 }

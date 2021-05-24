@@ -27,6 +27,7 @@ package io.questdb.griffin;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
+import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import org.junit.Assert;
 import org.junit.Test;
@@ -113,7 +114,7 @@ public class FunctionFactoryDescriptorTest {
             }
 
             @Override
-            public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+            public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
                 throw new UnsupportedOperationException();
             }
         });

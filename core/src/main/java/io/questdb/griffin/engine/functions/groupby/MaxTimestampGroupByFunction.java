@@ -39,8 +39,7 @@ public class MaxTimestampGroupByFunction extends TimestampFunction implements Gr
     private final Function arg;
     private int valueIndex;
 
-    public MaxTimestampGroupByFunction(int position, @NotNull Function arg) {
-        super(position);
+    public MaxTimestampGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
     }
 
