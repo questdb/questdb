@@ -868,6 +868,14 @@ public class TimestampQueryTest extends AbstractGriffinTest {
             assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where nts in '2020-01-01'");
 
             expected = "min\tmax\n" +
+                    "2020-01-01T00:00:00.000000Z\t2020-01-01T23:00:00.000000Z\n";
+            assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where nts not in ('2020-01' || '-02')");
+
+            expected = "min\tmax\n" +
+                    "2020-01-01T00:00:00.000000Z\t2020-01-01T23:00:00.000000Z\n";
+            assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where nts in ('2020-01-' || rnd_str('01', '01'))");
+
+            expected = "min\tmax\n" +
                     "2020-01-01T00:00:00.000000Z\t2020-01-01T12:00:00.000000Z\n";
             assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where nts in ('2020-01-01T12:00', '2020-01-01')");
 
@@ -899,6 +907,13 @@ public class TimestampQueryTest extends AbstractGriffinTest {
 
             expected = "dts\tnts\n";
             assertTimestampTtQuery(expected, "select * from tt where nts in now()");
+
+            expected = "dts\tnts\n";
+            assertTimestampTtQuery(expected, "select * from tt where nts in (now() || 'invalid')");
+
+            expected = "min\tmax\n" +
+                    "2020-01-01T00:00:00.000000Z\t2020-01-02T23:00:00.000000Z\n";
+            assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where  nts not in (now() || 'invalid')");
         });
     }
 
@@ -1054,6 +1069,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
             assertTimestampTtFailedQuery("Invalid date", "select min(nts), max(nts) from tt where nts between '2020-01-01' and 'invalid' || 'dd'");
             assertTimestampTtFailedQuery("Invalid column: invalidCol", "select min(nts), max(nts) from tt where invalidCol not between '2020-01-01' and '2020-01-02'");
             assertTimestampTtFailedQuery("Invalid date", "select min(nts), max(nts) from tt where nts in ('2020-01-01', 'invalid')");
+            assertTimestampTtFailedQuery("cannot compare TIMESTAMP with type CURSOR", "select min(nts), max(nts) from tt where nts in (select nts from tt)");
         });
     }
 
