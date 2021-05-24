@@ -35,12 +35,6 @@ import io.questdb.std.Numbers;
 import io.questdb.std.str.CharSink;
 
 public abstract class DateFunction implements ScalarFunction {
-    private final int position;
-
-    public DateFunction(int position) {
-        this.position = position;
-    }
-
     @Override
     public Long256 getLong256A(Record rec) {
         throw new UnsupportedOperationException();
@@ -94,11 +88,6 @@ public abstract class DateFunction implements ScalarFunction {
     @Override
     public final long getLong(Record rec) {
         return getDate(rec);
-    }
-
-    @Override
-    public int getPosition() {
-        return position;
     }
 
     @Override

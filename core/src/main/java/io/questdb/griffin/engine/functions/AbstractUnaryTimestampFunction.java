@@ -29,8 +29,7 @@ import io.questdb.cairo.sql.Function;
 public abstract class AbstractUnaryTimestampFunction extends TimestampFunction implements UnaryFunction {
     protected final Function arg;
 
-    public AbstractUnaryTimestampFunction(int position, Function arg) {
-        super(position);
+    public AbstractUnaryTimestampFunction(Function arg) {
         this.arg = arg;
     }
 

@@ -48,8 +48,8 @@ public class MaxIntVectorAggregateFunction extends IntFunction implements Vector
     private final KeyValueFunc keyValueFunc;
     private int valueOffset;
 
-    public MaxIntVectorAggregateFunction(int position, int keyKind, int columnIndex, int workerCount) {
-        super(position);
+    public MaxIntVectorAggregateFunction(int keyKind, int columnIndex, int workerCount) {
+        super();
         this.columnIndex = columnIndex;
         if (keyKind == GKK_HOUR_INT) {
             this.distinctFunc = Rosti::keyedHourDistinct;
@@ -61,14 +61,14 @@ public class MaxIntVectorAggregateFunction extends IntFunction implements Vector
     }
 
     @Override
-    public void aggregate(long address, long addressSize, int workerId) {
+    public void aggregate(long address, long addressSize, int columnSizeHint, int workerId) {
         if (address != 0) {
             max.accumulate(Vect.maxInt(address, addressSize / Integer.BYTES));
         }
     }
 
     @Override
-    public void aggregate(long pRosti, long keyAddress, long valueAddress, long valueAddressSize, int workerId) {
+    public void aggregate(long pRosti, long keyAddress, long valueAddress, long valueAddressSize, int columnSizeShr, int workerId) {
         if (valueAddress == 0) {
             distinctFunc.run(pRosti, keyAddress, valueAddressSize / Integer.BYTES);
         } else {

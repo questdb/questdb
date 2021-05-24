@@ -37,7 +37,6 @@ public final class OperatorExpression {
     static final ObjList<OperatorExpression> operators = new ObjList<OperatorExpression>() {{
         add(new OperatorExpression(".", DOT_PRECEDENCE, false, BINARY));
         add(new OperatorExpression("::", DOT_PRECEDENCE, false, BINARY));
-        add(new OperatorExpression("^", 2, false, BINARY));
         add(new OperatorExpression("*", 3, true, BINARY));
         add(new OperatorExpression("/", 3, true, BINARY));
         add(new OperatorExpression("%", 3, true, BINARY));
@@ -55,6 +54,9 @@ public final class OperatorExpression {
         add(new OperatorExpression("!~", 7, true, BINARY));
         add(new OperatorExpression("in", 7, true, SET, false));
         add(new OperatorExpression("between", 7, true, SET, false));
+        add(new OperatorExpression("&", 8, true, BINARY));
+        add(new OperatorExpression("^", 9, false, BINARY));
+        add(new OperatorExpression("|", 10, true, BINARY));
         add(new OperatorExpression("and", 11, true, BINARY, false));
         add(new OperatorExpression("or", 11, true, BINARY, false));
         add(new OperatorExpression("not", 11, true, UNARY, false));

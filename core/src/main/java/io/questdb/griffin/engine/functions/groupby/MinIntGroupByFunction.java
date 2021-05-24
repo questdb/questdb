@@ -40,7 +40,7 @@ public class MinIntGroupByFunction extends IntFunction implements GroupByFunctio
     private int valueIndex;
 
     public MinIntGroupByFunction(int position, @NotNull Function arg) {
-        super(position);
+        super();
         this.arg = arg;
     }
 

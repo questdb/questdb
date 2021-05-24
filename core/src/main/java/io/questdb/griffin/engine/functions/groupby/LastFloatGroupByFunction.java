@@ -24,25 +24,19 @@
 
 package io.questdb.griffin.engine.functions.groupby;
 
-import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
-import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.ObjList;
+import io.questdb.cairo.sql.Record;
+import org.jetbrains.annotations.NotNull;
 
-public class SumShortGroupByFunctionFactory implements FunctionFactory {
-    @Override
-    public String getSignature() {
-        return "sum(E)";
+public class LastFloatGroupByFunction extends FirstFloatGroupByFunction {
+
+    public LastFloatGroupByFunction(int position, @NotNull Function arg) {
+        super(arg);
     }
 
     @Override
-    public boolean isGroupBy() {
-        return true;
-    }
-
-    @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new SumShortGroupByFunction(position, args.getQuick(0));
+    public void computeNext(MapValue mapValue, Record record) {
+        super.computeFirst(mapValue, record);
     }
 }

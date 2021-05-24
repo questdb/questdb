@@ -33,6 +33,7 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.SymbolFunction;
+import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class ListFunctionFactory implements FunctionFactory {
@@ -42,10 +43,16 @@ public class ListFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
         final ObjList<String> symbols = new ObjList<>(args.size());
-        RndStringListFunctionFactory.copyConstants(args, symbols);
-        return new Func(position, symbols);
+        RndStringListFunctionFactory.copyConstants(args, argPositions, symbols);
+        return new Func(symbols);
     }
 
     private static final class Func extends SymbolFunction implements Function {
@@ -53,8 +60,7 @@ public class ListFunctionFactory implements FunctionFactory {
         private final int count;
         private int position = 0;
 
-        public Func(int position, ObjList<String> symbols) {
-            super(position);
+        public Func(ObjList<String> symbols) {
             this.symbols = symbols;
             this.count = symbols.size();
         }

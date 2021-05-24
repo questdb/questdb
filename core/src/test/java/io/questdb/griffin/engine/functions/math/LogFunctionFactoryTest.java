@@ -22,27 +22,37 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.groupby;
+package io.questdb.griffin.engine.functions.math;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.sql.Function;
-import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.ObjList;
+import io.questdb.griffin.AbstractGriffinTest;
+import io.questdb.test.tools.TestUtils;
+import org.junit.Test;
 
-public class FirstShortGroupByFunctionFactory implements FunctionFactory {
-    @Override
-    public String getSignature() {
-        return "first(E)";
+public class LogFunctionFactoryTest extends AbstractGriffinTest {
+
+    @Test
+    public void testLogDouble() throws Exception {
+        assertLog("select log(9989.2233)", "9.209262120872339\n");
     }
 
-    @Override
-    public boolean isGroupBy() {
-        return true;
+    @Test
+    public void testLogDoubleNull() throws Exception {
+        assertLog("select log(NaN)", "NaN\n");
     }
 
-    @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new FirstShortGroupByFunction(position, args.getQuick(0));
+    @Test
+    public void testLogInt() throws Exception {
+        assertLog("select log(8965)", "9.101083386039234\n");
+    }
+
+    private void assertLog(String sql, String expected) throws Exception {
+        assertMemoryLeak(() -> TestUtils.assertSql(
+                compiler,
+                sqlExecutionContext,
+                sql,
+                sink,
+                "log\n" +
+                        expected
+        ));
     }
 }

@@ -30,13 +30,12 @@ import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.std.Chars;
 
 public class StrConstant extends StrFunction implements ConstantFunction {
-    public static final StrConstant NULL = new StrConstant(0, null);
+    public static final StrConstant NULL = new StrConstant(null);
 
     private final String value;
     private final int length;
 
-    public StrConstant(int position, CharSequence value) {
-        super(position);
+    public StrConstant(CharSequence value) {
         if (value == null) {
             this.value = null;
             this.length = TableUtils.NULL_LEN;
@@ -50,6 +49,9 @@ public class StrConstant extends StrFunction implements ConstantFunction {
         }
     }
 
+    public static StrConstant newInstance(CharSequence value) {
+        return value != null ? new StrConstant(value) : NULL;
+    }
 
     @Override
     public CharSequence getStr(Record rec) {

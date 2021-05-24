@@ -35,6 +35,7 @@ import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.std.IntHashSet;
+import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class InCharFunctionFactory implements FunctionFactory {
@@ -44,13 +45,19 @@ public class InCharFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
 
         IntHashSet set = new IntHashSet();
         int n = args.size();
 
         if (n == 1) {
-            return new BooleanConstant(position, false);
+            return BooleanConstant.FALSE;
         }
 
         for (int i = 1; i < n; i++) {
@@ -58,22 +65,21 @@ public class InCharFunctionFactory implements FunctionFactory {
             if (func.getType() == ColumnType.CHAR) {
                 set.add(func.getChar(null));
             } else {
-                throw SqlException.$(func.getPosition(), "CHAR constant expected");
+                throw SqlException.$(argPositions.getQuick(i), "CHAR constant expected");
             }
         }
         Function var = args.getQuick(0);
         if (var.isConstant()) {
-            return new BooleanConstant(position, set.contains(var.getChar(null)));
+            return BooleanConstant.of(set.contains(var.getChar(null)));
         }
-        return new Func(position, var, set);
+        return new Func(var, set);
     }
 
     private static class Func extends BooleanFunction implements UnaryFunction {
         private final Function arg;
         private final IntHashSet set;
 
-        public Func(int position, Function arg, IntHashSet set) {
-            super(position);
+        public Func(Function arg, IntHashSet set) {
             this.arg = arg;
             this.set = set;
         }

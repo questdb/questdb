@@ -49,8 +49,7 @@ public class MinLongVectorAggregateFunction extends LongFunction implements Vect
     private final KeyValueFunc keyValueFunc;
     private int valueOffset;
 
-    public MinLongVectorAggregateFunction(int position, int keyKind, int columnIndex, int workerCount) {
-        super(position);
+    public MinLongVectorAggregateFunction(int keyKind, int columnIndex, int workerCount) {
         this.columnIndex = columnIndex;
         if (keyKind == GKK_HOUR_INT) {
             this.distinctFunc = Rosti::keyedHourDistinct;
@@ -62,7 +61,7 @@ public class MinLongVectorAggregateFunction extends LongFunction implements Vect
     }
 
     @Override
-    public void aggregate(long address, long addressSize, int workerId) {
+    public void aggregate(long address, long addressSize, int columnSizeHint, int workerId) {
         if (address != 0) {
             final long value = Vect.minLong(address, addressSize / Long.BYTES);
             if (value != Numbers.LONG_NaN) {
@@ -72,11 +71,11 @@ public class MinLongVectorAggregateFunction extends LongFunction implements Vect
     }
 
     @Override
-    public void aggregate(long pRosti, long keyAddress, long valueAddress, long valueAddressSize, int workerId) {
+    public void aggregate(long pRosti, long keyAddress, long valueAddress, long valueAddressSize, int columnSizeShr, int workerId) {
         if (valueAddress == 0) {
-            distinctFunc.run(pRosti, keyAddress, valueAddressSize/Long.BYTES);
+            distinctFunc.run(pRosti, keyAddress, valueAddressSize / Long.BYTES);
         } else {
-            keyValueFunc.run(pRosti, keyAddress, valueAddress, valueAddressSize/Long.BYTES, valueOffset);
+            keyValueFunc.run(pRosti, keyAddress, valueAddress, valueAddressSize / Long.BYTES, valueOffset);
         }
     }
 

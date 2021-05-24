@@ -32,7 +32,7 @@ import org.junit.Test;
 public class StrFunctionTest {
     // assert that all type casts that are not possible will throw exception
 
-    private static final StrFunction function = new StrFunction(25) {
+    private static final StrFunction function = new StrFunction() {
         @Override
         public CharSequence getStr(Record rec) {
             return "a";
@@ -87,11 +87,6 @@ public class StrFunctionTest {
     @Test(expected = UnsupportedOperationException.class)
     public void testGetLong() {
         function.getLong(null);
-    }
-
-    @Test
-    public void testGetPosition() {
-        Assert.assertEquals(25, function.getPosition());
     }
 
     @Test(expected = UnsupportedOperationException.class)

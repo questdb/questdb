@@ -37,7 +37,7 @@ public class InsertModel implements ExecutionModel, Mutable, Sinkable {
     private int selectKeywordPosition;
     private int endOfValuesPosition;
     private long batchSize = -1;
-    private long hysteresis = 0;
+    private long commitLag = 0;
 
     private InsertModel() {
     }
@@ -64,7 +64,7 @@ public class InsertModel implements ExecutionModel, Mutable, Sinkable {
         this.selectKeywordPosition = 0;
         this.endOfValuesPosition = 0;
         this.batchSize = -1;
-        this.hysteresis = 0;
+        this.commitLag = 0;
     }
 
     public int getColumnPosition(int columnIndex) {
@@ -108,12 +108,12 @@ public class InsertModel implements ExecutionModel, Mutable, Sinkable {
         this.batchSize = batchSize;
     }
 
-    public long getHysteresis() {
-        return hysteresis;
+    public long getCommitLag() {
+        return commitLag;
     }
 
-    public void setHysteresis(long hysteresis) {
-        this.hysteresis = hysteresis;
+    public void setCommitLag(long lag) {
+        this.commitLag = lag;
     }
 
     public ExpressionNode getTableName() {
@@ -139,8 +139,8 @@ public class InsertModel implements ExecutionModel, Mutable, Sinkable {
             sink.put(" batch ").put(batchSize);
         }
 
-        if (hysteresis != 0) {
-            sink.put(" hysteresis ").put(hysteresis);
+        if (commitLag != 0) {
+            sink.put(" lag ").put(commitLag);
         }
 
         sink.put(" into ").put(tableName.token).put(' ');

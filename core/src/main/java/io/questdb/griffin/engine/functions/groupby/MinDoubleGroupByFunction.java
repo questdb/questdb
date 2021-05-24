@@ -38,8 +38,7 @@ public class MinDoubleGroupByFunction extends DoubleFunction implements GroupByF
     private final Function arg;
     private int valueIndex;
 
-    public MinDoubleGroupByFunction(int position, @NotNull Function arg) {
-        super(position);
+    public MinDoubleGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
     }
 

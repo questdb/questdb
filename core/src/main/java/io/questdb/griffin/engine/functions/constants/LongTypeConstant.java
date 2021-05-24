@@ -32,10 +32,6 @@ import io.questdb.std.Numbers;
 public class LongTypeConstant extends LongFunction implements TypeConstant {
     public static final LongTypeConstant INSTANCE = new LongTypeConstant();
 
-    private LongTypeConstant() {
-        super(0);
-    }
-
     @Override
     public long getLong(Record rec) {
         return Numbers.LONG_NaN;

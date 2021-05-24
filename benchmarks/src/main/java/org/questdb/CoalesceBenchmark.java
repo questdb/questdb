@@ -60,13 +60,13 @@ public class CoalesceBenchmark {
 
     public CoalesceBenchmark() {
         constFunctions = new ObjList<>(2);
-        constFunctions.add(new LongFunction(0) {
+        constFunctions.add(new LongFunction() {
             @Override
             public long getLong(Record rec) {
                 return rec.getLong(0);
             }
         });
-        constFunctions.add(new LongConstant(0, 10L));
+        constFunctions.add(new LongConstant(10L));
         records = new Record[N];
         for (int i = 0; i < N; i++) {
             final long value = i % 2 == 0 ? Numbers.LONG_NaN : i;
@@ -81,7 +81,7 @@ public class CoalesceBenchmark {
 
     @Benchmark
     public long testBaseline() {
-        Function function = new CoalesceFunctionFactory.LongCoalesceFunction(0, constFunctions, constFunctions.size());
+        Function function = new CoalesceFunctionFactory.LongCoalesceFunction(constFunctions, constFunctions.size());
         long sum = 0;
         for (int i = 0; i < N; i++) {
             sum += function.getLong(records[i]);
@@ -91,7 +91,7 @@ public class CoalesceBenchmark {
 
     @Benchmark
     public long testTwoLongCoalesceDedicated() {
-        Function function = new CoalesceFunctionFactory.TwoLongCoalesceFunction(0, constFunctions);
+        Function function = new CoalesceFunctionFactory.TwoLongCoalesceFunction(constFunctions);
         long sum = 0;
         for (int i = 0; i < N; i++) {
             sum += function.getLong(records[i]);

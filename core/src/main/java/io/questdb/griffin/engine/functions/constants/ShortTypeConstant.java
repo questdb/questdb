@@ -32,10 +32,6 @@ public class ShortTypeConstant extends ShortFunction implements TypeConstant {
 
     public static final ShortTypeConstant INSTANCE = new ShortTypeConstant();
 
-    private ShortTypeConstant() {
-        super(0);
-    }
-
     @Override
     public short getShort(Record rec) {
         return 0;

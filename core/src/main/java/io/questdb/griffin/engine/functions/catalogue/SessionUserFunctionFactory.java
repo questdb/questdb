@@ -29,10 +29,11 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
+import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class SessionUserFunctionFactory implements FunctionFactory {
-    private static final StrConstant USER = new StrConstant(0, "admin");
+    private static final StrConstant USER = new StrConstant("admin");
 
     @Override
     public String getSignature() {
@@ -45,7 +46,7 @@ public class SessionUserFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         return USER;
     }
 }

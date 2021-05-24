@@ -22,34 +22,28 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.constants;
+package io.questdb.griffin.engine.functions.groupby;
 
-import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.engine.functions.StrFunction;
-import io.questdb.std.str.CharSink;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.sql.Function;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.IntList;
+import io.questdb.std.ObjList;
 
-public class NullStrConstant extends StrFunction implements ConstantFunction {
-
-    public NullStrConstant(int position) {
-        super(position);
+public class FirstCharGroupByFunctionFactory implements FunctionFactory {
+    @Override
+    public String getSignature() {
+        return "first(A)";
     }
 
     @Override
-    public CharSequence getStr(Record rec) {
-        return null;
+    public boolean isGroupBy() {
+        return true;
     }
 
     @Override
-    public CharSequence getStrB(Record rec) {
-        return null;
-    }
-
-    @Override
-    public void getStr(Record rec, CharSink sink) {
-    }
-
-    @Override
-    public int getStrLen(Record rec) {
-        return -1;
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+        return new FirstCharGroupByFunction(args.getQuick(0));
     }
 }

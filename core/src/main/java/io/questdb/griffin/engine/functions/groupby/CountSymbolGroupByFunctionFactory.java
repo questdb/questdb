@@ -28,12 +28,13 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class CountSymbolGroupByFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "count(K)";
+        return "count_distinct(K)";
     }
 
     @Override
@@ -42,7 +43,7 @@ public class CountSymbolGroupByFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new CountSymbolGroupByFunction(position, args.getQuick(0));
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+        return new CountSymbolGroupByFunction(args.getQuick(0));
     }
 }

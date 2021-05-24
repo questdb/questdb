@@ -29,53 +29,52 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.engine.functions.ByteFunction;
+import io.questdb.griffin.engine.functions.FloatFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import org.jetbrains.annotations.NotNull;
 
-public class MinByteGroupByFunction extends ByteFunction implements GroupByFunction, UnaryFunction {
+public class MaxFloatGroupByFunction extends FloatFunction implements GroupByFunction, UnaryFunction {
     private final Function arg;
     private int valueIndex;
 
-    public MinByteGroupByFunction(int position, @NotNull Function arg) {
-        super(position);
+    public MaxFloatGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
     }
 
     @Override
     public void computeFirst(MapValue mapValue, Record record) {
-        mapValue.putByte(valueIndex, arg.getByte(record));
+        mapValue.putFloat(valueIndex, arg.getFloat(record));
     }
 
     @Override
     public void computeNext(MapValue mapValue, Record record) {
-        byte min = mapValue.getByte(valueIndex);
-        byte next = arg.getByte(record);
-        if (next < min) {
-            mapValue.putByte(valueIndex, next);
+        float max = mapValue.getFloat(valueIndex);
+        float next = arg.getFloat(record);
+        if (next > max) {
+            mapValue.putFloat(valueIndex, next);
         }
     }
 
     @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(ColumnType.BYTE);
+        columnTypes.add(ColumnType.FLOAT);
     }
 
     @Override
-    public void setByte(MapValue mapValue, byte value) {
-        mapValue.putByte(valueIndex, value);
+    public void setFloat(MapValue mapValue, float value) {
+        mapValue.putFloat(valueIndex, value);
     }
 
     @Override
     public void setNull(MapValue mapValue) {
-        mapValue.putByte(valueIndex, (byte) 0);
+        mapValue.putFloat(valueIndex, Float.NaN);
     }
 
     @Override
-    public byte getByte(Record rec) {
-        return rec.getByte(valueIndex);
+    public float getFloat(Record rec) {
+        return rec.getFloat(valueIndex);
     }
 
     @Override

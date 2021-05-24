@@ -33,11 +33,9 @@ import io.questdb.std.Long256;
 import io.questdb.std.str.CharSink;
 
 public class CursorFunction implements ScalarFunction {
-    private final int position;
     private final RecordCursorFactory factory;
 
-    public CursorFunction(int position, RecordCursorFactory factory) {
-        this.position = position;
+    public CursorFunction(RecordCursorFactory factory) {
         this.factory = factory;
     }
 
@@ -104,11 +102,6 @@ public class CursorFunction implements ScalarFunction {
     @Override
     public final long getLong(Record rec) {
         throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public final int getPosition() {
-        return position;
     }
 
     @Override

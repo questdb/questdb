@@ -224,19 +224,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testBindVariableInvalid() throws Exception {
-        assertMemoryLeak(() -> {
-            compiler.compile("CREATE TABLE 'alcatel_traffic_tmp' (deviceName SYMBOL capacity 1000 index, time TIMESTAMP, slot SYMBOL, port SYMBOL, downStream DOUBLE, upStream DOUBLE) timestamp(time) partition by DAY", sqlExecutionContext);
-            try {
-                compiler.compile("select * from alcatel_traffic_tmp where deviceName in ($n1)", sqlExecutionContext).getRecordCursorFactory();
-            } catch (SqlException e) {
-                Assert.assertEquals(51, e.getPosition());
-                TestUtils.assertContains(e.getFlyweightMessage(), "invalid bind variable index [value=$n1]");
-            }
-        });
-    }
-
-    @Test
     public void testBindVariableInSelect() throws Exception {
         assertMemoryLeak(() -> {
             final CairoConfiguration configuration = new DefaultCairoConfiguration(root);
@@ -330,6 +317,19 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
                     );
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testBindVariableInvalid() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("CREATE TABLE 'alcatel_traffic_tmp' (deviceName SYMBOL capacity 1000 index, time TIMESTAMP, slot SYMBOL, port SYMBOL, downStream DOUBLE, upStream DOUBLE) timestamp(time) partition by DAY", sqlExecutionContext);
+            try {
+                compiler.compile("select * from alcatel_traffic_tmp where deviceName in ($n1)", sqlExecutionContext).getRecordCursorFactory();
+            } catch (SqlException e) {
+                Assert.assertEquals(51, e.getPosition());
+                TestUtils.assertContains(e.getFlyweightMessage(), "invalid bind variable index [value=$n1]");
             }
         });
     }
@@ -776,12 +776,12 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     @Test
     public void testFilterConstantTrue() throws Exception {
         Record[] expected = new Record[]{
-            new Record() {
-                @Override
-                public double getDouble(int col) {
-                    return 551.3822454600646;
+                new Record() {
+                    @Override
+                    public double getDouble(int col) {
+                        return 551.3822454600646;
+                    }
                 }
-            }
         };
         assertQuery(expected,
                 "(select sum(a) from x) where 1=1",
@@ -1616,6 +1616,190 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testJoinWhereExecutionOrder() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table l as( select x from long_sequence(100) )", sqlExecutionContext);
+            compiler.compile("create table rr as( select x + 50 as y from long_sequence(100) )", sqlExecutionContext);
+
+            TestUtils.assertSql(
+                    compiler,
+                    sqlExecutionContext,
+                    "select x, y\n" +
+                            "from l left join rr on l.x = rr.y\n" +
+                            "where y > 0 or y > 10",
+                    sink,
+                    "x\ty\n" +
+                            "51\t51\n" +
+                            "52\t52\n" +
+                            "53\t53\n" +
+                            "54\t54\n" +
+                            "55\t55\n" +
+                            "56\t56\n" +
+                            "57\t57\n" +
+                            "58\t58\n" +
+                            "59\t59\n" +
+                            "60\t60\n" +
+                            "61\t61\n" +
+                            "62\t62\n" +
+                            "63\t63\n" +
+                            "64\t64\n" +
+                            "65\t65\n" +
+                            "66\t66\n" +
+                            "67\t67\n" +
+                            "68\t68\n" +
+                            "69\t69\n" +
+                            "70\t70\n" +
+                            "71\t71\n" +
+                            "72\t72\n" +
+                            "73\t73\n" +
+                            "74\t74\n" +
+                            "75\t75\n" +
+                            "76\t76\n" +
+                            "77\t77\n" +
+                            "78\t78\n" +
+                            "79\t79\n" +
+                            "80\t80\n" +
+                            "81\t81\n" +
+                            "82\t82\n" +
+                            "83\t83\n" +
+                            "84\t84\n" +
+                            "85\t85\n" +
+                            "86\t86\n" +
+                            "87\t87\n" +
+                            "88\t88\n" +
+                            "89\t89\n" +
+                            "90\t90\n" +
+                            "91\t91\n" +
+                            "92\t92\n" +
+                            "93\t93\n" +
+                            "94\t94\n" +
+                            "95\t95\n" +
+                            "96\t96\n" +
+                            "97\t97\n" +
+                            "98\t98\n" +
+                            "99\t99\n" +
+                            "100\t100\n"
+            );
+        });
+    }
+
+    @Test
+    public void testJoinOnExecutionOrder() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table l as( select x from long_sequence(100) )", sqlExecutionContext);
+            compiler.compile("create table rr as( select x + 50 as y from long_sequence(100) )", sqlExecutionContext);
+
+            TestUtils.assertSql(
+                    compiler,
+                    sqlExecutionContext,
+                    "select x, y from l left join rr on l.x = rr.y and (y > 0 or y > 10)",
+                    sink,
+                    "x\ty\n" +
+                            "1\tNaN\n" +
+                            "2\tNaN\n" +
+                            "3\tNaN\n" +
+                            "4\tNaN\n" +
+                            "5\tNaN\n" +
+                            "6\tNaN\n" +
+                            "7\tNaN\n" +
+                            "8\tNaN\n" +
+                            "9\tNaN\n" +
+                            "10\tNaN\n" +
+                            "11\tNaN\n" +
+                            "12\tNaN\n" +
+                            "13\tNaN\n" +
+                            "14\tNaN\n" +
+                            "15\tNaN\n" +
+                            "16\tNaN\n" +
+                            "17\tNaN\n" +
+                            "18\tNaN\n" +
+                            "19\tNaN\n" +
+                            "20\tNaN\n" +
+                            "21\tNaN\n" +
+                            "22\tNaN\n" +
+                            "23\tNaN\n" +
+                            "24\tNaN\n" +
+                            "25\tNaN\n" +
+                            "26\tNaN\n" +
+                            "27\tNaN\n" +
+                            "28\tNaN\n" +
+                            "29\tNaN\n" +
+                            "30\tNaN\n" +
+                            "31\tNaN\n" +
+                            "32\tNaN\n" +
+                            "33\tNaN\n" +
+                            "34\tNaN\n" +
+                            "35\tNaN\n" +
+                            "36\tNaN\n" +
+                            "37\tNaN\n" +
+                            "38\tNaN\n" +
+                            "39\tNaN\n" +
+                            "40\tNaN\n" +
+                            "41\tNaN\n" +
+                            "42\tNaN\n" +
+                            "43\tNaN\n" +
+                            "44\tNaN\n" +
+                            "45\tNaN\n" +
+                            "46\tNaN\n" +
+                            "47\tNaN\n" +
+                            "48\tNaN\n" +
+                            "49\tNaN\n" +
+                            "50\tNaN\n" +
+                            "51\t51\n" +
+                            "52\t52\n" +
+                            "53\t53\n" +
+                            "54\t54\n" +
+                            "55\t55\n" +
+                            "56\t56\n" +
+                            "57\t57\n" +
+                            "58\t58\n" +
+                            "59\t59\n" +
+                            "60\t60\n" +
+                            "61\t61\n" +
+                            "62\t62\n" +
+                            "63\t63\n" +
+                            "64\t64\n" +
+                            "65\t65\n" +
+                            "66\t66\n" +
+                            "67\t67\n" +
+                            "68\t68\n" +
+                            "69\t69\n" +
+                            "70\t70\n" +
+                            "71\t71\n" +
+                            "72\t72\n" +
+                            "73\t73\n" +
+                            "74\t74\n" +
+                            "75\t75\n" +
+                            "76\t76\n" +
+                            "77\t77\n" +
+                            "78\t78\n" +
+                            "79\t79\n" +
+                            "80\t80\n" +
+                            "81\t81\n" +
+                            "82\t82\n" +
+                            "83\t83\n" +
+                            "84\t84\n" +
+                            "85\t85\n" +
+                            "86\t86\n" +
+                            "87\t87\n" +
+                            "88\t88\n" +
+                            "89\t89\n" +
+                            "90\t90\n" +
+                            "91\t91\n" +
+                            "92\t92\n" +
+                            "93\t93\n" +
+                            "94\t94\n" +
+                            "95\t95\n" +
+                            "96\t96\n" +
+                            "97\t97\n" +
+                            "98\t98\n" +
+                            "99\t99\n" +
+                            "100\t100\n"
+            );
+        });
+    }
+
+    @Test
     public void testLatestByAll() throws Exception {
         assertQuery("a\tb\tk\n" +
                         "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
@@ -1646,51 +1830,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
                         "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
                         "56.594291398612405\tVTJW\t2019-01-01T00:00:00.000000Z\n",
-                true,
-                true,
-                true
-        );
-    }
-
-    @Test
-    public void testLatestByAllMixed() throws Exception {
-        assertQuery("b\tk\ta\n" +
-                        "VTJW\t1970-01-04T11:20:00.000000Z\t78.83065830055033\n" +
-                        "HYRX\t1970-01-13T17:33:20.000000Z\t2.6836863013701473\n" +
-                        "PEHN\t1970-01-14T21:20:00.000000Z\t9.76683471072458\n" +
-                        "CPSW\t1970-01-19T12:26:40.000000Z\t51.85631921367574\n" +
-                        "RXGZ\t1970-01-20T16:13:20.000000Z\t50.25890936351257\n" +
-                        "\t1970-01-22T23:46:40.000000Z\t72.604681060764\n",
-                "select b,k,a from x latest by b",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " timestamp_sequence(0, 100000000000) k," +
-                        " rnd_double(0)*100 a1," +
-                        " rnd_double(0)*100 a2," +
-                        " rnd_double(0)*100 a3," +
-                        " rnd_double(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b" +
-                        " from long_sequence(20)" +
-                        ") timestamp(k) partition by DAY",
-                "k",
-                "insert into x select * from (" +
-                        " select" +
-                        " to_timestamp('2019', 'yyyy') t," +
-                        " rnd_double(0)*100," +
-                        " rnd_double(0)*100," +
-                        " rnd_double(0)*100," +
-                        " rnd_double(0)*100," +
-                        " 'VTJW'" +
-                        " from long_sequence(1)" +
-                        ") timestamp (t)",
-                "b\tk\ta\n" +
-                        "HYRX\t1970-01-13T17:33:20.000000Z\t2.6836863013701473\n" +
-                        "PEHN\t1970-01-14T21:20:00.000000Z\t9.76683471072458\n" +
-                        "CPSW\t1970-01-19T12:26:40.000000Z\t51.85631921367574\n" +
-                        "RXGZ\t1970-01-20T16:13:20.000000Z\t50.25890936351257\n" +
-                        "\t1970-01-22T23:46:40.000000Z\t72.604681060764\n" +
-                        "VTJW\t2019-01-01T00:00:00.000000Z\t6.578761277152223\n",
                 true,
                 true,
                 true
@@ -1847,53 +1986,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testLatestByAllIndexedMixed() throws Exception {
-        final String expected = "a\tk\tb\n" +
-                "78.83065830055033\t1970-01-04T11:20:00.000000Z\tVTJW\n" +
-                "2.6836863013701473\t1970-01-13T17:33:20.000000Z\tHYRX\n" +
-                "9.76683471072458\t1970-01-14T21:20:00.000000Z\tPEHN\n" +
-                "51.85631921367574\t1970-01-19T12:26:40.000000Z\tCPSW\n" +
-                "50.25890936351257\t1970-01-20T16:13:20.000000Z\tRXGZ\n" +
-                "72.604681060764\t1970-01-22T23:46:40.000000Z\t\n";
-        assertQuery(expected,
-                "select a,k,b from x latest by b",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " timestamp_sequence(0, 100000000000) k," +
-                        " rnd_double(0)*100 a1," +
-                        " rnd_double(0)*100 a2," +
-                        " rnd_double(0)*100 a3," +
-                        " rnd_double(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b" +
-                        " from" +
-                        " long_sequence(20)" +
-                        "), index(b) timestamp(k) partition by DAY",
-                "k",
-                "insert into x select * from (" +
-                        " select" +
-                        " to_timestamp('2019', 'yyyy') t," +
-                        " rnd_double(0)*100," +
-                        " rnd_double(0)*100," +
-                        " rnd_double(0)*100," +
-                        " rnd_double(0)*100," +
-                        " 'VTJW'" +
-                        " from long_sequence(1)" +
-                        ") timestamp (t)",
-                "a\tk\tb\n" +
-                        "2.6836863013701473\t1970-01-13T17:33:20.000000Z\tHYRX\n" +
-                        "9.76683471072458\t1970-01-14T21:20:00.000000Z\tPEHN\n" +
-                        "51.85631921367574\t1970-01-19T12:26:40.000000Z\tCPSW\n" +
-                        "50.25890936351257\t1970-01-20T16:13:20.000000Z\tRXGZ\n" +
-                        "72.604681060764\t1970-01-22T23:46:40.000000Z\t\n" +
-                        "6.578761277152223\t2019-01-01T00:00:00.000000Z\tVTJW\n",
-                true,
-                true,
-                true
-        );
-    }
-
-    @Test
     public void testLatestByAllIndexedConstantFilter() throws Exception {
         final String expected = "a\tb\tk\n" +
                 "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
@@ -1974,7 +2066,40 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testLatestByAllIndexedMultiplePartitions() throws Exception {
+    public void testLatestByAllIndexedFilterBySymbol() throws Exception {
+        final String expected = "a\tb\tc\tk\n" +
+                "67.52509547112409\tCPSW\tSXUX\t1970-01-21T20:00:00.000000Z\n";
+        assertQuery(expected,
+                "select * from x latest by b where c = 'SXUX'",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " rnd_symbol(5,4,4,1) c," +
+                        " timestamp_sequence(0, 100000000000) k" +
+                        " from long_sequence(20)" +
+                        "), index(b) timestamp(k) partition by DAY",
+                "k",
+                "insert into x select * from (" +
+                        " select" +
+                        " rnd_double(0)*100," +
+                        " 'VTJW'," +
+                        " 'SXUX'," +
+                        " to_timestamp('2019', 'yyyy') t" +
+                        " from long_sequence(1)" +
+                        ") timestamp (t)",
+                "a\tb\tc\tk\n" +
+                        "67.52509547112409\tCPSW\tSXUX\t1970-01-21T20:00:00.000000Z\n" +
+                        "94.41658975532606\tVTJW\tSXUX\t2019-01-01T00:00:00.000000Z\n",
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testLatestByAllIndexedFilteredMultiplePartitions() throws Exception {
         assertMemoryLeak(
                 () -> {
                     compiler.compile("create table trips(id int, vendor symbol index, ts timestamp) timestamp(ts) partition by DAY", sqlExecutionContext);
@@ -2010,16 +2135,13 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                     TestUtils.assertSql(
                             compiler,
                             sqlExecutionContext,
-                            "trips latest by vendor order by ts",
+                            "trips latest by vendor where id > 0 order by ts",
                             sink,
                             "id\tvendor\tts\n" +
                                     "1878619626\tKK\t1970-01-01T00:01:39.200000Z\n" +
-                                    "-1243990650\tZZ\t1970-01-01T00:01:39.900000Z\n" +
-                                    "-774731115\tTT\t1970-01-02T00:01:39.800000Z\n" +
+                                    "801241758\tTT\t1970-01-01T00:01:39.800000Z\n" +
                                     "371958898\tDD\t1970-01-02T00:01:39.900000Z\n" +
-                                    "1699760758\tPP\t1970-01-03T00:01:39.100000Z\n" +
-                                    "-610460127\tQQ\t1970-01-03T00:01:39.500000Z\n" +
-                                    "-1808277542\tCC\t1970-01-03T00:01:39.900000Z\n"
+                                    "1699760758\tPP\t1970-01-03T00:01:39.100000Z\n"
                     );
                 }
         );
@@ -2078,7 +2200,93 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testLatestByAllIndexedFilteredMultiplePartitions() throws Exception {
+    public void testLatestByAllIndexedMixed() throws Exception {
+        final String expected = "a\tk\tb\n" +
+                "78.83065830055033\t1970-01-04T11:20:00.000000Z\tVTJW\n" +
+                "2.6836863013701473\t1970-01-13T17:33:20.000000Z\tHYRX\n" +
+                "9.76683471072458\t1970-01-14T21:20:00.000000Z\tPEHN\n" +
+                "51.85631921367574\t1970-01-19T12:26:40.000000Z\tCPSW\n" +
+                "50.25890936351257\t1970-01-20T16:13:20.000000Z\tRXGZ\n" +
+                "72.604681060764\t1970-01-22T23:46:40.000000Z\t\n";
+        assertQuery(expected,
+                "select a,k,b from x latest by b",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " timestamp_sequence(0, 100000000000) k," +
+                        " rnd_double(0)*100 a1," +
+                        " rnd_double(0)*100 a2," +
+                        " rnd_double(0)*100 a3," +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b" +
+                        " from" +
+                        " long_sequence(20)" +
+                        "), index(b) timestamp(k) partition by DAY",
+                "k",
+                "insert into x select * from (" +
+                        " select" +
+                        " to_timestamp('2019', 'yyyy') t," +
+                        " rnd_double(0)*100," +
+                        " rnd_double(0)*100," +
+                        " rnd_double(0)*100," +
+                        " rnd_double(0)*100," +
+                        " 'VTJW'" +
+                        " from long_sequence(1)" +
+                        ") timestamp (t)",
+                "a\tk\tb\n" +
+                        "2.6836863013701473\t1970-01-13T17:33:20.000000Z\tHYRX\n" +
+                        "9.76683471072458\t1970-01-14T21:20:00.000000Z\tPEHN\n" +
+                        "51.85631921367574\t1970-01-19T12:26:40.000000Z\tCPSW\n" +
+                        "50.25890936351257\t1970-01-20T16:13:20.000000Z\tRXGZ\n" +
+                        "72.604681060764\t1970-01-22T23:46:40.000000Z\t\n" +
+                        "6.578761277152223\t2019-01-01T00:00:00.000000Z\tVTJW\n",
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testLatestByAllIndexedMixedColumns() throws Exception {
+        final String expected = "k\ta\n" +
+                "1970-01-03T07:33:20.000000Z\t23.90529010846525\n" +
+                "1970-01-11T10:00:00.000000Z\t12.026122412833129\n" +
+                "1970-01-12T13:46:40.000000Z\t48.820511018586934\n" +
+                "1970-01-18T08:40:00.000000Z\t49.00510449885239\n" +
+                "1970-01-22T23:46:40.000000Z\t40.455469747939254\n";
+        assertQuery(expected,
+                "select k,a from x latest by b",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(0, 100000000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        "), index(b) timestamp(k) partition by DAY",
+                "k",
+                "insert into x select * from (" +
+                        " select" +
+                        " rnd_double(0)*100," +
+                        " 'VTJW'," +
+                        " to_timestamp('2019', 'yyyy') t" +
+                        " from long_sequence(1)" +
+                        ") timestamp (t)",
+                "k\ta\n" +
+                        "1970-01-03T07:33:20.000000Z\t23.90529010846525\n" +
+                        "1970-01-11T10:00:00.000000Z\t12.026122412833129\n" +
+                        "1970-01-18T08:40:00.000000Z\t49.00510449885239\n" +
+                        "1970-01-22T23:46:40.000000Z\t40.455469747939254\n" +
+                        "2019-01-01T00:00:00.000000Z\t56.594291398612405\n",
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testLatestByAllIndexedMultiplePartitions() throws Exception {
         assertMemoryLeak(
                 () -> {
                     compiler.compile("create table trips(id int, vendor symbol index, ts timestamp) timestamp(ts) partition by DAY", sqlExecutionContext);
@@ -2114,15 +2322,63 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                     TestUtils.assertSql(
                             compiler,
                             sqlExecutionContext,
-                            "trips latest by vendor where id > 0 order by ts",
+                            "trips latest by vendor order by ts",
                             sink,
                             "id\tvendor\tts\n" +
                                     "1878619626\tKK\t1970-01-01T00:01:39.200000Z\n" +
-                                    "801241758\tTT\t1970-01-01T00:01:39.800000Z\n" +
+                                    "-1243990650\tZZ\t1970-01-01T00:01:39.900000Z\n" +
+                                    "-774731115\tTT\t1970-01-02T00:01:39.800000Z\n" +
                                     "371958898\tDD\t1970-01-02T00:01:39.900000Z\n" +
-                                    "1699760758\tPP\t1970-01-03T00:01:39.100000Z\n"
+                                    "1699760758\tPP\t1970-01-03T00:01:39.100000Z\n" +
+                                    "-610460127\tQQ\t1970-01-03T00:01:39.500000Z\n" +
+                                    "-1808277542\tCC\t1970-01-03T00:01:39.900000Z\n"
                     );
                 }
+        );
+    }
+
+    @Test
+    public void testLatestByAllMixed() throws Exception {
+        assertQuery("b\tk\ta\n" +
+                        "VTJW\t1970-01-04T11:20:00.000000Z\t78.83065830055033\n" +
+                        "HYRX\t1970-01-13T17:33:20.000000Z\t2.6836863013701473\n" +
+                        "PEHN\t1970-01-14T21:20:00.000000Z\t9.76683471072458\n" +
+                        "CPSW\t1970-01-19T12:26:40.000000Z\t51.85631921367574\n" +
+                        "RXGZ\t1970-01-20T16:13:20.000000Z\t50.25890936351257\n" +
+                        "\t1970-01-22T23:46:40.000000Z\t72.604681060764\n",
+                "select b,k,a from x latest by b",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " timestamp_sequence(0, 100000000000) k," +
+                        " rnd_double(0)*100 a1," +
+                        " rnd_double(0)*100 a2," +
+                        " rnd_double(0)*100 a3," +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b" +
+                        " from long_sequence(20)" +
+                        ") timestamp(k) partition by DAY",
+                "k",
+                "insert into x select * from (" +
+                        " select" +
+                        " to_timestamp('2019', 'yyyy') t," +
+                        " rnd_double(0)*100," +
+                        " rnd_double(0)*100," +
+                        " rnd_double(0)*100," +
+                        " rnd_double(0)*100," +
+                        " 'VTJW'" +
+                        " from long_sequence(1)" +
+                        ") timestamp (t)",
+                "b\tk\ta\n" +
+                        "HYRX\t1970-01-13T17:33:20.000000Z\t2.6836863013701473\n" +
+                        "PEHN\t1970-01-14T21:20:00.000000Z\t9.76683471072458\n" +
+                        "CPSW\t1970-01-19T12:26:40.000000Z\t51.85631921367574\n" +
+                        "RXGZ\t1970-01-20T16:13:20.000000Z\t50.25890936351257\n" +
+                        "\t1970-01-22T23:46:40.000000Z\t72.604681060764\n" +
+                        "VTJW\t2019-01-01T00:00:00.000000Z\t6.578761277152223\n",
+                true,
+                true,
+                true
         );
     }
 
@@ -2175,78 +2431,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                                     "-1808277542\tCC\t1970-01-03T00:01:39.900000Z\n"
                     );
                 }
-        );
-    }
-
-    @Test
-    public void testLatestByAllIndexedFilterBySymbol() throws Exception {
-        final String expected = "a\tb\tc\tk\n" +
-                "67.52509547112409\tCPSW\tSXUX\t1970-01-21T20:00:00.000000Z\n";
-        assertQuery(expected,
-                "select * from x latest by b where c = 'SXUX'",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " rnd_symbol(5,4,4,1) c," +
-                        " timestamp_sequence(0, 100000000000) k" +
-                        " from long_sequence(20)" +
-                        "), index(b) timestamp(k) partition by DAY",
-                "k",
-                "insert into x select * from (" +
-                        " select" +
-                        " rnd_double(0)*100," +
-                        " 'VTJW'," +
-                        " 'SXUX'," +
-                        " to_timestamp('2019', 'yyyy') t" +
-                        " from long_sequence(1)" +
-                        ") timestamp (t)",
-                "a\tb\tc\tk\n" +
-                        "67.52509547112409\tCPSW\tSXUX\t1970-01-21T20:00:00.000000Z\n" +
-                        "94.41658975532606\tVTJW\tSXUX\t2019-01-01T00:00:00.000000Z\n",
-                true,
-                true,
-                true
-        );
-    }
-
-    @Test
-    public void testLatestByAllIndexedMixedColumns() throws Exception {
-        final String expected = "k\ta\n" +
-                "1970-01-03T07:33:20.000000Z\t23.90529010846525\n" +
-                "1970-01-11T10:00:00.000000Z\t12.026122412833129\n" +
-                "1970-01-12T13:46:40.000000Z\t48.820511018586934\n" +
-                "1970-01-18T08:40:00.000000Z\t49.00510449885239\n" +
-                "1970-01-22T23:46:40.000000Z\t40.455469747939254\n";
-        assertQuery(expected,
-                "select k,a from x latest by b",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(0, 100000000000) k" +
-                        " from" +
-                        " long_sequence(20)" +
-                        "), index(b) timestamp(k) partition by DAY",
-                "k",
-                "insert into x select * from (" +
-                        " select" +
-                        " rnd_double(0)*100," +
-                        " 'VTJW'," +
-                        " to_timestamp('2019', 'yyyy') t" +
-                        " from long_sequence(1)" +
-                        ") timestamp (t)",
-                "k\ta\n" +
-                        "1970-01-03T07:33:20.000000Z\t23.90529010846525\n" +
-                        "1970-01-11T10:00:00.000000Z\t12.026122412833129\n" +
-                        "1970-01-18T08:40:00.000000Z\t49.00510449885239\n" +
-                        "1970-01-22T23:46:40.000000Z\t40.455469747939254\n" +
-                        "2019-01-01T00:00:00.000000Z\t56.594291398612405\n",
-                true,
-                true,
-                true
         );
     }
 
@@ -2366,37 +2550,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         ") timestamp(t)",
                 "a\tb\tk\n" +
                         "56.594291398612405\tRXGZ\t1971-01-01T00:00:00.000000Z\n");
-    }
-
-    @Test
-    public void testLatestByValue() throws Exception {
-        // no index
-        assertQuery("a\tb\tk\n" +
-                        "65.08594025855301\tHNR\t1970-01-02T03:46:40.000000Z\n",
-                "select * from x latest by b where b = 'HNR'",
-                "create table x as " +
-                        "(" +
-                        "select " +
-                        " rnd_double(0)*100 a," +
-                        " rnd_str(2,4,4) b," +
-                        " timestamp_sequence(0, 100000000000) k" +
-                        " from" +
-                        " long_sequence(20)" +
-                        ") timestamp(k) partition by DAY",
-                "k",
-                "insert into x select * from (" +
-                        "select" +
-                        " rnd_double(0)*100," +
-                        " 'HNR'," +
-                        " to_timestamp('1971', 'yyyy') t" +
-                        " from long_sequence(1)" +
-                        ") timestamp(t)",
-                "a\tb\tk\n" +
-                        "34.56897991538844\tHNR\t1971-01-01T00:00:00.000000Z\n",
-                true,
-                true,
-                false,
-                true);
     }
 
     @Test
@@ -3332,6 +3485,37 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 true,
                 false
         );
+    }
+
+    @Test
+    public void testLatestByValue() throws Exception {
+        // no index
+        assertQuery("a\tb\tk\n" +
+                        "65.08594025855301\tHNR\t1970-01-02T03:46:40.000000Z\n",
+                "select * from x latest by b where b = 'HNR'",
+                "create table x as " +
+                        "(" +
+                        "select " +
+                        " rnd_double(0)*100 a," +
+                        " rnd_str(2,4,4) b," +
+                        " timestamp_sequence(0, 100000000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        ") timestamp(k) partition by DAY",
+                "k",
+                "insert into x select * from (" +
+                        "select" +
+                        " rnd_double(0)*100," +
+                        " 'HNR'," +
+                        " to_timestamp('1971', 'yyyy') t" +
+                        " from long_sequence(1)" +
+                        ") timestamp(t)",
+                "a\tb\tk\n" +
+                        "34.56897991538844\tHNR\t1971-01-01T00:00:00.000000Z\n",
+                true,
+                true,
+                false,
+                true);
     }
 
     @Test

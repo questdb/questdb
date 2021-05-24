@@ -34,7 +34,7 @@ public class StrConstantTest {
 
     @Test
     public void testConstant() {
-        StrConstant constant = new StrConstant(0, "abc");
+        StrConstant constant = new StrConstant("abc");
         Assert.assertTrue(constant.isConstant());
         TestUtils.assertEquals("abc", constant.getStr(null));
         TestUtils.assertEquals("abc", constant.getStrB(null));
@@ -47,7 +47,7 @@ public class StrConstantTest {
 
     @Test
     public void testQuotedConstant() {
-        StrConstant constant = new StrConstant(0, "'abc'");
+        StrConstant constant = new StrConstant("'abc'");
         Assert.assertTrue(constant.isConstant());
         TestUtils.assertEquals("abc", constant.getStr(null));
         TestUtils.assertEquals("abc", constant.getStrB(null));

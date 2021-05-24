@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.StrArrayFunction;
+import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.CharSink;
 
@@ -41,15 +42,11 @@ public class PrefixedCurrentSchemasFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new CurrentSchemaFunction(position);
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+        return new CurrentSchemaFunction();
     }
 
     private static class CurrentSchemaFunction extends StrArrayFunction {
-
-        public CurrentSchemaFunction(int position) {
-            super(position);
-        }
 
         @Override
         public int getArrayLength() {

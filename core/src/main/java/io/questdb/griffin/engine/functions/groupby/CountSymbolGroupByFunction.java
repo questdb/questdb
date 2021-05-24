@@ -35,46 +35,54 @@ import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
+import static io.questdb.cairo.sql.SymbolTable.VALUE_IS_NULL;
+
 public class CountSymbolGroupByFunction extends LongFunction implements GroupByFunction {
     private final Function arg;
-    private final ObjList<IntList> sets = new ObjList<>();
+    private final ObjList<IntList> lists = new ObjList<>();
     private int valueIndex;
     private int setIndex;
 
-    public CountSymbolGroupByFunction(int position, Function arg) {
-        super(position);
+    public CountSymbolGroupByFunction(Function arg) {
         this.arg = arg;
     }
 
     @Override
     public void computeFirst(MapValue mapValue, Record record) {
-        final IntList set;
-        if (sets.size() <= setIndex) {
-            sets.extendAndSet(setIndex, set = new IntList());
+        final IntList list;
+        if (lists.size() <= setIndex) {
+            lists.extendAndSet(setIndex, list = new IntList());
         } else {
-            set = sets.getQuick(setIndex);
+            list = lists.getQuick(setIndex);
         }
-        set.clear(0);
-        int val = arg.getInt(record);
-        set.extendAndSet(val, 1);
-        mapValue.putLong(valueIndex, 1L);
+        list.clear(0);
         mapValue.putInt(valueIndex + 1, setIndex);
         setIndex++;
+
+        int val = arg.getInt(record);
+        if (val != VALUE_IS_NULL) {
+            list.extendAndSet(val, 1);
+            mapValue.putLong(valueIndex, 1L);
+        } else {
+            mapValue.putLong(valueIndex, 0L);
+        }
     }
 
     @Override
     public void computeNext(MapValue mapValue, Record record) {
-        final IntList set = sets.getQuick(mapValue.getInt(valueIndex + 1));
+        final IntList set = lists.getQuick(mapValue.getInt(valueIndex + 1));
         final int val = arg.getInt(record);
-        if (val < set.size()) {
-            if (set.getQuick(val) == 1) {
-                return;
+        if (val != VALUE_IS_NULL) {
+            if (val < set.size()) {
+                if (set.getQuick(val) == 1) {
+                    return;
+                }
+                set.setQuick(val, 1);
+            } else {
+                set.extendAndSet(val, 1);
             }
-            set.setQuick(val, 1);
-        } else {
-            set.extendAndSet(val, 1);
+            mapValue.addLong(valueIndex, 1);
         }
-        mapValue.addLong(valueIndex, 1);
     }
 
     @Override
@@ -87,6 +95,11 @@ public class CountSymbolGroupByFunction extends LongFunction implements GroupByF
     @Override
     public void setLong(MapValue mapValue, long value) {
         mapValue.putLong(valueIndex, value);
+    }
+
+    @Override
+    public void setEmpty(MapValue mapValue) {
+        mapValue.putLong(valueIndex, 0L);
     }
 
     @Override

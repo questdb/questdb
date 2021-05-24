@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BooleanFunction;
+import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class TestNPEFactory implements FunctionFactory {
@@ -39,17 +40,13 @@ public class TestNPEFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         return NPEFunction.INSTANCE;
     }
 
     private static class NPEFunction extends BooleanFunction {
 
-        private final static NPEFunction INSTANCE = new NPEFunction(0);
-
-        public NPEFunction(int position) {
-            super(position);
-        }
+        private final static NPEFunction INSTANCE = new NPEFunction();
 
         @Override
         public boolean getBool(Record rec) {

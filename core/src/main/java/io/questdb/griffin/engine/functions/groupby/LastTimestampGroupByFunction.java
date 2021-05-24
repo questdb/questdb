@@ -32,7 +32,7 @@ import org.jetbrains.annotations.NotNull;
 public class LastTimestampGroupByFunction extends FirstTimestampGroupByFunction {
 
     public LastTimestampGroupByFunction(int position, @NotNull Function arg) {
-        super(position, arg);
+        super(arg);
     }
 
     @Override

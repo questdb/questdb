@@ -32,10 +32,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
-import io.questdb.std.Chars;
-import io.questdb.std.Misc;
-import io.questdb.std.Numbers;
-import io.questdb.std.ObjList;
+import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 
@@ -46,14 +43,14 @@ public class CastTimestampToStrFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         Function func = args.getQuick(0);
         if (func.isConstant()) {
             StringSink sink = Misc.getThreadLocalBuilder();
             sink.put(func.getTimestamp(null));
-            return new StrConstant(position, Chars.toString(sink));
+            return new StrConstant(Chars.toString(sink));
         }
-        return new Func(position, args.getQuick(0));
+        return new Func(args.getQuick(0));
     }
 
     private static class Func extends StrFunction implements UnaryFunction {
@@ -61,8 +58,7 @@ public class CastTimestampToStrFunctionFactory implements FunctionFactory {
         private final StringSink sinkA = new StringSink();
         private final StringSink sinkB = new StringSink();
 
-        public Func(int position, Function arg) {
-            super(position);
+        public Func(Function arg) {
             this.arg = arg;
         }
 

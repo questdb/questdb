@@ -30,10 +30,11 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
+import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class VersionFunctionFactory implements FunctionFactory {
-    private final StrFunction INSTANCE = new StrConstant(0, "PostgreSQL 12.3, compiled by Visual C++ build 1914, 64-bit");
+    private final StrFunction INSTANCE = new StrConstant("PostgreSQL 12.3, compiled by Visual C++ build 1914, 64-bit");
 
     @Override
     public String getSignature() {
@@ -46,7 +47,7 @@ public class VersionFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         return INSTANCE;
     }
 }

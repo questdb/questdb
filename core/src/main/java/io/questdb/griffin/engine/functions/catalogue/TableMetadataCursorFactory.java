@@ -32,10 +32,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.Files;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.Numbers;
-import io.questdb.std.ObjList;
+import io.questdb.std.*;
 import io.questdb.std.str.NativeLPSZ;
 import io.questdb.std.str.Path;
 
@@ -47,7 +44,7 @@ public class TableMetadataCursorFactory implements FunctionFactory {
     private static final int nameColumn;
     private static final int partitionByColumn;
     private static final int maxUncommittedRowsColumn;
-    private static final int o3CommitHysteresisMicroSecColumn;
+    private static final int commitLagColumn;
     private static final int designatedTimestampColumn;
     private static final Log LOG = LogFactory.getLog(TableMetadataCursorFactory.class);
 
@@ -61,10 +58,10 @@ public class TableMetadataCursorFactory implements FunctionFactory {
         designatedTimestampColumn = metadata.getColumnCount() - 1;
         metadata.add(new TableColumnMetadata("partitionBy", ColumnType.STRING, null));
         partitionByColumn = metadata.getColumnCount() - 1;
-        metadata.add(new TableColumnMetadata("o3MaxUncommittedRows", ColumnType.INT, null));
+        metadata.add(new TableColumnMetadata("maxUncommittedRows", ColumnType.INT, null));
         maxUncommittedRowsColumn = metadata.getColumnCount() - 1;
-        metadata.add(new TableColumnMetadata("o3CommitHysteresisMicros", ColumnType.LONG, null));
-        o3CommitHysteresisMicroSecColumn = metadata.getColumnCount() - 1;
+        metadata.add(new TableColumnMetadata("commitLag", ColumnType.LONG, null));
+        commitLagColumn = metadata.getColumnCount() - 1;
         METADATA = metadata;
     }
 
@@ -79,9 +76,8 @@ public class TableMetadataCursorFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
         return new CursorFunction(
-                position,
                 new TableMetadataCursor(configuration.getFilesFacade(), configuration.getRoot())
         );
     }
@@ -197,7 +193,7 @@ public class TableMetadataCursorFactory implements FunctionFactory {
             public class TableListRecord implements Record {
                 private int tableId;
                 private int maxUncommittedRows;
-                private long o3CommitHysteresisMicroSec;
+                private long commitLag;
                 private int partitionBy;
 
                 @Override
@@ -234,8 +230,8 @@ public class TableMetadataCursorFactory implements FunctionFactory {
 
                 @Override
                 public long getLong(int col) {
-                    if (col == o3CommitHysteresisMicroSecColumn) {
-                        return o3CommitHysteresisMicroSec;
+                    if (col == commitLagColumn) {
+                        return commitLag;
                     }
                     return Numbers.LONG_NaN;
                 }
@@ -254,7 +250,7 @@ public class TableMetadataCursorFactory implements FunctionFactory {
                         // Pre-read as much as possible to skip record instead of failing on column fetch
                         tableId = metaReader.getId();
                         maxUncommittedRows = metaReader.getMaxUncommittedRows();
-                        o3CommitHysteresisMicroSec = metaReader.getO3CommitHysteresisMicros();
+                        commitLag = metaReader.getCommitLag();
                         partitionBy = metaReader.getPartitionBy();
                     } catch (CairoException e) {
                         // perhaps this folder is not a table

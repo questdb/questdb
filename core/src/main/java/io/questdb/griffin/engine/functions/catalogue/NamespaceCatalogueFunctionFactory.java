@@ -30,6 +30,7 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.griffin.engine.functions.GenericRecordCursorFactory;
+import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class NamespaceCatalogueFunctionFactory implements FunctionFactory {
@@ -44,9 +45,8 @@ public class NamespaceCatalogueFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         return new CursorFunction(
-                position,
                 new GenericRecordCursorFactory(
                         NamespaceCatalogueCursor.METADATA,
                         new NamespaceCatalogueCursor(),

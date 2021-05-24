@@ -1968,23 +1968,23 @@ static inline Vec2db is_nan(Vec2d const a) {
     // assume that compiler does not optimize this away with -ffinite-math-only:
     return Vec2db(_mm_fpclass_pd_mask(a, 0x81));
 }
-//#elif defined(__GNUC__) && !defined(__INTEL_COMPILER) && !defined(__clang__) 
+//#elif defined(__GNUC__) && !defined(__INTEL_COMPILER) && !defined(__clang__)
 //__attribute__((optimize("-fno-unsafe-math-optimizations")))
 //static inline Vec2db is_nan(Vec2d const a) {
 //    return a != a; // not safe with -ffinite-math-only compiler option
 //}
-#elif (defined(__GNUC__) || defined(__clang__)) && !defined(__INTEL_COMPILER)
-static inline Vec2db is_nan(Vec2d const a) {
-    __m128d aa = a;
-    __m128i unordered;
-    __asm volatile("vcmppd $3,  %1, %1, %0" : "=x" (unordered) :  "x" (aa) );
-    return Vec2db(unordered);
-}
+//#elif (defined(__GNUC__) || defined(__clang__)) && !defined(__INTEL_COMPILER)
+//static inline Vec2db is_nan(Vec2d const a) {
+//    __m128d aa = a;
+//    __m128i unordered;
+//    __asm volatile("vcmppd $3,  %1, %1, %0" : "=x" (unordered) :  "x" (aa) );
+//    return Vec2db(unordered);
+//}
 #else
 static inline Vec2db is_nan(Vec2d const a) {
     // assume that compiler does not optimize this away with -ffinite-math-only:
-    return _mm_cmp_pd(a, a, 3); // compare unordered
-    // return a != a; // This is not safe with -ffinite-math-only, -ffast-math, or /fp:fast compiler option
+//    return _mm_cmp_pd(a, a, 3); // compare unordered
+     return a != a; // This is not safe with -ffinite-math-only, -ffast-math, or /fp:fast compiler option
 }
 #endif
 

@@ -35,10 +35,6 @@ import io.questdb.std.Numbers;
 public class CountGroupByFunction extends LongFunction implements GroupByFunction {
     private int valueIndex;
 
-    public CountGroupByFunction(int position) {
-        super(position);
-    }
-
     @Override
     public void computeFirst(MapValue mapValue, Record record) {
         mapValue.putLong(valueIndex, 1L);
@@ -53,6 +49,11 @@ public class CountGroupByFunction extends LongFunction implements GroupByFunctio
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.LONG);
+    }
+
+    @Override
+    public void setEmpty(MapValue mapValue) {
+        mapValue.putLong(valueIndex, 0L);
     }
 
     @Override

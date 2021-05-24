@@ -35,12 +35,6 @@ import io.questdb.std.str.CharSink;
 
 public abstract class IntFunction implements ScalarFunction {
 
-    private final int position;
-
-    public IntFunction(int position) {
-        this.position = position;
-    }
-
     @Override
     public final BinarySequence getBin(Record rec) {
         throw new UnsupportedOperationException();
@@ -102,11 +96,6 @@ public abstract class IntFunction implements ScalarFunction {
     }
 
     @Override
-    public int getPosition() {
-        return position;
-    }
-
-    @Override
     public RecordCursorFactory getRecordCursorFactory() {
         throw new UnsupportedOperationException();
     }
@@ -148,7 +137,7 @@ public abstract class IntFunction implements ScalarFunction {
 
     @Override
     public long getTimestamp(Record rec) {
-        return getInt(rec);
+        return Numbers.intToLong(getInt(rec));
     }
 
     @Override

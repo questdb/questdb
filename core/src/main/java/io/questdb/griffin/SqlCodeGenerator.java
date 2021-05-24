@@ -67,7 +67,7 @@ public class SqlCodeGenerator implements Mutable {
     private static final IntObjHashMap<VectorAggregateFunctionConstructor> avgConstructors = new IntObjHashMap<>();
     private static final IntObjHashMap<VectorAggregateFunctionConstructor> minConstructors = new IntObjHashMap<>();
     private static final IntObjHashMap<VectorAggregateFunctionConstructor> maxConstructors = new IntObjHashMap<>();
-    private static final IntObjHashMap<VectorAggregateFunctionConstructor> countConstructors = new IntObjHashMap<>();
+    private static final VectorAggregateFunctionConstructor countConstructor = (keyKind, columnIndex, workerCount) -> new CountVectorAggregateFunction(keyKind);
     private static final SetRecordCursorFactoryConstructor SET_UNION_CONSTRUCTOR = UnionRecordCursorFactory::new;
     private static final SetRecordCursorFactoryConstructor SET_INTERSECT_CONSTRUCTOR = IntersectRecordCursorFactory::new;
     private static final SetRecordCursorFactoryConstructor SET_EXCEPT_CONSTRUCTOR = ExceptRecordCursorFactory::new;
@@ -96,6 +96,8 @@ public class SqlCodeGenerator implements Mutable {
     private final IntList tempVecConstructorArgIndexes = new IntList();
     private final IntList tempKeyKinds = new IntList();
     private final ObjObjHashMap<IntList, ObjList<AnalyticFunction>> grouppedAnalytic = new ObjObjHashMap<>();
+    private final IntList recordFunctionPositions = new IntList();
+    private final IntList groupByFunctionPositions = new IntList();
     private boolean fullFatJoins = false;
 
     public SqlCodeGenerator(
@@ -154,14 +156,12 @@ public class SqlCodeGenerator implements Mutable {
         return new LtJoinRecordCursorFactory(configuration, metadata, masterFactory, slaveFactory, mapKeyTypes, mapValueTypes, slaveColumnTypes, masterKeySink, slaveKeySink, columnSplit, slaveValueSink, columnIndex);
     }
 
-    private static void addCountConstructor(int type) {
-        countConstructors.put(type,
-                (position, keyKind, columnIndex, workerCount) -> new CountVectorAggregateFunction(
-                        position,
-                        keyKind,
-                        ColumnType.pow2SizeOf(type)
-                )
-        );
+    private static int getOrderByDirectionOrDefault(QueryModel model, int index) {
+        IntList direction = model.getOrderByDirectionAdvice();
+        if (index >= direction.size()) {
+            return 0;
+        }
+        return model.getOrderByDirectionAdvice().getQuick(index);
     }
 
     private VectorAggregateFunctionConstructor assembleFunctionReference(RecordMetadata metadata, ExpressionNode ast) {
@@ -173,7 +173,7 @@ public class SqlCodeGenerator implements Mutable {
         } else if (ast.type == FUNCTION && ast.paramCount == 0 && SqlKeywords.isCountKeyword(ast.token)) {
             // count() is a no-arg function
             tempVecConstructorArgIndexes.add(-1);
-            return countConstructors.get(ColumnType.pow2SizeOf(tempKeyIndexesInBase.getQuick(0)));
+            return countConstructor;
         } else if (isSingleColumnFunction(ast, "ksum")) {
             columnIndex = metadata.getColumnIndex(ast.rhs.token);
             tempVecConstructorArgIndexes.add(columnIndex);
@@ -1080,7 +1080,7 @@ public class SqlCodeGenerator implements Mutable {
         final Function hiFunc;
 
         if (limitLo == null) {
-            loFunc = new LongConstant(0, 0L);
+            loFunc = LongConstant.ZERO;
         } else {
             loFunc = functionParser.parseFunction(limitLo, EmptyRecordMetadata.INSTANCE, executionContext);
             final int type = loFunc.getType();
@@ -1279,6 +1279,8 @@ public class SqlCodeGenerator implements Mutable {
                             keyTypes,
                             valueTypes,
                             entityColumnFilter,
+                            recordFunctionPositions,
+                            groupByFunctionPositions,
                             timestampIndex
                     );
                 }
@@ -1293,17 +1295,21 @@ public class SqlCodeGenerator implements Mutable {
                         functionParser,
                         executionContext,
                         groupByFunctions,
+                        groupByFunctionPositions,
                         valueTypes
                 );
 
                 final ObjList<Function> recordFunctions = new ObjList<>(columnCount);
                 final GenericRecordMetadata groupByMetadata = new GenericRecordMetadata();
+
                 GroupByUtils.prepareGroupByRecordFunctions(
                         model,
                         metadata,
                         listColumnFilterA,
                         groupByFunctions,
+                        groupByFunctionPositions,
                         recordFunctions,
+                        recordFunctionPositions,
                         groupByMetadata,
                         keyTypes,
                         valueTypes.getColumnCount(),
@@ -1377,6 +1383,7 @@ public class SqlCodeGenerator implements Mutable {
                                 groupByMetadata,
                                 groupByFunctions,
                                 recordFunctions,
+                                recordFunctionPositions,
                                 valueTypes.getColumnCount(),
                                 timestampIndex
                         );
@@ -1393,6 +1400,7 @@ public class SqlCodeGenerator implements Mutable {
                             groupByMetadata,
                             groupByFunctions,
                             recordFunctions,
+                            recordFunctionPositions,
                             timestampIndex
                     );
                 }
@@ -1407,6 +1415,7 @@ public class SqlCodeGenerator implements Mutable {
                             groupByMetadata,
                             groupByFunctions,
                             recordFunctions,
+                            recordFunctionPositions,
                             valueTypes.getColumnCount(),
                             timestampIndex
                     );
@@ -1424,6 +1433,7 @@ public class SqlCodeGenerator implements Mutable {
                         groupByMetadata,
                         groupByFunctions,
                         recordFunctions,
+                        recordFunctionPositions,
                         timestampIndex
                 );
             } catch (SqlException | CairoException e) {
@@ -1921,7 +1931,7 @@ public class SqlCodeGenerator implements Mutable {
                     VectorAggregateFunctionConstructor constructor = tempVecConstructors.getQuick(i);
                     int indexInBase = tempVecConstructorArgIndexes.getQuick(i);
                     int indexInThis = tempAggIndex.getQuick(i);
-                    VectorAggregateFunction vaf = constructor.create(0, tempKeyKinds.size() == 0 ? 0 : tempKeyKinds.getQuick(0), indexInBase, executionContext.getWorkerCount());
+                    VectorAggregateFunction vaf = constructor.create(tempKeyKinds.size() == 0 ? 0 : tempKeyKinds.getQuick(0), indexInBase, executionContext.getWorkerCount());
                     tempVaf.add(vaf);
                     meta.add(indexInThis,
                             new TableColumnMetadata(
@@ -1987,6 +1997,7 @@ public class SqlCodeGenerator implements Mutable {
                     functionParser,
                     executionContext,
                     groupByFunctions,
+                    groupByFunctionPositions,
                     valueTypes
             );
 
@@ -1997,7 +2008,9 @@ public class SqlCodeGenerator implements Mutable {
                     metadata,
                     listColumnFilterA,
                     groupByFunctions,
+                    groupByFunctionPositions,
                     recordFunctions,
+                    recordFunctionPositions,
                     groupByMetadata,
                     keyTypes,
                     valueTypes.getColumnCount(),
@@ -2385,7 +2398,7 @@ public class SqlCodeGenerator implements Mutable {
                                     orderByKeyColumn = true;
                                 } else if (Chars.equals(orderByAdvice.getQuick(1).token, model.getTimestamp().token)) {
                                     orderByKeyColumn = true;
-                                    if (getOrderByDirectionOrDefault(model,1) == QueryModel.ORDER_DIRECTION_DESCENDING) {
+                                    if (getOrderByDirectionOrDefault(model, 1) == QueryModel.ORDER_DIRECTION_DESCENDING) {
                                         indexDirection = BitmapIndexReader.DIR_BACKWARD;
                                     }
                                 }
@@ -2574,14 +2587,6 @@ public class SqlCodeGenerator implements Mutable {
                     columnIndexes
             );
         }
-    }
-
-    private static int getOrderByDirectionOrDefault(QueryModel model, int index) {
-        IntList direction = model.getOrderByDirectionAdvice();
-        if (index >= direction.size()) {
-             return 0;
-        }
-        return model.getOrderByDirectionAdvice().getQuick(index);
     }
 
     private RecordCursorFactory generateUnionAllFactory(
@@ -2798,18 +2803,20 @@ public class SqlCodeGenerator implements Mutable {
 
     @FunctionalInterface
     public interface FullFatJoinGenerator {
-        RecordCursorFactory create(CairoConfiguration configuration,
-                                   RecordMetadata metadata,
-                                   RecordCursorFactory masterFactory,
-                                   RecordCursorFactory slaveFactory,
-                                   @Transient ColumnTypes mapKeyTypes,
-                                   @Transient ColumnTypes mapValueTypes,
-                                   @Transient ColumnTypes slaveColumnTypes,
-                                   RecordSink masterKeySink,
-                                   RecordSink slaveKeySink,
-                                   int columnSplit,
-                                   RecordValueSink slaveValueSink,
-                                   IntList columnIndex);
+        RecordCursorFactory create(
+                CairoConfiguration configuration,
+                RecordMetadata metadata,
+                RecordCursorFactory masterFactory,
+                RecordCursorFactory slaveFactory,
+                @Transient ColumnTypes mapKeyTypes,
+                @Transient ColumnTypes mapValueTypes,
+                @Transient ColumnTypes slaveColumnTypes,
+                RecordSink masterKeySink,
+                RecordSink slaveKeySink,
+                int columnSplit,
+                RecordValueSink slaveValueSink,
+                IntList columnIndex
+        );
     }
 
     static {
@@ -2853,12 +2860,5 @@ public class SqlCodeGenerator implements Mutable {
         maxConstructors.put(ColumnType.DATE, MaxDateVectorAggregateFunction::new);
         maxConstructors.put(ColumnType.TIMESTAMP, MaxTimestampVectorAggregateFunction::new);
         maxConstructors.put(ColumnType.INT, MaxIntVectorAggregateFunction::new);
-
-
-        addCountConstructor(ColumnType.DOUBLE);
-        addCountConstructor(ColumnType.LONG);
-        addCountConstructor(ColumnType.DATE);
-        addCountConstructor(ColumnType.TIMESTAMP);
-        addCountConstructor(ColumnType.INT);
     }
 }

@@ -34,12 +34,6 @@ import io.questdb.std.str.CharSink;
 
 public abstract class BinFunction implements ScalarFunction {
 
-    private final int position;
-
-    public BinFunction(int position) {
-        this.position = position;
-    }
-
     @Override
     public final boolean getBool(Record rec) {
         throw new UnsupportedOperationException();
@@ -93,11 +87,6 @@ public abstract class BinFunction implements ScalarFunction {
     @Override
     public Long256 getLong256B(Record rec) {
         throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public int getPosition() {
-        return position;
     }
 
     @Override

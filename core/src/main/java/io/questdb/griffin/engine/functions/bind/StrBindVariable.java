@@ -38,7 +38,6 @@ class StrBindVariable extends StrFunction implements ScalarFunction, Mutable {
     private final int floatScale;
 
     public StrBindVariable(int floatScale) {
-        super(0);
         this.floatScale = floatScale;
     }
 

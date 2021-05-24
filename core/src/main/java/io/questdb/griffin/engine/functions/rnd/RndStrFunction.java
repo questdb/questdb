@@ -37,8 +37,7 @@ class RndStrFunction extends StrFunction implements Function {
     private final int nullRate;
     private Rnd rnd;
 
-    public RndStrFunction(int position, int lo, int hi, int nullRate) {
-        super(position);
+    public RndStrFunction(int lo, int hi, int nullRate) {
         this.lo = lo;
         this.range = hi - lo + 1;
         this.nullRate = nullRate;

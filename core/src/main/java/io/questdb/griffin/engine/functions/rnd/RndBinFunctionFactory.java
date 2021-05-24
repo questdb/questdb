@@ -32,6 +32,7 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinFunction;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 
@@ -42,15 +43,14 @@ public class RndBinFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new FixLenFunction(position);
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+        return new FixLenFunction();
     }
 
     private static final class FixLenFunction extends BinFunction implements Function {
         private final Sequence sequence = new Sequence();
 
-        public FixLenFunction(int position) {
-            super(position);
+        public FixLenFunction() {
             this.sequence.len = 32;
         }
 

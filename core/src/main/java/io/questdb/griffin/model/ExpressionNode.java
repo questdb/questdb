@@ -52,6 +52,7 @@ public class ExpressionNode implements Mutable, Sinkable {
     public int type;
     public int paramCount;
     public int intrinsicValue = IntrinsicModel.UNDEFINED;
+    public boolean innerPredicate = false;
 
     private ExpressionNode() {
     }
@@ -120,6 +121,7 @@ public class ExpressionNode implements Mutable, Sinkable {
         paramCount = 0;
         intrinsicValue = IntrinsicModel.UNDEFINED;
         queryModel = null;
+        innerPredicate = false;
     }
 
     public ExpressionNode of(int type, CharSequence token, int precedence, int position) {

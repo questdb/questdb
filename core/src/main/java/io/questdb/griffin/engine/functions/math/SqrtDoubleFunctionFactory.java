@@ -22,27 +22,45 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.groupby;
+package io.questdb.griffin.engine.functions.math;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.DoubleFunction;
+import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
-public class MinShortGroupByFunctionFactory implements FunctionFactory {
+public class SqrtDoubleFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "min(E)";
+        return "sqrt(D)";
     }
 
     @Override
-    public boolean isGroupBy() {
-        return true;
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+        return new SqrtFunction(args.getQuick(0));
     }
 
-    @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new MinShortGroupByFunction(position, args.getQuick(0));
+    private static class SqrtFunction extends DoubleFunction implements UnaryFunction {
+        final Function function;
+
+        public SqrtFunction(Function function) {
+            this.function = function;
+        }
+
+        @Override
+        public Function getArg() {
+            return function;
+        }
+
+        @Override
+        public double getDouble(Record rec) {
+            double value = function.getDouble(rec);
+            return Math.sqrt(value);
+        }
     }
 }

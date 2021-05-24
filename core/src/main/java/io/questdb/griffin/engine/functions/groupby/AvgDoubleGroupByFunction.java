@@ -39,8 +39,7 @@ public class AvgDoubleGroupByFunction extends DoubleFunction implements GroupByF
     private final Function arg;
     private int valueIndex;
 
-    public AvgDoubleGroupByFunction(int position, @NotNull Function arg) {
-        super(position);
+    public AvgDoubleGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
     }
 

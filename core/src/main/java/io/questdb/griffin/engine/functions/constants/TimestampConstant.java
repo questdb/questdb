@@ -26,13 +26,18 @@ package io.questdb.griffin.engine.functions.constants;
 
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.TimestampFunction;
+import io.questdb.std.Numbers;
 
 public class TimestampConstant extends TimestampFunction implements ConstantFunction {
+    public static final TimestampConstant NULL = new TimestampConstant(Numbers.LONG_NaN);
     private final long value;
 
-    public TimestampConstant(int position, long value) {
-        super(position);
+    public TimestampConstant(long value) {
         this.value = value;
+    }
+
+    public static TimestampConstant newInstance(long value) {
+        return value != Numbers.LONG_NaN ? new TimestampConstant(value) : NULL;
     }
 
     @Override

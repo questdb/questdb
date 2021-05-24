@@ -24,58 +24,19 @@
 
 package io.questdb.griffin.engine.functions.groupby;
 
-import io.questdb.cairo.ArrayColumnTypes;
-import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.engine.functions.ByteFunction;
-import io.questdb.griffin.engine.functions.GroupByFunction;
-import io.questdb.griffin.engine.functions.UnaryFunction;
 import org.jetbrains.annotations.NotNull;
 
-public class FirstByteGroupByFunction extends ByteFunction implements GroupByFunction, UnaryFunction {
-    private final Function arg;
-    private int valueIndex;
+public class LastCharGroupByFunction extends FirstCharGroupByFunction {
 
-    public FirstByteGroupByFunction(int position, @NotNull Function arg) {
-        super(position);
-        this.arg = arg;
-    }
-
-    @Override
-    public void computeFirst(MapValue mapValue, Record record) {
-        mapValue.putByte(this.valueIndex, this.arg.getByte(record));
+    public LastCharGroupByFunction(int position, @NotNull Function arg) {
+        super(arg);
     }
 
     @Override
     public void computeNext(MapValue mapValue, Record record) {
-        // empty
-    }
-
-    @Override
-    public Function getArg() {
-        return this.arg;
-    }
-
-    @Override
-    public byte getByte(Record rec) {
-        return rec.getByte(this.valueIndex);
-    }
-
-    @Override
-    public void pushValueTypes(ArrayColumnTypes columnTypes) {
-        this.valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(ColumnType.BYTE);
-    }
-
-    @Override
-    public void setNull(MapValue mapValue) {
-        setByte(mapValue, (byte) 0);
-    }
-
-    @Override
-    public void setByte(MapValue mapValue, byte value) {
-        mapValue.putByte(this.valueIndex, value);
+        super.computeFirst(mapValue, record);
     }
 }

@@ -22,23 +22,27 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.constants;
+package io.questdb.griffin.engine.functions.groupby;
 
-import io.questdb.std.str.StringSink;
-import org.junit.Assert;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableModel;
+import io.questdb.griffin.AbstractGriffinTest;
+import io.questdb.griffin.SqlException;
+import io.questdb.std.NumericException;
 import org.junit.Test;
 
-public class NullStrConstantTest {
+public class MaxFloatGroupByFunctionTest extends AbstractGriffinTest {
     @Test
-    public void testConstant() {
-        NullStrConstant constant = new NullStrConstant(0);
-        Assert.assertTrue(constant.isConstant());
-        Assert.assertNull(constant.getStr(null));
-        Assert.assertNull(constant.getStrB(null));
-        Assert.assertEquals(-1, constant.getStrLen(null));
+    public void testSampleByWithFill() throws SqlException, NumericException {
+        try (TableModel tm = new TableModel(configuration, "tab", PartitionBy.DAY)) {
+            tm.timestamp("ts").col("ch", ColumnType.FLOAT);
+            createPopulateTable(tm, 100, "2020-01-01", 2);
+        }
 
-        StringSink sink = new StringSink();
-        constant.getStr(null, sink);
-        Assert.assertEquals(0, sink.length());
+        assertSql("select ts, min(ch), max(ch), first(ch), last(ch), count() from tab sample by 1m FILL(LINEAR) LIMIT 2",
+                "ts\tmin\tmax\tfirst\tlast\tcount\n" +
+                        "2020-01-01T00:28:00.000000Z\t0.0010\t0.0010\t0.0010\t0.0010\t1\n" +
+                        "2020-01-01T00:29:00.000000Z\t0.0010\t0.0010\t0.0010\t0.0010\t1\n");
     }
 }

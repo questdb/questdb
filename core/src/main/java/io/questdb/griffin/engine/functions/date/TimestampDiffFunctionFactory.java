@@ -34,6 +34,7 @@ import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.griffin.engine.functions.TernaryFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.TimestampConstant;
+import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.datetime.microtime.Timestamps;
@@ -48,7 +49,7 @@ public class TimestampDiffFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
 
         final Function perionFunction = args.getQuick(0);
         if (perionFunction.isConstant()) {
@@ -59,17 +60,17 @@ public class TimestampDiffFunctionFactory implements FunctionFactory {
                 final LongDiffFunction func = diffFunctions.getQuick(period);
                 if (func != null) {
                     if (start.isConstant() && start.getTimestamp(null) != Numbers.LONG_NaN) {
-                        return new DiffVarConstFunction(position, args.getQuick(2), start.getLong(null), func);
+                        return new DiffVarConstFunction(args.getQuick(2), start.getLong(null), func);
                     }
                     if (end.isConstant() && end.getTimestamp(null) != Numbers.LONG_NaN) {
-                        return new DiffVarConstFunction(position, args.getQuick(1), end.getLong(null), func);
+                        return new DiffVarConstFunction(args.getQuick(1), end.getLong(null), func);
                     }
-                    return new DiffVarVarFunction(position, args.getQuick(1), args.getQuick(2), func);
+                    return new DiffVarVarFunction(args.getQuick(1), args.getQuick(2), func);
                 }
             }
-            return new TimestampConstant(position, Numbers.LONG_NaN);
+            return TimestampConstant.NULL;
         }
-        return new DateDiffFunc(position, args.getQuick(0), args.getQuick(1), args.getQuick(2));
+        return new DateDiffFunc(args.getQuick(0), args.getQuick(1), args.getQuick(2));
     }
 
     @FunctionalInterface
@@ -82,8 +83,7 @@ public class TimestampDiffFunctionFactory implements FunctionFactory {
         private final Function right;
         private final LongDiffFunction func;
 
-        public DiffVarVarFunction(int position, Function left, Function right, LongDiffFunction func) {
-            super(position);
+        public DiffVarVarFunction(Function left, Function right, LongDiffFunction func) {
             this.left = left;
             this.right = right;
             this.func = func;
@@ -115,8 +115,7 @@ public class TimestampDiffFunctionFactory implements FunctionFactory {
         private final long constantTime;
         private final LongDiffFunction func;
 
-        public DiffVarConstFunction(int position, Function left, long right, LongDiffFunction func) {
-            super(position);
+        public DiffVarConstFunction(Function left, long right, LongDiffFunction func) {
             this.arg = left;
             this.constantTime = right;
             this.func = func;
@@ -142,8 +141,7 @@ public class TimestampDiffFunctionFactory implements FunctionFactory {
         final Function center;
         final Function right;
 
-        public DateDiffFunc(int position, Function left, Function center, Function right) {
-            super(position);
+        public DateDiffFunc(Function left, Function center, Function right) {
             this.left = left;
             this.center = center;
             this.right = right;

@@ -38,8 +38,7 @@ public class SumFloatGroupByFunction extends FloatFunction implements GroupByFun
     private final Function arg;
     private int valueIndex;
 
-    public SumFloatGroupByFunction(int position, @NotNull Function arg) {
-        super(position);
+    public SumFloatGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
     }
 

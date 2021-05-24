@@ -217,7 +217,7 @@ public class PropServerConfigurationTest {
         // assert mime types
         TestUtils.assertEquals("application/json", configuration.getHttpServerConfiguration().getStaticContentProcessorConfiguration().getMimeTypesCache().get("json"));
 
-        Assert.assertEquals(500000, configuration.getCairoConfiguration().getO3MaxUncommittedRows());
+        Assert.assertEquals(500000, configuration.getCairoConfiguration().getMaxUncommittedRows());
 
         // influxdb line TCP protocol
         Assert.assertTrue(configuration.getLineTcpReceiverConfiguration().isEnabled());
@@ -527,7 +527,8 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(256, configuration.getCairoConfiguration().getColumnCastModelPoolCapacity());
             Assert.assertEquals(64, configuration.getCairoConfiguration().getCreateTableModelPoolCapacity());
 
-            Assert.assertEquals(100000, configuration.getCairoConfiguration().getO3MaxUncommittedRows());
+            Assert.assertEquals(2_000_000, configuration.getCairoConfiguration().getCommitLag());
+            Assert.assertEquals(100000, configuration.getCairoConfiguration().getMaxUncommittedRows());
 
             Assert.assertEquals(167903521, configuration.getLineUdpReceiverConfiguration().getBindIPv4Address());
             Assert.assertEquals(9915, configuration.getLineUdpReceiverConfiguration().getPort());

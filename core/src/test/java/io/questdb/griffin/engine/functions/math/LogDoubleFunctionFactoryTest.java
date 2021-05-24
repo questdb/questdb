@@ -22,21 +22,26 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.groupby;
+package io.questdb.griffin.engine.functions.math;
 
-import io.questdb.cairo.map.MapValue;
-import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.Record;
-import org.jetbrains.annotations.NotNull;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.AbstractFunctionFactoryTest;
+import org.junit.Test;
 
-public class LastByteGroupByFunction extends FirstByteGroupByFunction {
+public class LogDoubleFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
-    public LastByteGroupByFunction(int position, @NotNull Function arg) {
-        super(position, arg);
+    @Test
+    public void testPositive() throws SqlException {
+        call(2.0).andAssert(0.6931471805599453, 0.0000000001);
+    }
+
+    @Test
+    public void testNegative() throws SqlException {
+        call(-2.0).andAssert(Double.NaN, 0.000001);
     }
 
     @Override
-    public void computeNext(MapValue mapValue, Record record) {
-        super.computeFirst(mapValue, record);
+    protected FunctionFactory getFunctionFactory() { return new LogDoubleFunctionFactory();
     }
 }

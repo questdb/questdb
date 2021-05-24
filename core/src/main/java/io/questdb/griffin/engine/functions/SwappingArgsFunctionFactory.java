@@ -29,7 +29,9 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+import io.questdb.std.Transient;
 
 import static io.questdb.griffin.FunctionFactoryDescriptor.replaceSignatureNameAndSwapArgs;
 
@@ -48,10 +50,16 @@ public class SwappingArgsFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    public Function newInstance(
+            int position,
+            @Transient ObjList<Function> args,
+            @Transient IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
         Function tmp = args.getQuick(0);
         args.setQuick(0, args.getQuick(1));
         args.setQuick(1, tmp);
-        return delegate.newInstance(args, position, configuration, sqlExecutionContext);
+        return delegate.newInstance(position, args, argPositions, configuration, sqlExecutionContext);
     }
 }

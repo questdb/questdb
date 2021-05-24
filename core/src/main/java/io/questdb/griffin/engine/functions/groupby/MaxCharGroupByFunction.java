@@ -29,57 +29,51 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.engine.functions.CharFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
-import io.questdb.griffin.engine.functions.ShortFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import org.jetbrains.annotations.NotNull;
 
-public class MinShortGroupByFunction extends ShortFunction implements GroupByFunction, UnaryFunction {
+public class MaxCharGroupByFunction extends CharFunction implements GroupByFunction, UnaryFunction {
     private final Function arg;
     private int valueIndex;
 
-    public MinShortGroupByFunction(int position, @NotNull Function arg) {
-        super(position);
+    public MaxCharGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
     }
 
     @Override
-    public Function getArg() {
-        return arg;
-    }
-
-    @Override
     public void computeFirst(MapValue mapValue, Record record) {
-        mapValue.putShort(valueIndex, arg.getShort(record));
+        mapValue.putChar(valueIndex, arg.getChar(record));
     }
 
     @Override
     public void computeNext(MapValue mapValue, Record record) {
-        short min = mapValue.getShort(valueIndex);
-        short next = arg.getShort(record);
-        if (next < min) {
-            mapValue.putShort(valueIndex, next);
+        char max = mapValue.getChar(valueIndex);
+        char next = arg.getChar(record);
+        if (next > max) {
+            mapValue.putChar(valueIndex, next);
         }
     }
 
     @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(ColumnType.SHORT);
-    }
-
-    @Override
-    public void setShort(MapValue mapValue, short value) {
-        mapValue.putShort(valueIndex, value);
+        columnTypes.add(ColumnType.CHAR);
     }
 
     @Override
     public void setNull(MapValue mapValue) {
-        mapValue.putShort(valueIndex, (short) 0);
+        mapValue.putChar(valueIndex, (char) 0);
     }
 
     @Override
-    public short getShort(Record rec) {
-        return rec.getShort(valueIndex);
+    public char getChar(Record rec) {
+        return rec.getChar(valueIndex);
+    }
+
+    @Override
+    public Function getArg() {
+        return arg;
     }
 }

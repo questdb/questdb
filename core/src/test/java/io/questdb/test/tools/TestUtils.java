@@ -43,6 +43,8 @@ public final class TestUtils {
 
     private static final RecordCursorPrinter printer = new RecordCursorPrinter();
 
+    private static final RecordCursorPrinter printerWithTypes = new RecordCursorPrinter().withTypes(true);
+
     private TestUtils() {
     }
 
@@ -380,7 +382,7 @@ public final class TestUtils {
     }
 
     public static void assertCursor(CharSequence expected, RecordCursor cursor, RecordMetadata metadata, boolean header, MutableCharSink sink) {
-        printCursor(cursor, metadata, header, sink);
+        printCursor(cursor, metadata, header, sink, printer);
         assertEquals(expected, sink);
     }
 
@@ -410,6 +412,22 @@ public final class TestUtils {
         assertEquals(expected, sink);
     }
 
+    public static void assertSqlWithTypes(
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext,
+            CharSequence sql,
+            MutableCharSink sink,
+            CharSequence expected
+    ) throws SqlException {
+        printSqlWithTypes(
+                compiler,
+                sqlExecutionContext,
+                sql,
+                sink
+        );
+        assertEquals(expected, sink);
+    }
+
     public static void assertReader(CharSequence expected, TableReader reader, MutableCharSink sink) {
         assertCursor(
                 expected,
@@ -420,7 +438,7 @@ public final class TestUtils {
         );
     }
 
-    public static void printCursor(RecordCursor cursor, RecordMetadata metadata, boolean header, MutableCharSink sink) {
+    public static void printCursor(RecordCursor cursor, RecordMetadata metadata, boolean header, MutableCharSink sink, RecordCursorPrinter printer) {
         sink.clear();
         printer.print(cursor, metadata, header, sink);
     }
@@ -433,7 +451,20 @@ public final class TestUtils {
     ) throws SqlException {
         try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                printCursor(cursor, factory.getMetadata(), true, sink);
+                printCursor(cursor, factory.getMetadata(), true, sink, printer);
+            }
+        }
+    }
+
+    public static void printSqlWithTypes(
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext,
+            CharSequence sql,
+            MutableCharSink sink
+    ) throws SqlException {
+        try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                printCursor(cursor, factory.getMetadata(), true, sink, printerWithTypes);
             }
         }
     }

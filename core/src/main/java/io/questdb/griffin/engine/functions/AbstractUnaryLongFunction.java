@@ -29,8 +29,7 @@ import io.questdb.cairo.sql.Function;
 public abstract class AbstractUnaryLongFunction extends LongFunction implements UnaryFunction {
     protected final Function arg;
 
-    public AbstractUnaryLongFunction(int position, Function arg) {
-        super(position);
+    public AbstractUnaryLongFunction(Function arg) {
         this.arg = arg;
     }
 

@@ -38,8 +38,7 @@ public class MaxDoubleGroupByFunction extends DoubleFunction implements GroupByF
     private final Function arg;
     private int valueIndex;
 
-    public MaxDoubleGroupByFunction(int position, @NotNull Function arg) {
-        super(position);
+    public MaxDoubleGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
     }
 

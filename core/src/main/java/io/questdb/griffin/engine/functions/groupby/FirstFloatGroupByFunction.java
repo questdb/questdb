@@ -29,59 +29,52 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.engine.functions.FloatFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
-import io.questdb.griffin.engine.functions.ShortFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import org.jetbrains.annotations.NotNull;
 
-public class SumShortGroupByFunction extends ShortFunction implements GroupByFunction, UnaryFunction {
+public class FirstFloatGroupByFunction extends FloatFunction implements GroupByFunction, UnaryFunction {
     private final Function arg;
     private int valueIndex;
 
-    public SumShortGroupByFunction(int position, @NotNull Function arg) {
-        super(position);
+    public FirstFloatGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
     }
 
     @Override
     public void computeFirst(MapValue mapValue, Record record) {
-        mapValue.putShort(valueIndex, arg.getShort(record));
+        mapValue.putFloat(this.valueIndex, this.arg.getFloat(record));
     }
 
     @Override
     public void computeNext(MapValue mapValue, Record record) {
-        mapValue.addShort(valueIndex, arg.getShort(record));
+        // empty
     }
 
     @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(ColumnType.SHORT);
+        columnTypes.add(ColumnType.FLOAT);
+    }
+
+    @Override
+    public void setFloat(MapValue mapValue, float value) {
+        mapValue.putFloat(this.valueIndex, value);
     }
 
     @Override
     public void setNull(MapValue mapValue) {
-        mapValue.putShort(valueIndex, (short) 0);
-    }
-
-    @Override
-    public void setShort(MapValue mapValue, short value) {
-        mapValue.putShort(valueIndex, value);
-    }
-
-    @Override
-    public short getShort(Record rec) {
-        return rec.getShort(valueIndex);
+        setFloat(mapValue, Float.NaN);
     }
 
     @Override
     public Function getArg() {
-        return arg;
+        return this.arg;
     }
 
-
     @Override
-    public boolean isConstant() {
-        return false;
+    public float getFloat(Record rec) {
+        return rec.getFloat(this.valueIndex);
     }
 }

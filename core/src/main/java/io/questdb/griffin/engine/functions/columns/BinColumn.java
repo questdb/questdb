@@ -28,13 +28,23 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.griffin.engine.functions.BinFunction;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.ObjList;
+
+import static io.questdb.griffin.engine.functions.columns.ColumnUtils.STATIC_COLUMN_COUNT;
 
 public class BinColumn extends BinFunction implements ScalarFunction {
+    private static final ObjList<BinColumn> COLUMNS = new ObjList<>(STATIC_COLUMN_COUNT);
     private final int columnIndex;
 
-    public BinColumn(int position, int columnIndex) {
-        super(position);
+    public BinColumn(int columnIndex) {
         this.columnIndex = columnIndex;
+    }
+
+    public static BinColumn newInstance(int columnIndex) {
+        if (columnIndex < STATIC_COLUMN_COUNT) {
+            return COLUMNS.getQuick(columnIndex);
+        }
+        return new BinColumn(columnIndex);
     }
 
     @Override
@@ -45,5 +55,12 @@ public class BinColumn extends BinFunction implements ScalarFunction {
     @Override
     public long getBinLen(Record rec) {
         return rec.getBinLen(columnIndex);
+    }
+
+    static {
+        COLUMNS.setPos(STATIC_COLUMN_COUNT);
+        for (int i = 0; i < STATIC_COLUMN_COUNT; i++) {
+            COLUMNS.setQuick(i, new BinColumn(i));
+        }
     }
 }

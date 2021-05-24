@@ -42,8 +42,7 @@ public class CountStringGroupByFunction extends LongFunction implements GroupByF
     private int valueIndex;
     private int setIndex = 0;
 
-    public CountStringGroupByFunction(int position, Function arg) {
-        super(position);
+    public CountStringGroupByFunction(Function arg) {
         this.arg = arg;
     }
 
@@ -88,6 +87,11 @@ public class CountStringGroupByFunction extends LongFunction implements GroupByF
     @Override
     public void setNull(MapValue mapValue) {
         mapValue.putLong(valueIndex, Numbers.LONG_NaN);
+    }
+
+    @Override
+    public void setEmpty(MapValue mapValue) {
+        mapValue.putLong(valueIndex, 0L);
     }
 
     @Override

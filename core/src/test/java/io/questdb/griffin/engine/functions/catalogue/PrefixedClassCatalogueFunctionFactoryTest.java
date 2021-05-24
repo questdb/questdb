@@ -175,7 +175,6 @@ public class PrefixedClassCatalogueFunctionFactoryTest extends AbstractGriffinTe
     public void testPSQLTableList() throws Exception {
         assertQuery(
                 "Schema\tName\tType\tOwner\n" +
-                        "\tpg_class\ttable\tpublic\n" +
                         "public\tx\ttable\tpublic\n",
                 "SELECT n.nspname as \"Schema\",\n" +
                         "  c.relname as \"Name\",\n" +

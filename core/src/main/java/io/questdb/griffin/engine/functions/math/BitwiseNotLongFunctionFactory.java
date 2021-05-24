@@ -22,27 +22,47 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.groupby;
+package io.questdb.griffin.engine.functions.math;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.LongFunction;
+import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.std.IntList;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
-public class LastShortGroupByFunctionFactory implements FunctionFactory {
+public class BitwiseNotLongFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "last(E)";
+        return "~(L)";
     }
 
     @Override
-    public boolean isGroupBy() {
-        return true;
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        return new BitNotLongFunction(args.getQuick(0));
     }
 
-    @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new LastShortGroupByFunction(position, args.getQuick(0));
+    public static final class BitNotLongFunction extends LongFunction implements UnaryFunction {
+        private final Function value;
+
+        public BitNotLongFunction(Function value) {
+            this.value = value;
+        }
+
+        @Override
+        public Function getArg() {
+            return value;
+        }
+
+        @Override
+        public long getLong(Record rec) {
+            final long val = value.getLong(rec);
+            return val != Numbers.LONG_NaN ? ~val : Numbers.LONG_NaN;
+        }
     }
 }

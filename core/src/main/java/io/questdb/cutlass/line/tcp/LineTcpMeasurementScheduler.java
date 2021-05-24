@@ -815,7 +815,7 @@ class LineTcpMeasurementScheduler implements Closeable {
         }
 
         void handleRowAppended() {
-            if (writer.checkMaxAndCommitHysteresis()) {
+            if (writer.checkMaxAndCommitLag()) {
                 lastCommitMillis = milliClock.getTicks();
             }
         }
@@ -1307,13 +1307,13 @@ class LineTcpMeasurementScheduler implements Closeable {
         }
 
         @Override
-        public int getO3MaxUncommittedRows() {
-            return cairoConfiguration.getO3MaxUncommittedRows();
+        public int getMaxUncommittedRows() {
+            return cairoConfiguration.getMaxUncommittedRows();
         }
 
         @Override
-        public long getO3CommitHysteresisInMicros() {
-            return cairoConfiguration.getO3CommitHysteresis();
+        public long getCommitLag() {
+            return cairoConfiguration.getCommitLag();
         }
 
         TableStructureAdapter of(CharSequence tableName, NewLineProtoParser protoParser) {

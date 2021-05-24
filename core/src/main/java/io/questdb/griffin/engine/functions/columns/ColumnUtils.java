@@ -22,21 +22,8 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.groupby;
+package io.questdb.griffin.engine.functions.columns;
 
-import io.questdb.cairo.map.MapValue;
-import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.Record;
-import org.jetbrains.annotations.NotNull;
-
-public class LastShortGroupByFunction extends FirstShortGroupByFunction {
-
-    public LastShortGroupByFunction(int position, @NotNull Function arg) {
-        super(position, arg);
-    }
-
-    @Override
-    public void computeNext(MapValue mapValue, Record record) {
-        super.computeFirst(mapValue, record);
-    }
+public class ColumnUtils {
+    static int STATIC_COLUMN_COUNT = 32;
 }

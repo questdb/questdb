@@ -41,12 +41,16 @@ import io.questdb.griffin.engine.functions.date.ToStrTimestampFunctionFactory;
 import io.questdb.griffin.engine.functions.eq.EqDoubleFunctionFactory;
 import io.questdb.griffin.engine.functions.eq.EqIntFunctionFactory;
 import io.questdb.griffin.engine.functions.eq.EqLongFunctionFactory;
-import io.questdb.griffin.engine.functions.groupby.*;
+import io.questdb.griffin.engine.functions.groupby.CountLong256GroupByFunctionFactory;
+import io.questdb.griffin.engine.functions.groupby.MinDateGroupByFunctionFactory;
+import io.questdb.griffin.engine.functions.groupby.MinFloatGroupByFunctionFactory;
+import io.questdb.griffin.engine.functions.groupby.MinTimestampGroupByFunctionFactory;
 import io.questdb.griffin.engine.functions.math.*;
 import io.questdb.griffin.engine.functions.str.LengthStrFunctionFactory;
 import io.questdb.griffin.engine.functions.str.LengthSymbolFunctionFactory;
 import io.questdb.griffin.engine.functions.str.ToCharBinFunctionFactory;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.IntList;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
@@ -58,6 +62,30 @@ import org.junit.Test;
 public class FunctionParserTest extends BaseFunctionFactoryTest {
 
     @Test
+    public void overloadFromCharToDoubleDoesNotExist() {
+        Assert.assertEquals(ColumnType.overloadDistance(ColumnType.CHAR, ColumnType.DOUBLE), ColumnType.NO_OVERLOAD);
+    }
+
+    @Test
+    public void overloadFromShortToIntIsLikelyThanToDouble() {
+        Assert.assertTrue(ColumnType.overloadDistance(ColumnType.SHORT, ColumnType.INT) <
+                ColumnType.overloadDistance(ColumnType.SHORT, ColumnType.DOUBLE));
+    }
+
+    @Test
+    public void overloadToUndefinedDoesNotExist() {
+        boolean assertsEnabled = false;
+        assert assertsEnabled = true;
+        if (assertsEnabled) {
+            try {
+                ColumnType.overloadDistance(ColumnType.INT, ColumnType.UNDEFINED);
+                Assert.fail();
+            } catch (AssertionError e) {
+            }
+        }
+    }
+
+    @Test
     public void testAmbiguousFunctionInvocation() throws SqlException {
         functions.add(new FunctionFactory() {
             @Override
@@ -66,8 +94,8 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
             }
 
             @Override
-            public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-                return new DoubleFunction(position) {
+            public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+                return new DoubleFunction() {
                     @Override
                     public double getDouble(Record rec) {
                         return 123.123;
@@ -82,8 +110,13 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
             }
 
             @Override
-            public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-                return null;
+            public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+                return new FloatFunction() {
+                    @Override
+                    public float getFloat(Record rec) {
+                        return 123.123f;
+                    }
+                };
             }
         });
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
@@ -91,7 +124,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         metadata.add(new TableColumnMetadata("c", ColumnType.SHORT, null));
         FunctionParser functionParser = createFunctionParser();
         Function f = parseFunction("a + c", metadata, functionParser);
-        Assert.assertEquals(123.123, f.getDouble(null), 0.0001);
+        Assert.assertEquals(123.123f, f.getFloat(null), 0.0001);
     }
 
     @Test
@@ -143,8 +176,8 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
     }
 
     @Test
-    public void testByteAndLongToFloatCast() throws SqlException {
-        assertCastToFloat(363, ColumnType.BYTE, ColumnType.LONG, new Record() {
+    public void testByteAndLongToDoubleCast() throws SqlException {
+        assertCastToDouble(363, ColumnType.BYTE, ColumnType.LONG, new Record() {
 
             @Override
             public byte getByte(int col) {
@@ -154,6 +187,21 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
             @Override
             public long getLong(int col) {
                 return 345;
+            }
+        });
+    }
+
+    @Test
+    public void testByteAndShortToFloatCast() throws SqlException {
+        assertCastToFloat(33, ColumnType.BYTE, ColumnType.SHORT, new Record() {
+            @Override
+            public byte getByte(int col) {
+                return 12;
+            }
+
+            @Override
+            public short getShort(int col) {
+                return 21;
             }
         });
     }
@@ -244,57 +292,57 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
 
     @Test
     public void testExplicitConstantBoolean() throws SqlException {
-        testConstantPassThru(new BooleanConstant(0, true));
+        testConstantPassThru(BooleanConstant.TRUE);
     }
 
     @Test
     public void testExplicitConstantByte() throws SqlException {
-        testConstantPassThru(new ByteConstant(0, (byte) 200));
+        testConstantPassThru(new ByteConstant((byte) 200));
     }
 
     @Test
     public void testExplicitConstantDate() throws SqlException {
-        testConstantPassThru(new DateConstant(0, 123));
+        testConstantPassThru(new DateConstant(123));
     }
 
     @Test
     public void testExplicitConstantDouble() throws SqlException {
-        testConstantPassThru(new DoubleConstant(0, 200));
+        testConstantPassThru(new DoubleConstant(200));
     }
 
     @Test
     public void testExplicitConstantFloat() throws SqlException {
-        testConstantPassThru(new FloatConstant(0, 200));
+        testConstantPassThru(new FloatConstant(200));
     }
 
     @Test
     public void testExplicitConstantInt() throws SqlException {
-        testConstantPassThru(new IntConstant(0, 200));
+        testConstantPassThru(new IntConstant(200));
     }
 
     @Test
     public void testExplicitConstantLong() throws SqlException {
-        testConstantPassThru(new LongConstant(0, 200));
+        testConstantPassThru(new LongConstant(200));
     }
 
     @Test
     public void testExplicitConstantNull() throws SqlException {
-        testConstantPassThru(new NullStrConstant(0));
+        testConstantPassThru(StrConstant.NULL);
     }
 
     @Test
     public void testExplicitConstantShort() throws SqlException {
-        testConstantPassThru(new ShortConstant(0, (short) 200));
+        testConstantPassThru(new ShortConstant((short) 200));
     }
 
     @Test
     public void testExplicitConstantStr() throws SqlException {
-        testConstantPassThru(new StrConstant(0, "abc"));
+        testConstantPassThru(new StrConstant("abc"));
     }
 
     @Test
     public void testExplicitConstantTimestamp() throws SqlException {
-        testConstantPassThru(new TimestampConstant(0, 123));
+        testConstantPassThru(new TimestampConstant(123));
     }
 
     @Test
@@ -329,7 +377,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
             }
 
             @Override
-            public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+            public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
                 throw new RuntimeException("oops");
             }
         });
@@ -346,7 +394,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
             }
 
             @Override
-            public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+            public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
                 return null;
             }
         });
@@ -363,8 +411,8 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
             }
 
             @Override
-            public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-                return new IntConstant(position, 0);
+            public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+                return new IntConstant(0);
             }
         });
         FunctionParser parser = createFunctionParser();
@@ -465,7 +513,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
 
     @Test
     public void testImplicitConstantBin() throws SqlException {
-        BinFunction function = new BinFunction(0) {
+        BinFunction function = new BinFunction() {
             @Override
             public BinarySequence getBin(Record rec) {
                 return null;
@@ -489,7 +537,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
             }
 
             @Override
-            public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration1, SqlExecutionContext sqlExecutionContext) {
+            public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration1, SqlExecutionContext sqlExecutionContext) {
                 return function;
             }
         });
@@ -507,8 +555,8 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
             }
 
             @Override
-            public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration1, SqlExecutionContext sqlExecutionContext) {
-                return new BooleanFunction(position) {
+            public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration1, SqlExecutionContext sqlExecutionContext) {
+                return new BooleanFunction() {
                     @Override
                     public boolean getBool(Record rec) {
                         return false;
@@ -535,8 +583,8 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
             }
 
             @Override
-            public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration1, SqlExecutionContext sqlExecutionContext) {
-                return new ByteFunction(position) {
+            public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration1, SqlExecutionContext sqlExecutionContext) {
+                return new ByteFunction() {
                     @Override
                     public byte getByte(Record rec) {
                         return 0;
@@ -563,8 +611,8 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
             }
 
             @Override
-            public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration1, SqlExecutionContext sqlExecutionContext) {
-                return new DateFunction(position) {
+            public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration1, SqlExecutionContext sqlExecutionContext) {
+                return new DateFunction() {
                     @Override
                     public long getDate(Record rec) {
                         return 0;
@@ -591,8 +639,8 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
             }
 
             @Override
-            public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration1, SqlExecutionContext sqlExecutionContext) {
-                return new DoubleFunction(position) {
+            public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration1, SqlExecutionContext sqlExecutionContext) {
+                return new DoubleFunction() {
                     @Override
                     public double getDouble(Record rec) {
                         return 0;
@@ -619,8 +667,8 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
             }
 
             @Override
-            public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration1, SqlExecutionContext sqlExecutionContext) {
-                return new FloatFunction(position) {
+            public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration1, SqlExecutionContext sqlExecutionContext) {
+                return new FloatFunction() {
                     @Override
                     public float getFloat(Record rec) {
                         return 0;
@@ -647,8 +695,8 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
             }
 
             @Override
-            public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration1, SqlExecutionContext sqlExecutionContext) {
-                return new IntFunction(position) {
+            public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration1, SqlExecutionContext sqlExecutionContext) {
+                return new IntFunction() {
                     @Override
                     public int getInt(Record rec) {
                         return 0;
@@ -675,8 +723,8 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
             }
 
             @Override
-            public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration1, SqlExecutionContext sqlExecutionContext) {
-                return new LongFunction(position) {
+            public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration1, SqlExecutionContext sqlExecutionContext) {
+                return new LongFunction() {
                     @Override
                     public long getLong(Record rec) {
                         return 0;
@@ -703,8 +751,8 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
             }
 
             @Override
-            public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration1, SqlExecutionContext sqlExecutionContext) {
-                return new StrFunction(position) {
+            public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration1, SqlExecutionContext sqlExecutionContext) {
+                return new StrFunction() {
                     @Override
                     public CharSequence getStr(Record rec) {
                         return null;
@@ -724,7 +772,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         });
 
         Function function = parseFunction("x()", new GenericRecordMetadata(), createFunctionParser());
-        Assert.assertTrue(function instanceof NullStrConstant);
+        Assert.assertSame(StrConstant.NULL, function);
     }
 
     @Test
@@ -736,8 +784,8 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
             }
 
             @Override
-            public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration1, SqlExecutionContext sqlExecutionContext) {
-                return new SymbolConstant(position, null, SymbolTable.VALUE_IS_NULL);
+            public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration1, SqlExecutionContext sqlExecutionContext) {
+                return new SymbolConstant(null, SymbolTable.VALUE_IS_NULL);
             }
         });
 
@@ -754,8 +802,8 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
             }
 
             @Override
-            public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration1, SqlExecutionContext sqlExecutionContext) {
-                return new ShortFunction(position) {
+            public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration1, SqlExecutionContext sqlExecutionContext) {
+                return new ShortFunction() {
                     @Override
                     public short getShort(Record rec) {
                         return 0;
@@ -782,8 +830,8 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
             }
 
             @Override
-            public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration1, SqlExecutionContext sqlExecutionContext) {
-                return new StrFunction(position) {
+            public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration1, SqlExecutionContext sqlExecutionContext) {
+                return new StrFunction() {
                     private final String x = "abc";
 
                     @Override
@@ -817,8 +865,8 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
             }
 
             @Override
-            public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration1, SqlExecutionContext sqlExecutionContext) {
-                return new SymbolConstant(position, "xyz", 0);
+            public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration1, SqlExecutionContext sqlExecutionContext) {
+                return new SymbolConstant("xyz", 0);
             }
         });
 
@@ -835,8 +883,8 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
             }
 
             @Override
-            public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration1, SqlExecutionContext sqlExecutionContext) {
-                return new TimestampFunction(position) {
+            public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration1, SqlExecutionContext sqlExecutionContext) {
+                return new TimestampFunction() {
                     @Override
                     public long getTimestamp(Record rec) {
                         return 0;
@@ -857,21 +905,6 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
     @Test
     public void testIntAndShortToDoubleCast() throws SqlException {
         assertCastToDouble(33, ColumnType.INT, ColumnType.SHORT, new Record() {
-            @Override
-            public int getInt(int col) {
-                return 12;
-            }
-
-            @Override
-            public short getShort(int col) {
-                return 21;
-            }
-        });
-    }
-
-    @Test
-    public void testIntAndShortToFloatCast() throws SqlException {
-        assertCastToFloat(33, ColumnType.INT, ColumnType.SHORT, new Record() {
             @Override
             public int getInt(int col) {
                 return 12;
@@ -975,7 +1008,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
             }
 
             @Override
-            public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+            public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
                 return null;
             }
         });
@@ -999,7 +1032,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
             }
 
             @Override
-            public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+            public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
                 return null;
             }
         });
@@ -1125,60 +1158,10 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         functions.add(new EqDoubleFunctionFactory());
         functions.add(new EqLongFunctionFactory());
         try (Function f = parseFunction("$2 = $1", null, createFunctionParser())) {
-            TestUtils.assertContains(f.getClass().getCanonicalName(),"io.questdb.griffin.engine.functions.eq.EqDoubleFunctionFactory.Func");
+            TestUtils.assertContains(f.getClass().getCanonicalName(), "io.questdb.griffin.engine.functions.eq.EqDoubleFunctionFactory.Func");
         }
         Assert.assertEquals(ColumnType.DOUBLE, bindVariableService.getFunction(0).getType());
         Assert.assertEquals(ColumnType.DOUBLE, bindVariableService.getFunction(1).getType());
-    }
-
-    @Test
-    public void testUndefinedBindVariableDefineByte() throws SqlException {
-        assertBindVariableTypes(
-                "min($1)",
-                new MinByteGroupByFunctionFactory(),
-                "io.questdb.griffin.engine.functions.groupby.MinByteGroupByFunction",
-                ColumnType.BYTE
-        );
-    }
-
-    @Test
-    public void testUndefinedBindVariableDefineChar() throws SqlException {
-        assertBindVariableTypes(
-                "min($1)",
-                new MinCharGroupByFunctionFactory(),
-                "io.questdb.griffin.engine.functions.groupby.MinCharGroupByFunction",
-                ColumnType.CHAR
-        );
-    }
-
-    @Test
-    public void testUndefinedBindVariableDefineDate() throws SqlException {
-        assertBindVariableTypes(
-                "min($1)",
-                new MinDateGroupByFunctionFactory(),
-                "io.questdb.griffin.engine.functions.groupby.MinDateGroupByFunction",
-                ColumnType.DATE
-        );
-    }
-
-    @Test
-    public void testUndefinedBindVariableDefineTimestamp() throws SqlException {
-        assertBindVariableTypes(
-                "min($1)",
-                new MinTimestampGroupByFunctionFactory(),
-                "io.questdb.griffin.engine.functions.groupby.MinTimestampGroupByFunction",
-                ColumnType.TIMESTAMP
-        );
-    }
-
-    @Test
-    public void testUndefinedBindVariableDefineFloat() throws SqlException {
-        assertBindVariableTypes(
-                "min($1)",
-                new MinFloatGroupByFunctionFactory(),
-                "io.questdb.griffin.engine.functions.groupby.MinFloatGroupByFunction",
-                ColumnType.FLOAT
-        );
     }
 
     @Test
@@ -1192,12 +1175,12 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
     }
 
     @Test
-    public void testUndefinedBindVariableDefineStr() throws SqlException {
+    public void testUndefinedBindVariableDefineBoolean() throws SqlException {
         assertBindVariableTypes(
-                "length($1)",
-                new LengthStrFunctionFactory(),
-                "io.questdb.griffin.engine.functions.str.LengthStrFunctionFactory.LengthStrVFunc",
-                ColumnType.STRING
+                "not($1)",
+                new NotFunctionFactory(),
+                "io.questdb.griffin.engine.functions.bool.NotFunctionFactory.Func",
+                ColumnType.BOOLEAN
         );
     }
 
@@ -1210,49 +1193,25 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         } catch (SqlException e) {
             Assert.assertEquals(1, e.getPosition());
         }
-   }
+    }
 
     @Test
-    public void testUndefinedBindVariableDefineVarArg() throws SqlException {
-        // bind variable is sparse
+    public void testUndefinedBindVariableDefineDate() throws SqlException {
         assertBindVariableTypes(
-                "case $1 when 'A' then $3 else $4 end",
-                new SwitchFunctionFactory(),
-                "io.questdb.griffin.engine.functions.conditional.StrCaseFunction",
-                ColumnType.STRING,
-                -1, // not defined
-                ColumnType.STRING,
-                ColumnType.STRING
+                "min($1)",
+                new MinDateGroupByFunctionFactory(),
+                "io.questdb.griffin.engine.functions.groupby.MinDateGroupByFunction",
+                ColumnType.DATE
         );
     }
 
     @Test
-    public void testUndefinedBindVariableDefineSymbol() throws SqlException {
+    public void testUndefinedBindVariableDefineFloat() throws SqlException {
         assertBindVariableTypes(
-                "length($1)",
-                new LengthSymbolFunctionFactory(),
-                "io.questdb.griffin.engine.functions.str.LengthSymbolFunctionFactory.LengthSymbolVFunc",
-                ColumnType.STRING
-        );
-    }
-
-    @Test
-    public void testUndefinedBindVariableDefineLong256() throws SqlException {
-        assertBindVariableTypes(
-                "count($1)",
-                new CountLong256GroupByFunctionFactory(),
-                "io.questdb.griffin.engine.functions.groupby.CountLong256GroupByFunction",
-                ColumnType.LONG256
-        );
-    }
-
-    @Test
-    public void testUndefinedBindVariableDefineBoolean() throws SqlException {
-        assertBindVariableTypes(
-                "not($1)",
-                new NotFunctionFactory(),
-                "io.questdb.griffin.engine.functions.bool.NotFunctionFactory.Func",
-                ColumnType.BOOLEAN
+                "min($1)",
+                new MinFloatGroupByFunctionFactory(),
+                "io.questdb.griffin.engine.functions.groupby.MinFloatGroupByFunction",
+                ColumnType.FLOAT
         );
     }
 
@@ -1268,12 +1227,66 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
     }
 
     @Test
+    public void testUndefinedBindVariableDefineLong256() throws SqlException {
+        assertBindVariableTypes(
+                "count_distinct($1)",
+                new CountLong256GroupByFunctionFactory(),
+                "io.questdb.griffin.engine.functions.groupby.CountLong256GroupByFunction",
+                ColumnType.LONG256
+        );
+    }
+
+    @Test
     public void testUndefinedBindVariableDefineShort() throws SqlException {
         assertBindVariableTypes(
                 "abs($1)",
                 new AbsShortFunctionFactory(),
                 "io.questdb.griffin.engine.functions.math.AbsShortFunctionFactory.AbsFunction",
                 ColumnType.SHORT
+        );
+    }
+
+    @Test
+    public void testUndefinedBindVariableDefineStr() throws SqlException {
+        assertBindVariableTypes(
+                "length($1)",
+                new LengthStrFunctionFactory(),
+                "io.questdb.griffin.engine.functions.str.LengthStrFunctionFactory.LengthStrVFunc",
+                ColumnType.STRING
+        );
+    }
+
+    @Test
+    public void testUndefinedBindVariableDefineSymbol() throws SqlException {
+        assertBindVariableTypes(
+                "length($1)",
+                new LengthSymbolFunctionFactory(),
+                "io.questdb.griffin.engine.functions.str.LengthSymbolFunctionFactory.LengthSymbolVFunc",
+                ColumnType.STRING
+        );
+    }
+
+    @Test
+    public void testUndefinedBindVariableDefineTimestamp() throws SqlException {
+        assertBindVariableTypes(
+                "min($1)",
+                new MinTimestampGroupByFunctionFactory(),
+                "io.questdb.griffin.engine.functions.groupby.MinTimestampGroupByFunction",
+                ColumnType.TIMESTAMP
+        );
+    }
+
+    @Test
+    public void testUndefinedBindVariableDefineVarArg() throws SqlException {
+        // bind variable is sparse
+        assertBindVariableTypes(
+                "case $1 when 'A' then $3 else $4 end",
+                new SwitchFunctionFactory(),
+                "io.questdb.griffin.engine.functions.conditional.StrCaseFunction",
+                ColumnType.STRING,
+                -1, // not defined
+                ColumnType.STRING,
+                ColumnType.STRING
         );
     }
 
@@ -1300,7 +1313,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
         metadata.add(new TableColumnMetadata("a", ColumnType.FLOAT, null));
         try (Function f = parseFunction("a = $1", metadata, createFunctionParser())) {
-            TestUtils.assertContains(f.getClass().getCanonicalName(),"io.questdb.griffin.engine.functions.eq.EqDoubleFunctionFactory.Func");
+            TestUtils.assertContains(f.getClass().getCanonicalName(), "io.questdb.griffin.engine.functions.eq.EqDoubleFunctionFactory.Func");
         }
         Assert.assertEquals(ColumnType.DOUBLE, bindVariableService.getFunction(0).getType());
     }
@@ -1421,7 +1434,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
             }
 
             @Override
-            public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+            public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
                 return null;
             }
         });
@@ -1442,7 +1455,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
             }
 
             @Override
-            public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+            public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
                 return constant;
             }
         });

@@ -32,6 +32,7 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.ByteFunction;
+import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 
@@ -43,13 +44,13 @@ public class RndByteCCFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
 
         byte lo = (byte) args.getQuick(0).getInt(null);
         byte hi = (byte) args.getQuick(1).getInt(null);
 
         if (lo < hi) {
-            return new RndFunction(position, lo, hi);
+            return new RndFunction(lo, hi);
         }
 
         throw SqlException.position(position).put("invalid range");
@@ -60,8 +61,7 @@ public class RndByteCCFunctionFactory implements FunctionFactory {
         private final byte range;
         private Rnd rnd;
 
-        public RndFunction(int position, byte lo, byte hi) {
-            super(position);
+        public RndFunction(byte lo, byte hi) {
             this.lo = lo;
             this.range = (byte) (hi - lo + 1);
         }
