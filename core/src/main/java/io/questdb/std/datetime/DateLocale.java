@@ -25,8 +25,11 @@
 package io.questdb.std.datetime;
 
 import io.questdb.std.*;
+import io.questdb.std.datetime.microtime.Timestamps;
 
 import java.text.DateFormatSymbols;
+
+import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_MICROS;
 
 public class DateLocale {
     private final IntObjHashMap<ObjList<CharSequence>> months = new IntObjHashMap<>();
@@ -198,7 +201,7 @@ public class DateLocale {
                 continue;
             }
 
-            for (int k = 1, m = zNames.length; k < m; k++) {
+            for (int k = 0, m = zNames.length; k < m; k++) {
                 String name = zNames[k];
                 // we already added this name, skip
                 if (cache.add(name)) {
