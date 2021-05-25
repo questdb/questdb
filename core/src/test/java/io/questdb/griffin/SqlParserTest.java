@@ -4921,7 +4921,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testSelectAliasNoWhere() throws SqlException {
         assertQuery(
-                "select-virtual rnd_int(1,2,0) a from (long_sequence(1))",
+                "select-virtual rnd_int(1,2,0) a from (null())",
                 "select rnd_int(1, 2, 0) a"
         );
     }
@@ -5182,7 +5182,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testSelectNoFromUnion() throws SqlException {
         assertQuery(
-                "select-group-by a, sum(b) sum from (select-virtual [1 a, 1 b] 1 a, 1 b from (long_sequence(1)) union all select-virtual 333 333, 1 1 from (long_sequence(1))) x",
+                "select-group-by a, sum(b) sum from (select-virtual [1 a, 1 b] 1 a, 1 b from (null()) union all select-virtual 333 333, 1 1 from (null())) x",
                 "select a, sum(b) from (select 1 a, 1 b union all select 333, 1) x"
         );
     }
@@ -5190,7 +5190,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testSelectNoWhere() throws SqlException {
         assertQuery(
-                "select-virtual rnd_int(1,2,0) rnd_int from (long_sequence(1))",
+                "select-virtual rnd_int(1,2,0) rnd_int from (null())",
                 "select rnd_int(1, 2, 0)"
         );
     }

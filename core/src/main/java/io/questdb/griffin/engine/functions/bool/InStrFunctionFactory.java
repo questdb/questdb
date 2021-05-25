@@ -57,6 +57,9 @@ public class InStrFunctionFactory implements FunctionFactory {
 
         for (int i = 1; i < n; i++) {
             Function func = args.getQuick(i);
+            if (func.isNull()) {
+                throw SqlException.$(argPositions.getQuick(i), "NULL is not allowed");
+            }
             switch (func.getType()) {
                 case ColumnType.STRING:
                 case ColumnType.SYMBOL:

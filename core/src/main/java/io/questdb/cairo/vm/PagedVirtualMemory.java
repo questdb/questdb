@@ -256,7 +256,7 @@ public class PagedVirtualMemory implements ReadWriteVirtualMemory, Closeable {
         return view.of(offset + STRING_LENGTH_BYTES, len);
     }
 
-    public final CharSequence getStr2(long offset) {
+    public final CharSequence getStrB(long offset) {
         return getStr0(offset, csview2);
     }
 

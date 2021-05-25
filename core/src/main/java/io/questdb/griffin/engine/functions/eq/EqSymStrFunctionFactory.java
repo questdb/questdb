@@ -58,10 +58,10 @@ public class EqSymStrFunctionFactory implements FunctionFactory {
         Function strFunc = args.getQuick(1);
 
         // SYMBOL cannot be constant
-        if (strFunc.isConstant()) {
-            return createHalfConstantFunc(strFunc, symFunc);
+        if (symFunc.isNull() || strFunc.isNull() || !strFunc.isConstant()) {
+            return new Func(symFunc, strFunc);
         }
-        return new Func(symFunc, strFunc);
+        return createHalfConstantFunc(strFunc, symFunc);
     }
 
     private Function createHalfConstantFunc(Function constFunc, Function varFunc) {
@@ -208,13 +208,24 @@ public class EqSymStrFunctionFactory implements FunctionFactory {
             // these are columns of the same record
             // records have re-usable character sequences
             final CharSequence a = left.getSymbol(rec);
-            final CharSequence b = right.getStr(rec);
+            final CharSequence b = right.isNull() ? right.getSymbol(null) : right.getStr(rec);
 
-            if (a == null) {
+            if (a == null || isNaN(a)) {
                 return negated != (b == null);
             }
 
             return negated != Chars.equalsNc(a, b);
+        }
+
+        private static boolean isNaN(CharSequence tok) {
+            if (tok.length() != 3) {
+                return false;
+            }
+
+            int i = 0;
+            return (tok.charAt(i++) | 32) == 'n'
+                    && (tok.charAt(i++) | 32) == 'a'
+                    && (tok.charAt(i++) | 32) == 'n';
         }
     }
 }

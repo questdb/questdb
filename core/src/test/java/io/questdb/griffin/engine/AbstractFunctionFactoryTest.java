@@ -30,10 +30,7 @@ import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.*;
-import io.questdb.griffin.engine.functions.cast.CastIntToByteFunctionFactory;
-import io.questdb.griffin.engine.functions.cast.CastIntToShortFunctionFactory;
-import io.questdb.griffin.engine.functions.cast.CastLongToDateFunctionFactory;
-import io.questdb.griffin.engine.functions.cast.CastLongToTimestampFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.*;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Numbers;
 import io.questdb.std.str.StringSink;
@@ -212,10 +209,10 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
 
         functions.add(functionFactory);
         if (toTimestampRefs > 0) {
-            functions.add(new CastLongToTimestampFunctionFactory());
+            functions.add(new CastDoubleToTimestampFunctionFactory());
         }
         if (toDateRefs > 0) {
-            functions.add(new CastLongToDateFunctionFactory());
+            functions.add(new CastDoubleToDateFunctionFactory());
         }
 
         if (toShortRefs > 0) {
@@ -385,7 +382,8 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
                 toDateRefs++;
                 break;
             case ColumnType.TIMESTAMP:
-                sink.put("cast(").put((Long) value).put(" as timestamp)");
+                final Long timestamp = (Long) value;
+                sink.put("cast(").put(timestamp).put(" as timestamp)");
                 toTimestampRefs++;
                 break;
             case ColumnType.SHORT:

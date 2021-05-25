@@ -56,7 +56,7 @@ public interface ReadOnlyVirtualMemory {
 
     CharSequence getStr(long offset);
 
-    CharSequence getStr2(long offset);
+    CharSequence getStrB(long offset);
 
     Long256 getLong256A(long offset);
 

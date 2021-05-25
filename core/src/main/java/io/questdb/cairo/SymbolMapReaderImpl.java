@@ -227,7 +227,7 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
     }
 
     private CharSequence uncachedValue2(int key) {
-        return charMem.getStr2(offsetMem.getLong(SymbolMapWriter.keyToOffset(key)));
+        return charMem.getStrB(offsetMem.getLong(SymbolMapWriter.keyToOffset(key)));
     }
 
     @Override

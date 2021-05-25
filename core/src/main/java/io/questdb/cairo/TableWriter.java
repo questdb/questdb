@@ -125,7 +125,7 @@ public class TableWriter implements Closeable {
     private final FindVisitor removePartitionDirsNotAttached = this::removePartitionDirsNotAttached;
     private final LongList o3PartitionRemoveCandidates = new LongList();
     private final ObjectPool<O3MutableAtomicInteger> o3ColumnCounters = new ObjectPool<O3MutableAtomicInteger>(O3MutableAtomicInteger::new, 64);
-    private final ObjectPool<O3Basket> o3BasketPool = new ObjectPool<O3Basket>(O3Basket::new, 64);
+    private final ObjectPool<O3Basket> o3BasketPool = new ObjectPool<>(O3Basket::new, 64);
     private final TxnScoreboard txnScoreboard;
     private final StringSink o3Sink = new StringSink();
     private final NativeLPSZ o3NativeLPSZ = new NativeLPSZ();
@@ -201,7 +201,7 @@ public class TableWriter implements Closeable {
         this.fileOperationRetryCount = configuration.getFileOperationRetryCount();
         this.tableName = Chars.toString(tableName);
         this.o3QuickSortEnabled = configuration.isO3QuickSortEnabled();
-        this.o3PartitionUpdateQueue = new RingQueue<O3PartitionUpdateTask>(O3PartitionUpdateTask.CONSTRUCTOR, configuration.getO3PartitionUpdateQueueCapacity());
+        this.o3PartitionUpdateQueue = new RingQueue<>(O3PartitionUpdateTask.CONSTRUCTOR, configuration.getO3PartitionUpdateQueueCapacity());
         this.o3PartitionUpdatePubSeq = new MPSequence(this.o3PartitionUpdateQueue.getCapacity());
         this.o3PartitionUpdateSubSeq = new SCSequence();
         o3PartitionUpdatePubSeq.then(o3PartitionUpdateSubSeq).then(o3PartitionUpdatePubSeq);
@@ -4738,7 +4738,11 @@ public class TableWriter implements Closeable {
         }
 
         public void putStr(int index, CharSequence value) {
-            getSecondaryColumn(index).putLong(getPrimaryColumn(index).putStr(value));
+            final long offset = getPrimaryColumn(index).putStr(value);
+            WriteOnlyVirtualMemory secondaryCol = getSecondaryColumn(index);
+            if (secondaryCol != null) {
+                secondaryCol.putLong(offset);
+            }
             notNull(index);
         }
 

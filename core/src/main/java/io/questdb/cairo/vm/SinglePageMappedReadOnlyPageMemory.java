@@ -170,7 +170,7 @@ public class SinglePageMappedReadOnlyPageMemory implements MappedReadOnlyMemory 
     }
 
     @Override
-    public final CharSequence getStr2(long offset) {
+    public final CharSequence getStrB(long offset) {
         return getStr0(offset, csview2);
     }
 

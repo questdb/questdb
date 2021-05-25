@@ -1041,11 +1041,11 @@ public class PagedVirtualMemoryTest {
 
         TestUtils.assertEquals("123", mem.getStr(o1));
         assertEquals(3, mem.getStrLen(o1));
-        TestUtils.assertEquals("123", mem.getStr2(o1));
+        TestUtils.assertEquals("123", mem.getStrB(o1));
 
         String expected = "0987654321abcd";
         TestUtils.assertEquals("0987654321abcd", mem.getStr(o2));
-        TestUtils.assertEquals("0987654321abcd", mem.getStr2(o2));
+        TestUtils.assertEquals("0987654321abcd", mem.getStrB(o2));
 
         for (int i = 0; i < expected.length(); i++) {
             long offset = o2 + 4 + i * 2;
@@ -1053,18 +1053,18 @@ public class PagedVirtualMemoryTest {
         }
 
         assertNull(mem.getStr(o3));
-        assertNull(mem.getStr2(o3));
+        assertNull(mem.getStrB(o3));
         TestUtils.assertEquals("xyz123", mem.getStr(o4));
-        TestUtils.assertEquals("xyz123", mem.getStr2(o4));
+        TestUtils.assertEquals("xyz123", mem.getStrB(o4));
         assertNull(mem.getStr(o5));
-        assertNull(mem.getStr2(o5));
+        assertNull(mem.getStrB(o5));
         assertEquals(-1, mem.getStrLen(o5));
 
         TestUtils.assertEquals("ohh", mem.getStr(o6));
         assertNull(mem.getStr(o7));
 
         CharSequence s1 = mem.getStr(o1);
-        CharSequence s2 = mem.getStr2(o2);
+        CharSequence s2 = mem.getStrB(o2);
         assertFalse(Chars.equals(s1, s2));
 
         assertNull(mem.getStr(o8));

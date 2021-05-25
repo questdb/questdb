@@ -58,6 +58,10 @@ public class EqStrCharFunctionFactory implements FunctionFactory {
         Function strFunc = args.getQuick(0);
         Function charFunc = args.getQuick(1);
 
+        if (strFunc.isNull() || charFunc.isNull()) {
+            return new Func(strFunc, charFunc);
+        }
+
         if (strFunc.isConstant() && !charFunc.isConstant()) {
             CharSequence str = strFunc.getStr(null);
             if (str == null || str.length() != 1) {

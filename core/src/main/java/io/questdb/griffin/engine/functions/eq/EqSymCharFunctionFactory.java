@@ -61,19 +61,19 @@ public class EqSymCharFunctionFactory implements FunctionFactory {
         //    length of non-constant (must be -1)
         // 2. when one of arguments is constant, save method call and use a field
 
-        SymbolFunction symFunc = (SymbolFunction) args.getQuick(0);
+        Function symFunc = args.getQuick(0);
         Function chrFunc = args.getQuick(1);
 
-        if (chrFunc.isConstant()) {
-            final char constValue = chrFunc.getChar(null);
-            if (symFunc.getStaticSymbolTable() != null) {
-                return new ConstCheckColumnFunc(symFunc, constValue);
-            } else {
-                return new ConstCheckFunc(symFunc, constValue);
-            }
+        if (symFunc.isNull() || chrFunc.isNull() || !chrFunc.isConstant()) {
+            return new Func(args.getQuick(0), chrFunc);
         }
 
-        return new Func(symFunc, chrFunc);
+        SymbolFunction symFunction = (SymbolFunction) symFunc;
+        final char constValue = chrFunc.getChar(null);
+        if (symFunction.getStaticSymbolTable() != null) {
+            return new ConstCheckColumnFunc(symFunction, constValue);
+        }
+        return new ConstCheckFunc(symFunction, constValue);
     }
 
     private static class ConstCheckFunc extends NegatableBooleanFunction implements UnaryFunction {

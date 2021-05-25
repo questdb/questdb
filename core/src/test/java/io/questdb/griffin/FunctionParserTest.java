@@ -29,9 +29,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.engine.functions.*;
-import io.questdb.griffin.engine.functions.bool.InStrFunctionFactory;
-import io.questdb.griffin.engine.functions.bool.NotFunctionFactory;
-import io.questdb.griffin.engine.functions.bool.OrFunctionFactory;
+import io.questdb.griffin.engine.functions.bool.*;
 import io.questdb.griffin.engine.functions.catalogue.CursorDereferenceFunctionFactory;
 import io.questdb.griffin.engine.functions.conditional.SwitchFunctionFactory;
 import io.questdb.griffin.engine.functions.constants.*;
@@ -327,7 +325,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
 
     @Test
     public void testExplicitConstantNull() throws SqlException {
-        testConstantPassThru(StrConstant.NULL);
+        testConstantPassThru(new NullConstant());
     }
 
     @Test

@@ -34,7 +34,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
-public class CastSymbolToLongFunctionFactory implements FunctionFactory {
+public class CastSymbolToLongFunctionFactory extends AbstractEntityCastFunctionFactory {
     @Override
     public String getSignature() {
         return "cast(Kl)";

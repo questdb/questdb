@@ -99,10 +99,15 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.bool.AndFunctionFactory,
             io.questdb.griffin.engine.functions.bool.NotFunctionFactory,
 
+            // null function
+            io.questdb.griffin.engine.functions.NullFunctionFactory,
+
             // [] operators
             io.questdb.griffin.engine.functions.array.StrArrayDereferenceFunctionFactory,
             // '=' operators
             io.questdb.griffin.engine.functions.eq.EqStrFunctionFactory,
+            io.questdb.griffin.engine.functions.eq.EqByteFunctionFactory,
+            io.questdb.griffin.engine.functions.eq.EqShortFunctionFactory,
             io.questdb.griffin.engine.functions.eq.EqIntFunctionFactory,
             io.questdb.griffin.engine.functions.eq.EqLongFunctionFactory,
             io.questdb.griffin.engine.functions.eq.EqDoubleFunctionFactory,
@@ -114,6 +119,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.eq.EqCharCharFunctionFactory,
             io.questdb.griffin.engine.functions.eq.EqIntStrCFunctionFactory,
             io.questdb.griffin.engine.functions.eq.EqTimestampFunctionFactory,
+            io.questdb.griffin.engine.functions.eq.EqBooleanFunctionFactory,
 
             //nullif
             io.questdb.griffin.engine.functions.eq.NullIfCharCharFunctionFactory,

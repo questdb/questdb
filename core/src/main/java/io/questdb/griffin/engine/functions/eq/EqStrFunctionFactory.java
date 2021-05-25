@@ -57,6 +57,7 @@ public class EqStrFunctionFactory implements FunctionFactory {
         Function a = args.getQuick(0);
         Function b = args.getQuick(1);
 
+
         if (a.isConstant() && !b.isConstant()) {
             return createHalfConstantFunc(a, b);
         }

@@ -48,6 +48,9 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
         boolean allConst = true;
         for (int i = 1, n = args.size(); i < n; i++) {
             Function func = args.getQuick(i);
+            if (func.isNull()) {
+                break;
+            }
             switch (func.getType()) {
                 case ColumnType.TIMESTAMP:
                 case ColumnType.LONG:

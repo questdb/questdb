@@ -57,6 +57,10 @@ public class InSymbolFunctionFactory implements FunctionFactory {
 
         for (int i = 1; i < n; i++) {
             Function func = args.getQuick(i);
+            if (func.isNull()) {
+                set.add(null);
+                continue;
+            }
             switch (func.getType()) {
                 case ColumnType.STRING:
                 case ColumnType.SYMBOL:

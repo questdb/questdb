@@ -97,7 +97,7 @@ public class RndStringRndListFunctionFactory implements FunctionFactory {
         @Override
         public CharSequence getStrB(Record rec) {
             long o = idxMem.getLong((rnd.nextPositiveInt() % count) * 8L);
-            return strMem.getStr2(o);
+            return strMem.getStrB(o);
         }
 
         @Override
@@ -142,7 +142,7 @@ public class RndStringRndListFunctionFactory implements FunctionFactory {
         @Override
         public CharSequence getStrB(Record rec) {
             long o = idxMem.getLong((rnd.nextPositiveInt() % count) * 8L);
-            return strMem.getStr2(o);
+            return strMem.getStrB(o);
         }
 
         @Override

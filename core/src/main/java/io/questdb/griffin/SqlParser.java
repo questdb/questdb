@@ -758,9 +758,7 @@ public final class SqlParser {
             if (tok == null) {
                 QueryModel nestedModel = queryModelPool.next();
                 nestedModel.setModelPosition(modelPosition);
-                ExpressionNode func = expressionNodePool.next().of(ExpressionNode.FUNCTION, "long_sequence", 0, lexer.lastTokenPosition());
-                func.paramCount = 1;
-                func.rhs = expressionNodePool.next().of(ExpressionNode.CONSTANT, "1", 0, 0);
+                ExpressionNode func = expressionNodePool.next().of(ExpressionNode.FUNCTION, "null", 0, lexer.lastTokenPosition());
                 nestedModel.setTableName(func);
                 model.setSelectModelType(QueryModel.SELECT_MODEL_VIRTUAL);
                 model.setNestedModel(nestedModel);

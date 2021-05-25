@@ -605,6 +605,7 @@ public class SqlCompiler implements Closeable {
                     asm.invokeVirtual(wPutLong256);
                     break;
                 default:
+                    assert false : "unsupported type: " + from.getColumnType(i);
                     break;
             }
         }
@@ -1835,7 +1836,7 @@ public class SqlCompiler implements Closeable {
 
                     int fromType = cursorMetadata.getColumnType(i);
                     int toType = writerMetadata.getColumnType(index);
-                    if (isAssignableFrom(toType, fromType)) {
+                    if (isAssignableFrom(toType, fromType) || SqlKeywords.isNullKeyword(cursorMetadata.getColumnName(index))) {
                         listColumnFilter.add(index + 1);
                     } else {
                         throw SqlException.inconvertibleTypes(
@@ -1858,6 +1859,10 @@ public class SqlCompiler implements Closeable {
 
                 for (int i = 0; i < n; i++) {
                     int fromType = cursorMetadata.getColumnType(i);
+                    if (SqlKeywords.isNullKeyword(cursorMetadata.getColumnName(i))) {
+                        continue;
+                    }
+
                     int toType = writerMetadata.getColumnType(i);
                     if (isAssignableFrom(toType, fromType)) {
                         continue;

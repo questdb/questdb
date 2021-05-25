@@ -36,7 +36,7 @@ import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 
-public class CastTimestampToStrFunctionFactory implements FunctionFactory {
+public class CastTimestampToStrFunctionFactory extends AbstractEntityCastFunctionFactory {
     @Override
     public String getSignature() {
         return "cast(Ns)";

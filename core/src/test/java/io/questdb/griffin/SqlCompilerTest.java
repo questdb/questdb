@@ -2547,6 +2547,40 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testInsertAsSelectNull() throws Exception {
+        testInsertAsSelect("a\tb\n" +
+                        "\uFFFF\t\n" +
+                        "\uFFFF\t\n" +
+                        "\uFFFF\t\n",
+                "create table x (a CHAR, b SYMBOL)",
+                "insert into x " +
+                        "select" +
+                        " null," +
+                        " null" +
+                        " from long_sequence(3)",
+                "x");
+    }
+
+    @Test
+    public void testInsertAsSelectNullInconvertible() throws Exception {
+        try {
+            testInsertAsSelect("nothing",
+                    // in this context null is the default type, STRING
+                    "create table x (a CHAR, b LONG)",
+                    "insert into x " +
+                            "select" +
+                            " null," +
+                            " null" +
+                            " from long_sequence(3)",
+                    "x");
+            Assert.fail();
+        } catch (SqlException e) {
+            Assert.assertEquals(27, e.getPosition());
+            TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible types: STRING -> LONG [from=null1, to=b]");
+        }
+    }
+
+    @Test
     public void testInsertAsSelectConvertible1() throws Exception {
         testInsertAsSelect("a\tb\n" +
                         "-1148479920\tJWCPS\n" +
@@ -2813,26 +2847,26 @@ public class SqlCompilerTest extends AbstractGriffinTest {
 
     @Test
     public void testInsertAsSelectPersistentIOError() throws Exception {
-            AtomicBoolean inError = new AtomicBoolean(true);
+        AtomicBoolean inError = new AtomicBoolean(true);
 
-            FilesFacade ff = new FilesFacadeImpl() {
-                int pageCount = 0;
+        FilesFacade ff = new FilesFacadeImpl() {
+            int pageCount = 0;
 
-                @Override
-                public long getMapPageSize() {
-                    return getPageSize();
+            @Override
+            public long getMapPageSize() {
+                return getPageSize();
+            }
+
+            @Override
+            public long mmap(long fd, long len, long offset, int flags) {
+                if (inError.get() && pageCount++ > 12) {
+                    return -1;
                 }
+                return super.mmap(fd, len, offset, flags);
+            }
+        };
 
-                @Override
-                public long mmap(long fd, long len, long offset, int flags) {
-                    if (inError.get() && pageCount++ > 12) {
-                        return -1;
-                    }
-                    return super.mmap(fd, len, offset, flags);
-                }
-            };
-
-            assertInsertAsSelectIOError(inError, ff);
+        assertInsertAsSelectIOError(inError, ff);
     }
 
     @Test
@@ -2911,26 +2945,26 @@ public class SqlCompilerTest extends AbstractGriffinTest {
 
     @Test
     public void testInsertAsSelectTemporaryIOError() throws Exception {
-            AtomicBoolean inError = new AtomicBoolean(true);
+        AtomicBoolean inError = new AtomicBoolean(true);
 
-            FilesFacade ff = new FilesFacadeImpl() {
-                int pageCount = 0;
+        FilesFacade ff = new FilesFacadeImpl() {
+            int pageCount = 0;
 
-                @Override
-                public long getMapPageSize() {
-                    return getPageSize();
+            @Override
+            public long getMapPageSize() {
+                return getPageSize();
+            }
+
+            @Override
+            public long mmap(long fd, long len, long offset, int flags) {
+                if (inError.get() && pageCount++ == 13) {
+                    return -1;
                 }
+                return super.mmap(fd, len, offset, flags);
+            }
+        };
 
-                @Override
-                public long mmap(long fd, long len, long offset, int flags) {
-                    if (inError.get() && pageCount++ == 13) {
-                        return -1;
-                    }
-                    return super.mmap(fd, len, offset, flags);
-                }
-            };
-
-            assertInsertAsSelectIOError(inError, ff);
+        assertInsertAsSelectIOError(inError, ff);
     }
 
     @Test

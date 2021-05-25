@@ -200,7 +200,7 @@ public class TableReaderSelectedColumnRecord implements Record {
                 recordIndex,
                 TableReader.getPrimaryColumnIndex(columnBase, col)
         );
-        return reader.getColumn(absoluteColumnIndex).getStr2(
+        return reader.getColumn(absoluteColumnIndex).getStrB(
                 reader.getColumn(absoluteColumnIndex + 1).getLong(recordIndex)
         );
     }

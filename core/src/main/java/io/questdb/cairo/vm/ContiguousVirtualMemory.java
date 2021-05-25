@@ -45,7 +45,7 @@ public class ContiguousVirtualMemory implements ReadWriteVirtualMemory, Mutable,
     private static final Log LOG = LogFactory.getLog(ContiguousVirtualMemory.class);
     private final ByteSequenceView bsview = new ByteSequenceView();
     private final CharSequenceView csview = new CharSequenceView();
-    private final CharSequenceView csview2 = new CharSequenceView();
+    private final CharSequenceView csviewb = new CharSequenceView();
     private final Long256Impl long256 = new Long256Impl();
     private final Long256Impl long256B = new Long256Impl();
     private final int maxPages;
@@ -141,8 +141,8 @@ public class ContiguousVirtualMemory implements ReadWriteVirtualMemory, Mutable,
         return getStr0(offset, csview);
     }
 
-    public final CharSequence getStr2(long offset) {
-        return getStr0(offset, csview2);
+    public final CharSequence getStrB(long offset) {
+        return getStr0(offset, csviewb);
     }
 
     public Long256 getLong256A(long offset) {

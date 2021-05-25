@@ -125,7 +125,7 @@ public class CompactMapRecord implements MapRecord {
         if (o == -1L) {
             return null;
         }
-        return entries.getStr2(offset + o);
+        return entries.getStrB(offset + o);
     }
 
     @Override

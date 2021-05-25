@@ -29,6 +29,8 @@ import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.LPSZ;
 
+import static io.questdb.griffin.engine.functions.constants.NullConstant.NULL;
+
 public class NullColumn implements MappedReadOnlyMemory {
 
     public static final NullColumn INSTANCE = new NullColumn();
@@ -63,42 +65,42 @@ public class NullColumn implements MappedReadOnlyMemory {
 
     @Override
     public BinarySequence getBin(long offset) {
-        return null;
+        return NULL.getBin(null);
     }
 
     @Override
     public long getBinLen(long offset) {
-        return TableUtils.NULL_LEN;
+        return NULL.getBinLen(null);
     }
 
     @Override
     public boolean getBool(long offset) {
-        return false;
+        return NULL.getBool(null);
     }
 
     @Override
     public byte getByte(long offset) {
-        return 0;
+        return NULL.getByte(null);
     }
 
     @Override
     public double getDouble(long offset) {
-        return Double.NaN;
+        return NULL.getDouble(null);
     }
 
     @Override
     public float getFloat(long offset) {
-        return Float.NaN;
+        return NULL.getFloat(null);
     }
 
     @Override
     public int getInt(long offset) {
-        return Numbers.INT_NaN;
+        return NULL.getInt(null);
     }
 
     @Override
     public long getLong(long offset) {
-        return Numbers.LONG_NaN;
+        return NULL.getLong(null);
     }
 
     @Override
@@ -118,22 +120,22 @@ public class NullColumn implements MappedReadOnlyMemory {
 
     @Override
     public short getShort(long offset) {
-        return 0;
+        return NULL.getShort(null);
     }
 
     @Override
     public CharSequence getStr(long offset) {
-        return null;
+        return NULL.getStr(null);
     }
 
     @Override
-    public CharSequence getStr2(long offset) {
-        return null;
+    public CharSequence getStrB(long offset) {
+        return NULL.getStrB(null);
     }
 
     @Override
     public Long256 getLong256A(long offset) {
-        return Long256Impl.NULL_LONG256;
+        return NULL.getLong256A(null);
     }
 
     @Override
@@ -142,17 +144,17 @@ public class NullColumn implements MappedReadOnlyMemory {
 
     @Override
     public Long256 getLong256B(long offset) {
-        return Long256Impl.NULL_LONG256;
+        return NULL.getLong256B(null);
     }
 
     @Override
     public char getChar(long offset) {
-        return 0;
+        return NULL.getChar(null);
     }
 
     @Override
     public int getStrLen(long offset) {
-        return TableUtils.NULL_LEN;
+        return NULL.getStrLen(null);
     }
 
     @Override

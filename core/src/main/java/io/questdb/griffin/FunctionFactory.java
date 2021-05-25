@@ -84,6 +84,10 @@ public interface FunctionFactory {
         return false;
     }
 
+    default boolean isCast() {
+        return false;
+    }
+
     Function newInstance(
             int position,
             @Transient ObjList<Function> args,

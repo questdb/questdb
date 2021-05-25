@@ -33,8 +33,8 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.engine.functions.constants.*;
 import io.questdb.std.IntList;
-import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class EqDoubleFunctionFactory implements FunctionFactory {
@@ -59,8 +59,17 @@ public class EqDoubleFunctionFactory implements FunctionFactory {
         Function left = args.getQuick(0);
         Function right = args.getQuick(1);
 
-        if (left.isConstant() && left.getType() == ColumnType.DOUBLE && Double.isNaN(left.getDouble(null))) {
+        if (left.isNull() || (left.isConstant() && left.getType() == ColumnType.DOUBLE && Double.isNaN(left.getDouble(null)))) {
+            if (right.isNull()) {
+                return new FuncTrue(right);
+            }
             switch (right.getType()) {
+                case ColumnType.BYTE:
+                    return new FuncByteIsZero(right);
+                case ColumnType.SHORT:
+                    return new FuncShortIsZero(right);
+                case ColumnType.CHAR:
+                    return new FuncCharIsZero(right);
                 case ColumnType.INT:
                     return new FuncIntIsNaN(right);
                 case ColumnType.LONG:
@@ -75,8 +84,17 @@ public class EqDoubleFunctionFactory implements FunctionFactory {
                     // double
                     return new FuncDoubleIsNaN(right);
             }
-        } else if (right.isConstant() && right.getType() == ColumnType.DOUBLE && Double.isNaN(right.getDouble(null))) {
+        } else if (right.isNull() || (right.isConstant() && right.getType() == ColumnType.DOUBLE && Double.isNaN(right.getDouble(null)))) {
+            if (left.isNull()) {
+                return new FuncTrue(left);
+            }
             switch (left.getType()) {
+                case ColumnType.BYTE:
+                    return new FuncByteIsZero(left);
+                case ColumnType.SHORT:
+                    return new FuncShortIsZero(left);
+                case ColumnType.CHAR:
+                    return new FuncCharIsZero(left);
                 case ColumnType.INT:
                     return new FuncIntIsNaN(left);
                 case ColumnType.LONG:
@@ -122,6 +140,96 @@ public class EqDoubleFunctionFactory implements FunctionFactory {
         }
     }
 
+    protected static class FuncTrue extends NegatableBooleanFunction implements UnaryFunction {
+        protected final Function arg;
+
+        public FuncTrue(Function arg) {
+            this.arg = arg;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            return negated;
+        }
+
+        @Override
+        public Function getArg() {
+            return arg;
+        }
+    }
+
+    protected static class FuncByteIsZero extends NegatableBooleanFunction implements UnaryFunction {
+        protected final Function arg;
+
+        public FuncByteIsZero(Function arg) {
+            this.arg = arg;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            return negated != (arg.getByte(rec) == 0);
+        }
+
+        @Override
+        public Function getArg() {
+            return arg;
+        }
+    }
+
+    protected static class FuncShortIsZero extends NegatableBooleanFunction implements UnaryFunction {
+        protected final Function arg;
+
+        public FuncShortIsZero(Function arg) {
+            this.arg = arg;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            return negated != (arg.getShort(rec) == 0);
+        }
+
+        @Override
+        public Function getArg() {
+            return arg;
+        }
+    }
+
+    protected static class FuncCharIsZero extends NegatableBooleanFunction implements UnaryFunction {
+        protected final Function arg;
+
+        public FuncCharIsZero(Function arg) {
+            this.arg = arg;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            return negated != (arg.getChar(rec) == CharConstant.ZERO.getChar(null));
+        }
+
+        @Override
+        public Function getArg() {
+            return arg;
+        }
+    }
+
+    protected static class FuncBinIsNull extends NegatableBooleanFunction implements UnaryFunction {
+        protected final Function arg;
+
+        public FuncBinIsNull(Function arg) {
+            this.arg = arg;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            return negated != (arg.getBin(rec) == NullBinConstant.INSTANCE.getBin(null));
+        }
+
+        @Override
+        public Function getArg() {
+            return arg;
+        }
+    }
+
     protected static class FuncIntIsNaN extends NegatableBooleanFunction implements UnaryFunction {
         protected final Function arg;
 
@@ -131,7 +239,7 @@ public class EqDoubleFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return negated != (arg.getInt(rec) == Numbers.INT_NaN);
+            return negated != (arg.getInt(rec) == IntConstant.NULL.getInt(null));
         }
 
         @Override
@@ -149,7 +257,7 @@ public class EqDoubleFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return negated != (arg.getLong(rec) == Numbers.LONG_NaN);
+            return negated != (arg.getLong(rec) == LongConstant.NULL.getLong(null));
         }
 
         @Override
@@ -167,7 +275,7 @@ public class EqDoubleFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return negated != (arg.getDate(rec) == Numbers.LONG_NaN);
+            return negated != (arg.getDate(rec) == DateConstant.NULL.getDate(null));
         }
 
         @Override
@@ -185,7 +293,7 @@ public class EqDoubleFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return negated != (arg.getTimestamp(rec) == Numbers.LONG_NaN);
+            return negated != (arg.getTimestamp(rec) == TimestampConstant.NULL.getTimestamp(null));
         }
 
         @Override

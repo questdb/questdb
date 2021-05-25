@@ -41,6 +41,21 @@ public class TypeOfFunctionFactoryTest extends AbstractGriffinTest {
         assertSyntaxError("select typeOf(1,2)");
     }
 
+    @Test
+    public void testOfNull() throws SqlException {
+        assertSql("select typeOf(null)", "typeOf\n" +
+                "null\n");
+
+        assertSql("select typeOf(cast(null as string))", "typeOf\n" +
+                "STRING\n");
+
+        assertSql("select typeOf(value) from (select null value from null())", "typeOf\n" +
+                "STRING\n");
+
+        assertSql("select typeOf(value) from (select cast(null as long) value from null())", "typeOf\n" +
+                "LONG\n");
+    }
+
     private void assertSyntaxError(String sql) throws Exception {
         assertMemoryLeak(
                 () -> {

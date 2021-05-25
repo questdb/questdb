@@ -186,7 +186,7 @@ public class TableReaderRecord implements Record {
         final int index = TableReader.getPrimaryColumnIndex(columnBase, col);
         final long recordIndex = getAdjustedRecordIndex(col) * Long.BYTES;
         final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(recordIndex, index);
-        return reader.getColumn(absoluteColumnIndex).getStr2(
+        return reader.getColumn(absoluteColumnIndex).getStrB(
                 reader.getColumn(absoluteColumnIndex + 1).getLong(recordIndex)
         );
     }
