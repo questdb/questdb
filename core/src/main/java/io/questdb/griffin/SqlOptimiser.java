@@ -24,22 +24,46 @@
 
 package io.questdb.griffin;
 
-import io.questdb.cairo.*;
-import io.questdb.cairo.pool.ex.EntryLockedException;
-import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.griffin.model.*;
-import io.questdb.std.*;
-import io.questdb.std.str.FlyweightCharSequence;
-import io.questdb.std.str.Path;
-import io.questdb.std.str.StringSink;
-import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
+import static io.questdb.griffin.model.ExpressionNode.FUNCTION;
+import static io.questdb.griffin.model.ExpressionNode.LITERAL;
 
 import java.util.ArrayDeque;
 
-import static io.questdb.griffin.model.ExpressionNode.FUNCTION;
-import static io.questdb.griffin.model.ExpressionNode.LITERAL;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
+
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.pool.ex.EntryLockedException;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.model.AnalyticColumn;
+import io.questdb.griffin.model.ExpressionNode;
+import io.questdb.griffin.model.JoinContext;
+import io.questdb.griffin.model.QueryColumn;
+import io.questdb.griffin.model.QueryModel;
+import io.questdb.std.CharSequenceHashSet;
+import io.questdb.std.CharSequenceIntHashMap;
+import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.std.Chars;
+import io.questdb.std.IntHashSet;
+import io.questdb.std.IntList;
+import io.questdb.std.IntPriorityQueue;
+import io.questdb.std.LowerCaseCharSequenceIntHashMap;
+import io.questdb.std.LowerCaseCharSequenceObjHashMap;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.ObjList;
+import io.questdb.std.ObjectPool;
+import io.questdb.std.Transient;
+import io.questdb.std.str.FlyweightCharSequence;
+import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 
 class SqlOptimiser {
 
@@ -1136,11 +1160,27 @@ class SqlOptimiser {
     }
 
     private boolean checkForAggregates(ExpressionNode node) {
+        sqlNodeStack.clear();
         while (node != null) {
-            if (null != node.lhs && functionParser.isGroupBy(node.lhs.token)) {
-                return true;
+            if (node.rhs != null) {
+                if (functionParser.isGroupBy(node.rhs.token)) {
+                    return true;
+                }
+                this.sqlNodeStack.push(node.rhs);
             }
-            node = node.rhs;
+
+            if (node.lhs != null) {
+                if (functionParser.isGroupBy(node.lhs.token)) {
+                    return true;
+                }
+                node = node.lhs;
+            } else {
+                if (!sqlNodeStack.isEmpty()) {
+                    node = this.sqlNodeStack.poll();
+                } else {
+                    node = null;
+                }
+            }
         }
 
         return false;
@@ -2771,7 +2811,6 @@ class SqlOptimiser {
         cursorModel.getAliasToColumnMap().putAll(baseModel.getAliasToColumnMap());
         // create virtual columns from select list
 
-        // TODO
         for (int i = 0, k = columns.size(); i < k; i++) {
             QueryColumn qc = columns.getQuick(i);
             final boolean analytic = qc instanceof AnalyticColumn;
