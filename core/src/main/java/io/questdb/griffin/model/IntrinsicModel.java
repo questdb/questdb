@@ -108,6 +108,11 @@ public class IntrinsicModel implements Mutable {
         runtimeIntervalBuilder.intersect(lo, hi);
     }
 
+    public void intersectRuntimeIntervals(Function intervalStrFunction) {
+        runtimeIntervalBuilder.intersectDynamicInterval(intervalStrFunction);
+        if (runtimeIntervalBuilder.isEmptySet()) intrinsicValue = FALSE;
+    }
+
     public void setBetweenBoundary(long timestamp) {
         runtimeIntervalBuilder.setBetweenBoundary(timestamp);
     }
@@ -122,6 +127,11 @@ public class IntrinsicModel implements Mutable {
 
     public void clearBetweenTempParsing() {
         runtimeIntervalBuilder.clearBetweenParsing();
+    }
+
+    public void subtractRuntimeIntervals(Function intervalStrFunction) {
+        runtimeIntervalBuilder.subtractRuntimeInterval(intervalStrFunction);
+        if (runtimeIntervalBuilder.isEmptySet()) intrinsicValue = FALSE;
     }
 
     public void unionIntervals(long lo, long hi) {

@@ -36,6 +36,7 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.model.IntervalOperation;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 import static io.questdb.griffin.model.IntervalUtils.*;
@@ -89,7 +90,7 @@ public class InTimestampStrFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class EqTimestampStrFunction extends NegatableBooleanFunction implements BinaryFunction {
+    public static class EqTimestampStrFunction extends NegatableBooleanFunction implements BinaryFunction {
         private final Function left;
         private final Function right;
         private final LongList intervals = new LongList();
@@ -101,7 +102,14 @@ public class InTimestampStrFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
+            long ts = left.getTimestamp(rec);
+            if (ts == Numbers.LONG_NaN) {
+                return negated;
+            }
             CharSequence timestampAsString = right.getStr(rec);
+            if (timestampAsString  == null) {
+                return negated;
+            }
             intervals.clear();
             try {
                 // we are ignoring exception contents here, so we do not need exact position
