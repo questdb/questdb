@@ -31,7 +31,7 @@ import org.junit.Test;
 public class SymbolFunctionTest {
     // assert that all type casts that are not possible will throw exception
 
-    private static final SymbolFunction function = new SymbolFunction(25) {
+    private static final SymbolFunction function = new SymbolFunction() {
         @Override
         public int getInt(Record rec) {
             return 0;
@@ -106,11 +106,6 @@ public class SymbolFunctionTest {
     @Test(expected = UnsupportedOperationException.class)
     public void testGetLong() {
         function.getLong(null);
-    }
-
-    @Test
-    public void testGetPosition() {
-        Assert.assertEquals(25, function.getPosition());
     }
 
     @Test(expected = UnsupportedOperationException.class)

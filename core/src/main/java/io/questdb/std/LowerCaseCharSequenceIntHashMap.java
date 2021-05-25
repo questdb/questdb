@@ -29,7 +29,7 @@ import java.util.Arrays;
 public class LowerCaseCharSequenceIntHashMap extends AbstractLowerCaseCharSequenceHashSet {
     private static final int NO_ENTRY_VALUE = -1;
     private final int noEntryValue;
-    protected int[] values;
+    private int[] values;
     private final ObjList<CharSequence> list;
 
     public LowerCaseCharSequenceIntHashMap() {
@@ -48,7 +48,8 @@ public class LowerCaseCharSequenceIntHashMap extends AbstractLowerCaseCharSequen
         clear();
     }
 
-    public void clear() {
+    @Override
+    public final void clear() {
         super.clear();
         list.clear();
         Arrays.fill(values, noEntryValue);
@@ -60,6 +61,7 @@ public class LowerCaseCharSequenceIntHashMap extends AbstractLowerCaseCharSequen
         values[index] = noEntryValue;
     }
 
+    @Override
     public void removeAt(int index) {
         if (index < 0) {
             int index1 = -index - 1;
@@ -90,16 +92,21 @@ public class LowerCaseCharSequenceIntHashMap extends AbstractLowerCaseCharSequen
             values[-index - 1] = value;
             return false;
         }
-        putAt0(index, key, value);
-        list.add(key);
+        final String keyString = Chars.toString(key);
+        putAt0(index, keyString, value);
+        list.add(keyString);
         return true;
     }
 
-    public void putIfAbsent(CharSequence key, int value) {
+    public boolean putIfAbsent(CharSequence key, int value) {
         int index = keyIndex(key);
         if (index > -1) {
-            putAt0(index, key, value);
+            String keyStr = Chars.toString(key);
+            putAt0(index, keyStr, value);
+            list.add(keyStr);
+            return true;
         }
+        return false;
     }
 
     @Override

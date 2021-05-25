@@ -39,8 +39,7 @@ public class MaxDateGroupByFunction extends DateFunction implements GroupByFunct
     private final Function arg;
     private int valueIndex;
 
-    public MaxDateGroupByFunction(int position, @NotNull Function arg) {
-        super(position);
+    public MaxDateGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
     }
 

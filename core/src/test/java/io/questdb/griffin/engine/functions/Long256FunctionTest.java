@@ -35,7 +35,7 @@ import org.junit.Test;
 public class Long256FunctionTest {
     // assert that all type casts that are not possible will throw exception
 
-    private static final Long256Function function = new Long256Function(25) {
+    private static final Long256Function function = new Long256Function() {
         @Override
         public Long256 getLong256A(Record rec) {
             return Long256Impl.NULL_LONG256;
@@ -94,11 +94,6 @@ public class Long256FunctionTest {
     @Test
     public void testGetLong() {
         Assert.assertEquals(Numbers.LONG_NaN, function.getLong(null));
-    }
-
-    @Test
-    public void testGetPosition() {
-        Assert.assertEquals(25, function.getPosition());
     }
 
     @Test(expected = UnsupportedOperationException.class)

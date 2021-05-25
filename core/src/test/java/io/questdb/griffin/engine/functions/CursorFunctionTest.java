@@ -24,11 +24,10 @@
 
 package io.questdb.griffin.engine.functions;
 
-import org.junit.Assert;
 import org.junit.Test;
 
 public class CursorFunctionTest {
-    private static final CursorFunction function = new CursorFunction(25, null);
+    private static final CursorFunction function = new CursorFunction(null);
 
     @Test(expected = UnsupportedOperationException.class)
     public void testGetBin() {
@@ -93,11 +92,6 @@ public class CursorFunctionTest {
     @Test(expected = UnsupportedOperationException.class)
     public void testGetLong() {
         function.getLong(null);
-    }
-
-    @Test
-    public void testGetPosition() {
-        Assert.assertEquals(25, function.getPosition());
     }
 
     @Test(expected = UnsupportedOperationException.class)

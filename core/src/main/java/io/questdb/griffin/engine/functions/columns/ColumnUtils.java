@@ -22,23 +22,8 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.constants;
+package io.questdb.griffin.engine.functions.columns;
 
-import io.questdb.std.str.StringSink;
-import org.junit.Assert;
-import org.junit.Test;
-
-public class NullStrConstantTest {
-    @Test
-    public void testConstant() {
-        NullStrConstant constant = new NullStrConstant(0);
-        Assert.assertTrue(constant.isConstant());
-        Assert.assertNull(constant.getStr(null));
-        Assert.assertNull(constant.getStrB(null));
-        Assert.assertEquals(-1, constant.getStrLen(null));
-
-        StringSink sink = new StringSink();
-        constant.getStr(null, sink);
-        Assert.assertEquals(0, sink.length());
-    }
+public class ColumnUtils {
+    static int STATIC_COLUMN_COUNT = 32;
 }

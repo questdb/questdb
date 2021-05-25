@@ -32,7 +32,7 @@ import org.jetbrains.annotations.NotNull;
 public class LastCharGroupByFunction extends FirstCharGroupByFunction {
 
     public LastCharGroupByFunction(int position, @NotNull Function arg) {
-        super(position, arg);
+        super(arg);
     }
 
     @Override

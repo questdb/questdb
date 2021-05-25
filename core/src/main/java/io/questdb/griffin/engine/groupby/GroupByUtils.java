@@ -39,7 +39,9 @@ import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.std.Chars;
+import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 
 public class GroupByUtils {
@@ -50,8 +52,11 @@ public class GroupByUtils {
             FunctionParser functionParser,
             SqlExecutionContext executionContext,
             ObjList<GroupByFunction> groupByFunctions,
+            @Transient IntList groupByFunctionPositions,
             ArrayColumnTypes valueTypes
     ) throws SqlException {
+
+        groupByFunctionPositions.clear();
 
         final ObjList<QueryColumn> columns = model.getColumns();
         for (int i = 0, n = columns.size(); i < n; i++) {
@@ -73,6 +78,7 @@ public class GroupByUtils {
                 GroupByFunction func = (GroupByFunction) function;
                 func.pushValueTypes(valueTypes);
                 groupByFunctions.add(func);
+                groupByFunctionPositions.add(column.getAst().position);
             }
         }
     }
@@ -82,13 +88,17 @@ public class GroupByUtils {
             RecordMetadata metadata,
             @NotNull ListColumnFilter listColumnFilter,
             ObjList<GroupByFunction> groupByFunctions,
+            @Transient IntList groupByFunctionPositions,
             ObjList<Function> recordFunctions,
+            @Transient IntList recordFunctionPositions,
             GenericRecordMetadata groupByMetadata,
             ArrayColumnTypes keyTypes,
             int keyColumnIndex,
             boolean timestampUnimportant,
             int timestampIndex
     ) throws SqlException {
+
+        recordFunctionPositions.clear();
 
         // Process group-by functions first to get the idea of
         // how many map values we will have.
@@ -126,56 +136,58 @@ public class GroupByUtils {
                     final Function fun;
                     switch (type) {
                         case ColumnType.BOOLEAN:
-                            fun = new BooleanColumn(node.position, keyColumnIndex - 1);
+                            fun = BooleanColumn.newInstance(keyColumnIndex - 1);
                             break;
                         case ColumnType.BYTE:
-                            fun = new ByteColumn(node.position, keyColumnIndex - 1);
+                            fun = ByteColumn.newInstance(keyColumnIndex - 1);
                             break;
                         case ColumnType.SHORT:
-                            fun = new ShortColumn(node.position, keyColumnIndex - 1);
+                            fun = ShortColumn.newInstance(keyColumnIndex - 1);
                             break;
                         case ColumnType.CHAR:
-                            fun = new CharColumn(node.position, keyColumnIndex - 1);
+                            fun = CharColumn.newInstance(keyColumnIndex - 1);
                             break;
                         case ColumnType.INT:
-                            fun = new IntColumn(node.position, keyColumnIndex - 1);
+                            fun = IntColumn.newInstance(keyColumnIndex - 1);
                             break;
                         case ColumnType.LONG:
-                            fun = new LongColumn(node.position, keyColumnIndex - 1);
+                            fun = LongColumn.newInstance(keyColumnIndex - 1);
                             break;
                         case ColumnType.FLOAT:
-                            fun = new FloatColumn(node.position, keyColumnIndex - 1);
+                            fun = FloatColumn.newInstance(keyColumnIndex - 1);
                             break;
                         case ColumnType.DOUBLE:
-                            fun = new DoubleColumn(node.position, keyColumnIndex - 1);
+                            fun = DoubleColumn.newInstance(keyColumnIndex - 1);
                             break;
                         case ColumnType.STRING:
-                            fun = new StrColumn(node.position, keyColumnIndex - 1);
+                            fun = StrColumn.newInstance(keyColumnIndex - 1);
                             break;
                         case ColumnType.SYMBOL:
-                            fun = new MapSymbolColumn(node.position, keyColumnIndex - 1, index, metadata.isSymbolTableStatic(index));
+                            fun = new MapSymbolColumn(keyColumnIndex - 1, index, metadata.isSymbolTableStatic(index));
                             break;
                         case ColumnType.DATE:
-                            fun = new DateColumn(node.position, keyColumnIndex - 1);
+                            fun = DateColumn.newInstance(keyColumnIndex - 1);
                             break;
                         case ColumnType.TIMESTAMP:
-                            fun = new TimestampColumn(node.position, keyColumnIndex - 1);
+                            fun = TimestampColumn.newInstance(keyColumnIndex - 1);
                             break;
                         case ColumnType.LONG256:
-                            fun = new Long256Column(node.position, keyColumnIndex - 1);
+                            fun = Long256Column.newInstance(keyColumnIndex - 1);
                             break;
                         default:
-                            fun = new BinColumn(node.position, keyColumnIndex - 1);
+                            fun = BinColumn.newInstance(keyColumnIndex - 1);
                             break;
                     }
 
                     recordFunctions.add(fun);
+                    recordFunctionPositions.add(node.position);
 
                 } else {
                     // set this function to null, cursor will replace it with an instance class
                     // timestamp function returns value of class member which makes it impossible
                     // to create these columns in advance of cursor instantiation
                     recordFunctions.add(null);
+                    groupByFunctionPositions.add(0);
                     if (groupByMetadata.getTimestampIndex() == -1) {
                         groupByMetadata.setTimestampIndex(i);
                     }
@@ -202,8 +214,9 @@ public class GroupByUtils {
             } else {
                 // add group-by function as a record function as well
                 // so it can produce column values
-                final GroupByFunction groupByFunction = groupByFunctions.getQuick(valueColumnIndex++);
+                final GroupByFunction groupByFunction = groupByFunctions.getQuick(valueColumnIndex);
                 recordFunctions.add(groupByFunction);
+                recordFunctionPositions.add(groupByFunctionPositions.getQuick(valueColumnIndex++));
                 type = groupByFunction.getType();
 
                 // and finish with populating metadata for this factory

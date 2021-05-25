@@ -43,8 +43,7 @@ public class CountSymbolGroupByFunction extends LongFunction implements GroupByF
     private int valueIndex;
     private int setIndex;
 
-    public CountSymbolGroupByFunction(int position, Function arg) {
-        super(position);
+    public CountSymbolGroupByFunction(Function arg) {
         this.arg = arg;
     }
 

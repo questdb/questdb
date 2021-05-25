@@ -39,8 +39,7 @@ public class CountVectorAggregateFunction extends LongFunction implements Vector
     private final CountFunc countFunc;
     private int valueOffset;
 
-    public CountVectorAggregateFunction(int position, int keyKind) {
-        super(position);
+    public CountVectorAggregateFunction(int keyKind) {
         countFunc = keyKind == SqlCodeGenerator.GKK_HOUR_INT ? Rosti::keyedHourCount : Rosti::keyedIntCount;
     }
 

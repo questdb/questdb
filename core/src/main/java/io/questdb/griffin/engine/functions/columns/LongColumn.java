@@ -27,17 +27,34 @@ package io.questdb.griffin.engine.functions.columns;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.griffin.engine.functions.LongFunction;
+import io.questdb.std.ObjList;
+
+import static io.questdb.griffin.engine.functions.columns.ColumnUtils.STATIC_COLUMN_COUNT;
 
 public class LongColumn extends LongFunction implements ScalarFunction {
+    private static final ObjList<LongColumn> COLUMNS = new ObjList<>(STATIC_COLUMN_COUNT);
     private final int columnIndex;
 
-    public LongColumn(int position, int columnIndex) {
-        super(position);
+    public LongColumn(int columnIndex) {
         this.columnIndex = columnIndex;
+    }
+
+    public static LongColumn newInstance(int columnIndex) {
+        if (columnIndex < STATIC_COLUMN_COUNT) {
+            return COLUMNS.getQuick(columnIndex);
+        }
+        return new LongColumn(columnIndex);
     }
 
     @Override
     public long getLong(Record rec) {
         return rec.getLong(columnIndex);
+    }
+
+    static {
+        COLUMNS.setPos(STATIC_COLUMN_COUNT);
+        for (int i = 0; i < STATIC_COLUMN_COUNT; i++) {
+            COLUMNS.setQuick(i, new LongColumn(i));
+        }
     }
 }

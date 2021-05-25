@@ -38,8 +38,7 @@ public class MaxCharGroupByFunction extends CharFunction implements GroupByFunct
     private final Function arg;
     private int valueIndex;
 
-    public MaxCharGroupByFunction(int position, @NotNull Function arg) {
-        super(position);
+    public MaxCharGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
     }
 

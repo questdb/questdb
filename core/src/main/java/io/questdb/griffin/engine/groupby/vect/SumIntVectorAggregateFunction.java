@@ -46,8 +46,7 @@ public class SumIntVectorAggregateFunction extends LongFunction implements Vecto
 
     private int valueOffset;
 
-    public SumIntVectorAggregateFunction(int position, int keyKind, int columnIndex, int workerCount) {
-        super(position);
+    public SumIntVectorAggregateFunction(int keyKind, int columnIndex, int workerCount) {
         if (keyKind == GKK_HOUR_INT) {
             distinctFunc = Rosti::keyedHourDistinct;
             keyValueFunc = Rosti::keyedHourSumInt;

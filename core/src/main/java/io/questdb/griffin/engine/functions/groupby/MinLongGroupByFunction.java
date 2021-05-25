@@ -39,8 +39,7 @@ public class MinLongGroupByFunction extends LongFunction implements GroupByFunct
     private final Function arg;
     private int valueIndex;
 
-    public MinLongGroupByFunction(int position, @NotNull Function arg) {
-        super(position);
+    public MinLongGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
     }
 

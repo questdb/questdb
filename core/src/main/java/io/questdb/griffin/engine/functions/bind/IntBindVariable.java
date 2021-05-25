@@ -34,7 +34,7 @@ class IntBindVariable extends IntFunction implements ScalarFunction, Mutable {
     int value;
 
     IntBindVariable() {
-        super(0);
+        super();
     }
 
     @Override

@@ -37,10 +37,7 @@ import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
-import io.questdb.std.CharSequenceHashSet;
-import io.questdb.std.Chars;
-import io.questdb.std.IntHashSet;
-import io.questdb.std.ObjList;
+import io.questdb.std.*;
 
 public class InSymbolFunctionFactory implements FunctionFactory {
     @Override
@@ -49,13 +46,13 @@ public class InSymbolFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
 
         CharSequenceHashSet set = new CharSequenceHashSet();
         int n = args.size();
 
         if (n == 1) {
-            return new BooleanConstant(position, false);
+            return BooleanConstant.FALSE;
         }
 
         for (int i = 1; i < n; i++) {
@@ -73,14 +70,14 @@ public class InSymbolFunctionFactory implements FunctionFactory {
                     set.add(new String(new char[]{func.getChar(null)}));
                     break;
                 default:
-                    throw SqlException.$(func.getPosition(), "STRING constant expected");
+                    throw SqlException.$(argPositions.getQuick(i), "STRING constant expected");
             }
         }
         SymbolFunction var = (SymbolFunction) args.getQuick(0);
         if (var.isConstant()) {
-            return new BooleanConstant(position, set.contains(var.getSymbol(null)));
+            return BooleanConstant.of(set.contains(var.getSymbol(null)));
         }
-        return new Func(position, var, set);
+        return new Func(var, set);
     }
 
     @FunctionalInterface
@@ -96,8 +93,7 @@ public class InSymbolFunctionFactory implements FunctionFactory {
         private final TestFunc strTest = this::testAsString;
         private TestFunc testFunc;
 
-        public Func(int position, SymbolFunction arg, CharSequenceHashSet set) {
-            super(position);
+        public Func(SymbolFunction arg, CharSequenceHashSet set) {
             this.arg = arg;
             this.set = set;
         }

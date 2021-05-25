@@ -526,7 +526,7 @@ public final class TableUtils {
         }
     }
 
-    public static void validate(FilesFacade ff, MappedReadOnlyMemory metaMem, CharSequenceIntHashMap nameIndex) {
+    public static void validate(FilesFacade ff, MappedReadOnlyMemory metaMem, LowerCaseCharSequenceIntHashMap nameIndex) {
         try {
             final int metaVersion = metaMem.getInt(TableUtils.META_OFFSET_VERSION);
             if (ColumnType.VERSION != metaVersion && metaVersion != 404) {

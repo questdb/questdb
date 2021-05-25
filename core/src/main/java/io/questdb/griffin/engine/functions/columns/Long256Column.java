@@ -28,14 +28,24 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.griffin.engine.functions.Long256Function;
 import io.questdb.std.Long256;
+import io.questdb.std.ObjList;
 import io.questdb.std.str.CharSink;
 
+import static io.questdb.griffin.engine.functions.columns.ColumnUtils.STATIC_COLUMN_COUNT;
+
 public class Long256Column extends Long256Function implements ScalarFunction {
+    private static final ObjList<Long256Column> COLUMNS = new ObjList<>(STATIC_COLUMN_COUNT);
     private final int columnIndex;
 
-    public Long256Column(int position, int columnIndex) {
-        super(position);
+    public Long256Column(int columnIndex) {
         this.columnIndex = columnIndex;
+    }
+
+    public static Long256Column newInstance(int columnIndex) {
+        if (columnIndex < STATIC_COLUMN_COUNT) {
+            return COLUMNS.getQuick(columnIndex);
+        }
+        return new Long256Column(columnIndex);
     }
 
     @Override
@@ -51,5 +61,12 @@ public class Long256Column extends Long256Function implements ScalarFunction {
     @Override
     public Long256 getLong256B(Record rec) {
         return rec.getLong256B(columnIndex);
+    }
+
+    static {
+        COLUMNS.setPos(STATIC_COLUMN_COUNT);
+        for (int i = 0; i < STATIC_COLUMN_COUNT; i++) {
+            COLUMNS.setQuick(i, new Long256Column(i));
+        }
     }
 }

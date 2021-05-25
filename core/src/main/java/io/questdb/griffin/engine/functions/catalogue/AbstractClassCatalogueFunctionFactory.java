@@ -66,9 +66,8 @@ public abstract class AbstractClassCatalogueFunctionFactory implements FunctionF
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         return new CursorFunction(
-                position,
                 new ClassCatalogueCursorFactory(
                         configuration,
                         METADATA

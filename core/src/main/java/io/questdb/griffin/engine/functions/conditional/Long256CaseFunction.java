@@ -36,8 +36,7 @@ class Long256CaseFunction extends Long256Function implements MultiArgFunction {
     private final CaseFunctionPicker picker;
     private final ObjList<Function> args;
 
-    public Long256CaseFunction(int position, CaseFunctionPicker picker, ObjList<Function> args) {
-        super(position);
+    public Long256CaseFunction(CaseFunctionPicker picker, ObjList<Function> args) {
         this.picker = picker;
         this.args = args;
     }

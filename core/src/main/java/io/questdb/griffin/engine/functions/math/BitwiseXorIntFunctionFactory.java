@@ -32,6 +32,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.IntFunction;
+import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
@@ -42,7 +43,7 @@ public class BitwiseXorIntFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
         return new BitXorIntFunction(position, args.getQuick(0), args.getQuick(1));
     }
 
@@ -51,7 +52,7 @@ public class BitwiseXorIntFunctionFactory implements FunctionFactory {
         private final Function right;
 
         public BitXorIntFunction(int position, Function left, Function right) {
-            super(position);
+            super();
             this.left = left;
             this.right = right;
         }

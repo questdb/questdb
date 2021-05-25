@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.StrFunction;
+import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
@@ -42,7 +43,7 @@ public class ReplaceStrFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         final Function term = args.getQuick(1);
         if (term.isConstant()) {
             if (term.getStrLen(null) < 1) {
@@ -58,7 +59,7 @@ public class ReplaceStrFunctionFactory implements FunctionFactory {
             }
         }
 
-        return new Func(position, value, term, args.getQuick(2));
+        return new Func(value, term, args.getQuick(2));
     }
 
     private static class Func extends StrFunction {
@@ -69,8 +70,7 @@ public class ReplaceStrFunctionFactory implements FunctionFactory {
         private final Function oldSubStr;
         private final Function newSubStr;
 
-        public Func(int position, Function value, Function oldSubStr, Function newSubStr) {
-            super(position);
+        public Func(Function value, Function oldSubStr, Function newSubStr) {
             this.value = value;
             this.oldSubStr = oldSubStr;
             this.newSubStr = newSubStr;

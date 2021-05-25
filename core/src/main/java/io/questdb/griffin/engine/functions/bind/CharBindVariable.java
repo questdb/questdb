@@ -32,10 +32,6 @@ import io.questdb.std.Mutable;
 class CharBindVariable extends CharFunction implements ScalarFunction, Mutable {
     char value;
 
-    public CharBindVariable() {
-        super(0);
-    }
-
     @Override
     public void clear() {
         this.value = 0;

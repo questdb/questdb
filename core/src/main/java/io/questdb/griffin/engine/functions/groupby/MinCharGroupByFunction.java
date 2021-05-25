@@ -38,8 +38,7 @@ public class MinCharGroupByFunction extends CharFunction implements GroupByFunct
     private final Function arg;
     private int valueIndex;
 
-    public MinCharGroupByFunction(int position, @NotNull Function arg) {
-        super(position);
+    public MinCharGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
     }
 

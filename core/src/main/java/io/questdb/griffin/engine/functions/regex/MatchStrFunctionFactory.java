@@ -33,6 +33,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Chars;
+import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 import java.util.regex.Matcher;
@@ -46,19 +47,25 @@ public class MatchStrFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
         Function value = args.getQuick(0);
         CharSequence regex = args.getQuick(1).getStr(null);
 
         if (regex == null) {
-            throw SqlException.$(args.getQuick(1).getPosition(), "NULL regex");
+            throw SqlException.$(argPositions.getQuick(1), "NULL regex");
         }
 
         try {
             Matcher matcher = Pattern.compile(Chars.toString(regex)).matcher("");
-            return new MatchFunction(position, value, matcher);
+            return new MatchFunction(value, matcher);
         } catch (PatternSyntaxException e) {
-            throw SqlException.$(args.getQuick(1).getPosition() + e.getIndex() + 1, e.getMessage());
+            throw SqlException.$(argPositions.getQuick(1) + e.getIndex() + 1, e.getMessage());
         }
     }
 
@@ -66,8 +73,7 @@ public class MatchStrFunctionFactory implements FunctionFactory {
         private final Function value;
         private final Matcher matcher;
 
-        public MatchFunction(int position, Function value, Matcher matcher) {
-            super(position);
+        public MatchFunction(Function value, Matcher matcher) {
             this.value = value;
             this.matcher = matcher;
         }

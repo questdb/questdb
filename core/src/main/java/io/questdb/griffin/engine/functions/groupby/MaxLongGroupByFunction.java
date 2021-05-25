@@ -39,8 +39,7 @@ public class MaxLongGroupByFunction extends LongFunction implements GroupByFunct
     private final Function arg;
     private int valueIndex;
 
-    public MaxLongGroupByFunction(int position, @NotNull Function arg) {
-        super(position);
+    public MaxLongGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
     }
 

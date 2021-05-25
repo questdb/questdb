@@ -39,11 +39,9 @@ public class TestSumDoubleGroupByFunction extends DoubleFunction implements Grou
     private int valueIndex;
 
     public TestSumDoubleGroupByFunction(
-            int position,
             @NotNull Function arg,
             @NotNull Function value2
     ) {
-        super(position);
         // this is just random attempt to create a problem within a function
         value2.getDouble(null);
         this.arg = arg;
