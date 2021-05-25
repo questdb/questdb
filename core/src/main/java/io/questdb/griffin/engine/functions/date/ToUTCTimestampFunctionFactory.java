@@ -35,6 +35,7 @@ import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
+import org.jetbrains.annotations.NotNull;
 
 import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_MICROS;
 
@@ -56,8 +57,16 @@ public class ToUTCTimestampFunctionFactory implements FunctionFactory {
         Function timezone = args.getQuick(1);
 
         if (timezone.isConstant()) {
+            return getTimestampFunction(argPositions, timestamp, timezone, -1);
+        } else {
+            return new ToTimezoneFunctionVar(timestamp, timezone);
+        }
+    }
 
-            CharSequence tz = timezone.getStr(null);
+    @NotNull
+    static TimestampFunction getTimestampFunction(IntList argPositions, Function timestamp, Function timezone, int multiplier) throws SqlException {
+        final CharSequence tz = timezone.getStr(null);
+        if (tz != null) {
             final int hi = tz.length();
             final long l = Timestamps.parseOffset(tz, 0, hi);
             if (l == Long.MIN_VALUE) {
@@ -68,7 +77,7 @@ public class ToUTCTimestampFunctionFactory implements FunctionFactory {
                             TimestampFormatUtils.enLocale.getZoneRules(
                                     Numbers.decodeLowInt(TimestampFormatUtils.enLocale.matchZone(tz, 0, hi)), RESOLUTION_MICROS
                             ),
-                            -1
+                            multiplier
                     );
                 } catch (NumericException e) {
                     Misc.free(timestamp);
@@ -79,13 +88,11 @@ public class ToUTCTimestampFunctionFactory implements FunctionFactory {
 
                 return new OffsetTimestampFunctionFromOffset(
                         timestamp,
-                        -Numbers.decodeLowInt(l) * Timestamps.MINUTE_MICROS
+                        multiplier * Numbers.decodeLowInt(l) * Timestamps.MINUTE_MICROS
                 );
             }
-
-        } else {
-            return new ToTimezoneFunctionVar(timestamp, timezone);
         }
+        throw SqlException.$(argPositions.getQuick(1), "timezone must not be null");
     }
 
     private static class ToTimezoneFunctionVar extends TimestampFunction implements BinaryFunction {
@@ -111,7 +118,8 @@ public class ToUTCTimestampFunctionFactory implements FunctionFactory {
         public long getTimestamp(Record rec) {
             final long timestampValue = timestamp.getTimestamp(rec);
             try {
-                return Timestamps.toUTC(timestampValue, TimestampFormatUtils.enLocale, timezone.getStr(rec));
+                final CharSequence tz = timezone.getStr(rec);
+                return tz != null ? Timestamps.toUTC(timestampValue, TimestampFormatUtils.enLocale, tz) : timestampValue;
             } catch (NumericException e) {
                 return timestampValue;
             }
