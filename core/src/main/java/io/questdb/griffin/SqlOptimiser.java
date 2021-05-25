@@ -2958,22 +2958,24 @@ class SqlOptimiser {
                     if (emitCursors(qc.getAst(), cursorModel, null, translatingModel, baseModel, sqlExecutionContext)) {
                         qc = ensureAliasUniqueness(innerVirtualModel, qc);
                     }
-                    if (useGroupByModel
-                            && (qc.getAst().type == ExpressionNode.CONSTANT || (qc.getAst().type == ExpressionNode.FUNCTION && functionParser.isRuntimeConstant(qc.getAst().token)))) {
-                        outerVirtualIsSelectChoose = false;
-                        outerVirtualModel.addBottomUpColumn(qc);
-                        distinctModel.addBottomUpColumn(qc);
-                    } else {
-                        addFunction(
-                                qc,
-                                baseModel,
-                                translatingModel,
-                                innerVirtualModel,
-                                analyticModel,
-                                groupByModel,
-                                outerVirtualModel,
-                                distinctModel);
+                    if (useGroupByModel) {
+                        if (isEffectivelyConstantExpression(qc.getAst())) {
+                            outerVirtualIsSelectChoose = false;
+                            outerVirtualModel.addBottomUpColumn(qc);
+                            distinctModel.addBottomUpColumn(qc);
+                            continue;
+                        }
                     }
+
+                    addFunction(
+                            qc,
+                            baseModel,
+                            translatingModel,
+                            innerVirtualModel,
+                            analyticModel,
+                            groupByModel,
+                            outerVirtualModel,
+                            distinctModel);
                 }
             }
         }
@@ -3083,6 +3085,28 @@ class SqlOptimiser {
             root.setModelPosition(model.getModelPosition());
         }
         return root;
+    }
+
+    private boolean isEffectivelyConstantExpression(ExpressionNode node) {
+        sqlNodeStack.clear();
+        while (null != node) {
+            if (node.type == ExpressionNode.OPERATION) {
+                sqlNodeStack.push(node.rhs);
+                node = node.lhs;
+            }
+
+            if (!(node.type == ExpressionNode.CONSTANT || (node.type == ExpressionNode.FUNCTION && functionParser.isRuntimeConstant(node.token)))) {
+                return false;
+            }
+
+            if (sqlNodeStack.isEmpty()) {
+                node = null;
+            } else {
+                node = sqlNodeStack.poll();
+            }
+        }
+
+        return true;
     }
 
     private CharSequence setAndGetModelAlias(QueryModel model) {
