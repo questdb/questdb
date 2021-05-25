@@ -25,11 +25,8 @@
 package io.questdb.std.datetime;
 
 import io.questdb.std.*;
-import io.questdb.std.datetime.microtime.Timestamps;
 
 import java.text.DateFormatSymbols;
-
-import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_MICROS;
 
 public class DateLocale {
     private final IntObjHashMap<ObjList<CharSequence>> months = new IntObjHashMap<>();
