@@ -375,14 +375,11 @@ public class NoopGroupByTest extends AbstractGriffinTest {
     public void testNoopGroupByJoinConst() throws Exception {
         compiler.compile("create table y(id int, ref int, val double)", sqlExecutionContext);
         engine.releaseAllWriters();
-        assertQuery(
-                "z\tsum\n",
+        assertFailure(
                 "select 'x' z, sum(val) from x join y on (id) group by 'x'",
                 "create table x (id int, ref int, ref3 int)",
-                null,
-                true,
-                true,
-                true
+                54,
+                "group by expression does not match anything select in statement"
         );
     }
 

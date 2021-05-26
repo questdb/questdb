@@ -36,6 +36,11 @@ public class IndexCatalogueFunctionFactory extends AbstractEmptyCatalogueFunctio
         super("pg_catalog.pg_index()", METADATA);
     }
 
+    @Override
+    public boolean isRuntimeConstant() {
+        return true;
+    }
+
     static {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
         metadata.add(new TableColumnMetadata("indkey", ColumnType.INT, null));

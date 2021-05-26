@@ -76,6 +76,10 @@ public interface FunctionFactory {
         return false;
     }
 
+    default boolean isRuntimeConstant() {
+        return false;
+    }
+
     Function newInstance(
             int position,
             @Transient ObjList<Function> args,

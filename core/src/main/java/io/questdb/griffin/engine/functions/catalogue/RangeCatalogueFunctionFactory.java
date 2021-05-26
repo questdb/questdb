@@ -36,6 +36,11 @@ public class RangeCatalogueFunctionFactory extends AbstractEmptyCatalogueFunctio
         super("pg_range()", METADATA);
     }
 
+    @Override
+    public boolean isRuntimeConstant() {
+        return true;
+    }
+
     static {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
         metadata.add(new TableColumnMetadata("rngtypid", ColumnType.INT, null));
