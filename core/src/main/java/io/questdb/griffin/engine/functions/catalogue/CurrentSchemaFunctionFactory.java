@@ -39,6 +39,11 @@ public class CurrentSchemaFunctionFactory implements FunctionFactory {
     }
 
     @Override
+    public boolean isRuntimeConstant() {
+        return true;
+    }
+
+    @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         return Constants.PUBLIC_CONSTANT;
     }

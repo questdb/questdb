@@ -29,4 +29,9 @@ public class PrefixedClassCatalogueFunctionFactory extends AbstractClassCatalogu
     public String getSignature() {
         return "pg_catalog.pg_class()";
     }
+
+    @Override
+    public boolean isRuntimeConstant() {
+        return true;
+    }
 }

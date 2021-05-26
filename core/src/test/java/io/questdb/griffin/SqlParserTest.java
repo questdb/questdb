@@ -1394,6 +1394,78 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testGroupByConstantMatchingColumnName() throws SqlException {
+        assertQuery(
+                "select-virtual 'nts' nts, min from (select-group-by [min(nts) min] min(nts) min from (select [nts] from tt timestamp (dts) where nts > '2020-01-01T00:00:00.000000Z'))",
+                "select 'nts', min(nts) from tt where nts > '2020-01-01T00:00:00.000000Z'",
+                modelOf("tt").timestamp("dts").col("nts", ColumnType.TIMESTAMP));
+    }
+
+    @Test
+    public void testGroupByConstantFunctionMatchingColumnName() throws SqlException {
+        assertQuery(
+                "select-virtual now() now, min from (select-group-by [min(nts) min] min(nts) min from (select [nts] from tt timestamp (dts) where nts > '2020-01-01T00:00:00.000000Z'))",
+                "select now(), min(nts) from tt where nts > '2020-01-01T00:00:00.000000Z'",
+                modelOf("tt").timestamp("dts").col("nts", ColumnType.TIMESTAMP));
+    }
+
+    @Test
+    public void testGroupByConstant1() throws SqlException {
+        assertQuery(
+                "select-virtual 'nts' nts, now() now, min from (select-group-by [min(nts) min] min(nts) min from (select [nts] from tt timestamp (dts) where nts > '2020-01-01T00:00:00.000000Z'))",
+                "select 'nts', now(), min(nts) from tt where nts > '2020-01-01T00:00:00.000000Z'",
+                modelOf("tt").timestamp("dts").col("nts", ColumnType.TIMESTAMP));
+    }
+
+    @Test
+    public void testGroupByConstant2() throws SqlException {
+        assertQuery(
+                "select-virtual min, 'a' a from (select-group-by [min(nts) min] min(nts) min from (select [nts] from tt timestamp (dts) where nts > '2020-01-01T00:00:00.000000Z'))",
+                "select min(nts), 'a' from tt where nts > '2020-01-01T00:00:00.000000Z'",
+                modelOf("tt").timestamp("dts").col("nts", ColumnType.TIMESTAMP));
+    }
+
+    @Test
+    public void testGroupByConstant3() throws SqlException {
+        assertQuery(
+                "select-virtual 1 + 1 column, min from (select-group-by [min(nts) min] min(nts) min from (select [nts] from tt timestamp (dts) where nts > '2020-01-01T00:00:00.000000Z'))",
+                "select 1+1, min(nts) from tt where nts > '2020-01-01T00:00:00.000000Z'",
+                modelOf("tt").timestamp("dts").col("nts", ColumnType.TIMESTAMP));
+    }
+
+    @Test
+    public void testGroupByConstant4() throws SqlException {
+        assertQuery(
+                "select-virtual min, 1 + 2 * 3 column from (select-group-by [min(nts) min] min(nts) min from (select [nts] from tt timestamp (dts) where nts > '2020-01-01T00:00:00.000000Z'))",
+                "select min(nts), 1 + 2 * 3 from tt where nts > '2020-01-01T00:00:00.000000Z'",
+                modelOf("tt").timestamp("dts").col("nts", ColumnType.TIMESTAMP));
+    }
+
+    @Test
+    public void testGroupByConstant5() throws SqlException {
+        assertQuery(
+                "select-virtual min, 1 + now() * 3 column from (select-group-by [min(nts) min] min(nts) min from (select [nts] from tt timestamp (dts) where nts > '2020-01-01T00:00:00.000000Z'))",
+                "select min(nts), 1 + now() * 3 from tt where nts > '2020-01-01T00:00:00.000000Z'",
+                modelOf("tt").timestamp("dts").col("nts", ColumnType.TIMESTAMP));
+    }
+
+    @Test
+    public void testGroupByConstant6() throws SqlException {
+        assertQuery(
+                "select-virtual now() + now() column, min from (select-group-by [min(nts) min] min(nts) min from (select [nts] from tt timestamp (dts) where nts > '2020-01-01T00:00:00.000000Z'))",
+                "select now() + now(), min(nts) from tt where nts > '2020-01-01T00:00:00.000000Z'",
+                modelOf("tt").timestamp("dts").col("nts", ColumnType.TIMESTAMP));
+    }
+
+    @Test
+    public void testGroupByNotConstant1() throws SqlException {
+        assertQuery(
+                "select-group-by min(nts) min, column from (select-virtual [nts, 1 + day(nts) * 3 column] nts, 1 + day(nts) * 3 column from (select [nts] from tt timestamp (dts) where nts > '2020-01-01T00:00:00.000000Z'))",
+                "select min(nts), 1 + day(nts) * 3 from tt where nts > '2020-01-01T00:00:00.000000Z'",
+                modelOf("tt").timestamp("dts").col("nts", ColumnType.TIMESTAMP));
+    }
+
+    @Test
     public void testCreateTableNoCacheIndex() throws SqlException {
         assertCreateTable("create table x (" +
                         "a INT," +
@@ -5772,7 +5844,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testUnionColumnMisSelection() throws SqlException {
         assertQuery(
-                "select-group-by ts, avg(bid_price) futures_price, spot_price from (select-virtual [ts, bid_price, 0.0 spot_price] ts, bid_price, 0.0 spot_price from (select [ts, bid_price, market_type] from market_updates timestamp (ts) where market_type = 'futures')) sample by 1m union all select-group-by ts, futures_price, avg(bid_price) spot_price from (select-virtual [ts, 0.0 futures_price, bid_price] ts, 0.0 futures_price, bid_price from (select [ts, bid_price, market_type] from market_updates timestamp (ts) where market_type = 'spot')) sample by 1m",
+                "select-virtual ts, futures_price, 0.0 spot_price from (select-group-by [ts, avg(bid_price) futures_price] ts, avg(bid_price) futures_price from (select [ts, bid_price, market_type] from market_updates timestamp (ts) where market_type = 'futures') sample by 1m) union all select-virtual ts, 0.0 futures_price, spot_price from (select-group-by [ts, avg(bid_price) spot_price] ts, avg(bid_price) spot_price from (select [ts, bid_price, market_type] from market_updates timestamp (ts) where market_type = 'spot') sample by 1m)",
                 "select \n" +
                         "    ts, \n" +
                         "    avg(bid_price) AS futures_price, \n" +
@@ -5854,7 +5926,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testUnionKeepOrderByWhenSampleByPresent() throws SqlException {
         assertQuery(
-                "select-choose x from (select-choose [x] x, t from (select [x] from a) union select-choose y, t from (select [y, t] from b) union all select-group-by k, sum(z) sum from (select-virtual ['a' k, z] 'a' k, z, t from (select-choose [t, z] z, t from (select [t, z] from c order by t)) timestamp (t)) sample by 6h) order by x",
+                "select-choose x from (select-choose [x] x, t from (select [x] from a) union select-choose y, t from (select [y, t] from b) union all select-virtual 'a' k, sum from (select-group-by [sum(z) sum] sum(z) sum from (select-choose [t, z] z, t from (select [t, z] from c order by t)) timestamp (t) sample by 6h)) order by x",
                 "select x from (select * from a union select * from b union all select 'a' k, sum(z) from (c order by t) timestamp(t) sample by 6h) order by x",
                 modelOf("a").col("x", ColumnType.INT).col("t", ColumnType.TIMESTAMP),
                 modelOf("b").col("y", ColumnType.INT).col("t", ColumnType.TIMESTAMP),
@@ -5892,7 +5964,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testUnionRemoveRedundantOrderBy() throws SqlException {
         assertQuery(
-                "select-choose x from (select-choose [x] x, t from (select [x] from a) union select-choose y, t from (select [y, t] from b) union all select-group-by 1, sum(z) sum from (select-virtual [1 1, z] 1 1, z, t from (select-choose [t, z] z, t from (select [t, z] from c order by t)) timestamp (t)) sample by 6h) order by x",
+                "select-choose x from (select-choose [x] x, t from (select [x] from a) union select-choose y, t from (select [y, t] from b) union all select-virtual 1 1, sum from (select-group-by [sum(z) sum] sum(z) sum from (select-choose [t, z] z, t from (select [t, z] from c order by t)) timestamp (t) sample by 6h)) order by x",
                 "select x from (select * from a union select * from b union all select 1, sum(z) from (c order by t, t) timestamp(t) sample by 6h) order by x",
                 modelOf("a").col("x", ColumnType.INT).col("t", ColumnType.TIMESTAMP),
                 modelOf("b").col("y", ColumnType.INT).col("t", ColumnType.TIMESTAMP),

@@ -198,7 +198,7 @@ public class DateLocale {
                 continue;
             }
 
-            for (int k = 1, m = zNames.length; k < m; k++) {
+            for (int k = 0, m = zNames.length; k < m; k++) {
                 String name = zNames[k];
                 // we already added this name, skip
                 if (cache.add(name)) {

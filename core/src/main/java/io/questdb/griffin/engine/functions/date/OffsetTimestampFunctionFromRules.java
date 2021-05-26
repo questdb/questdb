@@ -22,28 +22,33 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.catalogue;
+package io.questdb.griffin.engine.functions.date;
 
-import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
-import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.IntList;
-import io.questdb.std.ObjList;
+import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.engine.functions.TimestampFunction;
+import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.std.datetime.TimeZoneRules;
 
-public class UserByIdCatalogueFunctionFactory implements FunctionFactory {
-    @Override
-    public String getSignature() {
-        return "pg_catalog.pg_get_userbyid(I)";
+class OffsetTimestampFunctionFromRules extends TimestampFunction implements UnaryFunction {
+    private final Function timestamp;
+    private final TimeZoneRules rules;
+    private final int multiplier;
+
+    public OffsetTimestampFunctionFromRules(Function timestamp, TimeZoneRules rules, int multiplier) {
+        this.timestamp = timestamp;
+        this.rules = rules;
+        this.multiplier = multiplier;
     }
 
     @Override
-    public boolean isRuntimeConstant() {
-        return true;
+    public Function getArg() {
+        return timestamp;
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return Constants.PUBLIC_CONSTANT;
+    public long getTimestamp(Record rec) {
+        final long utc = timestamp.getTimestamp(rec);
+        return utc + multiplier * rules.getOffset(utc);
     }
 }

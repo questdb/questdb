@@ -45,10 +45,21 @@ public class AttrDefCatalogueFunctionFactory implements FunctionFactory {
         return "pg_catalog.pg_attrdef()";
     }
 
+    @Override
+    public boolean isRuntimeConstant() {
+        return true;
+    }
+
+    @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         return new CursorFunction(
                 new AttrDefCatalogueCursorFactory(configuration, METADATA)
-        );
+        ) {
+            @Override
+            public boolean isRuntimeConstant() {
+                return true;
+            }
+        };
     }
 
     private static class AttrDefCatalogueCursorFactory extends AbstractRecordCursorFactory {
