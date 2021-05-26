@@ -508,3 +508,7 @@ io.questdb.griffin.engine.functions.math.BitwiseAndIntFunctionFactory
 io.questdb.griffin.engine.functions.math.BitwiseOrIntFunctionFactory
 io.questdb.griffin.engine.functions.math.BitwiseXorIntFunctionFactory
 io.questdb.griffin.engine.functions.math.BitwiseNotIntFunctionFactory
+
+# timezone conversion
+io.questdb.griffin.engine.functions.date.ToTimezoneTimestampFunctionFactory
+io.questdb.griffin.engine.functions.date.ToUTCTimestampFunctionFactory
