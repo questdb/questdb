@@ -52,6 +52,11 @@ public class NamespaceCatalogueFunctionFactory implements FunctionFactory {
                         new NamespaceCatalogueCursor(),
                         false
                 )
-        );
+        ) {
+            @Override
+            public boolean isRuntimeConstant() {
+                return true;
+            }
+        };
     }
 }

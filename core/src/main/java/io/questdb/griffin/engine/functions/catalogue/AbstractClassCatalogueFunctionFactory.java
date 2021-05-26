@@ -72,7 +72,12 @@ public abstract class AbstractClassCatalogueFunctionFactory implements FunctionF
                         configuration,
                         METADATA
                 )
-        );
+        ) {
+            @Override
+            public boolean isRuntimeConstant() {
+                return true;
+            }
+        };
     }
 
     private static class ClassCatalogueCursorFactory extends AbstractRecordCursorFactory {

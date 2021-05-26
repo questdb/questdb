@@ -52,6 +52,11 @@ public class PrefixedNamespaceCatalogueFunctionFactory implements FunctionFactor
                         new NamespaceCatalogueCursor(),
                         false
                 )
-        );
+        ) {
+            @Override
+            public boolean isRuntimeConstant() {
+                return true;
+            }
+        };
     }
 }

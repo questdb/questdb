@@ -79,7 +79,12 @@ public class TableMetadataCursorFactory implements FunctionFactory {
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
         return new CursorFunction(
                 new TableMetadataCursor(configuration.getFilesFacade(), configuration.getRoot())
-        );
+        ) {
+            @Override
+            public boolean isRuntimeConstant() {
+                return true;
+            }
+        };
     }
 
     private static class TableMetadataCursor implements RecordCursorFactory {
