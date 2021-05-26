@@ -57,7 +57,6 @@ public class BitmapIndexFwdReader extends AbstractIndexReader {
 
     @Override
     public RowCursor getCursor(boolean cachedInstance, int key, long minValue, long maxValue) {
-
         if (key >= keyCount) {
             updateKeyCount();
         }

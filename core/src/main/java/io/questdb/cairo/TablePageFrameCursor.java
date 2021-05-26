@@ -38,6 +38,8 @@ public class TablePageFrameCursor implements PageFrameCursor {
     private final LongList columnFrameAddresses = new LongList();
     private final LongList columnFrameLengths = new LongList();
     private final LongList columnTops = new LongList();
+    private final LongList indexAddresses = new LongList();
+    private final LongList indexSizes = new LongList();
     private final ReplicationPageFrame frame = new ReplicationPageFrame();
 
     private TableReader reader;
@@ -146,6 +148,15 @@ public class TablePageFrameCursor implements PageFrameCursor {
                             }
 
                             break;
+                        }
+
+                        case ColumnType.SYMBOL:{
+                            if (reader.getMetadata().isColumnIndexed(columnIndex)) {
+                                BitmapIndexReader indexReader = reader.getBitmapIndexReader(partitionIndex, columnIndex, BitmapIndexReader.DIR_FORWARD);
+                                indexAddresses.extendAndSet(columnIndex, indexReader.getValueMem().getPageAddress(0));
+                                indexSizes.extendAndSet(columnIndex, indexReader.getValueMem().getPageSize(0));
+                            }
+                            // Fall through to default
                         }
 
                         default: {
@@ -277,8 +288,28 @@ public class TablePageFrameCursor implements PageFrameCursor {
     public class ReplicationPageFrame implements PageFrame {
 
         @Override
+        public BitmapIndexReader getBitmapIndexReader(int gropuBySymbolColIndex, int dirForward) {
+            return reader.getBitmapIndexReader(partitionIndex, gropuBySymbolColIndex, dirForward);
+        }
+
+        @Override
+        public long getFirstRowId() {
+            return frameFirstRow;
+        }
+
+        @Override
         public long getFirstTimestamp() {
             return firstTimestamp;
+        }
+
+        @Override
+        public long getIndexAddress(int columnIndex) {
+            return indexAddresses.getQuick(columnIndex);
+        }
+
+        @Override
+        public long getIndexSize(int columnIndex) {
+            return indexSizes.getQuick(columnIndex);
         }
 
         @Override

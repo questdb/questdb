@@ -210,7 +210,8 @@ public class TableReader implements Closeable, SymbolTableSource {
         return timestampFloorMethod.floor(timestamp);
     }
 
-    public BitmapIndexReader getBitmapIndexReader(int partitionIndex, int columnBase, int columnIndex, int direction) {
+    public BitmapIndexReader getBitmapIndexReader(int partitionIndex, int columnIndex, int direction) {
+        int columnBase = getColumnBase(partitionIndex);
         final int index = getPrimaryColumnIndex(columnBase, columnIndex);
         BitmapIndexReader reader = bitmapIndexes.getQuick(direction == BitmapIndexReader.DIR_BACKWARD ? index : index + 1);
         return reader == null ? createBitmapIndexReaderAt(index, columnBase, columnIndex, direction, txFile.getPartitionNameTxn(partitionIndex)) : reader;

@@ -1317,6 +1317,20 @@ public class SqlCodeGenerator implements Mutable {
                         timestampIndex
                 );
 
+
+                boolean allGroupsFirstLast = allGroupsFirstLast(model);
+                if (fillCount == 0 && allGroupsFirstLast && factory.supportPageFrameCursor()) {
+                    return new SampleByFirstLastRecordCursorFactory(
+                            factory,
+                            timestampSampler,
+                            groupByMetadata,
+                            groupByFunctions,
+                            recordFunctions,
+                            timestampIndex,
+                            valueTypes.getColumnCount()
+                    );
+                }
+
                 if (fillCount == 1 && Chars.equalsLowerCaseAscii(sampleByFill.getQuick(0).token, "prev")) {
                     if (keyTypes.getColumnCount() == 0) {
                         return new SampleByFillPrevNotKeyedRecordCursorFactory(
@@ -1443,6 +1457,22 @@ public class SqlCodeGenerator implements Mutable {
         } finally {
             executionContext.popTimestampRequiredFlag();
         }
+    }
+
+    private static boolean allGroupsFirstLast(QueryModel model) {
+        final ObjList<QueryColumn> columns = model.getColumns();
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            final QueryColumn column = columns.getQuick(i);
+            final ExpressionNode node = column.getAst();
+
+            if (node.type != ExpressionNode.LITERAL) {
+                CharSequence token = column.getAst().token;
+                if (!Chars.equalsIgnoreCase(token, "first") && !Chars.equalsIgnoreCase(token, "last") ) {
+                    return false;
+                }
+            }
+        }
+        return true;
     }
 
     private RecordCursorFactory generateSelect(

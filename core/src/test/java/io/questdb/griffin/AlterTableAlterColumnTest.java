@@ -54,7 +54,7 @@ public class AlterTableAlterColumnTest extends AbstractGriffinTest {
                     createX();
                     try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_VERSION)) {
                         try {
-                            reader.getBitmapIndexReader(0, reader.getColumnBase(0), reader.getMetadata().getColumnIndex("ik"), BitmapIndexReader.DIR_FORWARD);
+                            reader.getBitmapIndexReader(0, reader.getMetadata().getColumnIndex("ik"), BitmapIndexReader.DIR_FORWARD);
                             Assert.fail();
                         } catch (CairoException ignored) {
                         }
@@ -63,7 +63,7 @@ public class AlterTableAlterColumnTest extends AbstractGriffinTest {
                     Assert.assertEquals(ALTER, compiler.compile("alter table x alter column ik add index", sqlExecutionContext).getType());
 
                     try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_VERSION)) {
-                        Assert.assertNotNull(reader.getBitmapIndexReader(0, reader.getColumnBase(0), reader.getMetadata().getColumnIndex("ik"), BitmapIndexReader.DIR_FORWARD));
+                        Assert.assertNotNull(reader.getBitmapIndexReader(0, reader.getMetadata().getColumnIndex("ik"), BitmapIndexReader.DIR_FORWARD));
                     }
                 }
         );

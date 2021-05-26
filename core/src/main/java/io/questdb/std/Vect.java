@@ -54,6 +54,19 @@ public final class Vect {
 
     public static native void copyFromTimestampIndex(long pIndex, long indexLo, long indexHi, long pTs);
 
+    public static long findFirstLastInFrame(
+            long pageSize,
+            long timestampBuff,
+            long symbolBuff,
+            long symbolIndexBuff,
+            long symbolIndexSize,
+            long timestampOutBuff,
+            long keyIdsOutBuff,
+            long firstRowIdOutBuff,
+            long lastRowIdOutBuff) {
+        return 0;
+    }
+
     public static native void flattenIndex(long pIndex, long count);
 
     public static native void freeMergedIndex(long pIndex);

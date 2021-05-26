@@ -118,7 +118,7 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
         return cursor;
     }
 
-    private static class TableReaderPageFrameCursor implements PageFrameCursor {
+    public static class TableReaderPageFrameCursor implements PageFrameCursor {
         private final LongList columnPageNextAddress = new LongList();
         private final LongList columnPageAddress = new LongList();
         private final TableReaderPageFrameCursor.TableReaderPageFrame frame = new TableReaderPageFrameCursor.TableReaderPageFrame();
@@ -208,10 +208,24 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
                             }
                         }
                     }
-                    return computeFrame(computePageMin(base));
+                    TableReaderPageFrameCursor.TableReaderPageFrame pageFrame = computeFrame(computePageMin(base));
+                    setIndexAddress(pageFrame);
+                    return pageFrame;
                 }
             }
             return null;
+        }
+
+        private void setIndexAddress(TableReaderPageFrame pageFrame) {
+            RecordMetadata metadata = reader.getMetadata();
+            for (int i = 0; i < columnCount; i++) {
+                int columnIndex = columnIndexes.getQuick(i);
+                if (metadata.isColumnIndexed(columnIndex)) {
+                    BitmapIndexReader indexReader = reader.getBitmapIndexReader(partitionIndex, columnIndex, BitmapIndexReader.DIR_FORWARD);
+                    pageFrame.setIndexAddress(indexReader.getValueMem().getPageAddress(0));
+                    pageFrame.setIndexSize(indexReader.getValueMem().getPageSize(0));
+                }
+            }
         }
 
         @Override
@@ -243,7 +257,7 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
             return this;
         }
 
-        private PageFrame computeFrame(long min) {
+        private TableReaderPageFrameCursor.TableReaderPageFrame computeFrame(long min) {
             for (int i = 0; i < columnCount; i++) {
                 final long top = topsRemaining.getQuick(i);
                 if (top > 0) {
@@ -308,12 +322,25 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
 
         private class TableReaderPageFrame implements PageFrame {
 
+            private long indexAddress;
+            private long indexSize;
+
             @Override
             public long getFirstTimestamp() {
                 if (timestampIndex != -1) {
                     return Unsafe.getUnsafe().getLong(columnPageAddress.getQuick(timestampIndex));
                 }
                 return Long.MIN_VALUE;
+            }
+
+            @Override
+            public long getIndexAddress(int columnIndex) {
+                return indexAddress;
+            }
+
+            @Override
+            public long getIndexSize(int columnIndex) {
+                return indexSize;
             }
 
             @Override
@@ -329,6 +356,14 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
             @Override
             public int getColumnSize(int columnIndex) {
                 return columnSizes.getQuick(columnIndex);
+            }
+
+            public void setIndexAddress(long indexAddress) {
+                this.indexAddress = indexAddress;
+            }
+
+            public void setIndexSize(long indexSize) {
+                this.indexSize = indexSize;
             }
         }
     }

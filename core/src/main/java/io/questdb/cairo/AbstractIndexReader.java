@@ -48,6 +48,14 @@ public abstract class AbstractIndexReader implements BitmapIndexReader {
     protected long unIndexedNullCount;
     private int keyCountIncludingNulls;
 
+    public MappedReadOnlyMemory getValueMem() {
+        return valueMem;
+    }
+
+    public MappedReadOnlyMemory getKeyMem() {
+        return keyMem;
+    }
+
     @Override
     public void close() {
         if (isOpen()) {

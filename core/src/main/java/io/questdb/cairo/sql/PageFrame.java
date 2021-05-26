@@ -24,12 +24,22 @@
 
 package io.questdb.cairo.sql;
 
+import io.questdb.cairo.BitmapIndexReader;
+
 public interface PageFrame {
+
+    BitmapIndexReader getBitmapIndexReader(int gropuBySymbolColIndex, int dirForward);
+
+    long getFirstRowId();
 
     // todo: implement for TablePageFrameCursor
     default long getFirstTimestamp() {
         throw new UnsupportedOperationException();
     }
+
+    long getIndexAddress(int columnIndex);
+
+    long getIndexSize(int columnIndex);
 
     /**
      * Return the address of the start of the page frame or if this page represents
