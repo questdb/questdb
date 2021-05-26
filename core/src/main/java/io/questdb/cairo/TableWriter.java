@@ -2436,7 +2436,7 @@ public class TableWriter implements Closeable {
             // partition actual data "lo" and "hi" (dataLo, dataHi)
             // out of order "lo" and "hi" (indexLo, indexHi)
 
-            final long srcOooMax;
+            long srcOooMax;
             final long o3TimestampMin = getTimestampIndexValue(sortedTimestampsAddr, 0);
             if (o3TimestampMin < Timestamps.AD_01) {
                 throw CairoException.instance(0).put("timestamps before 0001-01-01 are not allowed for O3");
@@ -2484,7 +2484,28 @@ public class TableWriter implements Closeable {
                 return true;
             }
 
-            final long o3TimestampMax = getTimestampIndexValue(sortedTimestampsAddr, srcOooMax - 1);
+            long o3TimestampMax = getTimestampIndexValue(sortedTimestampsAddr, srcOooMax - 1);
+            long srcOooMaxAdjust = 0;
+            if (o3TimestampMax == Numbers.LONG_NaN) {
+                LOG.error().$("o3 nulls in timestamp [table=").$(tableName) .I$();
+                long prevSrcO3Max = srcOooMax;
+                // there were nulls in timestamp
+                // Radix sort interprets timestamps as unsigned long long, this means NULL timestamp
+                // will always end up at bottom of O3 segment. This makes it impossible for NULLs
+                // to be inside data segment, that is outside of the lag. When we hit current scenario
+                // this means we're committing entire O3 segment.
+                while (o3TimestampMax == Numbers.LONG_NaN && --srcOooMax > 1) {
+                    o3TimestampMax = getTimestampIndexValue(sortedTimestampsAddr, srcOooMax - 1);
+                }
+                // we need to adjust size of data that we shift by number of NULL timestamps we removed
+                // we make the shift code think we committed this much
+                srcOooMaxAdjust = prevSrcO3Max - srcOooMax;
+
+                if (srcOooMax == 0) {
+                    o3RowCount = 0;
+                    return true;
+                }
+            }
             // move uncommitted is liable to change max timestamp
             // however we need to identify last partition before max timestamp skips to NULL for example
             final long maxTimestamp = txFile.getMaxTimestamp();
@@ -2682,7 +2703,7 @@ public class TableWriter implements Closeable {
             }
 
             if (o3LagRowCount > 0) {
-                o3ShiftLagRowsUp(timestampIndex, o3LagRowCount, srcOooMax);
+                o3ShiftLagRowsUp(timestampIndex, o3LagRowCount, srcOooMax + srcOooMaxAdjust);
             }
         } finally {
             if (denseIndexers.size() == 0) {
