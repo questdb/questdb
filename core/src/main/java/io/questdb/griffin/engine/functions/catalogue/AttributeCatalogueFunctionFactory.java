@@ -60,7 +60,12 @@ public class AttributeCatalogueFunctionFactory implements FunctionFactory {
                         configuration,
                         METADATA
                 )
-        );
+        ) {
+            @Override
+            public boolean isRuntimeConstant() {
+                return true;
+            }
+        };
     }
 
     private static class AttributeCatalogueCursorFactory extends AbstractRecordCursorFactory {

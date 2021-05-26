@@ -54,7 +54,12 @@ public class AttrDefCatalogueFunctionFactory implements FunctionFactory {
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         return new CursorFunction(
                 new AttrDefCatalogueCursorFactory(configuration, METADATA)
-        );
+        ) {
+            @Override
+            public boolean isRuntimeConstant() {
+                return true;
+            }
+        };
     }
 
     private static class AttrDefCatalogueCursorFactory extends AbstractRecordCursorFactory {
