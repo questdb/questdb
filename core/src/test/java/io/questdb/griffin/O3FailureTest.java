@@ -1057,7 +1057,7 @@ public class O3FailureTest extends AbstractO3Test {
 //                        " rnd_symbol('msft','ibm', 'googl') sym," +
                         " timestamp_sequence(500000000000L,1000000L) ts," +
                         " cast(x as short) l" +
-                        " from long_sequence(500)" +
+                        " from long_sequence(1)" +
                         ") timestamp (ts) partition by DAY",
                 sqlExecutionContext
         );
@@ -1069,9 +1069,9 @@ public class O3FailureTest extends AbstractO3Test {
                         " cast(x as int) i2, " +
 //                        " rnd_symbol('msft','ibm', 'googl') sym," +
 //                        " CAST(NULL as TIMESTAMP) ts, " +
-                        " case WHEN x < 500 THEN CAST(x as TIMESTAMP) ELSE CAST(NULL as TIMESTAMP) END ts," +
+                        " case WHEN x < 2 THEN CAST(x as TIMESTAMP) ELSE CAST(NULL as TIMESTAMP) END ts," +
                         " cast(x + 1000 as short)  l" +
-                        " from long_sequence(1000)" +
+                        " from long_sequence(2)" +
                         ")",
                 sqlExecutionContext
         );
@@ -1095,8 +1095,17 @@ public class O3FailureTest extends AbstractO3Test {
                     "insert into x select * from top where ts >= 0"
             );
 //        } catch (AssertionError e) {
-//            int i = 0;
+////            int i = 0;
 //        }
+//        printSqlResult(compiler, sqlExecutionContext, "y order by ts");
+//        TestUtils.printSql(
+//                compiler,
+//                sqlExecutionContext,
+//                "x",
+//                sink2
+//        );
+//        TestUtils.assertEquals(sink, sink2);
+
 //        assertIndexConsistency(compiler, sqlExecutionContext);
     }
 
