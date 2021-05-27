@@ -24,24 +24,8 @@
 
 package io.questdb.cutlass.line.tcp;
 
-import java.io.Closeable;
-import java.util.Arrays;
-import java.util.concurrent.locks.ReadWriteLock;
-
-import org.jetbrains.annotations.NotNull;
-
 import io.questdb.Telemetry;
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.CairoException;
-import io.questdb.cairo.CairoSecurityContext;
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.EntryUnavailableException;
-import io.questdb.cairo.TableReader;
-import io.questdb.cairo.TableReaderMetadata;
-import io.questdb.cairo.TableStructure;
-import io.questdb.cairo.TableUtils;
-import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.*;
 import io.questdb.cairo.TableWriter.Row;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.SymbolTable;
@@ -50,30 +34,22 @@ import io.questdb.cutlass.line.LineProtoTimestampAdapter;
 import io.questdb.cutlass.line.tcp.NewLineProtoParser.ProtoEntity;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.mp.FanOut;
-import io.questdb.mp.Job;
-import io.questdb.mp.MPSequence;
-import io.questdb.mp.RingQueue;
-import io.questdb.mp.SCSequence;
-import io.questdb.mp.Sequence;
-import io.questdb.mp.WorkerPool;
+import io.questdb.mp.*;
 import io.questdb.network.IODispatcher;
 import io.questdb.network.IOOperation;
 import io.questdb.network.IORequestProcessor;
-import io.questdb.std.CharSequenceIntHashMap;
-import io.questdb.std.CharSequenceObjHashMap;
-import io.questdb.std.Chars;
-import io.questdb.std.Misc;
-import io.questdb.std.ObjIntHashMap;
-import io.questdb.std.ObjList;
-import io.questdb.std.Unsafe;
-import io.questdb.std.Vect;
+import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.DirectCharSink;
 import io.questdb.std.str.FloatingDirectCharSink;
 import io.questdb.std.str.Path;
 import io.questdb.tasks.TelemetryTask;
+import org.jetbrains.annotations.NotNull;
+
+import java.io.Closeable;
+import java.util.Arrays;
+import java.util.concurrent.locks.ReadWriteLock;
 
 class LineTcpMeasurementScheduler implements Closeable {
     private static final Log LOG = LogFactory.getLog(LineTcpMeasurementScheduler.class);
@@ -215,8 +191,13 @@ class LineTcpMeasurementScheduler implements Closeable {
         Arrays.fill(loadByThread, 0);
         ObjList<CharSequence> tableNames = tableUpdateDetailsByTableName.keys();
         for (int n = 0, sz = tableNames.size(); n < sz; n++) {
-            TableUpdateDetails stats = tableUpdateDetailsByTableName.get(tableNames.get(n));
-            loadByThread[stats.writerThreadId] += stats.nUpdates;
+            final CharSequence tableName = tableNames.getQuick(n);
+            final TableUpdateDetails stats = tableUpdateDetailsByTableName.get(tableName);
+            if (stats != null) {
+                loadByThread[stats.writerThreadId] += stats.nUpdates;
+            } else {
+                LOG.error().$("could not find static for table [name=").$(tableName).I$();
+            }
         }
     }
 
@@ -366,7 +347,7 @@ class LineTcpMeasurementScheduler implements Closeable {
 
                 keyIndex = idleTableUpdateDetailsByTableName.keyIndex(tableName);
                 if (keyIndex < 0) {
-                    LOG.info().$("idle table going active [tableName=").$(tableName).$(']').$();
+                    LOG.info().$("idle table going active [tableName=").$(tableName).I$();
                     tableUpdateDetails = idleTableUpdateDetailsByTableName.valueAt(keyIndex);
                     idleTableUpdateDetailsByTableName.removeAt(keyIndex);
                     tableUpdateDetailsByTableName.put(tableUpdateDetails.tableName, tableUpdateDetails);
@@ -1117,8 +1098,11 @@ class LineTcpMeasurementScheduler implements Closeable {
         public void addTableUpdateDetails(TableUpdateDetails tableUpdateDetails) {
             localTableUpdateDetailsByTableName.put(tableUpdateDetails.tableName, tableUpdateDetails);
             tableUpdateDetails.nNetworkIoWorkers++;
-            LOG.info().$("network IO thread using table [workerId=").$(workerId).$(", tableName=").$(tableUpdateDetails.tableName).$(", nNetworkIoWorkers=")
-                    .$(tableUpdateDetails.nNetworkIoWorkers).$(']').$();
+            LOG.info()
+                    .$("network IO thread using table [workerId=").$(workerId)
+                    .$(", tableName=").$(tableUpdateDetails.tableName)
+                    .$(", nNetworkIoWorkers=").$(tableUpdateDetails.nNetworkIoWorkers)
+                    .$(']').$();
         }
 
         @Override
@@ -1181,9 +1165,11 @@ class LineTcpMeasurementScheduler implements Closeable {
                                 LineTcpMeasurementEvent event = queue.get(seq);
                                 event.createReleaseWriterEvent(tableUpdateDetails);
                                 removeTableUpdateDetails(tableUpdateDetails);
-                                tableUpdateDetailsByTableName.remove(tableUpdateDetails.tableName);
-                                idleTableUpdateDetailsByTableName.put(tableUpdateDetails.tableName, tableUpdateDetails);
+                                final CharSequence tableName = tableUpdateDetails.tableName;
+                                tableUpdateDetailsByTableName.remove(tableName);
+                                idleTableUpdateDetailsByTableName.put(tableName, tableUpdateDetails);
                                 pubSeq.done(seq);
+                                LOG.info().$("active table going idle [tableName=").$(tableName).I$();
                             }
                             return true;
                         } else {
