@@ -1034,6 +1034,118 @@ public class O3FailureTest extends AbstractO3Test {
         executeWithPool(0, O3FailureTest::testTwoRowsConsistency0);
     }
 
+    @Test
+    public void testInsertAsSelectNulls() throws Exception {
+        executeWithPool(0, O3FailureTest::testInsertAsSelectNulls0);
+    }
+
+    @Test
+    public void testInsertAsSelectNegativeTimestamp() throws Exception {
+        executeWithPool(0, O3FailureTest::testInsertAsSelectNegativeTimestamp0);
+    }
+
+    private static void testInsertAsSelectNulls0(
+            CairoEngine engine,
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
+        compiler.compile(
+                "create table x as (" +
+                        "select" +
+                        " cast(x as int) i, " +
+                        " cast(x as int) i2, " +
+//                        " rnd_symbol('msft','ibm', 'googl') sym," +
+                        " timestamp_sequence(500000000000L,1000000L) ts," +
+                        " cast(x as short) l" +
+                        " from long_sequence(500)" +
+                        ") timestamp (ts) partition by DAY",
+                sqlExecutionContext
+        );
+
+        compiler.compile(
+                "create table top as (" +
+                        "select" +
+                        " cast(x as int) i," +
+                        " cast(x as int) i2, " +
+//                        " rnd_symbol('msft','ibm', 'googl') sym," +
+//                        " CAST(NULL as TIMESTAMP) ts, " +
+                        " case WHEN x < 500 THEN CAST(x as TIMESTAMP) ELSE CAST(NULL as TIMESTAMP) END ts," +
+                        " cast(x + 1000 as short)  l" +
+                        " from long_sequence(1000)" +
+                        ")",
+                sqlExecutionContext
+        );
+
+//        try {
+//            compiler.compile("insert into x select * from top", sqlExecutionContext);
+//            Assert.fail();
+//        } catch (CairoException ignored) {
+//            Chars.contains(ignored.getFlyweightMessage(), "timestamps before 1970-01-01");
+//        }
+
+//        engine.releaseAllReaders();
+//        engine.releaseAllWriters();
+
+//        try {
+            assertO3DataConsistency(
+                    engine,
+                    compiler,
+                    sqlExecutionContext,
+                    "create table y as (select * from top where ts >= 0 union all select * from x)",
+                    "insert into x select * from top where ts >= 0"
+            );
+//        } catch (AssertionError e) {
+//            int i = 0;
+//        }
+//        assertIndexConsistency(compiler, sqlExecutionContext);
+    }
+
+    private static void testInsertAsSelectNegativeTimestamp0(
+            CairoEngine engine,
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
+        compiler.compile(
+                "create table x as (" +
+                        "select" +
+                        " cast(x as int) i, " +
+                        " rnd_symbol('msft','ibm', 'googl') sym," +
+                        " timestamp_sequence(500000000000L,1000000L) ts," +
+                        " rnd_byte(2,50) l" +
+                        " from long_sequence(500)" +
+                        "), index(sym) timestamp (ts) partition by DAY",
+                sqlExecutionContext
+        );
+
+        compiler.compile(
+                "create table top as (" +
+                        "select" +
+                        " cast(x as int) i," +
+                        " rnd_symbol('msft','ibm', 'googl') sym," +
+                        " timestamp_sequence(-5000L,10L) ts,\"" +
+                        " rnd_byte(2,50) l" +
+                        " from long_sequence(1000)" +
+                        ")",
+                sqlExecutionContext
+        );
+
+        try {
+            compiler.compile("insert into x select * from top", sqlExecutionContext);
+            Assert.fail();
+        } catch (CairoException ignored) {
+            Chars.contains(ignored.getFlyweightMessage(), "timestamps before 1970-01-01");
+        }
+
+        assertO3DataConsistency(
+                engine,
+                compiler,
+                sqlExecutionContext,
+                "create table y as (select * from x union all select * from top where ts >= 0)",
+                "insert into x select * from top where ts >= 0"
+        );
+        assertIndexConsistency(compiler, sqlExecutionContext);
+    }
+
     private static void testPartitionedOOPrefixesExistingPartitionsFailRetry0(
             CairoEngine engine,
             SqlCompiler compiler,
