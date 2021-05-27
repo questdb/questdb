@@ -581,7 +581,9 @@ class LineTcpMeasurementScheduler implements Closeable {
                         long nameHi = bufPos + colNameLen;
                         job.charSink.clear();
                         if (!Chars.utf8Decode(nameLo, nameHi, job.charSink)) {
-                            throw CairoException.instance(0).put("invalid UTF8 in column name ").put(job.floatingCharSink.asCharSequence(nameLo, nameHi));
+                            throw CairoException.instance(0)
+                                    .put("invalid UTF8 in column name ")
+                                    .put(job.floatingCharSink.asCharSequence(nameLo, nameHi));
                         }
                         bufPos = nameHi;
                         entityType = Unsafe.getUnsafe().getByte(bufPos);
@@ -595,8 +597,10 @@ class LineTcpMeasurementScheduler implements Closeable {
                             if (TableUtils.isValidInfluxColumnName(job.charSink)) {
                                 writer.addColumn(job.charSink, colType);
                             } else {
-                                throw CairoException.instance(0).put("invalid column name [table=").put(writer.getTableName())
-                                        .put(", columnName=").put(job.charSink).put(']');
+                                throw CairoException.instance(0)
+                                        .put("invalid column name [table=").put(writer.getTableName())
+                                        .put(", columnName=").put(job.charSink)
+                                        .put(']');
                             }
                             // Reset to beginning of entities
                             bufPos = firstEntityBufPos;
@@ -636,21 +640,30 @@ class LineTcpMeasurementScheduler implements Closeable {
 
                                 case ColumnType.INT:
                                     if (v < Integer.MIN_VALUE || v > Integer.MAX_VALUE) {
-                                        throw CairoException.instance(0).put("line protocol integer is out of int bounds [columnIndex=").put(colIndex).put(", v=").put(v).put(']');
+                                        throw CairoException.instance(0)
+                                                .put("line protocol integer is out of int bounds [columnIndex=").put(colIndex)
+                                                .put(", v=").put(v)
+                                                .put(']');
                                     }
                                     row.putInt(colIndex, (int) v);
                                     break;
 
                                 case ColumnType.SHORT:
                                     if (v < Short.MIN_VALUE || v > Short.MAX_VALUE) {
-                                        throw CairoException.instance(0).put("line protocol integer is out of short bounds [columnIndex=").put(colIndex).put(", v=").put(v).put(']');
+                                        throw CairoException.instance(0)
+                                                .put("line protocol integer is out of short bounds [columnIndex=").put(colIndex)
+                                                .put(", v=").put(v)
+                                                .put(']');
                                     }
                                     row.putShort(colIndex, (short) v);
                                     break;
 
                                 case ColumnType.BYTE:
                                     if (v < Byte.MIN_VALUE || v > Byte.MAX_VALUE) {
-                                        throw CairoException.instance(0).put("line protocol integer is out of byte bounds [columnIndex=").put(colIndex).put(", v=").put(v).put(']');
+                                        throw CairoException.instance(0)
+                                                .put("line protocol integer is out of byte bounds [columnIndex=").put(colIndex)
+                                                .put(", v=").put(v)
+                                                .put(']');
                                     }
                                     row.putByte(colIndex, (byte) v);
                                     break;
@@ -664,7 +677,10 @@ class LineTcpMeasurementScheduler implements Closeable {
                                     break;
 
                                 default:
-                                    throw CairoException.instance(0).put("expected a line protocol integer [entityType=").put(entityType).put(']');
+                                    throw CairoException.instance(0)
+                                            .put("cast error for line protocol integer [columnIndex=").put(colIndex)
+                                            .put(", columnType=").put(ColumnType.nameOf(colType))
+                                            .put(']');
                             }
                             break;
                         }
@@ -683,7 +699,10 @@ class LineTcpMeasurementScheduler implements Closeable {
                                     break;
 
                                 default:
-                                    throw CairoException.instance(0).put("expected a line protocol float [entityType=").put(entityType).put(']');
+                                    throw CairoException.instance(0)
+                                            .put("cast error for line protocol float [columnIndex=").put(colIndex)
+                                            .put(", columnType=").put(ColumnType.nameOf(colType))
+                                            .put(']');
                             }
                             break;
                         }
@@ -705,8 +724,10 @@ class LineTcpMeasurementScheduler implements Closeable {
                             if (colType == ColumnType.STRING) {
                                 row.putStr(colIndex, job.floatingCharSink);
                             } else {
-                                throw CairoException.instance(0).put("line protocol STRING cannot be inserted into column type ").put(ColumnType.nameOf(colType)).put(") [entityType=")
-                                        .put(entityType).put(']');
+                                throw CairoException.instance(0)
+                                        .put("cast error for line protocol string [columnIndex=").put(colIndex)
+                                        .put(", columnType=").put(ColumnType.nameOf(colType))
+                                        .put(']');
                             }
                             break;
                         }
