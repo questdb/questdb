@@ -220,9 +220,7 @@ public class LineTcpServerTest extends AbstractCairoTest {
 
             StringBuilder expectedSB = new StringBuilder(header);
             for(int l = 0; l < lines.length; l++) {
-                for (int it = 0; it < iterations + 2; it++) {
-                    expectedSB.append(lines[l]);
-                }
+                expectedSB.append(String.valueOf(lines[l]).repeat(iterations + 2));
             }
             String expected2 = expectedSB.toString();
 
@@ -428,10 +426,12 @@ public class LineTcpServerTest extends AbstractCairoTest {
             path = new Path(4096);
             try {
                 LineTcpServer tcpServer = LineTcpServer.create(lineConfiguration, sharedWorkerPool, LOG, engine);
+                sharedWorkerPool.assignCleaner(Path.CLEANER);
                 sharedWorkerPool.start(LOG);
                 r.run();
                 sharedWorkerPool.halt();
                 Misc.free(tcpServer);
+                Path.clearThreadLocals();
             } finally {
                 Misc.free(path);
             }
