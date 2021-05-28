@@ -225,6 +225,59 @@ public class LineTcpServerTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSomeWritersReleased() throws Exception {
+        runInContext(() -> {
+            String lineData = "weather,location=us-midwest temperature=82 1465839830100400200\n" +
+                    "weather,location=us-midwest temperature=83 1465839830100500200\n" +
+                    "weather,location=us-eastcoast temperature=81 1465839830101400200\n";
+
+            send(lineData, "weather");
+
+            int threadCount = 100;
+            for(int i = 0; i < threadCount; i++) {
+                final String threadTable = "weather"+i;
+                final String lineDataThread = lineData.replace("weather", threadTable);
+                send(lineDataThread, threadTable, false);
+                new Thread(() -> {
+                    for(int n = 0; n < 10; n++) {
+                        send(lineDataThread, threadTable, false);
+                        try {
+                            Thread.sleep(minIdleMsBeforeWriterRelease - 50);
+                        } catch (InterruptedException e) {
+                            e.printStackTrace();
+                        }
+                    }
+                    send(lineDataThread, threadTable);
+                });
+            }
+
+            send(lineData, "weather");
+
+            try (TableWriter w = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "weather")) {
+                w.truncate();
+            }
+
+            lineData = "weather,location=us-midwest temperature=85 1465839830102300200\n" +
+                    "weather,location=us-eastcoast temperature=89 1465839830102400200\n" +
+                    "weather,location=us-westcost temperature=82 1465839830102500200\n";
+            send(lineData, "weather");
+
+            String expected = "location\ttemperature\ttimestamp\n" +
+                    "us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\n" +
+                    "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\n" +
+                    "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\n";
+            assertTable(expected, "weather");
+
+
+            for(int i = 0; i < threadCount; i++) {
+                final String threadTable = "weather"+i;
+                final String lineDataThread = lineData.replace("weather", threadTable);
+                send(lineDataThread, threadTable);
+            }
+        });
+    }
+
+    @Test
     public void testWriterRelease3() throws Exception {
         runInContext(() -> {
             String lineData = "weather,location=us-midwest temperature=82 1465839830100400200\n" +
@@ -362,13 +415,15 @@ public class LineTcpServerTest extends AbstractCairoTest {
         });
     }
 
-    private void send(String lineData, String tableName) {
+    private void send(String lineData, String tableName, boolean wait) {
         SOCountDownLatch releaseLatch = new SOCountDownLatch(1);
-        engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
-            if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN && Chars.equals(tableName, name)) {
-                releaseLatch.countDown();
-            }
-        });
+        if (wait) {
+            engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
+                if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN && Chars.equals(tableName, name)) {
+                    releaseLatch.countDown();
+                }
+            });
+        }
 
         try {
 
@@ -388,10 +443,19 @@ public class LineTcpServerTest extends AbstractCairoTest {
             Net.close(fd);
             Net.freeSockAddr(sockaddr);
             Assert.assertEquals(lineDataBytes.length, rc);
-            releaseLatch.await();
+
+            if (wait) {
+                releaseLatch.await();
+            }
         } finally {
-            engine.setPoolListener(null);
+            if (wait) {
+                engine.setPoolListener(null);
+            }
         }
+    }
+
+    private void send(String lineData, String tableName) {
+        send(lineData, tableName, true);
     }
 
     private void test(

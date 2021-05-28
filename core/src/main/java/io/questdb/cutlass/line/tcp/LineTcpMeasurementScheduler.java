@@ -206,6 +206,12 @@ class LineTcpMeasurementScheduler implements Closeable {
             }
         }
         tableUpdateDetails = new TableUpdateDetails(tableName, threadId, netIoJobs);
+
+        if (tableUpdateDetailsByTableName.keys().size() > 0) {
+            int i = 0;
+        }
+        assert tableUpdateDetailsByTableName.keyIndex(tableName) == keyIndex;
+
         tableUpdateDetailsByTableName.putAt(keyIndex, tableName, tableUpdateDetails);
         LOG.info().$("assigned ").$(tableName).$(" to thread ").$(threadId).$();
         return tableUpdateDetails;
