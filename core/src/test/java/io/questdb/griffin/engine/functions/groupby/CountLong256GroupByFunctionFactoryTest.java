@@ -77,7 +77,7 @@ public class CountLong256GroupByFunctionFactoryTest extends AbstractGriffinTest 
         assertQuery(
                 expected,
                 "select count_distinct(s) from x",
-                "create table x as (select * from (select rnd_long256(6) s,  timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts)) PARTITION BY YEAR",
+                "create table x as (select * from (select rnd_long256(6) s,  timestamp_sequence(10, 100000) ts from long_sequence(100)) timestamp(ts)) PARTITION BY YEAR",
                 null,
                 false,
                 true,
@@ -85,7 +85,7 @@ public class CountLong256GroupByFunctionFactoryTest extends AbstractGriffinTest 
         );
 
         executeInsert("insert into x values(cast(null as LONG256), '2021-05-21')");
-        executeInsert("insert into x values(cast(null as LONG256), '1969-01-01')");
+        executeInsert("insert into x values(cast(null as LONG256), '1970-01-01')");
         assertSql("select count_distinct(s) from x", expected);
     }
 

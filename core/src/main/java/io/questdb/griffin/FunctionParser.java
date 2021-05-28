@@ -167,6 +167,10 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
         return functionFactoryCache.isGroupBy(token);
     }
 
+    public boolean isRuntimeConstant(CharSequence token) {
+        return functionFactoryCache.isRuntimeConstant(token);
+    }
+
     public boolean isValidNoArgFunction(ExpressionNode node) {
         final ObjList<FunctionFactoryDescriptor> overload = functionFactoryCache.getOverloadList(node.token);
         if (overload == null) {

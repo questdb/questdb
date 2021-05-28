@@ -55,6 +55,11 @@ public abstract class AbstractEmptyCatalogueFunctionFactory implements FunctionF
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new CursorFunction(new EmptyTableRecordCursorFactory(metadata));
+        return new CursorFunction(new EmptyTableRecordCursorFactory(metadata)) {
+            @Override
+            public boolean isRuntimeConstant() {
+                return true;
+            }
+        };
     }
 }

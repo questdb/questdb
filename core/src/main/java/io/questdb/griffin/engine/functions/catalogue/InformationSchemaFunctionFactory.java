@@ -36,6 +36,11 @@ public class InformationSchemaFunctionFactory extends AbstractEmptyCatalogueFunc
         super("information_schema._pg_expandarray(V)", METADATA);
     }
 
+    @Override
+    public boolean isRuntimeConstant() {
+        return true;
+    }
+
     static {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
         metadata.add(new TableColumnMetadata("x", ColumnType.INT, null));

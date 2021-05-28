@@ -24,22 +24,46 @@
 
 package io.questdb.griffin;
 
-import io.questdb.cairo.*;
-import io.questdb.cairo.pool.ex.EntryLockedException;
-import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.griffin.model.*;
-import io.questdb.std.*;
-import io.questdb.std.str.FlyweightCharSequence;
-import io.questdb.std.str.Path;
-import io.questdb.std.str.StringSink;
-import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
+import static io.questdb.griffin.model.ExpressionNode.FUNCTION;
+import static io.questdb.griffin.model.ExpressionNode.LITERAL;
 
 import java.util.ArrayDeque;
 
-import static io.questdb.griffin.model.ExpressionNode.FUNCTION;
-import static io.questdb.griffin.model.ExpressionNode.LITERAL;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
+
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.pool.ex.EntryLockedException;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.model.AnalyticColumn;
+import io.questdb.griffin.model.ExpressionNode;
+import io.questdb.griffin.model.JoinContext;
+import io.questdb.griffin.model.QueryColumn;
+import io.questdb.griffin.model.QueryModel;
+import io.questdb.std.CharSequenceHashSet;
+import io.questdb.std.CharSequenceIntHashMap;
+import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.std.Chars;
+import io.questdb.std.IntHashSet;
+import io.questdb.std.IntList;
+import io.questdb.std.IntPriorityQueue;
+import io.questdb.std.LowerCaseCharSequenceIntHashMap;
+import io.questdb.std.LowerCaseCharSequenceObjHashMap;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.ObjList;
+import io.questdb.std.ObjectPool;
+import io.questdb.std.Transient;
+import io.questdb.std.str.FlyweightCharSequence;
+import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 
 class SqlOptimiser {
 
@@ -1133,6 +1157,33 @@ class SqlOptimiser {
             }
         }
         return replaced;
+    }
+
+    private boolean checkForAggregates(ExpressionNode node) {
+        sqlNodeStack.clear();
+        while (node != null) {
+            if (node.rhs != null) {
+                if (functionParser.isGroupBy(node.rhs.token)) {
+                    return true;
+                }
+                this.sqlNodeStack.push(node.rhs);
+            }
+
+            if (node.lhs != null) {
+                if (functionParser.isGroupBy(node.lhs.token)) {
+                    return true;
+                }
+                node = node.lhs;
+            } else {
+                if (!sqlNodeStack.isEmpty()) {
+                    node = this.sqlNodeStack.poll();
+                } else {
+                    node = null;
+                }
+            }
+        }
+
+        return false;
     }
 
     private void emitColumnLiteralsTopDown(ObjList<QueryColumn> columns, QueryModel target) {
@@ -2739,7 +2790,7 @@ class SqlOptimiser {
         boolean useAnalyticModel = false;
         boolean useGroupByModel = false;
         boolean useOuterModel = false;
-        boolean useDistinctModel = model.isDistinct();
+        final boolean useDistinctModel = model.isDistinct();
 
         final ObjList<QueryColumn> columns = model.getBottomUpColumns();
         final QueryModel baseModel = model.getNestedModel();
@@ -2758,8 +2809,8 @@ class SqlOptimiser {
 
         // cursor model should have all columns that base model has to properly resolve duplicate names
         cursorModel.getAliasToColumnMap().putAll(baseModel.getAliasToColumnMap());
-
         // create virtual columns from select list
+
         for (int i = 0, k = columns.size(); i < k; i++) {
             QueryColumn qc = columns.getQuick(i);
             final boolean analytic = qc instanceof AnalyticColumn;
@@ -2768,6 +2819,36 @@ class SqlOptimiser {
             if (analytic && qc.getAst().type != ExpressionNode.FUNCTION) {
                 throw SqlException.$(qc.getAst().position, "Analytic function expected");
             }
+
+            if (qc.getAst().type == ExpressionNode.BIND_VARIABLE) {
+                useInnerModel = true;
+            } else if (qc.getAst().type != LITERAL) {
+                if (qc.getAst().type == ExpressionNode.FUNCTION) {
+                    if (analytic) {
+                        useAnalyticModel = true;
+                        continue;
+                    } else if (functionParser.isGroupBy(qc.getAst().token)) {
+                        useGroupByModel = true;
+                        continue;
+                    } else if (functionParser.isCursor(qc.getAst().token)) {
+                        continue;
+                    }
+                }
+                if (checkForAggregates(qc.getAst())) {
+                    useGroupByModel = true;
+                    useOuterModel = true;
+                } else {
+                    useInnerModel = true;
+                }
+            }
+        }
+
+        boolean outerVirtualIsSelectChoose = true;
+
+        // create virtual columns from select list
+        for (int i = 0, k = columns.size(); i < k; i++) {
+            QueryColumn qc = columns.getQuick(i);
+            final boolean analytic = qc instanceof AnalyticColumn;
 
             if (qc.getAst().type == LITERAL) {
                 if (Chars.endsWith(qc.getAst().token, '*')) {
@@ -2809,7 +2890,6 @@ class SqlOptimiser {
                         outerVirtualModel,
                         distinctModel
                 );
-                useInnerModel = true;
             } else {
                 // when column is direct call to aggregation function, such as
                 // select sum(x) ...
@@ -2833,7 +2913,6 @@ class SqlOptimiser {
                         final AnalyticColumn ac = (AnalyticColumn) qc;
                         replaceLiteralList(innerVirtualModel, translatingModel, baseModel, ac.getPartitionBy());
                         replaceLiteralList(innerVirtualModel, translatingModel, baseModel, ac.getOrderBy());
-                        useAnalyticModel = true;
                         continue;
                     } else if (functionParser.isGroupBy(qc.getAst().token)) {
                         qc = ensureAliasUniqueness(groupByModel, qc);
@@ -2846,7 +2925,6 @@ class SqlOptimiser {
                         distinctModel.addBottomUpColumn(ref);
                         // pull out literals
                         emitLiterals(qc.getAst(), translatingModel, innerVirtualModel, baseModel, false);
-                        useGroupByModel = true;
                         continue;
                     } else if (functionParser.isCursor(qc.getAst().token)) {
                         addCursorFunctionAsCrossJoin(
@@ -2876,13 +2954,19 @@ class SqlOptimiser {
                     for (int j = beforeSplit, n = groupByModel.getBottomUpColumns().size(); j < n; j++) {
                         emitLiterals(groupByModel.getBottomUpColumns().getQuick(i).getAst(), translatingModel, innerVirtualModel, baseModel, false);
                     }
-
-                    useGroupByModel = true;
-                    useOuterModel = true;
                 } else {
                     if (emitCursors(qc.getAst(), cursorModel, null, translatingModel, baseModel, sqlExecutionContext)) {
                         qc = ensureAliasUniqueness(innerVirtualModel, qc);
                     }
+                    if (useGroupByModel) {
+                        if (isEffectivelyConstantExpression(qc.getAst())) {
+                            outerVirtualIsSelectChoose = false;
+                            outerVirtualModel.addBottomUpColumn(qc);
+                            distinctModel.addBottomUpColumn(qc);
+                            continue;
+                        }
+                    }
+
                     addFunction(
                             qc,
                             baseModel,
@@ -2891,9 +2975,7 @@ class SqlOptimiser {
                             analyticModel,
                             groupByModel,
                             outerVirtualModel,
-                            distinctModel
-                    );
-                    useInnerModel = true;
+                            distinctModel);
                 }
             }
         }
@@ -2912,6 +2994,18 @@ class SqlOptimiser {
                     innerVirtualModel,
                     analyticModel
             );
+        }
+
+        if (useInnerModel) {
+            final ObjList<QueryColumn> innerColumns = innerVirtualModel.getBottomUpColumns();
+            useInnerModel = false;
+            for (int i = 0, k = innerColumns.size(); i < k; i++) {
+                QueryColumn qc = innerColumns.getQuick(i);
+                if (qc.getAst().type != LITERAL) {
+                    useInnerModel = true;
+                    break;
+                }
+            }
         }
 
         // check if translating model is redundant, e.g.
@@ -2972,8 +3066,7 @@ class SqlOptimiser {
             outerVirtualModel.setNestedModel(root);
             outerVirtualModel.moveLimitFrom(limitSource);
             outerVirtualModel.moveAliasFrom(limitSource);
-            // in this case outer model should be of "choose" type
-            outerVirtualModel.setSelectModelType(QueryModel.SELECT_MODEL_CHOOSE);
+            outerVirtualModel.setSelectModelType(outerVirtualIsSelectChoose ? QueryModel.SELECT_MODEL_CHOOSE : QueryModel.SELECT_MODEL_VIRTUAL);
             root = outerVirtualModel;
         }
 
@@ -2992,6 +3085,28 @@ class SqlOptimiser {
             root.setModelPosition(model.getModelPosition());
         }
         return root;
+    }
+
+    private boolean isEffectivelyConstantExpression(ExpressionNode node) {
+        sqlNodeStack.clear();
+        while (null != node) {
+            if (node.type == ExpressionNode.OPERATION) {
+                sqlNodeStack.push(node.rhs);
+                node = node.lhs;
+            }
+
+            if (!(node.type == ExpressionNode.CONSTANT || (node.type == ExpressionNode.FUNCTION && functionParser.isRuntimeConstant(node.token)))) {
+                return false;
+            }
+
+            if (sqlNodeStack.isEmpty()) {
+                node = null;
+            } else {
+                node = sqlNodeStack.poll();
+            }
+        }
+
+        return true;
     }
 
     private CharSequence setAndGetModelAlias(QueryModel model) {

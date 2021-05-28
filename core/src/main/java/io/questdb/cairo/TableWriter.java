@@ -1211,7 +1211,7 @@ public class TableWriter implements Closeable {
      * performance of some applications. UDP receivers use this in order to avoid initial receive buffer contention.
      */
     public void warmUp() {
-        Row r = newRow(Math.max(Timestamps.AD_01, txFile.getMaxTimestamp()));
+        Row r = newRow(Math.max(Timestamps.O3_MIN_TS, txFile.getMaxTimestamp()));
         try {
             for (int i = 0; i < columnCount; i++) {
                 r.putByte(i, (byte) 0);
@@ -2423,6 +2423,7 @@ public class TableWriter implements Closeable {
             // to this.maxTimestamp, which isn't truncated yet. So we need to truncate it first
             LOG.info().$("sorting o3 [table=").$(tableName).$(']').$();
             final long sortedTimestampsAddr = o3TimestampMem.addressOf(0);
+
             // ensure there is enough size
             if (o3RowCount > 600 || !o3QuickSortEnabled) {
                 o3TimestampMemCpy.jumpTo(o3TimestampMem.getAppendOffset());
@@ -2436,11 +2437,26 @@ public class TableWriter implements Closeable {
             // partition actual data "lo" and "hi" (dataLo, dataHi)
             // out of order "lo" and "hi" (indexLo, indexHi)
 
-            final long srcOooMax;
+            long srcOooMax;
             final long o3TimestampMin = getTimestampIndexValue(sortedTimestampsAddr, 0);
-            if (o3TimestampMin < Timestamps.AD_01) {
-                throw CairoException.instance(0).put("timestamps before 0001-01-01 are not allowed for O3");
+            if (o3TimestampMin < Timestamps.O3_MIN_TS) {
+                o3InError = true;
+                throw CairoException.instance(0).put("timestamps before 1970-01-01 are not allowed for O3");
             }
+
+            final long o3CheckTimestampMax = getTimestampIndexValue(sortedTimestampsAddr, o3RowCount-1);
+            if (o3CheckTimestampMax < Timestamps.O3_MIN_TS) {
+                o3InError = true;
+                throw CairoException.instance(0).put("timestamps before 1970-01-01 are not allowed for O3");
+            }
+
+            if (o3TimestampMin > o3CheckTimestampMax) {
+                // Safe check of the sort. No known way to reproduce
+                o3InError = true;
+                throw CairoException.instance(0).put("error in o3 timestamp sort results [minTimestamp=")
+                        .put(o3TimestampMin).put(",maxTimestamp=").put(o3CheckTimestampMax).put("]");
+            }
+
             if (lag > 0) {
                 final long o3max = getTimestampIndexValue(sortedTimestampsAddr, o3RowCount - 1);
                 long lagThresholdTimestamp = o3max - lag;
@@ -2484,7 +2500,7 @@ public class TableWriter implements Closeable {
                 return true;
             }
 
-            final long o3TimestampMax = getTimestampIndexValue(sortedTimestampsAddr, srcOooMax - 1);
+            long o3TimestampMax = getTimestampIndexValue(sortedTimestampsAddr, srcOooMax - 1);
             // move uncommitted is liable to change max timestamp
             // however we need to identify last partition before max timestamp skips to NULL for example
             final long maxTimestamp = txFile.getMaxTimestamp();
@@ -4544,12 +4560,12 @@ public class TableWriter implements Closeable {
         }
 
         private Row getRowSlow(long timestamp) {
-            if (timestamp >= Timestamps.AD_01) {
+            if (timestamp >= Timestamps.O3_MIN_TS) {
                 txFile.setMinTimestamp(timestamp);
                 openFirstPartition(timestamp);
                 return (rowFunction = switchPartitionFunction).newRow(timestamp);
             }
-            throw CairoException.instance(0).put("timestamp before 0001-01-01 is not allowed");
+            throw CairoException.instance(0).put("timestamp before 1970-01-01 is not allowed");
         }
     }
 

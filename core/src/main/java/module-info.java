@@ -543,6 +543,9 @@ open module io.questdb {
             BitwiseAndIntFunctionFactory,
             BitwiseOrIntFunctionFactory,
             BitwiseNotIntFunctionFactory,
-            BitwiseXorIntFunctionFactory
+            BitwiseXorIntFunctionFactory,
+
+            io.questdb.griffin.engine.functions.date.ToTimezoneTimestampFunctionFactory,
+            io.questdb.griffin.engine.functions.date.ToUTCTimestampFunctionFactory
             ;
 }

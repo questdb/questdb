@@ -28,7 +28,10 @@ import io.questdb.std.Chars;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
+import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.str.CharSink;
+
+import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_MICROS;
 
 final public class Timestamps {
 
@@ -47,7 +50,7 @@ final public class Timestamps {
     public static final int STATE_MINUTE = 5;
     public static final int STATE_END = 6;
     public static final int STATE_SIGN = 7;
-    public static final long AD_01 = -62135596800000000L;
+    public static final long O3_MIN_TS = 0L;
     public static final TimestampFloorMethod FLOOR_DD = Timestamps::floorDD;
     public static final TimestampAddMethod ADD_DD = Timestamps::addDays;
     private static final long AVG_YEAR_MICROS = (long) (365.2425 * DAY_MICROS);
@@ -620,6 +623,52 @@ final public class Timestamps {
         CharSink sink = Misc.getThreadLocalBuilder();
         TimestampFormatUtils.appendDateTime(sink, micros);
         return sink.toString();
+    }
+
+    public static long toTimezone(long utcTimestamp, DateLocale locale, CharSequence timezone) throws NumericException {
+        return toTimezone(utcTimestamp, locale, timezone, 0, timezone.length());
+    }
+
+    public static long toTimezone(
+            long utc,
+            DateLocale locale,
+            CharSequence timezone,
+            int lo,
+            int hi
+    ) throws NumericException {
+        final long offset;
+        long l = parseOffset(timezone, lo, hi);
+        if (l == Long.MIN_VALUE) {
+            return utc + locale.getZoneRules(
+                    Numbers.decodeLowInt(locale.matchZone(timezone, lo, hi)), RESOLUTION_MICROS
+            ).getOffset(utc);
+
+        }
+        offset = Numbers.decodeLowInt(l) * MINUTE_MICROS;
+        return utc + offset;
+    }
+
+    public static long toUTC(long timestampWithTimezone, DateLocale locale, CharSequence timezone) throws NumericException {
+        return toUTC(timestampWithTimezone, locale, timezone, 0, timezone.length());
+    }
+
+    public static long toUTC(
+            long timestampWithTimezone,
+            DateLocale locale,
+            CharSequence timezone,
+            int lo,
+            int hi
+    ) throws NumericException {
+        final long offset;
+        long l = parseOffset(timezone, lo, hi);
+        if (l == Long.MIN_VALUE) {
+            return timestampWithTimezone - locale.getZoneRules(
+                    Numbers.decodeLowInt(locale.matchZone(timezone, lo, hi)), RESOLUTION_MICROS
+            ).getOffset(timestampWithTimezone);
+
+        }
+        offset = Numbers.decodeLowInt(l) * MINUTE_MICROS;
+        return timestampWithTimezone - offset;
     }
 
     /**
