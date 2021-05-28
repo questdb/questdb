@@ -44,6 +44,7 @@
     "jquery": "3.5.1",
     "react": "16.13.1",
     "react-ace": "9.0.0",
+    "react-contextmenu": "2.14.0",
     "react-copy-to-clipboard": "5.0.3",
     "react-dom": "16.13.1",
     "react-popper": "2.2.3",
