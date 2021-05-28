@@ -1053,12 +1053,11 @@ public class O3FailureTest extends AbstractO3Test {
                 "create table x as (" +
                         "select" +
                         " cast(x as int) i, " +
-                        " cast(x as int) i2, " +
-//                        " rnd_symbol('msft','ibm', 'googl') sym," +
+                        " rnd_symbol('msft','ibm', 'googl') sym," +
                         " timestamp_sequence(500000000000L,1000000L) ts," +
                         " cast(x as short) l" +
-                        " from long_sequence(1)" +
-                        ") timestamp (ts) partition by DAY",
+                        " from long_sequence(50)" +
+                        "), index(sym) timestamp (ts) partition by DAY",
                 sqlExecutionContext
         );
 
@@ -1066,47 +1065,29 @@ public class O3FailureTest extends AbstractO3Test {
                 "create table top as (" +
                         "select" +
                         " cast(x as int) i," +
-                        " cast(x as int) i2, " +
-//                        " rnd_symbol('msft','ibm', 'googl') sym," +
-//                        " CAST(NULL as TIMESTAMP) ts, " +
-                        " case WHEN x < 2 THEN CAST(x as TIMESTAMP) ELSE CAST(NULL as TIMESTAMP) END ts," +
+                        " rnd_symbol('msft','ibm', 'googl') sym," +
+                        " case WHEN x < 2 THEN CAST(NULL as TIMESTAMP) ELSE CAST(x as TIMESTAMP) END ts," +
                         " cast(x + 1000 as short)  l" +
-                        " from long_sequence(2)" +
+                        " from long_sequence(100)" +
                         ")",
                 sqlExecutionContext
         );
 
-//        try {
-//            compiler.compile("insert into x select * from top", sqlExecutionContext);
-//            Assert.fail();
-//        } catch (CairoException ignored) {
-//            Chars.contains(ignored.getFlyweightMessage(), "timestamps before 1970-01-01");
-//        }
+        try {
+            compiler.compile("insert into x select * from top", sqlExecutionContext);
+            Assert.fail();
+        } catch (CairoException ex) {
+            Chars.contains(ex.getFlyweightMessage(), "timestamps before 1970-01-01");
+        }
 
-//        engine.releaseAllReaders();
-//        engine.releaseAllWriters();
-
-//        try {
-            assertO3DataConsistency(
-                    engine,
-                    compiler,
-                    sqlExecutionContext,
-                    "create table y as (select * from top where ts >= 0 union all select * from x)",
-                    "insert into x select * from top where ts >= 0"
-            );
-//        } catch (AssertionError e) {
-////            int i = 0;
-//        }
-//        printSqlResult(compiler, sqlExecutionContext, "y order by ts");
-//        TestUtils.printSql(
-//                compiler,
-//                sqlExecutionContext,
-//                "x",
-//                sink2
-//        );
-//        TestUtils.assertEquals(sink, sink2);
-
-//        assertIndexConsistency(compiler, sqlExecutionContext);
+        assertO3DataConsistency(
+                engine,
+                compiler,
+                sqlExecutionContext,
+                "create table y as (select * from top where ts >= 0 union all select * from x)",
+                "insert into x select * from top where ts >= 0"
+        );
+        assertIndexConsistency(compiler, sqlExecutionContext);
     }
 
     private static void testInsertAsSelectNegativeTimestamp0(
@@ -1120,8 +1101,8 @@ public class O3FailureTest extends AbstractO3Test {
                         " cast(x as int) i, " +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
                         " timestamp_sequence(500000000000L,1000000L) ts," +
-                        " rnd_byte(2,50) l" +
-                        " from long_sequence(500)" +
+                        " cast(x as short) l" +
+                        " from long_sequence(50)" +
                         "), index(sym) timestamp (ts) partition by DAY",
                 sqlExecutionContext
         );
@@ -1131,9 +1112,9 @@ public class O3FailureTest extends AbstractO3Test {
                         "select" +
                         " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
-                        " timestamp_sequence(-5000L,10L) ts,\"" +
-                        " rnd_byte(2,50) l" +
-                        " from long_sequence(1000)" +
+                        " timestamp_sequence(-500,10L) ts," +
+                        " cast(x + 1000 as short)  l" +
+                        " from long_sequence(100)" +
                         ")",
                 sqlExecutionContext
         );
@@ -1141,15 +1122,15 @@ public class O3FailureTest extends AbstractO3Test {
         try {
             compiler.compile("insert into x select * from top", sqlExecutionContext);
             Assert.fail();
-        } catch (CairoException ignored) {
-            Chars.contains(ignored.getFlyweightMessage(), "timestamps before 1970-01-01");
+        } catch (CairoException ex) {
+            Chars.contains(ex.getFlyweightMessage(), "timestamps before 1970-01-01");
         }
 
         assertO3DataConsistency(
                 engine,
                 compiler,
                 sqlExecutionContext,
-                "create table y as (select * from x union all select * from top where ts >= 0)",
+                "create table y as (select * from top where ts >= 0 union all select * from x)",
                 "insert into x select * from top where ts >= 0"
         );
         assertIndexConsistency(compiler, sqlExecutionContext);

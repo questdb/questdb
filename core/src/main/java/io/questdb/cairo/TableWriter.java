@@ -2442,18 +2442,17 @@ public class TableWriter implements Closeable {
             final long o3TimestampMin = getTimestampIndexValue(sortedTimestampsAddr, 0);
             if (o3TimestampMin < Timestamps.O3_MIN_TS) {
                 o3InError = true;
-                o3RowCount = 0;
                 throw CairoException.instance(0).put("timestamps before 1970-01-01 are not allowed for O3");
             }
 
             final long o3CheckTimestampMax = getTimestampIndexValue(sortedTimestampsAddr, o3RowCount-1);
             if (o3CheckTimestampMax < Timestamps.O3_MIN_TS) {
                 o3InError = true;
-                o3RowCount = 0;
                 throw CairoException.instance(0).put("timestamps before 1970-01-01 are not allowed for O3");
             }
 
             if (o3TimestampMin > o3CheckTimestampMax) {
+                // Safe check of the sort. No known way to reproduce
                 o3InError = true;
                 throw CairoException.instance(0).put("error in o3 timestamp sort results [minTimestamp=")
                         .put(o3TimestampMin).put(",maxTimestamp=").put(o3CheckTimestampMax).put("]");
