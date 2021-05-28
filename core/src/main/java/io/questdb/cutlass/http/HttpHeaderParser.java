@@ -431,8 +431,6 @@ public class HttpHeaderParser implements Mutable, Closeable, HttpRequestHeader {
                     if (name != null) {
                         map.put(name, pool.next().of(_lo, wp));
                         name = null;
-                    } else if (_lo < wp) {
-                        map.put(pool.next().of(_lo, wp), null);
                     }
                     _lo = rp - offset;
                     break;
@@ -456,12 +454,8 @@ public class HttpHeaderParser implements Mutable, Closeable, HttpRequestHeader {
             Unsafe.getUnsafe().putByte(wp++, (byte) b);
         }
 
-        if (_lo < wp) {
-            if (name != null) {
-                map.put(name, pool.next().of(_lo, wp));
-            } else {
-                map.put(pool.next().of(_lo, wp), null);
-            }
+        if (_lo < wp && name != null) {
+            map.put(name, pool.next().of(_lo, wp));
         }
 
         return offset;

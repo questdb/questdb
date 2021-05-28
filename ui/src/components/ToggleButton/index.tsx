@@ -76,7 +76,7 @@ const baseStyles = css<Props>`
   font-weight: 400;
   line-height: 1.15;
   ${({ direction }) =>
-    `border-${direction || defaultProps.direction}: 2px solid transparent;`};
+    `border-${direction || defaultProps.direction}: 3px solid transparent;`};
   ${bezierTransition};
   ${({ disabled }) => disabled && "pointer-events: none;"};
 

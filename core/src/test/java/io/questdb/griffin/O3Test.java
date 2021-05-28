@@ -5131,7 +5131,7 @@ public class O3Test extends AbstractO3Test {
                 TestUtils.insert(compiler, sqlExecutionContext, "insert into x values(0, 'abc', to_timestamp('2019-08-15T16:03:06.595', 'yyyy-MM-dd:HH:mm:ss.SSSUUU'))");
                 Assert.fail();
             } catch (CairoException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "timestamps before 0001-01-01 are not allowed for O3");
+                TestUtils.assertContains(e.getFlyweightMessage(), "timestamps before 1970-01-01 are not allowed for O3");
             }
         });
     }
@@ -5264,7 +5264,7 @@ public class O3Test extends AbstractO3Test {
 
         final Rnd rnd = new Rnd();
         try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x")) {
-            long ts = 0;
+            long ts = 1000000 * 1000L;
             long step = 1000000;
             TxnScoreboard txnScoreboard = w.getTxnScoreboard();
             for (int i = 0; i < 1000; i++) {

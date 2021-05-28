@@ -1,11 +1,5 @@
 import * as ace from "ace-builds"
 
-enum StoreKey {
-  TEXT = "query.text",
-  LINE = "editor.line",
-  COL = "editor.col",
-}
-
 type Position = Readonly<{
   column: number
   row: number
@@ -16,29 +10,6 @@ export type Request = Readonly<{
   row: number
   column: number
 }>
-
-export const loadPreferences = (editor: ace.Ace.Editor) => {
-  const query = localStorage.getItem(StoreKey.TEXT)
-
-  if (query) {
-    editor.setValue(query)
-  }
-
-  const row = parseInt(localStorage.getItem(StoreKey.LINE) || "0", 10)
-  const col = parseInt(localStorage.getItem(StoreKey.COL) || "0", 10)
-
-  if (row && col) {
-    setTimeout(() => {
-      editor.gotoLine(row, col, false)
-    }, 10)
-  }
-}
-
-export const savePreferences = (editor: ace.Ace.Editor) => {
-  localStorage.setItem(StoreKey.TEXT, editor.getValue())
-  localStorage.setItem(StoreKey.LINE, `${editor.getCursorPosition().row + 1}`)
-  localStorage.setItem(StoreKey.COL, `${editor.getCursorPosition().column}`)
-}
 
 export const getQueryFromCursor = (
   editor: ace.Ace.Editor,

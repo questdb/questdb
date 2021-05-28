@@ -1,0 +1,12 @@
+.js-settings-panel {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  overflow: hidden;
+  font-size: 1.4rem;
+  background: #21222c;
+
+  ::selection {
+    background: #44475a;
+  }
+}
