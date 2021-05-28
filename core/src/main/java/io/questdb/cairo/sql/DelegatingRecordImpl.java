@@ -41,16 +41,6 @@ public class DelegatingRecordImpl implements DelegatingRecord {
     }
 
     @Override
-    public int getInt(int col) {
-        return base.getInt(col);
-    }
-
-    @Override
-    public long getLong(int col) {
-        return base.getLong(col);
-    }
-
-    @Override
     public long getBinLen(int col) {
         return base.getBinLen(col);
     }
@@ -63,6 +53,11 @@ public class DelegatingRecordImpl implements DelegatingRecord {
     @Override
     public byte getByte(int col) {
         return base.getByte(col);
+    }
+
+    @Override
+    public char getChar(int col) {
+        return base.getChar(col);
     }
 
     @Override
@@ -81,23 +76,13 @@ public class DelegatingRecordImpl implements DelegatingRecord {
     }
 
     @Override
-    public short getShort(int col) {
-        return base.getShort(col);
+    public int getInt(int col) {
+        return base.getInt(col);
     }
 
     @Override
-    public char getChar(int col) {
-        return base.getChar(col);
-    }
-
-    @Override
-    public CharSequence getStr(int col) {
-        return base.getStr(col);
-    }
-
-    @Override
-    public void getStr(int col, CharSink sink) {
-        base.getStr(col, sink);
+    public long getLong(int col) {
+        return base.getLong(col);
     }
 
     @Override
@@ -113,6 +98,26 @@ public class DelegatingRecordImpl implements DelegatingRecord {
     @Override
     public Long256 getLong256B(int col) {
         return base.getLong256B(col);
+    }
+
+    @Override
+    public Record getRecord(int col) {
+        return base.getRecord(col);
+    }
+
+    @Override
+    public short getShort(int col) {
+        return base.getShort(col);
+    }
+
+    @Override
+    public CharSequence getStr(int col) {
+        return base.getStr(col);
+    }
+
+    @Override
+    public void getStr(int col, CharSink sink) {
+        base.getStr(col, sink);
     }
 
     @Override
@@ -138,10 +143,5 @@ public class DelegatingRecordImpl implements DelegatingRecord {
     @Override
     public long getTimestamp(int col) {
         return base.getTimestamp(col);
-    }
-
-    @Override
-    public Record getRecord(int col) {
-        return base.getRecord(col);
     }
 }

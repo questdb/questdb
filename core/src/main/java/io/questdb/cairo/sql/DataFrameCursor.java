@@ -29,20 +29,43 @@ import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
+/**
+ * A cursor for managing position of operations within data frames
+ *
+ * Interfaces which extend Closeable are not optionally-closeable.
+ * close() method must be called after other calls are complete.
+ */
 public interface DataFrameCursor extends Closeable, SymbolTableSource  {
 
     // same TableReader is available on each data frame
     TableReader getTableReader();
 
+    /**
+     * Reload the data frame and return the cursor to the beginning of
+     * the data frame
+     * @return
+     */
     boolean reload();
 
+    /**
+     * @return the next element in the data frame
+     */
     @Nullable DataFrame next();
 
+    /**
+     * Must be closed after other calls are complete
+     */
     @Override
     void close();
 
+    /**
+     * Return the cursor to the beginning of the data frame
+     */
     void toTop();
 
+    /**
+     * @return number of items in the data frame
+     */
     long size();
 
     StaticSymbolTable getSymbolTable(int columnIndex);
