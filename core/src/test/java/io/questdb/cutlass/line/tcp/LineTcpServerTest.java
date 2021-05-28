@@ -177,8 +177,8 @@ public class LineTcpServerTest extends AbstractCairoTest {
 
             send(lineData, "weather", true);
 
-            int iterations = 10;
-            int threadCount = 10;
+            int iterations = 8;
+            int threadCount = 8;
             SOCountDownLatch threadPushFinished = new SOCountDownLatch(threadCount);
             for (int i = 0; i < threadCount; i++) {
                 final String threadTable = "weather" + i;
@@ -187,8 +187,8 @@ public class LineTcpServerTest extends AbstractCairoTest {
                 new Thread(() -> {
                     try {
                         for (int n = 0; n < iterations; n++) {
-                            send(lineDataThread, threadTable, false);
                             Thread.sleep(minIdleMsBeforeWriterRelease - 50);
+                            send(lineDataThread, threadTable, false);
                         }
                     } catch (Exception e) {
                         e.printStackTrace();
@@ -217,18 +217,31 @@ public class LineTcpServerTest extends AbstractCairoTest {
             String expected = header + line1 + line2 + line3;
             assertTable(expected, "weather");
 
-            threadPushFinished.await();
+
             StringBuilder expectedSB = new StringBuilder(header);
             for(int l = 0; l < lines.length; l++) {
-                for (int it = 0; it < iterations + 1; it++) {
+                for (int it = 0; it < iterations + 2; it++) {
                     expectedSB.append(lines[l]);
                 }
             }
-
             String expected2 = expectedSB.toString();
+
+            threadPushFinished.await();
             for (int i = 0; i < threadCount; i++) {
-                assertTable(expected2, "weather" + i);
+                // Wait writer to be released and check.
+                String tableName = "weather" + i;
+                final String lineDataThread = lineData.replace("weather", tableName);
+                send(lineDataThread, tableName, true);
+                assertTable(expected2, tableName);
             }
+
+            for (int i = 0; i < threadCount; i++) {
+                String tableName = "weather" + i;
+                engine.remove(AllowAllCairoSecurityContext.INSTANCE, path, tableName);
+            }
+
+            engine.releaseAllWriters();
+            engine.releaseAllReaders();
         });
     }
 
