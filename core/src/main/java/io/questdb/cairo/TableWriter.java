@@ -1535,7 +1535,7 @@ public class TableWriter implements Closeable {
         ddlMem.putInt(ColumnType.VERSION);
         ddlMem.putInt(metaMem.getInt(META_OFFSET_TABLE_ID));
         ddlMem.putInt(metaMem.getInt(META_OFFSET_MAX_UNCOMMITTED_ROWS));
-        ddlMem.putInt(metaMem.getInt(META_OFFSET_COMMIT_LAG));
+        ddlMem.putLong(metaMem.getLong(META_OFFSET_COMMIT_LAG));
     }
 
     private void bumpMasterRef() {
@@ -1938,8 +1938,6 @@ public class TableWriter implements Closeable {
             ddlMem.putInt(metaMem.getInt(META_OFFSET_PARTITION_BY));
             ddlMem.putInt(metaMem.getInt(META_OFFSET_TIMESTAMP_INDEX));
             copyVersionAndLagValues();
-            ddlMem.putInt(metaMem.getInt(META_OFFSET_MAX_UNCOMMITTED_ROWS));
-            ddlMem.putLong(metaMem.getInt(META_OFFSET_COMMIT_LAG));
             ddlMem.jumpTo(META_OFFSET_COLUMN_TYPES);
             for (int i = 0; i < columnCount; i++) {
                 writeColumnEntry(i);
