@@ -78,6 +78,8 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
             @Transient @NotNull ArrayColumnTypes keyTypes,
             @Transient @NotNull ArrayColumnTypes valueTypes,
             @Transient @NotNull EntityColumnFilter entityColumnFilter,
+            @Transient @NotNull IntList recordFunctionPositions,
+            @Transient @NotNull IntList groupByFunctionPositions,
             int timestampIndex
     ) throws SqlException {
         final int columnCount = model.getBottomUpColumns().size();
@@ -93,6 +95,7 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
                 functionParser,
                 executionContext,
                 groupByFunctions,
+                groupByFunctionPositions,
                 valueTypes
         );
 
@@ -103,7 +106,9 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
                 metadata,
                 listColumnFilter,
                 groupByFunctions,
+                groupByFunctionPositions,
                 recordFunctions,
+                recordFunctionPositions,
                 groupByMetadata,
                 keyTypes,
                 valueTypes.getColumnCount(),
@@ -115,7 +120,7 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
         this.interpolatorFunctions = new ObjList<>(columnCount);
 
         // create timestamp column
-        TimestampColumn timestampColumn = new TimestampColumn(0, valueTypes.getColumnCount() + keyTypes.getColumnCount());
+        TimestampColumn timestampColumn = TimestampColumn.newInstance(valueTypes.getColumnCount() + keyTypes.getColumnCount());
         for (int i = 0, n = recordFunctions.size(); i < n; i++) {
             if (recordFunctions.getQuick(i) == null) {
                 recordFunctions.setQuick(i, timestampColumn);
@@ -127,6 +132,35 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
             GroupByFunction function = groupByFunctions.getQuick(i);
             if (function.isScalar()) {
                 groupByScalarFunctions.add(function);
+                switch (function.getType()) {
+                    case ColumnType.BYTE:
+                        storeYFunctions.add(InterpolationUtil.STORE_Y_BYTE);
+                        interpolatorFunctions.add(InterpolationUtil.INTERPOLATE_BYTE);
+                        break;
+                    case ColumnType.SHORT:
+                        storeYFunctions.add(InterpolationUtil.STORE_Y_SHORT);
+                        interpolatorFunctions.add(InterpolationUtil.INTERPOLATE_SHORT);
+                        break;
+                    case ColumnType.INT:
+                        storeYFunctions.add(InterpolationUtil.STORE_Y_INT);
+                        interpolatorFunctions.add(InterpolationUtil.INTERPOLATE_INT);
+                        break;
+                    case ColumnType.LONG:
+                        storeYFunctions.add(InterpolationUtil.STORE_Y_LONG);
+                        interpolatorFunctions.add(InterpolationUtil.INTERPOLATE_LONG);
+                        break;
+                    case ColumnType.DOUBLE:
+                        storeYFunctions.add(InterpolationUtil.STORE_Y_DOUBLE);
+                        interpolatorFunctions.add(InterpolationUtil.INTERPOLATE_DOUBLE);
+                        break;
+                    case ColumnType.FLOAT:
+                        storeYFunctions.add(InterpolationUtil.STORE_Y_FLOAT);
+                        interpolatorFunctions.add(InterpolationUtil.INTERPOLATE_FLOAT);
+                        break;
+                    default:
+                        Misc.freeObjList(groupByScalarFunctions);
+                        throw SqlException.$(groupByFunctionPositions.getQuick(i), "Unsupported type: ").put(ColumnType.nameOf(function.getType()));
+                }
             } else {
                 groupByTwoPointFunctions.add(function);
             }
@@ -134,40 +168,6 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
 
         this.groupByScalarFunctionCount = groupByScalarFunctions.size();
         this.groupByTwoPointFunctionCount = groupByTwoPointFunctions.size();
-
-        for (int i = 0; i < groupByScalarFunctionCount; i++) {
-            GroupByFunction function = groupByScalarFunctions.getQuick(i);
-            switch (function.getType()) {
-                case ColumnType.BYTE:
-                    storeYFunctions.add(InterpolationUtil.STORE_Y_BYTE);
-                    interpolatorFunctions.add(InterpolationUtil.INTERPOLATE_BYTE);
-                    break;
-                case ColumnType.SHORT:
-                    storeYFunctions.add(InterpolationUtil.STORE_Y_SHORT);
-                    interpolatorFunctions.add(InterpolationUtil.INTERPOLATE_SHORT);
-                    break;
-                case ColumnType.INT:
-                    storeYFunctions.add(InterpolationUtil.STORE_Y_INT);
-                    interpolatorFunctions.add(InterpolationUtil.INTERPOLATE_INT);
-                    break;
-                case ColumnType.LONG:
-                    storeYFunctions.add(InterpolationUtil.STORE_Y_LONG);
-                    interpolatorFunctions.add(InterpolationUtil.INTERPOLATE_LONG);
-                    break;
-                case ColumnType.DOUBLE:
-                    storeYFunctions.add(InterpolationUtil.STORE_Y_DOUBLE);
-                    interpolatorFunctions.add(InterpolationUtil.INTERPOLATE_DOUBLE);
-                    break;
-                case ColumnType.FLOAT:
-                    storeYFunctions.add(InterpolationUtil.STORE_Y_FLOAT);
-                    interpolatorFunctions.add(InterpolationUtil.INTERPOLATE_FLOAT);
-                    break;
-                default:
-                    Misc.freeObjList(groupByScalarFunctions);
-                    throw SqlException.$(function.getPosition(), "Unsupported type: ").put(ColumnType.nameOf(function.getType()));
-            }
-        }
-
         this.timestampIndex = timestampIndex;
         this.yDataSize = groupByFunctionCount * 16;
         this.yData = Unsafe.malloc(yDataSize);
@@ -404,7 +404,7 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
             }
 
             return initFunctionsAndCursor(executionContext, dataMap.getCursor(), baseCursor);
-        } catch (CairoException e) {
+        } catch (Throwable e) {
             baseCursor.close();
             throw e;
         }

@@ -56,7 +56,7 @@ public class AppendOnlyVirtualMemory extends PagedVirtualMemory implements Mappe
         if (page == mappedPage) {
             return pageAddress;
         }
-        return -1;
+        return 0L;
     }
 
     @Override
@@ -108,7 +108,8 @@ public class AppendOnlyVirtualMemory extends PagedVirtualMemory implements Mappe
             return address;
         }
         mappedPage = -1;
-        throw CairoException.instance(ff.errno()).put("Could not mmap append fd=").put(fd).put(", offset=").put(offset).put(", size=").put(getMapPageSize());
+//        new Exception("could not mmap").printStackTrace();
+        throw CairoException.instance(ff.errno()).put("could not mmap for append fd=").put(fd).put(", offset=").put(offset).put(", size=").put(getMapPageSize());
     }
 
     public long getAppendAddress() {

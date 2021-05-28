@@ -35,7 +35,7 @@ class IntCaseFunction extends IntFunction implements MultiArgFunction {
     private final ObjList<Function> args;
 
     public IntCaseFunction(int position, CaseFunctionPicker picker, ObjList<Function> args) {
-        super(position);
+        super();
         this.picker = picker;
         this.args = args;
     }

@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BooleanFunction;
+import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 import java.util.concurrent.atomic.AtomicInteger;
@@ -53,15 +54,14 @@ public class TestLatchedCounterFunctionFactory implements FunctionFactory {
 	}
 
 	@Override
-	public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-		return new TestLatchFunction(position);
+	public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+		return new TestLatchFunction();
 	}
 
 	private static class TestLatchFunction extends BooleanFunction {
 		private final Callback callback;
 
-		public TestLatchFunction(int position) {
-			super(position);
+		public TestLatchFunction() {
 			callback = CALLBACK;
 		}
 

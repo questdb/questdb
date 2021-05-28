@@ -128,7 +128,7 @@ public class TableReadFailTest extends AbstractCairoTest {
                     reader.reload();
                     Assert.fail();
                 } catch (CairoException e) {
-                    TestUtils.assertContains(e.getMessage(), "timeout");
+                    TestUtils.assertContains(e.getFlyweightMessage(), "timeout");
                 }
 
                 // restore txn file to its former glory

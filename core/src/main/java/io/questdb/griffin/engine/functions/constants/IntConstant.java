@@ -26,13 +26,21 @@ package io.questdb.griffin.engine.functions.constants;
 
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.IntFunction;
+import io.questdb.std.Numbers;
 
 public class IntConstant extends IntFunction implements ConstantFunction {
+
+    public static final IntConstant NULL = new IntConstant(Numbers.INT_NaN);
+
     private final int value;
 
-    public IntConstant(int position, int value) {
-        super(position);
+    public IntConstant(int value) {
+        super();
         this.value = value;
+    }
+
+    public static IntConstant newInstance(int value) {
+        return value != Numbers.INT_NaN ? new IntConstant(value) : NULL;
     }
 
     @Override

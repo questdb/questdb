@@ -24,15 +24,17 @@
 
 package io.questdb.test.tools;
 
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.RecordCursorPrinter;
-import io.questdb.cairo.TableReader;
+import io.questdb.cairo.*;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.model.IntervalUtils;
+import io.questdb.log.Log;
+import io.questdb.log.LogRecord;
 import io.questdb.std.*;
+import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.MutableCharSink;
 import io.questdb.std.str.Path;
 import org.junit.Assert;
@@ -43,7 +45,20 @@ public final class TestUtils {
 
     private static final RecordCursorPrinter printer = new RecordCursorPrinter();
 
+    private static final RecordCursorPrinter printerWithTypes = new RecordCursorPrinter().withTypes(true);
+
     private TestUtils() {
+    }
+
+    public static boolean areEqual(BinarySequence a, BinarySequence b) {
+        if (a == b) return true;
+        if (a == null || b == null) return false;
+
+        if (a.length() != b.length()) return false;
+        for (int i = 0; i < a.length(); i++) {
+            if (a.byteAt(i) != b.byteAt(i)) return false;
+        }
+        return true;
     }
 
     public static void assertContains(CharSequence _this, CharSequence that) {
@@ -51,6 +66,11 @@ public final class TestUtils {
             return;
         }
         Assert.fail("'" + _this.toString() + "' does not contain: " + that);
+    }
+
+    public static void assertCursor(CharSequence expected, RecordCursor cursor, RecordMetadata metadata, boolean header, MutableCharSink sink) {
+        printCursor(cursor, metadata, header, sink, printer);
+        assertEquals(expected, sink);
     }
 
     public static void assertEquals(RecordCursor cursorExpected, RecordMetadata metadataExpected, RecordCursor cursorActual, RecordMetadata metadataActual) {
@@ -121,46 +141,6 @@ public final class TestUtils {
         }
 
         Assert.assertFalse("Expected cursor misses record " + rowIndex, cursorActual.hasNext());
-    }
-
-    private static void assertEquals(Long256 expected, Long256 actual) {
-        if (expected == actual) return;
-        if (actual == null) {
-            Assert.fail("Expected " + toHexString(expected) +", but was: null");
-        }
-
-        if (expected.getLong0() != actual.getLong0()
-                || expected.getLong1() != actual.getLong1()
-                || expected.getLong2() != actual.getLong2()
-                || expected.getLong3() != actual.getLong3()) {
-                    Assert.assertEquals(toHexString(expected), toHexString(actual));
-                }
-    }
-
-    private static String toHexString(Long256 expected) {
-        return Long.toHexString(expected.getLong0()) + " " +
-                Long.toHexString(expected.getLong1()) + " " +
-                Long.toHexString(expected.getLong2()) + " " +
-                Long.toHexString(expected.getLong3());
-    }
-
-    public static boolean areEqual(BinarySequence a, BinarySequence b) {
-        if (a == b) return true;
-        if (a == null || b == null) return false;
-
-        if (a.length() != b.length()) return false;
-        for (int i = 0; i < a.length(); i++) {
-            if (a.byteAt(i) != b.byteAt(i)) return false;
-        }
-        return true;
-    }
-
-    private static void assertEquals(RecordMetadata metadataExpected, RecordMetadata metadataActual) {
-        Assert.assertEquals("Column count must be same", metadataExpected.getColumnCount(), metadataActual.getColumnCount());
-        for (int i = 0, n = metadataExpected.getColumnCount(); i < n; i++) {
-            Assert.assertEquals("Column name " + i, metadataExpected.getColumnName(i), metadataActual.getColumnName(i));
-            Assert.assertEquals("Column type " + i, metadataExpected.getColumnType(i), metadataActual.getColumnType(i));
-        }
     }
 
     public static void assertEquals(File a, File b) {
@@ -236,7 +216,7 @@ public final class TestUtils {
                             if (b == 13) {
                                 continue;
                             }
-                            byte bb= Unsafe.getUnsafe().getByte(strp);
+                            byte bb = Unsafe.getUnsafe().getByte(strp);
                             strp++;
                             if (b != bb) {
                                 Assert.fail(
@@ -306,138 +286,6 @@ public final class TestUtils {
         }
     }
 
-    public static void assertFileContentsEquals(Path expected, Path actual) throws IOException {
-        try (BufferedInputStream expectedStream = new BufferedInputStream(new FileInputStream(expected.toString()));
-             BufferedInputStream actualStream = new BufferedInputStream(new FileInputStream(actual.toString()))) {
-            int byte1, byte2;
-            long length = 0;
-            do {
-                length++;
-                byte1 = expectedStream.read();
-                byte2 = actualStream.read();
-            } while (byte1 == byte2 && byte1 > 0);
-
-            if (byte1 != byte2) {
-                Assert.fail("Files are different at offset " + (length - 1));
-            }
-        }
-    }
-
-    public static void assertMemoryLeak(LeakProneCode runnable) throws Exception {
-        Path.clearThreadLocals();
-        long mem = Unsafe.getMemUsed();
-        long fileCount = Files.getOpenFileCount();
-        runnable.run();
-        Path.clearThreadLocals();
-        Assert.assertEquals(fileCount, Files.getOpenFileCount());
-        Assert.assertEquals(mem, Unsafe.getMemUsed());
-    }
-
-    public static void copyMimeTypes(String targetDir) throws IOException {
-        try (InputStream stream = TestUtils.class.getResourceAsStream("/site/conf/mime.types")) {
-            Assert.assertNotNull(stream);
-            final File target = new File(targetDir, "conf/mime.types");
-            target.getParentFile().mkdirs();
-            try (FileOutputStream fos = new FileOutputStream(target)) {
-                byte[] buffer = new byte[1024 * 1204];
-                int len;
-                while ((len = stream.read(buffer)) > 0) {
-                    fos.write(buffer, 0, len);
-                }
-            }
-        }
-    }
-
-    public static String readStringFromFile(File file) {
-        try {
-            try (FileInputStream fis = new FileInputStream(file)) {
-                byte[] buffer
-                        = new byte[(int) fis.getChannel().size()];
-                int totalRead = 0;
-                int read;
-                while (totalRead < buffer.length
-                        && (read = fis.read(buffer, totalRead, buffer.length - totalRead)) > 0) {
-                    totalRead += read;
-                }
-                return new String(buffer, Files.UTF_8);
-            }
-        } catch (IOException e) {
-            throw new RuntimeException("Cannot read from " + file.getAbsolutePath(), e);
-        }
-    }
-
-    public static long toMemory(CharSequence sequence) {
-        long ptr = Unsafe.malloc(sequence.length());
-        Chars.asciiStrCpy(sequence, sequence.length(), ptr);
-        return ptr;
-    }
-
-    // used in tests
-    public static void writeStringToFile(File file, String s) throws IOException {
-        try (FileOutputStream fos = new FileOutputStream(file)) {
-            fos.write(s.getBytes(Files.UTF_8));
-        }
-    }
-
-    public static void assertCursor(CharSequence expected, RecordCursor cursor, RecordMetadata metadata, boolean header, MutableCharSink sink) {
-        printCursor(cursor, metadata, header, sink);
-        assertEquals(expected, sink);
-    }
-
-    public static void insert(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, CharSequence insertSql) throws SqlException {
-        CompiledQuery compiledQuery = compiler.compile(insertSql, sqlExecutionContext);
-        Assert.assertNotNull(compiledQuery.getInsertStatement());
-        final InsertStatement insertStatement = compiledQuery.getInsertStatement();
-        try (InsertMethod insertMethod = insertStatement.createMethod(sqlExecutionContext)) {
-            insertMethod.execute();
-            insertMethod.commit();
-        }
-    }
-
-    public static void assertSql(
-            SqlCompiler compiler,
-            SqlExecutionContext sqlExecutionContext,
-            CharSequence sql,
-            MutableCharSink sink,
-            CharSequence expected
-    ) throws SqlException {
-        printSql(
-                compiler,
-                sqlExecutionContext,
-                sql,
-                sink
-        );
-        assertEquals(expected, sink);
-    }
-
-    public static void assertReader(CharSequence expected, TableReader reader, MutableCharSink sink) {
-        assertCursor(
-                expected,
-                reader.getCursor(),
-                reader.getMetadata(),
-                true,
-                sink
-        );
-    }
-
-    public static void printCursor(RecordCursor cursor, RecordMetadata metadata, boolean header, MutableCharSink sink) {
-        sink.clear();
-        printer.print(cursor, metadata, header, sink);
-    }
-
-    public static void printSql(
-            SqlCompiler compiler,
-            SqlExecutionContext sqlExecutionContext,
-            CharSequence sql,
-            MutableCharSink sink
-    ) throws SqlException {
-        try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
-            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                printCursor(cursor, factory.getMetadata(), true, sink);
-            }
-        }
-    }
-
     public static void assertEqualsIgnoreCase(CharSequence expected, CharSequence actual) {
         assertEqualsIgnoreCase(null, expected, actual);
     }
@@ -466,14 +314,213 @@ public final class TestUtils {
         }
     }
 
-    public static int getJavaVersion() {
-        String version = System.getProperty("java.version");
-        if(version.startsWith("1.")) {
-            version = version.substring(2, 3);
-        } else {
-            int dot = version.indexOf(".");
-            if(dot != -1) { version = version.substring(0, dot); }
-        } return Integer.parseInt(version);
+    public static void assertFileContentsEquals(Path expected, Path actual) throws IOException {
+        try (BufferedInputStream expectedStream = new BufferedInputStream(new FileInputStream(expected.toString()));
+             BufferedInputStream actualStream = new BufferedInputStream(new FileInputStream(actual.toString()))) {
+            int byte1, byte2;
+            long length = 0;
+            do {
+                length++;
+                byte1 = expectedStream.read();
+                byte2 = actualStream.read();
+            } while (byte1 == byte2 && byte1 > 0);
+
+            if (byte1 != byte2) {
+                Assert.fail("Files are different at offset " + (length - 1));
+            }
+        }
+    }
+
+    public static void assertMemoryLeak(LeakProneCode runnable) throws Exception {
+        Path.clearThreadLocals();
+        long mem = Unsafe.getMemUsed();
+        long fileCount = Files.getOpenFileCount();
+        runnable.run();
+        Path.clearThreadLocals();
+        Assert.assertEquals(fileCount, Files.getOpenFileCount());
+        Assert.assertEquals(mem, Unsafe.getMemUsed());
+    }
+
+    public static void assertReader(CharSequence expected, TableReader reader, MutableCharSink sink) {
+        assertCursor(
+                expected,
+                reader.getCursor(),
+                reader.getMetadata(),
+                true,
+                sink
+        );
+    }
+
+    public static void assertSql(
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext,
+            CharSequence sql,
+            MutableCharSink sink,
+            CharSequence expected
+    ) throws SqlException {
+        printSql(
+                compiler,
+                sqlExecutionContext,
+                sql,
+                sink
+        );
+        assertEquals(expected, sink);
+    }
+
+    public static void assertSqlCursors(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, String expected, String actual, Log log) throws SqlException {
+        try (RecordCursorFactory factory = compiler.compile(expected, sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursorFactory factory2 = compiler.compile(actual, sqlExecutionContext).getRecordCursorFactory()) {
+                try (RecordCursor cursor1 = factory.getCursor(sqlExecutionContext)) {
+                    try (RecordCursor cursor2 = factory2.getCursor(sqlExecutionContext)) {
+                        assertEquals(cursor1, factory.getMetadata(), cursor2, factory2.getMetadata());
+                    }
+                } catch (AssertionError e) {
+                    log.error().$(e).$();
+                    try (RecordCursor expectedCursor = factory.getCursor(sqlExecutionContext)) {
+                        try (RecordCursor actualCursor = factory2.getCursor(sqlExecutionContext)) {
+                            log.xDebugW().$();
+
+                            LogRecordSinkAdapter recordSinkAdapter = new LogRecordSinkAdapter();
+                            LogRecord record = log.xDebugW().$("java.lang.AssertionError: expected:<");
+                            printer.printHeaderNoNl(factory.getMetadata(), recordSinkAdapter.of(record));
+                            record.$();
+                            printer.print(expectedCursor, factory.getMetadata(), false, log);
+
+                            record = log.xDebugW().$("> but was:<");
+                            printer.printHeaderNoNl(factory2.getMetadata(), recordSinkAdapter.of(record));
+                            record.$();
+
+                            printer.print(actualCursor, factory2.getMetadata(), false, log);
+                            log.xDebugW().$(">").$();
+                        }
+                    }
+                    throw e;
+                }
+            }
+        }
+    }
+
+    public static void assertSqlWithTypes(
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext,
+            CharSequence sql,
+            MutableCharSink sink,
+            CharSequence expected
+    ) throws SqlException {
+        printSqlWithTypes(
+                compiler,
+                sqlExecutionContext,
+                sql,
+                sink
+        );
+        assertEquals(expected, sink);
+    }
+
+    public static void copyMimeTypes(String targetDir) throws IOException {
+        try (InputStream stream = TestUtils.class.getResourceAsStream("/site/conf/mime.types")) {
+            Assert.assertNotNull(stream);
+            final File target = new File(targetDir, "conf/mime.types");
+            target.getParentFile().mkdirs();
+            try (FileOutputStream fos = new FileOutputStream(target)) {
+                byte[] buffer = new byte[1024 * 1204];
+                int len;
+                while ((len = stream.read(buffer)) > 0) {
+                    fos.write(buffer, 0, len);
+                }
+            }
+        }
+    }
+
+    public static void createPopulateTable(
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext,
+            TableModel tableModel,
+            int totalRows,
+            String startDate,
+            int partitionCount) throws NumericException, SqlException {
+        createPopulateTable(tableModel.getTableName(), compiler, sqlExecutionContext, tableModel, totalRows, startDate, partitionCount);
+    }
+
+    public static void createPopulateTable(
+            CharSequence tableName,
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext,
+            TableModel tableModel,
+            int totalRows,
+            String startDate,
+            int partitionCount) throws NumericException, SqlException {
+        long fromTimestamp = IntervalUtils.parseFloorPartialDate(startDate);
+
+        long increment = 0;
+        if (tableModel.getPartitionBy() != PartitionBy.NONE) {
+            Timestamps.TimestampAddMethod partitionAdd = TableUtils.getPartitionAdd(tableModel.getPartitionBy());
+            long toTs = partitionAdd.calculate(fromTimestamp, partitionCount) - fromTimestamp - Timestamps.SECOND_MICROS;
+            increment = totalRows > 0 ? Math.max(toTs / totalRows, 1) : 0;
+        }
+
+        StringBuilder sql = new StringBuilder();
+        sql.append("create table ").append(tableName).append(" as (").append(Misc.EOL).append("select").append(Misc.EOL);
+        for (int i = 0; i < tableModel.getColumnCount(); i++) {
+            int colType = tableModel.getColumnType(i);
+            CharSequence colName = tableModel.getColumnName(i);
+            switch (colType) {
+                case ColumnType.INT:
+                    sql.append("cast(x as int) ").append(colName);
+                    break;
+                case ColumnType.STRING:
+                    sql.append("CAST(x as STRING) ").append(colName);
+                    break;
+                case ColumnType.LONG:
+                    sql.append("x ").append(colName);
+                    break;
+                case ColumnType.DOUBLE:
+                    sql.append("x / 1000.0 ").append(colName);
+                    break;
+                case ColumnType.TIMESTAMP:
+                    sql.append("CAST(").append(fromTimestamp).append("L AS TIMESTAMP) + x * ").append(increment).append("  ").append(colName);
+                    break;
+                case ColumnType.SYMBOL:
+                    sql.append("rnd_symbol(4,4,4,2) ").append(colName);
+                    break;
+                case ColumnType.BOOLEAN:
+                    sql.append("rnd_boolean() ").append(colName);
+                    break;
+                case ColumnType.FLOAT:
+                    sql.append("CAST(x / 1000.0 AS FLOAT) ").append(colName);
+                    break;
+                case ColumnType.DATE:
+                    sql.append("CAST(").append(fromTimestamp).append("L AS DATE) ").append(colName);
+                    break;
+                case ColumnType.LONG256:
+                    sql.append("CAST(x AS LONG256) ").append(colName);
+                    break;
+                case ColumnType.BYTE:
+                    sql.append("CAST(x AS BYTE) ").append(colName);
+                    break;
+                case ColumnType.CHAR:
+                    sql.append("CAST(x AS CHAR) ").append(colName);
+                    break;
+                case ColumnType.SHORT:
+                    sql.append("CAST(x AS SHORT) ").append(colName);
+                    break;
+                default:
+                    throw new UnsupportedOperationException();
+            }
+            if (i < tableModel.getColumnCount() - 1) {
+                sql.append("," + Misc.EOL);
+            }
+        }
+
+        sql.append(Misc.EOL + "from long_sequence(").append(totalRows).append(")");
+        sql.append(")" + Misc.EOL);
+        if (tableModel.getTimestampIndex() != -1) {
+            CharSequence timestampCol = tableModel.getColumnName(tableModel.getTimestampIndex());
+            sql.append(" timestamp(").append(timestampCol).append(")");
+        }
+        if (tableModel.getPartitionBy() != PartitionBy.NONE) {
+            sql.append(" Partition By ").append(PartitionBy.toString(tableModel.getPartitionBy()));
+        }
+        compiler.compile(sql.toString(), sqlExecutionContext);
     }
 
     public static void createTestPath(CharSequence root) {
@@ -485,9 +532,123 @@ public final class TestUtils {
         }
     }
 
+    public static int getJavaVersion() {
+        String version = System.getProperty("java.version");
+        if (version.startsWith("1.")) {
+            version = version.substring(2, 3);
+        } else {
+            int dot = version.indexOf(".");
+            if (dot != -1) {
+                version = version.substring(0, dot);
+            }
+        }
+        return Integer.parseInt(version);
+    }
+
+    public static void insert(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, CharSequence insertSql) throws SqlException {
+        CompiledQuery compiledQuery = compiler.compile(insertSql, sqlExecutionContext);
+        Assert.assertNotNull(compiledQuery.getInsertStatement());
+        final InsertStatement insertStatement = compiledQuery.getInsertStatement();
+        try (InsertMethod insertMethod = insertStatement.createMethod(sqlExecutionContext)) {
+            insertMethod.execute();
+            insertMethod.commit();
+        }
+    }
+
+    public static void printCursor(RecordCursor cursor, RecordMetadata metadata, boolean header, MutableCharSink sink, RecordCursorPrinter printer) {
+        sink.clear();
+        printer.print(cursor, metadata, header, sink);
+    }
+
+    public static void printSql(
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext,
+            CharSequence sql,
+            MutableCharSink sink
+    ) throws SqlException {
+        try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                printCursor(cursor, factory.getMetadata(), true, sink, printer);
+            }
+        }
+    }
+
+    public static void printSqlWithTypes(
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext,
+            CharSequence sql,
+            MutableCharSink sink
+    ) throws SqlException {
+        try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                printCursor(cursor, factory.getMetadata(), true, sink, printerWithTypes);
+            }
+        }
+    }
+
+    public static String readStringFromFile(File file) {
+        try {
+            try (FileInputStream fis = new FileInputStream(file)) {
+                byte[] buffer
+                        = new byte[(int) fis.getChannel().size()];
+                int totalRead = 0;
+                int read;
+                while (totalRead < buffer.length
+                        && (read = fis.read(buffer, totalRead, buffer.length - totalRead)) > 0) {
+                    totalRead += read;
+                }
+                return new String(buffer, Files.UTF_8);
+            }
+        } catch (IOException e) {
+            throw new RuntimeException("Cannot read from " + file.getAbsolutePath(), e);
+        }
+    }
+
     public static void removeTestPath(CharSequence root) {
         Path path = Path.getThreadLocal(root);
         Files.rmdir(path.slash$());
+    }
+
+    public static long toMemory(CharSequence sequence) {
+        long ptr = Unsafe.malloc(sequence.length());
+        Chars.asciiStrCpy(sequence, sequence.length(), ptr);
+        return ptr;
+    }
+
+    // used in tests
+    public static void writeStringToFile(File file, String s) throws IOException {
+        try (FileOutputStream fos = new FileOutputStream(file)) {
+            fos.write(s.getBytes(Files.UTF_8));
+        }
+    }
+
+    private static void assertEquals(Long256 expected, Long256 actual) {
+        if (expected == actual) return;
+        if (actual == null) {
+            Assert.fail("Expected " + toHexString(expected) + ", but was: null");
+        }
+
+        if (expected.getLong0() != actual.getLong0()
+                || expected.getLong1() != actual.getLong1()
+                || expected.getLong2() != actual.getLong2()
+                || expected.getLong3() != actual.getLong3()) {
+            Assert.assertEquals(toHexString(expected), toHexString(actual));
+        }
+    }
+
+    private static String toHexString(Long256 expected) {
+        return Long.toHexString(expected.getLong0()) + " " +
+                Long.toHexString(expected.getLong1()) + " " +
+                Long.toHexString(expected.getLong2()) + " " +
+                Long.toHexString(expected.getLong3());
+    }
+
+    private static void assertEquals(RecordMetadata metadataExpected, RecordMetadata metadataActual) {
+        Assert.assertEquals("Column count must be same", metadataExpected.getColumnCount(), metadataActual.getColumnCount());
+        for (int i = 0, n = metadataExpected.getColumnCount(); i < n; i++) {
+            Assert.assertEquals("Column name " + i, metadataExpected.getColumnName(i), metadataActual.getColumnName(i));
+            Assert.assertEquals("Column type " + i, metadataExpected.getColumnType(i), metadataActual.getColumnType(i));
+        }
     }
 
     @FunctionalInterface

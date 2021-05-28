@@ -212,6 +212,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean isO3QuickSortEnabled() {
+        return false;
+    }
+
+    @Override
     public int getSqlCharacterStoreSequencePoolCapacity() {
         return 64;
     }
@@ -487,7 +492,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getO3UpdPartitionSizeQueueCapacity() {
+    public int getO3PartitionUpdateQueueCapacity() {
         return 1024;
     }
 
@@ -519,5 +524,15 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getTxnScoreboardEntryCount() {
         return 8192;
+    }
+
+    @Override
+    public int getMaxUncommittedRows() {
+        return 1000;
+    }
+
+    @Override
+    public long getCommitLag() {
+        return 0;
     }
 }

@@ -38,8 +38,7 @@ public class MinFloatGroupByFunction extends FloatFunction implements GroupByFun
     private final Function arg;
     private int valueIndex;
 
-    public MinFloatGroupByFunction(int position, @NotNull Function arg) {
-        super(position);
+    public MinFloatGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
     }
 

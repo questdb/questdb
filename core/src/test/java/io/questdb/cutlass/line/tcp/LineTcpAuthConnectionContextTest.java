@@ -733,7 +733,7 @@ public class LineTcpAuthConnectionContextTest extends AbstractCairoTest {
         Assert.assertTrue(disconnected);
         // Wait for last commit
         try {
-            Thread.sleep(lineTcpConfiguration.getMaintenanceJobHysteresisInMs() + 50);
+            Thread.sleep(lineTcpConfiguration.getMaintenanceInterval() + 50);
         } catch (InterruptedException ex) {
             throw new RuntimeException(ex);
         }

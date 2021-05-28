@@ -33,10 +33,6 @@ import io.questdb.std.Numbers;
 class LongBindVariable extends LongFunction implements ScalarFunction, Mutable {
     long value;
 
-    public LongBindVariable() {
-        super(0);
-    }
-
     @Override
     public void clear() {
         this.value = Numbers.LONG_NaN;

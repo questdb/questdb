@@ -37,7 +37,7 @@ import io.questdb.std.ObjIntHashMap;
 import io.questdb.std.str.Path;
 
 class SymbolCache implements Closeable {
-    private final ObjIntHashMap<CharSequence> indexBySym = new ObjIntHashMap<>(8, 0.5, SymbolTable.VALUE_NOT_FOUND);
+    private final ObjIntHashMap<CharSequence> indexBySym = new ObjIntHashMap<>(256, 0.5, SymbolTable.VALUE_NOT_FOUND);
     private final MappedReadOnlyMemory txMem = new SinglePageMappedReadOnlyPageMemory();
     private final SymbolMapReaderImpl symMapReader = new SymbolMapReaderImpl();
     private long transientSymCountOffset;
@@ -53,6 +53,7 @@ class SymbolCache implements Closeable {
         int symCount = txMem.getInt(transientSymCountOffset);
         path.trimTo(plen);
         symMapReader.of(configuration, path, name, symCount);
+        indexBySym.clear(symCount);
     }
 
     int getSymIndex(CharSequence symValue) {

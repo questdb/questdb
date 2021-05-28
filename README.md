@@ -10,8 +10,8 @@
   <a href="https://github.com/questdb/questdb/blob/master/LICENSE.txt">
     <img src="https://img.shields.io/github/license/questdb/questdb" alt="Apache 2.0 licence"/>
   </a>
-  <a href="https://hub.docker.com/r/questdb/questdb">
-    <img src="https://img.shields.io/docker/pulls/questdb/questdb.svg" alt="QuestDB Docker images"/>
+  <a href="#contribute">
+    <img src="https://img.shields.io/github/all-contributors/questdb/questdb" alt="QuestDB open source contributors"/>
   </a>
   <a href="https://dev.azure.com/questdb/questdb">
     <img src="https://dev.azure.com/questdb/questdb/_apis/build/status/Build%20and%20upload%20snapshot%20%28Linux%29?branchName=master" alt="Azure pipeline status"/>
@@ -78,18 +78,21 @@ You can interact with QuestDB using the following interfaces:
 - [InfluxDB](https://questdb.io/docs/reference/api/influxdb/) line protocol for
   high-throughput ingestion on port `9009`
 
-## Performance figures
+## How QuestDB compares to other open source TSDBs
 
-On a CPU with 6 memory channels, QuestDB can scan through 117GB of data per
-second. The following table shows the number operations per second, per thread:
+Here are ingestion results of the
+[Time Series Benchmark Suite](https://github.com/timescale/tsbs) `cpu-only` use
+case with up to fourteen workers on an AWS EC2 `m5.8xlarge` instance with
+sixteen cores:
 
-| Operation | 64-bit double  | 32-bit int     |
-| --------- | -------------- | -------------- |
-| Read      | 120 Million /s | 240 Million /s |
-| Write     | 240 Million /s | 480 Million /s |
+<div align="center">
+  <a href="https://questdb.io/blog/2021/05/10/questdb-release-6-0-tsbs-benchmark/">
+    <img alt="A chart comparing the maximum throughput of QuestDB, ClickHouse, TimescaleDB and InfluxDB." src=".github/tsbs-results.png" width="700"/>
+  </a>
+</div>
 
-The following table shows query execution time on a c5.metal instance using 16
-of the 96 threads available:
+The following table shows query execution time of a billion rows run on a
+`c5.metal` instance using 16 of the 96 threads available:
 
 | Query                                                     | Runtime    |
 | --------------------------------------------------------- | ---------- |
@@ -176,9 +179,11 @@ QuestDB: ([emoji key](https://allcontributors.org/docs/en/emoji-key)):
   <tr>
     <td align="center"><a href="http://patrick.spacesurfer.com/"><img src="https://avatars.githubusercontent.com/u/29952889?v=4" width="100px;" alt=""/><br /><sub><b>patrickSpaceSurfer</b></sub></a><br /><a href="https://github.com/questdb/questdb/commits?author=patrickSpaceSurfer" title="Code">💻</a> <a href="#maintenance-patrickSpaceSurfer" title="Maintenance">🚧</a> <a href="https://github.com/questdb/questdb/commits?author=patrickSpaceSurfer" title="Tests">⚠️</a></td>
     <td align="center"><a href="http://chenrui.dev"><img src="https://avatars.githubusercontent.com/u/1580956?v=4" width="100px;" alt=""/><br /><sub><b>chenrui333</b></sub></a><br /><a href="#infra-chenrui333" title="Infrastructure (Hosting, Build-Tools, etc)">🚇</a></td>
-    <td align="center"><a href="https://github.com/Ugbot"><img src="https://avatars.githubusercontent.com/u/2143631?v=4" width="100px;" alt=""/><br /><sub><b>Ugbot</b></sub></a><br /><a href="#question-Ugbot" title="Answering Questions">💬</a> <a href="#userTesting-Ugbot" title="User Testing">📓</a> <a href="#talk-Ugbot" title="Talks">📢</a></td>
     <td align="center"><a href="http://bsmth.de"><img src="https://avatars.githubusercontent.com/u/43580235?v=4" width="100px;" alt=""/><br /><sub><b>bsmth</b></sub></a><br /><a href="https://github.com/questdb/questdb/commits?author=bsmth" title="Documentation">📖</a> <a href="#content-bsmth" title="Content">🖋</a></td>
+    <td align="center"><a href="https://github.com/Ugbot"><img src="https://avatars.githubusercontent.com/u/2143631?v=4" width="100px;" alt=""/><br /><sub><b>Ugbot</b></sub></a><br /><a href="#question-Ugbot" title="Answering Questions">💬</a> <a href="#userTesting-Ugbot" title="User Testing">📓</a> <a href="#talk-Ugbot" title="Talks">📢</a></td>
     <td align="center"><a href="https://github.com/lepolac"><img src="https://avatars.githubusercontent.com/u/6312424?v=4" width="100px;" alt=""/><br /><sub><b>lepolac</b></sub></a><br /><a href="https://github.com/questdb/questdb/commits?author=lepolac" title="Code">💻</a> <a href="#tool-lepolac" title="Tools">🔧</a></td>
+    <td align="center"><a href="https://github.com/tiagostutz"><img src="https://avatars.githubusercontent.com/u/3986989?v=4" width="100px;" alt=""/><br /><sub><b>tiagostutz</b></sub></a><br /><a href="#userTesting-tiagostutz" title="User Testing">📓</a> <a href="https://github.com/questdb/questdb/issues?q=author%3Atiagostutz" title="Bug reports">🐛</a> <a href="#projectManagement-tiagostutz" title="Project Management">📆</a></td>
+    <td align="center"><a href="https://github.com/Lyncee59"><img src="https://avatars.githubusercontent.com/u/13176504?v=4" width="100px;" alt=""/><br /><sub><b>Lyncee59</b></sub></a><br /><a href="#ideas-Lyncee59" title="Ideas, Planning, & Feedback">🤔</a> <a href="https://github.com/questdb/questdb/commits?author=Lyncee59" title="Code">💻</a></td>
   </tr>
 </table>
 

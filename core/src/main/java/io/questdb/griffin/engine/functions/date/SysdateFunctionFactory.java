@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.DateFunction;
+import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 
@@ -40,16 +41,15 @@ public class SysdateFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new Func(position, configuration.getMillisecondClock());
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+        return new Func(configuration.getMillisecondClock());
     }
 
     private static class Func extends DateFunction implements Function {
 
         private final MillisecondClock clock;
 
-        public Func(int position, MillisecondClock clock) {
-            super(position);
+        public Func(MillisecondClock clock) {
             this.clock = clock;
         }
 

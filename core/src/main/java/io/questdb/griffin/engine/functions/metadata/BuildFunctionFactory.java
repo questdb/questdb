@@ -31,6 +31,7 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
+import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class BuildFunctionFactory implements FunctionFactory {
@@ -42,9 +43,13 @@ public class BuildFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(final ObjList<Function> args,
-                                final int position,
-                                final CairoConfiguration configuration,
+    public boolean isRuntimeConstant() {
+        return true;
+    }
+
+    @Override
+    public Function newInstance(final int position, final ObjList<Function> args,
+                                IntList argPositions, final CairoConfiguration configuration,
                                 final SqlExecutionContext sqlExecutionContext) {
 
         if (instance == null) {
@@ -64,6 +69,6 @@ public class BuildFunctionFactory implements FunctionFactory {
                 ", Commit Hash " +
                 buildInformation.getCommitHash();
 
-        return new StrConstant(0, information);
+        return new StrConstant(information);
     }
 }

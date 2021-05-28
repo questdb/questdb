@@ -29,7 +29,9 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+import io.questdb.std.Transient;
 
 import static io.questdb.griffin.FunctionFactoryDescriptor.replaceSignatureName;
 
@@ -48,8 +50,14 @@ public class NegatingFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        Function function = delegate.newInstance(args, position, configuration, sqlExecutionContext);
+    public Function newInstance(
+            int position,
+            @Transient ObjList<Function> args,
+            @Transient IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
+        Function function = delegate.newInstance(position, args, argPositions, configuration, sqlExecutionContext);
         if (function instanceof NegatableBooleanFunction) {
             NegatableBooleanFunction negateableFunction = (NegatableBooleanFunction) function;
             negateableFunction.setNegated();

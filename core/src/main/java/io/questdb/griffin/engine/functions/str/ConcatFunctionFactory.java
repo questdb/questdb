@@ -32,6 +32,7 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.MultiArgFunction;
 import io.questdb.griffin.engine.functions.StrFunction;
+import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 import io.questdb.std.str.CharSink;
@@ -120,10 +121,10 @@ public class ConcatFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(@Transient ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+    public Function newInstance(int position, @Transient ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         final ObjList<Function> functions = new ObjList<>(args.size());
         functions.addAll(args);
-        return new ConcatFunction(position, functions);
+        return new ConcatFunction(functions);
     }
 
     @FunctionalInterface
@@ -138,8 +139,7 @@ public class ConcatFunctionFactory implements FunctionFactory {
         private final StringSink sinkB = new StringSink();
         private final int functionCount;
 
-        public ConcatFunction(int position, ObjList<Function> functions) {
-            super(position);
+        public ConcatFunction(ObjList<Function> functions) {
             this.functions = functions;
             this.functionCount = functions.size();
             this.adaptors = new ObjList<>(functionCount);

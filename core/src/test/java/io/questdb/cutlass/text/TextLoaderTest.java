@@ -471,7 +471,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
                     playText0(textLoader, csv, 1024, ENTITY_MANIPULATOR);
                     Assert.fail();
                 } catch (CairoException e) {
-                    TestUtils.assertContains(e.getMessage(), "Could not lock");
+                    TestUtils.assertContains(e.getFlyweightMessage(), "Could not lock");
                 }
             }
         });
@@ -1254,7 +1254,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
     @Test
     public void testLoadRowsWithExtraColumns() throws Exception {
         assertNoLeak(textLoader -> {
-            final String expected = "VendorID\tlpepPickupDatetime\tLpepDropoffDatetime\tStoreAndFwdFlag\tRateCodeID\tPickupLongitude\tPickupLatitude\tDropoffLongitude\tDropoffLatitude\tPassengerCount\tTripDistance\tFareAmount\tExtra\tMTATax\tTipAmount\tTollsAmount\tEhailFee\tTotalAmount\tPaymentType\tTripType\n" +
+            final String expected = "VendorID\tlpep_pickup_datetime\tLpep_dropoff_datetime\tStore_and_fwd_flag\tRateCodeID\tPickup_longitude\tPickup_latitude\tDropoff_longitude\tDropoff_latitude\tPassenger_count\tTrip_distance\tFare_amount\tExtra\tMTA_tax\tTip_amount\tTolls_amount\tEhail_fee\tTotal_amount\tPayment_type\tTrip_type\n" +
                     "2\t2014-03-01T00:00:00.000Z\t2014-03-01T19:18:34.000Z\tN\t1\t0\t0\t-73.87202453613283\t40.678714752197266\t6\t7.0200000000000005\t28.5\t0.0\t0.5\t0.0\t0\t\t29.0\t2\t1\n" +
                     "2\t2014-03-01T00:00:00.000Z\t2014-03-01T13:10:37.000Z\tN\t1\t0\t0\t-73.91783905029298\t40.75776672363282\t1\t5.43\t23.5\t0.0\t0.5\t5.88\t0\t\t29.88\t1\t1\n" +
                     "2\t2014-03-01T00:00:00.000Z\t2014-03-01T14:36:16.000Z\tN\t1\t0\t0\t-73.88289642333984\t40.87045669555664\t1\t0.84\t5.0\t0.0\t0.5\t0.0\t0\t\t5.5\t1\t1\n" +
@@ -1296,7 +1296,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
                     csv,
                     1024 * 1024,
                     expected,
-                    "{\"columnCount\":20,\"columns\":[{\"index\":0,\"name\":\"VendorID\",\"type\":\"INT\"},{\"index\":1,\"name\":\"lpepPickupDatetime\",\"type\":\"DATE\"},{\"index\":2,\"name\":\"LpepDropoffDatetime\",\"type\":\"DATE\"},{\"index\":3,\"name\":\"StoreAndFwdFlag\",\"type\":\"CHAR\"},{\"index\":4,\"name\":\"RateCodeID\",\"type\":\"INT\"},{\"index\":5,\"name\":\"PickupLongitude\",\"type\":\"INT\"},{\"index\":6,\"name\":\"PickupLatitude\",\"type\":\"INT\"},{\"index\":7,\"name\":\"DropoffLongitude\",\"type\":\"DOUBLE\"},{\"index\":8,\"name\":\"DropoffLatitude\",\"type\":\"DOUBLE\"},{\"index\":9,\"name\":\"PassengerCount\",\"type\":\"INT\"},{\"index\":10,\"name\":\"TripDistance\",\"type\":\"DOUBLE\"},{\"index\":11,\"name\":\"FareAmount\",\"type\":\"DOUBLE\"},{\"index\":12,\"name\":\"Extra\",\"type\":\"DOUBLE\"},{\"index\":13,\"name\":\"MTATax\",\"type\":\"DOUBLE\"},{\"index\":14,\"name\":\"TipAmount\",\"type\":\"DOUBLE\"},{\"index\":15,\"name\":\"TollsAmount\",\"type\":\"INT\"},{\"index\":16,\"name\":\"EhailFee\",\"type\":\"STRING\"},{\"index\":17,\"name\":\"TotalAmount\",\"type\":\"DOUBLE\"},{\"index\":18,\"name\":\"PaymentType\",\"type\":\"INT\"},{\"index\":19,\"name\":\"TripType\",\"type\":\"INT\"}],\"timestampIndex\":-1}",
+                    "{\"columnCount\":20,\"columns\":[{\"index\":0,\"name\":\"VendorID\",\"type\":\"INT\"},{\"index\":1,\"name\":\"lpep_pickup_datetime\",\"type\":\"DATE\"},{\"index\":2,\"name\":\"Lpep_dropoff_datetime\",\"type\":\"DATE\"},{\"index\":3,\"name\":\"Store_and_fwd_flag\",\"type\":\"CHAR\"},{\"index\":4,\"name\":\"RateCodeID\",\"type\":\"INT\"},{\"index\":5,\"name\":\"Pickup_longitude\",\"type\":\"INT\"},{\"index\":6,\"name\":\"Pickup_latitude\",\"type\":\"INT\"},{\"index\":7,\"name\":\"Dropoff_longitude\",\"type\":\"DOUBLE\"},{\"index\":8,\"name\":\"Dropoff_latitude\",\"type\":\"DOUBLE\"},{\"index\":9,\"name\":\"Passenger_count\",\"type\":\"INT\"},{\"index\":10,\"name\":\"Trip_distance\",\"type\":\"DOUBLE\"},{\"index\":11,\"name\":\"Fare_amount\",\"type\":\"DOUBLE\"},{\"index\":12,\"name\":\"Extra\",\"type\":\"DOUBLE\"},{\"index\":13,\"name\":\"MTA_tax\",\"type\":\"DOUBLE\"},{\"index\":14,\"name\":\"Tip_amount\",\"type\":\"DOUBLE\"},{\"index\":15,\"name\":\"Tolls_amount\",\"type\":\"INT\"},{\"index\":16,\"name\":\"Ehail_fee\",\"type\":\"STRING\"},{\"index\":17,\"name\":\"Total_amount\",\"type\":\"DOUBLE\"},{\"index\":18,\"name\":\"Payment_type\",\"type\":\"INT\"},{\"index\":19,\"name\":\"Trip_type\",\"type\":\"INT\"}],\"timestampIndex\":-1}",
                     14,
                     14
             );
@@ -1405,7 +1405,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
     @Test
     public void testMissingFirstColumn() throws Exception {
         assertNoLeak(textLoader -> {
-            String expected = "StrSym\tIntSym\tIntCol\tDoubleCol\tIsoDate\tFmt1Date\tFmt2Date\tPhone\tboolean\tlong\n" +
+            String expected = "StrSym\tIntSym\tInt_Col\tDoubleCol\tIsoDate\tFmt1Date\tFmt2Date\tPhone\tboolean\tlong\n" +
                     "CMP1\t7\t8284\t3.2045788760297\t2015-01-13T19:15:09.000Z\t2015-01-13T19:15:09.000Z\t2015-01-13T00:00:00.000Z\t8284\ttrue\t10239799\n" +
                     "CMP2\t3\t1066\t7.5186683377251\t2015-01-14T19:15:09.000Z\t2015-01-14T19:15:09.000Z\t2015-01-14T00:00:00.000Z\t1066\tfalse\t23331405\n" +
                     "\t6\t4527\t2.48986426275223\t2015-01-16T19:15:09.000Z\t2015-01-16T19:15:09.000Z\t2015-01-16T00:00:00.000Z\t2719\tfalse\t67489936\n" +
@@ -1426,7 +1426,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
                     csv,
                     260,
                     expected,
-                    "{\"columnCount\":10,\"columns\":[{\"index\":0,\"name\":\"StrSym\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"IntSym\",\"type\":\"INT\"},{\"index\":2,\"name\":\"IntCol\",\"type\":\"INT\"},{\"index\":3,\"name\":\"DoubleCol\",\"type\":\"DOUBLE\"},{\"index\":4,\"name\":\"IsoDate\",\"type\":\"DATE\"},{\"index\":5,\"name\":\"Fmt1Date\",\"type\":\"DATE\"},{\"index\":6,\"name\":\"Fmt2Date\",\"type\":\"DATE\"},{\"index\":7,\"name\":\"Phone\",\"type\":\"INT\"},{\"index\":8,\"name\":\"boolean\",\"type\":\"BOOLEAN\"},{\"index\":9,\"name\":\"long\",\"type\":\"INT\"}],\"timestampIndex\":-1}",
+                    "{\"columnCount\":10,\"columns\":[{\"index\":0,\"name\":\"StrSym\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"IntSym\",\"type\":\"INT\"},{\"index\":2,\"name\":\"Int_Col\",\"type\":\"INT\"},{\"index\":3,\"name\":\"DoubleCol\",\"type\":\"DOUBLE\"},{\"index\":4,\"name\":\"IsoDate\",\"type\":\"DATE\"},{\"index\":5,\"name\":\"Fmt1Date\",\"type\":\"DATE\"},{\"index\":6,\"name\":\"Fmt2Date\",\"type\":\"DATE\"},{\"index\":7,\"name\":\"Phone\",\"type\":\"INT\"},{\"index\":8,\"name\":\"boolean\",\"type\":\"BOOLEAN\"},{\"index\":9,\"name\":\"long\",\"type\":\"INT\"}],\"timestampIndex\":-1}",
                     5,
                     4
             );
@@ -1799,7 +1799,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
             assertNoLeak(
                     engine,
                     textLoader -> {
-                        String expected = "StrSym\tIntSym\tIntCol\tDoubleCol\tIsoDate\tFmt1Date\tFmt2Date\tPhone\tboolean\tlong\n" +
+                        String expected = "StrSym\tIntSym\tInt_Col\tDoubleCol\tIsoDate\tFmt1Date\tFmt2Date\tPhone\tboolean\tlong\n" +
                                 "CMP1\t7\t8284\t3.2045788760297\t2015-01-13T19:15:09.000Z\t2015-01-13T19:15:09.000Z\t2015-01-13T00:00:00.000Z\t8284\ttrue\t10239799\n" +
                                 "CMP2\t3\t1066\t7.5186683377251\t2015-01-14T19:15:09.000Z\t2015-01-14T19:15:09.000Z\t2015-01-14T00:00:00.000Z\t1066\tfalse\t23331405\n" +
                                 "CMP1\t4\t6938\t5.11407712241635\t2015-01-15T19:15:09.000Z\t2015-01-15T19:15:09.000Z\t2015-01-15T00:00:00.000Z\t(099)889-776\ttrue\t55296137\n" +
@@ -1821,7 +1821,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
                                 csv,
                                 1024,
                                 expected,
-                                "{\"columnCount\":10,\"columns\":[{\"index\":0,\"name\":\"StrSym\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"IntSym\",\"type\":\"INT\"},{\"index\":2,\"name\":\"IntCol\",\"type\":\"INT\"},{\"index\":3,\"name\":\"DoubleCol\",\"type\":\"DOUBLE\"},{\"index\":4,\"name\":\"IsoDate\",\"type\":\"DATE\"},{\"index\":5,\"name\":\"Fmt1Date\",\"type\":\"DATE\"},{\"index\":6,\"name\":\"Fmt2Date\",\"type\":\"DATE\"},{\"index\":7,\"name\":\"Phone\",\"type\":\"STRING\"},{\"index\":8,\"name\":\"boolean\",\"type\":\"BOOLEAN\"},{\"index\":9,\"name\":\"long\",\"type\":\"INT\"}],\"timestampIndex\":-1}",
+                                "{\"columnCount\":10,\"columns\":[{\"index\":0,\"name\":\"StrSym\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"IntSym\",\"type\":\"INT\"},{\"index\":2,\"name\":\"Int_Col\",\"type\":\"INT\"},{\"index\":3,\"name\":\"DoubleCol\",\"type\":\"DOUBLE\"},{\"index\":4,\"name\":\"IsoDate\",\"type\":\"DATE\"},{\"index\":5,\"name\":\"Fmt1Date\",\"type\":\"DATE\"},{\"index\":6,\"name\":\"Fmt2Date\",\"type\":\"DATE\"},{\"index\":7,\"name\":\"Phone\",\"type\":\"STRING\"},{\"index\":8,\"name\":\"boolean\",\"type\":\"BOOLEAN\"},{\"index\":9,\"name\":\"long\",\"type\":\"INT\"}],\"timestampIndex\":-1}",
                                 5,
                                 4
                         );
@@ -1855,7 +1855,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
                 playText0(textLoader, csv, 1024, ENTITY_MANIPULATOR);
                 Assert.fail();
             } catch (CairoException e) {
-                TestUtils.assertContains(e.getMessage(), "name is reserved");
+                TestUtils.assertContains(e.getFlyweightMessage(), "name is reserved");
             }
         });
     }
@@ -2037,7 +2037,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
                 playText0(textLoader, csv, 1, ENTITY_MANIPULATOR);
                 Assert.fail();
             } catch (CairoException e) {
-                TestUtils.assertContains(e.getMessage(), "cannot determine text structure");
+                TestUtils.assertContains(e.getFlyweightMessage(), "cannot determine text structure");
             }
         });
     }
@@ -2373,7 +2373,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
                         3);
                 Assert.fail();
             } catch (CairoException e) {
-                TestUtils.assertContains(e.getMessage(), "cannot import text into BINARY column");
+                TestUtils.assertContains(e.getFlyweightMessage(), "cannot import text into BINARY column");
             }
         });
     }
@@ -2547,7 +2547,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
                 playText0(textLoader, csv, 1024, ENTITY_MANIPULATOR);
                 Assert.fail();
             } catch (CairoException e) {
-                TestUtils.assertContains(e.getMessage(), "column count mismatch [textColumnCount=10, tableColumnCount=2, table=test]");
+                TestUtils.assertContains(e.getFlyweightMessage(), "column count mismatch [textColumnCount=10, tableColumnCount=2, table=test]");
             }
         });
     }

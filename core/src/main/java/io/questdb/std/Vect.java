@@ -58,6 +58,10 @@ public final class Vect {
 
     public static native void freeMergedIndex(long pIndex);
 
+    public static native long getPerformanceCounter(int index);
+
+    public static native int getPerformanceCountersCount();
+
     public static native int getSupportedInstructionSet();
 
     public static String getSupportedInstructionSetName() {
@@ -81,17 +85,15 @@ public final class Vect {
 
     public static native void indexReshuffle16Bit(long pSrc, long pDest, long pIndex, long count);
 
+    public static native void indexReshuffle256Bit(long pSrc, long pDest, long pIndex, long count);
+
     public static native void indexReshuffle32Bit(long pSrc, long pDest, long pIndex, long count);
 
     public static native void indexReshuffle64Bit(long pSrc, long pDest, long pIndex, long count);
 
-    public static native void indexReshuffle256Bit(long pSrc, long pDest, long pIndex, long count);
-
     public static native void indexReshuffle8Bit(long pSrc, long pDest, long pIndex, long count);
 
     public static native long makeTimestampIndex(long pData, long low, long high, long pIndex);
-
-    public static native long shiftTimestampIndex(long pSrc, long count, long pDest);
 
     public static native double maxDouble(long pDouble, long count);
 
@@ -115,17 +117,17 @@ public final class Vect {
 
     public static native long mergeLongIndexesAsc(long pIndexStructArray, int count);
 
-    public static native long mergeTwoLongIndexesAsc(long pIndex1, long index1Count, long pIndex2, long index2Count);
-
     public static native void mergeShuffle16Bit(long pSrc1, long pSrc2, long pDest, long pIndex, long count);
+
+    public static native void mergeShuffle256Bit(long pSrc1, long pSrc2, long pDest, long pIndex, long count);
 
     public static native void mergeShuffle32Bit(long pSrc1, long pSrc2, long pDest, long pIndex, long count);
 
     public static native void mergeShuffle64Bit(long pSrc1, long pSrc2, long pDest, long pIndex, long count);
 
-    public static native void mergeShuffle256Bit(long pSrc1, long pSrc2, long pDest, long pIndex, long count);
-
     public static native void mergeShuffle8Bit(long pSrc1, long pSrc2, long pDest, long pIndex, long count);
+
+    public static native long mergeTwoLongIndexesAsc(long pIndex1, long index1Count, long pIndex2, long index2Count);
 
     public static native double minDouble(long pDouble, long count);
 
@@ -159,6 +161,12 @@ public final class Vect {
             long dstVarOffset
     );
 
+    public static native void quickSortLongIndexAscInPlace(long pLongData, long count);
+
+    public static native void radixSortLongIndexAscInPlace(long pLongData, long count, long pCpy);
+
+    public static native void resetPerformanceCounters();
+
     public static native void setMemoryDouble(long pData, double value, long count);
 
     public static native void setMemoryFloat(long pData, float value, long count);
@@ -175,7 +183,20 @@ public final class Vect {
 
     public static native void shiftCopyFixedSizeColumnData(long shift, long src, long srcLo, long srcHi, long dstAddr);
 
+    public static native long shiftTimestampIndex(long pSrc, long count, long pDest);
+
     public static native void sortLongIndexAscInPlace(long pLongData, long count);
+
+    public static native void sortULongAscInPlace(long pLongData, long count);
+
+    public static native long sortVarColumn(
+            long mergedTimestampsAddr,
+            long valueCount,
+            long srcDataAddr,
+            long srcIndxAddr,
+            long tgtDataAddr,
+            long tgtIndxAdd
+    );
 
     public static native double sumDouble(long pDouble, long count);
 
@@ -188,10 +209,4 @@ public final class Vect {
     public static native long sumLong(long pLong, long count);
 
     private static native void memcpy0(long src, long dst, long len);
-
-    public static native int getPerformanceCountersCount();
-
-    public static native long getPerformanceCounter(int index);
-
-    public static native void resetPerformanceCounters();
 }

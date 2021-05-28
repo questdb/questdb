@@ -53,7 +53,10 @@ public class ShowTablesTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             compiler.compile("create table balances(cust_id int, ccy symbol, balance double)", sqlExecutionContext);
             assertQuery(
-                    "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\ncust_id\tINT\tfalse\t0\tfalse\t0\nccy\tSYMBOL\tfalse\t256\ttrue\t128\nbalance\tDOUBLE\tfalse\t0\tfalse\t0\n",
+                    "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\n" +
+                            "cust_id\tINT\tfalse\t0\tfalse\t0\tfalse\n" +
+                            "ccy\tSYMBOL\tfalse\t256\ttrue\t128\tfalse\n" +
+                            "balance\tDOUBLE\tfalse\t0\tfalse\t0\tfalse\n",
                     "show columns from balances", null, false, sqlExecutionContext, false);
         });
     }
@@ -79,7 +82,7 @@ public class ShowTablesTest extends AbstractGriffinTest {
                 assertQuery("columnName\tcolumnType\ncust_id\tINT\nccy\tSYMBOL\nbalance\tDOUBLE\n", "show", null, false, sqlExecutionContext, false);
                 Assert.fail();
             } catch (SqlException ex) {
-                Assert.assertTrue(ex.toString().contains("expected 'tables' or 'columns'"));
+                Assert.assertTrue(ex.toString().contains("expected 'tables', 'columns' or 'time zone'"));
             }
         });
     }
@@ -110,9 +113,27 @@ public class ShowTablesTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             compiler.compile("create table balances(cust_id int, ccy symbol, balance double)", sqlExecutionContext);
             assertQuery(
-                    "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\ncust_id\tINT\tfalse\t0\tfalse\t0\nccy\tSYMBOL\tfalse\t256\ttrue\t128\nbalance\tDOUBLE\tfalse\t0\tfalse\t0\n",
+                    "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\n" +
+                            "cust_id\tINT\tfalse\t0\tfalse\t0\tfalse\n" +
+                            "ccy\tSYMBOL\tfalse\t256\ttrue\t128\tfalse\n" +
+                            "balance\tDOUBLE\tfalse\t0\tfalse\t0\tfalse\n",
                     "select * from table_columns('balances')", null, false, sqlExecutionContext, false);
         });
     }
 
+    @Test
+    public void testShowTimeZone() throws Exception {
+        assertMemoryLeak(() -> {
+            assertQuery(
+                    "TimeZone\nUTC\n",
+                    "show time zone", null, false, sqlExecutionContext, false, true);
+        });
+    }
+
+    @Test
+    public void testShowTimeZoneWrongSyntax() throws Exception {
+        assertMemoryLeak(() -> {
+            assertFailure("show time", null, 5, "expected 'tables', 'columns' or 'time zone'");
+        });
+    }
 }

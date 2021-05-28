@@ -24,28 +24,49 @@
 
 package io.questdb.cutlass.line.tcp;
 
-import io.questdb.cairo.*;
-import io.questdb.cutlass.line.tcp.LineTcpMeasurementScheduler.NetworkIOJob;
-import io.questdb.cutlass.line.tcp.LineTcpMeasurementScheduler.TableUpdateDetails;
-import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
-import io.questdb.mp.WorkerPool;
-import io.questdb.mp.WorkerPoolConfiguration;
-import io.questdb.network.*;
-import io.questdb.std.*;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
-import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
-import io.questdb.std.str.FloatingDirectCharSink;
-import io.questdb.std.str.LPSZ;
-import org.junit.Assert;
-import org.junit.Before;
-import org.junit.Test;
-
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.Random;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.LockSupport;
+
+import org.junit.Assert;
+import org.junit.Before;
+import org.junit.Test;
+
+import io.questdb.cairo.AbstractCairoTest;
+import io.questdb.cairo.CairoTestUtils;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableModel;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableReaderRecordCursor;
+import io.questdb.cairo.security.AllowAllCairoSecurityContext;
+import io.questdb.cutlass.line.tcp.LineTcpMeasurementScheduler.NetworkIOJob;
+import io.questdb.cutlass.line.tcp.LineTcpMeasurementScheduler.TableUpdateDetails;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.mp.WorkerPool;
+import io.questdb.mp.WorkerPoolConfiguration;
+import io.questdb.network.IODispatcher;
+import io.questdb.network.IOOperation;
+import io.questdb.network.IORequestProcessor;
+import io.questdb.network.NetworkFacade;
+import io.questdb.network.NetworkFacadeImpl;
+import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.std.Chars;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.ObjList;
+import io.questdb.std.Unsafe;
+import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
+import io.questdb.std.str.FloatingDirectCharSink;
+import io.questdb.std.str.LPSZ;
 
 public class LineTcpConnectionContextTest extends AbstractCairoTest {
     private final static Log LOG = LogFactory.getLog(LineTcpConnectionContextTest.class);
@@ -100,12 +121,7 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
             }
 
             @Override
-            public int getMaxUncommittedRows() {
-                return 25;
-            }
-
-            @Override
-            public long getMinIdleMsBeforeWriterRelease() {
+            public long getWriterIdleTimeout() {
                 return 150;
             }
 
@@ -177,6 +193,51 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
                     "us-eastcoast\t80.0\t2016-06-13T17:43:50.102400Z\t\n" +
                     "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\t\n";
             assertTable(expected, "weather");
+        });
+    }
+
+    @Test
+    public void testTableParameterRetentionOnAddColumn() throws Exception {
+        runInContext(() -> {
+            try (
+                    SqlCompiler compiler = new SqlCompiler(engine);
+                    SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)) {
+                compiler.compile(
+                        "create table weather (location SYMBOL, temperature DOUBLE, timestamp TIMESTAMP) timestamp(timestamp) partition by DAY WITH maxUncommittedRows=3, commitLag=250ms;",
+                        sqlExecutionContext);
+            } catch (SqlException ex) {
+                throw new RuntimeException(ex);
+            }
+            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "weather")) {
+                Assert.assertEquals(3, reader.getMetadata().getMaxUncommittedRows());
+                Assert.assertEquals(250_000, reader.getMetadata().getCommitLag());
+            }
+            recvBuffer = "weather,location=us-midwest temperature=82 1465839830100400200\n" +
+                    "weather,location=us-midwest temperature=83 1465839830100500200\n" +
+                    "weather,location=us-eastcoast,city=york temperature=81 1465839830101400200\n" +
+                    "weather,location=us-midwest temperature=85 1465839830102300200\n" +
+                    "weather,location=us-eastcoast temperature=89 1465839830102400200\n" +
+                    "weather,location=us-eastcoast temperature=80 1465839830102400200\n" +
+                    "weather,location=us-westcost temperature=82 1465839830102500200\n";
+            do {
+                handleContextIO();
+                Assert.assertFalse(disconnected);
+            } while (recvBuffer.length() > 0);
+            waitForIOCompletion();
+            closeContext();
+            String expected = "location\ttemperature\ttimestamp\tcity\n" +
+                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\t\n" +
+                    "us-midwest\t83.0\t2016-06-13T17:43:50.100500Z\t\n" +
+                    "us-eastcoast\t81.0\t2016-06-13T17:43:50.101400Z\tyork\n" +
+                    "us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\t\n" +
+                    "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\t\n" +
+                    "us-eastcoast\t80.0\t2016-06-13T17:43:50.102400Z\t\n" +
+                    "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\t\n";
+            assertTable(expected, "weather");
+            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "weather")) {
+                Assert.assertEquals(3, reader.getMetadata().getMaxUncommittedRows());
+                Assert.assertEquals(250_000, reader.getMetadata().getCommitLag());
+            }
         });
     }
 
@@ -501,6 +562,30 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
             String expected = "event\tid\tts\tfloat1\tint1\tdate1\tbyte1\ttimestamp\n" +
                     "12\t0x5a9796963abad00001e5f6bbdb38\t2016-06-13T17:43:50.102400Z\t1.2000\t23\t2016-06-13T17:43:50.102Z\t-7\t2016-06-13T17:43:50.102800Z\n" +
                     "12\t0x5a9796963abad00001e5f6bbdb38\t2016-06-13T17:43:50.102400Z\t1000.0000\t-500000\t2016-06-13T17:43:50.102Z\t3\t2016-06-13T17:43:50.102800Z\n";
+            assertTable(expected, "t_ilp21");
+        });
+    }
+
+    @Test
+    public void testColumnConversion2() throws Exception {
+        runInContext(() -> {
+            try (
+                    @SuppressWarnings("resource")
+            TableModel model = new TableModel(configuration, "t_ilp21",
+                    PartitionBy.NONE).col("l", ColumnType.LONG)) {
+                CairoTestUtils.create(model);
+            }
+            microSecondTicks = 1465839830102800L;
+            recvBuffer = "t_ilp21 l=843530699759026177i\n" +
+                    "t_ilp21 l=\"843530699759026178\"\n" +
+                    "t_ilp21 l=843530699759026179i\n";
+            handleContextIO();
+            Assert.assertFalse(disconnected);
+            waitForIOCompletion();
+            closeContext();
+            String expected = "l\n" +
+                    "843530699759026177\n" +
+                    "843530699759026179\n";
             assertTable(expected, "t_ilp21");
         });
     }
@@ -1177,11 +1262,11 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
 
         scheduler = new LineTcpMeasurementScheduler(lineTcpConfiguration, engine, netIoWorkerPool, null, workerPool) {
             @Override
-            boolean tryCommitNewEvent(NetworkIOJob netIoJob, NewLineProtoParser protoParser, FloatingDirectCharSink charSink) {
+            boolean tryButCouldNotCommit(NetworkIOJob netIoJob, NewLineProtoParser protoParser, FloatingDirectCharSink charSink) {
                 if (null != onCommitNewEvent) {
                     onCommitNewEvent.run();
                 }
-                return super.tryCommitNewEvent(netIoJob, protoParser, charSink);
+                return super.tryButCouldNotCommit(netIoJob, protoParser, charSink);
             }
 
             @Override
@@ -1358,7 +1443,7 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
         Assert.assertTrue(disconnected || !closeConnection);
         // Wait for last commit
         try {
-            Thread.sleep(lineTcpConfiguration.getMaintenanceJobHysteresisInMs() + 50);
+            Thread.sleep(lineTcpConfiguration.getMaintenanceInterval() + 50);
         } catch (InterruptedException ex) {
             throw new RuntimeException(ex);
         }

@@ -29,6 +29,7 @@ import io.questdb.cairo.vm.PagedMappedReadWriteMemory;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
+import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
 
 import java.io.Closeable;
@@ -274,9 +275,9 @@ public final class TxWriter extends TxReader implements Closeable {
     }
 
     public void setMinTimestamp(long timestamp) {
-        minTimestamp = timestamp;
-        if (prevMinTimestamp == Long.MAX_VALUE) {
-            prevMinTimestamp = minTimestamp;
+            minTimestamp = timestamp;
+            if (prevMinTimestamp == Long.MAX_VALUE) {
+                prevMinTimestamp = minTimestamp;
         }
     }
 
@@ -312,6 +313,7 @@ public final class TxWriter extends TxReader implements Closeable {
 
     public void updateMaxTimestamp(long timestamp) {
         prevMaxTimestamp = maxTimestamp;
+        assert timestamp >= maxTimestamp;
         maxTimestamp = timestamp;
     }
 
@@ -352,8 +354,12 @@ public final class TxWriter extends TxReader implements Closeable {
     }
 
     void resetToLastPartition(long committedTransientRowCount) {
+        resetToLastPartition(committedTransientRowCount, txMem.getLong(TX_OFFSET_MAX_TIMESTAMP));
+    }
+
+    void resetToLastPartition(long committedTransientRowCount, long newMaxTimestamp) {
         updatePartitionSizeByTimestamp(maxTimestamp, committedTransientRowCount);
-        prevMaxTimestamp = txMem.getLong(TX_OFFSET_MAX_TIMESTAMP);
+        prevMaxTimestamp = newMaxTimestamp;
         maxTimestamp = prevMaxTimestamp;
         transientRowCount = committedTransientRowCount;
     }

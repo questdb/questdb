@@ -26,8 +26,6 @@ package io.questdb.griffin;
 
 import io.questdb.WorkerPoolAwareConfiguration;
 import io.questdb.cairo.*;
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -54,6 +52,7 @@ public class AbstractO3Test {
     @ClassRule
     public static TemporaryFolder temp = new TemporaryFolder();
     protected static CharSequence root;
+    private static final RecordCursorPrinter printer = new RecordCursorPrinter();
 
     @BeforeClass
     public static void setupStatic() {
@@ -78,24 +77,12 @@ public class AbstractO3Test {
         TestUtils.removeTestPath(root);
     }
 
-    protected static void assertSqlCursors(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, String expected, String actual) throws SqlException {
-        try (RecordCursorFactory factory = compiler.compile(expected, sqlExecutionContext).getRecordCursorFactory()) {
-            try (RecordCursor cursor1 = factory.getCursor(sqlExecutionContext)) {
-                try (RecordCursorFactory factory2 = compiler.compile(actual, sqlExecutionContext).getRecordCursorFactory()) {
-                    try (RecordCursor cursor2 = factory2.getCursor(sqlExecutionContext)) {
-                        TestUtils.assertEquals(cursor1, factory.getMetadata(), cursor2, factory2.getMetadata());
-                    }
-                }
-            }
-        }
-    }
-
     protected static void assertIndexConsistency(
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext,
             String table
     ) throws SqlException {
-        assertSqlCursors(compiler, sqlExecutionContext, table + " where sym = 'googl' order by ts", "x where sym = 'googl'");
+        TestUtils.assertSqlCursors(compiler, sqlExecutionContext, table + " where sym = 'googl' order by ts", "x where sym = 'googl'", LOG);
     }
 
     protected static void assertIndexConsistency(
@@ -144,7 +131,7 @@ public class AbstractO3Test {
         AbstractO3Test.assertSqlResultAgainstFile(compiler, sqlExecutionContext, "x where sym = 'googl'", resourceName);
     }
 
-    protected static void assertO3DataConsistency(
+    protected static void assertO3DataCursors(
             CairoEngine engine,
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext,
@@ -156,9 +143,9 @@ public class AbstractO3Test {
         // create third table, which will contain both X and 1AM
         compiler.compile(referenceTableDDL, sqlExecutionContext);
         compiler.compile(o3InsertSQL, sqlExecutionContext);
-        assertSqlCursors(compiler, sqlExecutionContext, referenceSQL, assertSQL);
+        TestUtils.assertSqlCursors(compiler, sqlExecutionContext, referenceSQL, assertSQL, LOG);
         engine.releaseAllReaders();
-        assertSqlCursors(compiler, sqlExecutionContext, referenceSQL, assertSQL);
+        TestUtils.assertSqlCursors(compiler, sqlExecutionContext, referenceSQL, assertSQL, LOG);
     }
 
     protected static void assertO3DataConsistency(
@@ -299,6 +286,11 @@ public class AbstractO3Test {
 
                     @Override
                     public int getO3PurgeQueueCapacity() {
+                        return 0;
+                    }
+
+                    @Override
+                    public int getO3PartitionUpdateQueueCapacity() {
                         return 0;
                     }
                 };

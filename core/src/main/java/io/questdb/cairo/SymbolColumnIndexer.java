@@ -104,7 +104,7 @@ class SymbolColumnIndexer implements ColumnIndexer, Closeable {
         try {
             this.writer.of(configuration, path, name);
             this.mem.of(columnMem);
-        } catch (CairoException e) {
+        } catch (Throwable e) {
             this.close();
             throw e;
         }
@@ -115,7 +115,7 @@ class SymbolColumnIndexer implements ColumnIndexer, Closeable {
         this.columnTop = columnTop;
         try {
             this.writer.of(configuration, path, name);
-        } catch (CairoException e) {
+        } catch (Throwable e) {
             this.close();
             throw e;
         }

@@ -74,7 +74,7 @@ public class CairoEngine implements Closeable, WriterSource {
         openTableId();
         try {
             new EngineMigration(this, configuration).migrateEngineTo(ColumnType.VERSION);
-        } catch (CairoException e) {
+        } catch (Throwable e) {
             close();
             throw e;
         }
@@ -403,7 +403,7 @@ public class CairoEngine implements Closeable, WriterSource {
     ) {
         readerPool.unlock(tableName);
         writerPool.unlock(tableName, writer, newTable);
-        LOG.info().$("unlocked [table=`").$(tableName).$(']').$();
+        LOG.info().$("unlocked [table=`").$(tableName).$("`]").$();
     }
 
     public void unlockReaders(CharSequence tableName) {

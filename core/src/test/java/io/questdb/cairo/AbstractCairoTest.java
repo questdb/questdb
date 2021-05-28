@@ -58,6 +58,8 @@ public class AbstractCairoTest {
     protected static CairoEngine engine;
     protected static String inputRoot = null;
     protected static FilesFacade ff;
+    protected static long configOverrideCommitLag = -1;
+    protected static int configOverrideMaxUncommittedRows = -1;
     protected static Metrics metrics = Metrics.enabled();
 
     @Rule
@@ -93,6 +95,18 @@ public class AbstractCairoTest {
             public CharSequence getInputRoot() {
                 return inputRoot;
             }
+
+            @Override
+            public long getCommitLag() {
+                if (configOverrideCommitLag >= 0) return configOverrideCommitLag;
+                return super.getCommitLag();
+            }
+
+            @Override
+            public int getMaxUncommittedRows() {
+                if (configOverrideMaxUncommittedRows >= 0) return configOverrideMaxUncommittedRows;
+                return super.getMaxUncommittedRows();
+            }
         };
         engine = new CairoEngine(configuration);
         messageBus = engine.getMessageBus();
@@ -117,6 +131,9 @@ public class AbstractCairoTest {
         engine.freeTableId();
         engine.clear();
         TestUtils.removeTestPath(root);
+        configOverrideMaxUncommittedRows = -1;
+        configOverrideCommitLag = -1;
+        currentMicros = -1;
     }
 
     protected static void assertMemoryLeak(TestUtils.LeakProneCode code) throws Exception {

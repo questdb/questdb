@@ -50,6 +50,7 @@ import static io.questdb.cairo.TableWriter.*;
 public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
     private static final Log LOG = LogFactory.getLog(O3PartitionJob.class);
+
     public O3PartitionJob(MessageBus messageBus) {
         super(messageBus.getO3PartitionQueue(), messageBus.getO3PartitionSubSeq());
     }
@@ -62,8 +63,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             long srcOooLo,
             long srcOooHi,
             long srcOooMax,
-            long oooTimestampMin,
-            long oooTimestampMax,
+            long o3TimestampMin,
+            long o3TimestampMax,
             long partitionTimestamp,
             long maxTimestamp,
             long srcDataMax,
@@ -76,15 +77,13 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             O3Basket o3Basket,
             long tmpBuf
     ) {
-
         // is out of order data hitting the last partition?
         // if so we do not need to re-open files and and write to existing file descriptors
-
-        final long oooTimestampLo = getTimestampIndexValue(sortedTimestampsAddr, srcOooLo);
+        final long o3TimestampLo = getTimestampIndexValue(sortedTimestampsAddr, srcOooLo);
         final RecordMetadata metadata = tableWriter.getMetadata();
         final int timestampIndex = metadata.getTimestampIndex();
         final Path path = Path.getThreadLocal(pathToTable);
-        TableUtils.setPathForPartition(path, partitionBy, oooTimestampLo, false);
+        TableUtils.setPathForPartition(path, partitionBy, o3TimestampLo, false);
         final int pplen = path.length();
         TableUtils.txnPartitionConditionally(path, srcDataTxn);
         final int plen = path.length();
@@ -106,7 +105,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     LOG.debug().$("would create [path=").$(path.chop$().slash$()).$(']').$();
                     createDirsOrFail(ff, path, tableWriter.getConfiguration().getMkDirMode());
                 } catch (Throwable e) {
-                    LOG.debug().$("idle new").$();
+                    LOG.error().$("process new partition error [table=").$(tableWriter.getTableName())
+                            .$(", e=").$(e)
+                            .I$();
                     tableWriter.o3BumpErrorCount();
                     tableWriter.o3ClockDownPartitionUpdateCount();
                     tableWriter.o3CountDownDoneLatch();
@@ -122,9 +123,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     srcOooLo,
                     srcOooHi,
                     srcOooMax,
-                    oooTimestampMin,
-                    oooTimestampMax,
-                    oooTimestampLo,
+                    o3TimestampMin,
+                    o3TimestampMax,
+                    o3TimestampLo,
                     partitionTimestamp,
                     // below parameters are unused by this type of append
                     0,
@@ -140,8 +141,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     0,
                     0,
                     srcDataTxn,
-                    last ? OPEN_LAST_PARTITION_FOR_APPEND : OPEN_NEW_PARTITION_FOR_APPEND,
-                    last ? -columns.getQuick(getPrimaryColumnIndex(timestampIndex)).getFd() : 0,  // timestamp fd
+                    OPEN_NEW_PARTITION_FOR_APPEND,
+                    0,  // timestamp fd
                     0,
                     0,
                     timestampIndex,
@@ -160,8 +161,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             int mergeType;
             long mergeDataLo;
             long mergeDataHi;
-            long mergeOOOLo;
-            long mergeOOOHi;
+            long mergeO3Lo;
+            long mergeO3Hi;
             int suffixType;
             long suffixLo;
             long suffixHi;
@@ -176,7 +177,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     srcTimestampSize = srcDataMax * 8L;
                     // negative fd indicates descriptor reuse
                     srcTimestampFd = -columns.getQuick(getPrimaryColumnIndex(timestampIndex)).getFd();
-                    srcTimestampAddr = O3Utils.mapRO(ff, -srcTimestampFd, srcTimestampSize);
+                    srcTimestampAddr = O3Utils.mapRW(ff, -srcTimestampFd, srcTimestampSize);
                 } else {
                     srcTimestampSize = srcDataMax * 8L;
                     // out of order data is going into archive partition
@@ -209,19 +210,23 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 mergeType = O3_BLOCK_NONE;
                 mergeDataLo = -1;
                 mergeDataHi = -1;
-                mergeOOOLo = -1;
-                mergeOOOHi = -1;
+                mergeO3Lo = -1;
+                mergeO3Hi = -1;
                 suffixType = O3_BLOCK_NONE;
                 suffixLo = -1;
                 suffixHi = -1;
 
-                if (oooTimestampLo > dataTimestampLo) {
+                assert srcTimestampFd != -1 && srcTimestampFd != 1;
+
+                int branch;
+
+                if (o3TimestampLo > dataTimestampLo) {
                     //   +------+
                     //   | data |  +-----+
                     //   |      |  | OOO |
                     //   |      |  |     |
 
-                    if (oooTimestampLo >= dataTimestampHi) {
+                    if (o3TimestampLo >= dataTimestampHi) {
 
                         // +------+
                         // | data |
@@ -232,6 +237,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         //           | OOO |
                         //           |     |
                         //
+                        branch = 1;
                         suffixType = O3_BLOCK_O3;
                         suffixLo = srcOooLo;
                         suffixHi = srcOooHi;
@@ -246,11 +252,17 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
                         prefixType = O3_BLOCK_DATA;
                         prefixLo = 0;
-                        prefixHi = Vect.boundedBinarySearch64Bit(srcTimestampAddr, oooTimestampLo, 0, srcDataMax - 1, BinarySearch.SCAN_DOWN);
+                        prefixHi = Vect.boundedBinarySearch64Bit(
+                                srcTimestampAddr,
+                                o3TimestampLo,
+                                0,
+                                srcDataMax - 1,
+                                BinarySearch.SCAN_DOWN
+                        );
                         mergeDataLo = prefixHi + 1;
-                        mergeOOOLo = srcOooLo;
+                        mergeO3Lo = srcOooLo;
 
-                        if (oooTimestampMax < dataTimestampHi) {
+                        if (o3TimestampMax < dataTimestampHi) {
 
                             //
                             // |      | +-----+
@@ -258,24 +270,32 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             // |      | +-----+
                             // +------+
 
-                            mergeOOOHi = srcOooHi;
-                            mergeDataHi = Vect.boundedBinarySearch64Bit(srcTimestampAddr, oooTimestampMax - 1, mergeDataLo, srcDataMax - 1, BinarySearch.SCAN_DOWN) + 1;
+                            branch = 2;
+                            mergeO3Hi = srcOooHi;
+                            mergeDataHi = Vect.boundedBinarySearch64Bit(
+                                    srcTimestampAddr,
+                                    o3TimestampMax - 1,
+                                    mergeDataLo,
+                                    srcDataMax - 1,
+                                    BinarySearch.SCAN_DOWN
+                            );
 
-                            if (mergeDataLo < mergeDataHi) {
-                                mergeType = O3_BLOCK_MERGE;
-                            } else {
+                            if (mergeDataLo > mergeDataHi) {
                                 // the OO data implodes right between rows of existing data
                                 // so we will have both data prefix and suffix and the middle bit
 
                                 // is the out of order
                                 mergeType = O3_BLOCK_O3;
-                                mergeDataHi--;
+                            } else {
+                                mergeType = O3_BLOCK_MERGE;
                             }
 
                             suffixType = O3_BLOCK_DATA;
                             suffixLo = mergeDataHi + 1;
                             suffixHi = srcDataMax - 1;
-                        } else if (oooTimestampMax > dataTimestampHi) {
+                            assert suffixLo <= suffixHi;
+
+                        } else if (o3TimestampMax > dataTimestampHi) {
 
                             //
                             // |      | +-----+
@@ -285,12 +305,20 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             //          |     |
                             //          +-----+
 
-                            mergeOOOHi = Vect.boundedBinarySearchIndexT(sortedTimestampsAddr, dataTimestampHi, srcOooLo, srcOooHi, BinarySearch.SCAN_UP);
+                            branch = 3;
+                            mergeO3Hi = Vect.boundedBinarySearchIndexT(
+                                    sortedTimestampsAddr,
+                                    dataTimestampHi,
+                                    srcOooLo,
+                                    srcOooHi,
+                                    BinarySearch.SCAN_UP
+                            );
+
                             mergeDataHi = srcDataMax - 1;
 
                             mergeType = O3_BLOCK_MERGE;
                             suffixType = O3_BLOCK_O3;
-                            suffixLo = mergeOOOHi + 1;
+                            suffixLo = mergeO3Hi + 1;
                             suffixHi = srcOooHi;
                         } else {
 
@@ -301,8 +329,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             // +------+ +-----+
                             //
 
+                            branch = 4;
                             mergeType = O3_BLOCK_MERGE;
-                            mergeOOOHi = srcOooHi;
+                            mergeO3Hi = srcOooHi;
                             mergeDataHi = srcDataMax - 1;
                         }
                     }
@@ -317,7 +346,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
                     prefixType = O3_BLOCK_O3;
                     prefixLo = srcOooLo;
-                    if (dataTimestampLo < oooTimestampMax) {
+                    if (dataTimestampLo < o3TimestampMax) {
 
                         //
                         //  +------+  | OOO |
@@ -325,10 +354,16 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         //  |      |
 
                         mergeDataLo = 0;
-                        prefixHi = Vect.boundedBinarySearchIndexT(sortedTimestampsAddr, dataTimestampLo, srcOooLo, srcOooHi, BinarySearch.SCAN_DOWN);
-                        mergeOOOLo = prefixHi + 1;
+                        prefixHi = Vect.boundedBinarySearchIndexT(
+                                sortedTimestampsAddr,
+                                dataTimestampLo,
+                                srcOooLo,
+                                srcOooHi,
+                                BinarySearch.SCAN_DOWN
+                        );
+                        mergeO3Lo = prefixHi + 1;
 
-                        if (oooTimestampMax < dataTimestampHi) {
+                        if (o3TimestampMax < dataTimestampHi) {
 
                             // |      | |     |
                             // |      | | OOO |
@@ -336,15 +371,22 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             // |      |
                             // +------+
 
+                            branch = 5;
                             mergeType = O3_BLOCK_MERGE;
-                            mergeOOOHi = srcOooHi;
-                            mergeDataHi = Vect.boundedBinarySearch64Bit(srcTimestampAddr, oooTimestampMax, 0, srcDataMax - 1, BinarySearch.SCAN_DOWN);
+                            mergeO3Hi = srcOooHi;
+                            mergeDataHi = Vect.boundedBinarySearch64Bit(
+                                    srcTimestampAddr,
+                                    o3TimestampMax,
+                                    0,
+                                    srcDataMax - 1,
+                                    BinarySearch.SCAN_DOWN
+                            );
 
                             suffixLo = mergeDataHi + 1;
                             suffixType = O3_BLOCK_DATA;
                             suffixHi = srcDataMax - 1;
 
-                        } else if (oooTimestampMax > dataTimestampHi) {
+                        } else if (o3TimestampMax > dataTimestampHi) {
 
                             // |      | |     |
                             // |      | | OOO |
@@ -352,18 +394,24 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             // +------+ |     |
                             //          +-----+
 
+                            branch = 6;
                             mergeDataHi = srcDataMax - 1;
-                            mergeOOOHi = Vect.boundedBinarySearchIndexT(sortedTimestampsAddr, dataTimestampHi - 1, mergeOOOLo, srcOooHi, BinarySearch.SCAN_DOWN) + 1;
+                            mergeO3Hi = Vect.boundedBinarySearchIndexT(
+                                    sortedTimestampsAddr,
+                                    dataTimestampHi - 1,
+                                    mergeO3Lo,
+                                    srcOooHi,
+                                    BinarySearch.SCAN_DOWN
+                            );
 
-                            if (mergeOOOLo < mergeOOOHi) {
-                                mergeType = O3_BLOCK_MERGE;
-                            } else {
+                            if (mergeO3Lo > mergeO3Hi) {
                                 mergeType = O3_BLOCK_DATA;
-                                mergeOOOHi--;
+                            } else {
+                                mergeType = O3_BLOCK_MERGE;
                             }
 
-                            if (mergeOOOHi < srcOooHi) {
-                                suffixLo = mergeOOOHi + 1;
+                            if (mergeO3Hi < srcOooHi) {
+                                suffixLo = mergeO3Hi + 1;
                                 suffixType = O3_BLOCK_O3;
                                 suffixHi = Math.max(suffixLo, srcOooHi);
                             } else {
@@ -376,8 +424,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             // | data | |     |
                             // +------+ +-----+
 
+                            branch = 7;
                             mergeType = O3_BLOCK_MERGE;
-                            mergeOOOHi = srcOooHi;
+                            mergeO3Hi = srcOooHi;
                             mergeDataHi = srcDataMax - 1;
                         }
                     } else {
@@ -388,6 +437,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         //  +------+
                         //  | data |
                         //
+                        branch = 8;
                         prefixHi = srcOooHi;
                         suffixType = O3_BLOCK_DATA;
                         suffixLo = 0;
@@ -395,14 +445,33 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     }
                 }
 
+                LOG.debug()
+                        .$("o3 merge [branch=").$(branch)
+                        .$(", prefixType=").$(prefixType)
+                        .$(", prefixLo=").$(prefixLo)
+                        .$(", prefixHi=").$(prefixHi)
+                        .$(", o3TimestampLo=").$ts(o3TimestampLo)
+                        .$(", o3TimestampMin=").$ts(o3TimestampMin)
+                        .$(", o3TimestampMax=").$ts(o3TimestampMax)
+                        .$(", dataTimestampLo=").$ts(dataTimestampLo)
+                        .$(", dataTimestampHi=").$ts(dataTimestampHi)
+                        .$(", partitionTimestamp=").$ts(partitionTimestamp)
+                        .$(", srcDataMax=").$(srcDataMax)
+                        .$(", mergeType=").$(mergeType)
+                        .$(", mergeDataLo=").$(mergeDataLo)
+                        .$(", mergeDataHi=").$(mergeDataHi)
+                        .$(", mergeO3Lo=").$(mergeO3Lo)
+                        .$(", mergeO3Hi=").$(mergeO3Hi)
+                        .$(", suffixType=").$(suffixType)
+                        .$(", suffixLo=").$(suffixLo)
+                        .$(", suffixHi=").$(suffixHi)
+                        .$(", table=").$(pathToTable)
+                        .I$();
+
                 if (prefixType == O3_BLOCK_NONE) {
                     // We do not need to create a copy of partition when we simply need to append
                     // existing the one.
-                    if (last) {
-                        openColumnMode = OPEN_LAST_PARTITION_FOR_APPEND;
-                    } else {
-                        openColumnMode = OPEN_MID_PARTITION_FOR_APPEND;
-                    }
+                    openColumnMode = OPEN_MID_PARTITION_FOR_APPEND;
                 } else {
                     txnPartition(path.trimTo(pplen), txn);
                     createDirsOrFail(ff, path.slash$(), tableWriter.getConfiguration().getMkDirMode());
@@ -413,7 +482,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     }
                 }
             } catch (Throwable e) {
-                LOG.debug().$("idle existing").$();
+                LOG.error().$("process existing partition error [table=").$(tableWriter.getTableName())
+                        .$(", e=").$(e)
+                        .I$();
                 O3Utils.unmap(ff, srcTimestampAddr, srcTimestampSize);
                 O3Utils.close(ff, srcTimestampFd);
                 tableWriter.o3BumpErrorCount();
@@ -425,7 +496,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             // Compute max timestamp as maximum of out of order data and
             // data in existing partition.
             // When partition is new, the data timestamp is MIN_LONG
-            final long timestampMax = Math.max(oooTimestampMax, dataTimestampHi);
+            final long timestampMax = Math.max(o3TimestampMax, dataTimestampHi);
 
             publishOpenColumnTasks(
                     txn,
@@ -435,9 +506,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     srcOooLo,
                     srcOooHi,
                     srcOooMax,
-                    oooTimestampMin,
+                    o3TimestampMin,
                     timestampMax, // <-- this is max of OOO and data chunk
-                    oooTimestampLo,
+                    o3TimestampLo,
                     partitionTimestamp,
                     prefixType,
                     prefixLo,
@@ -445,8 +516,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     mergeType,
                     mergeDataLo,
                     mergeDataHi,
-                    mergeOOOLo,
-                    mergeOOOHi,
+                    mergeO3Lo,
+                    mergeO3Hi,
                     suffixType,
                     suffixLo,
                     suffixHi,
@@ -734,11 +805,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
                 final BitmapIndexWriter indexWriter;
                 if (isIndexed) {
-                    if (openColumnMode == OPEN_LAST_PARTITION_FOR_APPEND) {
-                        indexWriter = tableWriter.getBitmapIndexWriter(i);
-                    } else {
-                        indexWriter = o3Basket.nextIndexer();
-                    }
+                    indexWriter = o3Basket.nextIndexer();
                 } else {
                     indexWriter = null;
                 }
@@ -839,6 +906,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     }
                 } catch (Throwable e) {
                     tableWriter.o3BumpErrorCount();
+                    LOG.error().$("open column error [table=").$(tableWriter.getTableName())
+                            .$(", e=").$(e)
+                            .I$();
                     columnsInFlight = i + 1;
                     throw e;
                 }

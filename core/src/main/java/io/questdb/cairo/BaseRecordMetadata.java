@@ -26,12 +26,12 @@ package io.questdb.cairo;
 
 
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.std.CharSequenceIntHashMap;
+import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.ObjList;
 
 public abstract class BaseRecordMetadata implements RecordMetadata {
     protected ObjList<TableColumnMetadata> columnMetadata;
-    protected CharSequenceIntHashMap columnNameIndexMap;
+    protected LowerCaseCharSequenceIntHashMap columnNameIndexMap;
     protected int timestampIndex;
     protected int columnCount;
 

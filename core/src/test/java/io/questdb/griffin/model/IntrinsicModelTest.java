@@ -90,14 +90,41 @@ public class IntrinsicModelTest {
         assertDateCeil("2015-02-28T07:21:44.556012Z", "2015-02-28T07:21:44.556011");
     }
 
+
     @Test(expected = NumericException.class)
     public void testDateCeilFails() throws NumericException {
         assertDateCeil("", "2015-01-01T00:00:00.000000-1");
     }
 
     @Test(expected = NumericException.class)
+    public void testDateCeilFails2() throws NumericException {
+        assertDateCeil("", "2015-01-01T00:00:00.000000-0");
+    }
+
+    @Test(expected = NumericException.class)
+    public void testDateCeilFails3() throws NumericException {
+        assertDateCeil("", "2015-01-01T00:00:00.000000-");
+    }
+
+    @Test(expected = NumericException.class)
     public void testDateCeilFailsOnTzSign() throws NumericException {
         assertDateCeil("", "2015-01-01T00:00:00.000000≠10");
+    }
+
+
+    @Test(expected = NumericException.class)
+    public void testDateCeilFailsOnTooManyMicros() throws NumericException {
+        assertDateCeil("", "2015-01-01T00:00:00.00000010");
+    }
+
+    @Test
+    public void testDateCeilMicroWithDiffFraction() throws NumericException {
+        assertDateFloor("2015-02-28T08:22:44.556012Z", "2015-02-28T08:22:44.556012");
+        assertDateFloor("2015-02-28T08:22:44.556010Z", "2015-02-28T08:22:44.55601");
+        assertDateFloor("2015-02-28T08:22:44.556000Z", "2015-02-28T08:22:44.5560");
+        assertDateFloor("2015-02-28T08:22:44.556000Z", "2015-02-28T08:22:44.556");
+        assertDateFloor("2015-02-28T08:22:44.550000Z", "2015-02-28T08:22:44.55");
+        assertDateFloor("2015-02-28T08:22:44.500000Z", "2015-02-28T08:22:44.5");
     }
 
     @Test

@@ -32,6 +32,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.DateFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
@@ -48,13 +49,13 @@ public class ToDateFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
         final Function arg = args.getQuick(0);
         final CharSequence pattern = args.getQuick(1).getStr(null);
         if (pattern == null) {
-            throw SqlException.$(args.getQuick(1).getPosition(), "pattern is required");
+            throw SqlException.$(argPositions.getQuick(1), "pattern is required");
         }
-        return new ToDateFunction(position, arg, tlCompiler.get().compile(pattern), configuration.getDefaultDateLocale());
+        return new ToDateFunction(arg, tlCompiler.get().compile(pattern), configuration.getDefaultDateLocale());
     }
 
     private static final class ToDateFunction extends DateFunction implements UnaryFunction {
@@ -63,8 +64,7 @@ public class ToDateFunctionFactory implements FunctionFactory {
         private final DateFormat dateFormat;
         private final DateLocale locale;
 
-        public ToDateFunction(int position, Function arg, DateFormat dateFormat, DateLocale locale) {
-            super(position);
+        public ToDateFunction(Function arg, DateFormat dateFormat, DateLocale locale) {
             this.arg = arg;
             this.dateFormat = dateFormat;
             this.locale = locale;

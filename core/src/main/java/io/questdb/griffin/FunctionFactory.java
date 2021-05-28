@@ -26,6 +26,8 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
+import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 
@@ -75,9 +77,17 @@ public interface FunctionFactory {
         return false;
     }
 
+    /**
+     * @return true if the {@link Function} produced by the factory is guaranteed to be constant for a query such that its result does not depend on any {@link Record} in the result set (i.e. now())
+     */
+    default boolean isRuntimeConstant() {
+        return false;
+    }
+
     Function newInstance(
-            @Transient ObjList<Function> args,
             int position,
+            @Transient ObjList<Function> args,
+            @Transient IntList argPositions,
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException;

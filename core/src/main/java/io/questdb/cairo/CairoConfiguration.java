@@ -217,7 +217,7 @@ public interface CairoConfiguration {
 
     int getO3CopyQueueCapacity();
 
-    int getO3UpdPartitionSizeQueueCapacity();
+    int getO3PartitionUpdateQueueCapacity();
 
     BuildInformation getBuildInformation();
 
@@ -226,4 +226,16 @@ public interface CairoConfiguration {
     long getDatabaseIdLo();
 
     int getTxnScoreboardEntryCount();
+
+    int getMaxUncommittedRows();
+
+    /**
+     * Default commit lag in microseconds for new tables. This value
+     * can be overridden with 'create table' statement.
+     *
+     * @return commit lag in microseconds
+     */
+    long getCommitLag();
+
+    boolean isO3QuickSortEnabled();
 }

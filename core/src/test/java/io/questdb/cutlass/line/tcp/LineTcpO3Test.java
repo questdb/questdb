@@ -1,16 +1,19 @@
 package io.questdb.cutlass.line.tcp;
 
 import io.questdb.PropServerConfiguration;
-import io.questdb.cairo.*;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
+import io.questdb.cairo.AbstractCairoTest;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.pool.PoolListener;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.network.Net;
+import io.questdb.std.Chars;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectUnboundedByteSink;
 import io.questdb.std.str.Path;
@@ -139,58 +142,35 @@ public class LineTcpO3Test extends AbstractCairoTest {
                     SqlCompiler compiler = new SqlCompiler(engine);
                     SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
             ) {
+                SOCountDownLatch haltLatch = new SOCountDownLatch(1);
+                engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
+                    if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN && Chars.equals(name, "cpu")) {
+                        haltLatch.countDown();
+                    }
+                });
+
                 sharedWorkerPool.assignCleaner(Path.CLEANER);
                 sharedWorkerPool.start(LOG);
                 long rc = Net.connect(clientFd, ilpSockAddr);
                 Assert.assertEquals(0, rc);
-
                 readGzResource(ilpResourceName);
                 Net.send(clientFd, resourceAddress, resourceSize);
                 Unsafe.free(resourceAddress, resourceSize);
 
-                boolean tableExists = false;
-                int maxIter = 50;
-                while (true) {
-                    if (!tableExists) {
-                        try (Path path = new Path()) {
-                            if (engine.getStatus(AllowAllCairoSecurityContext.INSTANCE, path, "cpu") != TableUtils.TABLE_EXISTS) {
-                                maxIter--;
-                                Assert.assertTrue(maxIter > 0);
-                                Thread.sleep(200);
-                                continue;
-                            }
-                        }
-                        tableExists = true;
-                    }
-
-                    try {
-                        TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "cpu");
-                        writer.close();
-                        break;
-                    } catch (CairoException ex) {
-                        maxIter--;
-                        Assert.assertTrue(maxIter > 0);
-                        Thread.sleep(200);
-                    }
-                    LOG.info().$("Failed to get writer after ").$(maxIter).$(" iterations").$();
-                }
+                haltLatch.await();
 
                 TestUtils.printSql(compiler, sqlExecutionContext, "select * from " + "cpu", sink);
-                // try (OutputStreamWriter oow = new OutputStreamWriter(new FileOutputStream(new File("/tmp/1")))) {
-                // oow.append(sink);
-                // }
                 readGzResource("selectAll1");
                 DirectUnboundedByteSink expectedSink = new DirectUnboundedByteSink(resourceAddress);
                 expectedSink.clear(resourceSize);
                 TestUtils.assertEquals(expectedSink.toString(), sink);
                 Unsafe.free(resourceAddress, resourceSize);
-
-                sharedWorkerPool.halt();
             } finally {
+                engine.setPoolListener(null);
                 Net.close(clientFd);
                 Net.freeSockAddr(ilpSockAddr);
+                sharedWorkerPool.halt();
             }
         });
-
     }
 }

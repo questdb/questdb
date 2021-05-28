@@ -31,7 +31,7 @@ import org.junit.Test;
 public class IntFunctionTest {
     // assert that all type casts that are not possible will throw exception
 
-    private static final IntFunction function = new IntFunction(25) {
+    private static final IntFunction function = new IntFunction() {
         @Override
         public int getInt(Record rec) {
             return 150;
@@ -66,11 +66,6 @@ public class IntFunctionTest {
     @Test(expected = UnsupportedOperationException.class)
     public void testGetByte() {
         function.getByte(null);
-    }
-
-    @Test
-    public void testGetPosition() {
-        Assert.assertEquals(25, function.getPosition());
     }
 
     @Test(expected = UnsupportedOperationException.class)

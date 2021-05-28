@@ -29,8 +29,10 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.AbstractFunctionFactoryTest;
+import io.questdb.griffin.engine.functions.bool.InTimestampStrFunctionFactory;
 import io.questdb.griffin.engine.functions.columns.StrColumn;
 import io.questdb.griffin.engine.functions.columns.TimestampColumn;
+import io.questdb.std.IntList;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import org.junit.Assert;
@@ -42,67 +44,22 @@ public class EqTimestampStrFunctionFactoryTest extends AbstractFunctionFactoryTe
 
     @Test
     public void testTimestampEqualsString() throws SqlException, NumericException {
-        testTimestampAsString("=(NS)");
+        testTimestampAsString("in(NS)");
     }
 
     @Test
     public void testTimestampEqualsStringWithPeriod() throws SqlException, NumericException {
-        testTimestampAsStringWithPeriod("=(NS)");
+        testTimestampAsStringWithPeriod("in(NS)");
     }
 
     @Test
     public void testTimestampEqualsStringWithPeriodAndCount() throws SqlException, NumericException {
-        testTimestampAsStringWithPeriodAndCount("=(NS)");
-    }
-
-    @Test
-    public void testStringEqualsTimestamp() throws SqlException, NumericException {
-        testTimestampAsString("=(SN)");
-    }
-
-    @Test
-    public void testStringWithPeriodEqualsTimestamp() throws SqlException, NumericException {
-        testTimestampAsStringWithPeriod("=(SN)");
-    }
-
-    @Test
-    public void testStringWithPeriodAndCountEqualsTimestamp() throws SqlException, NumericException {
-        testTimestampAsStringWithPeriodAndCount("=(SN)");
-    }
-
-    @Test
-    public void testTimestampNotEqualsString() throws SqlException, NumericException {
-        testTimestampAsString("<>(NS)");
-    }
-
-    @Test
-    public void testTimestampNotEqualsStringWithPeriod() throws SqlException, NumericException {
-        testTimestampAsStringWithPeriod("<>(NS)");
-    }
-
-    @Test
-    public void testTimestampNotEqualsStringWithPeriodAndCount() throws SqlException, NumericException {
-        testTimestampAsStringWithPeriodAndCount("<>(NS)");
-    }
-
-    @Test
-    public void testStringNotEqualsTimestamp() throws SqlException, NumericException {
-        testTimestampAsString("<>(SN)");
-    }
-
-    @Test
-    public void testStringWithPeriodNotEqualsTimestamp() throws SqlException, NumericException {
-        testTimestampAsStringWithPeriod("<>(SN)");
-    }
-
-    @Test
-    public void testStringWithPeriodAndCountNotEqualsTimestamp() throws SqlException, NumericException {
-        testTimestampAsStringWithPeriodAndCount("<>(SN)");
+        testTimestampAsStringWithPeriodAndCount("in(NS)");
     }
 
     @Test
     public void testFailureWhenConstantStringIsNotValidTimestamp() throws NumericException {
-        assertFailure(true, 38, "Not a date", parseUTCTimestamp("2020-12-31T23:59:59.000000Z"), "abc");
+        assertFailure(true, 40, "Not a date", parseUTCTimestamp("2020-12-31T23:59:59.000000Z"), "abc");
     }
 
     @Test
@@ -111,9 +68,14 @@ public class EqTimestampStrFunctionFactoryTest extends AbstractFunctionFactoryTe
         CharSequence invalidTimestamp = "abc";
         FunctionFactory factory = getFunctionFactory();
         ObjList<Function> args = new ObjList<>();
-        args.add(new TimestampColumn(0, 0));
-        args.add(new StrColumn(1, 5));
-        Function function = factory.newInstance(args, 3, configuration, sqlExecutionContext);
+        args.add(TimestampColumn.newInstance(0));
+        args.add(StrColumn.newInstance(5));
+
+        IntList argPositions = new IntList();
+        argPositions.add(0);
+        argPositions.add(1);
+
+        Function function = factory.newInstance(3, args, argPositions, configuration, sqlExecutionContext);
         Assert.assertFalse(function.getBool(new Record() {
             @Override
             public CharSequence getStr(int col) {
@@ -129,7 +91,7 @@ public class EqTimestampStrFunctionFactoryTest extends AbstractFunctionFactoryTe
 
     @Override
     protected FunctionFactory getFunctionFactory() {
-        return new EqTimestampStrFunctionFactory();
+        return new InTimestampStrFunctionFactory();
     }
 
     private void testTimestampAsString(String signature) throws NumericException, SqlException {
@@ -166,12 +128,6 @@ public class EqTimestampStrFunctionFactoryTest extends AbstractFunctionFactoryTe
     }
 
     private void callAndAssert(String signature, long arg1, String arg2, boolean expectedIfEquals) throws SqlException {
-        boolean rightArgIsString = signature.contains("(NS)");
-        boolean equalsOperator = signature.startsWith("=");
-        if (rightArgIsString) {
-            callBySignature(signature, arg1, arg2).andAssert(equalsOperator == expectedIfEquals);
-        } else {
-            callBySignature(signature, arg2, arg1).andAssert(equalsOperator == expectedIfEquals);
-        }
+        callBySignature(signature, arg1, arg2).andAssert(expectedIfEquals);
     }
 }

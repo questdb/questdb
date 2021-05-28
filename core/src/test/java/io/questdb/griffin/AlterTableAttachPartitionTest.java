@@ -455,7 +455,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             }
         };
 
-        testSqlFailedOnFsOperation(ff, "[12] table 'dst' could not be altered: [", "]: Cannot open:");
+        testSqlFailedOnFsOperation(ff, "table 'dst' could not be altered: [", "]: could not open");
     }
 
     @Test
@@ -471,7 +471,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             }
         };
 
-        testSqlFailedOnFsOperation(ff, "[12] table 'dst' could not be altered: [0]: Doesn't exist:");
+        testSqlFailedOnFsOperation(ff, "table 'dst' could not be altered: [0]: Doesn't exist:");
     }
 
     @Test
@@ -487,7 +487,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             }
         };
 
-        testSqlFailedOnFsOperation(ff, "[12] table 'dst' could not be altered: [", "]: File system error on trying to rename [from=");
+        testSqlFailedOnFsOperation(ff, "table 'dst' could not be altered: [", "]: File system error on trying to rename [from=");
     }
 
     private void assertSchemaMatch(AddColumn tm) throws Exception {
@@ -532,7 +532,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                 copyAttachPartition(src, dst, 0, "2020-01-10");
                 Assert.fail();
             } catch (SqlException e) {
-                TestUtils.assertContains(e.getMessage(), "Column file does not exist");
+                TestUtils.assertContains(e.getFlyweightMessage(), "Column file does not exist");
             }
             Files.rmdir(path.concat(root).concat("dst").concat("2020-01-10").put(TableUtils.DETACHED_DIR_MARKER).$());
         }
@@ -563,7 +563,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                 if (i > 0) {
                     partitionsIn.append(" OR ");
                 }
-                partitionsIn.append("ts = '");
+                partitionsIn.append("ts IN '");
                 partitionsIn.append(partitionList[i]);
                 partitionsIn.append("'");
             }
@@ -704,7 +704,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                     Assert.fail();
                 } catch (SqlException e) {
                     for (String error : errorContains) {
-                        TestUtils.assertContains(e.getMessage(), error);
+                        TestUtils.assertContains(e.getFlyweightMessage(), error);
                     }
                 }
 

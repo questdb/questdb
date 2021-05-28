@@ -32,6 +32,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
+import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
@@ -42,7 +43,7 @@ public class AndFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         Function leftFunc = args.getQuick(0);
         Function rightFunc = args.getQuick(1);
         if (leftFunc.isConstant()) {
@@ -51,7 +52,7 @@ public class AndFunctionFactory implements FunctionFactory {
                     return rightFunc;
                 }
                 Misc.free(rightFunc);
-                return new BooleanConstant(position, false);
+                return BooleanConstant.FALSE;
             } finally {
                 leftFunc.close();
             }
@@ -63,20 +64,19 @@ public class AndFunctionFactory implements FunctionFactory {
                     return leftFunc;
                 }
                 Misc.free(leftFunc);
-                return new BooleanConstant(position, false);
+                return BooleanConstant.FALSE;
             } finally {
                 rightFunc.close();
             }
         }
-        return new MyBooleanFunction(position, leftFunc, rightFunc);
+        return new MyBooleanFunction(leftFunc, rightFunc);
     }
 
     private static class MyBooleanFunction extends BooleanFunction implements BinaryFunction {
         final Function left;
         final Function right;
 
-        public MyBooleanFunction(int position, Function left, Function right) {
-            super(position);
+        public MyBooleanFunction(Function left, Function right) {
             this.left = left;
             this.right = right;
         }

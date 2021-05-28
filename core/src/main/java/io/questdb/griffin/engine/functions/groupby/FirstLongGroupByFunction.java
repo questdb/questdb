@@ -39,8 +39,7 @@ public class FirstLongGroupByFunction extends LongFunction implements GroupByFun
     private final Function arg;
     private int valueIndex;
 
-    public FirstLongGroupByFunction(int position, @NotNull Function arg) {
-        super(position);
+    public FirstLongGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
     }
 

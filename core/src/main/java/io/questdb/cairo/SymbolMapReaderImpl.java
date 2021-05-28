@@ -141,7 +141,7 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
             }
             this.cache.clear();
             LOG.debug().$("open [name=").$(path.trimTo(plen).concat(name).$()).$(", fd=").$(this.offsetMem.getFd()).$(", capacity=").$(symbolCapacity).$(']').$();
-        } catch (CairoException e) {
+        } catch (Throwable e) {
             close();
             throw e;
         } finally {

@@ -39,8 +39,7 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
-import static io.questdb.cairo.EngineMigration.TX_STRUCT_UPDATE_1_OFFSET_MAP_WRITER_COUNT;
-import static io.questdb.cairo.EngineMigration.VERSION_TX_STRUCT_UPDATE_1;
+import static io.questdb.cairo.EngineMigration.*;
 import static io.questdb.cairo.TableUtils.*;
 
 public class EngineMigrationTest extends AbstractGriffinTest {
@@ -156,7 +155,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
                         100, "2020-01-01", 10
                 );
 
-                String queryOld = "select sum(c1) from src where ts != '2020-01-01'";
+                String queryOld = "select sum(c1) from src where ts not in '2020-01-01'";
                 String queryNew = "select sum(c1) from src";
                 LongList removedTimestamps = new LongList();
                 removedTimestamps.add(TimestampFormatUtils.parseTimestamp("2020-01-01T00:00:00.000Z"));
@@ -337,6 +336,167 @@ public class EngineMigrationTest extends AbstractGriffinTest {
         });
     }
 
+    @Test
+    public void testMigrateTableSimple() throws Exception {
+        configOverrideMaxUncommittedRows = 50001;
+        configOverrideCommitLag = 777777;
+
+        assertMemoryLeak(() -> {
+            try (TableModel src = new TableModel(configuration, "src", PartitionBy.NONE)) {
+                createPopulateTable(
+                        src.col("c1", ColumnType.INT).col("ts", ColumnType.TIMESTAMP).timestamp(),
+                        100, "2020-01-01", 0
+                );
+
+                String query = "select sum(c1) from src";
+                assertMetadataMigration(src, query);
+            }
+        });
+    }
+
+    @Test
+    public void testCannotUpdateLagMetadata1() throws Exception {
+        configOverrideMaxUncommittedRows = 1231231;
+        configOverrideCommitLag = 85754;
+        assertMemoryLeak(() -> {
+            try (TableModel src = new TableModel(configuration, "src", PartitionBy.NONE)) {
+                createPopulateTable(
+                        src.col("c1", ColumnType.INT).col("ts", ColumnType.TIMESTAMP).timestamp(),
+                        100, "2020-01-01", 0
+                );
+
+                ff = new FilesFacadeImpl() {
+                    @Override
+                    public long write(long fd, long buf, long len, long offset) {
+                        if (META_OFFSET_MAX_UNCOMMITTED_ROWS == offset) {
+                            return 0;
+                        }
+                        return super.write(fd, buf, len, offset);
+                    }
+                };
+
+                try {
+                    assertMetadataMigration(src, "select sum(c1) from src");
+                    Assert.fail();
+                } catch (SqlException e) {
+                    Chars.contains(e.getFlyweightMessage(), "Metadata version does not match runtime version");
+                }
+
+                ff = new FilesFacadeImpl() {
+                    @Override
+                    public long write(long fd, long buf, long len, long offset) {
+                        if (META_OFFSET_COMMIT_LAG == offset) {
+                            return 0;
+                        }
+                        return super.write(fd, buf, len, offset);
+                    }
+                };
+
+                try {
+                    new EngineMigration(engine, configuration).migrateEngineTo(ColumnType.VERSION);
+                    assertMetadataMigration(src, "select sum(c1) from src");
+                    Assert.fail();
+                } catch (SqlException e) {
+                    Chars.contains(e.getFlyweightMessage(), "Metadata version does not match runtime version");
+                }
+
+                ff = new FilesFacadeImpl();
+                new EngineMigration(engine, configuration).migrateEngineTo(ColumnType.VERSION);
+                assertMetadataMigration(src, "select sum(c1) from src");
+            }
+        });
+    }
+
+    private void assertMetadataMigration(TableModel src, String query) throws SqlException {
+        assertMetadataMigration(src, query, query);
+    }
+
+    private void assertMetadataMigration(TableModel src, String queryOld, String queryNew) throws SqlException {
+        CharSequence expected = executeSql(queryOld).toString();
+        if (!queryOld.equals(queryNew)) {
+            // if queries are different they must produce different results
+            CharSequence expectedNewEquivalent = executeSql(queryNew).toString();
+            Assert.assertNotEquals(expected, expectedNewEquivalent);
+        }
+
+        // Downgrade version meta
+        downgradeMetaDataFile(src);
+
+        // Act
+        new EngineMigration(engine, configuration).migrateEngineTo(ColumnType.VERSION);
+
+        // Verify
+        TestUtils.assertEquals(expected, executeSql(queryNew));
+
+        // Second run of migration should not do anything
+        new EngineMigration(engine, configuration).migrateEngineTo(ColumnType.VERSION);
+        TestUtils.assertEquals(expected, executeSql(queryNew));
+
+        // Third time, downgrade and migrate
+        downgradeMetaDataFile(src);
+        new EngineMigration(engine, configuration).migrateEngineTo(ColumnType.VERSION);
+        TestUtils.assertEquals(expected, executeSql(queryNew));
+
+        assertSql("select maxUncommittedRows, commitLag from tables where name = '" + src.getName() + "'",
+                "maxUncommittedRows\tcommitLag\n" +
+                        +configOverrideMaxUncommittedRows + "\t" + configOverrideCommitLag + "\n");
+    }
+
+    private void downgradeMetaDataFile(TableModel tableModel) {
+        engine.clear();
+        FilesFacade ff = configuration.getFilesFacade();
+
+        try (Path path = new Path()) {
+            setMetadataVersion(tableModel, ff, path, VERSION_TBL_META_COMMIT_LAG);
+
+            path.concat(root).concat(tableModel.getName()).concat(TableUtils.META_FILE_NAME);
+            long fd = ff.openRO(path.$());
+            Assert.assertTrue(fd >= 0);
+
+            long fileSize = ff.length(fd);
+            ff.close(fd);
+            try (PagedMappedReadWriteMemory rwTx = new PagedMappedReadWriteMemory(ff, path.$(), fileSize)) {
+                rwTx.putInt(META_OFFSET_MAX_UNCOMMITTED_ROWS, 0);
+                rwTx.putLong(META_OFFSET_COMMIT_LAG, 0);
+                rwTx.jumpTo(fileSize);
+            }
+
+            setMetadataVersion(tableModel, ff, path, VERSION_TBL_META_COMMIT_LAG);
+            downgradeUpdateFileTo(ff, path);
+        }
+    }
+
+    private void setMetadataVersion(TableModel tableModel, FilesFacade ff, Path path, int version) {
+        int pathLen = path.length();
+
+        try {
+            path.trimTo(0).concat(root).concat(tableModel.getName()).concat(TableUtils.META_FILE_NAME);
+            long fd = ff.openRO(path.$());
+            Assert.assertTrue(fd >= 0);
+
+            long fileSize = ff.length(fd);
+            ff.close(fd);
+            try (PagedMappedReadWriteMemory rwTx = new PagedMappedReadWriteMemory(ff, path.$(), fileSize)) {
+                if (rwTx.getInt(META_OFFSET_VERSION) > version - 1) {
+                    rwTx.putInt(META_OFFSET_VERSION, version - 1);
+                    rwTx.jumpTo(fileSize);
+                }
+            }
+        } finally {
+            path.trimTo(pathLen);
+        }
+    }
+
+    private void downgradeUpdateFileTo(FilesFacade ff, Path path) {
+        path.trimTo(0).concat(root).concat(UPGRADE_FILE_NAME);
+        if (ff.exists(path.$())) {
+            try (PagedMappedReadWriteMemory rwTx = new PagedMappedReadWriteMemory(ff, path.$(), 8)) {
+                rwTx.putInt(0, EngineMigration.VERSION_TBL_META_COMMIT_LAG - 1);
+                rwTx.jumpTo(Integer.BYTES);
+            }
+        }
+    }
+
     private FilesFacadeImpl failToWriteMetaOffset(final long metaOffsetVersion, final String filename) {
         return new FilesFacadeImpl() {
             private long metaFd = -1;
@@ -414,15 +574,11 @@ public class EngineMigrationTest extends AbstractGriffinTest {
 
     private void downgradeTxFile(TableModel src, LongList removedPartitions) {
         engine.clear();
+        downgradeMetaDataFile(src);
 
         try (Path path = new Path()) {
             path.concat(root).concat(src.getName()).concat(TableUtils.META_FILE_NAME);
             FilesFacade ff = configuration.getFilesFacade();
-            try (PagedMappedReadWriteMemory rwTx = new PagedMappedReadWriteMemory(ff, path.$(), ff.getPageSize())) {
-                if (rwTx.getInt(META_OFFSET_VERSION) >= VERSION_TX_STRUCT_UPDATE_1 - 1) {
-                    rwTx.putInt(META_OFFSET_VERSION, VERSION_TX_STRUCT_UPDATE_1 - 1);
-                }
-            }
 
             // Read current symbols list
             IntList symbolCounts = new IntList();
@@ -477,6 +633,8 @@ public class EngineMigrationTest extends AbstractGriffinTest {
                     }
                 }
             }
+
+            setMetadataVersion(src, ff, path, VERSION_TX_STRUCT_UPDATE_1);
 
             path.trimTo(0).concat(root).concat(UPGRADE_FILE_NAME);
             if (ff.exists(path.$())) {

@@ -1432,4 +1432,23 @@ public class CaseFunctionFactoryTest extends AbstractGriffinTest {
                 true
         );
     }
+
+    @Test
+    public void testKeyedFunctionVarArgumentNumeric() throws Exception {
+        String[] types = {"INT", "LONG", "SHORT", "STRING", "TIMESTAMP", "BOOLEAN"};
+
+        for (String type : types) {
+            compiler.compile("create table tt as (" +
+                    "select cast(x as TIMESTAMP) as ts, cast(x as " + type + ") as x from long_sequence(10)" +
+                    ") timestamp(ts)", sqlExecutionContext);
+
+            assertSql("select sum(case x when CAST(1 as " + type + ") then 1 else 0 end) " +
+                            "from tt",
+                    "sum\n" +
+                            "1\n"
+            );
+
+            compiler.compile("drop table tt", sqlExecutionContext);
+        }
+    }
 }

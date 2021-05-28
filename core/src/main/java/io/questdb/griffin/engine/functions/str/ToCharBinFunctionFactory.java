@@ -33,6 +33,7 @@ import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Chars;
+import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
@@ -45,8 +46,8 @@ public class ToCharBinFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new ToCharBinFunc(position, args.getQuick(0));
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+        return new ToCharBinFunc(args.getQuick(0));
     }
 
     private static class ToCharBinFunc extends StrFunction implements UnaryFunction {
@@ -54,8 +55,7 @@ public class ToCharBinFunctionFactory implements FunctionFactory {
         private final StringSink sink1 = new StringSink();
         private final StringSink sink2 = new StringSink();
 
-        public ToCharBinFunc(int position, Function arg) {
-            super(position);
+        public ToCharBinFunc(Function arg) {
             this.arg = arg;
         }
 

@@ -24,12 +24,12 @@
 
 package io.questdb.griffin.model;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.sql.Function;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.LongList;
-import io.questdb.std.Misc;
-import io.questdb.std.ObjList;
+import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.Timestamps;
 
 import static io.questdb.griffin.model.IntervalUtils.STATIC_LONGS_PER_DYNAMIC_INTERVAL;
@@ -117,6 +117,7 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
         for (int i = dynamicStart; i < size; i += STATIC_LONGS_PER_DYNAMIC_INTERVAL) {
             Function dynamicFunction = dynamicRangeList.getQuick(dynamicIndex++);
             short operation = IntervalUtils.getEncodedOperation(intervals, i);
+            boolean negated = operation > IntervalOperation.NEGATED_BORDERLINE;
             int divider = outIntervals.size();
 
             if (dynamicFunction == null) {
@@ -130,39 +131,122 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
                 short dynamicHiLo = IntervalUtils.getEncodedDynamicIndicator(intervals, i);
 
                 dynamicFunction.init(null, sqlContext);
-                long dynamicValue = dynamicFunction.getTimestamp(null);
-                if (dynamicValue == Long.MIN_VALUE) {
-                    // function evaluated to null. return empty set
-                    outIntervals.clear();
-                    return;
-                }
 
-                if ((dynamicHiLo & IntervalDynamicIndicator.IS_HI_DYNAMIC) != 0) {
-                    hi = dynamicValue + adjustment;
-                }
-                if ((dynamicHiLo & IntervalDynamicIndicator.IS_LO_DYNAMIC) != 0) {
-                    lo = dynamicValue + adjustment;
-                }
+                if (operation != IntervalOperation.INTERSECT_INTERVALS && operation != IntervalOperation.SUBTRACT_INTERVALS) {
+                    long dynamicValue = getTimestamp(dynamicFunction);
+                    long dynamicValue2 = 0;
+                    if (dynamicHiLo == IntervalDynamicIndicator.IS_LO_SEPARATE_DYNAMIC) {
+                        // Both ends of BETWEEN are dynamic and different values. Take next dynamic point.
+                        i += STATIC_LONGS_PER_DYNAMIC_INTERVAL;
+                        dynamicFunction = dynamicRangeList.getQuick(dynamicIndex++);
+                        dynamicFunction.init(null, sqlContext);
+                        dynamicValue2 = hi = getTimestamp(dynamicFunction);
+                        lo = dynamicValue;
+                    } else {
+                        if ((dynamicHiLo & IntervalDynamicIndicator.IS_HI_DYNAMIC) != 0) {
+                            hi = dynamicValue + adjustment;
+                        }
+                        if ((dynamicHiLo & IntervalDynamicIndicator.IS_LO_DYNAMIC) != 0) {
+                            lo = dynamicValue + adjustment;
+                        }
+                    }
 
-                outIntervals.extendAndSet(divider + 1, hi);
-                outIntervals.setQuick(divider, lo);
+                    if (dynamicValue == Numbers.LONG_NaN || dynamicValue2 == Numbers.LONG_NaN) {
+                        // functions evaluated to null.
+                        if (!negated) {
+                            // return empty set if it's not negated
+                            outIntervals.clear();
+                            return;
+                        } else {
+                            // or full set
+                            negatedNothing(outIntervals, divider);
+                            continue;
+                        }
+                    }
+
+                    if (operation == IntervalOperation.INTERSECT_BETWEEN || operation == IntervalOperation.SUBTRACT_BETWEEN) {
+                        long tempHi = Math.max(hi, lo);
+                        lo = Math.min(hi, lo);
+                        hi = tempHi;
+                    }
+
+                    outIntervals.extendAndSet(divider + 1, hi);
+                    outIntervals.setQuick(divider, lo);
+                } else {
+                    // This is subtract or intersect with a string interval (not a single timestamp)
+                    CharSequence strValue = dynamicFunction.getStr(null);
+                    if (operation == IntervalOperation.INTERSECT_INTERVALS) {
+                        // This is intersect
+                        if (parseIntervalFails(outIntervals, strValue)){
+                            // return empty set
+                            outIntervals.clear();
+                            return;
+                        }
+                    } else {
+                        // This is subtract
+                        if (parseIntervalFails(outIntervals, strValue)){
+                            // full set
+                            negatedNothing(outIntervals, divider);
+                            continue;
+                        }
+                        IntervalUtils.invert(outIntervals, divider);
+                    }
+                }
             }
 
-            if (i > 0) {
-                // Do not apply operation (intersect, subtract)
-                // if this is first element and no pre-calculated static intervals exist
+            // Do not apply operation (intersect, subtract)
+            // if this is first element and no pre-calculated static intervals exist
+            if (divider > 0) {
                 switch (operation) {
                     case IntervalOperation.INTERSECT:
+                    case IntervalOperation.INTERSECT_BETWEEN:
+                    case IntervalOperation.INTERSECT_INTERVALS:
+                    case IntervalOperation.SUBTRACT_INTERVALS:
                         IntervalUtils.intersectInplace(outIntervals, divider);
                         break;
                     case IntervalOperation.SUBTRACT:
+                    case IntervalOperation.SUBTRACT_BETWEEN:
                         IntervalUtils.subtract(outIntervals, divider);
                         break;
+                    // UNION cannot be the first thing at the moment.
                     default:
                         throw new UnsupportedOperationException("Interval operation " + operation + " is not supported");
                 }
             }
         }
+    }
+
+    private boolean parseIntervalFails(LongList outIntervals, CharSequence strValue) {
+        if (strValue  != null) {
+            try {
+                IntervalUtils.parseIntervalEx(strValue, 0, strValue.length(), 0, outIntervals, IntervalOperation.INTERSECT);
+                IntervalUtils.applyLastEncodedIntervalEx(outIntervals);
+            } catch (SqlException e) {
+                return true;
+            }
+            return false;
+        }
+        return true;
+    }
+
+    private void negatedNothing(LongList outIntervals, int divider) {
+        outIntervals.setPos(divider);
+        if (divider == 0) {
+            outIntervals.extendAndSet(1, Long.MAX_VALUE);
+            outIntervals.extendAndSet(0, Long.MIN_VALUE);
+        }
+    }
+
+    private long getTimestamp(Function dynamicFunction) {
+        if (dynamicFunction.getType() == ColumnType.STRING) {
+            CharSequence value = dynamicFunction.getStr(null);
+            try {
+                return IntervalUtils.parseFloorPartialDate(value);
+            } catch (NumericException e) {
+                return Numbers.LONG_NaN;
+            }
+        }
+        return dynamicFunction.getTimestamp(null);
     }
 
     private boolean isStatic() {

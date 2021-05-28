@@ -37,6 +37,7 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.bind.IndexedParameterLinkFunction;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.std.Chars;
+import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
@@ -70,7 +71,7 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
         final Function value = args.getQuick(0);
         final Function pattern = args.getQuick(1);
 
@@ -80,7 +81,6 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
                 String p = escapeSpecialChars(likeString, null);
                 assert p != null;
                 return new ConstLikeStrFunction(
-                        position,
                         value,
                         Pattern.compile(p, Pattern.DOTALL).matcher("")
                 );
@@ -90,18 +90,17 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
 
         if (pattern instanceof IndexedParameterLinkFunction) {
             // bind variable
-            return new BindLikeStrFunction(position, value, pattern);
+            return new BindLikeStrFunction(value, pattern);
         }
 
-        throw SqlException.$(pattern.getPosition(), "use constant or bind variable");
+        throw SqlException.$(argPositions.getQuick(1), "use constant or bind variable");
     }
 
     private static class ConstLikeStrFunction extends BooleanFunction implements UnaryFunction {
         private final Function value;
         private final Matcher matcher;
 
-        public ConstLikeStrFunction(int position, Function value, Matcher matcher) {
-            super(position);
+        public ConstLikeStrFunction(Function value, Matcher matcher) {
             this.value = value;
             this.matcher = matcher;
         }
@@ -124,8 +123,7 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
         private Matcher matcher;
         private String lastPattern = null;
 
-        public BindLikeStrFunction(int position, Function value, Function pattern) {
-            super(position);
+        public BindLikeStrFunction(Function value, Function pattern) {
             this.value = value;
             this.pattern = pattern;
         }

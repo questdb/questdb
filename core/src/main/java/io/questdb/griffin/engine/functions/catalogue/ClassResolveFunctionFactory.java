@@ -34,6 +34,7 @@ import io.questdb.griffin.engine.functions.constants.IntConstant;
 import io.questdb.griffin.engine.functions.date.ToPgDateFunctionFactory;
 import io.questdb.griffin.engine.functions.date.ToTimestampFunctionFactory;
 import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 import static io.questdb.cutlass.pgwire.PGOids.PG_CLASS_OID;
@@ -48,7 +49,13 @@ public class ClassResolveFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
         final Function nameFunction = args.getQuick(0);
         final CharSequence type = args.getQuick(1).getStr(null);
 
@@ -57,26 +64,31 @@ public class ClassResolveFunctionFactory implements FunctionFactory {
             if (func != null) {
                 return func;
             }
-            throw SqlException.$(nameFunction.getPosition(), "unsupported class");
+            throw SqlException.$(argPositions.getQuick(0), "unsupported class");
+        }
+
+        if (SqlKeywords.isRegprocKeyword(type) || SqlKeywords.isRegprocedureKeyword(type)) {
+            // return fake OID
+            return new IntConstant(289208840);
         }
 
         if (SqlKeywords.isTimestampKeyword(type)) {
-            return new ToTimestampFunctionFactory.ToTimestampFunction(nameFunction.getPosition(), nameFunction);
+            return new ToTimestampFunctionFactory.ToTimestampFunction(nameFunction);
         }
 
         if (SqlKeywords.isDateKeyword(type)) {
-            return new ToPgDateFunctionFactory.ToPgDateFunction(nameFunction.getPosition(), nameFunction);
+            return new ToPgDateFunctionFactory.ToPgDateFunction(nameFunction);
         }
 
         if (SqlKeywords.isTextArrayKeyword(type)) {
-            return new StringToStringArrayFunction(nameFunction.getPosition(), nameFunction.getStr(null));
+            return new StringToStringArrayFunction(argPositions.getQuick(0), nameFunction.getStr(null));
         }
 
-        throw SqlException.$(args.getQuick(1).getPosition(), "unsupported type");
+        throw SqlException.$(argPositions.getQuick(1), "unsupported type");
     }
 
     static {
-        map.put("pg_namespace", new IntConstant(0, PG_NAMESPACE_OID));
-        map.put("pg_class", new IntConstant(0, PG_CLASS_OID));
+        map.put("pg_namespace", new IntConstant(PG_NAMESPACE_OID));
+        map.put("pg_class", new IntConstant(PG_CLASS_OID));
     }
 }

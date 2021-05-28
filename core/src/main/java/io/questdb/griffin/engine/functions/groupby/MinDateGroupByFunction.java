@@ -39,8 +39,7 @@ public class MinDateGroupByFunction extends DateFunction implements GroupByFunct
     private final Function arg;
     private int valueIndex;
 
-    public MinDateGroupByFunction(int position, @NotNull Function arg) {
-        super(position);
+    public MinDateGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
     }
 

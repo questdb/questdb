@@ -64,6 +64,8 @@ class TypeCatalogueCursor implements NoRandomAccessRecordCursor {
             intValues[8] = Numbers.INT_NaN;
             intValues[9] = 0;
             intValues[10] = 0;
+            intValues[11] = 0;
+            intValues[12] = 0;
             return true;
         }
         return false;
@@ -125,6 +127,8 @@ class TypeCatalogueCursor implements NoRandomAccessRecordCursor {
         metadata.add(new TableColumnMetadata("typrelid", ColumnType.INT, null));
         metadata.add(new TableColumnMetadata("typelem", ColumnType.INT, null));
         metadata.add(new TableColumnMetadata("typreceive", ColumnType.INT, null));
+        metadata.add(new TableColumnMetadata("typdelim", ColumnType.INT, null));
+        metadata.add(new TableColumnMetadata("typinput", ColumnType.INT, null));
         METADATA = metadata;
     }
 }

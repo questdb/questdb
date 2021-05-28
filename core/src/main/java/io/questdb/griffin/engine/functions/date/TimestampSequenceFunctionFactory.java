@@ -32,6 +32,7 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.griffin.engine.functions.constants.TimestampConstant;
+import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -43,15 +44,21 @@ public class TimestampSequenceFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) {
         if (args.getQuick(0).isConstant()) {
             final long start = args.getQuick(0).getTimestamp(null);
             if (start == Numbers.LONG_NaN) {
-                return new TimestampConstant(args.getQuick(0).getPosition(), Numbers.LONG_NaN);
+                return TimestampConstant.NULL;
             }
-            return new TimestampSequenceFunction(position, start, args.getQuick(1));
+            return new TimestampSequenceFunction(start, args.getQuick(1));
         } else {
-            return new TimestampSequenceVariableFunction(position, args.getQuick(0), args.getQuick(1));
+            return new TimestampSequenceVariableFunction(args.getQuick(0), args.getQuick(1));
         }
     }
 
@@ -60,8 +67,7 @@ public class TimestampSequenceFunctionFactory implements FunctionFactory {
         private final long start;
         private long next;
 
-        public TimestampSequenceFunction(int position, long start, Function longIncrement) {
-            super(position);
+        public TimestampSequenceFunction(long start, Function longIncrement) {
             this.start = start;
             this.next = start;
             this.longIncrement = longIncrement;
@@ -94,8 +100,7 @@ public class TimestampSequenceFunctionFactory implements FunctionFactory {
         private final Function start;
         private long next;
 
-        public TimestampSequenceVariableFunction(int position, Function start, Function longIncrement) {
-            super(position);
+        public TimestampSequenceVariableFunction(Function start, Function longIncrement) {
             this.start = start;
             this.next = 0;
             this.longIncrement = longIncrement;

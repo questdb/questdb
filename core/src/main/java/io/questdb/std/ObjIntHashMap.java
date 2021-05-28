@@ -47,16 +47,15 @@ public class ObjIntHashMap<K> implements Iterable<ObjIntHashMap.Entry<K>>, Mutab
     }
 
     private ObjIntHashMap(int initialCapacity) {
-        this(initialCapacity, 0.5, -1);
+        this(initialCapacity, 0.3, -1);
     }
 
-    @SuppressWarnings("unchecked")
     public ObjIntHashMap(int initialCapacity, double loadFactor, int noKeyValue) {
         assert loadFactor > 0 && loadFactor < 1.0;
         this.capacity = Math.max(initialCapacity, MIN_INITIAL_CAPACITY);
         this.loadFactor = loadFactor;
         this.noKeyValue = noKeyValue;
-        keys = (K[]) new Object[Numbers.ceilPow2((int) (this.capacity / loadFactor))];
+        keys = getKeys();
         values = new int[keys.length];
         mask = keys.length - 1;
         clear();
@@ -66,6 +65,23 @@ public class ObjIntHashMap<K> implements Iterable<ObjIntHashMap.Entry<K>>, Mutab
     public final void clear() {
         free = capacity;
         Arrays.fill(keys, noEntryValue);
+    }
+
+    public void clear(int newCapacity) {
+        if (newCapacity <= capacity) {
+            clear();
+        } else {
+            free = capacity = Numbers.ceilPow2(newCapacity);
+            keys = getKeys();
+            values = new int[keys.length];
+            mask = keys.length - 1;
+            Arrays.fill(keys, noEntryValue);
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private K[] getKeys() {
+        return (K[]) new Object[Numbers.ceilPow2((int) (this.capacity / this.loadFactor))];
     }
 
     public int get(K key) {

@@ -34,6 +34,7 @@ import io.questdb.griffin.engine.functions.TernaryFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.TimestampConstant;
+import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.datetime.microtime.Timestamps;
@@ -49,7 +50,7 @@ public class TimestampAddFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
 
         Function period = args.getQuick(0);
         Function interval = args.getQuick(1);
@@ -60,16 +61,16 @@ public class TimestampAddFunctionFactory implements FunctionFactory {
                 if (func != null) {
                     if (interval.isConstant()) {
                         if (interval.getInt(null) != Numbers.INT_NaN) {
-                            return new AddLongIntVarConstFunction(position, args.getQuick(2), interval.getInt(null), func);
+                            return new AddLongIntVarConstFunction(args.getQuick(2), interval.getInt(null), func);
                         }
-                        return new TimestampConstant(position, Numbers.LONG_NaN);
+                        return TimestampConstant.NULL;
                     }
-                    return new AddLongIntVarVarFunction(position, args.getQuick(2), args.getQuick(1), func);
+                    return new AddLongIntVarVarFunction(args.getQuick(2), args.getQuick(1), func);
                 }
             }
-            return new TimestampConstant(position, Numbers.LONG_NaN);
+            return TimestampConstant.NULL;
         }
-        return new AddLongFunc(position, args.getQuick(2), args.getQuick(0), args.getQuick(1));
+        return new DateAddFunc(args.getQuick(2), args.getQuick(0), args.getQuick(1));
     }
 
     @FunctionalInterface
@@ -82,8 +83,7 @@ public class TimestampAddFunctionFactory implements FunctionFactory {
         private final Function right;
         private final LongAddIntFunction func;
 
-        public AddLongIntVarVarFunction(int position, Function left, Function right, LongAddIntFunction func) {
-            super(position);
+        public AddLongIntVarVarFunction(Function left, Function right, LongAddIntFunction func) {
             this.left = left;
             this.right = right;
             this.func = func;
@@ -115,8 +115,7 @@ public class TimestampAddFunctionFactory implements FunctionFactory {
         private final int interval;
         private final LongAddIntFunction func;
 
-        public AddLongIntVarConstFunction(int position, Function left, int right, LongAddIntFunction func) {
-            super(position);
+        public AddLongIntVarConstFunction(Function left, int right, LongAddIntFunction func) {
             this.arg = left;
             this.interval = right;
             this.func = func;
@@ -137,13 +136,12 @@ public class TimestampAddFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class AddLongFunc extends TimestampFunction implements TernaryFunction {
+    private static class DateAddFunc extends TimestampFunction implements TernaryFunction {
         final Function left;
         final Function center;
         final Function right;
 
-        public AddLongFunc(int position, Function left, Function center, Function right) {
-            super(position);
+        public DateAddFunc(Function left, Function center, Function right) {
             this.left = left;
             this.center = center;
             this.right = right;

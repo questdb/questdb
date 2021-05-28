@@ -61,6 +61,7 @@ public class SampleByFillValueRecordCursorFactory implements RecordCursorFactory
             RecordMetadata groupByMetadata,
             ObjList<GroupByFunction> groupByFunctions,
             ObjList<Function> recordFunctions,
+            @Transient IntList recordFunctionPositions,
             int timestampIndex
     ) throws SqlException {
 
@@ -73,7 +74,11 @@ public class SampleByFillValueRecordCursorFactory implements RecordCursorFactory
             this.metadata = groupByMetadata;
             this.recordFunctions = recordFunctions;
             this.groupByFunctions = groupByFunctions;
-            final ObjList<Function> placeholderFunctions = createPlaceholderFunctions(recordFunctions, fillValues);
+            final ObjList<Function> placeholderFunctions = createPlaceholderFunctions(
+                    recordFunctions,
+                    recordFunctionPositions,
+                    fillValues
+            );
             this.cursor = new SampleByFillValueRecordCursor(
                     map,
                     mapSink,
@@ -93,6 +98,7 @@ public class SampleByFillValueRecordCursorFactory implements RecordCursorFactory
     @NotNull
     public static ObjList<Function> createPlaceholderFunctions(
             ObjList<Function> recordFunctions,
+            @Transient IntList recordFunctionPositions,
             @NotNull @Transient ObjList<ExpressionNode> fillValues
     ) throws SqlException {
 
@@ -111,25 +117,25 @@ public class SampleByFillValueRecordCursorFactory implements RecordCursorFactory
                 try {
                     switch (function.getType()) {
                         case ColumnType.INT:
-                            placeholderFunctions.add(new IntConstant(function.getPosition(), Numbers.parseInt(fillNode.token)));
+                            placeholderFunctions.add(IntConstant.newInstance(Numbers.parseInt(fillNode.token)));
                             break;
                         case ColumnType.LONG:
-                            placeholderFunctions.add(new LongConstant(function.getPosition(), Numbers.parseLong(fillNode.token)));
+                            placeholderFunctions.add(LongConstant.newInstance(Numbers.parseLong(fillNode.token)));
                             break;
                         case ColumnType.FLOAT:
-                            placeholderFunctions.add(new FloatConstant(function.getPosition(), Numbers.parseFloat(fillNode.token)));
+                            placeholderFunctions.add(FloatConstant.newInstance(Numbers.parseFloat(fillNode.token)));
                             break;
                         case ColumnType.DOUBLE:
-                            placeholderFunctions.add(new DoubleConstant(function.getPosition(), Numbers.parseDouble(fillNode.token)));
+                            placeholderFunctions.add(DoubleConstant.newInstance(Numbers.parseDouble(fillNode.token)));
                             break;
                         case ColumnType.SHORT:
-                            placeholderFunctions.add(new ShortConstant(function.getPosition(), (short) Numbers.parseInt(fillNode.token)));
+                            placeholderFunctions.add(ShortConstant.newInstance((short) Numbers.parseInt(fillNode.token)));
                             break;
                         case ColumnType.BYTE:
-                            placeholderFunctions.add(new ByteConstant(function.getPosition(), (byte) Numbers.parseInt(fillNode.token)));
+                            placeholderFunctions.add(ByteConstant.newInstance((byte) Numbers.parseInt(fillNode.token)));
                             break;
                         default:
-                            throw SqlException.$(function.getPosition(), "Unsupported type: ").put(ColumnType.nameOf(function.getType()));
+                            throw SqlException.$(recordFunctionPositions.getQuick(i), "Unsupported type: ").put(ColumnType.nameOf(function.getType()));
                     }
                 } catch (NumericException e) {
                     throw SqlException.position(fillNode.position).put("invalid number: ").put(fillNode.token);
@@ -193,7 +199,7 @@ public class SampleByFillValueRecordCursorFactory implements RecordCursorFactory
             // we know base cursor has value
             assert next;
             return initFunctionsAndCursor(executionContext, baseCursor);
-        } catch (CairoException ex) {
+        } catch (Throwable ex) {
             baseCursor.close();
             throw ex;
         }

@@ -220,7 +220,7 @@ public class TypeManagerTest {
             typeManager.getTypeAdapter(columnType);
             Assert.fail();
         } catch (CairoException e) {
-            TestUtils.assertContains(e.getMessage(), "no adapter for type");
+            TestUtils.assertContains(e.getFlyweightMessage(), "no adapter for type");
         }
     }
 }

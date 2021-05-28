@@ -31,18 +31,18 @@ public class DBeaverTest extends AbstractGriffinTest {
     public void testDotNetGetTypes() throws SqlException {
         assertQuery(
                 "nspname\toid\ttypnamespace\ttypname\ttyptype\ttyprelid\ttypnotnull\trelkind\telemtypoid\telemtypname\telemrelkind\telemtyptype\tord\n" +
-                        "public\t1043\t2200\tVARCHAR\tb\tNaN\tfalse\t\tNaN\t\t\t\t0\n" +
-                        "public\t1114\t2200\tTIMESTAMP\tb\tNaN\tfalse\t\tNaN\t\t\t\t0\n" +
-                        "public\t701\t2200\tFLOAT8\tb\tNaN\tfalse\t\tNaN\t\t\t\t0\n" +
-                        "public\t700\t2200\tFLOAT4\tb\tNaN\tfalse\t\tNaN\t\t\t\t0\n" +
-                        "public\t23\t2200\tINT4\tb\tNaN\tfalse\t\tNaN\t\t\t\t0\n" +
-                        "public\t21\t2200\tINT2\tb\tNaN\tfalse\t\tNaN\t\t\t\t0\n" +
-                        "public\t18\t2200\tCHAR\tb\tNaN\tfalse\t\tNaN\t\t\t\t0\n" +
-                        "public\t20\t2200\tINT8\tb\tNaN\tfalse\t\tNaN\t\t\t\t0\n" +
-                        "public\t16\t2200\tBOOL\tb\tNaN\tfalse\t\tNaN\t\t\t\t0\n" +
-                        "public\t17\t2200\tBINARY\tb\tNaN\tfalse\t\tNaN\t\t\t\t0\n" +
-                        "public\t1700\t2200\tNUMERIC\tb\tNaN\tfalse\t\tNaN\t\t\t\t0\n" +
-                        "public\t1082\t2200\tDATE\tb\tNaN\tfalse\t\tNaN\t\t\t\t0\n",
+                        "public\t1043\t2200\tvarchar\tb\tNaN\tfalse\t\tNaN\t\t\t\t0\n" +
+                        "public\t1114\t2200\ttimestamp\tb\tNaN\tfalse\t\tNaN\t\t\t\t0\n" +
+                        "public\t701\t2200\tfloat8\tb\tNaN\tfalse\t\tNaN\t\t\t\t0\n" +
+                        "public\t700\t2200\tfloat4\tb\tNaN\tfalse\t\tNaN\t\t\t\t0\n" +
+                        "public\t23\t2200\tint4\tb\tNaN\tfalse\t\tNaN\t\t\t\t0\n" +
+                        "public\t21\t2200\tint2\tb\tNaN\tfalse\t\tNaN\t\t\t\t0\n" +
+                        "public\t18\t2200\tchar\tb\tNaN\tfalse\t\tNaN\t\t\t\t0\n" +
+                        "public\t20\t2200\tint8\tb\tNaN\tfalse\t\tNaN\t\t\t\t0\n" +
+                        "public\t16\t2200\tbool\tb\tNaN\tfalse\t\tNaN\t\t\t\t0\n" +
+                        "public\t17\t2200\tbinary\tb\tNaN\tfalse\t\tNaN\t\t\t\t0\n" +
+                        "public\t1700\t2200\tnumeric\tb\tNaN\tfalse\t\tNaN\t\t\t\t0\n" +
+                        "public\t1082\t2200\tdate\tb\tNaN\tfalse\t\tNaN\t\t\t\t0\n",
                 "SELECT ns.nspname, typ_and_elem_type.*,\n" +
                         "   CASE\n" +
                         "       WHEN typtype IN ('b', 'e', 'p') THEN 0           -- First base types, enums, pseudo-types\n" +
@@ -165,19 +165,19 @@ public class DBeaverTest extends AbstractGriffinTest {
     @Test
     public void testListTypes() throws SqlException {
         assertQuery(
-                "oid\toid1\ttypname\ttypbasetype\ttyparray\ttypnamespace\ttypnotnull\ttyptypmod\ttyptype\ttyprelid\ttypelem\ttypreceive\trelkind\tbase_type_name\tdescription\n" +
-                        "16\t16\tBOOL\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t\t\t\n" +
-                        "17\t17\tBINARY\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t\t\t\n" +
-                        "18\t18\tCHAR\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t\t\t\n" +
-                        "20\t20\tINT8\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t\t\t\n" +
-                        "21\t21\tINT2\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t\t\t\n" +
-                        "23\t23\tINT4\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t\t\t\n" +
-                        "700\t700\tFLOAT4\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t\t\t\n" +
-                        "701\t701\tFLOAT8\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t\t\t\n" +
-                        "1043\t1043\tVARCHAR\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t\t\t\n" +
-                        "1082\t1082\tDATE\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t\t\t\n" +
-                        "1114\t1114\tTIMESTAMP\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t\t\t\n" +
-                        "1700\t1700\tNUMERIC\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t\t\t\n",
+                "oid\toid1\ttypname\ttypbasetype\ttyparray\ttypnamespace\ttypnotnull\ttyptypmod\ttyptype\ttyprelid\ttypelem\ttypreceive\ttypdelim\ttypinput\trelkind\tbase_type_name\tdescription\n" +
+                        "16\t16\tbool\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t0\t0\t\t\t\n" +
+                        "17\t17\tbinary\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t0\t0\t\t\t\n" +
+                        "18\t18\tchar\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t0\t0\t\t\t\n" +
+                        "20\t20\tint8\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t0\t0\t\t\t\n" +
+                        "21\t21\tint2\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t0\t0\t\t\t\n" +
+                        "23\t23\tint4\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t0\t0\t\t\t\n" +
+                        "700\t700\tfloat4\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t0\t0\t\t\t\n" +
+                        "701\t701\tfloat8\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t0\t0\t\t\t\n" +
+                        "1043\t1043\tvarchar\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t0\t0\t\t\t\n" +
+                        "1082\t1082\tdate\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t0\t0\t\t\t\n" +
+                        "1114\t1114\ttimestamp\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t0\t0\t\t\t\n" +
+                        "1700\t1700\tnumeric\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t0\t0\t\t\t\n",
                 "SELECT t.oid,t.*,c.relkind,format_type(nullif(t.typbasetype, 0), t.typtypmod) as base_type_name, d.description\n" +
                         "FROM pg_catalog.pg_type t\n" +
                         "LEFT OUTER JOIN pg_catalog.pg_class c ON c.oid=t.typrelid\n" +

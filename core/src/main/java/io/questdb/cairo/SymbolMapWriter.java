@@ -104,7 +104,7 @@ public class SymbolMapWriter implements Closeable {
 
             tmpSymbol = new DirectCharSequence();
             LOG.debug().$("open [name=").$(path.trimTo(plen).concat(name).$()).$(", fd=").$(this.offsetMem.getFd()).$(", cache=").$(cache != null).$(", capacity=").$(symbolCapacity).$(']').$();
-        } catch (CairoException e) {
+        } catch (Throwable e) {
             close();
             throw e;
         } finally {
@@ -288,7 +288,9 @@ public class SymbolMapWriter implements Closeable {
         offsetMem.jumpTo(keyToOffset(0));
         charMem.jumpTo(0);
         indexWriter.truncate();
-        cache.clear();
+        if (cache != null) {
+            cache.clear();
+        }
     }
 
     public interface TransientSymbolCountChangeHandler {

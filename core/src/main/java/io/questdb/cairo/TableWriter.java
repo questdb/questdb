@@ -62,6 +62,7 @@ public class TableWriter implements Closeable {
     public static final int O3_BLOCK_O3 = 1;
     public static final int O3_BLOCK_DATA = 2;
     public static final int O3_BLOCK_MERGE = 3;
+    private static final int MEM_PAGE_SIZE = 16 * Numbers.SIZE_1MB;
     private static final Log LOG = LogFactory.getLog(TableWriter.class);
     private static final CharSequenceHashSet IGNORED_FILES = new CharSequenceHashSet();
     private static final Runnable NOOP = () -> {
@@ -96,7 +97,7 @@ public class TableWriter implements Closeable {
     private final CharSequence tableName;
     private final TableWriterMetadata metadata;
     private final CairoConfiguration configuration;
-    private final CharSequenceIntHashMap validationMap = new CharSequenceIntHashMap();
+    private final LowerCaseCharSequenceIntHashMap validationMap = new LowerCaseCharSequenceIntHashMap();
     private final FragileCode RECOVER_FROM_META_RENAME_FAILURE = this::recoverFromMetaRenameFailure;
     private final SOCountDownLatch indexLatch = new SOCountDownLatch();
     private final LongList indexSequences = new LongList();
@@ -123,15 +124,19 @@ public class TableWriter implements Closeable {
     private final TxWriter txFile;
     private final FindVisitor removePartitionDirsNotAttached = this::removePartitionDirsNotAttached;
     private final LongList o3PartitionRemoveCandidates = new LongList();
-    private final LongConsumer appendTimestampSetter;
     private final ObjectPool<O3MutableAtomicInteger> o3ColumnCounters = new ObjectPool<O3MutableAtomicInteger>(O3MutableAtomicInteger::new, 64);
     private final ObjectPool<O3Basket> o3BasketPool = new ObjectPool<O3Basket>(O3Basket::new, 64);
     private final TxnScoreboard txnScoreboard;
     private final StringSink o3Sink = new StringSink();
     private final NativeLPSZ o3NativeLPSZ = new NativeLPSZ();
+    private final RingQueue<O3PartitionUpdateTask> o3PartitionUpdateQueue;
+    private final MPSequence o3PartitionUpdatePubSeq;
+    private final SCSequence o3PartitionUpdateSubSeq;
+    private LongConsumer appendTimestampSetter;
     private long todoTxn;
     private ContiguousVirtualMemory o3TimestampMem;
-    private final O3ColumnUpdateMethod o3MoveHysteresisRef = this::o3MoveHysteresis0;
+    private ContiguousVirtualMemory o3TimestampMemCpy;
+    private final O3ColumnUpdateMethod o3MoveLagRef = this::o3MoveLag0;
     private long lockFd = -1;
     private LongConsumer timestampSetter;
     private int columnCount;
@@ -144,7 +149,7 @@ public class TableWriter implements Closeable {
     private long tempMem16b = Unsafe.malloc(16);
     private int metaSwapIndex;
     private int metaPrevIndex;
-    private final FragileCode RECOVER_FROM_TODO_WRITE_FAILURE = this::recoverFrommTodoWriteFailure;
+    private final FragileCode RECOVER_FROM_TODO_WRITE_FAILURE = this::recoverFromTodoWriteFailure;
     private final FragileCode RECOVER_FROM_SYMBOL_MAP_WRITER_FAILURE = this::recoverFromSymbolMapWriterFailure;
     private final FragileCode RECOVER_FROM_SWAP_RENAME_FAILURE = this::recoverFromSwapRenameFailure;
     private final FragileCode RECOVER_FROM_COLUMN_OPEN_FAILURE = this::recoverOpenColumnFailure;
@@ -157,6 +162,7 @@ public class TableWriter implements Closeable {
     private final O3ColumnUpdateMethod o3MoveUncommittedRef = this::o3MoveUncommitted0;
     private long lastPartitionTimestamp;
     private boolean o3InError = false;
+    private final boolean o3QuickSortEnabled;
 
     public TableWriter(CairoConfiguration configuration, CharSequence tableName) {
         this(configuration, tableName, new MessageBusImpl(configuration));
@@ -194,6 +200,12 @@ public class TableWriter implements Closeable {
         this.mkDirMode = configuration.getMkDirMode();
         this.fileOperationRetryCount = configuration.getFileOperationRetryCount();
         this.tableName = Chars.toString(tableName);
+        this.o3QuickSortEnabled = configuration.isO3QuickSortEnabled();
+        this.o3PartitionUpdateQueue = new RingQueue<O3PartitionUpdateTask>(O3PartitionUpdateTask.CONSTRUCTOR, configuration.getO3PartitionUpdateQueueCapacity());
+        this.o3PartitionUpdatePubSeq = new MPSequence(this.o3PartitionUpdateQueue.getCapacity());
+        this.o3PartitionUpdateSubSeq = new SCSequence();
+        o3PartitionUpdatePubSeq.then(o3PartitionUpdateSubSeq).then(o3PartitionUpdatePubSeq);
+
         this.path = new Path();
         this.path.of(root).concat(tableName);
         this.other = new Path().of(root).concat(tableName);
@@ -265,15 +277,8 @@ public class TableWriter implements Closeable {
                 partitionDirFmt = null;
             }
 
-            configureColumnMemory();
-            timestampSetter = configureTimestampSetter();
-            this.appendTimestampSetter = timestampSetter;
-            this.txFile.readRowCounts();
-            configureAppendPosition();
-            purgeUnusedPartitions();
-            clearTodoLog();
-        } catch (CairoException e) {
-            LOG.error().$("could not open '").$(path).$("' and this is why: {").$((Sinkable) e).$('}').$();
+                executeDeferred();
+        } catch (Throwable e) {
             doClose(false);
             throw e;
         }
@@ -285,10 +290,6 @@ public class TableWriter implements Closeable {
 
     public static int getSecondaryColumnIndex(int index) {
         return getPrimaryColumnIndex(index) + 1;
-    }
-
-    public static long getTimestampIndexRow(long timestampIndex, long indexRow) {
-        return Unsafe.getUnsafe().getLong(timestampIndex + indexRow * 16 + Long.BYTES);
     }
 
     public static long getTimestampIndexValue(long timestampIndex, long indexRow) {
@@ -474,6 +475,9 @@ public class TableWriter implements Closeable {
                 if (partitionBy != PartitionBy.NONE) {
                     // run indexer for the whole table
                     final long timestamp = indexHistoricPartitions(indexer, columnName, indexValueBlockSize);
+                    if (timestamp == Numbers.LONG_NaN) {
+                        return;
+                    }
                     path.trimTo(rootLen);
                     setStateForTimestamp(path, timestamp, true);
                 } else {
@@ -486,7 +490,7 @@ public class TableWriter implements Closeable {
             } finally {
                 path.trimTo(rootLen);
             }
-        } catch (CairoException | CairoError e) {
+        } catch (Throwable e) {
             LOG.error().$("rolling back index created so far [path=").$(path).$(']').$();
             removeIndexFiles(columnName);
             throw e;
@@ -661,8 +665,19 @@ public class TableWriter implements Closeable {
         commit(commitMode, 0);
     }
 
-    public void commitWithHysteresis(long lastTimestampHysteresisInMicros) {
-        commit(defaultCommitMode, lastTimestampHysteresisInMicros);
+    public boolean checkMaxAndCommitLag() {
+        if (getO3RowCount() < metadata.getMaxUncommittedRows()) {
+            return false;
+        }
+        commitWithLag();
+        return true;
+    }
+    public void commitWithLag() {
+        commit(defaultCommitMode, metadata.getCommitLag());
+    }
+
+    public void commitWithLag(long lagMicros) {
+        commit(defaultCommitMode, lagMicros);
     }
 
     public int getColumnIndex(CharSequence name) {
@@ -685,7 +700,7 @@ public class TableWriter implements Closeable {
         return txFile.getMaxTimestamp();
     }
 
-    public RecordMetadata getMetadata() {
+    public TableWriterMetadata getMetadata() {
         return metadata;
     }
 
@@ -738,6 +753,10 @@ public class TableWriter implements Closeable {
 
     public Row newRow() {
         return newRow(0L);
+    }
+
+    public void o3BumpErrorCount() {
+        o3ErrorCount.incrementAndGet();
     }
 
     public long partitionNameToTimestamp(CharSequence partitionName) {
@@ -1004,6 +1023,75 @@ public class TableWriter implements Closeable {
         this.lifecycleManager = lifecycleManager;
     }
 
+    public void setMetaCommitLag(long commitLag) {
+        try {
+            commit();
+            long metaSize = copyMetadataAndUpdateVersion();
+            openMetaSwapFileByIndex(ff, ddlMem, path, rootLen, this.metaSwapIndex);
+            try {
+                ddlMem.jumpTo(META_OFFSET_COMMIT_LAG);
+                ddlMem.putLong(commitLag);
+                ddlMem.jumpTo(metaSize);
+            } finally {
+                ddlMem.close();
+            }
+
+            finishMetaSwapUpdate();
+            metadata.setCommitLag(commitLag);
+        } finally {
+            ddlMem.close();
+        }
+    }
+
+    public void setMetaMaxUncommittedRows(int maxUncommittedRows) {
+        try {
+            commit();
+            long metaSize = copyMetadataAndUpdateVersion();
+            openMetaSwapFileByIndex(ff, ddlMem, path, rootLen, this.metaSwapIndex);
+            try {
+                ddlMem.jumpTo(META_OFFSET_MAX_UNCOMMITTED_ROWS);
+                ddlMem.putInt(maxUncommittedRows);
+                ddlMem.jumpTo(metaSize);
+            } finally {
+                ddlMem.close();
+            }
+
+            finishMetaSwapUpdate();
+            metadata.setMaxUncommittedRows(maxUncommittedRows);
+        } finally {
+            ddlMem.close();
+        }
+    }
+
+    private void finishMetaSwapUpdate() {
+
+        // rename _meta to _meta.prev
+        this.metaPrevIndex = rename(fileOperationRetryCount);
+        writeRestoreMetaTodo();
+
+        try {
+            // rename _meta.swp to -_meta
+            restoreMetaFrom(META_SWAP_FILE_NAME, metaSwapIndex);
+        } catch (CairoException ex) {
+            try {
+                recoverFromTodoWriteFailure(null);
+            } catch (CairoException ex2) {
+                throwDistressException(ex2);
+            }
+            throw ex;
+        }
+
+        try {
+            // open _meta file
+            openMetaFile(ff, path, rootLen, metaMem);
+        } catch (CairoException err) {
+            throwDistressException(err);
+        }
+
+        txFile.bumpStructureVersion(this.denseSymbolMapWriters);
+        metadata.setTableVersion();
+    }
+
     public long size() {
         return txFile.getRowCount();
     }
@@ -1084,7 +1172,7 @@ public class TableWriter implements Closeable {
 
         commit();
         // create new _meta.swp
-        this.metaSwapIndex = copyMetadataAndUpdateVersion();
+        copyMetadataAndUpdateVersion();
 
         // close _meta so we can rename it
         metaMem.close();
@@ -1123,7 +1211,7 @@ public class TableWriter implements Closeable {
      * performance of some applications. UDP receivers use this in order to avoid initial receive buffer contention.
      */
     public void warmUp() {
-        Row r = newRow(txFile.getMaxTimestamp());
+        Row r = newRow(Math.max(Timestamps.AD_01, txFile.getMaxTimestamp()));
         try {
             for (int i = 0; i < columnCount; i++) {
                 r.putByte(i, (byte) 0);
@@ -1394,28 +1482,6 @@ public class TableWriter implements Closeable {
         throw CairoException.instance(0).put("Column file does not exist [path=").put(path).put(']');
     }
 
-    //todo: move to c++
-    private static long o3SortVarColumn0(
-            long mergedTimestampsAddr,
-            long valueCount,
-            long srcDataAddr,
-            long srcIndxAddr,
-            long tgtDataAddr,
-            long tgtIndxAddr
-    ) {
-        long offset = 0;
-        for (long l = 0; l < valueCount; l++) {
-            final long row = getTimestampIndexRow(mergedTimestampsAddr, l);
-            final long o1 = Unsafe.getUnsafe().getLong(srcIndxAddr + row * Long.BYTES);
-            final long o2 = Unsafe.getUnsafe().getLong(srcIndxAddr + row * Long.BYTES + Long.BYTES);
-            final long len = o2 - o1;
-            Vect.memcpy(srcDataAddr + o1, tgtDataAddr + offset, len);
-            Unsafe.getUnsafe().putLong(tgtIndxAddr + l * Long.BYTES, offset);
-            offset += len;
-        }
-        return offset;
-    }
-
     private int addColumnToMeta(
             CharSequence name,
             int type,
@@ -1431,8 +1497,7 @@ public class TableWriter implements Closeable {
             ddlMem.putInt(columnCount + 1);
             ddlMem.putInt(metaMem.getInt(META_OFFSET_PARTITION_BY));
             ddlMem.putInt(metaMem.getInt(META_OFFSET_TIMESTAMP_INDEX));
-            ddlMem.putInt(ColumnType.VERSION);
-            ddlMem.putInt(metaMem.getInt(META_OFFSET_TABLE_ID));
+            copyVersionAndLagValues();
             ddlMem.jumpTo(META_OFFSET_COLUMN_TYPES);
             for (int i = 0; i < columnCount; i++) {
                 writeColumnEntry(i);
@@ -1464,6 +1529,13 @@ public class TableWriter implements Closeable {
             ddlMem.close();
         }
         return index;
+    }
+
+    private void copyVersionAndLagValues() {
+        ddlMem.putInt(ColumnType.VERSION);
+        ddlMem.putInt(metaMem.getInt(META_OFFSET_TABLE_ID));
+        ddlMem.putInt(metaMem.getInt(META_OFFSET_MAX_UNCOMMITTED_ROWS));
+        ddlMem.putInt(metaMem.getInt(META_OFFSET_COMMIT_LAG));
     }
 
     private void bumpMasterRef() {
@@ -1508,7 +1580,7 @@ public class TableWriter implements Closeable {
                     try {
                         openPartition(rollbackToMaxTimestamp);
                         setAppendPosition(rollbackToTransientRowCount, false);
-                    } catch (CairoException e) {
+                    } catch (Throwable e) {
                         freeColumns(false);
                         throw e;
                     }
@@ -1581,6 +1653,7 @@ public class TableWriter implements Closeable {
     }
 
     void closeActivePartition() {
+        LOG.info().$("closing last partition [table=").$(tableName).I$();
         closeAppendMemoryNoTruncate(true);
         Misc.freeObjList(denseIndexers);
         denseIndexers.clear();
@@ -1623,9 +1696,9 @@ public class TableWriter implements Closeable {
      * <p>This method will cancel pending rows by calling {@link #cancelRow()}. Data in partially appended row will be lost.</p>
      *
      * @param commitMode                      commit durability mode.
-     * @param lastTimestampHysteresisInMicros if > 0 then do a partial commit, leaving the rows within the hysteresis in a new uncommitted transaction
+     * @param commitLag if > 0 then do a partial commit, leaving the rows within the lag in a new uncommitted transaction
      */
-    private void commit(int commitMode, long lastTimestampHysteresisInMicros) {
+    private void commit(int commitMode, long commitLag) {
 
         checkDistressed();
 
@@ -1640,7 +1713,7 @@ public class TableWriter implements Closeable {
 
         if (inTransaction()) {
 
-            if (hasO3() && o3Commit(lastTimestampHysteresisInMicros)) {
+            if (hasO3() && o3Commit(commitLag)) {
                 return;
             }
 
@@ -1693,16 +1766,16 @@ public class TableWriter implements Closeable {
     private void configureColumn(int type, boolean indexFlag) {
         final AppendOnlyVirtualMemory primary = new AppendOnlyVirtualMemory();
         final AppendOnlyVirtualMemory secondary;
-        final ContiguousVirtualMemory oooPrimary = new ContiguousVirtualMemory(16 * Numbers.SIZE_1MB, Integer.MAX_VALUE);
+        final ContiguousVirtualMemory oooPrimary = new ContiguousVirtualMemory(MEM_PAGE_SIZE, Integer.MAX_VALUE);
         final ContiguousVirtualMemory oooSecondary;
-        final ContiguousVirtualMemory oooPrimary2 = new ContiguousVirtualMemory(16 * Numbers.SIZE_1MB, Integer.MAX_VALUE);
+        final ContiguousVirtualMemory oooPrimary2 = new ContiguousVirtualMemory(MEM_PAGE_SIZE, Integer.MAX_VALUE);
         final ContiguousVirtualMemory oooSecondary2;
         switch (type) {
             case ColumnType.BINARY:
             case ColumnType.STRING:
                 secondary = new AppendOnlyVirtualMemory();
-                oooSecondary = new ContiguousVirtualMemory(16 * Numbers.SIZE_1MB, Integer.MAX_VALUE);
-                oooSecondary2 = new ContiguousVirtualMemory(16 * Numbers.SIZE_1MB, Integer.MAX_VALUE);
+                oooSecondary = new ContiguousVirtualMemory(MEM_PAGE_SIZE, Integer.MAX_VALUE);
+                oooSecondary2 = new ContiguousVirtualMemory(MEM_PAGE_SIZE, Integer.MAX_VALUE);
                 break;
             default:
                 secondary = null;
@@ -1749,6 +1822,7 @@ public class TableWriter implements Closeable {
         final int timestampIndex = metadata.getTimestampIndex();
         if (timestampIndex != -1) {
             o3TimestampMem = o3Columns.getQuick(getPrimaryColumnIndex(timestampIndex));
+            o3TimestampMemCpy = new ContiguousVirtualMemory(MEM_PAGE_SIZE, Integer.MAX_VALUE);
         }
         populateDenseIndexerList();
     }
@@ -1826,8 +1900,7 @@ public class TableWriter implements Closeable {
             ddlMem.putInt(columnCount);
             ddlMem.putInt(metaMem.getInt(META_OFFSET_PARTITION_BY));
             ddlMem.putInt(metaMem.getInt(META_OFFSET_TIMESTAMP_INDEX));
-            ddlMem.putInt(ColumnType.VERSION);
-            ddlMem.putInt(metaMem.getInt(META_OFFSET_TABLE_ID));
+            copyVersionAndLagValues();
             ddlMem.jumpTo(META_OFFSET_COLUMN_TYPES);
             for (int i = 0; i < columnCount; i++) {
                 if (i != columnIndex) {
@@ -1856,17 +1929,17 @@ public class TableWriter implements Closeable {
         }
     }
 
-    private int copyMetadataAndUpdateVersion() {
-        int index;
+    private long copyMetadataAndUpdateVersion() {
         try {
-            index = openMetaSwapFile(ff, ddlMem, path, rootLen, configuration.getMaxSwapFileCount());
+            int index = openMetaSwapFile(ff, ddlMem, path, rootLen, configuration.getMaxSwapFileCount());
             int columnCount = metaMem.getInt(META_OFFSET_COUNT);
 
             ddlMem.putInt(columnCount);
             ddlMem.putInt(metaMem.getInt(META_OFFSET_PARTITION_BY));
             ddlMem.putInt(metaMem.getInt(META_OFFSET_TIMESTAMP_INDEX));
-            ddlMem.putInt(ColumnType.VERSION);
-            ddlMem.putInt(metaMem.getInt(META_OFFSET_TABLE_ID));
+            copyVersionAndLagValues();
+            ddlMem.putInt(metaMem.getInt(META_OFFSET_MAX_UNCOMMITTED_ROWS));
+            ddlMem.putLong(metaMem.getInt(META_OFFSET_COMMIT_LAG));
             ddlMem.jumpTo(META_OFFSET_COLUMN_TYPES);
             for (int i = 0; i < columnCount; i++) {
                 writeColumnEntry(i);
@@ -1878,7 +1951,8 @@ public class TableWriter implements Closeable {
                 ddlMem.putStr(columnName);
                 nameOffset += VmUtils.getStorageLength(columnName);
             }
-            return index;
+            this.metaSwapIndex = index;
+            return nameOffset;
         } finally {
             ddlMem.close();
         }
@@ -1956,9 +2030,20 @@ public class TableWriter implements Closeable {
         } finally {
             Misc.free(txnScoreboard);
             Misc.free(path);
+            Misc.free(o3TimestampMemCpy);
             freeTempMem();
             LOG.info().$("closed '").utf8(tableName).$('\'').$();
         }
+    }
+
+    private void executeDeferred() {
+        configureColumnMemory();
+        timestampSetter = configureTimestampSetter();
+        this.appendTimestampSetter = timestampSetter;
+        this.txFile.readRowCounts();
+        configureAppendPosition();
+        purgeUnusedPartitions();
+        clearTodoLog();
     }
 
     private void freeAndRemoveColumnPair(ObjList<?> columns, int pi, int si) {
@@ -2034,14 +2119,14 @@ public class TableWriter implements Closeable {
     }
 
     Sequence getO3PartitionUpdatePubSeq() {
-        return messageBus.getO3PartitionUpdatePubSeq();
+        return o3PartitionUpdatePubSeq;
     }
 
     RingQueue<O3PartitionUpdateTask> getO3PartitionUpdateQueue() {
-        return messageBus.getO3PartitionUpdateQueue();
+        return o3PartitionUpdateQueue;
     }
 
-    private long getO3RowCount() {
+    public long getO3RowCount() {
         return (masterRef - o3MasterRef + 1) / 2;
     }
 
@@ -2104,52 +2189,56 @@ public class TableWriter implements Closeable {
     }
 
     private long indexHistoricPartitions(SymbolColumnIndexer indexer, CharSequence columnName, int indexValueBlockSize) {
-        final long maxTimestamp = timestampFloorMethod.floor(this.txFile.getMaxTimestamp());
-        long timestamp = txFile.getMinTimestamp();
+        final long ts = this.txFile.getMaxTimestamp();
+        if (ts > Numbers.LONG_NaN) {
+            final long maxTimestamp = timestampFloorMethod.floor(ts);
+            long timestamp = txFile.getMinTimestamp();
 
-        //noinspection TryFinallyCanBeTryWithResources
-        try (final MappedReadOnlyMemory roMem = new SinglePageMappedReadOnlyPageMemory()) {
+            //noinspection TryFinallyCanBeTryWithResources
+            try (final MappedReadOnlyMemory roMem = new SinglePageMappedReadOnlyPageMemory()) {
 
-            while (timestamp < maxTimestamp) {
+                while (timestamp < maxTimestamp) {
 
-                path.trimTo(rootLen);
+                    path.trimTo(rootLen);
 
-                setStateForTimestamp(path, timestamp, true);
+                    setStateForTimestamp(path, timestamp, true);
 
-                if (txFile.attachedPartitionsContains(timestamp) && ff.exists(path.$())) {
+                    if (txFile.attachedPartitionsContains(timestamp) && ff.exists(path.$())) {
 
-                    final int plen = path.length();
+                        final int plen = path.length();
 
-                    TableUtils.dFile(path.trimTo(plen), columnName);
+                        TableUtils.dFile(path.trimTo(plen), columnName);
 
-                    if (ff.exists(path)) {
+                        if (ff.exists(path)) {
 
-                        path.trimTo(plen);
+                            path.trimTo(plen);
 
-                        LOG.info().$("indexing [path=").$(path).$(']').$();
+                            LOG.info().$("indexing [path=").$(path).$(']').$();
 
-                        createIndexFiles(columnName, indexValueBlockSize, plen, true);
+                            createIndexFiles(columnName, indexValueBlockSize, plen, true);
 
-                        final long partitionSize = txFile.getPartitionSizeByPartitionTimestamp(timestamp);
-                        final long columnTop = TableUtils.readColumnTop(ff, path.trimTo(plen), columnName, plen, tempMem16b);
+                            final long partitionSize = txFile.getPartitionSizeByPartitionTimestamp(timestamp);
+                            final long columnTop = TableUtils.readColumnTop(ff, path.trimTo(plen), columnName, plen, tempMem16b);
 
-                        if (partitionSize > columnTop) {
-                            TableUtils.dFile(path.trimTo(plen), columnName);
+                            if (partitionSize > columnTop) {
+                                TableUtils.dFile(path.trimTo(plen), columnName);
 
-                            roMem.of(ff, path, ff.getPageSize(), 0);
-                            roMem.grow((partitionSize - columnTop) << ColumnType.pow2SizeOf(ColumnType.INT));
+                                roMem.of(ff, path, ff.getPageSize(), 0);
+                                roMem.grow((partitionSize - columnTop) << ColumnType.pow2SizeOf(ColumnType.INT));
 
-                            indexer.configureWriter(configuration, path.trimTo(plen), columnName, columnTop);
-                            indexer.index(roMem, columnTop, partitionSize);
+                                indexer.configureWriter(configuration, path.trimTo(plen), columnName, columnTop);
+                                indexer.index(roMem, columnTop, partitionSize);
+                            }
                         }
                     }
+                    timestamp = timestampAddMethod.calculate(timestamp, 1);
                 }
-                timestamp = timestampAddMethod.calculate(timestamp, 1);
+            } finally {
+                indexer.close();
             }
-        } finally {
-            indexer.close();
+            return timestamp;
         }
-        return timestamp;
+        return ts;
     }
 
     private void indexLastPartition(SymbolColumnIndexer indexer, CharSequence columnName, int columnIndex, int indexValueBlockSize) {
@@ -2183,8 +2272,120 @@ public class TableWriter implements Closeable {
         }
     }
 
-    void o3BumpErrorCount() {
-        o3ErrorCount.incrementAndGet();
+    private long o3CalculatedMoveUncommittedSize(long transientRowsAdded, long committedTransientRowCount) {
+        // We want to move as much as possible of uncommitted rows to O3 dedicated memory from column files
+        // but not all the column file data is mapped and mapping is relatively expensive.
+        // If the rows are not moved to O3 memory it will result in merge of bigger segment
+        // from O3 to column files
+        // If all the rows moved this will be sort shuffle in O3 memory and copying back to column files
+        for (int colIndex = 0; colIndex < columnCount; colIndex++) {
+            int columnType = metadata.getColumnType(colIndex);
+            AppendOnlyVirtualMemory primaryColumn = getPrimaryColumn(colIndex);
+            AppendOnlyVirtualMemory secondaryColumn = getSecondaryColumn(colIndex);
+            // Fixed size column
+            //
+            //   Partition can be like this
+            //
+            //          Page 1 (16Mb) unmapped                            Page 2 (16Mb) mapped
+            //   |  ================================ < === |  ================================ > ----- |
+            //   |   committedTransientRowCount     I    transientRowsAdded                   |
+            //
+            // We want to move separator I between committedTransientRowCount and transientRowsAdded
+            // to start from mapped page boundary but keeping sum of committedTransientRowCount + transientRowsAdded same
+            // so that after the change in committedTransientRowCount, transientRowsAdded the picture looks like
+            //
+            //          Page 1 (16Mb) unmapped                            Page 2 (16Mb) mapped
+            //   |  ================================ < === |  ================================ > ----- |
+            //   |     committedTransientRowCount          I     transientRowsAdded            |
+
+            int shl = ColumnType.pow2SizeOf(columnType);
+
+            if (secondaryColumn == null) {
+                long srcMappedRows = primaryColumn.offsetInPage((committedTransientRowCount + transientRowsAdded) << shl) >> shl;
+                if (srcMappedRows < transientRowsAdded) {
+                    long delta = transientRowsAdded - srcMappedRows;
+                    committedTransientRowCount += delta;
+                    transientRowsAdded -= delta;
+                }
+
+                // Assert that fixed column is mapped for row committedTransientRowCount
+                assert primaryColumn.addressOf(committedTransientRowCount << shl) > 0;
+
+            } else {
+                // Variable length record column. It has 2 files:
+                // Primary is the variable record length file
+                // Secondary is fixed file with 64bit per record
+
+                shl = 3;
+
+                // Here both files have to be mapped into memory
+                //
+                // Step 1: process fixed record file in the same way as fixed size column above
+                //
+                long fixLenMappedRows = secondaryColumn.offsetInPage(secondaryColumn.getAppendOffset()) >> shl;
+                if (fixLenMappedRows < transientRowsAdded) {
+                    committedTransientRowCount += transientRowsAdded - fixLenMappedRows;
+                    transientRowsAdded = fixLenMappedRows;
+                }
+
+                // Assert that secondary file is mapped for row committedTransientRowCount
+                assert secondaryColumn.addressOf(committedTransientRowCount << shl) > 0;
+                //
+                // Step 2: check all rows in transientRowsAdded are mapped in variable record file
+                //
+                // Fixed record file (secondary) has offset records of the variable file
+                //
+                // Primary file:
+                //
+                // |   Page 1 (unmapped )     |     Page 2 (mapped)      |
+                // | ========== I =========== | =================== > -- |
+                // | record one | record 2 | r3 | value of record 3 |
+                //
+                //  Secondary file:
+                //
+                // | Page 1 (mapped )         |
+                // | 0  | 14 | 25 | 30 | -----|
+                //
+                // here committedTransientRowCount == 0 and transientRowsAdded == 4
+
+                // varFileCommittedOffset is record with 0 offset in the example and is 0
+                long varFileCommittedOffset = secondaryColumn.getLong(committedTransientRowCount << shl);
+
+                // varFileMappedOffset is 28 in the above example (offset in bytes where Page 2 of primary file starts)
+                long varFileAppendOffset = primaryColumn.getAppendOffset();
+                long varLenMappedBytes = primaryColumn.offsetInPage(primaryColumn.getAppendOffset());
+                long varFileMappedOffset = varFileAppendOffset - varLenMappedBytes;
+
+                // Check if all variable file records we want to move are mapped
+                if (varFileCommittedOffset < varFileMappedOffset) {
+                    // We need to binary search fix file
+                    // to find the records where mapped page starts (Page 2 in the example, offset 28)
+                    long firstMappedVarColRowOffset = Vect.binarySearch64Bit(
+                            secondaryColumn.addressOf(committedTransientRowCount << shl), // this is address of memory of fix file where to start the search
+                            varFileMappedOffset, // This is the value we search for (28 in case of example)
+                            0, // start from index 0
+                            fixLenMappedRows - 1, // and search in all mapped rows (inclusive of ixLenMappedRows - 1)
+                            BinarySearch.SCAN_DOWN // doesn't matter
+                    );
+
+                    // In the example firstMappedVarColRowOffset expected to be -3 -1, e.g. no exact match found
+                    // value 28 is between index 2 and 3 in the secondary file
+                    if (firstMappedVarColRowOffset < 0) {
+                        // convert it to index 3, the first index of the value >= 28
+                        firstMappedVarColRowOffset = -firstMappedVarColRowOffset - 1;
+                    }
+
+                    // move transientRowsAdded to 1 and committedTransientRowCount to 3
+                    transientRowsAdded -= firstMappedVarColRowOffset;
+                    assert transientRowsAdded >= 0;
+                    committedTransientRowCount += firstMappedVarColRowOffset;
+
+                    // assert that secondary file is mapped for record committedTransientRowCount
+                    assert primaryColumn.addressOf(secondaryColumn.getLong(committedTransientRowCount << shl)) > 0;
+                }
+            }
+        }
+        return transientRowsAdded;
     }
 
     void o3ClockDownPartitionUpdateCount() {
@@ -2192,21 +2393,23 @@ public class TableWriter implements Closeable {
     }
 
     /**
-     * Commits O3 data. Hysteresis is optional. When 0 is specified the entire O3 segment is committed.
+     * Commits O3 data. Lag is optional. When 0 is specified the entire O3 segment is committed.
      *
-     * @param hysteresis interval in microseconds that determines the length of O3 segment that is not going to be
-     *                   committed to disk. The interval starts at max timestamp of O3 segment and ends <i>hysteresis</i>
+     * @param lag interval in microseconds that determines the length of O3 segment that is not going to be
+     *                   committed to disk. The interval starts at max timestamp of O3 segment and ends <i>lag</i>
      *                   microseconds before this timestamp.
      * @return <i>true</i> when commit has is a NOOP, e.g. no data has been committed to disk. <i>false</i> otherwise.
      */
-    private boolean o3Commit(long hysteresis) {
+    private boolean o3Commit(long lag) {
         o3RowCount = getO3RowCount();
         o3PartitionRemoveCandidates.clear();
         o3ErrorCount.set(0);
         o3ColumnCounters.clear();
         o3BasketPool.clear();
 
-        long o3HysteresisRowCount = 0;
+        long o3LagRowCount = 0;
+        long maxUncommittedRows = metadata.getMaxUncommittedRows();
+
         final int timestampIndex = metadata.getTimestampIndex();
         this.lastPartitionTimestamp = timestampFloorMethod.floor(partitionTimestampHi);
         try {
@@ -2220,7 +2423,13 @@ public class TableWriter implements Closeable {
             // to this.maxTimestamp, which isn't truncated yet. So we need to truncate it first
             LOG.info().$("sorting o3 [table=").$(tableName).$(']').$();
             final long sortedTimestampsAddr = o3TimestampMem.addressOf(0);
-            Vect.sortLongIndexAscInPlace(sortedTimestampsAddr, o3RowCount);
+            // ensure there is enough size
+            if (o3RowCount > 600 || !o3QuickSortEnabled) {
+                o3TimestampMemCpy.jumpTo(o3TimestampMem.getAppendOffset());
+                Vect.radixSortLongIndexAscInPlace(sortedTimestampsAddr, o3RowCount, o3TimestampMemCpy.addressOf(0));
+            } else {
+                Vect.quickSortLongIndexAscInPlace(sortedTimestampsAddr, o3RowCount);
+            }
 
             // we have three frames:
             // partition logical "lo" and "hi" - absolute bounds (partitionLo, partitionHi)
@@ -2229,27 +2438,43 @@ public class TableWriter implements Closeable {
 
             final long srcOooMax;
             final long o3TimestampMin = getTimestampIndexValue(sortedTimestampsAddr, 0);
-            if (hysteresis > 0) {
+            if (o3TimestampMin < Timestamps.AD_01) {
+                throw CairoException.instance(0).put("timestamps before 0001-01-01 are not allowed for O3");
+            }
+            if (lag > 0) {
                 final long o3max = getTimestampIndexValue(sortedTimestampsAddr, o3RowCount - 1);
-                long hysteresisThresholdTimestamp = o3max - hysteresis;
-                if (hysteresisThresholdTimestamp >= o3TimestampMin) {
-                    long hysteresisThresholdRow = Vect.boundedBinarySearchIndexT(sortedTimestampsAddr, hysteresisThresholdTimestamp, 0, o3RowCount - 1, BinarySearch.SCAN_DOWN);
-                    o3HysteresisRowCount = o3RowCount - hysteresisThresholdRow - 1;
-                    srcOooMax = hysteresisThresholdRow + 1;
+                long lagThresholdTimestamp = o3max - lag;
+                if (lagThresholdTimestamp >= o3TimestampMin) {
+                    final long lagThresholdRow = Vect.boundedBinarySearchIndexT(
+                            sortedTimestampsAddr,
+                            lagThresholdTimestamp,
+                            0,
+                            o3RowCount - 1,
+                            BinarySearch.SCAN_DOWN
+                    );
+                    o3LagRowCount = o3RowCount - lagThresholdRow - 1;
+                    if (o3LagRowCount > maxUncommittedRows) {
+                        o3LagRowCount = maxUncommittedRows;
+                        srcOooMax = o3RowCount - maxUncommittedRows;
+                    } else {
+                        srcOooMax = lagThresholdRow + 1;
+                    }
                 } else {
-                    o3HysteresisRowCount = o3RowCount;
+                    o3LagRowCount = o3RowCount;
                     srcOooMax = 0;
                 }
-                LOG.debug().$("o3 hysteresis [table=").$(tableName)
+                LOG.debug().$("o3 commit lag [table=").$(tableName)
+                        .$(", lag=").$(lag)
+                        .$(", maxUncommittedRows=").$(maxUncommittedRows)
                         .$(", o3max=").$ts(o3max)
-                        .$(", hysteresisThresholdTimestamp=").$ts(hysteresisThresholdTimestamp)
-                        .$(", o3HysteresisRowCount=").$(o3HysteresisRowCount)
+                        .$(", lagThresholdTimestamp=").$ts(lagThresholdTimestamp)
+                        .$(", o3LagRowCount=").$(o3LagRowCount)
                         .$(", srcOooMax=").$(srcOooMax)
                         .$(", o3RowCount=").$(o3RowCount)
                         .I$();
             } else {
                 LOG.debug()
-                        .$("o3 no hysteresis [table=").$(tableName)
+                        .$("o3 commit no lag [table=").$(tableName)
                         .$(", o3RowCount=").$(o3RowCount)
                         .I$();
                 srcOooMax = o3RowCount;
@@ -2259,15 +2484,24 @@ public class TableWriter implements Closeable {
                 return true;
             }
 
+            final long o3TimestampMax = getTimestampIndexValue(sortedTimestampsAddr, srcOooMax - 1);
+            // move uncommitted is liable to change max timestamp
+            // however we need to identify last partition before max timestamp skips to NULL for example
+            final long maxTimestamp = txFile.getMaxTimestamp();
+            // we are going to use this soon to avoid double-copying lag data
+//            final boolean yep = isAppendLastPartitionOnly(sortedTimestampsAddr, o3TimestampMax);
+
             // reshuffle all columns according to timestamp index
             o3Sort(sortedTimestampsAddr, timestampIndex, o3RowCount);
-            final long o3TimestampMax = getTimestampIndexValue(sortedTimestampsAddr, srcOooMax - 1);
+            LOG.info().$("sorted [table=").utf8(tableName).I$();
+
             this.o3DoneLatch.reset();
             this.o3PartitionUpdRemaining.set(0);
             boolean success = true;
             int latchCount = 0;
             long srcOoo = 0;
             boolean flattenTimestamp = true;
+            int pCount = 0;
             try {
                 while (srcOoo < srcOooMax) {
                     try {
@@ -2306,33 +2540,34 @@ public class TableWriter implements Closeable {
                             srcNameTxn = -1;
                         }
 
-                        // move uncommitted is liable to change max timestamp
-                        // however we need to identify last partition before max timestamp skips to NULL for example
-                        final long maxTimestamp = txFile.getMaxTimestamp();
-
+                        final boolean append = last && (srcDataSize < 0 || o3Timestamp >= maxTimestamp);
                         LOG.debug().
                                 $("o3 partition task [table=").$(tableName)
                                 .$(", srcOooLo=").$(srcOooLo)
                                 .$(", srcOooHi=").$(srcOooHi)
                                 .$(", srcOooMax=").$(srcOooMax)
-                                .$(", timestampMin=").$ts(o3TimestampMin)
-                                .$(", timestamp=").$ts(o3Timestamp)
-                                .$(", timestampMax=").$ts(o3TimestampMax)
+                                .$(", o3TimestampMin=").$ts(o3TimestampMin)
+                                .$(", o3Timestamp=").$ts(o3Timestamp)
+                                .$(", o3TimestampMax=").$ts(o3TimestampMax)
                                 .$(", partitionTimestamp=").$ts(partitionTimestamp)
                                 .$(", partitionIndex=").$(partitionIndex)
                                 .$(", srcDataSize=").$(srcDataSize)
-                                .$(", srcDataSize=").$(srcDataSize)
+                                .$(", maxTimestamp=").$ts(maxTimestamp)
                                 .$(", last=").$(last)
+                                .$(", append=").$(append)
+                                .$(", memUsed=").$(Unsafe.getMemUsed())
                                 .I$();
 
+                        pCount++;
                         o3PartitionUpdRemaining.incrementAndGet();
                         final O3Basket o3Basket = o3BasketPool.next();
                         o3Basket.ensureCapacity(columnCount, indexCount);
 
-                        if (last && (srcDataSize < 0 || o3Timestamp >= maxTimestamp)) {
-                            AtomicInteger columnCounter = o3ColumnCounters.next();
-                            columnCounter.set(columnCount);
+                        AtomicInteger columnCounter = o3ColumnCounters.next();
+                        columnCounter.set(columnCount);
+                        latchCount++;
 
+                        if (append) {
                             Path pathToPartition = Path.getThreadLocal(this.path);
                             TableUtils.setPathForPartition(pathToPartition, partitionBy, o3TimestampMin, false);
                             TableUtils.txnPartitionConditionally(pathToPartition, srcNameTxn);
@@ -2403,6 +2638,7 @@ public class TableWriter implements Closeable {
                                 flattenTimestamp = false;
                             }
                             o3CommitPartitionAsync(
+                                    columnCounter,
                                     maxTimestamp,
                                     sortedTimestampsAddr,
                                     srcOooMax,
@@ -2417,7 +2653,6 @@ public class TableWriter implements Closeable {
                                     o3Basket
                             );
                         }
-                        latchCount++;
                     } catch (CairoException | CairoError e) {
                         LOG.error().$((Sinkable) e).$();
                         success = false;
@@ -2428,8 +2663,9 @@ public class TableWriter implements Closeable {
                 // we are stealing work here it is possible we get exception from this method
                 LOG.debug()
                         .$("o3 expecting updates [table=").$(tableName)
-                        .$(", updateCount=").$(o3PartitionUpdRemaining.get())
+                        .$(", partitionsPublished=").$(pCount)
                         .I$();
+
                 o3ConsumePartitionUpdates(
                         srcOooMax,
                         o3TimestampMin,
@@ -2438,7 +2674,6 @@ public class TableWriter implements Closeable {
 
                 o3DoneLatch.await(latchCount);
 
-
                 o3InError = !success || o3ErrorCount.get() > 0;
                 if (success && o3ErrorCount.get() > 0) {
                     //noinspection ThrowFromFinallyBlock
@@ -2446,8 +2681,8 @@ public class TableWriter implements Closeable {
                 }
             }
 
-            if (o3HysteresisRowCount > 0) {
-                o3ShiftHysteresisUp(timestampIndex, o3HysteresisRowCount, srcOooMax);
+            if (o3LagRowCount > 0) {
+                o3ShiftLagRowsUp(timestampIndex, o3LagRowCount, srcOooMax);
             }
         } finally {
             if (denseIndexers.size() == 0) {
@@ -2460,15 +2695,16 @@ public class TableWriter implements Closeable {
             // We start with ensuring append memory is in ready-to-use state. When max timestamp changes we need to
             // move append memory to new set of files. Otherwise we stay on the same set but advance the append position.
             avoidIndexOnCommit = o3ErrorCount.get() == 0;
-            if (o3HysteresisRowCount == 0) {
+            if (o3LagRowCount == 0) {
                 this.o3MasterRef = -1;
                 rowFunction = switchPartitionFunction;
                 row.activeColumns = columns;
                 row.activeNullSetters = nullSetters;
             } else {
-                // adjust O3 master ref so that virtual row count becomes equal to value of "o3HysteresisRowCount"
-                this.o3MasterRef = this.masterRef - o3HysteresisRowCount * 2 + 1;
+                // adjust O3 master ref so that virtual row count becomes equal to value of "o3LagRowCount"
+                this.o3MasterRef = this.masterRef - o3LagRowCount * 2 + 1;
             }
+            LOG.debug().$("adjusted [o3RowCount=").$(getO3RowCount()).I$();
         }
         if (columns.getQuick(0).isClosed() || partitionTimestampHi < txFile.getMaxTimestamp()) {
             openPartition(txFile.getMaxTimestamp());
@@ -2478,6 +2714,7 @@ public class TableWriter implements Closeable {
     }
 
     private void o3CommitPartitionAsync(
+            AtomicInteger columnCounter,
             long maxTimestamp,
             long sortedTimestampsAddr,
             long srcOooMax,
@@ -2512,7 +2749,7 @@ public class TableWriter implements Closeable {
                     getTxn(),
                     sortedTimestampsAddr,
                     this,
-                    o3ColumnCounters.next(),
+                    columnCounter,
                     o3Basket
             );
             messageBus.getO3PartitionPubSeq().done(cursor);
@@ -2535,7 +2772,7 @@ public class TableWriter implements Closeable {
                     getTxn(),
                     sortedTimestampsAddr,
                     this,
-                    o3ColumnCounters.next(),
+                    columnCounter,
                     o3Basket,
                     tempMem16b
             );
@@ -2547,8 +2784,6 @@ public class TableWriter implements Closeable {
             long timestampMin,
             long timestampMax
     ) {
-        final Sequence updSizeSubSeq = messageBus.getO3PartitionUpdateSubSeq();
-        final RingQueue<O3PartitionUpdateTask> updSizeQueue = messageBus.getO3PartitionUpdateQueue();
         final Sequence partitionSubSeq = messageBus.getO3PartitionSubSeq();
         final RingQueue<O3PartitionTask> partitionQueue = messageBus.getO3PartitionQueue();
         final Sequence openColumnSubSeq = messageBus.getO3OpenColumnSubSeq();
@@ -2557,18 +2792,18 @@ public class TableWriter implements Closeable {
         final RingQueue<O3CopyTask> copyQueue = messageBus.getO3CopyQueue();
 
         do {
-            long cursor = updSizeSubSeq.next();
+            long cursor = o3PartitionUpdateSubSeq.next();
             if (cursor > -1) {
-                final O3PartitionUpdateTask task = updSizeQueue.get(cursor);
+                final O3PartitionUpdateTask task = o3PartitionUpdateQueue.get(cursor);
                 final long partitionTimestamp = task.getPartitionTimestamp();
                 final long srcOooPartitionLo = task.getSrcOooPartitionLo();
                 final long srcOooPartitionHi = task.getSrcOooPartitionHi();
                 final long srcDataMax = task.getSrcDataMax();
                 final boolean partitionMutates = task.isPartitionMutates();
 
-                this.o3PartitionUpdRemaining.decrementAndGet();
+                o3ClockDownPartitionUpdateCount();
 
-                updSizeSubSeq.done(cursor);
+                o3PartitionUpdateSubSeq.done(cursor);
 
                 if (o3ErrorCount.get() == 0) {
                     o3PartitionUpdate(
@@ -2582,69 +2817,72 @@ public class TableWriter implements Closeable {
                             partitionMutates
                     );
                 }
-            } else {
-                cursor = partitionSubSeq.next();
-                if (cursor > -1) {
-                    final O3PartitionTask partitionTask = partitionQueue.get(cursor);
-                    if (o3ErrorCount.get() > 0) {
-                        // do we need to free anything on the task?
-                        partitionSubSeq.done(cursor);
-                        o3ClockDownPartitionUpdateCount();
-                        o3CountDownDoneLatch();
-                    } else {
-                        o3ProcessPartitionSafe(partitionSubSeq, cursor, partitionTask);
-                    }
+                continue;
+            }
+
+            cursor = partitionSubSeq.next();
+            if (cursor > -1) {
+                final O3PartitionTask partitionTask = partitionQueue.get(cursor);
+                if (partitionTask.getTableWriter() == this && o3ErrorCount.get() > 0) {
+                    // do we need to free anything on the task?
+                    partitionSubSeq.done(cursor);
+                    o3ClockDownPartitionUpdateCount();
+                    o3CountDownDoneLatch();
                 } else {
-                    cursor = openColumnSubSeq.next();
-                    if (cursor > -1) {
-                        O3OpenColumnTask openColumnTask = openColumnQueue.get(cursor);
-                        if (o3ErrorCount.get() > 0) {
-                            O3CopyJob.closeColumnIdle(
-                                    openColumnTask.getColumnCounter(),
-                                    openColumnTask.getTimestampMergeIndexAddr(),
-                                    openColumnTask.getSrcTimestampFd(),
-                                    openColumnTask.getSrcTimestampAddr(),
-                                    openColumnTask.getSrcTimestampSize(),
-                                    this
-                            );
-                            openColumnSubSeq.done(cursor);
-                        } else {
-                            o3OpenColumnSafe(openColumnSubSeq, cursor, openColumnTask);
-                        }
-                    } else {
-                        cursor = copySubSeq.next();
-                        if (cursor > -1) {
-                            O3CopyTask copyTask = copyQueue.get(cursor);
-                            if (o3ErrorCount.get() > 0) {
-                                O3CopyJob.copyIdle(
-                                        copyTask.getColumnCounter(),
-                                        copyTask.getPartCounter(),
-                                        copyTask.getTimestampMergeIndexAddr(),
-                                        copyTask.getSrcDataFixFd(),
-                                        copyTask.getSrcDataFixAddr(),
-                                        copyTask.getSrcDataFixSize(),
-                                        copyTask.getSrcDataVarFd(),
-                                        copyTask.getSrcDataVarAddr(),
-                                        copyTask.getSrcDataVarSize(),
-                                        copyTask.getDstFixFd(),
-                                        copyTask.getDstFixAddr(),
-                                        copyTask.getDstFixSize(),
-                                        copyTask.getDstVarFd(),
-                                        copyTask.getDstVarAddr(),
-                                        copyTask.getDstVarSize(),
-                                        copyTask.getSrcTimestampFd(),
-                                        copyTask.getSrcTimestampAddr(),
-                                        copyTask.getSrcTimestampSize(),
-                                        copyTask.getDstKFd(),
-                                        copyTask.getDstVFd(),
-                                        this
-                                );
-                                copySubSeq.done(cursor);
-                            } else {
-                                o3CopySafe(cursor);
-                            }
-                        }
-                    }
+                    o3ProcessPartitionSafe(partitionSubSeq, cursor, partitionTask);
+                }
+                continue;
+            }
+
+            cursor = openColumnSubSeq.next();
+            if (cursor > -1) {
+                O3OpenColumnTask openColumnTask = openColumnQueue.get(cursor);
+                if (openColumnTask.getTableWriter() == this && o3ErrorCount.get() > 0) {
+                    O3CopyJob.closeColumnIdle(
+                            openColumnTask.getColumnCounter(),
+                            openColumnTask.getTimestampMergeIndexAddr(),
+                            openColumnTask.getSrcTimestampFd(),
+                            openColumnTask.getSrcTimestampAddr(),
+                            openColumnTask.getSrcTimestampSize(),
+                            this
+                    );
+                    openColumnSubSeq.done(cursor);
+                } else {
+                    o3OpenColumnSafe(openColumnSubSeq, cursor, openColumnTask);
+                }
+                continue;
+            }
+
+            cursor = copySubSeq.next();
+            if (cursor > -1) {
+                O3CopyTask copyTask = copyQueue.get(cursor);
+                if (copyTask.getTableWriter() == this && o3ErrorCount.get() > 0) {
+                    O3CopyJob.copyIdle(
+                            copyTask.getColumnCounter(),
+                            copyTask.getPartCounter(),
+                            copyTask.getTimestampMergeIndexAddr(),
+                            copyTask.getSrcDataFixFd(),
+                            copyTask.getSrcDataFixAddr(),
+                            copyTask.getSrcDataFixSize(),
+                            copyTask.getSrcDataVarFd(),
+                            copyTask.getSrcDataVarAddr(),
+                            copyTask.getSrcDataVarSize(),
+                            copyTask.getDstFixFd(),
+                            copyTask.getDstFixAddr(),
+                            copyTask.getDstFixSize(),
+                            copyTask.getDstVarFd(),
+                            copyTask.getDstVarAddr(),
+                            copyTask.getDstVarSize(),
+                            copyTask.getSrcTimestampFd(),
+                            copyTask.getSrcTimestampAddr(),
+                            copyTask.getSrcTimestampSize(),
+                            copyTask.getDstKFd(),
+                            copyTask.getDstVFd(),
+                            this
+                    );
+                    copySubSeq.done(cursor);
+                } else {
+                    o3CopySafe(cursor);
                 }
             }
         } while (this.o3PartitionUpdRemaining.get() > 0);
@@ -2671,10 +2909,10 @@ public class TableWriter implements Closeable {
         o3DoneLatch.countDown();
     }
 
-    private void o3MoveHysteresis0(
+    private void o3MoveLag0(
             int columnIndex,
             final int columnType,
-            long o3HysteresisRowCount,
+            long o3LagRowCount,
             long o3RowCount
     ) {
         if (columnIndex > -1) {
@@ -2687,7 +2925,7 @@ public class TableWriter implements Closeable {
             if (null == o3IndexMem) {
                 // Fixed size column
                 sourceOffset = o3RowCount << shl;
-                size = o3HysteresisRowCount << shl;
+                size = o3LagRowCount << shl;
             } else {
                 // Var size column
                 sourceOffset = o3IndexMem.getLong(o3RowCount * 8);
@@ -2696,37 +2934,40 @@ public class TableWriter implements Closeable {
                         sourceOffset,
                         o3IndexMem.addressOf(o3RowCount * 8),
                         0,
-                        o3HysteresisRowCount * 8,
+                        o3LagRowCount,
                         o3IndexMem.addressOf(0)
                 );
-                o3IndexMem.jumpTo(o3HysteresisRowCount * 8);
+                o3IndexMem.jumpTo(o3LagRowCount * 8);
             }
 
             o3DataMem.jumpTo(size);
             Vect.memmove(o3DataMem.addressOf(0), o3DataMem.addressOf(sourceOffset), size);
         } else {
             // Special case, designated timestamp column
-            // Move values and set index to  0..o3HysteresisRowCount
+            // Move values and set index to  0..o3LagRowCount
             final long sourceOffset = o3RowCount * 16;
             final long mergeMemAddr = o3TimestampMem.addressOf(0);
-            Vect.shiftTimestampIndex(mergeMemAddr + sourceOffset, o3HysteresisRowCount, mergeMemAddr);
-            o3TimestampMem.jumpTo(o3HysteresisRowCount * 16);
+            Vect.shiftTimestampIndex(mergeMemAddr + sourceOffset, o3LagRowCount, mergeMemAddr);
+            o3TimestampMem.jumpTo(o3LagRowCount * 16);
         }
     }
 
     private long o3MoveUncommitted(final int timestampIndex) {
         final long committedRowCount = txFile.getCommittedFixedRowCount() + txFile.getCommittedTransientRowCount();
         final long rowsAdded = txFile.getRowCount() - committedRowCount;
-        final long transientRowsAdded = Math.min(txFile.getTransientRowCount(), rowsAdded);
-        final long committedTransientRowCount = txFile.getTransientRowCount() - transientRowsAdded;
-        if (transientRowsAdded > 0) {
+        final long committedTransientRowCount = txFile.getTransientRowCount() - Math.min(txFile.getTransientRowCount(), rowsAdded);
+        if (Math.min(txFile.getTransientRowCount(), rowsAdded) > 0) {
             LOG.debug()
                     .$("o3 move uncommitted [table=").$(tableName)
-                    .$(", transientRowsAdded=").$(transientRowsAdded)
+                    .$(", transientRowsAdded=").$(Math.min(txFile.getTransientRowCount(), rowsAdded))
                     .I$();
-            o3MoveUncommitted0(timestampIndex, transientRowsAdded, committedTransientRowCount);
+            return o3ScheduleMoveUncommitted0(
+                    timestampIndex,
+                    Math.min(txFile.getTransientRowCount(), rowsAdded),
+                    committedTransientRowCount
+            );
         }
-        return transientRowsAdded;
+        return 0;
     }
 
     private void o3MoveUncommitted0(
@@ -2755,18 +2996,18 @@ public class TableWriter implements Closeable {
                 long srcVarOffset = srcFixMem.getLong(committedTransientRowCount * Long.BYTES);
                 // ensure memory is available
                 long dstAppendOffset = o3IndexMem.getAppendOffset();
+                o3IndexMem.jumpTo(o3IndexMem.getAppendOffset() + transientRowsAdded * Long.BYTES);
 
                 O3Utils.shiftCopyFixedSizeColumnData(
                         srcVarOffset - dstVarOffset,
                         srcFixMem.addressOf(committedTransientRowCount * Long.BYTES),
                         0,
-                        transientRowsAdded * Long.BYTES,
+                        transientRowsAdded,
                         o3IndexMem.addressOf(dstAppendOffset)
                 );
                 long sourceEndOffset = srcDataMem.getAppendOffset();
                 extendedSize = sourceEndOffset - srcVarOffset;
                 srcFixOffset = srcVarOffset;
-                o3IndexMem.jumpTo(o3IndexMem.getAppendOffset() + transientRowsAdded * Long.BYTES);
                 srcFixMem.jumpTo(committedTransientRowCount * Long.BYTES);
             }
 
@@ -2787,58 +3028,6 @@ public class TableWriter implements Closeable {
             }
             srcDataMem.jumpTo(srcFixOffset);
         }
-    }
-
-    private void o3MoveUncommitted0(int timestampIndex, long transientRowsAdded, long committedTransientRowCount) {
-        o3PendingCallbackTasks.clear();
-
-        final Sequence pubSeq = this.messageBus.getO3CallbackPubSeq();
-        final RingQueue<O3CallbackTask> queue = this.messageBus.getO3CallbackQueue();
-
-        o3DoneLatch.reset();
-        int queuedCount = 0;
-        for (int colIndex = 0; colIndex < columnCount; colIndex++) {
-            int columnType = metadata.getColumnType(colIndex);
-            int columnIndex = colIndex != timestampIndex ? colIndex : -colIndex - 1;
-
-            long cursor = pubSeq.next();
-
-            // Pass column index as -1 when it's designated timestamp column to o3 move method
-            if (cursor > -1) {
-                try {
-                    final O3CallbackTask task = queue.get(cursor);
-                    task.of(
-                            o3DoneLatch,
-                            columnIndex,
-                            columnType,
-                            committedTransientRowCount,
-                            transientRowsAdded,
-                            this.o3MoveUncommittedRef
-                    );
-
-                    o3PendingCallbackTasks.add(task);
-                } finally {
-                    queuedCount++;
-                    pubSeq.done(cursor);
-                }
-            } else {
-                o3MoveUncommitted0(columnIndex, columnType, committedTransientRowCount, transientRowsAdded);
-            }
-        }
-
-        for (int n = o3PendingCallbackTasks.size() - 1; n > -1; n--) {
-            final O3CallbackTask task = o3PendingCallbackTasks.getQuick(n);
-            if (task.tryLock()) {
-                O3CallbackJob.runCallbackWithCol(
-                        task,
-                        -1,
-                        null
-                );
-            }
-        }
-
-        o3DoneLatch.await(queuedCount);
-        txFile.resetToLastPartition(committedTransientRowCount);
     }
 
     private void o3OpenColumnSafe(Sequence openColumnSubSeq, long cursor, O3OpenColumnTask openColumnTask) {
@@ -2876,7 +3065,6 @@ public class TableWriter implements Closeable {
             boolean partitionMutates
     ) {
         this.txFile.minTimestamp = Math.min(timestampMin, this.txFile.minTimestamp);
-
         final long partitionSize = srcDataMax + srcOooPartitionHi - srcOooPartitionLo + 1;
         final long rowDelta = srcOooPartitionHi - srcOooMax;
         if (partitionTimestamp < lastPartitionTimestamp) {
@@ -2888,7 +3076,7 @@ public class TableWriter implements Closeable {
         } else {
             // this is last partition
             this.txFile.transientRowCount = partitionSize;
-            this.txFile.maxTimestamp = timestampMax;
+            this.txFile.maxTimestamp = Math.max(this.txFile.maxTimestamp, timestampMax);
         }
 
         final int partitionIndex = txFile.findAttachedPartitionIndexByLoTimestamp(partitionTimestamp);
@@ -2931,7 +3119,6 @@ public class TableWriter implements Closeable {
             long srcDataMax
     ) {
         o3ClockDownPartitionUpdateCount();
-
         o3PartitionUpdate(
                 timestampMin,
                 timestampMax,
@@ -2958,7 +3145,7 @@ public class TableWriter implements Closeable {
     private void o3ProcessPartitionRemoveCandidates0(int n) {
         final long readerTxn = txnScoreboard.getMin();
         final long readerTxnCount = txnScoreboard.getActiveReaderCount(readerTxn);
-        if (txnScoreboard.isTxnUnused(txFile.getTxn() - 1, readerTxn)) {
+        if (txnScoreboard.isTxnAvailable(txFile.getTxn() - 1)) {
             for (int i = 0; i < n; i += 2) {
                 final long timestamp = o3PartitionRemoveCandidates.getQuick(i);
                 final long txn = o3PartitionRemoveCandidates.getQuick(i + 1);
@@ -3035,7 +3222,95 @@ public class TableWriter implements Closeable {
         }
     }
 
-    private void o3ShiftHysteresisUp(int timestampIndex, long o3HysteresisRowCount, long o3RowCount) {
+    private long o3ScheduleMoveUncommitted0(int timestampIndex, long transientRowsAdded, long committedTransientRowCount) {
+        long transientRowsAddedNew = o3CalculatedMoveUncommittedSize(transientRowsAdded, committedTransientRowCount);
+        long delta = transientRowsAdded - transientRowsAddedNew;
+        assert delta >= 0;
+
+        if (delta > 0) {
+            // Not all uncommitted rows can be moved to O3 staging memory
+            // because column files are not fully mapped to memory
+            // reduce number of rows to move
+            transientRowsAdded -= delta;
+            committedTransientRowCount += delta;
+        }
+
+        if (transientRowsAdded > 0) {
+
+            long maxCommittedTimestamp = 0;
+            if (delta > 0) {
+                // If there are rows to move
+                // and we cannot move all uncommitted rows to o3 memory
+                // we have to set maxCommittedTimestamp in tx file
+                AppendOnlyVirtualMemory timestampColumn = getPrimaryColumn(timestampIndex);
+                if (!timestampColumn.isMapped((committedTransientRowCount - 1) << 3, Long.BYTES)) {
+                    // Need to leave one more record in column files
+                    // to correctly get max timestamp
+                    transientRowsAdded--;
+                    committedTransientRowCount++;
+                }
+                maxCommittedTimestamp = timestampColumn.getLong((committedTransientRowCount - 1) << 3);
+            }
+
+            final Sequence pubSeq = this.messageBus.getO3CallbackPubSeq();
+            final RingQueue<O3CallbackTask> queue = this.messageBus.getO3CallbackQueue();
+            o3PendingCallbackTasks.clear();
+            o3DoneLatch.reset();
+            int queuedCount = 0;
+
+            for (int colIndex = 0; colIndex < columnCount; colIndex++) {
+                int columnType = metadata.getColumnType(colIndex);
+                int columnIndex = colIndex != timestampIndex ? colIndex : -colIndex - 1;
+
+                long cursor = pubSeq.next();
+
+                // Pass column index as -1 when it's designated timestamp column to o3 move method
+                if (cursor > -1) {
+                    try {
+                        final O3CallbackTask task = queue.get(cursor);
+                        task.of(
+                                o3DoneLatch,
+                                columnIndex,
+                                columnType,
+                                committedTransientRowCount,
+                                transientRowsAdded,
+                                this.o3MoveUncommittedRef
+                        );
+
+                        o3PendingCallbackTasks.add(task);
+                    } finally {
+                        queuedCount++;
+                        pubSeq.done(cursor);
+                    }
+                } else {
+                    o3MoveUncommitted0(columnIndex, columnType, committedTransientRowCount, transientRowsAdded);
+                }
+            }
+
+            for (int n = o3PendingCallbackTasks.size() - 1; n > -1; n--) {
+                final O3CallbackTask task = o3PendingCallbackTasks.getQuick(n);
+                if (task.tryLock()) {
+                    O3CallbackJob.runCallbackWithCol(
+                            task,
+                            -1,
+                            null
+                    );
+                }
+            }
+
+            o3DoneLatch.await(queuedCount);
+            if (delta == 0) {
+                txFile.resetToLastPartition(committedTransientRowCount);
+            } else {
+                // If transientRowsAdded is decreased because uncommitted area is not mapped
+                // maxCommittedTimestamp the last value of the segment left in files
+                txFile.resetToLastPartition(committedTransientRowCount, maxCommittedTimestamp);
+            }
+        }
+        return transientRowsAdded;
+    }
+
+    private void o3ShiftLagRowsUp(int timestampIndex, long o3LagRowCount, long o3RowCount) {
         o3PendingCallbackTasks.clear();
 
         final Sequence pubSeq = this.messageBus.getO3CallbackPubSeq();
@@ -3045,10 +3320,10 @@ public class TableWriter implements Closeable {
         int queuedCount = 0;
         for (int colIndex = 0; colIndex < columnCount; colIndex++) {
             int columnType = metadata.getColumnType(colIndex);
+            int columnIndex = colIndex != timestampIndex ? colIndex : -colIndex - 1;
             long cursor = pubSeq.next();
 
             // Pass column index as -1 when it's designated timestamp column to o3 move method
-            int columnIndex = colIndex != timestampIndex ? colIndex : -colIndex - 1;
             if (cursor > -1) {
                 try {
                     final O3CallbackTask task = queue.get(cursor);
@@ -3056,9 +3331,9 @@ public class TableWriter implements Closeable {
                             o3DoneLatch,
                             columnIndex,
                             columnType,
-                            o3HysteresisRowCount,
+                            o3LagRowCount,
                             o3RowCount,
-                            this.o3MoveHysteresisRef
+                            this.o3MoveLagRef
                     );
 
                     o3PendingCallbackTasks.add(task);
@@ -3067,7 +3342,7 @@ public class TableWriter implements Closeable {
                     pubSeq.done(cursor);
                 }
             } else {
-                o3MoveHysteresis0(columnIndex, columnType, o3HysteresisRowCount, o3RowCount);
+                o3MoveLag0(columnIndex, columnType, o3LagRowCount, o3RowCount);
             }
         }
 
@@ -3208,7 +3483,7 @@ public class TableWriter implements Closeable {
         final long tgtIndxSize = indexMem2.size();
         // add max offset so that we do not have conditionals inside loop
         indexMem.putLong(valueCount * Long.BYTES, dataSize);
-        final long offset = o3SortVarColumn0(
+        final long offset = Vect.sortVarColumn(
                 mergedTimestampsAddr,
                 valueCount,
                 srcDataAddr,
@@ -3232,13 +3507,14 @@ public class TableWriter implements Closeable {
         AppendOnlyVirtualMemory mem1 = getPrimaryColumn(i);
         AppendOnlyVirtualMemory mem2 = getSecondaryColumn(i);
 
-        mem1.of(ff, dFile(path.trimTo(plen), name), configuration.getAppendPageSize());
-
-        if (mem2 != null) {
-            mem2.of(ff, iFile(path.trimTo(plen), name), configuration.getAppendPageSize());
+        try {
+            mem1.of(ff, dFile(path.trimTo(plen), name), configuration.getAppendPageSize());
+            if (mem2 != null) {
+                mem2.of(ff, iFile(path.trimTo(plen), name), configuration.getAppendPageSize());
+            }
+        } finally {
+            path.trimTo(plen);
         }
-
-        path.trimTo(plen);
     }
 
     private void openFirstPartition(long timestamp) {
@@ -3378,11 +3654,7 @@ public class TableWriter implements Closeable {
             dFile(other, metadata.getColumnName(metadata.getTimestampIndex()));
             if (ff.exists(other)) {
                 // read min timestamp value
-                long fd = ff.openRO(other);
-                if (fd == -1) {
-                    // oops
-                    throw CairoException.instance(Os.errno()).put("could not open [file=").put(other).put(']');
-                }
+                final long fd = TableUtils.openRO(ff, other, LOG);
                 try {
                     long n = ff.read(fd, tempMem16b, Long.BYTES, 0);
                     if (n != Long.BYTES) {
@@ -3405,7 +3677,7 @@ public class TableWriter implements Closeable {
     }
 
     private void recoverFromSwapRenameFailure(CharSequence columnName) {
-        recoverFrommTodoWriteFailure(columnName);
+        recoverFromTodoWriteFailure(columnName);
         clearTodoLog();
     }
 
@@ -3415,7 +3687,7 @@ public class TableWriter implements Closeable {
         recoverFromSwapRenameFailure(columnName);
     }
 
-    private void recoverFrommTodoWriteFailure(CharSequence columnName) {
+    private void recoverFromTodoWriteFailure(CharSequence columnName) {
         restoreMetaFrom(META_PREV_FILE_NAME, metaPrevIndex);
         openMetaFile(ff, path, rootLen, metaMem);
     }
@@ -3501,8 +3773,7 @@ public class TableWriter implements Closeable {
             } else {
                 ddlMem.putInt(timestampIndex);
             }
-            ddlMem.putInt(ColumnType.VERSION);
-            ddlMem.putInt(metaMem.getInt(META_OFFSET_TABLE_ID));
+            copyVersionAndLagValues();
             ddlMem.jumpTo(META_OFFSET_COLUMN_TYPES);
 
             for (int i = 0; i < columnCount; i++) {
@@ -3595,8 +3866,16 @@ public class TableWriter implements Closeable {
                 return;
             }
             try {
-                long dirTimestamp = partitionDirFmt.parse(nativeLPSZ, null);
-                if (txFile.attachedPartitionsContains(dirTimestamp) || txFile.isActivePartition(dirTimestamp)) {
+                long txn = 0;
+                int txnSep = Chars.indexOf(nativeLPSZ, '.');
+                if (txnSep < 0) {
+                    txnSep = nativeLPSZ.length();
+                } else {
+                    txn = Numbers.parseLong(nativeLPSZ, txnSep + 1, nativeLPSZ.length());
+                }
+                long dirTimestamp = partitionDirFmt.parse(nativeLPSZ, 0, txnSep, null);
+                if (txn <= txFile.txn &&
+                        (txFile.attachedPartitionsContains(dirTimestamp) || txFile.isActivePartition(dirTimestamp))) {
                     return;
                 }
             } catch (NumericException ignore) {
@@ -3717,8 +3996,7 @@ public class TableWriter implements Closeable {
             ddlMem.putInt(columnCount);
             ddlMem.putInt(partitionBy);
             ddlMem.putInt(timestampIndex);
-            ddlMem.putInt(ColumnType.VERSION);
-            ddlMem.putInt(metaMem.getInt(META_OFFSET_TABLE_ID));
+            copyVersionAndLagValues();
             ddlMem.jumpTo(META_OFFSET_COLUMN_TYPES);
 
             for (int i = 0; i < columnCount; i++) {
@@ -3759,7 +4037,7 @@ public class TableWriter implements Closeable {
         }
     }
 
-    private long repairDataGaps(long timestamp) {
+    private long repairDataGaps(final long timestamp) {
         if (txFile.getMaxTimestamp() != Numbers.LONG_NaN && partitionBy != PartitionBy.NONE) {
             long actualSize = 0;
             long lastTimestamp = -1;
@@ -4203,21 +4481,24 @@ public class TableWriter implements Closeable {
 
     private void writeRestoreMetaTodo(CharSequence columnName) {
         try {
-            todoMem.putLong(0, ++todoTxn); // write txn, reader will first read txn at offset 24 and then at offset 0
-            Unsafe.getUnsafe().storeFence(); // make sure we do not write hash before writing txn (view from another thread)
-            todoMem.putLong(8, configuration.getDatabaseIdLo()); // write out our instance hashes
-            todoMem.putLong(16, configuration.getDatabaseIdHi());
-            Unsafe.getUnsafe().storeFence();
-            todoMem.putLong(32, 1);
-            todoMem.putLong(40, TODO_RESTORE_META);
-            todoMem.putLong(48, metaPrevIndex);
-            Unsafe.getUnsafe().storeFence();
-            todoMem.putLong(24, todoTxn);
-            todoMem.setSize(56);
-
+            writeRestoreMetaTodo();
         } catch (CairoException e) {
             runFragile(RECOVER_FROM_TODO_WRITE_FAILURE, columnName, e);
         }
+    }
+
+    private void writeRestoreMetaTodo() {
+        todoMem.putLong(0, ++todoTxn); // write txn, reader will first read txn at offset 24 and then at offset 0
+        Unsafe.getUnsafe().storeFence(); // make sure we do not write hash before writing txn (view from another thread)
+        todoMem.putLong(8, configuration.getDatabaseIdLo()); // write out our instance hashes
+        todoMem.putLong(16, configuration.getDatabaseIdHi());
+        Unsafe.getUnsafe().storeFence();
+        todoMem.putLong(32, 1);
+        todoMem.putLong(40, TODO_RESTORE_META);
+        todoMem.putLong(48, metaPrevIndex);
+        Unsafe.getUnsafe().storeFence();
+        todoMem.putLong(24, todoTxn);
+        todoMem.setSize(56);
     }
 
     @FunctionalInterface
@@ -4263,9 +4544,12 @@ public class TableWriter implements Closeable {
         }
 
         private Row getRowSlow(long timestamp) {
-            txFile.setMinTimestamp(timestamp);
-            openFirstPartition(timestamp);
-            return (rowFunction = switchPartitionFunction).newRow(timestamp);
+            if (timestamp >= Timestamps.AD_01) {
+                txFile.setMinTimestamp(timestamp);
+                openFirstPartition(timestamp);
+                return (rowFunction = switchPartitionFunction).newRow(timestamp);
+            }
+            throw CairoException.instance(0).put("timestamp before 0001-01-01 is not allowed");
         }
     }
 

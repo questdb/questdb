@@ -57,7 +57,8 @@ public class LineTcpServer implements Closeable {
         this.contextFactory = new LineTcpConnectionContextFactory(lineConfiguration);
         this.dispatcher = IODispatchers.create(
                 lineConfiguration.getNetDispatcherConfiguration(),
-                contextFactory);
+                contextFactory
+        );
         this.dedicatedPools = dedicatedPools;
         ioWorkerPool.assign(dispatcher);
         scheduler = new LineTcpMeasurementScheduler(lineConfiguration, engine, ioWorkerPool, dispatcher, writerWorkerPool);
@@ -94,10 +95,10 @@ public class LineTcpServer implements Closeable {
         }
         LineTcpServer lineTcpServer = new LineTcpServer(lineConfiguration, cairoEngine, ioWorkerPool, writerWorkerPool, dedicatedPools);
         if (ioWorkerPool != sharedWorkerPool) {
-            ioWorkerPool.start(LOG);
+            ioWorkerPool.start(log);
         }
         if (writerWorkerPool != sharedWorkerPool) {
-            writerWorkerPool.start(LOG);
+            writerWorkerPool.start(log);
         }
         return lineTcpServer;
     }

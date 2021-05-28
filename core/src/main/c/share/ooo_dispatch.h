@@ -46,6 +46,19 @@ typedef struct index_t {
     bool operator==(int64_t other) const {
         return ts == other;
     }
+
+    bool operator<=(index_t other) const {
+        return ts <= other.ts;
+    }
+
+    uint64_t operator>>(uint64_t shr) const {
+        return ts >> shr;
+    }
+
+    uint64_t operator&(uint64_t mask) const{
+        return ts & mask;
+    }
+
 } index_t;
 
 typedef struct __attribute__ ((packed)) long_256bit {

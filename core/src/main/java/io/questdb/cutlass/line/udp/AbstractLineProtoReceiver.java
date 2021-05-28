@@ -86,7 +86,7 @@ public abstract class AbstractLineProtoReceiver extends SynchronizedJob implemen
                 workerPool.assign(this);
                 logStarted(configuration);
             }
-        } catch (CairoException | NetworkError e) {
+        } catch (Throwable e) {
             close();
             throw e;
         }

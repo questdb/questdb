@@ -24,22 +24,36 @@
 
 package io.questdb.griffin;
 
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.TableWriter;
-import io.questdb.cairo.TxnScoreboard;
+import io.questdb.WorkerPoolAwareConfiguration;
+import io.questdb.cairo.*;
+import io.questdb.cairo.security.AllowAllCairoSecurityContext;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.mp.Job;
+import io.questdb.mp.SOCountDownLatch;
+import io.questdb.mp.WorkerPool;
+import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.junit.*;
 import org.junit.rules.TestName;
 
 import java.net.URISyntaxException;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.atomic.AtomicInteger;
 
 public class O3Test extends AbstractO3Test {
+    private static final Log LOG = LogFactory.getLog(O3Test.class);
+
+    private final StringBuilder tstData = new StringBuilder();
     @Rule
     public TestName name = new TestName();
-    private final StringBuilder tstData = new StringBuilder();
 
     @Before
     public void setUp4() {
@@ -68,21 +82,21 @@ public class O3Test extends AbstractO3Test {
     }
 
     @Test
+    public void testAppendOrderStabilityParallel() throws Exception {
+        executeWithPool(4, O3Test::testAppendOrderStability);
+    }
+
+    @Test
+    public void testAppendToLastPartition() throws Exception {
+        executeWithPool(4, O3Test::testAppendToLastPartition);
+    }
+
+    @Test
     public void testBench() throws Exception {
         // On OSX it's not trivial to increase open file limit per process
         if (Os.type != Os.OSX_AMD64 && Os.type != Os.OSX_ARM64) {
             executeVanilla(O3Test::testBench0);
         }
-    }
-
-    @Test
-    public void testBench2Contended() throws Exception {
-        executeWithPool(0, this::bench20);
-    }
-
-    @Test
-    public void testBench2Parallel() throws Exception {
-        executeWithPool(4, this::bench20);
     }
 
     @Test
@@ -227,26 +241,6 @@ public class O3Test extends AbstractO3Test {
     }
 
     @Test
-    public void testInsertTouchesNotLastPartition() throws Exception {
-        executeVanilla(O3Test::testOOOTouchesNotLastPartition0);
-    }
-
-    @Test
-    public void testInsertTouchesNotLastPartitionParallel() throws Exception {
-        executeWithPool(4, O3Test::testOOOTouchesNotLastPartition0);
-    }
-
-    @Test
-    public void testInsertTouchesNotLastTopPartition() throws Exception {
-        executeVanilla(O3Test::testOOOTouchesNotLastPartitionTop0);
-    }
-
-    @Test
-    public void testInsertTouchesNotLastPartitionTopParallel() throws Exception {
-        executeWithPool(4, O3Test::testOOOTouchesNotLastPartitionTop0);
-    }
-
-    @Test
     public void testColumnTopMidDataMergeData() throws Exception {
         executeVanilla(O3Test::testColumnTopMidDataMergeData0);
     }
@@ -299,6 +293,31 @@ public class O3Test extends AbstractO3Test {
     @Test
     public void testColumnTopNewPartitionMiddleOfTableParallel() throws Exception {
         executeWithPool(4, O3Test::testColumnTopNewPartitionMiddleOfTable0);
+    }
+
+    @Test
+    public void testInsertTouchesNotLastPartition() throws Exception {
+        executeVanilla(O3Test::testOOOTouchesNotLastPartition0);
+    }
+
+    @Test
+    public void testInsertTouchesNotLastPartitionParallel() throws Exception {
+        executeWithPool(4, O3Test::testOOOTouchesNotLastPartition0);
+    }
+
+    @Test
+    public void testInsertTouchesNotLastPartitionTopParallel() throws Exception {
+        executeWithPool(4, O3Test::testOOOTouchesNotLastPartitionTop0);
+    }
+
+    @Test
+    public void testInsertTouchesNotLastTopPartition() throws Exception {
+        executeVanilla(O3Test::testOOOTouchesNotLastPartitionTop0);
+    }
+
+    @Test
+    public void testO3EdgeBugContended() throws Exception {
+        executeWithPool(0, O3Test::testO3EdgeBug);
     }
 
     @Test
@@ -424,6 +443,11 @@ public class O3Test extends AbstractO3Test {
     @Test
     public void testPartitionedDataOODataPbOODataDropColumnContended() throws Exception {
         executeWithPool(0, O3Test::testPartitionedDataOODataPbOODataDropColumn0);
+    }
+
+    @Test
+    public void testPartitionedDataOODataPbOODataDropColumnParallel() throws Exception {
+        executeWithPool(4, O3Test::testPartitionedDataOODataPbOODataDropColumn0);
     }
 
     @Test
@@ -592,38 +616,262 @@ public class O3Test extends AbstractO3Test {
     }
 
     @Test
-    public void testVanillaHysteresis() throws Exception {
-        executeVanilla(O3Test::testVanillaHysteresis0);
-    }
-
-    @Test
-    public void testVanillaHysteresisContended() throws Exception {
-        executeWithPool(0, O3Test::testVanillaHysteresis0);
-    }
-
-    @Test
-    public void testVanillaHysteresisSinglePartitionContended() throws Exception {
-        executeWithPool(0, O3Test::testVanillaHysteresisSinglePartition0);
-    }
-
-    @Test
-    public void testVanillaHysteresisSinglePartition() throws Exception {
-        executeVanilla(O3Test::testVanillaHysteresisSinglePartition0);
-    }
-
-    @Test
-    public void testVanillaHysteresisSinglePartitionParallel() throws Exception {
-        executeWithPool(4, O3Test::testVanillaHysteresisSinglePartition0);
-    }
-
-    @Test
-    public void testVanillaHysteresisParallel() throws Exception {
-        executeWithPool(4, O3Test::testVanillaHysteresis0);
-    }
-
-    @Test
     public void testPartitionedOOTopAndBottomParallel() throws Exception {
         executeWithPool(4, O3Test::testPartitionedOOTopAndBottom0);
+    }
+
+    @Test
+    public void testRepeatedIngest() throws Exception {
+        executeWithPool(4, O3Test::testRepeatedIngest0);
+    }
+
+    @Test
+    public void testTwoTablesCompeteForBuffer() throws Exception {
+        executeWithPool(4, O3Test::testTwoTablesCompeteForBuffer0);
+    }
+
+    @Test
+    public void testVanillaCommitLag() throws Exception {
+        executeVanilla(O3Test::testVanillaCommitLag0);
+    }
+
+    @Test
+    public void testVanillaCommitLagContended() throws Exception {
+        executeWithPool(0, O3Test::testVanillaCommitLag0);
+    }
+
+    @Test
+    public void testLargeCommitLagContended() throws Exception {
+        executeWithPool(0, O3Test::testLargeCommitLag0);
+    }
+
+    @Test
+    public void testVanillaCommitLagParallel() throws Exception {
+        executeWithPool(4, O3Test::testVanillaCommitLag0);
+    }
+
+    @Test
+    public void testVanillaCommitLagSinglePartition() throws Exception {
+        executeVanilla(O3Test::testVanillaCommitLagSinglePartition0);
+    }
+
+    @Test
+    public void testVanillaCommitLagSinglePartitionContended() throws Exception {
+        executeWithPool(0, O3Test::testVanillaCommitLagSinglePartition0);
+    }
+
+    @Test
+    public void testVanillaCommitLagSinglePartitionParallel() throws Exception {
+        executeWithPool(4, O3Test::testVanillaCommitLagSinglePartition0);
+    }
+
+    @Test
+    public void testWriterOpensCorrectTxnPartitionOnRestart() throws Exception {
+        executeWithPool(0, O3Test::testWriterOpensCorrectTxnPartitionOnRestart0);
+    }
+
+    private static void testWriterOpensCorrectTxnPartitionOnRestart0(
+            CairoEngine engine,
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException, NumericException {
+        CairoConfiguration configuration = engine.getConfiguration();
+        try (TableModel x = new TableModel(configuration, "x", PartitionBy.DAY)) {
+            TestUtils.createPopulateTable(
+                    compiler,
+                    sqlExecutionContext,
+                    x.col("id", ColumnType.LONG)
+                            .col("ok", ColumnType.DOUBLE)
+                            .timestamp("ts"),
+                    10,
+                    "2020-01-01",
+                    1);
+
+            // Insert OOO to create partition dir 2020-01-01.1
+            TestUtils.insert(compiler, sqlExecutionContext, "insert into x values(1, 100.0, '2020-01-01T00:01:00')");
+            TestUtils.assertSql(compiler, sqlExecutionContext, "select count() from x", sink,
+                    "count\n" +
+                            "11\n"
+            );
+
+            // Close and open writer. Partition dir 2020-01-01.1 should not be purged
+            engine.releaseAllWriters();
+            TestUtils.insert(compiler, sqlExecutionContext, "insert into x values(2, 101.0, '2020-01-01T00:02:00')");
+            TestUtils.assertSql(compiler, sqlExecutionContext, "select count() from x", sink,
+                    "count\n" +
+                            "12\n"
+            );
+        }
+    }
+
+    private static void testTwoTablesCompeteForBuffer0(
+            CairoEngine engine,
+            SqlCompiler compiler,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        compiler.compile(
+                "create table x as (" +
+                        "select" +
+                        " rnd_str(5,16,10) i," +
+                        " rnd_str(5,16,10) sym," +
+                        " rnd_str(5,16,10) amt," +
+                        " rnd_str(5,16,10) timestamp," +
+                        " rnd_str(5,16,10) b," +
+                        " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                        " rnd_str(5,16,10) d," +
+                        " rnd_str(5,16,10) e," +
+                        " rnd_str(5,16,10) f," +
+                        " rnd_str(5,16,10) g," +
+                        " rnd_str(5,16,10) ik," +
+                        " rnd_str(5,16,10) j," +
+                        " timestamp_sequence(500000000000L,100000000L) ts," +
+                        " rnd_str(5,16,10) l," +
+                        " rnd_str(5,16,10) m," +
+                        " rnd_str(5,16,10) n," +
+                        " rnd_str(5,16,10) t," +
+                        " rnd_str(5,16,10) l256" +
+                        " from long_sequence(10000)" +
+                        ") timestamp (ts) partition by DAY",
+                executionContext
+        );
+
+        compiler.compile("create table x1 as (x) timestamp(ts) partition by DAY", executionContext);
+
+        compiler.compile(
+                "create table y as (" +
+                        "select" +
+                        " rnd_str(5,16,10) i," +
+                        " rnd_str(5,16,10) sym," +
+                        " rnd_str(5,16,10) amt," +
+                        " rnd_str(5,16,10) timestamp," +
+                        " rnd_str(5,16,10) b," +
+                        " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                        " rnd_str(5,16,10) d," +
+                        " rnd_str(5,16,10) e," +
+                        " rnd_str(5,16,10) f," +
+                        " rnd_str(5,16,10) g," +
+                        " rnd_str(5,16,10) ik," +
+                        " rnd_str(5,16,10) j," +
+                        " timestamp_sequence(500000080000L,79999631L) ts," +
+                        " rnd_str(5,16,10) l," +
+                        " rnd_str(5,16,10) m," +
+                        " rnd_str(5,16,10) n," +
+                        " rnd_str(5,16,10) t," +
+                        " rnd_str(5,16,10) l256" +
+                        " from long_sequence(10000)" +
+                        ") timestamp (ts) partition by DAY",
+                executionContext
+        );
+
+        compiler.compile("create table y1 as (y)", executionContext);
+
+        // create expected result sets
+        compiler.compile("create table z as (x union all y)", executionContext);
+
+        // create another compiler to be used by second pool
+        try (SqlCompiler compiler2 = new SqlCompiler(engine)) {
+
+            final CyclicBarrier barrier = new CyclicBarrier(2);
+            final SOCountDownLatch haltLatch = new SOCountDownLatch(2);
+            final AtomicInteger errorCount = new AtomicInteger();
+
+            // we have two pairs of tables (x,y) and (x1,y1)
+            WorkerPool pool1 = new WorkerPool(new WorkerPoolAwareConfiguration() {
+                @Override
+                public int[] getWorkerAffinity() {
+                    return new int[]{-1};
+                }
+
+                @Override
+                public int getWorkerCount() {
+                    return 1;
+                }
+
+                @Override
+                public boolean haltOnError() {
+                    return false;
+                }
+
+                @Override
+                public boolean isEnabled() {
+                    return true;
+                }
+            });
+
+            pool1.assign(new Job() {
+                private boolean toRun = true;
+
+                @Override
+                public boolean run(int workerId) {
+                    if (toRun) {
+                        try {
+                            toRun = false;
+                            barrier.await();
+                            compiler.compile("insert into x select * from y", executionContext);
+                        } catch (Throwable e) {
+                            e.printStackTrace();
+                            errorCount.incrementAndGet();
+                        } finally {
+                            haltLatch.countDown();
+                        }
+                    }
+                    return false;
+                }
+            });
+            pool1.assignCleaner(Path.CLEANER);
+
+            final WorkerPool pool2 = new WorkerPool(new WorkerPoolConfiguration() {
+                @Override
+                public int[] getWorkerAffinity() {
+                    return new int[]{-1};
+                }
+
+                @Override
+                public int getWorkerCount() {
+                    return 1;
+                }
+
+                @Override
+                public boolean haltOnError() {
+                    return false;
+                }
+            });
+
+            pool2.assign(new Job() {
+                private boolean toRun = true;
+
+                @Override
+                public boolean run(int workerId) {
+                    if (toRun) {
+                        try {
+                            toRun = false;
+                            barrier.await();
+                            compiler2.compile("insert into x1 select * from y1", executionContext);
+                        } catch (Throwable e) {
+                            e.printStackTrace();
+                            errorCount.incrementAndGet();
+                        } finally {
+                            haltLatch.countDown();
+                        }
+                    }
+                    return false;
+                }
+            });
+
+            pool2.assignCleaner(Path.CLEANER);
+
+            pool1.start(null);
+            pool2.start(null);
+
+            haltLatch.await();
+
+            pool1.halt();
+            pool2.halt();
+
+            Assert.assertEquals(0, errorCount.get());
+            TestUtils.assertSqlCursors(compiler, executionContext, "z order by ts", "x", LOG);
+            TestUtils.assertSqlCursors(compiler, executionContext, "z order by ts", "x1", LOG);
+        }
     }
 
     private static void testPartitionedOOONullSetters0(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext)
@@ -725,7 +973,7 @@ public class O3Test extends AbstractO3Test {
         );
 
         // create third table, which will contain both X and 1AM
-        assertO3DataConsistency(
+        assertO3DataCursors(
                 engine,
                 compiler,
                 sqlExecutionContext,
@@ -801,7 +1049,7 @@ public class O3Test extends AbstractO3Test {
         );
 
         // create third table, which will contain both X and 1AM
-        assertO3DataConsistency(
+        assertO3DataCursors(
                 engine,
                 compiler,
                 sqlExecutionContext,
@@ -812,6 +1060,83 @@ public class O3Test extends AbstractO3Test {
         );
 
         assertIndexConsistency(compiler, sqlExecutionContext);
+    }
+
+    private static void testAppendOrderStability(
+            CairoEngine engine,
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
+        compiler.compile(
+                "create table x (" +
+                        "seq long, " +
+                        "sym symbol, " +
+                        "ts timestamp" +
+                        "), index(sym) timestamp (ts) partition by DAY",
+                sqlExecutionContext
+        );
+
+        String[] symbols = {"AA", "BB"};
+        long[] seq = new long[symbols.length];
+
+        // insert some records in order
+        final Rnd rnd = new Rnd();
+        try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x")) {
+            long t = 0;
+            for (int i = 0; i < 1000; i++) {
+                TableWriter.Row r = w.newRow(t++);
+                int index = rnd.nextInt(1);
+                r.putLong(0, seq[index]++);
+                r.putSym(1, symbols[index]);
+                r.append();
+            }
+            w.commitWithLag();
+
+            // now do out of order
+            for (int i = 0; i < 100_000; i++) {
+                TableWriter.Row r;
+
+                // symbol 0
+
+                r = w.newRow(t + 1);
+                r.putLong(0, seq[0]++);
+                r.putSym(1, symbols[0]);
+                r.append();
+
+                r = w.newRow(t + 1);
+                r.putLong(0, seq[0]++);
+                r.putSym(1, symbols[0]);
+                r.append();
+
+                // symbol 1
+
+                r = w.newRow(t);
+                r.putLong(0, seq[1]++);
+                r.putSym(1, symbols[1]);
+                r.append();
+
+                r = w.newRow(t);
+                r.putLong(0, seq[1]++);
+                r.putSym(1, symbols[1]);
+                r.append();
+
+                t += 2;
+            }
+            w.commit();
+        }
+
+        // now verify that sequence did not get mixed up in the table
+        long[] actualSeq = new long[symbols.length];
+        try (
+                RecordCursorFactory f = compiler.compile("x", sqlExecutionContext).getRecordCursorFactory();
+                RecordCursor cursor = f.getCursor(sqlExecutionContext)
+        ) {
+            final Record record = cursor.getRecord();
+            while (cursor.hasNext()) {
+                int index = record.getInt(1);
+                Assert.assertEquals(record.getLong(0), actualSeq[index]++);
+            }
+        }
     }
 
     private static void testPartitionedOOTopAndBottom0(
@@ -900,7 +1225,7 @@ public class O3Test extends AbstractO3Test {
         );
 
         // create third table, which will contain both X and 1AM
-        assertO3DataConsistency(
+        assertO3DataCursors(
                 engine,
                 compiler,
                 sqlExecutionContext,
@@ -913,7 +1238,7 @@ public class O3Test extends AbstractO3Test {
         assertIndexConsistency(compiler, sqlExecutionContext);
     }
 
-    private static void testVanillaHysteresis0(
+    private static void testVanillaCommitLag0(
             CairoEngine engine,
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
@@ -959,7 +1284,7 @@ public class O3Test extends AbstractO3Test {
                         " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
                         " rnd_symbol(4,4,4,2) ik," +
                         " rnd_long() j," +
-                        // the formula below creates hysteresis-friendly timestamp distribution
+                        // the formula below creates lag-friendly timestamp distribution
                         " cast(500000000000L + ((x-1)/4) * 1000000L + (4-(x-1)%4)*80009  as timestamp) ts," +
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m," +
@@ -972,20 +1297,94 @@ public class O3Test extends AbstractO3Test {
         );
 
         // create third table, which will contain both X and 1AM
-        assertO3DataConsistency(
+        assertO3DataCursors(
                 engine,
                 compiler,
                 sqlExecutionContext,
                 "create table y as (x union all top)",
                 "y order by ts",
-                "insert batch 100000 hysteresis 180000000 into x select * from top",
+                "insert batch 100000 lag 180000000 into x select * from top",
                 "x"
         );
 
         assertIndexConsistency(compiler, sqlExecutionContext);
     }
 
-    private static void testVanillaHysteresisSinglePartition0(
+    private static void testLargeCommitLag0(
+            CairoEngine engine,
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
+        compiler.compile(
+                "create table x as (" +
+                        "select" +
+                        " cast(x as int) i," +
+                        " rnd_symbol('msft','ibm', 'googl') sym," +
+                        " round(rnd_double(0)*100, 3) amt," +
+                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                        " rnd_boolean() b," +
+                        " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                        " rnd_double(2) d," +
+                        " rnd_float(2) e," +
+                        " rnd_short(10,1024) f," +
+                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                        " rnd_symbol(4,4,4,2) ik," +
+                        " rnd_long() j," +
+                        " timestamp_sequence(500000000000L,1000000L) ts," +
+                        " rnd_byte(2,50) l," +
+                        " rnd_bin(10, 20, 2) m," +
+                        " rnd_str(5,16,2) n," +
+                        " rnd_char() t," +
+                        " rnd_long256() l256" +
+                        " from long_sequence(0)" +
+                        "), index(sym) timestamp (ts) partition by MONTH",
+                sqlExecutionContext
+        );
+
+        compiler.compile("ALTER TABLE x SET PARAM maxUncommittedRows = 2000000", sqlExecutionContext);
+
+        compiler.compile(
+                "create table top as (" +
+                        "select" +
+                        " cast(x as int) i," +
+                        " rnd_symbol('msft','ibm', 'googl') sym," +
+                        " round(rnd_double(0)*100, 3) amt," +
+                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                        " rnd_boolean() b," +
+                        " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                        " rnd_double(2) d," +
+                        " rnd_float(2) e," +
+                        " rnd_short(10,1024) f," +
+                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                        " rnd_symbol(4,4,4,2) ik," +
+                        " rnd_long() j," +
+                        // the formula below creates lag-friendly timestamp distribution
+                        " cast(500000000000L + ((x-1)/4) * 1000L + (4-(x-1)%4)*89  as timestamp) ts," +
+                        " rnd_byte(2,50) l," +
+                        " rnd_bin(10, 20, 2) m," +
+                        " rnd_str(5,16,2) n," +
+                        " rnd_char() t," +
+                        " rnd_long256() l256" +
+                        " from long_sequence(2096128)" +
+                        ")",
+                sqlExecutionContext
+        );
+
+        // create third table, which will contain both X and 1AM
+        assertO3DataCursors(
+                engine,
+                compiler,
+                sqlExecutionContext,
+                "create table y as (x union all top)",
+                "y order by ts",
+                "insert batch 2000000 lag 180000000 into x select * from top",
+                "x"
+        );
+
+        assertIndexConsistency(compiler, sqlExecutionContext);
+    }
+
+    private static void testVanillaCommitLagSinglePartition0(
             CairoEngine engine,
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
@@ -1031,7 +1430,7 @@ public class O3Test extends AbstractO3Test {
                         " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
                         " rnd_symbol(4,4,4,2) ik," +
                         " rnd_long() j," +
-                        // the formula below creates hysteresis-friendly timestamp distribution
+                        // the formula below creates lag-friendly timestamp distribution
                         " cast(500000000000L + ((x-1)/4) * 1000000L + (4-(x-1)%4)*80009  as timestamp) ts," +
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m," +
@@ -1049,10 +1448,10 @@ public class O3Test extends AbstractO3Test {
                 compiler,
                 sqlExecutionContext,
                 "create table y as (x union all top)",
-                // combination of row count in "top" table, batch size and hysteresis value land
+                // combination of row count in "top" table, batch size and lag value land
                 // rows into single partition, which causes internal state to corrupt
                 // please do not change these values unless you know what you're doing
-                "insert batch 100 hysteresis 300000000 into x select * from top"
+                "insert batch 100 lag 300000000 into x select * from top"
         );
 
         assertIndexConsistency(compiler, sqlExecutionContext);
@@ -1213,6 +1612,245 @@ public class O3Test extends AbstractO3Test {
         testXAndIndex(engine, compiler, sqlExecutionContext, expected);
     }
 
+    private static void testRepeatedIngest0(
+            CairoEngine engine,
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException, NumericException {
+
+        compiler.compile("create table x (a int, ts timestamp) timestamp(ts) partition by DAY", sqlExecutionContext);
+
+
+        long ts = TimestampFormatUtils.parseUTCTimestamp("2020-03-10T20:36:00.000000Z");
+        long expectedMaxTimestamp = Long.MIN_VALUE;
+        int step = 100;
+        int rowCount = 10;
+        try (TableWriter w = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "x")) {
+            for (int i = 0; i < 20; i++) {
+                for (int j = 0; j < rowCount; j++) {
+                    long t = ts + (rowCount - j) * step;
+                    expectedMaxTimestamp = Math.max(expectedMaxTimestamp, t);
+                    TableWriter.Row r = w.newRow(t);
+                    r.putInt(0, i * step + j);
+                    r.append();
+                }
+                w.commit();
+                ts--;
+            }
+            Assert.assertEquals(expectedMaxTimestamp, w.getMaxTimestamp());
+        }
+
+        final String expected = "a\tts\n" +
+                "1909\t2020-03-10T20:36:00.000081Z\n" +
+                "1809\t2020-03-10T20:36:00.000082Z\n" +
+                "1709\t2020-03-10T20:36:00.000083Z\n" +
+                "1609\t2020-03-10T20:36:00.000084Z\n" +
+                "1509\t2020-03-10T20:36:00.000085Z\n" +
+                "1409\t2020-03-10T20:36:00.000086Z\n" +
+                "1309\t2020-03-10T20:36:00.000087Z\n" +
+                "1209\t2020-03-10T20:36:00.000088Z\n" +
+                "1109\t2020-03-10T20:36:00.000089Z\n" +
+                "1009\t2020-03-10T20:36:00.000090Z\n" +
+                "909\t2020-03-10T20:36:00.000091Z\n" +
+                "809\t2020-03-10T20:36:00.000092Z\n" +
+                "709\t2020-03-10T20:36:00.000093Z\n" +
+                "609\t2020-03-10T20:36:00.000094Z\n" +
+                "509\t2020-03-10T20:36:00.000095Z\n" +
+                "409\t2020-03-10T20:36:00.000096Z\n" +
+                "309\t2020-03-10T20:36:00.000097Z\n" +
+                "209\t2020-03-10T20:36:00.000098Z\n" +
+                "109\t2020-03-10T20:36:00.000099Z\n" +
+                "9\t2020-03-10T20:36:00.000100Z\n" +
+                "1908\t2020-03-10T20:36:00.000181Z\n" +
+                "1808\t2020-03-10T20:36:00.000182Z\n" +
+                "1708\t2020-03-10T20:36:00.000183Z\n" +
+                "1608\t2020-03-10T20:36:00.000184Z\n" +
+                "1508\t2020-03-10T20:36:00.000185Z\n" +
+                "1408\t2020-03-10T20:36:00.000186Z\n" +
+                "1308\t2020-03-10T20:36:00.000187Z\n" +
+                "1208\t2020-03-10T20:36:00.000188Z\n" +
+                "1108\t2020-03-10T20:36:00.000189Z\n" +
+                "1008\t2020-03-10T20:36:00.000190Z\n" +
+                "908\t2020-03-10T20:36:00.000191Z\n" +
+                "808\t2020-03-10T20:36:00.000192Z\n" +
+                "708\t2020-03-10T20:36:00.000193Z\n" +
+                "608\t2020-03-10T20:36:00.000194Z\n" +
+                "508\t2020-03-10T20:36:00.000195Z\n" +
+                "408\t2020-03-10T20:36:00.000196Z\n" +
+                "308\t2020-03-10T20:36:00.000197Z\n" +
+                "208\t2020-03-10T20:36:00.000198Z\n" +
+                "108\t2020-03-10T20:36:00.000199Z\n" +
+                "8\t2020-03-10T20:36:00.000200Z\n" +
+                "1907\t2020-03-10T20:36:00.000281Z\n" +
+                "1807\t2020-03-10T20:36:00.000282Z\n" +
+                "1707\t2020-03-10T20:36:00.000283Z\n" +
+                "1607\t2020-03-10T20:36:00.000284Z\n" +
+                "1507\t2020-03-10T20:36:00.000285Z\n" +
+                "1407\t2020-03-10T20:36:00.000286Z\n" +
+                "1307\t2020-03-10T20:36:00.000287Z\n" +
+                "1207\t2020-03-10T20:36:00.000288Z\n" +
+                "1107\t2020-03-10T20:36:00.000289Z\n" +
+                "1007\t2020-03-10T20:36:00.000290Z\n" +
+                "907\t2020-03-10T20:36:00.000291Z\n" +
+                "807\t2020-03-10T20:36:00.000292Z\n" +
+                "707\t2020-03-10T20:36:00.000293Z\n" +
+                "607\t2020-03-10T20:36:00.000294Z\n" +
+                "507\t2020-03-10T20:36:00.000295Z\n" +
+                "407\t2020-03-10T20:36:00.000296Z\n" +
+                "307\t2020-03-10T20:36:00.000297Z\n" +
+                "207\t2020-03-10T20:36:00.000298Z\n" +
+                "107\t2020-03-10T20:36:00.000299Z\n" +
+                "7\t2020-03-10T20:36:00.000300Z\n" +
+                "1906\t2020-03-10T20:36:00.000381Z\n" +
+                "1806\t2020-03-10T20:36:00.000382Z\n" +
+                "1706\t2020-03-10T20:36:00.000383Z\n" +
+                "1606\t2020-03-10T20:36:00.000384Z\n" +
+                "1506\t2020-03-10T20:36:00.000385Z\n" +
+                "1406\t2020-03-10T20:36:00.000386Z\n" +
+                "1306\t2020-03-10T20:36:00.000387Z\n" +
+                "1206\t2020-03-10T20:36:00.000388Z\n" +
+                "1106\t2020-03-10T20:36:00.000389Z\n" +
+                "1006\t2020-03-10T20:36:00.000390Z\n" +
+                "906\t2020-03-10T20:36:00.000391Z\n" +
+                "806\t2020-03-10T20:36:00.000392Z\n" +
+                "706\t2020-03-10T20:36:00.000393Z\n" +
+                "606\t2020-03-10T20:36:00.000394Z\n" +
+                "506\t2020-03-10T20:36:00.000395Z\n" +
+                "406\t2020-03-10T20:36:00.000396Z\n" +
+                "306\t2020-03-10T20:36:00.000397Z\n" +
+                "206\t2020-03-10T20:36:00.000398Z\n" +
+                "106\t2020-03-10T20:36:00.000399Z\n" +
+                "6\t2020-03-10T20:36:00.000400Z\n" +
+                "1905\t2020-03-10T20:36:00.000481Z\n" +
+                "1805\t2020-03-10T20:36:00.000482Z\n" +
+                "1705\t2020-03-10T20:36:00.000483Z\n" +
+                "1605\t2020-03-10T20:36:00.000484Z\n" +
+                "1505\t2020-03-10T20:36:00.000485Z\n" +
+                "1405\t2020-03-10T20:36:00.000486Z\n" +
+                "1305\t2020-03-10T20:36:00.000487Z\n" +
+                "1205\t2020-03-10T20:36:00.000488Z\n" +
+                "1105\t2020-03-10T20:36:00.000489Z\n" +
+                "1005\t2020-03-10T20:36:00.000490Z\n" +
+                "905\t2020-03-10T20:36:00.000491Z\n" +
+                "805\t2020-03-10T20:36:00.000492Z\n" +
+                "705\t2020-03-10T20:36:00.000493Z\n" +
+                "605\t2020-03-10T20:36:00.000494Z\n" +
+                "505\t2020-03-10T20:36:00.000495Z\n" +
+                "405\t2020-03-10T20:36:00.000496Z\n" +
+                "305\t2020-03-10T20:36:00.000497Z\n" +
+                "205\t2020-03-10T20:36:00.000498Z\n" +
+                "105\t2020-03-10T20:36:00.000499Z\n" +
+                "5\t2020-03-10T20:36:00.000500Z\n" +
+                "1904\t2020-03-10T20:36:00.000581Z\n" +
+                "1804\t2020-03-10T20:36:00.000582Z\n" +
+                "1704\t2020-03-10T20:36:00.000583Z\n" +
+                "1604\t2020-03-10T20:36:00.000584Z\n" +
+                "1504\t2020-03-10T20:36:00.000585Z\n" +
+                "1404\t2020-03-10T20:36:00.000586Z\n" +
+                "1304\t2020-03-10T20:36:00.000587Z\n" +
+                "1204\t2020-03-10T20:36:00.000588Z\n" +
+                "1104\t2020-03-10T20:36:00.000589Z\n" +
+                "1004\t2020-03-10T20:36:00.000590Z\n" +
+                "904\t2020-03-10T20:36:00.000591Z\n" +
+                "804\t2020-03-10T20:36:00.000592Z\n" +
+                "704\t2020-03-10T20:36:00.000593Z\n" +
+                "604\t2020-03-10T20:36:00.000594Z\n" +
+                "504\t2020-03-10T20:36:00.000595Z\n" +
+                "404\t2020-03-10T20:36:00.000596Z\n" +
+                "304\t2020-03-10T20:36:00.000597Z\n" +
+                "204\t2020-03-10T20:36:00.000598Z\n" +
+                "104\t2020-03-10T20:36:00.000599Z\n" +
+                "4\t2020-03-10T20:36:00.000600Z\n" +
+                "1903\t2020-03-10T20:36:00.000681Z\n" +
+                "1803\t2020-03-10T20:36:00.000682Z\n" +
+                "1703\t2020-03-10T20:36:00.000683Z\n" +
+                "1603\t2020-03-10T20:36:00.000684Z\n" +
+                "1503\t2020-03-10T20:36:00.000685Z\n" +
+                "1403\t2020-03-10T20:36:00.000686Z\n" +
+                "1303\t2020-03-10T20:36:00.000687Z\n" +
+                "1203\t2020-03-10T20:36:00.000688Z\n" +
+                "1103\t2020-03-10T20:36:00.000689Z\n" +
+                "1003\t2020-03-10T20:36:00.000690Z\n" +
+                "903\t2020-03-10T20:36:00.000691Z\n" +
+                "803\t2020-03-10T20:36:00.000692Z\n" +
+                "703\t2020-03-10T20:36:00.000693Z\n" +
+                "603\t2020-03-10T20:36:00.000694Z\n" +
+                "503\t2020-03-10T20:36:00.000695Z\n" +
+                "403\t2020-03-10T20:36:00.000696Z\n" +
+                "303\t2020-03-10T20:36:00.000697Z\n" +
+                "203\t2020-03-10T20:36:00.000698Z\n" +
+                "103\t2020-03-10T20:36:00.000699Z\n" +
+                "3\t2020-03-10T20:36:00.000700Z\n" +
+                "1902\t2020-03-10T20:36:00.000781Z\n" +
+                "1802\t2020-03-10T20:36:00.000782Z\n" +
+                "1702\t2020-03-10T20:36:00.000783Z\n" +
+                "1602\t2020-03-10T20:36:00.000784Z\n" +
+                "1502\t2020-03-10T20:36:00.000785Z\n" +
+                "1402\t2020-03-10T20:36:00.000786Z\n" +
+                "1302\t2020-03-10T20:36:00.000787Z\n" +
+                "1202\t2020-03-10T20:36:00.000788Z\n" +
+                "1102\t2020-03-10T20:36:00.000789Z\n" +
+                "1002\t2020-03-10T20:36:00.000790Z\n" +
+                "902\t2020-03-10T20:36:00.000791Z\n" +
+                "802\t2020-03-10T20:36:00.000792Z\n" +
+                "702\t2020-03-10T20:36:00.000793Z\n" +
+                "602\t2020-03-10T20:36:00.000794Z\n" +
+                "502\t2020-03-10T20:36:00.000795Z\n" +
+                "402\t2020-03-10T20:36:00.000796Z\n" +
+                "302\t2020-03-10T20:36:00.000797Z\n" +
+                "202\t2020-03-10T20:36:00.000798Z\n" +
+                "102\t2020-03-10T20:36:00.000799Z\n" +
+                "2\t2020-03-10T20:36:00.000800Z\n" +
+                "1901\t2020-03-10T20:36:00.000881Z\n" +
+                "1801\t2020-03-10T20:36:00.000882Z\n" +
+                "1701\t2020-03-10T20:36:00.000883Z\n" +
+                "1601\t2020-03-10T20:36:00.000884Z\n" +
+                "1501\t2020-03-10T20:36:00.000885Z\n" +
+                "1401\t2020-03-10T20:36:00.000886Z\n" +
+                "1301\t2020-03-10T20:36:00.000887Z\n" +
+                "1201\t2020-03-10T20:36:00.000888Z\n" +
+                "1101\t2020-03-10T20:36:00.000889Z\n" +
+                "1001\t2020-03-10T20:36:00.000890Z\n" +
+                "901\t2020-03-10T20:36:00.000891Z\n" +
+                "801\t2020-03-10T20:36:00.000892Z\n" +
+                "701\t2020-03-10T20:36:00.000893Z\n" +
+                "601\t2020-03-10T20:36:00.000894Z\n" +
+                "501\t2020-03-10T20:36:00.000895Z\n" +
+                "401\t2020-03-10T20:36:00.000896Z\n" +
+                "301\t2020-03-10T20:36:00.000897Z\n" +
+                "201\t2020-03-10T20:36:00.000898Z\n" +
+                "101\t2020-03-10T20:36:00.000899Z\n" +
+                "1\t2020-03-10T20:36:00.000900Z\n" +
+                "1900\t2020-03-10T20:36:00.000981Z\n" +
+                "1800\t2020-03-10T20:36:00.000982Z\n" +
+                "1700\t2020-03-10T20:36:00.000983Z\n" +
+                "1600\t2020-03-10T20:36:00.000984Z\n" +
+                "1500\t2020-03-10T20:36:00.000985Z\n" +
+                "1400\t2020-03-10T20:36:00.000986Z\n" +
+                "1300\t2020-03-10T20:36:00.000987Z\n" +
+                "1200\t2020-03-10T20:36:00.000988Z\n" +
+                "1100\t2020-03-10T20:36:00.000989Z\n" +
+                "1000\t2020-03-10T20:36:00.000990Z\n" +
+                "900\t2020-03-10T20:36:00.000991Z\n" +
+                "800\t2020-03-10T20:36:00.000992Z\n" +
+                "700\t2020-03-10T20:36:00.000993Z\n" +
+                "600\t2020-03-10T20:36:00.000994Z\n" +
+                "500\t2020-03-10T20:36:00.000995Z\n" +
+                "400\t2020-03-10T20:36:00.000996Z\n" +
+                "300\t2020-03-10T20:36:00.000997Z\n" +
+                "200\t2020-03-10T20:36:00.000998Z\n" +
+                "100\t2020-03-10T20:36:00.000999Z\n" +
+                "0\t2020-03-10T20:36:00.001000Z\n";
+
+        TestUtils.assertSql(
+                compiler,
+                sqlExecutionContext,
+                "x",
+                sink,
+                expected
+        );
+    }
+
     private static void testXAndIndex(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, String expected) throws SqlException {
         printSqlResult(compiler, sqlExecutionContext, "x");
         TestUtils.assertEquals(expected, sink);
@@ -1311,7 +1949,7 @@ public class O3Test extends AbstractO3Test {
         );
 
         // create third table, which will contain both X and 1AM
-        assertO3DataConsistency(
+        assertO3DataCursors(
                 engine,
                 compiler,
                 sqlExecutionContext,
@@ -1595,7 +2233,7 @@ public class O3Test extends AbstractO3Test {
         );
 
         // create third table, which will contain both X and 1AM
-        assertO3DataConsistency(
+        assertO3DataCursors(
                 engine,
                 compiler,
                 sqlExecutionContext,
@@ -1936,6 +2574,119 @@ public class O3Test extends AbstractO3Test {
         );
     }
 
+    private static void testO3EdgeBug(
+            CairoEngine engine,
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
+        compiler.compile(
+                "create table x as (" +
+                        "select" +
+                        " cast(x as int) i," +
+                        " rnd_symbol('msft','ibm', 'googl') sym," +
+                        " round(rnd_double(0)*100, 3) amt," +
+                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                        " rnd_boolean() b," +
+                        " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                        " rnd_double(2) d," +
+                        " rnd_float(2) e," +
+                        " rnd_short(10,1024) f," +
+                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                        " rnd_symbol(4,4,4,2) ik," +
+                        " rnd_long() j," +
+                        " timestamp_sequence(10000000000,1000000L) ts," +
+                        " rnd_byte(2,50) l," +
+                        " rnd_bin(10, 20, 2) m," +
+                        " rnd_str(5,16,2) n," +
+                        " rnd_char() t," +
+                        " rnd_long256() l256" +
+                        " from long_sequence(1000)" +
+                        "), index(sym) timestamp (ts) partition by DAY",
+                sqlExecutionContext
+        );
+
+        // create table with 1AM data
+
+        compiler.compile(
+                "create table 1am as (" +
+                        "select" +
+                        " cast(x as int) i," +
+                        " rnd_symbol('msft','ibm', 'googl') sym," +
+                        " round(rnd_double(0)*100, 3) amt," +
+                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                        " rnd_boolean() b," +
+                        " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                        " rnd_double(2) d," +
+                        " rnd_float(2) e," +
+                        " rnd_short(10,1024) f," +
+                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                        " rnd_symbol(4,4,4,2) ik," +
+                        " rnd_long() j," +
+                        " timestamp_sequence(3000000000l,10000000L) ts," + // mid partition for "x"
+                        " rnd_byte(2,50) l," +
+                        " rnd_bin(10, 20, 2) m," +
+                        " rnd_str(5,16,2) n," +
+                        " rnd_char() t," +
+                        " rnd_long256() l256" +
+                        " from long_sequence(801)" +
+                        ")",
+                sqlExecutionContext
+        );
+
+        compiler.compile(
+                "create table tail as (" +
+                        "select" +
+                        " cast(x as int) i," +
+                        " rnd_symbol('msft','ibm', 'googl') sym," +
+                        " round(rnd_double(0)*100, 3) amt," +
+                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                        " rnd_boolean() b," +
+                        " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                        " rnd_double(2) d," +
+                        " rnd_float(2) e," +
+                        " rnd_short(10,1024) f," +
+                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                        " rnd_symbol(4,4,4,2) ik," +
+                        " rnd_long() j," +
+                        " timestamp_sequence(20000000000,1000000L) ts," +
+                        " rnd_byte(2,50) l," +
+                        " rnd_bin(10, 20, 2) m," +
+                        " rnd_str(5,16,2) n," +
+                        " rnd_char() t," +
+                        " rnd_long256() l256" +
+                        " from long_sequence(100)" +
+                        ") timestamp (ts) partition by DAY",
+                sqlExecutionContext
+        );
+
+        // create third table, which will contain both X and 1AM
+        compiler.compile("create table y as (x union all 1am union all tail)", sqlExecutionContext);
+
+        // expected outcome
+        printSqlResult(compiler, sqlExecutionContext, "y order by ts");
+
+        final String expected = Chars.toString(sink);
+
+        // The query above generates expected result, but there is a problem using it
+        // This test produces duplicate timestamps. Those are being sorted in different order by OOO implementation
+        // and the reference query. So they cannot be directly compared. The parts with duplicate timestamps will
+        // look different. If this test ever breaks, uncomment the reference query and compare results visually.
+
+        // insert 1AM data into X
+        compiler.compile("insert into x select * from 1am", sqlExecutionContext);
+        compiler.compile("insert into x select * from tail", sqlExecutionContext);
+
+        // It is necessary to release cached "x" reader because as of yet
+        // reader cannot reload any partition other than "current".
+        // Cached reader will assume smaller partition size for "1970-01-01", which out-of-order insert updated
+        testXAndIndex(
+                engine,
+                compiler,
+                sqlExecutionContext,
+                expected
+        );
+    }
+
     private static void testPartitionedDataMergeData0(
             CairoEngine engine,
             SqlCompiler compiler,
@@ -1993,7 +2744,7 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext
         );
 
-        assertO3DataConsistency(
+        assertO3DataCursors(
                 engine,
                 compiler,
                 sqlExecutionContext,
@@ -2214,7 +2965,7 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext
         );
 
-        assertO3DataConsistency(
+        assertO3DataCursors(
                 engine,
                 compiler,
                 sqlExecutionContext,
@@ -2285,7 +3036,7 @@ public class O3Test extends AbstractO3Test {
         );
 
         // create third table, which will contain both X and 1AM
-        assertO3DataConsistency(
+        assertO3DataCursors(
                 engine,
                 compiler,
                 sqlExecutionContext,
@@ -3363,7 +4114,7 @@ public class O3Test extends AbstractO3Test {
         );
 
         // create third table, which will contain both X and 1AM
-        assertO3DataConsistency(
+        assertO3DataCursors(
                 engine,
                 compiler,
                 executionContext,
@@ -3404,7 +4155,7 @@ public class O3Test extends AbstractO3Test {
         );
 
         // create third table, which will contain both X and 1AM
-        assertO3DataConsistency(
+        assertO3DataCursors(
                 engine,
                 compiler,
                 executionContext,
@@ -3504,7 +4255,7 @@ public class O3Test extends AbstractO3Test {
         );
 
         // create third table, which will contain both X and 1AM
-        assertO3DataConsistency(
+        assertO3DataCursors(
                 engine,
                 compiler,
                 executionContext,
@@ -3602,7 +4353,7 @@ public class O3Test extends AbstractO3Test {
         );
 
         // create third table, which will contain both X and 1AM
-        assertO3DataConsistency(
+        assertO3DataCursors(
                 engine,
                 compiler,
                 executionContext,
@@ -3703,7 +4454,7 @@ public class O3Test extends AbstractO3Test {
         );
 
         // create third table, which will contain both X and 1AM
-        assertO3DataConsistency(
+        assertO3DataCursors(
                 engine,
                 compiler,
                 executionContext,
@@ -3827,7 +4578,7 @@ public class O3Test extends AbstractO3Test {
         );
 
         // create third table, which will contain both X and 1AM
-        assertO3DataConsistency(
+        assertO3DataCursors(
                 engine,
                 compiler,
                 sqlExecutionContext,
@@ -4037,7 +4788,7 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext
         );
 
-        assertO3DataConsistency(
+        assertO3DataCursors(
                 engine,
                 compiler,
                 sqlExecutionContext,
@@ -4115,7 +4866,7 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext
         );
 
-        assertO3DataConsistency(
+        assertO3DataCursors(
                 engine,
                 compiler,
                 sqlExecutionContext,
@@ -4361,6 +5112,30 @@ public class O3Test extends AbstractO3Test {
         );
     }
 
+    @Test
+    public void testInsertNullTimestamp() throws Exception {
+        executeWithPool(2, (engine, compiler, sqlExecutionContext) -> {
+            compiler.compile(
+                    "create table x as (" +
+                            "select" +
+                            " cast(x as int) i," +
+                            " rnd_symbol('msft','ibm', 'googl') sym," +
+                            " timestamp_sequence(10000000000,1000000000L) ts" +
+                            " from long_sequence(100)" +
+                            "), index(sym) timestamp (ts) partition by DAY",
+                    sqlExecutionContext
+            );
+
+            // to_timestamp produces NULL because values does not match the pattern
+            try {
+                TestUtils.insert(compiler, sqlExecutionContext, "insert into x values(0, 'abc', to_timestamp('2019-08-15T16:03:06.595', 'yyyy-MM-dd:HH:mm:ss.SSSUUU'))");
+                Assert.fail();
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "timestamps before 0001-01-01 are not allowed for O3");
+            }
+        });
+    }
+
     private static void testPartitionedDataOODataPbOODataDropColumn0(
             CairoEngine engine,
             SqlCompiler compiler,
@@ -4450,9 +5225,7 @@ public class O3Test extends AbstractO3Test {
                 compiler,
                 sqlExecutionContext,
                 "create table y as (select * from x union all 1am)",
-                "y order by ts",
-                "insert into x select * from 1am",
-                "x"
+                "insert into x select * from 1am"
         );
 
         assertIndexConsistency(
@@ -4462,7 +5235,7 @@ public class O3Test extends AbstractO3Test {
 
         compiler.compile("alter table x drop column c", sqlExecutionContext);
 
-        assertO3DataConsistency(
+        assertO3DataCursors(
                 engine,
                 compiler,
                 sqlExecutionContext,
@@ -4477,11 +5250,6 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext,
                 "z"
         );
-    }
-
-    @Test
-    public void testAppendToLastPartition() throws Exception {
-        executeWithPool(4, O3Test::testAppendToLastPartition);
     }
 
     private static void testAppendToLastPartition(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
@@ -4501,7 +5269,6 @@ public class O3Test extends AbstractO3Test {
             TxnScoreboard txnScoreboard = w.getTxnScoreboard();
             for (int i = 0; i < 1000; i++) {
                 TableWriter.Row r;
-                // todo: we need to truncate last partition when we close it, otherwise we're leaving massive files behind
                 r = w.newRow(ts - step);
                 r.putInt(0, rnd.nextInt());
                 r.putDouble(1, rnd.nextDouble());
@@ -4583,77 +5350,10 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext
         );
 
-        assertO3DataConsistency(
+        assertO3DataCursors(
                 engine,
                 compiler,
                 sqlExecutionContext,
-                "create table y as (x union all append)",
-                "y order by ts",
-                "insert into x select * from append",
-                "x"
-        );
-    }
-
-    private void bench20(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext executionContext) throws SqlException {
-        // create table with roughly 2AM data
-        compiler.compile(
-                "create table x as (" +
-                        "select" +
-                        " cast(x as int) i," +
-                        " rnd_symbol('msft','ibm', 'googl') sym," +
-                        " round(rnd_double(0)*100, 3) amt," +
-                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
-                        " rnd_boolean() b," +
-                        " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
-                        " rnd_double(2) d," +
-                        " rnd_float(2) e," +
-                        " rnd_short(10,1024) f," +
-                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                        " rnd_symbol(4,4,4,2) ik," +
-                        " rnd_long() j," +
-                        " timestamp_sequence(10000000000,100000L) ts," +
-                        " rnd_byte(2,50) l," +
-                        " rnd_bin(10, 20, 2) m," +
-                        " rnd_str(5,16,2) n," +
-                        " rnd_char() t," +
-                        " rnd_long256() l256" +
-                        " from long_sequence(1000000)" +
-                        "), index(sym) timestamp (ts) partition by DAY",
-                executionContext
-        );
-
-        // create table with 1AM data
-
-        compiler.compile(
-                "create table append as (" +
-                        "select" +
-                        " cast(x as int) i," +
-                        " rnd_symbol('msft','ibm', 'googl') sym," +
-                        " round(rnd_double(0)*100, 3) amt," +
-                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
-                        " rnd_boolean() b," +
-                        " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
-                        " rnd_double(2) d," +
-                        " rnd_float(2) e," +
-                        " rnd_short(10,1024) f," +
-                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                        " rnd_symbol(4,4,4,2) ik," +
-                        " rnd_long() j," +
-                        " timestamp_sequence(3000000000l,100000L) ts," + // mid partition for "x"
-                        " rnd_byte(2,50) l," +
-                        " rnd_bin(10, 20, 2) m," +
-                        " rnd_str(5,16,2) n," +
-                        " rnd_char() t," +
-                        " rnd_long256() l256" +
-                        " from long_sequence(1000000)" +
-                        ")",
-                executionContext
-        );
-
-        assertO3DataConsistency(
-                engine,
-                compiler,
-                executionContext,
                 "create table y as (x union all append)",
                 "y order by ts",
                 "insert into x select * from append",

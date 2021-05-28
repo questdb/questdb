@@ -1,0 +1,25 @@
+#
+# Running influx with tsbs benchmark on amazon m5.8xlarge instance pim-ilp-perf-test
+#
+
+# install
+sudo yum install influxdb
+
+# aws linux 2 package tested
+rpm -ql influxdb-1.8.4-1.x86_64
+sudo systemctl start influxdb
+
+# cli 
+influx
+
+# data
+ls -latrh /var/lib/influxdb/data/
+
+# run benchmark
+~/tmp/go/bin/tsbs_generate_data --use-case="cpu-only" --seed=123 --scale=4000 --timestamp-start="2016-01-01T00:00:00Z" --timestamp-end="2016-01-02T00:00:00Z" --log-interval="10s" --format="influx" > /tmp/bigcpu
+~/tmp/go/bin/tsbs_load_influx --file /tmp/bigcpu --workers 4
+
+# stop
+sudo systemctl stop influxdb
+sudo systemctl disable influxdb
+sudo rm -rf /var/lib/influxdb/data/

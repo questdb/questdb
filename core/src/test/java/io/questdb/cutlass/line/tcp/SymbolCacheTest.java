@@ -25,7 +25,8 @@ public class SymbolCacheTest extends AbstractCairoTest {
                     TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY)
                             .col("symCol1", ColumnType.SYMBOL)
                             .col("symCol2", ColumnType.SYMBOL);
-                    SymbolCache cache = new SymbolCache()) {
+                    SymbolCache cache = new SymbolCache()
+            ) {
                 CairoTestUtils.create(model);
                 try (
                         TableWriter writer = new TableWriter(configuration, tableName);

@@ -35,12 +35,6 @@ import io.questdb.std.str.CharSink;
 
 public abstract class FloatFunction implements ScalarFunction {
 
-    private final int position;
-
-    public FloatFunction(int position) {
-        this.position = position;
-    }
-
     @Override
     public final BinarySequence getBin(Record rec) {
         throw new UnsupportedOperationException();
@@ -99,11 +93,6 @@ public abstract class FloatFunction implements ScalarFunction {
     @Override
     public Long256 getLong256B(Record rec) {
         throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public int getPosition() {
-        return position;
     }
 
     @Override

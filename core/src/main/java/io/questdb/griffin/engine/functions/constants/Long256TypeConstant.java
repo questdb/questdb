@@ -35,8 +35,9 @@ public class Long256TypeConstant extends Long256Function implements TypeConstant
 
     public static final Long256TypeConstant INSTANCE = new Long256TypeConstant();
 
-    private Long256TypeConstant() {
-        super(0);
+    @Override
+    public void getLong256(Record rec, CharSink sink) {
+        Long256Impl.NULL_LONG256.toSink(sink);
     }
 
     @Override
@@ -47,10 +48,5 @@ public class Long256TypeConstant extends Long256Function implements TypeConstant
     @Override
     public Long256 getLong256B(Record rec) {
         return Long256Impl.NULL_LONG256;
-    }
-
-    @Override
-    public void getLong256(Record rec, CharSink sink) {
-        Long256Impl.NULL_LONG256.toSink(sink);
     }
 }

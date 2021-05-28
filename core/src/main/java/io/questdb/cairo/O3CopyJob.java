@@ -474,6 +474,10 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                 }
             }
         } catch (Throwable e) {
+            LOG.error()
+                    .$("index error [table=").$(tableWriter.getTableName())
+                    .$(", e=").$(e)
+                    .I$();
             tableWriter.o3BumpErrorCount();
             copyIdleQuick(
                     columnCounter,
@@ -573,21 +577,24 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             long dstVFd,
             TableWriter tableWriter
     ) {
-        final FilesFacade ff = tableWriter.getFilesFacade();
-        O3Utils.unmapAndClose(ff, srcDataFixFd, srcDataFixAddr, srcDataFixSize);
-        O3Utils.unmapAndClose(ff, srcDataVarFd, srcDataVarAddr, srcDataVarSize);
-        O3Utils.unmapAndClose(ff, dstFixFd, dstFixAddr, dstFixSize);
-        O3Utils.unmapAndClose(ff, dstVarFd, dstVarAddr, dstVarSize);
-        O3Utils.close(ff, dstKFd);
-        O3Utils.close(ff, dstVFd);
-        closeColumnIdle(
-                columnCounter,
-                timestampMergeIndexAddr,
-                srcTimestampFd,
-                srcTimestampAddr,
-                srcTimestampSize,
-                tableWriter
-        );
+        try {
+            final FilesFacade ff = tableWriter.getFilesFacade();
+            O3Utils.unmapAndClose(ff, srcDataFixFd, srcDataFixAddr, srcDataFixSize);
+            O3Utils.unmapAndClose(ff, srcDataVarFd, srcDataVarAddr, srcDataVarSize);
+            O3Utils.unmapAndClose(ff, dstFixFd, dstFixAddr, dstFixSize);
+            O3Utils.unmapAndClose(ff, dstVarFd, dstVarAddr, dstVarSize);
+            O3Utils.close(ff, dstKFd);
+            O3Utils.close(ff, dstVFd);
+        } finally {
+            closeColumnIdle(
+                    columnCounter,
+                    timestampMergeIndexAddr,
+                    srcTimestampFd,
+                    srcTimestampAddr,
+                    srcTimestampSize,
+                    tableWriter
+            );
+        }
     }
 
     static void closeColumnIdle(
@@ -599,7 +606,10 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             TableWriter tableWriter
     ) {
         final int columnsRemaining = columnCounter.decrementAndGet();
-        LOG.debug().$("idle [columnsRemaining=").$(columnsRemaining).$(']').$();
+        LOG.debug()
+                .$("idle [table=").$(tableWriter.getTableName())
+                .$(", columnsRemaining=").$(columnsRemaining)
+                .I$();
         if (columnsRemaining == 0) {
             closeColumnIdleQuick(
                     timestampMergeIndexAddr,
@@ -618,14 +628,17 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             long srcTimestampSize,
             TableWriter tableWriter
     ) {
-        final FilesFacade ff = tableWriter.getFilesFacade();
-        O3Utils.unmap(ff, srcTimestampAddr, srcTimestampSize);
-        O3Utils.close(ff, srcTimestampFd);
-        if (timestampMergeIndexAddr != 0) {
-            Vect.freeMergedIndex(timestampMergeIndexAddr);
+        try {
+            final FilesFacade ff = tableWriter.getFilesFacade();
+            O3Utils.unmap(ff, srcTimestampAddr, srcTimestampSize);
+            O3Utils.close(ff, srcTimestampFd);
+            if (timestampMergeIndexAddr != 0) {
+                Vect.freeMergedIndex(timestampMergeIndexAddr);
+            }
+        } finally {
+            tableWriter.o3ClockDownPartitionUpdateCount();
+            tableWriter.o3CountDownDoneLatch();
         }
-        tableWriter.o3ClockDownPartitionUpdateCount();
-        tableWriter.o3CountDownDoneLatch();
     }
 
     // lowest timestamp of partition where data is headed

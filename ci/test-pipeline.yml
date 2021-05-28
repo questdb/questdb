@@ -7,14 +7,40 @@ pr:
 
 variables:
   QDB_LOG_W_FILE_LOCATION: "$(Build.BinariesDirectory)/tests.log"
-  ARCHIVED_LOGS: "$(Build.ArtifactStagingDirectory)/questdb-$(Build.SourceBranchName)-$(Build.SourceVersion)-$(System.StageAttempt).zip"
+  ARCHIVED_LOGS: "$(Build.ArtifactStagingDirectory)/questdb-$(Build.SourceBranchName)-$(Build.SourceVersion)-$(System.StageAttempt)-$(Agent.OS)-$(jdk).zip"
+  DIFF_CONVER_THRESHOLD_PCT: 50
 
 stages:
   - stage: RunTestsBranches
     displayName: "Running tests"
     jobs:
+      - job: CheckChanges
+        displayName: 'Check changes'
+        pool:
+          vmImage: "ubuntu-latest"
+        steps:
+          - checkout: none
+          - bash: |
+              if [ -z "$PR_ID" ]
+                then
+                # No PR - cannot detect changed files, default to true
+                echo "##vso[task.setvariable variable=SOURCE_CODE_CHANGED;isOutput=true]true"
+                else
+                  CHANGED_CORE_FILES=$(curl https://api.github.com/repos/questdb/questdb/pulls/$PR_ID/files -s  | grep -oP 'filename": "core/*\/\K[^.]+')
+                  if [ -z "$CHANGED_CORE_FILES" ]
+                  then
+                    echo "##vso[task.setvariable variable=SOURCE_CODE_CHANGED;isOutput=true]false"
+                  else
+                    echo "##vso[task.setvariable variable=SOURCE_CODE_CHANGED;isOutput=true]true"
+                  fi
+              fi
+            env:
+              PR_ID: $(System.PullRequest.PullRequestNumber)
+            name: check_changes
+            displayName: 'Check changed files'
       - job: RunOn
         displayName: "on"
+        dependsOn: CheckChanges
         strategy:
           matrix:
             linux:
@@ -36,6 +62,8 @@ stages:
         pool:
           vmImage: $(imageName)
         timeoutInMinutes: 60
+        variables:
+          SOURCE_CODE_CHANGED: $[ dependencies.CheckChanges.outputs['check_changes.SOURCE_CODE_CHANGED'] ]
         steps:
           - checkout: self
             fetchDepth: 1
@@ -44,23 +72,72 @@ stages:
           - bash: sudo sysctl -w fs.file-max=500000
             displayName: "Increase file count on Linux"
             condition: eq(variables['Agent.OS'], 'Linux')
-          - bash: sudo sysctl -w kern.sysv.shmseg=4096 && sudo sysctl -w kern.sysv.shmall=5120 && sysctl -A | grep shm
-            displayName: "Increase shared mem size on Darwin"
-            condition: eq(variables['Agent.OS'], 'Darwin')
+          - task: ShellScript@2
+            displayName: "List of coverage classes PR build"
+            inputs:
+              scriptPath: $(Build.SourcesDirectory)/ci/coverage.sh
+              args: $(System.PullRequest.PullRequestNumber)
+              failOnStandardError: true
+            condition: and(and(eq(variables['Agent.OS'], 'Linux'), eq(variables['jdk'], '1.11')), not(eq(variables['System.PullRequest.PullRequestId'], '')) )
           - task: Maven@3
             displayName: "Compile with Maven"
             inputs:
               mavenPomFile: "core/pom.xml"
               mavenOptions: "-Xmx3072m"
-              options: "compile -DskipTests"
+              options: "compile -DskipTests -P build-web-console,use-built-in-nodejs"
               jdkVersionOption: $(jdk)
+            condition: eq(variables['SOURCE_CODE_CHANGED'], 'false')
+          - task: Maven@3
+            displayName: "Run tests with Maven with Code Coverage"
+            inputs:
+              mavenPomFile: "core/pom.xml"
+              mavenOptions: "-Xmx3072m"
+              options: "--batch-mode --quiet -P build-web-console,use-built-in-nodejs -Dout=$(Build.SourcesDirectory)/ci/qlog.conf"
+              jdkVersionOption: $(jdk)
+              codeCoverageToolOption: "$(CODE_COVERAGE_TOOL_OPTION)"
+              codeCoverageClassFilter: "$(COVERAGE_DIFF)"
+            condition: |
+              and(
+                   and(
+                      and( eq(variables['Agent.OS'],                         'Linux'), eq(variables['jdk'], '1.11') ),
+                      not( eq(variables['System.PullRequest.PullRequestId'], ''     ) )
+                  ),
+                  eq(variables['SOURCE_CODE_CHANGED'], 'true')
+              )
           - task: Maven@3
             displayName: "Run tests with Maven"
             inputs:
               mavenPomFile: "core/pom.xml"
               mavenOptions: "-Xmx3072m"
-              options: "--batch-mode --quiet -Dout=$(Build.SourcesDirectory)/ci/qlog.conf"
+              options: "--batch-mode --quiet -P build-web-console,use-built-in-nodejs -Dout=$(Build.SourcesDirectory)/ci/qlog.conf"
               jdkVersionOption: $(jdk)
+            condition: |
+              and(
+                not(
+                   and(
+                      and( eq(variables['Agent.OS'],                         'Linux'), eq(variables['jdk'], '1.11') ),
+                      not( eq(variables['System.PullRequest.PullRequestId'], ''     ) )
+                  )
+                ),
+                eq(variables['SOURCE_CODE_CHANGED'], 'true')
+              )
+          - bash: if [ "$CODE_COVERAGE_TOOL_OPTION" == "JaCoCo" ]; then $JAVA_HOME_11_X64/bin/java -jar $SOURCES/ci/cover-checker-console-1.4.2-jar-with-dependencies.jar -c $SOURCES/$COVERAGE_REPORT_PATH --github-token $SYSTEM_ACCESSTOKEN --repo "questdb/questdb" --pr $PR_ID -t $DIFF_CONVER_THRESHOLD_PCT -type jacoco; fi
+            displayName: "Diff coverage PR report"
+            env:
+              CODE_COVERAGE_TOOL_OPTION: "$(CODE_COVERAGE_TOOL_OPTION)"
+              SYSTEM_ACCESSTOKEN: $(GH_TOKEN)
+              PR_ID: $(System.PullRequest.PullRequestNumber)
+              SOURCES: $(Build.SourcesDirectory)
+              COVERAGE_REPORT_PATH: core/CCReport43F6D5EF/jacoco.xml
+              DIFF_CONVER_THRESHOLD_PCT: $(DIFF_CONVER_THRESHOLD_PCT)
+            condition: |
+              and(
+                  and(
+                     and( eq(variables['Agent.OS'],                         'Linux'), eq(variables['jdk'], '1.11') ),
+                     not( eq(variables['System.PullRequest.PullRequestId'], ''     ) )
+                 ),
+                 eq(variables['SOURCE_CODE_CHANGED'], 'true')
+              )
           - task: ArchiveFiles@2
             displayName: "Tests failed -- Compress logs"
             condition: not(succeeded())

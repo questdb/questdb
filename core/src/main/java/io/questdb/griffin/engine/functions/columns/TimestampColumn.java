@@ -27,17 +27,34 @@ package io.questdb.griffin.engine.functions.columns;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
+import io.questdb.std.ObjList;
+
+import static io.questdb.griffin.engine.functions.columns.ColumnUtils.STATIC_COLUMN_COUNT;
 
 public class TimestampColumn extends TimestampFunction implements ScalarFunction {
+    private static ObjList<TimestampColumn> COLUMNS = new ObjList<>(STATIC_COLUMN_COUNT);
     private final int columnIndex;
 
-    public TimestampColumn(int position, int columnIndex) {
-        super(position);
+    public TimestampColumn(int columnIndex) {
         this.columnIndex = columnIndex;
     }
 
     @Override
     public long getTimestamp(Record rec) {
         return rec.getTimestamp(columnIndex);
+    }
+
+    public static TimestampColumn newInstance(int columnIndex) {
+        if (columnIndex < STATIC_COLUMN_COUNT) {
+            return COLUMNS.getQuick(columnIndex);
+        }
+        return new TimestampColumn(columnIndex);
+    }
+
+    static {
+        COLUMNS.setPos(STATIC_COLUMN_COUNT);
+        for (int i = 0; i < STATIC_COLUMN_COUNT; i++) {
+            COLUMNS.setQuick(i, new TimestampColumn(i));
+        }
     }
 }

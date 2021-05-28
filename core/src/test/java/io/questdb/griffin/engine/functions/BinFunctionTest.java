@@ -27,13 +27,12 @@ package io.questdb.griffin.engine.functions;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.Record;
 import io.questdb.std.BinarySequence;
-import org.junit.Assert;
 import org.junit.Test;
 
 public class BinFunctionTest {
     // assert that all type casts that are not possible will throw exception
 
-    private static final BinFunction function = new BinFunction(25) {
+    private static final BinFunction function = new BinFunction() {
         @Override
         public BinarySequence getBin(Record rec) {
             return null;
@@ -78,11 +77,6 @@ public class BinFunctionTest {
     @Test(expected = UnsupportedOperationException.class)
     public void testGetLong() {
         function.getLong(null);
-    }
-
-    @Test
-    public void testGetPosition() {
-        Assert.assertEquals(25, function.getPosition());
     }
 
     @Test(expected = UnsupportedOperationException.class)

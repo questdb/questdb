@@ -37,6 +37,7 @@ import Result from "../Result"
 import SideMenu from "../SideMenu"
 import Schema from "../Schema"
 import Sidebar from "../Sidebar"
+import { QuestProvider } from "providers"
 
 const Top = styled.div`
   position: relative;
@@ -61,7 +62,7 @@ const Layout = () => {
   }, [])
 
   return (
-    <>
+    <QuestProvider>
       <Sidebar />
       <Footer />
       {consoleNode &&
@@ -93,7 +94,7 @@ const Layout = () => {
       {notificationsNode && createPortal(<Notifications />, notificationsNode)}
       {sideMenuNode && createPortal(<SideMenu />, sideMenuNode)}
       {modalNode && createPortal(<Modal />, modalNode)}
-    </>
+    </QuestProvider>
   )
 }
 

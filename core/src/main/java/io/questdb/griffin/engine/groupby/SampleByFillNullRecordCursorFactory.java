@@ -60,6 +60,7 @@ public class SampleByFillNullRecordCursorFactory implements RecordCursorFactory 
             RecordMetadata groupByMetadata,
             ObjList<GroupByFunction> groupByFunctions,
             ObjList<Function> recordFunctions,
+            @Transient @NotNull IntList recordFunctionPositions,
             int timestampIndex
     ) throws SqlException {
 
@@ -78,7 +79,7 @@ public class SampleByFillNullRecordCursorFactory implements RecordCursorFactory 
                     mapSink,
                     groupByFunctions,
                     recordFunctions,
-                    createPlaceholderFunctions(recordFunctions),
+                    createPlaceholderFunctions(recordFunctions, recordFunctionPositions),
                     timestampIndex,
                     timestampSampler
             );
@@ -90,32 +91,35 @@ public class SampleByFillNullRecordCursorFactory implements RecordCursorFactory 
     }
 
     @NotNull
-    public static ObjList<Function> createPlaceholderFunctions(ObjList<Function> recordFunctions) throws SqlException {
+    public static ObjList<Function> createPlaceholderFunctions(
+            ObjList<Function> recordFunctions,
+            IntList recordFunctionPositions
+    ) throws SqlException {
         final ObjList<Function> placeholderFunctions = new ObjList<>();
         for (int i = 0, n = recordFunctions.size(); i < n; i++) {
             Function function = recordFunctions.getQuick(i);
             if (function instanceof GroupByFunction) {
                 switch (function.getType()) {
                     case ColumnType.INT:
-                        placeholderFunctions.add(new IntConstant(function.getPosition(), Numbers.INT_NaN));
+                        placeholderFunctions.add(IntConstant.NULL);
                         break;
                     case ColumnType.LONG:
-                        placeholderFunctions.add(new LongConstant(function.getPosition(), Numbers.LONG_NaN));
+                        placeholderFunctions.add(LongConstant.NULL);
                         break;
                     case ColumnType.FLOAT:
-                        placeholderFunctions.add(new FloatConstant(function.getPosition(), Float.NaN));
+                        placeholderFunctions.add(FloatConstant.NULL);
                         break;
                     case ColumnType.DOUBLE:
-                        placeholderFunctions.add(new DoubleConstant(function.getPosition(), Double.NaN));
+                        placeholderFunctions.add(DoubleConstant.NULL);
                         break;
                     case ColumnType.BYTE:
-                        placeholderFunctions.add(new ByteConstant(function.getPosition(), (byte) 0));
+                        placeholderFunctions.add(ByteConstant.ZERO);
                         break;
                     case ColumnType.SHORT:
-                        placeholderFunctions.add(new ShortConstant(function.getPosition(), (short) 0));
+                        placeholderFunctions.add(ShortConstant.ZERO);
                         break;
                     default:
-                        throw SqlException.$(function.getPosition(), "Unsupported type: ").put(ColumnType.nameOf(function.getType()));
+                        throw SqlException.$(recordFunctionPositions.getQuick(i), "Unsupported type: ").put(ColumnType.nameOf(function.getType()));
                 }
             } else {
                 placeholderFunctions.add(function);
@@ -174,7 +178,7 @@ public class SampleByFillNullRecordCursorFactory implements RecordCursorFactory 
             // we know base cursor has value
             assert next;
             return initFunctionsAndCursor(executionContext, baseCursor);
-        } catch (CairoException ex) {
+        } catch (Throwable ex) {
             baseCursor.close();
             throw ex;
         }

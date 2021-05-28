@@ -31,6 +31,7 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.StrFunction;
+import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class StrArrayDereferenceFunctionFactory implements FunctionFactory {
@@ -40,16 +41,15 @@ public class StrArrayDereferenceFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new StrArrayDereferenceFunction(position, args.getQuick(0), args.getQuick(1));
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+        return new StrArrayDereferenceFunction(args.getQuick(0), args.getQuick(1));
     }
 
     private static class StrArrayDereferenceFunction extends StrFunction implements BinaryFunction {
         private final Function arrayFunction;
         private final Function indexFunction;
 
-        public StrArrayDereferenceFunction(int position, Function arrayFunction, Function indexFunction) {
-            super(position);
+        public StrArrayDereferenceFunction(Function arrayFunction, Function indexFunction) {
             this.arrayFunction = arrayFunction;
             this.indexFunction = indexFunction;
         }

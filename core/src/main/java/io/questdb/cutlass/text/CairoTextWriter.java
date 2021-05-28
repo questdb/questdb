@@ -390,6 +390,16 @@ public class CairoTextWriter implements Closeable, Mutable {
             return timestampIndex;
         }
 
+        @Override
+        public int getMaxUncommittedRows() {
+            return configuration.getMaxUncommittedRows();
+        }
+
+        @Override
+        public long getCommitLag() {
+            return configuration.getCommitLag();
+        }
+
         TableStructureAdapter of(ObjList<CharSequence> names, ObjList<TypeAdapter> types) throws TextException {
             this.names = names;
             this.types = types;

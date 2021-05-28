@@ -63,6 +63,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
     private int nCompletedRequests;
     private long totalBytesSent;
     private int receivedBytes;
+    private final Runnable onPeerDisconnect;
 
     public HttpConnectionContext(HttpContextConfiguration configuration) {
         this.nf = configuration.getNetworkFacade();
@@ -78,6 +79,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
         this.allowDeflateBeforeSend = configuration.allowDeflateBeforeSend();
         cairoSecurityContext = new CairoSecurityContextImpl(!configuration.readOnlySecurityContext());
         this.serverKeepAlive = configuration.getServerKeepAlive();
+        this.onPeerDisconnect = configuration.onPeerDisconnect();
     }
 
     @Override
@@ -300,7 +302,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
         while (true) {
             final int n = nf.recv(fd, buf, bufRemaining);
             if (n < 0) {
-                dispatcher.disconnect(this);
+                handlePeerDisconnect();
                 break;
             }
 
@@ -442,7 +444,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
                 pendingRetry = true;
                 return false;
             } catch (PeerDisconnectedException ignore) {
-                dispatcher.disconnect(this);
+                handlePeerDisconnect();
             } catch (PeerIsSlowToReadException e2) {
                 LOG.info().$("peer is slow on running the rerun [fd=").$(fd).$(", thread=")
                         .$(Thread.currentThread().getId()).$(']').$();
@@ -478,7 +480,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
             LOG.debug().$("peer is slow reader").$();
             dispatcher.registerChannel(this, IOOperation.WRITE);
         } catch (PeerDisconnectedException ignore) {
-            dispatcher.disconnect(this);
+            handlePeerDisconnect();
         } catch (ServerDisconnectException ignore) {
             LOG.info().$("kicked out [fd=").$(fd).$(']').$();
             dispatcher.disconnect(this);
@@ -524,7 +526,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
                                 .$(", errno=").$(nf.errno())
                                 .$(']').$();
                         // peer disconnect
-                        dispatcher.disconnect(this);
+                        handlePeerDisconnect();
                         return false;
                     }
 
@@ -571,7 +573,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
                     if (read != 0) {
                         dumpBuffer(recvBuffer, read);
                         LOG.info().$("disconnect after request [fd=").$(fd).$(']').$();
-                        dispatcher.disconnect(this);
+                        handlePeerDisconnect();
                         busyRecv = false;
                     } else {
                         processor.onHeadersReady(this);
@@ -586,7 +588,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
                 scheduleRetry(processor, rescheduleContext);
                 busyRecv = false;
             } catch (PeerDisconnectedException e) {
-                dispatcher.disconnect(this);
+                handlePeerDisconnect();
                 busyRecv = false;
             } catch (ServerDisconnectException e) {
                 LOG.info().$("kicked out [fd=").$(fd).$(']').$();
@@ -626,7 +628,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
         try {
             doFail(e, processor);
         } catch (PeerDisconnectedException peerDisconnectedException) {
-            dispatcher.disconnect(this);
+            handlePeerDisconnect();
         } catch (PeerIsSlowToReadException peerIsSlowToReadException) {
             LOG.info().$("peer is slow to receive failed to retry response [fd=").$(fd).$(']').$();
             processor.parkRequest(this);
@@ -636,6 +638,11 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
             LOG.info().$("failed query result cannot be delivered. Kicked out [fd=").$(fd).$(']').$();
             dispatcher.disconnect(this);
         }
+    }
+
+    private void handlePeerDisconnect() {
+        dispatcher.disconnect(this);
+        onPeerDisconnect.run();
     }
 
     private void doFail(HttpException e, HttpRequestProcessor processor) throws

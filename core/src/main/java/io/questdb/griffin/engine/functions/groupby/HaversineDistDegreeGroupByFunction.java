@@ -45,8 +45,7 @@ public class HaversineDistDegreeGroupByFunction extends DoubleFunction implement
     private final Function timestamp;
     private int valueIndex;
 
-    public HaversineDistDegreeGroupByFunction(int position, @NotNull Function latDegree, @NotNull Function lonDegree, Function timestamp) {
-        super(position);
+    public HaversineDistDegreeGroupByFunction(@NotNull Function latDegree, @NotNull Function lonDegree, Function timestamp) {
         this.latDegree = latDegree;
         this.lonDegree = lonDegree;
         this.timestamp = timestamp;

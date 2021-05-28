@@ -33,8 +33,10 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.EmptyTableNoSizeRecordCursor;
 import io.questdb.griffin.engine.functions.GroupByFunction;
+import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 
 public class SampleByFillNullNotKeyedRecordCursorFactory implements RecordCursorFactory {
@@ -50,6 +52,7 @@ public class SampleByFillNullNotKeyedRecordCursorFactory implements RecordCursor
             RecordMetadata groupByMetadata,
             ObjList<GroupByFunction> groupByFunctions,
             ObjList<Function> recordFunctions,
+            @Transient @NotNull IntList recordFunctionPositions,
             int valueCount,
             int timestampIndex
     ) throws SqlException {
@@ -61,7 +64,7 @@ public class SampleByFillNullNotKeyedRecordCursorFactory implements RecordCursor
             this.cursor = new SampleByFillValueNotKeyedRecordCursor(
                     groupByFunctions,
                     recordFunctions,
-                    SampleByFillNullRecordCursorFactory.createPlaceholderFunctions(recordFunctions),
+                    SampleByFillNullRecordCursorFactory.createPlaceholderFunctions(recordFunctions, recordFunctionPositions),
                     timestampIndex,
                     timestampSampler,
                     simpleMapValue

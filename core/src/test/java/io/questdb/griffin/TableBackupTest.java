@@ -161,7 +161,7 @@ public class TableBackupTest {
 
             mainCompiler.compile("backup table " + tableName, mainSqlExecutionContext);
             setFinalBackupPath();
-            xxxxx(tableName);
+            assertTables(tableName);
         });
     }
 
@@ -184,8 +184,8 @@ public class TableBackupTest {
 
             setFinalBackupPath();
 
-            xxxxx("tb1");
-            xxxxx("tb2");
+            assertTables("tb1");
+            assertTables("tb2");
         });
     }
 
@@ -318,8 +318,8 @@ public class TableBackupTest {
 
             setFinalBackupPath();
 
-            xxxxx("tb1");
-            xxxxx("tb2");
+            assertTables("tb1");
+            assertTables("tb2");
         });
     }
 
@@ -345,7 +345,7 @@ public class TableBackupTest {
 
             mainCompiler.compile("backup table " + tableName + ";", mainSqlExecutionContext);
             setFinalBackupPath(1);
-            xxxxx(tableName);
+            assertTables(tableName);
         });
     }
 
@@ -363,7 +363,7 @@ public class TableBackupTest {
 
             mainCompiler.compile("backup table " + tableName + ";", mainSqlExecutionContext);
             setFinalBackupPath();
-            xxxxx(tableName);
+            assertTables(tableName);
         });
     }
 
@@ -517,7 +517,7 @@ public class TableBackupTest {
         setFinalBackupPath(0);
     }
 
-    private void xxxxx(String tb1) throws Exception {
+    private void assertTables(String tb1) throws Exception {
         selectAll(tb1, false, sink1);
         selectAll(tb1, true, sink2);
         TestUtils.assertEquals(sink1, sink2);

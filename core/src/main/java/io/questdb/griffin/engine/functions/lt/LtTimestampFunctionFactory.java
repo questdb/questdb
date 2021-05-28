@@ -31,6 +31,8 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
+import io.questdb.std.IntList;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class LtTimestampFunctionFactory implements FunctionFactory {
@@ -46,23 +48,29 @@ public class LtTimestampFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new LtTimestampFunction(position, args.getQuick(0), args.getQuick(1));
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+        return new LtTimestampFunction(args.getQuick(0), args.getQuick(1));
     }
 
     private static class LtTimestampFunction extends NegatableBooleanFunction implements BinaryFunction {
         private final Function left;
         private final Function right;
 
-        public LtTimestampFunction(int position, Function left, Function right) {
-            super(position);
+        public LtTimestampFunction(Function left, Function right) {
             this.left = left;
             this.right = right;
         }
 
         @Override
         public boolean getBool(Record rec) {
-            return negated == (left.getTimestamp(rec) >= right.getTimestamp(rec));
+            long left = this.left.getTimestamp(rec);
+            if (left != Numbers.LONG_NaN) {
+                long right = this.right.getTimestamp(rec);
+                if (right != Numbers.LONG_NaN) {
+                    return negated == (left >= right);
+                }
+            }
+            return false;
         }
 
         @Override
