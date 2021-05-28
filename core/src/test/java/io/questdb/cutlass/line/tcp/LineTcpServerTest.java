@@ -232,14 +232,6 @@ public class LineTcpServerTest extends AbstractCairoTest {
                 send(lineDataThread, tableName, true);
                 assertTable(expected2, tableName);
             }
-
-            for (int i = 0; i < threadCount; i++) {
-                String tableName = "weather" + i;
-                engine.remove(AllowAllCairoSecurityContext.INSTANCE, path, tableName);
-            }
-
-            engine.releaseAllWriters();
-            engine.releaseAllReaders();
         });
     }
 
