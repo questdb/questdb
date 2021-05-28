@@ -5264,7 +5264,7 @@ public class O3Test extends AbstractO3Test {
 
         final Rnd rnd = new Rnd();
         try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x")) {
-            long ts = 0;
+            long ts = 1000000 * 1000L;
             long step = 1000000;
             TxnScoreboard txnScoreboard = w.getTxnScoreboard();
             for (int i = 0; i < 1000; i++) {

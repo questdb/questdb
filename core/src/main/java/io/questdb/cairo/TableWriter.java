@@ -2423,7 +2423,6 @@ public class TableWriter implements Closeable {
             // to this.maxTimestamp, which isn't truncated yet. So we need to truncate it first
             LOG.info().$("sorting o3 [table=").$(tableName).$(']').$();
             final long sortedTimestampsAddr = o3TimestampMem.addressOf(0);
-//            assert o3TimestampMem.getAppendOffset() / Long.BYTES == o3RowCount;
 
             // ensure there is enough size
             if (o3RowCount > 600 || !o3QuickSortEnabled) {
