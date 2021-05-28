@@ -50,7 +50,7 @@ final public class Timestamps {
     public static final int STATE_MINUTE = 5;
     public static final int STATE_END = 6;
     public static final int STATE_SIGN = 7;
-    public static final long AD_01 = -62135596800000000L;
+    public static final long O3_MIN_TS = 0L;
     public static final TimestampFloorMethod FLOOR_DD = Timestamps::floorDD;
     public static final TimestampAddMethod ADD_DD = Timestamps::addDays;
     private static final long AVG_YEAR_MICROS = (long) (365.2425 * DAY_MICROS);

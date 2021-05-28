@@ -101,6 +101,7 @@ public class CharSequenceObjHashMap<V> extends AbstractCharSequenceHashSet {
     }
 
     public boolean putAt(int index, CharSequence key, V value) {
+        assert value != null;
         if (putAt0(index, key, value)) {
             list.add(key);
             return true;
