@@ -194,7 +194,7 @@ class LineTcpMeasurementScheduler implements Closeable {
     }
 
     @NotNull
-    private TableUpdateDetails assignTableToThread(String tableName, int keyIndex) {
+    private TableUpdateDetails assignTableToThread(String tableName) {
         TableUpdateDetails tableUpdateDetails;
         calcThreadLoad();
         int leastLoad = Integer.MAX_VALUE;
@@ -207,11 +207,7 @@ class LineTcpMeasurementScheduler implements Closeable {
         }
         tableUpdateDetails = new TableUpdateDetails(tableName, threadId, netIoJobs);
 
-        if (tableUpdateDetailsByTableName.keys().size() > 0) {
-            int i = 0;
-        }
-        assert tableUpdateDetailsByTableName.keyIndex(tableName) == keyIndex;
-
+        int keyIndex = tableUpdateDetailsByTableName.keyIndex(tableName);
         tableUpdateDetailsByTableName.putAt(keyIndex, tableName, tableUpdateDetails);
         LOG.info().$("assigned ").$(tableName).$(" to thread ").$(threadId).$();
         return tableUpdateDetails;
@@ -359,11 +355,16 @@ class LineTcpMeasurementScheduler implements Closeable {
         TableUpdateDetails tableUpdateDetails;
         tableUpdateDetailsLock.writeLock().lock();
         try {
+            if (Chars.equals(protoParser.getMeasurementName(), "weather")) {
+                int i = 0;
+            }
+
             int keyIndex = tableUpdateDetailsByTableName.keyIndex(protoParser.getMeasurementName());
             if (keyIndex < 0) {
                 tableUpdateDetails = tableUpdateDetailsByTableName.valueAt(keyIndex);
             } else {
                 String tableName = protoParser.getMeasurementName().toString();
+
                 int status = engine.getStatus(securityContext, path, tableName, 0, tableName.length());
                 if (status != TableUtils.TABLE_EXISTS) {
                     LOG.info().$("creating table [tableName=").$(tableName).$(']').$();
@@ -378,7 +379,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                     tableUpdateDetailsByTableName.put(tableUpdateDetails.tableName, tableUpdateDetails);
                 } else {
                     TelemetryTask.doStoreTelemetry(engine, Telemetry.SYSTEM_ILP_RESERVE_WRITER, Telemetry.ORIGIN_ILP_TCP);
-                    tableUpdateDetails = assignTableToThread(tableName, keyIndex);
+                    tableUpdateDetails = assignTableToThread(tableName);
                 }
             }
 
