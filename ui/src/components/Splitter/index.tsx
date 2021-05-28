@@ -59,7 +59,6 @@ type Props = Readonly<{
   fallback: number
   max?: number
   min?: number
-  name: string
   onChange?: (value: number) => void
 }>
 
@@ -133,7 +132,6 @@ export const Splitter = ({
   direction,
   max,
   min,
-  name,
   onChange,
 }: Props) => {
   const [offset, setOffset] = useState(0)
@@ -227,7 +225,6 @@ export const Splitter = ({
       const size =
         firstChild.current.getBoundingClientRect()[measure] +
         (ghostPosition - originalPosition)
-      localStorage.setItem(`splitter.${name}`, `${size}`)
 
       setOriginalPosition(0)
       setGhostPosition(0)
@@ -237,17 +234,11 @@ export const Splitter = ({
         onChange(size)
       }
     }
-  }, [direction, ghostPosition, name, onChange, originalPosition, pressed])
+  }, [direction, ghostPosition, onChange, originalPosition, pressed])
 
   useEffect(() => {
-    const size = parseInt(localStorage.getItem(`splitter.${name}`) ?? "0", 10)
-
-    if (size) {
-      setBasis(size)
-    } else {
-      setBasis(fallback)
-    }
-  }, [fallback, name])
+    setBasis(fallback)
+  }, [fallback])
 
   const style = {
     display: "flex",
