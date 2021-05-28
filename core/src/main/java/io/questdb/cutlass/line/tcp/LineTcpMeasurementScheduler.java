@@ -336,16 +336,11 @@ class LineTcpMeasurementScheduler implements Closeable {
         TableUpdateDetails tableUpdateDetails;
         tableUpdateDetailsLock.writeLock().lock();
         try {
-            if (Chars.equals(protoParser.getMeasurementName(), "weather")) {
-                int i = 0;
-            }
-
             int keyIndex = tableUpdateDetailsByTableName.keyIndex(protoParser.getMeasurementName());
             if (keyIndex < 0) {
                 tableUpdateDetails = tableUpdateDetailsByTableName.valueAt(keyIndex);
             } else {
                 String tableName = protoParser.getMeasurementName().toString();
-
                 int status = engine.getStatus(securityContext, path, tableName, 0, tableName.length());
                 if (status != TableUtils.TABLE_EXISTS) {
                     LOG.info().$("creating table [tableName=").$(tableName).$(']').$();
