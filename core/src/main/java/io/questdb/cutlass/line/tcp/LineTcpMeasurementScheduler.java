@@ -170,7 +170,7 @@ class LineTcpMeasurementScheduler implements Closeable {
     }
 
     @NotNull
-    private TableUpdateDetails assignTableToThread(String tableName, int keyIndex) {
+    private TableUpdateDetails assignTableToThread(String tableName) {
         TableUpdateDetails tableUpdateDetails;
         calcThreadLoad();
         int leastLoad = Integer.MAX_VALUE;
@@ -182,6 +182,8 @@ class LineTcpMeasurementScheduler implements Closeable {
             }
         }
         tableUpdateDetails = new TableUpdateDetails(tableName, threadId, netIoJobs);
+
+        int keyIndex = tableUpdateDetailsByTableName.keyIndex(tableName);
         tableUpdateDetailsByTableName.putAt(keyIndex, tableName, tableUpdateDetails);
         LOG.info().$("assigned ").$(tableName).$(" to thread ").$(threadId).$();
         return tableUpdateDetails;
@@ -353,7 +355,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                     tableUpdateDetailsByTableName.put(tableUpdateDetails.tableName, tableUpdateDetails);
                 } else {
                     TelemetryTask.doStoreTelemetry(engine, Telemetry.SYSTEM_ILP_RESERVE_WRITER, Telemetry.ORIGIN_ILP_TCP);
-                    tableUpdateDetails = assignTableToThread(tableName, keyIndex);
+                    tableUpdateDetails = assignTableToThread(tableName);
                 }
             }
 
