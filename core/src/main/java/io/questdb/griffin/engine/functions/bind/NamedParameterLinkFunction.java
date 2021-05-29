@@ -35,13 +35,11 @@ import io.questdb.std.str.CharSink;
 public class NamedParameterLinkFunction implements ScalarFunction {
     private final String variableName;
     private final int type;
-    private final int position;
     private Function base;
 
-    public NamedParameterLinkFunction(String variableName, int type, int position) {
+    public NamedParameterLinkFunction(String variableName, int type) {
         this.variableName = variableName;
         this.type = type;
-        this.position = position;
     }
 
     @Override
@@ -107,10 +105,6 @@ public class NamedParameterLinkFunction implements ScalarFunction {
     @Override
     public Long256 getLong256B(Record rec) {
         return getBase().getLong256B(rec);
-    }
-
-    private int getPosition() {
-        return position;
     }
 
     @Override

@@ -83,7 +83,7 @@ public class SimpleReadWriteLock implements ReadWriteLock {
         }
 
         @Override
-        public boolean tryLock(long time, @NotNull TimeUnit unit) throws InterruptedException {
+        public boolean tryLock(long time, @NotNull TimeUnit unit) {
             throw new UnsupportedOperationException();
         }
 
@@ -130,7 +130,7 @@ public class SimpleReadWriteLock implements ReadWriteLock {
         }
 
         @Override
-        public boolean tryLock(long time, @NotNull TimeUnit unit) throws InterruptedException {
+        public boolean tryLock(long time, @NotNull TimeUnit unit) {
             throw new UnsupportedOperationException();
         }
 

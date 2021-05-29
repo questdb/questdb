@@ -43,14 +43,14 @@ public class AddIntFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new AddIntFunc(position, args.getQuick(0), args.getQuick(1));
+        return new AddIntFunc(args.getQuick(0), args.getQuick(1));
     }
 
     private static class AddIntFunc extends IntFunction implements BinaryFunction {
         final Function left;
         final Function right;
 
-        public AddIntFunc(int position, Function left, Function right) {
+        public AddIntFunc(Function left, Function right) {
             super();
             this.left = left;
             this.right = right;

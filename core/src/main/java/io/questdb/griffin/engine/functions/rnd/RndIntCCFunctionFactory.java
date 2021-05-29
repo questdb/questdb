@@ -56,7 +56,7 @@ public class RndIntCCFunctionFactory implements FunctionFactory {
         }
 
         if (lo < hi) {
-            return new RndFunction(position, lo, hi, nanRate);
+            return new RndFunction(lo, hi, nanRate);
         }
 
         throw SqlException.position(position).put("invalid range");
@@ -68,7 +68,7 @@ public class RndIntCCFunctionFactory implements FunctionFactory {
         private final int nanRate;
         private Rnd rnd;
 
-        public RndFunction(int position, int lo, int hi, int nanRate) {
+        public RndFunction(int lo, int hi, int nanRate) {
             super();
             this.lo = lo;
             this.range = hi - lo + 1;

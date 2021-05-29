@@ -45,13 +45,13 @@ public class AbsIntFunctionFactory implements FunctionFactory {
             int position, ObjList<Function> args,
             IntList argPositions, CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext) {
-        return new AbsIntFunction(position, args.getQuick(0));
+        return new AbsIntFunction(args.getQuick(0));
     }
 
     private static class AbsIntFunction extends IntFunction implements UnaryFunction {
         private final Function arg;
 
-        public AbsIntFunction(int position, Function arg) {
+        public AbsIntFunction(Function arg) {
             super();
             this.arg = arg;
         }

@@ -70,7 +70,7 @@ public class NewLineProtoParser implements Closeable {
     private final EntityHandler entityNameHandler = this::expectEntityName;
     private final EntityHandler entityValueHandler = this::expectEntityValue;
     private final EntityHandler entityTimestampHandler = this::expectTimestamp;
-    private final EntityHandler entityEndOfLineHandler = this::expectEndoOfLine;
+    private final EntityHandler entityEndOfLineHandler = this::expectEndOfLine;
 
     public NewLineProtoParser of(long bufLo) {
         this.bufAt = bufLo - 1;
@@ -185,10 +185,6 @@ public class NewLineProtoParser implements Closeable {
         return errorCode;
     }
 
-    public void clear() {
-        bufAt = 0;
-    }
-
     @Override
     public void close() {
     }
@@ -289,7 +285,7 @@ public class NewLineProtoParser implements Closeable {
         }
     }
 
-    private boolean expectEndoOfLine(byte endOfEntityByte) {
+    private boolean expectEndOfLine(byte endOfEntityByte) {
         assert endOfEntityByte == '\n';
         return true;
     }

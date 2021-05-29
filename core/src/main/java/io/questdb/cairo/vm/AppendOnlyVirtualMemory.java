@@ -147,13 +147,6 @@ public class AppendOnlyVirtualMemory extends PagedVirtualMemory implements Mappe
         return fd;
     }
 
-    public final void of(FilesFacade ff, long fd, long pageSize) {
-        close();
-        this.ff = ff;
-        setPageSize(pageSize);
-        this.fd = fd;
-    }
-
     public final void setSize(long size) {
         jumpTo(size);
     }

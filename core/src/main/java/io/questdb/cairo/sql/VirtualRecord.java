@@ -30,7 +30,7 @@ import io.questdb.std.Long256;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.CharSink;
 
-public class VirtualRecord implements ColumnTypes, DelegatingRecord {
+public class VirtualRecord implements ColumnTypes, Record {
     private final ObjList<? extends Function> functions;
     private final int columnCount;
     private Record base;
@@ -173,7 +173,6 @@ public class VirtualRecord implements ColumnTypes, DelegatingRecord {
         return functions;
     }
 
-    @Override
     public void of(Record record) {
         this.base = record;
     }

@@ -157,11 +157,6 @@ public class InsertStatementImpl implements InsertStatement {
         }
 
         @Override
-        public void rollback() {
-            writer.rollback();
-        }
-
-        @Override
         public TableWriter popWriter() {
             TableWriter w = writer;
             this.writer = null;
