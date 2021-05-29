@@ -24,8 +24,17 @@
 
 package io.questdb.cairo.sql;
 
+/**
+ * Used internally for vector-based row access
+ */
 public interface RowCursor {
+    /**
+     * @return true if cursor has more rows, otherwise false.
+     */
     boolean hasNext();
 
+    /**
+     * @return numeric index of the next row
+     */
     long next();
 }
