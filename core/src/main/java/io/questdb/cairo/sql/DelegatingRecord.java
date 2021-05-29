@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.sql;
 
+// TODO - remove
 public interface DelegatingRecord extends Record {
     void of(Record base);
 }

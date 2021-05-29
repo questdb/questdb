@@ -38,6 +38,9 @@ public interface InsertMethod extends Closeable {
 
     void rollback();
 
+    /**
+     * @return sets writer to null
+     */
     TableWriter popWriter();
 
     @Override
