@@ -27,13 +27,26 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.sql.StaticSymbolTable;
 
+/**
+ * Gets the properties of a symbol map, whether symbols in a table are
+ * cached, what the table symbol capacity is, updating the symbol count of a table.
+ */
 public interface SymbolMapReader extends StaticSymbolTable {
     int getSymbolCapacity();
 
+    /**
+     * @return true if symbol table is cached, otherwise false.
+     */
     boolean isCached();
 
+    /**
+     * @return true if table reader is deleted, otherwise false.
+     */
     boolean isDeleted();
 
+    /**
+     * @param count number of symbols to update symbol table to
+     */
     void updateSymbolCount(int count);
 
     long symbolCharsAddressOf(int symbolIndex);

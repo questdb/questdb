@@ -43,7 +43,7 @@ public interface PageFrame {
     /**
      * Return the size of the page frame or if the page represents a column top
      * (a column that was added to the table when other columns already had data),
-     * then return the number of of empty rows at the top of a column
+     * then return the number of empty rows at the top of a column
      *
      * @param columnIndex index of column
      * @return size of page in bytes

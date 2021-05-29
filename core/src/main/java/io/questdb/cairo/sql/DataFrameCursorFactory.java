@@ -30,9 +30,16 @@ import io.questdb.std.str.CharSink;
 
 import java.io.Closeable;
 
+/**
+ * A factory interface for dataframe cursors
+ */
 public interface DataFrameCursorFactory extends Sinkable, Closeable {
+
     DataFrameCursor getCursor(SqlExecutionContext executionContext);
 
+    /**
+     * @param sink to print data frame cursor to
+     */
     default void toSink(CharSink sink) {
         throw new UnsupportedOperationException();
     }
