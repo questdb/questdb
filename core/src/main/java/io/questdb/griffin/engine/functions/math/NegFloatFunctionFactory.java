@@ -29,16 +29,15 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.IntFunction;
+import io.questdb.griffin.engine.functions.FloatFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
-import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
-public class NegIntFunctionFactory implements FunctionFactory {
+public class NegFloatFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "-(I)";
+        return "-(F)";
     }
 
     @Override
@@ -46,7 +45,7 @@ public class NegIntFunctionFactory implements FunctionFactory {
         return new Func(args.getQuick(0));
     }
 
-    private static class Func extends IntFunction implements UnaryFunction {
+    private static class Func extends FloatFunction implements UnaryFunction {
         final Function arg;
 
         public Func(Function arg) {
@@ -59,9 +58,8 @@ public class NegIntFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public int getInt(Record rec) {
-            final int value = arg.getInt(rec);
-            return value != Numbers.INT_NaN ? -value : Numbers.INT_NaN;
+        public float getFloat(Record rec) {
+            return -arg.getFloat(rec);
         }
     }
 }

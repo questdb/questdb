@@ -5,7 +5,6 @@ io.questdb.griffin.engine.functions.test.TestSumTDoubleGroupByFunctionFactory
 io.questdb.griffin.engine.functions.test.TestSumStringGroupByFunctionFactory
 io.questdb.griffin.engine.functions.test.TestNPEFactory
 
-
 # logical operations
 io.questdb.griffin.engine.functions.bool.OrFunctionFactory
 io.questdb.griffin.engine.functions.bool.AndFunctionFactory
@@ -48,6 +47,11 @@ io.questdb.griffin.engine.functions.date.AddLongToTimestampFunctionFactory
 # '-' operator
 io.questdb.griffin.engine.functions.math.NegIntFunctionFactory
 io.questdb.griffin.engine.functions.math.NegDoubleFunctionFactory
+io.questdb.griffin.engine.functions.math.NegFloatFunctionFactory
+io.questdb.griffin.engine.functions.math.NegLongFunctionFactory
+io.questdb.griffin.engine.functions.math.NegShortFunctionFactory
+io.questdb.griffin.engine.functions.math.NegByteFunctionFactory
+
 io.questdb.griffin.engine.functions.math.SubDoubleFunctionFactory
 io.questdb.griffin.engine.functions.math.SubIntFunctionFactory
 io.questdb.griffin.engine.functions.math.SubLongFunctionFactory
@@ -512,3 +516,5 @@ io.questdb.griffin.engine.functions.math.BitwiseNotIntFunctionFactory
 # timezone conversion
 io.questdb.griffin.engine.functions.date.ToTimezoneTimestampFunctionFactory
 io.questdb.griffin.engine.functions.date.ToUTCTimestampFunctionFactory
+
+io.questdb.griffin.engine.functions.catalogue.TypeOfFunctionFactory
