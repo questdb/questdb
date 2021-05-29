@@ -55,6 +55,50 @@ public class AlterTableCommitLagTest extends AbstractGriffinTest {
         });
     }
 
+    @Test
+    public void setMaxUncommittedRowsAndCommitLag() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableName = "tableSetMaxUncommittedRows";
+            try (TableModel tbl = new TableModel(configuration, tableName, PartitionBy.DAY)) {
+                createX(tbl);
+            }
+            try (TableReader rdr = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+                String alterCommand2 = "ALTER TABLE " + tableName + " SET PARAM CommitLag = 1s";
+                compiler.compile(alterCommand2, sqlExecutionContext);
+                String alterCommand = "ALTER TABLE " + tableName + " SET PARAM maxUncommittedRows = 11111";
+                compiler.compile(alterCommand, sqlExecutionContext);
+
+                assertSql("SELECT maxUncommittedRows, commitLag FROM tables() WHERE name = '" + tableName + "'",
+                        "maxUncommittedRows\tcommitLag\n" +
+                                "11111\t1000000\n");
+                rdr.reload();
+                Assert.assertEquals(11111, rdr.getMetadata().getMaxUncommittedRows());
+                Assert.assertEquals(1000000, rdr.getMetadata().getCommitLag());
+            }
+            engine.releaseAllReaders();
+            try (TableReader rdr = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+                Assert.assertEquals(11111, rdr.getMetadata().getMaxUncommittedRows());
+                Assert.assertEquals(1000000, rdr.getMetadata().getCommitLag());
+            }
+
+            try (TableReader rdr = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+                String alterCommand = "ALTER TABLE " + tableName + " SET PARAM maxUncommittedRows = 0";
+                compiler.compile(alterCommand, sqlExecutionContext);
+                String alterCommand2 = "ALTER TABLE " + tableName + " SET PARAM CommitLag = 0s";
+                compiler.compile(alterCommand2, sqlExecutionContext);
+
+                assertSql("SELECT maxUncommittedRows, commitLag FROM tables() WHERE name = '" + tableName + "'",
+                        "maxUncommittedRows\tcommitLag\n" +
+                                "0\t0\n");
+                rdr.reload();
+                Assert.assertEquals(0, rdr.getMetadata().getMaxUncommittedRows());
+                Assert.assertEquals(0, rdr.getMetadata().getCommitLag());
+            }
+
+            assertX(tableName);
+        });
+    }
+
     private void assertX(String tableName) throws SqlException {
         engine.releaseAllReaders();
         assertSql("select * from " + tableName,
