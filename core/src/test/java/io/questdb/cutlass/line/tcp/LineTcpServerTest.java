@@ -220,8 +220,9 @@ public class LineTcpServerTest extends AbstractCairoTest {
 
             StringBuilder expectedSB = new StringBuilder(header);
             for(int l = 0; l < lines.length; l++) {
-                expectedSB.append(String.valueOf(lines[l]).repeat(iterations + 2));
-            }
+                for (int it = 0; it < iterations + 2; it++) {
+                    expectedSB.append(lines[l]);
+                }            }
             String expected2 = expectedSB.toString();
 
             threadPushFinished.await();
