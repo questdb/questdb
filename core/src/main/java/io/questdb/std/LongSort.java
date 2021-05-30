@@ -50,6 +50,7 @@ public class LongSort {
     /**
      * Sorts the specified range of the array.
      *
+     * @param vec vector of long values
      * @param left  the index of the first element, inclusive, to be sorted
      * @param right the index of the last element, inclusive, to be sorted
      */

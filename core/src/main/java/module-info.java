@@ -134,6 +134,11 @@ open module io.questdb {
 //                    # '-' operator,
             io.questdb.griffin.engine.functions.math.NegIntFunctionFactory,
             io.questdb.griffin.engine.functions.math.NegDoubleFunctionFactory,
+            io.questdb.griffin.engine.functions.math.NegFloatFunctionFactory,
+            io.questdb.griffin.engine.functions.math.NegLongFunctionFactory,
+            io.questdb.griffin.engine.functions.math.NegShortFunctionFactory,
+            io.questdb.griffin.engine.functions.math.NegByteFunctionFactory,
+
             io.questdb.griffin.engine.functions.math.SubDoubleFunctionFactory,
             io.questdb.griffin.engine.functions.math.SubIntFunctionFactory,
             io.questdb.griffin.engine.functions.math.SubLongFunctionFactory,
@@ -547,6 +552,8 @@ open module io.questdb {
             BitwiseXorIntFunctionFactory,
 
             io.questdb.griffin.engine.functions.date.ToTimezoneTimestampFunctionFactory,
-            io.questdb.griffin.engine.functions.date.ToUTCTimestampFunctionFactory
+            io.questdb.griffin.engine.functions.date.ToUTCTimestampFunctionFactory,
+
+            io.questdb.griffin.engine.functions.catalogue.TypeOfFunctionFactory
             ;
 }

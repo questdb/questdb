@@ -46,9 +46,5 @@ public interface PageFrameCursor extends Closeable {
      */
     long size();
 
-    /**
-     * @param columnIndex
-     * @return
-     */
     SymbolMapReader getSymbolMapReader(int columnIndex);
 }

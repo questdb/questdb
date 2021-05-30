@@ -32,10 +32,10 @@ import io.questdb.std.Mutable;
 /**
  * Allows for setting the values of bind variables passed
  * in a SQL query by their index (position in a list of bind variables).
- *
- * Type checking is not performed beforehand, meaning the type of the
- * element being set by the following methods should be known by
- * performing a prior lookup using {@link io.questdb.cairo.sql.RecordMetadata}
+ * <p>
+ * Types of bind variables are can be defined either via setting them explicitly before
+ * SQL is executed or having SQL compiler infer types from expression where bind variable
+ * is used. Once type is set, bind variable can be assigned value only from a compatible type.
  */
 public interface BindVariableService extends Mutable {
 
@@ -53,9 +53,10 @@ public interface BindVariableService extends Mutable {
     /**
      * Set the type of a bind variable by name as binary and provide a value
      *
-     * @param name of the bind variable
+     * @param name  of the bind variable
      * @param value as binary
-     * @throws SqlException
+     * @throws SqlException is throw when variable has already been defined with type
+     *                      that is not compatible with Binary
      */
     void setBin(CharSequence name, BinarySequence value) throws SqlException;
 
@@ -63,7 +64,8 @@ public interface BindVariableService extends Mutable {
      * Set type of a bind variable by index as binary
      *
      * @param index numeric index of the bind variable
-     * @throws SqlException
+     * @throws SqlException is throw when variable has already been defined with type
+     *                      that is not compatible with Binary
      */
     void setBin(int index) throws SqlException;
 
@@ -73,16 +75,18 @@ public interface BindVariableService extends Mutable {
      *
      * @param index numeric index of the bind variable
      * @param value as binary
-     * @throws SqlException
+     * @throws SqlException is throw when variable has already been defined with type
+     *                      that is not compatible with Binary
      */
     void setBin(int index, BinarySequence value) throws SqlException;
 
     /**
      * Set type of a bind variable by name as boolean and provide a value
      *
-     * @param name of the bind variable
-     * @param value
-     * @throws SqlException
+     * @param name  of the bind variable
+     * @param value as boolean
+     * @throws SqlException is throw when variable has already been defined with type
+     *                      that is not compatible with Boolean
      */
     void setBoolean(CharSequence name, boolean value) throws SqlException;
 
@@ -90,7 +94,8 @@ public interface BindVariableService extends Mutable {
      * Set type of a bind variable by index as boolean
      *
      * @param index numeric index of the bind variable
-     * @throws SqlException
+     * @throws SqlException is throw when variable has already been defined with type
+     *                      that is not compatible with Boolean
      */
     void setBoolean(int index) throws SqlException;
 
@@ -99,16 +104,18 @@ public interface BindVariableService extends Mutable {
      *
      * @param index numeric index of the bind variable
      * @param value as boolean
-     * @throws SqlException
+     * @throws SqlException is throw when variable has already been defined with type
+     *                      that is not compatible with Boolean
      */
     void setBoolean(int index, boolean value) throws SqlException;
 
     /**
      * Set type of a bind variable by name as byte and provide a value
      *
-     * @param name of the bind variable
+     * @param name  of the bind variable
      * @param value as byte
-     * @throws SqlException
+     * @throws SqlException is throw when variable has already been defined with type
+     *                      that is not compatible with Byte
      */
     void setByte(CharSequence name, byte value) throws SqlException;
 
@@ -116,16 +123,28 @@ public interface BindVariableService extends Mutable {
      * Set type of a bind variable by index as byte
      *
      * @param index numeric index of the bind variable
-     * @throws SqlException
+     * @param  value value as byte
+     * @throws SqlException is throw when variable has already been defined with type
+     *                      that is not compatible with Byte
      */
     void setByte(int index, byte value) throws SqlException;
 
     /**
+     * Set type of a bind variable by index as binary
+     *
+     * @param index numeric index of the bind variable
+     * @throws SqlException is throw when variable has already been defined with type
+     *                      that is not compatible with Byte
+     */
+    void setByte(int index) throws SqlException;
+
+    /**
      * Set type of a bind variable by index as char and provide a value
      *
-     * @param name of the bind variable
-     * @param value
-     * @throws SqlException
+     * @param name  of the bind variable
+     * @param value as character
+     * @throws SqlException is throw when variable has already been defined with type
+     *                      that is not compatible with Character
      */
     void setChar(CharSequence name, char value) throws SqlException;
 
@@ -133,7 +152,8 @@ public interface BindVariableService extends Mutable {
      * Set type of a bind variable by index as char
      *
      * @param index numeric index of the bind variable
-     * @throws SqlException
+     * @throws SqlException is throw when variable has already been defined with type
+     *                      that is not compatible with Character
      */
     void setChar(int index) throws SqlException;
 
@@ -141,17 +161,19 @@ public interface BindVariableService extends Mutable {
      * Set type of a bind variable by index as char and provide a value
      *
      * @param index numeric index of the bind variable
-     * @param value char
-     * @throws SqlException
+     * @param value character
+     * @throws SqlException is throw when variable has already been defined with type
+     *                      that is not compatible with Character
      */
     void setChar(int index, char value) throws SqlException;
 
     /**
      * Set type of a bind variable by name as date and provide a value
      *
-     * @param name of the bind variable
+     * @param name  of the bind variable
      * @param value date as long
-     * @throws SqlException
+     * @throws SqlException is throw when variable has already been defined with type
+     *                      that is not compatible with Date
      */
     void setDate(CharSequence name, long value) throws SqlException;
 
@@ -159,7 +181,8 @@ public interface BindVariableService extends Mutable {
      * Set type of a bind variable by index as binary
      *
      * @param index numeric index of the bind variable
-     * @throws SqlException
+     * @throws SqlException is throw when variable has already been defined with type
+     *                      that is not compatible with Date
      */
     void setDate(int index) throws SqlException;
 
@@ -168,16 +191,18 @@ public interface BindVariableService extends Mutable {
      *
      * @param index numeric index of the bind variable
      * @param value date as long
-     * @throws SqlException
+     * @throws SqlException is throw when variable has already been defined with type
+     *                      that is not compatible with Date
      */
     void setDate(int index, long value) throws SqlException;
 
     /**
      * Set type of a bind variable by name as double and provide a value
      *
-     * @param name of the bind variable
+     * @param name  of the bind variable
      * @param value as double
-     * @throws SqlException
+     * @throws SqlException is throw when variable has already been defined with type
+     *                      that is not compatible with Double
      */
     void setDouble(CharSequence name, double value) throws SqlException;
 
@@ -185,23 +210,26 @@ public interface BindVariableService extends Mutable {
      * Set type of a bind variable by index as double
      *
      * @param index numeric index of the bind variable
-     * @throws SqlException
+     * @throws SqlException is throw when variable has already been defined with type
+     *                      that is not compatible with Double
      */
     void setDouble(int index) throws SqlException;
 
     /**
      * @param index numeric index of the bind variable
      * @param value as double
-     * @throws SqlException
+     * @throws SqlException is throw when variable has already been defined with type
+     *                      that is not compatible with Double
      */
     void setDouble(int index, double value) throws SqlException;
 
     /**
      * Set type of a bind variable by name as float and provide a value
      *
-     * @param name of the bind variable
+     * @param name  of the bind variable
      * @param value as float
-     * @throws SqlException
+     * @throws SqlException is throw when variable has already been defined with type
+     *                      that is not compatible with Float
      */
     void setFloat(CharSequence name, float value) throws SqlException;
 
@@ -209,7 +237,8 @@ public interface BindVariableService extends Mutable {
      * Set type of a bind variable by index as binary
      *
      * @param index numeric index of the bind variable
-     * @throws SqlException
+     * @throws SqlException is throw when variable has already been defined with type
+     *                      that is not compatible with Float
      */
     void setFloat(int index) throws SqlException;
 
@@ -218,16 +247,18 @@ public interface BindVariableService extends Mutable {
      *
      * @param index numeric index of the bind variable
      * @param value as float
-     * @throws SqlException
+     * @throws SqlException is throw when variable has already been defined with type
+     *                      that is not compatible with Float
      */
     void setFloat(int index, float value) throws SqlException;
 
     /**
      * Set type of a bind variable by name as integer and provide a value
      *
-     * @param name of the bind variable
+     * @param name  of the bind variable
      * @param value as integer
-     * @throws SqlException
+     * @throws SqlException is throw when variable has already been defined with type
+     *                      that is not compatible with Int
      */
     void setInt(CharSequence name, int value) throws SqlException;
 
@@ -235,7 +266,8 @@ public interface BindVariableService extends Mutable {
      * Set type of a bind variable by index as binary
      *
      * @param index numeric index of the bind variable
-     * @throws SqlException
+     * @throws SqlException is throw when variable has already been defined with type
+     *                      that is not compatible with Int
      */
     void setInt(int index) throws SqlException;
 
@@ -244,16 +276,18 @@ public interface BindVariableService extends Mutable {
      *
      * @param index numeric index of the bind variable
      * @param value as integer
-     * @throws SqlException
+     * @throws SqlException is throw when variable has already been defined with type
+     *                      that is not compatible with Int
      */
     void setInt(int index, int value) throws SqlException;
 
     /**
      * Set type of a bind variable by name as long and provide a value
      *
-     * @param name of the bind variable
+     * @param name  of the bind variable
      * @param value as long
-     * @throws SqlException
+     * @throws SqlException is throw when variable has already been defined with type
+     *                      that is not compatible with Long
      */
     void setLong(CharSequence name, long value) throws SqlException;
 
@@ -261,7 +295,8 @@ public interface BindVariableService extends Mutable {
      * Set type of a bind variable by index as binary
      *
      * @param index numeric index of the bind variable
-     * @throws SqlException
+     * @throws SqlException is throw when variable has already been defined with type
+     *                      that is not compatible with Long
      */
     void setLong(int index) throws SqlException;
 
@@ -270,7 +305,8 @@ public interface BindVariableService extends Mutable {
      *
      * @param index numeric index of the bind variable
      * @param value as long
-     * @throws SqlException
+     * @throws SqlException is throw when variable has already been defined with type
+     *                      that is not compatible with Long
      */
     void setLong(int index, long value) throws SqlException;
 
@@ -278,20 +314,22 @@ public interface BindVariableService extends Mutable {
      * Set type of a bind variable by name as long256 and provide a value
      *
      * @param name of the bind variable
-     * @param l0 TODO
-     * @param l1 TODO
-     * @param l2 TODO
-     * @param l3 TODO
-     * @throws SqlException
+     * @param l0   64 bit long 0
+     * @param l1   64 bit long 1
+     * @param l2   64 bit long 2
+     * @param l3   64 bit long 3
+     * @throws SqlException is throw when variable has already been defined with type
+     *                      that is not compatible with Long256
      */
     void setLong256(CharSequence name, long l0, long l1, long l2, long l3) throws SqlException;
 
     /**
      * Set type of a bind variable by name as long256 and provide a value
      *
-     * @param name of the bind variable
+     * @param name  of the bind variable
      * @param value as long256
-     * @throws SqlException
+     * @throws SqlException is throw when variable has already been defined with type
+     *                      that is not compatible with Long256
      */
     void setLong256(CharSequence name, Long256 value) throws SqlException;
 
@@ -299,7 +337,8 @@ public interface BindVariableService extends Mutable {
      * Set type of a bind variable by index as binary
      *
      * @param index numeric index of the bind variable
-     * @throws SqlException
+     * @throws SqlException is throw when variable has already been defined with type
+     *                      that is not compatible with Long256
      */
     void setLong256(int index) throws SqlException;
 
@@ -307,11 +346,12 @@ public interface BindVariableService extends Mutable {
      * Set type of a bind variable by index as long256
      *
      * @param index numeric index of the bind variable
-     * @param l0 TODO
-     * @param l1 TODO
-     * @param l2 TODO
-     * @param l3 TODO
-     * @throws SqlException
+     * @param l0   64 bit long 0
+     * @param l1   64 bit long 1
+     * @param l2   64 bit long 2
+     * @param l3   64 bit long 3
+     * @throws SqlException is throw when variable has already been defined with type
+     *                      that is not compatible with Long256
      */
     void setLong256(int index, long l0, long l1, long l2, long l3) throws SqlException;
 
@@ -319,7 +359,8 @@ public interface BindVariableService extends Mutable {
      * Set type of a bind variable by name as long256
      *
      * @param name of the bind variable
-     * @throws SqlException
+     * @throws SqlException is throw when variable has already been defined with type
+     *                      that is not compatible with Long256
      */
     void setLong256(CharSequence name) throws SqlException;
 
@@ -327,7 +368,8 @@ public interface BindVariableService extends Mutable {
      * Set type of a bind variable by index as short
      *
      * @param index numeric index of the bind variable
-     * @throws SqlException
+     * @throws SqlException is throw when variable has already been defined with type
+     *                      that is not compatible with Short
      */
     void setShort(int index) throws SqlException;
 
@@ -336,16 +378,18 @@ public interface BindVariableService extends Mutable {
      *
      * @param index numeric index of the bind variable
      * @param value as short
-     * @throws SqlException
+     * @throws SqlException is throw when variable has already been defined with type
+     *                      that is not compatible with Short
      */
     void setShort(int index, short value) throws SqlException;
 
     /**
      * Set type of a bind variable by name as long256 and provide a value
      *
-     * @param name of the bind variable
+     * @param name  of the bind variable
      * @param value as short
-     * @throws SqlException
+     * @throws SqlException is throw when variable has already been defined with type
+     *                      that is not compatible with Short
      */
     void setShort(CharSequence name, short value) throws SqlException;
 
@@ -353,7 +397,8 @@ public interface BindVariableService extends Mutable {
      * Set type of a bind variable by index as string
      *
      * @param index numeric index of the bind variable
-     * @throws SqlException
+     * @throws SqlException is throw when variable has already been defined with type
+     *                      that is not compatible with String
      */
     void setStr(int index) throws SqlException;
 
@@ -362,16 +407,18 @@ public interface BindVariableService extends Mutable {
      *
      * @param index numeric index of the bind variable
      * @param value as string
-     * @throws SqlException
+     * @throws SqlException is throw when variable has already been defined with type
+     *                      that is not compatible with String
      */
     void setStr(int index, CharSequence value) throws SqlException;
 
     /**
      * Set type of a bind variable by name as string and provide a value
      *
-     * @param name of the bind variable
+     * @param name  of the bind variable
      * @param value as string
-     * @throws SqlException
+     * @throws SqlException is throw when variable has already been defined with type
+     *                      that is not compatible with String
      */
     void setStr(CharSequence name, CharSequence value) throws SqlException;
 
@@ -379,7 +426,8 @@ public interface BindVariableService extends Mutable {
      * Set type of a bind variable by index as timestamp
      *
      * @param index numeric index of the bind variable
-     * @throws SqlException
+     * @throws SqlException is throw when variable has already been defined with type
+     *                      that is not compatible with Timestamp
      */
     void setTimestamp(int index) throws SqlException;
 
@@ -388,24 +436,18 @@ public interface BindVariableService extends Mutable {
      *
      * @param index numeric index of the bind variable
      * @param value as long
-     * @throws SqlException
+     * @throws SqlException is throw when variable has already been defined with type
+     *                      that is not compatible with Timestamp
      */
     void setTimestamp(int index, long value) throws SqlException;
 
     /**
      * Set type of a bind variable by name as timestamp and provide a value
      *
-     * @param name of the bind variable
+     * @param name  of the bind variable
      * @param value as long
-     * @throws SqlException
+     * @throws SqlException is throw when variable has already been defined with type
+     *                      that is not compatible with Timestamp
      */
     void setTimestamp(CharSequence name, long value) throws SqlException;
-
-    /**
-     * Set type of a bind variable by index as binary
-     *
-     * @param index numeric index of the bind variable
-     * @throws SqlException
-     */
-    void setByte(int index) throws SqlException;
 }

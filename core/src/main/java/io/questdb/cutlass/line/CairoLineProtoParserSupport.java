@@ -44,6 +44,7 @@ public class CairoLineProtoParserSupport {
      * @param columnIndex index of column to write value to
      * @param columnType  column type value will be cast to
      * @param value       value characters
+     * @throws BadCastException when value cannot be cast to the give type
      */
     public static void putValue(TableWriter.Row row, int columnType, int columnIndex, CharSequence value) throws BadCastException {
         try {
@@ -115,7 +116,7 @@ public class CairoLineProtoParserSupport {
                 return ColumnType.LONG;
             case 'e':
                 // tru(e)
-                // fals(e)
+                //  fals(e)
             case 't':
             case 'T':
                 // t
