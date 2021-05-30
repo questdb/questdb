@@ -43,7 +43,7 @@ public interface DataFrameCursor extends Closeable, SymbolTableSource  {
     /**
      * Reload the data frame and return the cursor to the beginning of
      * the data frame
-     * @return
+     * @return true when reload data has changed, false otherwise
      */
     boolean reload();
 

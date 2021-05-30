@@ -277,7 +277,7 @@ public interface Record {
     @FunctionalInterface
     interface CharSequenceFunction {
         /**
-         * @param record
+         * @param record to retrieve CharSequence from
          * @param col numeric index of the column
          * @return record as a char sequence
          */
