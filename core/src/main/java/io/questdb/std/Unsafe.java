@@ -204,6 +204,8 @@ public final class Unsafe {
     /**
      * Equivalent to {@link AccessibleObject#setAccessible(boolean) AccessibleObject.setAccessible(true)}, except that
      * it does not produce an illegal access error or warning.
+     *
+     * @param accessibleObject the instance to make accessible
      */
     public static void makeAccessible(AccessibleObject accessibleObject) {
         UNSAFE.putBooleanVolatile(accessibleObject, OVERRIDE, true);

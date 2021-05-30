@@ -46,7 +46,7 @@ public interface RecordCursor extends Closeable, SymbolTableSource {
 
     /**
      * @param columnIndex numeric index of the column
-     * @return
+     * @return instance of symbol table or null, when column is not Symbol
      */
     default SymbolTable getSymbolTable(int columnIndex) {
         throw new UnsupportedOperationException();
@@ -64,8 +64,9 @@ public interface RecordCursor extends Closeable, SymbolTableSource {
     Record getRecordB();
 
     /**
-     * @param record
-     * @param atRowId numeric ID of a row
+     * Positions record at given rowid. The rowid must have been previously obtained from Record instance.
+     * @param record to position
+     * @param atRowId rowid of the desired record
      */
     void recordAt(Record record, long atRowId);
 
