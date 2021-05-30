@@ -164,13 +164,6 @@ public class ShowColumnsRecordCursorFactory implements RecordCursorFactory {
                         return false;
                     }
                 }
-                if (col == N_SYMBOL_CACHED_COL) {
-                    if (reader.getMetadata().getColumnType(columnIndex) == ColumnType.SYMBOL) {
-                        return reader.getSymbolMapReader(columnIndex).isCached();
-                    } else {
-                        return false;
-                    }
-                }
                 if (col == N_DESIGNATED_COL) {
                     return reader.getMetadata().getTimestampIndex() == columnIndex;
                 }

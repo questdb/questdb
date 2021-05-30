@@ -36,8 +36,6 @@ public interface InsertMethod extends Closeable {
 
     void commit();
 
-    void rollback();
-
     /**
      * @return sets writer to null
      */

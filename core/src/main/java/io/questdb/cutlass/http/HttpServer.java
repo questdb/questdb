@@ -26,7 +26,6 @@ package io.questdb.cutlass.http;
 
 import io.questdb.MessageBus;
 import io.questdb.WorkerPoolAwareConfiguration;
-import io.questdb.WorkerPoolAwareConfiguration.ServerFactory;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnIndexerJob;
 import io.questdb.cairo.TableBlockWriter.TableBlockWriterJob;
@@ -203,26 +202,6 @@ public class HttpServer implements Closeable {
                 sharedWorkerPool,
                 workerPoolLog,
                 cairoEngine,
-                (FunctionFactoryCache) null,
-                metrics
-        );
-    }
-
-    @Nullable
-    public static HttpServer create(
-            HttpServerConfiguration configuration,
-            WorkerPool sharedWorkerPool,
-            Log workerPoolLog,
-            CairoEngine cairoEngine,
-            ServerFactory<HttpServer, HttpServerConfiguration> factory,
-            Metrics metrics
-    ) {
-        return WorkerPoolAwareConfiguration.create(
-                configuration,
-                sharedWorkerPool,
-                workerPoolLog,
-                cairoEngine,
-                factory,
                 null,
                 metrics
         );

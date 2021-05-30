@@ -555,7 +555,6 @@ class LineTcpMeasurementScheduler implements Closeable {
             this.tableUpdateDetails = tableUpdateDetails;
         }
 
-        @SuppressWarnings("resource")
         void processMeasurementEvent(WriterJob job) {
             Row row = null;
             try {

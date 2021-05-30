@@ -64,7 +64,6 @@ public class CursorDereferenceFunctionFactory implements FunctionFactory {
 
         if (columnType == ColumnType.INT) {
             return new IntColumnFunction(
-                    position,
                     cursorFunction,
                     columnNameFunction,
                     columnIndex
@@ -80,7 +79,6 @@ public class CursorDereferenceFunctionFactory implements FunctionFactory {
         private final int columnIndex;
 
         public IntColumnFunction(
-                int position,
                 Function cursorFunction,
                 Function columnNameFunction,
                 int columnIndex

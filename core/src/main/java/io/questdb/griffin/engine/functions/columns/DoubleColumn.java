@@ -32,7 +32,7 @@ import io.questdb.std.ObjList;
 import static io.questdb.griffin.engine.functions.columns.ColumnUtils.STATIC_COLUMN_COUNT;
 
 public class DoubleColumn extends DoubleFunction implements ScalarFunction {
-    private static ObjList<DoubleColumn> COLUMNS = new ObjList<>(STATIC_COLUMN_COUNT);
+    private static final ObjList<DoubleColumn> COLUMNS = new ObjList<>(STATIC_COLUMN_COUNT);
     private final int columnIndex;
 
     public DoubleColumn(int columnIndex) {

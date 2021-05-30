@@ -38,13 +38,6 @@ public class HttpSqlExecutionInterruptor implements SqlExecutionInterruptor, Clo
     private int nIterationsSinceCheck;
     private long fd = -1;
 
-    public static HttpSqlExecutionInterruptor create(SqlInterruptorConfiguration configuration) {
-        if(configuration.isEnabled()) {
-            return new HttpSqlExecutionInterruptor(configuration);
-        }
-        return null;
-    }
-
     public HttpSqlExecutionInterruptor(SqlInterruptorConfiguration configuration) {
         this.nf = configuration.getNetworkFacade();
         this.nIterationsPerCheck = configuration.getCountOfIterationsPerCheck();

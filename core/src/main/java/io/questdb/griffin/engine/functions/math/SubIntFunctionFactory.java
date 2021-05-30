@@ -43,14 +43,14 @@ public class SubIntFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration1, SqlExecutionContext sqlExecutionContext) {
-        return new SubtractIntVVFunc(position, args.getQuick(0), args.getQuick(1));
+        return new SubtractIntVVFunc(args.getQuick(0), args.getQuick(1));
     }
 
     private static class SubtractIntVVFunc extends IntFunction implements BinaryFunction {
         final Function left;
         final Function right;
 
-        public SubtractIntVVFunc(int position, Function left, Function right) {
+        public SubtractIntVVFunc(Function left, Function right) {
             super();
             this.left = left;
             this.right = right;

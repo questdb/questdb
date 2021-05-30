@@ -25,5 +25,5 @@
 package io.questdb.griffin.engine.functions.columns;
 
 public class ColumnUtils {
-    static int STATIC_COLUMN_COUNT = 32;
+    static final int STATIC_COLUMN_COUNT = 32;
 }
