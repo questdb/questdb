@@ -34,7 +34,7 @@ public class CounterWithTwoLabelsImpl implements CounterWithTwoLabels {
     private final CharSequence labelName1;
     private final CharSequence[] labelValues0;
     private final CharSequence[] labelValues1;
-    private final LongAdder[][] counters;
+    private final LongAdder[] counters;
 
     CounterWithTwoLabelsImpl(CharSequence name,
                              CharSequence labelName0, CharSequence[] labelValues0,
@@ -44,31 +44,31 @@ public class CounterWithTwoLabelsImpl implements CounterWithTwoLabels {
         this.labelName1 = labelName1;
         this.labelValues0 = labelValues0;
         this.labelValues1 = labelValues1;
-        this.counters = new LongAdder[labelValues0.length][labelValues1.length];
+        this.counters = new LongAdder[labelValues0.length * labelValues1.length];
         for (int i = 0, n = labelValues0.length; i < n; i++) {
             for (int j = 0, k = labelValues1.length; j < k; j++) {
-                counters[i][j] = new LongAdder();
+                counters[i * n + j] = new LongAdder();
             }
         }
     }
 
     @Override
     public void inc(short label0, short label1) {
-        counters[label0][label1].increment();
+        counters[label0 * labelValues0.length + label1].increment();
     }
 
     @Override
     public void scrapeIntoPrometheus(CharSink sink) {
         PrometheusFormatUtils.appendCounterType(name, sink);
-        for (int i = 0, n = counters.length; i < n; i++) {
-            for (int j = 0, k = counters[i].length; j < k; j++) {
+        for (int i = 0, n = labelValues0.length; i < n; i++) {
+            for (int j = 0, k = labelValues1.length; j < k; j++) {
                 PrometheusFormatUtils.appendCounterNamePrefix(name, sink);
                 sink.put('{');
                 PrometheusFormatUtils.appendLabel(sink, labelName0, labelValues0[i]);
                 sink.put(',');
                 PrometheusFormatUtils.appendLabel(sink, labelName1, labelValues1[j]);
                 sink.put('}');
-                PrometheusFormatUtils.appendSampleLineSuffix(sink, counters[i][j].longValue());
+                PrometheusFormatUtils.appendSampleLineSuffix(sink, counters[i * n + j].longValue());
             }
         }
         PrometheusFormatUtils.appendNewLine(sink);
