@@ -24,6 +24,7 @@
 
 package io.questdb.metrics;
 
+import io.questdb.std.Numbers;
 import io.questdb.std.str.CharSink;
 
 import java.util.concurrent.atomic.LongAdder;
@@ -35,6 +36,7 @@ public class CounterWithTwoLabelsImpl implements CounterWithTwoLabels {
     private final CharSequence[] labelValues0;
     private final CharSequence[] labelValues1;
     private final LongAdder[] counters;
+    private final int shl;
 
     CounterWithTwoLabelsImpl(CharSequence name,
                              CharSequence labelName0, CharSequence[] labelValues0,
@@ -44,17 +46,19 @@ public class CounterWithTwoLabelsImpl implements CounterWithTwoLabels {
         this.labelName1 = labelName1;
         this.labelValues0 = labelValues0;
         this.labelValues1 = labelValues1;
-        this.counters = new LongAdder[labelValues0.length * labelValues1.length];
+        int labelValues0Capacity = Numbers.ceilPow2(labelValues0.length);
+        this.shl = Numbers.msb(labelValues0Capacity);
+        this.counters = new LongAdder[labelValues0Capacity * labelValues1.length];
         for (int i = 0, n = labelValues0.length; i < n; i++) {
             for (int j = 0, k = labelValues1.length; j < k; j++) {
-                counters[i * n + j] = new LongAdder();
+                counters[(i << shl) + j] = new LongAdder();
             }
         }
     }
 
     @Override
     public void inc(short label0, short label1) {
-        counters[label0 * labelValues0.length + label1].increment();
+        counters[(label0 << shl) + label1].increment();
     }
 
     @Override
@@ -68,7 +72,7 @@ public class CounterWithTwoLabelsImpl implements CounterWithTwoLabels {
                 sink.put(',');
                 PrometheusFormatUtils.appendLabel(sink, labelName1, labelValues1[j]);
                 sink.put('}');
-                PrometheusFormatUtils.appendSampleLineSuffix(sink, counters[i * n + j].longValue());
+                PrometheusFormatUtils.appendSampleLineSuffix(sink, counters[(i << shl) + j].longValue());
             }
         }
         PrometheusFormatUtils.appendNewLine(sink);
