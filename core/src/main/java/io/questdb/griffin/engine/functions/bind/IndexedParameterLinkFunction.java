@@ -110,10 +110,6 @@ public class IndexedParameterLinkFunction implements ScalarFunction {
         getBase().getLong256(rec, sink);
     }
 
-    private int getPosition() {
-        return position;
-    }
-
     @Override
     public RecordCursorFactory getRecordCursorFactory() {
         return getBase().getRecordCursorFactory();

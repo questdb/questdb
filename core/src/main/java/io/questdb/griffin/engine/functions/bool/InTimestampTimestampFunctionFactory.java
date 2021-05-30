@@ -31,12 +31,11 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.*;
-import io.questdb.griffin.model.IntervalOperation;
+import io.questdb.griffin.engine.functions.MultiArgFunction;
+import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
+import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.*;
-
-import static io.questdb.griffin.model.IntervalUtils.*;
 
 public class InTimestampTimestampFunctionFactory implements FunctionFactory {
     @Override

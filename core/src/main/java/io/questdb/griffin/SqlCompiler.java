@@ -2332,7 +2332,6 @@ public class SqlCompiler implements Closeable {
     }
 
     public final static class PartitionAction {
-        public static final int NONE = 0;
         public static final int DROP = 1;
         public static final int ATTACH = 2;
     }

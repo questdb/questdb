@@ -42,14 +42,13 @@ public class LengthSymbolFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new LengthSymbolVFunc(position, args.getQuick(0));
+        return new LengthSymbolVFunc(args.getQuick(0));
     }
 
     private static class LengthSymbolVFunc extends IntFunction implements UnaryFunction {
         private final Function arg;
 
-        public LengthSymbolVFunc(int position, Function arg) {
-            super();
+        public LengthSymbolVFunc(Function arg) {
             this.arg = arg;
         }
 

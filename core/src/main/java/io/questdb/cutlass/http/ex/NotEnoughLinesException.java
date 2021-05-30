@@ -63,11 +63,6 @@ public class NotEnoughLinesException extends HttpException implements Sinkable, 
         return this;
     }
 
-    public NotEnoughLinesException put(double c) {
-        message.put(c);
-        return this;
-    }
-
     public NotEnoughLinesException put(long c) {
         message.put(c);
         return this;
