@@ -62,11 +62,22 @@ public interface RecordCursorFactory extends Closeable, Sinkable {
     }
 
     /**
+     * Creates an instance of RecordCursor. Factories will typically reuse cursor instances.
+     * The calling code must not hold on to copies of the cursor.
+     *
+     * The new cursor will have refreshed its view of the data. If new data was added to table(s)
+     * the cursor will pick it up.
+     *
      * @param executionContext name of a SQL execution context
-     * @return
+     * @return instance of cursor
      */
     RecordCursor getCursor(SqlExecutionContext executionContext);
 
+    /**
+     * Metadata of the SQL result. It includes column names, indexes and types.
+     *
+     * @return metadata
+     */
     RecordMetadata getMetadata();
 
     default PageFrameCursor getPageFrameCursor(SqlExecutionContext executionContext) {
