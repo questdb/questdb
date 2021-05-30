@@ -26,11 +26,23 @@ package io.questdb.cairo.sql;
 
 import io.questdb.std.Numbers;
 
+/**
+ * A table to store symbols (repetitive strings) as integers
+ * and corresponding string values
+ */
 public interface SymbolTable {
     int VALUE_NOT_FOUND = -2;
     int VALUE_IS_NULL = Numbers.INT_NaN;
 
+    /**
+     * @param key numeric key of the symbol
+     * @return string value of the symbol
+     */
     CharSequence valueOf(int key);
 
+    /**
+     * @param key numeric key of the symbol
+     * @return string value of the symbol
+     */
     CharSequence valueBOf(int key);
 }

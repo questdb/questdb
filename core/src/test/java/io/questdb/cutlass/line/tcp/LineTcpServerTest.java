@@ -170,6 +170,73 @@ public class LineTcpServerTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSomeWritersReleased() throws Exception {
+        runInContext(() -> {
+            String lineData = "weather,location=us-midwest temperature=85 1465839830102300200\n" +
+                    "weather,location=us-eastcoast temperature=89 1465839830102400200\n" +
+                    "weather,location=us-westcost temperature=82 1465839830102500200\n";
+
+            send(lineData, "weather", true);
+
+            int iterations = 8;
+            int threadCount = 8;
+            SOCountDownLatch threadPushFinished = new SOCountDownLatch(threadCount);
+            for (int i = 0; i < threadCount; i++) {
+                final String threadTable = "weather" + i;
+                final String lineDataThread = lineData.replace("weather", threadTable);
+                send(lineDataThread, threadTable, false);
+                new Thread(() -> {
+                    try {
+                        for (int n = 0; n < iterations; n++) {
+                            Thread.sleep(minIdleMsBeforeWriterRelease - 50);
+                            send(lineDataThread, threadTable, false);
+                        }
+                    } catch (Exception e) {
+                        e.printStackTrace();
+                    } finally {
+                        threadPushFinished.countDown();
+                    }
+                }).start();
+            }
+
+            send(lineData, "weather", true);
+
+            try (TableWriter w = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "weather")) {
+                w.truncate();
+            }
+
+            String lineData2 = "weather,location=us-midwest temperature=85 1465839830102300200\n" +
+                    "weather,location=us-eastcoast temperature=89 1465839830102400200\n" +
+                    "weather,location=us-westcost temperature=82 1465839830102500200\n";
+            send(lineData2, "weather");
+
+            String line1 = "us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\n";
+            String line2 = "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\n";
+            String line3 = "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\n";
+            String header = "location\ttemperature\ttimestamp\n";
+            String[] lines = {line1, line2, line3 };
+            String expected = header + line1 + line2 + line3;
+            assertTable(expected, "weather");
+
+            StringBuilder expectedSB = new StringBuilder(header);
+            for(int l = 0; l < lines.length; l++) {
+                for (int it = 0; it < iterations + 2; it++) {
+                    expectedSB.append(lines[l]);
+                }            }
+            String expected2 = expectedSB.toString();
+
+            threadPushFinished.await();
+            for (int i = 0; i < threadCount; i++) {
+                // Wait writer to be released and check.
+                String tableName = "weather" + i;
+                final String lineDataThread = lineData.replace("weather", tableName);
+                send(lineDataThread, tableName, true);
+                assertTable(expected2, tableName);
+            }
+        });
+    }
+
+    @Test
     public void testUnauthenticated() throws Exception {
         test(null, null, 200, 1_000, false);
     }
@@ -352,26 +419,31 @@ public class LineTcpServerTest extends AbstractCairoTest {
             path = new Path(4096);
             try {
                 LineTcpServer tcpServer = LineTcpServer.create(lineConfiguration, sharedWorkerPool, LOG, engine);
+                sharedWorkerPool.assignCleaner(Path.CLEANER);
                 sharedWorkerPool.start(LOG);
                 r.run();
                 sharedWorkerPool.halt();
                 Misc.free(tcpServer);
+                Path.clearThreadLocals();
             } finally {
                 Misc.free(path);
             }
         });
     }
 
-    private void send(String lineData, String tableName) {
+    private void send(String lineData, String tableName, boolean wait) {
         SOCountDownLatch releaseLatch = new SOCountDownLatch(1);
-        engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
-            if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN && Chars.equals(tableName, name)) {
-                releaseLatch.countDown();
-            }
-        });
+        if (wait) {
+            engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
+                if (Chars.equals(tableName, name)) {
+                    if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN) {
+                        releaseLatch.countDown();
+                    }
+                }
+            });
+        }
 
         try {
-
             int ipv4address = Net.parseIPv4("127.0.0.1");
             long sockaddr = Net.sockaddr(ipv4address, bindPort);
             long fd = Net.socketTcp(true);
@@ -388,10 +460,19 @@ public class LineTcpServerTest extends AbstractCairoTest {
             Net.close(fd);
             Net.freeSockAddr(sockaddr);
             Assert.assertEquals(lineDataBytes.length, rc);
-            releaseLatch.await();
+
+            if (wait) {
+                releaseLatch.await();
+            }
         } finally {
-            engine.setPoolListener(null);
+            if (wait) {
+                engine.setPoolListener(null);
+            }
         }
+    }
+
+    private void send(String lineData, String tableName) {
+        send(lineData, tableName, true);
     }
 
     private void test(
