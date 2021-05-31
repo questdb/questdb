@@ -1,24 +1,29 @@
 import React, { useCallback, useState } from "react"
 import styled from "styled-components"
 import Notifications from "./Notifications"
-import {
-  PaneContent,
-  PaneMenu,
-  PaneWrapper,
-  Text,
-  PrimaryToggleButton,
-} from "components"
+import { PaneContent, PaneMenu, Text, PrimaryToggleButton } from "components"
 import { Settings2 } from "@styled-icons/evaicons-solid/Settings2"
 import { Notification } from "@styled-icons/entypo/Notification"
 import { color } from "utils"
+
+const PaneWrapper = styled.div`
+  display: flex;
+  flex-direction: column;
+  flex: 0;
+`
 
 const Wrapper = styled.div`
   display: flex;
   flex-direction: column;
   justify-content: flex-start;
   align-items: flex-start;
+  --webkit-flex: 0;
+  flex: 0;
 `
+
 const HeaderWrapper = styled(PaneWrapper)`
+  --webkit-flex: 0;
+  flex: 0;
   width: 100%;
 `
 const HeaderMenu = styled(PaneMenu)`
