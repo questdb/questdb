@@ -28,7 +28,7 @@ import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.vm.MappedReadOnlyMemory;
 import io.questdb.cairo.vm.ReadOnlyVirtualMemory;
-import io.questdb.cairo.vm.SinglePageMappedReadOnlyPageMemory;
+import io.questdb.cairo.vm.ContiguousMappedReadOnlyMemory;
 import io.questdb.cairo.vm.VmUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -63,7 +63,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     private final CairoConfiguration configuration;
     private final IntList symbolCountSnapshot = new IntList();
     private final TxReader txFile;
-    private final MappedReadOnlyMemory todoMem = new SinglePageMappedReadOnlyPageMemory();
+    private final MappedReadOnlyMemory todoMem = new ContiguousMappedReadOnlyMemory();
     private final TxnScoreboard txnScoreboard;
     private int partitionCount;
     private LongList columnTops;
@@ -537,7 +537,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             // subtract column top
             switch (type) {
                 default:
-                    mem1.grow(rowCount << ColumnType.pow2SizeOf(type));
+                    mem1.setSize(rowCount << ColumnType.pow2SizeOf(type));
                     break;
                 case ColumnType.BINARY:
                     growBin(mem1, mem2, rowCount);
@@ -551,24 +551,24 @@ public class TableReader implements Closeable, SymbolTableSource {
 
     private static void growStr(ReadOnlyVirtualMemory mem1, ReadOnlyVirtualMemory mem2, long rowCount) {
         assert mem2 != null;
-        mem2.grow(rowCount * 8);
+        mem2.setSize(rowCount * 8);
         final long offset = mem2.getLong((rowCount - 1) * 8);
-        mem1.grow(offset + 4);
+        mem1.setSize(offset + 4);
         final int len = mem1.getInt(offset);
         if (len > 0) {
-            mem1.grow(offset + VmUtils.getStorageLength(len));
+            mem1.setSize(offset + VmUtils.getStorageLength(len));
         }
     }
 
     private static void growBin(ReadOnlyVirtualMemory mem1, ReadOnlyVirtualMemory mem2, long rowCount) {
         assert mem2 != null;
-        mem2.grow(rowCount * 8);
+        mem2.setSize(rowCount * 8);
         final long offset = mem2.getLong((rowCount - 1) * 8);
-        // grow data column to value offset + length, so that we can read length
-        mem1.grow(offset + 8);
+        // setSize data column to value offset + length, so that we can read length
+        mem1.setSize(offset + 8);
         final long len = mem1.getLong(offset);
         if (len > 0) {
-            mem1.grow(offset + len + 8);
+            mem1.setSize(offset + len + 8);
         }
     }
 
@@ -590,7 +590,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             boolean lastPartition
     ) {
         MappedReadOnlyMemory mem1 = tempCopyStruct.mem1;
-        final boolean reload = (mem1 instanceof SinglePageMappedReadOnlyPageMemory || mem1 instanceof NullColumn) && mem1.isDeleted();
+        final boolean reload = (mem1 instanceof ContiguousMappedReadOnlyMemory || mem1 instanceof NullColumn) && mem1.isDeleted();
         final int index = getPrimaryColumnIndex(columnBase, columnIndex);
         tempCopyStruct.mem1 = columns.getAndSetQuick(index, mem1);
         tempCopyStruct.mem2 = columns.getAndSetQuick(index + 1, tempCopyStruct.mem2);
@@ -880,9 +880,9 @@ public class TableReader implements Closeable, SymbolTableSource {
             mem.of(ff, path, ff.getMapPageSize(), ff.length(path));
         } else {
             if (lastPartition) {
-                mem = new SinglePageMappedReadOnlyPageMemory(ff, path, ff.getMapPageSize());
+                mem = new ContiguousMappedReadOnlyMemory(ff, path, ff.getMapPageSize());
             } else {
-                mem = new SinglePageMappedReadOnlyPageMemory(ff, path, ff.length(path));
+                mem = new ContiguousMappedReadOnlyMemory(ff, path, ff.length(path));
             }
             columns.setQuick(primaryIndex, mem);
         }
@@ -1312,7 +1312,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                             //    instance and the column from disk
                             // 3. Column hasn't been altered and we can skip to next column.
                             MappedReadOnlyMemory col = columns.getQuick(getPrimaryColumnIndex(base, i));
-                            if ((col instanceof SinglePageMappedReadOnlyPageMemory && col.isDeleted()) || col instanceof NullColumn) {
+                            if ((col instanceof ContiguousMappedReadOnlyMemory && col.isDeleted()) || col instanceof NullColumn) {
                                 reloadColumnAt(
                                         path,
                                         columns,

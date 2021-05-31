@@ -58,7 +58,7 @@ public class PagedSlidingReadOnlyMemory extends PagedVirtualMemory {
 
     @Override
     protected long mapWritePage(int page) {
-        throw new UnsupportedOperationException("Cannot jump() read-only memory. Use grow() instead.");
+        throw new UnsupportedOperationException("Cannot jump() read-only memory. Use setSize() instead.");
     }
 
     public long getFd() {

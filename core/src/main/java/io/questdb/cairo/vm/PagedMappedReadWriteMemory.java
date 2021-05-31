@@ -76,7 +76,7 @@ public class PagedMappedReadWriteMemory extends PagedVirtualMemory implements Ma
 
     @Override
     public void growToFileSize() {
-        grow(ff.length(fd));
+        this.setSize(ff.length(fd));
     }
 
     @Override

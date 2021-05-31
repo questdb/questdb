@@ -2,10 +2,9 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.vm.AppendOnlyVirtualMemory;
 import io.questdb.cairo.vm.MappedReadOnlyMemory;
-import io.questdb.cairo.vm.SinglePageMappedReadOnlyPageMemory;
+import io.questdb.cairo.vm.ContiguousMappedReadOnlyMemory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.str.Path;
@@ -31,14 +30,14 @@ public class MemRemappedFileTest {
     @Test
     public void testReadOnlyMemory() {
         LOG.info().$("ReadOnlyMemory starting").$();
-        double micros = test(new SinglePageMappedReadOnlyPageMemory());
+        double micros = test(new ContiguousMappedReadOnlyMemory());
         LOG.info().$("ReadOnlyMemory took ").$(micros).$("ms").$();
     }
 
     @Test
     public void testExtendableOnePageMemory() {
         LOG.info().$("ExtendableOnePageMemory starting").$();
-        double micros = test(new SinglePageMappedReadOnlyPageMemory());
+        double micros = test(new ContiguousMappedReadOnlyMemory());
         LOG.info().$("ExtendableOnePageMemory took ").$(micros).$("ms").$();
     }
 
@@ -66,7 +65,7 @@ public class MemRemappedFileTest {
                     if (nPage == 0) {
                         readMem.of(ff, path, MAPPING_PAGE_SIZE, newSize);
                     } else {
-                        readMem.grow(newSize);
+                        readMem.setSize(newSize);
                     }
                     for (int i = 0; i < MAPPING_PAGE_SIZE; i++) {
                         actualTotal += readMem.getByte(offset);

@@ -118,6 +118,12 @@ public final class TableUtils {
     private TableUtils() {
     }
 
+    public static void allocateDiskSpace(FilesFacade ff, long fd, long size) {
+        if (!ff.allocate(fd, size)) {
+            throw CairoException.instance(ff.errno()).put("No space left [size=").put(size).put(", fd=").put(fd).put(']');
+        }
+    }
+
     public static void createTable(
             FilesFacade ff,
             AppendOnlyVirtualMemory memory,
@@ -626,7 +632,7 @@ public final class TableUtils {
         try {
             //noinspection SuspiciousNameCombination
             Unsafe.getUnsafe().putLong(tempBuf, columnTop);
-            O3Utils.allocateDiskSpace(ff, fd, Long.BYTES);
+            allocateDiskSpace(ff, fd, Long.BYTES);
             if (ff.write(fd, tempBuf, Long.BYTES, 0) != Long.BYTES) {
                 throw CairoException.instance(ff.errno()).put("could not write top file [path=").put(path).put(']');
             }
@@ -874,7 +880,7 @@ public final class TableUtils {
         }
     }
 
-    static long openRW(FilesFacade ff, LPSZ path, Log log) {
+    public static long openRW(FilesFacade ff, LPSZ path, Log log) {
         final long fd = ff.openRW(path);
         if (fd > -1) {
             log.debug().$("open [file=").$(path).$(", fd=").$(fd).$(']').$();

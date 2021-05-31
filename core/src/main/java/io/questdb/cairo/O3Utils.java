@@ -146,7 +146,7 @@ public class O3Utils {
     }
 
     static long mapRW(FilesFacade ff, long fd, long size) {
-        allocateDiskSpace(ff, fd, size);
+        TableUtils.allocateDiskSpace(ff, fd, size);
         long addr = ff.mmap(fd, size, 0, Files.MAP_RW);
         if (addr > -1) {
             return addr;
@@ -154,9 +154,4 @@ public class O3Utils {
         throw CairoException.instance(ff.errno()).put("could not mmap column [fd=").put(fd).put(", size=").put(size).put(']');
     }
 
-    static void allocateDiskSpace(FilesFacade ff, long fd, long size) {
-        if (!ff.allocate(fd, size)) {
-            throw CairoException.instance(ff.errno()).put("No space left [size=").put(size).put(", fd=").put(fd).put(']');
-        }
-    }
 }

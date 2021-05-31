@@ -228,7 +228,7 @@ public class TableWriter implements Closeable {
                 repairMetaRename((int) todoMem.getLong(48));
             }
             this.ddlMem = new AppendOnlyVirtualMemory();
-            this.metaMem = new SinglePageMappedReadOnlyPageMemory();
+            this.metaMem = new ContiguousMappedReadOnlyMemory();
             openMetaFile(ff, path, rootLen, metaMem);
             this.metadata = new TableWriterMetadata(ff, metaMem);
             this.partitionBy = metaMem.getInt(META_OFFSET_PARTITION_BY);
@@ -2193,7 +2193,7 @@ public class TableWriter implements Closeable {
             long timestamp = txFile.getMinTimestamp();
 
             //noinspection TryFinallyCanBeTryWithResources
-            try (final MappedReadOnlyMemory roMem = new SinglePageMappedReadOnlyPageMemory()) {
+            try (final MappedReadOnlyMemory roMem = new ContiguousMappedReadOnlyMemory()) {
 
                 while (timestamp < maxTimestamp) {
 
@@ -2222,7 +2222,7 @@ public class TableWriter implements Closeable {
                                 TableUtils.dFile(path.trimTo(plen), columnName);
 
                                 roMem.of(ff, path, ff.getPageSize(), 0);
-                                roMem.grow((partitionSize - columnTop) << ColumnType.pow2SizeOf(ColumnType.INT));
+                                roMem.setSize((partitionSize - columnTop) << ColumnType.pow2SizeOf(ColumnType.INT));
 
                                 indexer.configureWriter(configuration, path.trimTo(plen), columnName, columnTop);
                                 indexer.index(roMem, columnTop, partitionSize);

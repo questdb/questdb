@@ -26,7 +26,7 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.vm.AppendOnlyVirtualMemory;
 import io.questdb.cairo.vm.MappedReadOnlyMemory;
-import io.questdb.cairo.vm.SinglePageMappedReadOnlyPageMemory;
+import io.questdb.cairo.vm.ContiguousMappedReadOnlyMemory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
@@ -144,7 +144,7 @@ public class MetadataMigration400 {
 
     public static void main(String[] args) {
         try (
-                final MappedReadOnlyMemory roMem = new SinglePageMappedReadOnlyPageMemory();
+                final MappedReadOnlyMemory roMem = new ContiguousMappedReadOnlyMemory();
                 final AppendOnlyVirtualMemory appendMem = new AppendOnlyVirtualMemory();
                 final Path path1 = new Path();
                 final Path path2 = new Path()

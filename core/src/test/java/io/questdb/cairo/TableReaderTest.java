@@ -2168,7 +2168,7 @@ public class TableReaderTest extends AbstractCairoTest {
                 }
 
                 // rnd is aligned to where we left our writer, just continue
-                // from this point to append and grow files
+                // from this point to append and setSize files
 
                 for (int i = 0; i < M; i++) {
                     TableWriter.Row row = writer.newRow(timestamp);
@@ -2184,7 +2184,7 @@ public class TableReaderTest extends AbstractCairoTest {
 
                 writer.commit();
 
-                // this reload must be able to grow its files following file expansion by writer
+                // this reload must be able to setSize its files following file expansion by writer
                 Assert.assertTrue(reader.reload());
 
                 int count = 0;

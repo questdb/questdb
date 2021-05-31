@@ -147,7 +147,8 @@ public class ContiguousVirtualMemoryTest {
             long offset = 0;
             short i = 0;
             while (target > 0) {
-                long len = mem.getMemorySize() - offset;
+                long len = mem.size()
+                        - offset;
                 target -= len;
                 long address = mem.addressOf(offset);
                 offset += len;

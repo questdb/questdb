@@ -26,7 +26,7 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.sql.SymbolTable;
-import io.questdb.cairo.vm.SinglePageMappedReadOnlyPageMemory;
+import io.questdb.cairo.vm.ContiguousMappedReadOnlyMemory;
 import io.questdb.cairo.vm.VmUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -38,8 +38,8 @@ import java.io.Closeable;
 public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
     private static final Log LOG = LogFactory.getLog(SymbolMapReaderImpl.class);
     private final BitmapIndexBwdReader indexReader = new BitmapIndexBwdReader();
-    private final SinglePageMappedReadOnlyPageMemory charMem = new SinglePageMappedReadOnlyPageMemory();
-    private final SinglePageMappedReadOnlyPageMemory offsetMem = new SinglePageMappedReadOnlyPageMemory();
+    private final ContiguousMappedReadOnlyMemory charMem = new ContiguousMappedReadOnlyMemory();
+    private final ContiguousMappedReadOnlyMemory offsetMem = new ContiguousMappedReadOnlyMemory();
     private final ObjList<String> cache = new ObjList<>();
     private int maxHash;
     private boolean cached;
@@ -85,7 +85,7 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
         if (symbolCount > this.symbolCount) {
             this.symbolCount = symbolCount;
             this.maxOffset = SymbolMapWriter.keyToOffset(symbolCount);
-            this.offsetMem.grow(maxOffset);
+            this.offsetMem.setSize(maxOffset);
             growCharMemToSymbolCount(symbolCount);
         } else if (symbolCount < this.symbolCount) {
             cache.remove(symbolCount + 1, this.symbolCount);
@@ -214,12 +214,12 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
         long charMemLength;
         if (symbolCount > 0) {
             long lastSymbolOffset = this.offsetMem.getLong(SymbolMapWriter.keyToOffset(symbolCount - 1));
-            this.charMem.grow(lastSymbolOffset + 4);
+            this.charMem.setSize(lastSymbolOffset + 4);
             charMemLength = lastSymbolOffset + VmUtils.getStorageLength(this.charMem.getStrLen(lastSymbolOffset));
         } else {
             charMemLength = 0;
         }
-        this.charMem.grow(charMemLength);
+        this.charMem.setSize(charMemLength);
     }
 
     private CharSequence uncachedValue(int key) {

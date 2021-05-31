@@ -1,6 +1,6 @@
 package io.questdb.cairo;
 
-import io.questdb.cairo.vm.SinglePageMappedReadOnlyPageMemory;
+import io.questdb.cairo.vm.ContiguousMappedReadOnlyMemory;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.str.Path;
@@ -26,7 +26,7 @@ public class ExtendedOnePageMemoryTest {
     @Test
     public void testFailOnInitialMap() throws IOException {
         createFile();
-        try (SinglePageMappedReadOnlyPageMemory mem = new SinglePageMappedReadOnlyPageMemory()) {
+        try (ContiguousMappedReadOnlyMemory mem = new ContiguousMappedReadOnlyMemory()) {
             FILE_MAP_FAIL.set(true);
             try {
                 mem.of(ff, path, FILE_SIZE, FILE_SIZE);
@@ -40,13 +40,13 @@ public class ExtendedOnePageMemoryTest {
     @Test
     public void testFailOnGrow() throws IOException {
         createFile();
-        try (SinglePageMappedReadOnlyPageMemory mem = new SinglePageMappedReadOnlyPageMemory()) {
+        try (ContiguousMappedReadOnlyMemory mem = new ContiguousMappedReadOnlyMemory()) {
             int sz = FILE_SIZE / 2;
             mem.of(ff, path, sz, sz);
             FILE_MAP_FAIL.set(true);
             sz *= 2;
             try {
-                mem.grow(sz);
+                mem.setSize(sz);
                 Assert.fail();
             } catch (CairoException ex) {
                 Assert.assertTrue(ex.getMessage().contains("Could not remap"));

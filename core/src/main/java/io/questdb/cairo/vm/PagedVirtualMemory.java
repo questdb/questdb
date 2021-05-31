@@ -893,7 +893,7 @@ public class PagedVirtualMemory implements ReadWriteVirtualMemory, Closeable {
     }
 
     @Override
-    public void grow(long size) {
+    public void setSize(long size) {
         jumpTo(size);
     }
 
@@ -1144,7 +1144,7 @@ public class PagedVirtualMemory implements ReadWriteVirtualMemory, Closeable {
 
         @Override
         public char charAt(int index) {
-            return PagedVirtualMemory.this.getChar(offset + index * 2L);
+            return getChar(offset + index * 2L);
         }
 
         CharSequenceView of(long offset, int len) {

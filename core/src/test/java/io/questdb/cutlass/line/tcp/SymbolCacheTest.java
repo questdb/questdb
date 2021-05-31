@@ -1,7 +1,7 @@
 package io.questdb.cutlass.line.tcp;
 
 import io.questdb.cairo.vm.MappedReadOnlyMemory;
-import io.questdb.cairo.vm.SinglePageMappedReadOnlyPageMemory;
+import io.questdb.cairo.vm.ContiguousMappedReadOnlyMemory;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -30,7 +30,7 @@ public class SymbolCacheTest extends AbstractCairoTest {
                 CairoTestUtils.create(model);
                 try (
                         TableWriter writer = new TableWriter(configuration, tableName);
-                        MappedReadOnlyMemory txMem = new SinglePageMappedReadOnlyPageMemory()
+                        MappedReadOnlyMemory txMem = new ContiguousMappedReadOnlyMemory()
                 ) {
                     int symColIndex1 = writer.getColumnIndex("symCol1");
                     int symColIndex2 = writer.getColumnIndex("symCol2");

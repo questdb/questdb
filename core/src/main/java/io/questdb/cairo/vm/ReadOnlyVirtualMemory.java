@@ -68,7 +68,22 @@ public interface ReadOnlyVirtualMemory {
 
     int getStrLen(long offset);
 
-    void grow(long size);
+    void setSize(long size);
 
     long size();
+
+    long addressOf(long offset);
+
+    default long hash(long offset, long size) {
+        long n = size - (size & 7);
+        long h = 179426491L;
+        for (long i = 0; i < n; i += 8) {
+            h = (h << 5) - h + getLong(offset + i);
+        }
+
+        for (; n < size; n++) {
+            h = (h << 5) - h + getByte(offset + n);
+        }
+        return h;
+    }
 }

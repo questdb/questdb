@@ -27,7 +27,7 @@ package io.questdb.griffin.engine.functions.catalogue;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.MappedReadOnlyMemory;
-import io.questdb.cairo.vm.SinglePageMappedReadOnlyPageMemory;
+import io.questdb.cairo.vm.ContiguousMappedReadOnlyMemory;
 import io.questdb.cairo.vm.VmUtils;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
@@ -71,7 +71,7 @@ public class AttributeCatalogueFunctionFactory implements FunctionFactory {
     private static class AttributeCatalogueCursorFactory extends AbstractRecordCursorFactory {
 
         private final Path path = new Path();
-        private final MappedReadOnlyMemory metaMem = new SinglePageMappedReadOnlyPageMemory();
+        private final MappedReadOnlyMemory metaMem = new ContiguousMappedReadOnlyMemory();
         private final AttributeClassCatalogueCursor cursor;
 
         public AttributeCatalogueCursorFactory(CairoConfiguration configuration, RecordMetadata metadata) {

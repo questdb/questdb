@@ -216,7 +216,7 @@ public class CompactMap implements Map {
         // it is out of the way we can calculate key hash on contiguous memory.
 
         // entry actual size always starts with sum of fixed size columns we have
-        // and may grow when we add variable key values.
+        // and may setSize when we add variable key values.
         currentEntrySize = entryFixedSize;
 
         return key;
@@ -637,7 +637,7 @@ public class CompactMap implements Map {
                 int dist = findFreeSlot(parentSlot);
 
                 if (dist == 0) {
-                    // we are out of space; let parent method know that we have to grow slots and retry
+                    // we are out of space; let parent method know that we have to setSize slots and retry
                     return false;
                 }
 
@@ -693,7 +693,7 @@ public class CompactMap implements Map {
 
             if (++size == keyCapacity) {
                 // reached capacity?
-                // no need to populate slot, grow() will do the job for us
+                // no need to populate slot, setSize() will do the job for us
                 grow();
             } else {
                 setOffsetAt(slot, currentEntryOffset);

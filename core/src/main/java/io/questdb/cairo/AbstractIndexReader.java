@@ -25,7 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.vm.MappedReadOnlyMemory;
-import io.questdb.cairo.vm.SinglePageMappedReadOnlyPageMemory;
+import io.questdb.cairo.vm.ContiguousMappedReadOnlyMemory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Misc;
@@ -38,8 +38,8 @@ import java.util.concurrent.locks.LockSupport;
 public abstract class AbstractIndexReader implements BitmapIndexReader {
     public static final String INDEX_CORRUPT = "cursor could not consistently read index header [corrupt?]";
     protected final static Log LOG = LogFactory.getLog(BitmapIndexBwdReader.class);
-    protected final MappedReadOnlyMemory keyMem = new SinglePageMappedReadOnlyPageMemory();
-    protected final MappedReadOnlyMemory valueMem = new SinglePageMappedReadOnlyPageMemory();
+    protected final MappedReadOnlyMemory keyMem = new ContiguousMappedReadOnlyMemory();
+    protected final MappedReadOnlyMemory valueMem = new ContiguousMappedReadOnlyMemory();
     protected int blockValueCountMod;
     protected int blockCapacity;
     protected long spinLockTimeoutUs;
@@ -75,7 +75,7 @@ public abstract class AbstractIndexReader implements BitmapIndexReader {
 
         try {
             this.keyMem.of(configuration.getFilesFacade(), BitmapIndexUtils.keyFileName(path, name), pageSize, 0);
-            this.keyMem.grow(configuration.getFilesFacade().length(this.keyMem.getFd()));
+            this.keyMem.setSize(configuration.getFilesFacade().length(this.keyMem.getFd()));
             this.clock = configuration.getMicrosecondClock();
 
             // key file should already be created at least with header
@@ -126,7 +126,7 @@ public abstract class AbstractIndexReader implements BitmapIndexReader {
                 this.keyCountIncludingNulls++;
             }
             this.valueMem.of(configuration.getFilesFacade(), BitmapIndexUtils.valueFileName(path.trimTo(plen), name), pageSize, 0);
-            this.valueMem.grow(configuration.getFilesFacade().length(this.valueMem.getFd()));
+            this.valueMem.setSize(configuration.getFilesFacade().length(this.valueMem.getFd()));
         } catch (Throwable e) {
             close();
             throw e;

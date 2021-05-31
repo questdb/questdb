@@ -29,14 +29,9 @@ import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-import java.util.Comparator;
-
 import static io.questdb.std.Numbers.hexDigits;
 
 public final class Chars {
-    public static final Comparator<CharSequence> CHAR_SEQUENCE_COMPARATOR = Chars::compare;
-    public static final Comparator<CharSequence> CHAR_SEQUENCE_COMPARATOR_DESC = Chars::compareDescending;
-
     private Chars() {
     }
 
@@ -56,10 +51,6 @@ public final class Chars {
         for (int i = 0; i < len; i++) {
             Unsafe.getUnsafe().putByte(address + i, (byte) value.charAt(lo + i));
         }
-    }
-
-    public static boolean nonEmpty(final CharSequence value) {
-        return value != null && value.length() > 0;
     }
 
     public static int compare(CharSequence l, CharSequence r) {
@@ -117,6 +108,13 @@ public final class Chars {
         }
 
         return false;
+    }
+
+    public static void copyStrChars(CharSequence value, int pos, int len, long address) {
+        for (int i = 0; i < len; i++) {
+            char c = value.charAt(i + pos);
+            Unsafe.getUnsafe().putChar(address + 2L * i, c);
+        }
     }
 
     public static boolean endsWith(CharSequence cs, CharSequence ends) {
@@ -193,18 +191,6 @@ public final class Chars {
 
     public static boolean equals(CharSequence l, char r) {
         return l.length() == 1 && l.charAt(0) == r;
-    }
-
-
-    public static boolean notDots(CharSequence value) {
-        final int len = value.length();
-        if (len > 2) {
-            return true;
-        }
-        if (value.charAt(0) != '.') {
-            return true;
-        }
-        return len == 1 || len == 2 && value.charAt(1) != '.';
     }
 
     /**
@@ -463,6 +449,40 @@ public final class Chars {
         return lp != lhi || rp != rhi;
     }
 
+    public static boolean nonEmpty(final CharSequence value) {
+        return value != null && value.length() > 0;
+    }
+
+    public static boolean notDots(CharSequence value) {
+        final int len = value.length();
+        if (len > 2) {
+            return true;
+        }
+        if (value.charAt(0) != '.') {
+            return true;
+        }
+        return len == 1 || len == 2 && value.charAt(1) != '.';
+    }
+
+    public static CharSequence repeat(String s, int times) {
+        return new CharSequence() {
+            @Override
+            public int length() {
+                return s.length() * times;
+            }
+
+            @Override
+            public char charAt(int index) {
+                return s.charAt(index % s.length());
+            }
+
+            @Override
+            public CharSequence subSequence(int start, int end) {
+                throw new UnsupportedOperationException();
+            }
+        };
+    }
+
     /**
      * Split character sequence into a list of lpsz strings. This function
      * uses space as a delimiter and it honours spaces in double quotes. Main
@@ -546,6 +566,15 @@ public final class Chars {
         return b.toString();
     }
 
+    public static void toLowerCase(@Nullable final CharSequence str, final CharSink sink) {
+        if (str != null) {
+            final int len = str.length();
+            for (int i = 0; i < len; i++) {
+                sink.put(Character.toLowerCase(str.charAt(i)));
+            }
+        }
+    }
+
     public static String toLowerCaseAscii(@Nullable CharSequence value) {
         if (value == null) {
             return null;
@@ -564,24 +593,6 @@ public final class Chars {
 
     public static char toLowerCaseAscii(char character) {
         return character > 64 && character < 91 ? (char) (character + 32) : character;
-    }
-
-    public static void toUpperCase(@Nullable final CharSequence str, final CharSink sink) {
-        if(str != null) {
-            final int len = str.length();
-            for (int i = 0; i < len; i++) {
-                sink.put(Character.toUpperCase(str.charAt(i)));
-            }
-        }
-    }
-
-    public static void toLowerCase(@Nullable final CharSequence str, final CharSink sink) {
-        if(str != null) {
-            final int len = str.length();
-            for (int i = 0; i < len; i++) {
-                sink.put(Character.toLowerCase(str.charAt(i)));
-            }
-        }
     }
 
     public static void toSink(BinarySequence sequence, CharSink sink) {
@@ -628,6 +639,15 @@ public final class Chars {
         final CharSink b = Misc.getThreadLocalBuilder();
         b.put(cs, start, end);
         return b.toString();
+    }
+
+    public static void toUpperCase(@Nullable final CharSequence str, final CharSink sink) {
+        if (str != null) {
+            final int len = str.length();
+            for (int i = 0; i < len; i++) {
+                sink.put(Character.toUpperCase(str.charAt(i)));
+            }
+        }
     }
 
     public static boolean utf8Decode(long lo, long hi, CharSink sink) {
@@ -824,35 +844,5 @@ public final class Chars {
 
         sink.put((char) (b1 << 6 ^ b2 ^ 3968));
         return 2;
-    }
-
-    public static String toLowerCase(CharSequence str) {
-        final CharSink sink = Misc.getThreadLocalBuilder();
-        if (str != null) {
-            final int len = str.length();
-            for (int i = 0; i < len; i++) {
-                sink.put(Character.toLowerCase(str.charAt(i)));
-            }
-        }
-        return sink.toString();
-    }
-
-    public static CharSequence repeat(String s, int times) {
-        return new CharSequence() {
-            @Override
-            public int length() {
-                return s.length() * times;
-            }
-
-            @Override
-            public char charAt(int index) {
-                return s.charAt(index % s.length());
-            }
-
-            @Override
-            public CharSequence subSequence(int start, int end) {
-                throw new UnsupportedOperationException();
-            }
-        };
     }
 }

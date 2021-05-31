@@ -3198,7 +3198,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 for (int i = 0; i < N; i++) {
                     // one record per hour
                     ts = populateRow(writer, ts, rnd, 10L * 60000L * 1000L);
-                    // do not commit often, let transaction size grow
+                    // do not commit often, let transaction size setSize
                     if (rnd.nextPositiveInt() % 100 == 0) {
 
                         // reduce frequency of failures

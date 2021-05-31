@@ -26,7 +26,7 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.vm.AppendOnlyVirtualMemory;
 import io.questdb.cairo.vm.MappedReadOnlyMemory;
-import io.questdb.cairo.vm.SinglePageMappedReadOnlyPageMemory;
+import io.questdb.cairo.vm.ContiguousMappedReadOnlyMemory;
 import io.questdb.cairo.vm.VmUtils;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
@@ -44,7 +44,7 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
     public TableReaderMetadata(FilesFacade ff) {
         this.path = new Path();
         this.ff = ff;
-        this.metaMem = new SinglePageMappedReadOnlyPageMemory();
+        this.metaMem = new ContiguousMappedReadOnlyMemory();
         this.columnMetadata = new ObjList<>(columnCount);
         this.columnNameIndexMap = new LowerCaseCharSequenceIntHashMap();
     }
@@ -198,7 +198,7 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
 
     public long createTransitionIndex() {
         if (transitionMeta == null) {
-            transitionMeta = new SinglePageMappedReadOnlyPageMemory();
+            transitionMeta = new ContiguousMappedReadOnlyMemory();
         }
 
         transitionMeta.of(ff, path, ff.getPageSize(), ff.length(path));

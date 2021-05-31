@@ -156,11 +156,16 @@ public class NullColumn implements MappedReadOnlyMemory {
     }
 
     @Override
-    public void grow(long size) {
+    public void setSize(long size) {
     }
 
     @Override
     public long size() {
+        return 0;
+    }
+
+    @Override
+    public long addressOf(long offset) {
         return 0;
     }
 }
