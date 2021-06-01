@@ -36,16 +36,13 @@ const Notifications = () => (
       <SettingControl>
         <Toggler />
       </SettingControl>
-      <Text color="draculaForeground" size="lg">
-        Enable/Disable query notifications.
-      </Text>
     </SettingGroup>
     <SettingGroup>
       <SettingControl>
         <Duration />
       </SettingControl>
       <Text color="draculaForeground" size="lg">
-        Delay before notifications disappear.
+        Delay before notifications disappear
       </Text>
     </SettingGroup>
   </Wrapper>
