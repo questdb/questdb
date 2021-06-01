@@ -18,8 +18,8 @@ const Toggler = () => {
   return (
     <SwitchButton
       items={[
-        { text: "On", value: "true" },
-        { text: "Off", value: "false" },
+        { text: "Enable", value: "true" },
+        { text: "Disable", value: "false" },
       ]}
       onSelect={handleSelect}
       value={isNotificationEnabled.toString()}

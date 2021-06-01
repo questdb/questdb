@@ -3,7 +3,7 @@ import styled from "styled-components"
 import Notifications from "./Notifications"
 import { PaneContent, PaneMenu, Text, PrimaryToggleButton } from "components"
 import { Settings2 } from "@styled-icons/evaicons-solid/Settings2"
-import { Notification } from "@styled-icons/entypo/Notification"
+import { Popup } from "@styled-icons/entypo/Popup"
 import { color } from "utils"
 
 const PaneWrapper = styled.div`
@@ -17,13 +17,9 @@ const Wrapper = styled.div`
   flex-direction: column;
   justify-content: flex-start;
   align-items: flex-start;
-  --webkit-flex: 0;
-  flex: 0;
 `
 
 const HeaderWrapper = styled(PaneWrapper)`
-  --webkit-flex: 0;
-  flex: 0;
   width: 100%;
 `
 const HeaderMenu = styled(PaneMenu)`
@@ -84,7 +80,7 @@ const Settings = () => {
             onClick={handleNotificationClick}
             selected={selected === "notification"}
           >
-            <Notification size="18px" />
+            <Popup size="18px" />
             <span>Notification</span>
           </ToggleButton>
         </SettingsMenu>
