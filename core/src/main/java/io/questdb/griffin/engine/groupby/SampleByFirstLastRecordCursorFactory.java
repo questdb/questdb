@@ -24,9 +24,7 @@
 
 package io.questdb.griffin.engine.groupby;
 
-import io.questdb.cairo.BitmapIndexReader;
-import io.questdb.cairo.GenericRecordMetadata;
-import io.questdb.cairo.SymbolMapReader;
+import io.questdb.cairo.*;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
@@ -36,13 +34,13 @@ import io.questdb.std.Vect;
 
 public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory {
     private final RecordCursorFactory base;
+    private final TimestampSampler timestampSampler;
     private final GenericRecordMetadata groupByMetadata;
     private final int timestampIndex;
     private static final long BUFF_SIZE = 4096;
     private long timestampOutBuff;
     private long firstRowIdOutBuff;
     private long lastRowIdOutBuff;
-    private long keyIdsOutBuff;
     private final int gropuBySymbolColIndex;
 
     public SampleByFirstLastRecordCursorFactory(
@@ -54,12 +52,12 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
             int timestampIndex,
             int columnCount) {
         this.base = base;
+        this.timestampSampler = timestampSampler;
         this.groupByMetadata = groupByMetadata;
         this.timestampIndex = timestampIndex;
         timestampOutBuff = Unsafe.malloc(BUFF_SIZE * Long.BYTES);
         firstRowIdOutBuff = Unsafe.malloc(BUFF_SIZE * Long.BYTES);
         lastRowIdOutBuff = Unsafe.malloc(BUFF_SIZE * Long.BYTES);
-        keyIdsOutBuff = Unsafe.malloc(BUFF_SIZE * Integer.BYTES);
         gropuBySymbolColIndex = 1;
     }
 
@@ -69,7 +67,6 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
         Unsafe.free(timestampOutBuff, BUFF_SIZE * Long.BYTES);
         Unsafe.free(firstRowIdOutBuff, BUFF_SIZE * Long.BYTES);
         Unsafe.free(lastRowIdOutBuff, BUFF_SIZE * Long.BYTES);
-        Unsafe.free(keyIdsOutBuff, BUFF_SIZE * Integer.BYTES);
     }
 
     @Override
@@ -94,6 +91,7 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
         private SampleByFirstLastRecord record = new SampleByFirstLastRecord();
         private long currentRow;
         private long rowsFound;
+        private IndexFrameCursor indexCursor;
 
         public SampleByFirstLastRecordCursor(PageFrameCursor pageFrameCursor) {
             this.pageFrameCursor = pageFrameCursor;
@@ -135,19 +133,21 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
             long timestampBuff = currentFrame.getPageAddress(timestampIndex);
             long pageSize = currentFrame.getPageSize(timestampIndex);
 
-            long symbolBuff = currentFrame.getPageAddress(gropuBySymbolColIndex);
             BitmapIndexReader symbolIndexReader = currentFrame.getBitmapIndexReader(gropuBySymbolColIndex, BitmapIndexReader.DIR_FORWARD);
             int key = 0;
-            symbolIndexReader.getNextFrame(0,  currentFrame.getFirstRowId(), pageSize);
+            if (indexCursor == null) {
+                indexCursor = symbolIndexReader.getNextFrame(key, currentFrame.getFirstRowId(), currentFrame.getFirstRowId() + pageSize);
+            }
 
+            IndexFrame frame = indexCursor.getNext();
             rowsFound = Vect.findFirstLastInFrame(
                     pageSize,
                     timestampBuff,
-                    symbolBuff,
-                    symbolIndexBuff,
-                    symbolIndexSize,
+                    timestampSampler,
+                    key,
+                    frame.getAddress(),
+                    frame.getSize(),
                     timestampOutBuff,
-                    keyIdsOutBuff,
                     firstRowIdOutBuff,
                     lastRowIdOutBuff);
 

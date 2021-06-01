@@ -22,24 +22,16 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo;
+package io.questdb;
 
-public class IndexFrame {
-    public static final IndexFrame NULL_INSTANCE = new IndexFrame();
-    private long address;
-    private long size;
+import io.questdb.cairo.IndexFrame;
+import io.questdb.cairo.IndexFrameCursor;
 
-    IndexFrame of(long address, long size) {
-        this.address = address;
-        this.size = size;
-        return this;
-    }
-    
-    public long getAddress() {
-        return address;
-    }
-    
-    public long getSize() {
-        return size;    
+public class NullIndexFrameCursor implements IndexFrameCursor {
+    public static final NullIndexFrameCursor INSTANCE = new NullIndexFrameCursor();
+
+    @Override
+    public IndexFrame getNext() {
+        return IndexFrame.NULL_INSTANCE;
     }
 }

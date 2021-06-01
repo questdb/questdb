@@ -24,6 +24,7 @@
 
 package io.questdb.cairo;
 
+import io.questdb.NullIndexFrameCursor;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
@@ -53,6 +54,25 @@ public class BitmapIndexBwdReader extends AbstractIndexReader {
             long unIndexedNullCount
     ) {
         of(configuration, path, name, unIndexedNullCount, -1);
+    }
+
+    @Override
+    public IndexFrameCursor getNextFrame(int key, long minRowId, long maxRowId) {
+        if (key >= keyCount) {
+            updateKeyCount();
+        }
+
+        if (key == 0 && unIndexedNullCount > 0) {
+            return NullIndexFrameCursor.INSTANCE;
+        }
+
+        if (key < keyCount) {
+            final Cursor cursor = getCursor(false);
+            cursor.of(key, minRowId, maxRowId, keyCount);
+            return cursor;
+        }
+
+        return NullIndexFrameCursor.INSTANCE;
     }
 
     @Override
@@ -88,12 +108,30 @@ public class BitmapIndexBwdReader extends AbstractIndexReader {
         return cachedInstance ? nullCursor : new NullCursor();
     }
 
-    private class Cursor implements RowCursor {
+    private class Cursor implements RowCursor, IndexFrameCursor {
         protected long valueCount;
         protected long minValue;
         protected long next;
         private long valueBlockOffset;
+        private IndexFrame indexFrame = new IndexFrame();
         private final BitmapIndexUtils.ValueBlockSeeker SEEKER = this::seekValue;
+
+        @Override
+        public IndexFrame getNext() {
+            if (valueCount > 0) {
+                long cellIndex = getValueCellIndex(valueCount);
+                long address = valueMem.addressOf(valueBlockOffset);
+
+                valueCount -= cellIndex;
+                if (valueCount > 0) {
+                    jumpToPreviousValueBlock();
+                }
+
+                return indexFrame.of(address, cellIndex);
+            }
+
+            return IndexFrame.NULL_INSTANCE;
+        }
 
         @Override
         public boolean hasNext() {

@@ -24,22 +24,6 @@
 
 package io.questdb.cairo;
 
-public class IndexFrame {
-    public static final IndexFrame NULL_INSTANCE = new IndexFrame();
-    private long address;
-    private long size;
-
-    IndexFrame of(long address, long size) {
-        this.address = address;
-        this.size = size;
-        return this;
-    }
-    
-    public long getAddress() {
-        return address;
-    }
-    
-    public long getSize() {
-        return size;    
-    }
+public interface IndexFrameCursor {
+    IndexFrame getNext();
 }

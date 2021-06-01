@@ -24,6 +24,7 @@
 
 package io.questdb.cairo;
 
+import io.questdb.NullIndexFrameCursor;
 import io.questdb.cairo.sql.RowCursor;
 
 public class BitmapIndexBwdNullReader implements BitmapIndexReader {
@@ -49,6 +50,11 @@ public class BitmapIndexBwdNullReader implements BitmapIndexReader {
 
     private NullCursor getCursor(boolean cachedInstance) {
         return cachedInstance ? cursor : new NullCursor();
+    }
+
+    @Override
+    public IndexFrameCursor getNextFrame(int key, long minValue, long maxValue) {
+        return NullIndexFrameCursor.INSTANCE;
     }
 
     private static class NullCursor implements RowCursor {

@@ -209,23 +209,10 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
                         }
                     }
                     TableReaderPageFrameCursor.TableReaderPageFrame pageFrame = computeFrame(computePageMin(base));
-                    setIndexAddress(pageFrame);
                     return pageFrame;
                 }
             }
             return null;
-        }
-
-        private void setIndexAddress(TableReaderPageFrame pageFrame) {
-            RecordMetadata metadata = reader.getMetadata();
-            for (int i = 0; i < columnCount; i++) {
-                int columnIndex = columnIndexes.getQuick(i);
-                if (metadata.isColumnIndexed(columnIndex)) {
-                    BitmapIndexReader indexReader = reader.getBitmapIndexReader(partitionIndex, columnIndex, BitmapIndexReader.DIR_FORWARD);
-                    pageFrame.setIndexAddress(indexReader.getValueMem().getPageAddress(0));
-                    pageFrame.setIndexSize(indexReader.getValueMem().getPageSize(0));
-                }
-            }
         }
 
         @Override
@@ -321,9 +308,15 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
         }
 
         private class TableReaderPageFrame implements PageFrame {
+            @Override
+            public BitmapIndexReader getBitmapIndexReader(int columnIndex, int direction) {
+                return reader.getBitmapIndexReader(partitionIndex, columnIndexes.getQuick(columnIndex), direction);
+            }
 
-            private long indexAddress;
-            private long indexSize;
+            @Override
+            public long getFirstRowId() {
+                return 0;
+            }
 
             @Override
             public long getFirstTimestamp() {
@@ -331,16 +324,6 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
                     return Unsafe.getUnsafe().getLong(columnPageAddress.getQuick(timestampIndex));
                 }
                 return Long.MIN_VALUE;
-            }
-
-            @Override
-            public long getIndexAddress(int columnIndex) {
-                return indexAddress;
-            }
-
-            @Override
-            public long getIndexSize(int columnIndex) {
-                return indexSize;
             }
 
             @Override
@@ -358,13 +341,6 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
                 return columnSizes.getQuick(columnIndex);
             }
 
-            public void setIndexAddress(long indexAddress) {
-                this.indexAddress = indexAddress;
-            }
-
-            public void setIndexSize(long indexSize) {
-                this.indexSize = indexSize;
-            }
         }
     }
 

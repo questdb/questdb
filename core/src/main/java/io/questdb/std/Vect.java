@@ -24,6 +24,8 @@
 
 package io.questdb.std;
 
+import io.questdb.griffin.engine.groupby.TimestampSampler;
+
 public final class Vect {
 
     public static native double avgDouble(long pDouble, long count);
@@ -55,16 +57,24 @@ public final class Vect {
     public static native void copyFromTimestampIndex(long pIndex, long indexLo, long indexHi, long pTs);
 
     public static long findFirstLastInFrame(
+            long startRowId,
             long pageSize,
             long timestampBuff,
-            long symbolBuff,
+            TimestampSampler timestampSampler,
+            int key,
             long symbolIndexBuff,
             long symbolIndexSize,
             long timestampOutBuff,
-            long keyIdsOutBuff,
             long firstRowIdOutBuff,
             long lastRowIdOutBuff) {
-        return 0;
+        if (pageSize > 0 && symbolIndexSize > 0) {
+            long firstTs = Unsafe.getUnsafe().getLong(timestampBuff);
+            int resultOffset = 0;
+            long scanIndex = 0;
+            while (scanIndex < pageSize) {
+
+            }
+        }
     }
 
     public static native void flattenIndex(long pIndex, long count);

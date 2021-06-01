@@ -24,6 +24,7 @@
 
 package io.questdb.cairo;
 
+import io.questdb.NullIndexFrameCursor;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -79,6 +80,25 @@ public class BitmapIndexFwdReader extends AbstractIndexReader {
         return EmptyRowCursor.INSTANCE;
     }
 
+    @Override
+    public IndexFrameCursor getNextFrame(int key, long minRowId, long maxRowId) {
+        if (key >= keyCount) {
+            updateKeyCount();
+        }
+
+        if (key == 0 && unIndexedNullCount > 0) {
+            return NullIndexFrameCursor.INSTANCE;
+        }
+
+        if (key < keyCount) {
+            final Cursor cursor = getCursor(false);
+            cursor.of(key, minRowId, maxRowId, keyCount);
+            return cursor;
+        }
+
+        return NullIndexFrameCursor.INSTANCE;
+    }
+
     private Cursor getCursor(boolean cachedInstance) {
         return cachedInstance ? cursor : new Cursor();
     }
@@ -87,13 +107,33 @@ public class BitmapIndexFwdReader extends AbstractIndexReader {
         return cachedInstance ? nullCursor : new NullCursor();
     }
 
-    private class Cursor implements RowCursor {
+    private class Cursor implements RowCursor, IndexFrameCursor {
         protected long position;
         protected long valueCount;
         protected long next;
         private long valueBlockOffset;
+        private final IndexFrame indexFrame = new IndexFrame();
         private final BitmapIndexUtils.ValueBlockSeeker SEEKER = this::seekValue;
         private long maxValue;
+
+        @Override
+        public IndexFrame getNext() {
+            if (position < valueCount) {
+                long cellIndex = getValueCellIndex(position);
+                long address = valueMem.addressOf(valueBlockOffset + position);
+
+                long pageSize = Math.min(valueCount, blockValueCountMod);
+                position += pageSize;
+                if (cellIndex == blockValueCountMod && position < valueCount) {
+                    // we are at edge of block right now, next value will be in previous block
+                    jumpToPreviousValueBlock();
+                }
+
+                return indexFrame.of(address, pageSize);
+            }
+
+            return IndexFrame.NULL_INSTANCE;
+        }
 
         @Override
         public boolean hasNext() {

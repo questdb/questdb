@@ -303,16 +303,6 @@ public class TablePageFrameCursor implements PageFrameCursor {
         }
 
         @Override
-        public long getIndexAddress(int columnIndex) {
-            return indexAddresses.getQuick(columnIndex);
-        }
-
-        @Override
-        public long getIndexSize(int columnIndex) {
-            return indexSizes.getQuick(columnIndex);
-        }
-
-        @Override
         public long getPageAddress(int i) {
             return columnFrameAddresses.getQuick(i);
         }
