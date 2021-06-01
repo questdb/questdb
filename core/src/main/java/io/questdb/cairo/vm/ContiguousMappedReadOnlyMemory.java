@@ -122,15 +122,6 @@ public class ContiguousMappedReadOnlyMemory extends AbstractContiguousMemory
         setSize(ff.length(fd));
     }
 
-    public void of(FilesFacade ff, long fd, LPSZ name, long size) {
-        close();
-        this.ff = ff;
-        this.fd = fd;
-        if (fd != -1) {
-            map(ff, name, size);
-        }
-    }
-
     protected void map(FilesFacade ff, LPSZ name, long size) {
         size = Math.min(ff.length(fd), size);
         this.size = size;

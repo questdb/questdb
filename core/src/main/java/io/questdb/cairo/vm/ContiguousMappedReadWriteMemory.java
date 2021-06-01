@@ -57,7 +57,7 @@ public class ContiguousMappedReadWriteMemory extends AbstractContiguousMemory
 
     @Override
     public long appendAddressFor(long bytes) {
-        assert getAppendOffset() + bytes <= size;
+        checkAndExtend(appendAddress + bytes);
         long result = appendAddress;
         appendAddress += bytes;
         return result;
@@ -65,7 +65,7 @@ public class ContiguousMappedReadWriteMemory extends AbstractContiguousMemory
 
     @Override
     public long appendAddressFor(long offset, long bytes) {
-        assert offset + bytes <= size;
+        checkAndExtend(page + offset + bytes);
         return page + offset;
     }
 
@@ -148,6 +148,7 @@ public class ContiguousMappedReadWriteMemory extends AbstractContiguousMemory
 
     @Override
     public void jumpTo(long offset) {
+        checkAndExtend(page + offset);
         appendAddress = page + offset;
     }
 
