@@ -41,6 +41,8 @@ set(
         src/main/c/share/util.cpp
         src/main/c/share/ooo.cpp
         src/main/c/share/txn_board.cpp
+        src/main/c/share/bitmap_index_utils.h
+        src/main/c/share/bitmap_index_utils.cpp
 )
 
 # JNI includes
