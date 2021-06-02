@@ -44,6 +44,6 @@ public class MaxIntGroupByFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new MaxIntGroupByFunction(position, args.getQuick(0));
+        return new MaxIntGroupByFunction(args.getQuick(0));
     }
 }

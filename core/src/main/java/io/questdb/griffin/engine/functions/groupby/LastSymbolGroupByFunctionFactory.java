@@ -45,6 +45,6 @@ public class LastSymbolGroupByFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new LastSymbolGroupByFunction(position, (SymbolFunction) args.getQuick(0));
+        return new LastSymbolGroupByFunction((SymbolFunction) args.getQuick(0));
     }
 }

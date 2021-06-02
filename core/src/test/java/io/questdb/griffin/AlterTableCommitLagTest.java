@@ -301,6 +301,41 @@ public class AlterTableCommitLagTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testSetMaxUncommitted() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    compiler.compile(
+                            "create table x1(a int, b double, ts timestamp) timestamp(ts) partition by DAY",
+                            sqlExecutionContext
+                    );
+                    compiler.compile("alter table x1 set param maxUncommittedRows = 150", sqlExecutionContext);
+                    TestUtils.assertSql(
+                            compiler,
+                            sqlExecutionContext,
+                            "tables() where name = 'x1'",
+                            sink,
+                            "id\tname\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\tcommitLag\n" +
+                                    "1\tx1\tts\tDAY\t150\t0\n"
+                    );
+
+                    // test open table writer
+                    engine.releaseInactive();
+                    engine.releaseAllWriters();
+                    engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x1").close();
+
+                    TestUtils.assertSql(
+                            compiler,
+                            sqlExecutionContext,
+                            "tables() where name = 'x1'",
+                            sink,
+                            "id\tname\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\tcommitLag\n" +
+                                    "1\tx1\tts\tDAY\t150\t0\n"
+                    );
+                }
+        );
+    }
+
+    @Test
     public void testLagUnitsMs() throws Exception {
         assertLagUnits("alter table x1 set param commitLag = 100ms", "1\tx1\tts\tDAY\t1000\t100000\n");
     }
@@ -332,6 +367,20 @@ public class AlterTableCommitLagTest extends AbstractGriffinTest {
                             "create table x1(a int, b double, ts timestamp) timestamp(ts) partition by DAY",
                             sqlExecutionContext);
                     compiler.compile(sql, sqlExecutionContext);
+                    TestUtils.assertSql(
+                            compiler,
+                            sqlExecutionContext,
+                            "tables() where name = 'x1'",
+                            sink,
+                            "id\tname\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\tcommitLag\n" +
+                                    expected
+                    );
+
+                    // test open table writer
+                    engine.releaseInactive();
+                    engine.releaseAllWriters();
+                    engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x1").close();
+
                     TestUtils.assertSql(
                             compiler,
                             sqlExecutionContext,

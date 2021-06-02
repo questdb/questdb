@@ -44,6 +44,6 @@ public class LastDoubleGroupByFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new LastDoubleGroupByFunction(position, args.getQuick(0));
+        return new LastDoubleGroupByFunction(args.getQuick(0));
     }
 }
