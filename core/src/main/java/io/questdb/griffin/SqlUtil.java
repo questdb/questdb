@@ -27,6 +27,7 @@ package io.questdb.griffin;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.std.*;
+import io.questdb.std.datetime.microtime.Timestamps;
 
 public class SqlUtil {
 
@@ -125,12 +126,6 @@ public class SqlUtil {
         return queryColumnPool.next().of(alias, nextLiteral(sqlNodePool, column, 0));
     }
 
-    static {
-        for (int i = 0, n = OperatorExpression.operators.size(); i < n; i++) {
-            SqlUtil.disallowedAliases.add(OperatorExpression.operators.getQuick(i).token);
-        }
-    }
-
     static long expectMicros(CharSequence tok, int position) throws SqlException {
         int k = -1;
 
@@ -160,31 +155,38 @@ public class SqlUtil {
                 case 's':
                     if (nChars == 1) {
                         // seconds
-                        return interval * 1_000_000L;
+                        return interval * Timestamps.SECOND_MICROS;
                     }
                     break;
                 case 'm':
                     if (nChars == 1) {
                         // minutes
-                        return interval * 60_000_000L;
+                        return interval * Timestamps.MINUTE_MICROS;
                     } else {
                         if (tok.charAt(k + 1) == 's') {
                             // millis
-                            return interval * 1_000;
+                            return interval * Timestamps.MILLI_MICROS;
                         }
                     }
                     break;
                 case 'h':
                     if (nChars == 1) {
                         // hours
-                        return interval * 3_600_000_000L;
+                        return interval * Timestamps.HOUR_MICROS;
                     }
                     break;
                 case 'd':
                     if (nChars == 1) {
                         // days
-                        return interval * 86_400_000_000L;
+                        return interval * Timestamps.DAY_MICROS;
                     }
+                    break;
+                case 'u':
+                    if (nChars == 2 && tok.charAt(k + 1) == 's') {
+                        return interval;
+                    }
+                    break;
+                default:
                     break;
             }
         } catch (NumericException ex) {
@@ -192,5 +194,11 @@ public class SqlUtil {
         }
 
         throw SqlException.$(position + len, "invalid interval qualifier ").put(tok);
+    }
+
+    static {
+        for (int i = 0, n = OperatorExpression.operators.size(); i < n; i++) {
+            SqlUtil.disallowedAliases.add(OperatorExpression.operators.getQuick(i).token);
+        }
     }
 }
