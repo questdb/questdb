@@ -59,8 +59,6 @@ public class LineTcpServerTest extends AbstractCairoTest {
     private final static String AUTH_KEY_ID2 = "testUser2";
     private final static PrivateKey AUTH_PRIVATE_KEY2 = AuthDb.importPrivateKey("lwJi3TSb4G6UcHxFJmPhOTWa4BLwJOOiK76wT6Uk7pI");
     private static final long TEST_TIMEOUT_IN_MS = 120000;
-    private int maxMeasurementSize = 50;
-
     private final WorkerPool sharedWorkerPool = new WorkerPool(new WorkerPoolConfiguration() {
         private final int[] affinity = {-1, -1};
 
@@ -91,6 +89,7 @@ public class LineTcpServerTest extends AbstractCairoTest {
             return bindPort;
         }
     };
+    private int maxMeasurementSize = 50;
     private String authKeyId = null;
     private int msgBufferSize = 1024;
     private long minIdleMsBeforeWriterRelease = 30000;
@@ -113,6 +112,11 @@ public class LineTcpServerTest extends AbstractCairoTest {
         @Override
         public int getWriterQueueCapacity() {
             return 4;
+        }
+
+        @Override
+        public MicrosecondClock getMicrosecondClock() {
+            return testMicrosClock;
         }
 
         @Override
@@ -144,11 +148,6 @@ public class LineTcpServerTest extends AbstractCairoTest {
         @Override
         public long getWriterIdleTimeout() {
             return minIdleMsBeforeWriterRelease;
-        }
-
-        @Override
-        public MicrosecondClock getMicrosecondClock() {
-            return testMicrosClock;
         }
     };
 
@@ -214,15 +213,17 @@ public class LineTcpServerTest extends AbstractCairoTest {
             String line2 = "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\n";
             String line3 = "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\n";
             String header = "location\ttemperature\ttimestamp\n";
-            String[] lines = {line1, line2, line3 };
+            String[] lines = {line1, line2, line3};
             String expected = header + line1 + line2 + line3;
             assertTable(expected, "weather");
 
             StringBuilder expectedSB = new StringBuilder(header);
-            for(int l = 0; l < lines.length; l++) {
+            for (int l = 0; l < lines.length; l++) {
+                //noinspection StringRepeatCanBeUsed
                 for (int it = 0; it < iterations + 2; it++) {
                     expectedSB.append(lines[l]);
-                }            }
+                }
+            }
             String expected2 = expectedSB.toString();
 
             threadPushFinished.await();
@@ -239,6 +240,54 @@ public class LineTcpServerTest extends AbstractCairoTest {
     @Test
     public void testUnauthenticated() throws Exception {
         test(null, null, 200, 1_000, false);
+    }
+
+    @Test
+    public void testWriter17Fields() throws Exception {
+        int defautlMeasurementSize = maxMeasurementSize;
+        String lineData = "tableCRASH,tag_n_1=1,tag_n_2=2,tag_n_3=3,tag_n_4=4,tag_n_5=5,tag_n_6=6," +
+                "tag_n_7=7,tag_n_8=8,tag_n_9=9,tag_n_10=10,tag_n_11=11,tag_n_12=12,tag_n_13=13," +
+                "tag_n_14=14,tag_n_15=15,tag_n_16=16,tag_n_17=17 value=42.4 1619509249714000000\n";
+        try {
+            maxMeasurementSize = lineData.length();
+            runInContext(() -> {
+                send(lineData, "tableCRASH");
+
+                String expected = "tag_n_1\ttag_n_2\ttag_n_3\ttag_n_4\ttag_n_5\ttag_n_6\ttag_n_7\ttag_n_8\ttag_n_9\ttag_n_10\ttag_n_11\ttag_n_12\ttag_n_13\ttag_n_14\ttag_n_15\ttag_n_16\ttag_n_17\tvalue\ttimestamp\n" +
+                        "1\t2\t3\t4\t5\t6\t7\t8\t9\t10\t11\t12\t13\t14\t15\t16\t17\t42.400000000000006\t2021-04-27T07:40:49.714000Z\n";
+                assertTable(expected, "tableCRASH");
+            });
+        } finally {
+            maxMeasurementSize = defautlMeasurementSize;
+        }
+    }
+
+    @Test
+    public void testWriterAllLongs() throws Exception {
+        currentMicros = 1;
+        try (TableModel m = new TableModel(configuration, "messages", PartitionBy.MONTH)) {
+            m.timestamp("ts")
+                    .col("id", ColumnType.LONG)
+                    .col("author", ColumnType.LONG)
+                    .col("guild", ColumnType.LONG)
+                    .col("channel", ColumnType.LONG)
+                    .col("flags", ColumnType.BYTE);
+            CairoTestUtils.createTableWithVersion(m, ColumnType.VERSION);
+        }
+
+        int defautlMeasurementSize = maxMeasurementSize;
+        String lineData = "messages id=843530699759026177i,author=820703963477180437i,guild=820704412095479830i,channel=820704412095479833i,flags=6i\n";
+        try {
+            maxMeasurementSize = lineData.length();
+            runInContext(() -> {
+                send(lineData, "messages");
+                String expected = "ts\tid\tauthor\tguild\tchannel\tflags\n" +
+                        "1970-01-01T00:00:00.000001Z\t843530699759026177\t820703963477180437\t820704412095479830\t820704412095479833\t6\n";
+                assertTable(expected, "messages");
+            });
+        } finally {
+            maxMeasurementSize = defautlMeasurementSize;
+        }
     }
 
     @Test
@@ -357,54 +406,6 @@ public class LineTcpServerTest extends AbstractCairoTest {
                     "us-westcost\tsensor1\t82.0\t2016-06-13T17:43:50.102500Z\n";
             assertTable(expected, "weather");
         });
-    }
-
-    @Test
-    public void testWriter17Fields() throws Exception {
-        int defautlMeasurementSize = maxMeasurementSize;
-        String lineData = "tableCRASH,tag_n_1=1,tag_n_2=2,tag_n_3=3,tag_n_4=4,tag_n_5=5,tag_n_6=6," +
-                "tag_n_7=7,tag_n_8=8,tag_n_9=9,tag_n_10=10,tag_n_11=11,tag_n_12=12,tag_n_13=13," +
-                "tag_n_14=14,tag_n_15=15,tag_n_16=16,tag_n_17=17 value=42.4 1619509249714000000\n";
-        try {
-            maxMeasurementSize = lineData.length();
-            runInContext(() -> {
-                send(lineData, "tableCRASH");
-
-                String expected = "tag_n_1\ttag_n_2\ttag_n_3\ttag_n_4\ttag_n_5\ttag_n_6\ttag_n_7\ttag_n_8\ttag_n_9\ttag_n_10\ttag_n_11\ttag_n_12\ttag_n_13\ttag_n_14\ttag_n_15\ttag_n_16\ttag_n_17\tvalue\ttimestamp\n" +
-                        "1\t2\t3\t4\t5\t6\t7\t8\t9\t10\t11\t12\t13\t14\t15\t16\t17\t42.400000000000006\t2021-04-27T07:40:49.714000Z\n";
-                assertTable(expected, "tableCRASH");
-            });
-        } finally {
-            maxMeasurementSize = defautlMeasurementSize;
-        }
-    }
-
-    @Test
-    public void testWriterAllLongs() throws Exception {
-        currentMicros = 1;
-        try (TableModel m = new TableModel(configuration, "messages", PartitionBy.MONTH)) {
-            m.timestamp("ts")
-                    .col("id", ColumnType.LONG)
-                    .col("author", ColumnType.LONG)
-                    .col("guild", ColumnType.LONG)
-                    .col("channel", ColumnType.LONG)
-                    .col("flags", ColumnType.BYTE);
-            CairoTestUtils.createTableWithVersion(m, ColumnType.VERSION);
-        }
-
-        int defautlMeasurementSize = maxMeasurementSize;
-        String lineData = "messages id=843530699759026177i,author=820703963477180437i,guild=820704412095479830i,channel=820704412095479833i,flags=6i\n";
-        try {
-            maxMeasurementSize = lineData.length();
-            runInContext(() -> {
-                send(lineData, "messages");
-                String expected = "ts\tid\tauthor\tguild\tchannel\tflags\n" +
-                        "1970-01-01T00:00:00.000001Z\t843530699759026177\t820703963477180437\t820704412095479830\t820704412095479833\t6\n";
-                assertTable(expected, "messages");
-            });
-        } finally {
-            maxMeasurementSize = defautlMeasurementSize;
-        }
     }
 
     private void assertTable(CharSequence expected, CharSequence tableName) {

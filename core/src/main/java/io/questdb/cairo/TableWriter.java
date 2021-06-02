@@ -2443,22 +2443,23 @@ public class TableWriter implements Closeable {
                 throw CairoException.instance(0).put("timestamps before 1970-01-01 are not allowed for O3");
             }
 
-            final long o3CheckTimestampMax = getTimestampIndexValue(sortedTimestampsAddr, o3RowCount - 1);
-            if (o3CheckTimestampMax < Timestamps.O3_MIN_TS) {
+            long o3TimestampMax = getTimestampIndexValue(sortedTimestampsAddr, o3RowCount - 1);
+            if (o3TimestampMax < Timestamps.O3_MIN_TS) {
                 o3InError = true;
                 throw CairoException.instance(0).put("timestamps before 1970-01-01 are not allowed for O3");
             }
 
-            if (o3TimestampMin > o3CheckTimestampMax) {
+            if (o3TimestampMin > o3TimestampMax) {
                 // Safe check of the sort. No known way to reproduce
                 o3InError = true;
-                throw CairoException.instance(0).put("error in o3 timestamp sort results [minTimestamp=")
-                        .put(o3TimestampMin).put(",maxTimestamp=").put(o3CheckTimestampMax).put("]");
+                throw CairoException.instance(0)
+                        .put("error in o3 timestamp sort results [o3TimestampMin=").put(o3TimestampMin)
+                        .put(", o3TimestampMax=").put(o3TimestampMax)
+                        .put("]");
             }
 
             if (lag > 0) {
-                final long o3max = getTimestampIndexValue(sortedTimestampsAddr, o3RowCount - 1);
-                long lagThresholdTimestamp = o3max - lag;
+                long lagThresholdTimestamp = o3TimestampMax - lag;
                 if (lagThresholdTimestamp >= o3TimestampMin) {
                     final long lagThresholdRow = Vect.boundedBinarySearchIndexT(
                             sortedTimestampsAddr,
@@ -2476,12 +2477,20 @@ public class TableWriter implements Closeable {
                     }
                 } else {
                     o3LagRowCount = o3RowCount;
-                    srcOooMax = 0;
+                    // This is a scenario where "lag" and "maxUncommitted" values do not work with the data
+                    // in that the "lag" is larger than dictated "maxUncommitted". A simple plan here is to
+                    // commit half of the lag.
+                    if (o3LagRowCount > maxUncommittedRows) {
+                        o3LagRowCount = maxUncommittedRows / 2;
+                        srcOooMax = o3RowCount - o3LagRowCount;
+                    } else {
+                        srcOooMax = 0;
+                    }
                 }
                 LOG.debug().$("o3 commit lag [table=").$(tableName)
                         .$(", lag=").$(lag)
                         .$(", maxUncommittedRows=").$(maxUncommittedRows)
-                        .$(", o3max=").$ts(o3max)
+                        .$(", o3max=").$ts(o3TimestampMax)
                         .$(", lagThresholdTimestamp=").$ts(lagThresholdTimestamp)
                         .$(", o3LagRowCount=").$(o3LagRowCount)
                         .$(", srcOooMax=").$(srcOooMax)
@@ -2499,10 +2508,12 @@ public class TableWriter implements Closeable {
                 return true;
             }
 
-            long o3TimestampMax = getTimestampIndexValue(sortedTimestampsAddr, srcOooMax - 1);
+            // we could have moved the "srcOooMax" and hence we re-read the max timestamp
+            o3TimestampMax = getTimestampIndexValue(sortedTimestampsAddr, srcOooMax - 1);
             // move uncommitted is liable to change max timestamp
             // however we need to identify last partition before max timestamp skips to NULL for example
             final long maxTimestamp = txFile.getMaxTimestamp();
+
             // we are going to use this soon to avoid double-copying lag data
 //            final boolean yep = isAppendLastPartitionOnly(sortedTimestampsAddr, o3TimestampMax);
 
