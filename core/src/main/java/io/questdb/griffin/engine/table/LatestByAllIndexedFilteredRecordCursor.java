@@ -102,11 +102,11 @@ class LatestByAllIndexedFilteredRecordCursor extends AbstractRecordListCursor {
                     }
                 }
             }
-            rows.sortAsUnsigned();
             keyLo = localLo;
             keyHi = localHi + 1;
             localLo = Integer.MAX_VALUE;
             localHi = Integer.MIN_VALUE;
         }
+        rows.sortAsUnsigned();
     }
 }
