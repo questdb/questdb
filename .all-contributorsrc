@@ -371,6 +371,15 @@
       "contributions": [
         "bug"
       ]
+    },
+    {
+      "login": "RiccardoGiro",
+      "name": "Riccardo",
+      "avatar_url": "https://avatars.githubusercontent.com/u/60734967?v=4",
+      "profile": "https://github.com/RiccardoGiro",
+      "contributions": [
+        "bug"
+      ]
     }
   ],
   "badgeTemplate": "[![All Contributors](https://img.shields.io/badge/all_contributors-<%= contributors.length %>-orange.svg)](#contributors)",
