@@ -24,6 +24,8 @@
 
 #include "bitmap_index_utils.h"
 #include <algorithm>
+#include <cassert>
+#include <atomic>
 
 void latest_scan_backward(int64_t keys_memory_addr, int64_t keys_memory_size, int64_t values_memory_addr,
                           int64_t value_memory_size, int64_t args_memory_addr, int64_t unindexed_null_count,
