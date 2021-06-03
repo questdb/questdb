@@ -152,9 +152,7 @@ public abstract class AbstractIndexReader implements BitmapIndexReader {
                 this.keyCountIncludingNulls++;
             }
             this.valueMem.of(configuration.getFilesFacade(), BitmapIndexUtils.valueFileName(path.trimTo(plen), name), pageSize, 0);
-            long fileSize = configuration.getFilesFacade().length(this.valueMem.getFd());
-            long mappedSize = Long.min(fileSize, valuesMemorySize);
-            this.valueMem.grow(mappedSize);
+            this.valueMem.grow(configuration.getFilesFacade().length(this.valueMem.getFd()));
         } catch (Throwable e) {
             close();
             throw e;
