@@ -24,13 +24,13 @@
 
 package io.questdb.std;
 
+import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Path;
+
 import java.io.File;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.atomic.AtomicLong;
-
-import io.questdb.std.str.LPSZ;
-import io.questdb.std.str.Path;
 
 public final class Files {
 
@@ -140,6 +140,8 @@ public final class Files {
     public native static long length(long fd);
 
     public static native int lock(long fd);
+
+    public static native int lockTruncate(long fd);
 
     public static int mkdir(LPSZ path, int mode) {
         return mkdir(path.address(), mode);

@@ -248,6 +248,11 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
+    public int tryExclusiveLockTruncate(long fd) {
+        return Files.lockTruncate(fd);
+    }
+
+    @Override
     public long write(long fd, long address, long len, long offset) {
         return Files.write(fd, address, len, offset);
     }

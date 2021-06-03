@@ -21,7 +21,6 @@
  *  limitations under the License.
  *
  ******************************************************************************/
-
 #include <unistd.h>
 #include <sys/stat.h>
 #include <fcntl.h>
@@ -323,6 +322,32 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_findType
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_lock
         (JNIEnv *e, jclass cl, jlong fd) {
     return flock((int) fd, LOCK_EX | LOCK_NB);
+}
+
+JNIEXPORT jint JNICALL Java_io_questdb_std_Files_lockTruncate
+        (JNIEnv *e, jclass cl, jlong fd) {
+    int result = 0;
+
+    // lock exclusively non-blocking specifies non blocking mode
+    if (flock((int) fd, LOCK_EX | LOCK_NB) == 0) {
+        int tr = ftruncate(fd, 0);
+        // truncate error
+        if (tr == -1) {
+            // error
+            return -1;
+        }
+        // remove exclusive lock and blocking shared lock
+        result = 1;
+    }
+
+    // keep shared lock
+    if (flock((int) fd, LOCK_SH) == 0) {
+        // not truncated
+        return result;
+    }
+
+    // error
+    return -1;
 }
 
 JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_rename

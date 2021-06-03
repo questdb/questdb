@@ -106,5 +106,7 @@ public interface FilesFacade {
 
     boolean allocate(long fd, long size);
 
+    int tryExclusiveLockTruncate(long fd);
+
     long write(long fd, long address, long len, long offset);
 }

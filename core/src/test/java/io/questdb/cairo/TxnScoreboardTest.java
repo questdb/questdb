@@ -111,18 +111,109 @@ public class TxnScoreboardTest extends AbstractCairoTest {
                     scoreboard.releaseTxn(i);
                 }
                 Assert.assertEquals(1499, scoreboard.getMin());
-            }
 
-            // increase scoreboard size
+                // increase scoreboard size
+                try (
+                        final TxnScoreboard scoreboard2 = new TxnScoreboard(FilesFacadeImpl.INSTANCE, shmPath.of(root), 2048)
+                ) {
+                    Assert.assertEquals(1499, scoreboard2.getMin());
+                    for (int i = 1500; i < 3000; i++) {
+                        scoreboard2.acquireTxn(i);
+                        scoreboard2.releaseTxn(i);
+                    }
+                    Assert.assertEquals(2999, scoreboard2.getMin());
+                    Assert.assertEquals(2999, scoreboard.getMin());
+                }
+            }
+        }
+    }
+
+    @Test
+    public void testCleanOnExclusiveOpen() {
+        try (final Path shmPath = new Path()) {
             try (
-                    final TxnScoreboard scoreboard = new TxnScoreboard(FilesFacadeImpl.INSTANCE, shmPath.of(root), 2048)
+                    final TxnScoreboard scoreboard = new TxnScoreboard(FilesFacadeImpl.INSTANCE, shmPath.of(root), 1024)
             ) {
-                Assert.assertEquals(1499, scoreboard.getMin());
-                for (int i = 1500; i < 3000; i++) {
+                for (int i = 0; i < 1500; i++) {
                     scoreboard.acquireTxn(i);
                     scoreboard.releaseTxn(i);
                 }
-                Assert.assertEquals(2999, scoreboard.getMin());
+                Assert.assertEquals(1499, scoreboard.getMin());
+            }
+
+
+            // second open is exclusive, file should be truncated
+            try (
+                    final TxnScoreboard scoreboard2 = new TxnScoreboard(FilesFacadeImpl.INSTANCE, shmPath.of(root), 2048)
+            ) {
+                Assert.assertEquals(0, scoreboard2.getMin());
+            }
+        }
+    }
+
+    @Test
+    public void testCleanOnExclusiveOpenLocksFile() {
+        try (final Path shmPath = new Path()) {
+            try (
+                    final TxnScoreboard scoreboard = new TxnScoreboard(FilesFacadeImpl.INSTANCE, shmPath.of(root), 1024)
+            ) {
+                for (int i = 0; i < 1500; i++) {
+                    scoreboard.acquireTxn(i);
+                    scoreboard.releaseTxn(i);
+                }
+                Assert.assertEquals(1499, scoreboard.getMin());
+            }
+
+            // second open is exclusive, file should be truncated
+            try (
+                    final TxnScoreboard scoreboard2 = new TxnScoreboard(FilesFacadeImpl.INSTANCE, shmPath.of(root), 2048)
+            ) {
+                Assert.assertEquals(0, scoreboard2.getMin());
+                for (int i = 0; i < 10; i++) {
+                    scoreboard2.acquireTxn(i);
+                    scoreboard2.releaseTxn(i);
+                }
+
+                // This should not obtain exclusive lock even though file was empty when scoreboard2 put shared lock
+                try (
+                        final TxnScoreboard scoreboard3 = new TxnScoreboard(FilesFacadeImpl.INSTANCE, shmPath.of(root), 2048)
+                ) {
+                    Assert.assertEquals(9, scoreboard2.getMin());
+                    Assert.assertEquals(9, scoreboard3.getMin());
+                }
+
+            }
+        }
+    }
+
+    @Test
+    public void testDoesNotCleanOnNonExclusiveOpen() {
+        try (final Path shmPath = new Path()) {
+            try (
+                    final TxnScoreboard rootBoard = new TxnScoreboard(FilesFacadeImpl.INSTANCE, shmPath.of(root), 2048)
+            ) {
+                try (
+                        final TxnScoreboard scoreboard = new TxnScoreboard(FilesFacadeImpl.INSTANCE, shmPath.of(root), 1024)
+                ) {
+                    for (int i = 0; i < 1500; i++) {
+                        scoreboard.acquireTxn(i);
+                        scoreboard.releaseTxn(i);
+                    }
+                    Assert.assertEquals(1499, scoreboard.getMin());
+                }
+
+                try (
+                        final TxnScoreboard scoreboard2 = new TxnScoreboard(FilesFacadeImpl.INSTANCE, shmPath.of(root), 2048)
+                ) {
+                    Assert.assertEquals(1499, scoreboard2.getMin());
+                    for (int i = 1500; i < 3000; i++) {
+                        scoreboard2.acquireTxn(i);
+                        scoreboard2.releaseTxn(i);
+                    }
+                    Assert.assertEquals(2999, scoreboard2.getMin());
+                }
+
+                Assert.assertEquals(2999, rootBoard.getMin());
             }
         }
     }

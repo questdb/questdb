@@ -47,6 +47,7 @@ public class TxnScoreboard implements Closeable {
         this.ff = ff;
         root.concat(TableUtils.TXN_SCOREBOARD_FILE_NAME).$();
         this.fd = TableUtils.openRW(ff, root, LOG);
+        TableUtils.tryCleanExclusively(ff, root, fd, LOG);
         int pow2EntryCount = Numbers.ceilPow2(entryCount);
         this.size = TxnScoreboard.getScoreboardSize(pow2EntryCount);
         if (!ff.allocate(fd, this.size)) {
