@@ -4,7 +4,6 @@ project(questdb)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED True)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
-set(CMAKE_BUILD_TYPE MinSizeRel)
 
 # deal with windows slashes in JAVA_HOME
 if ($ENV{JAVA_HOME})
@@ -133,6 +132,9 @@ include(${ZLIB_SOURCE_DIR}/CMakeLists.txt)
 # ZLIB_SRCS is defined in Zlib Cmake config
 add_library(questdb SHARED ${SOURCE_FILES} ${ZLIB_SRCS})
 
+set(DEBUG_OPTIONS "-Wall;-g;-O0")
+set(RELEASE_OPTIONS "-Wall;-Wpedantic;-Wextra;-fexceptions;-O3")
+
 if (AARCH64)
 
     add_compile_definitions(__aarch64__)
@@ -148,20 +150,18 @@ if (AARCH64)
     )
 
     add_library(questdb-aarch64 OBJECT ${AARCH64_FILES})
-    set_target_properties(
-            questdb-aarch64 PROPERTIES
-	        COMPILE_FLAGS "-O3 -fPIC"
-    )
+    target_compile_options(questdb-aarch64 PRIVATE "-fPIC"
+            "$<$<CONFIG:DEBUG>:${DEBUG_OPTIONS}>"
+            "$<$<CONFIG:RELEASE>:${RELEASE_OPTIONS}>")
 
     target_link_libraries(
             questdb
             questdb-aarch64
     )
 
-    set_target_properties(
-            questdb PROPERTIES
-	        COMPILE_FLAGS "-O3"
-    )
+    target_compile_options(questdb PRIVATE
+            "$<$<CONFIG:DEBUG>:${DEBUG_OPTIONS}>"
+            "$<$<CONFIG:RELEASE>:${RELEASE_OPTIONS}>")
 
 else ()
 
@@ -179,26 +179,23 @@ else ()
     ## and fetch method pointer to the relevant implementation.
     # SSE 4.1 lib
     add_library(questdb-sse4 OBJECT ${VCL_FILES})
-    set_target_properties(
-            questdb-sse4 PROPERTIES
-            COMPILE_FLAGS "-m64 -O3 -msse4.1 -fPIC"
-    )
+    target_compile_options(questdb-sse4 PRIVATE "-m64;-msse4.1;-fPIC"
+            "$<$<CONFIG:DEBUG>:${DEBUG_OPTIONS}>"
+            "$<$<CONFIG:RELEASE>:${RELEASE_OPTIONS}>")
 
     # AVX2 lib
     add_library(questdb-avx2 OBJECT ${VCL_FILES})
-    set_target_properties(
-            questdb-avx2 PROPERTIES
-            COMPILE_FLAGS "-m64 -O3 -mavx2 -fPIC -mfma"
-    )
+    target_compile_options(questdb-avx2 PRIVATE "-m64;-mavx2;-fPIC;-mfma"
+            "$<$<CONFIG:DEBUG>:${DEBUG_OPTIONS}>"
+            "$<$<CONFIG:RELEASE>:${RELEASE_OPTIONS}>")
 
     #AVX512 lib
     add_library(questdb-avx512 OBJECT ${VCL_FILES})
     # A_memset, A_memcpy are faster on avx512 but slower on other CPU's on Linux
     target_compile_definitions(questdb-avx512 PRIVATE ENABLE_ASMLIB)
-    set_target_properties(
-            questdb-avx512 PROPERTIES
-            COMPILE_FLAGS "-m64 -O3 -mavx512f -fPIC -mfma -mavx512vl -mavx512bw -mavx512dq"
-    )
+    target_compile_options(questdb-avx512 PRIVATE "-m64;-mavx512f;-fPIC;-mfma;-mavx512vl;-mavx512bw;-mavx512dq"
+            "$<$<CONFIG:DEBUG>:${DEBUG_OPTIONS}>"
+            "$<$<CONFIG:RELEASE>:${RELEASE_OPTIONS}>")
 
     #SSE2 lib
     add_library(questdb-sse2 OBJECT ${VCL_FILES_SSE2})
@@ -210,21 +207,17 @@ else ()
     )
 
     if (WIN32)
-        set_target_properties(
-                questdb-sse2 PROPERTIES
-                COMPILE_FLAGS "-m64 -O3 -march=core2 -msse2 -Wno-attributes"
-        )
+        target_compile_options(questdb-sse2 PRIVATE "-m64;-march=core2;-msse2;-Wno-attributes"
+                "$<$<CONFIG:DEBUG>:${DEBUG_OPTIONS}>"
+                "$<$<CONFIG:RELEASE>:${RELEASE_OPTIONS}>")
     else ()
-        set_target_properties(
-                questdb-sse2 PROPERTIES
-                COMPILE_FLAGS "-m64 -O3 -march=core2 -msse2 -fPIC"
-        )
+        target_compile_options(questdb-sse2 PRIVATE "-m64;-march=core2;-msse2;-fPIC"
+                "$<$<CONFIG:DEBUG>:${DEBUG_OPTIONS}>"
+                "$<$<CONFIG:RELEASE>:${RELEASE_OPTIONS}>")
     endif (WIN32)
-
-    set_target_properties(
-            questdb PROPERTIES
-	    COMPILE_FLAGS "-lrt -m64 -O3"
-    )
+    target_compile_options(questdb PRIVATE "-lrt;-m64"
+            "$<$<CONFIG:DEBUG>:${DEBUG_OPTIONS}>"
+            "$<$<CONFIG:RELEASE>:${RELEASE_OPTIONS}>")
 
     ## Uncomment to measure time of ooo.cpp methods
     ## add_compile_definitions(OOO_CPP_PROFILE_TIMING)
