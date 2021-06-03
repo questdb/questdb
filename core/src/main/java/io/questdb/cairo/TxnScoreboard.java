@@ -114,7 +114,7 @@ public class TxnScoreboard implements Closeable {
         // because of process termination
         // the txn is locked forever and eventually scoreboard fails with txn-inflight error.
         // To prevent it try to clean scoreboard on opening if noone has it opened yet.
-        if (ff.isRestrictedFileSystem()) {
+        if (ff.fsLocksOpenedFiles()) {
             // On Windows simply attempt to delete the file
             // If file is in use, delete attempt fails but it's ok to ignore since it will happen in most of the cases
             if (ff.remove(path)) {

@@ -136,6 +136,11 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
+    public boolean fsLocksOpenedFiles() {
+        return Os.type == Os.WINDOWS;
+    }
+
+    @Override
     public void iterateDir(LPSZ path, FindVisitor func) {
         long p = findFirst(path);
         if (p > 0) {

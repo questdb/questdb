@@ -66,6 +66,8 @@ public interface FilesFacade {
 
     boolean isRestrictedFileSystem();
 
+    boolean fsLocksOpenedFiles();
+
     void iterateDir(LPSZ path, FindVisitor func);
 
     long length(long fd);
