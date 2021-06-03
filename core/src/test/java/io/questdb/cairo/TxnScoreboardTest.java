@@ -24,6 +24,8 @@
 
 package io.questdb.cairo;
 
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
@@ -126,6 +128,25 @@ public class TxnScoreboardTest extends AbstractCairoTest {
                 }
             }
         }
+    }
+
+    @Test
+    public void testCleanFails() throws Exception {
+        FilesFacade ff = new FilesFacadeImpl() {
+            @Override
+            public int tryExclusiveLockTruncate(long fd) {
+                return -1;
+            }
+        };
+
+        assertMemoryLeak(() -> {
+            try (final Path shmPath = new Path()) {
+                new TxnScoreboard(ff, shmPath.of(root), 1024);
+                Assert.fail();
+            } catch (CairoException ex) {
+                TestUtils.assertContains(ex.getFlyweightMessage(), "Could not lock");
+            }
+        });
     }
 
     @Test

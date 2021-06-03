@@ -131,6 +131,7 @@ public class TxnScoreboard implements Closeable {
             }
 
             if (isTruncated < 0) {
+                ff.close(fd);
                 throw CairoException.instance(ff.errno()).put("Could not lock [file=").put(path).put(']');
             }
             return fd;
