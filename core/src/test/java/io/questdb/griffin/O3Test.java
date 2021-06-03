@@ -1303,7 +1303,7 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext,
                 "create table y as (x union all top)",
                 "y order by ts",
-                "insert batch 100000 lag 180000000 into x select * from top",
+                "insert batch 100000 commitLag 180s into x select * from top",
                 "x"
         );
 
@@ -1377,7 +1377,7 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext,
                 "create table y as (x union all top)",
                 "y order by ts",
-                "insert batch 2000000 lag 180000000 into x select * from top",
+                "insert batch 2000000 commitLag 180s into x select * from top",
                 "x"
         );
 
@@ -1451,7 +1451,7 @@ public class O3Test extends AbstractO3Test {
                 // combination of row count in "top" table, batch size and lag value land
                 // rows into single partition, which causes internal state to corrupt
                 // please do not change these values unless you know what you're doing
-                "insert batch 100 lag 300000000 into x select * from top"
+                "insert batch 100 commitLag 300s into x select * from top"
         );
 
         assertIndexConsistency(compiler, sqlExecutionContext);

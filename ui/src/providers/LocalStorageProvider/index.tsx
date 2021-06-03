@@ -44,7 +44,7 @@ export const LocalStorageProvider = ({
   const [authPayload, setAuthPayload] = useState<string>(getValue(StoreKey.AUTH_PAYLOAD))
   const [editorCol, setEditorCol] = useState<number>(parseInteger(getValue(StoreKey.EDITOR_COL), defaultConfig.editorCol))
   const [editorLine, setEditorLine] = useState<number>(parseInteger(getValue(StoreKey.EDITOR_LINE), defaultConfig.editorLine))
-  const [isNotificationEnabled, setIsNotificationEnabled] = useState<boolean>(parseBoolean(StoreKey.NOTIFICATION_ENABLED, defaultConfig.isNotificationEnabled))
+  const [isNotificationEnabled, setIsNotificationEnabled] = useState<boolean>(parseBoolean(getValue(StoreKey.NOTIFICATION_ENABLED), defaultConfig.isNotificationEnabled))
   const [notificationDelay, setNotificationDelay] = useState<number>(parseInteger(getValue(StoreKey.NOTIFICATION_DELAY), defaultConfig.notificationDelay))
   const [queryText, setQueryText] = useState<string>(getValue(StoreKey.QUERY_TEXT))
 
