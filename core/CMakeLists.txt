@@ -135,7 +135,7 @@ include(${ZLIB_SOURCE_DIR}/CMakeLists.txt)
 add_library(questdb SHARED ${SOURCE_FILES} ${ZLIB_SRCS})
 
 set(DEBUG_OPTIONS "-Wall;-g;-O0")
-set(RELEASE_OPTIONS "-Wall;-Wpedantic;-Wextra;-fexceptions;-O3")
+set(RELEASE_OPTIONS "-O3")
 
 if (AARCH64)
 
