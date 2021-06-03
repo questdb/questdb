@@ -32,10 +32,7 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.*;
-import io.questdb.std.Long256;
-import io.questdb.std.Long256Impl;
-import io.questdb.std.Numbers;
-import io.questdb.std.ObjList;
+import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
 
 public class CoalesceFunctionFactory implements FunctionFactory {
@@ -45,7 +42,13 @@ public class CoalesceFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
         if (args.size() < 2) {
             throw SqlException.$(position, "coalesce can be used with 2 or more arguments");
         }
@@ -59,36 +62,36 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         final int argsSize = args.size();
         int returnType = -1;
         for (int i = 0; i < argsSize; i++) {
-            returnType = CaseCommon.getCommonType(returnType, args.getQuick(i).getType(), args.getQuick(i).getPosition());
+            returnType = CaseCommon.getCommonType(returnType, args.getQuick(i).getType(), argPositions.getQuick(i));
         }
         switch (returnType) {
             case ColumnType.DOUBLE:
-                return argsSize == 2 ? new TwoDoubleCoalesceFunction(position, args) : new DoubleCoalesceFunction(position, args, argsSize);
+                return argsSize == 2 ? new TwoDoubleCoalesceFunction(args) : new DoubleCoalesceFunction(args, argsSize);
             case ColumnType.DATE:
-                return argsSize == 2 ? new TwoDateCoalesceFunction(position, args) : new DateCoalesceFunction(position, args, argsSize);
+                return argsSize == 2 ? new TwoDateCoalesceFunction(args) : new DateCoalesceFunction(args, argsSize);
             case ColumnType.TIMESTAMP:
-                return argsSize == 2 ? new TwoTimestampCoalesceFunction(position, args) : new TimestampCoalesceFunction(position, args);
+                return argsSize == 2 ? new TwoTimestampCoalesceFunction(args) : new TimestampCoalesceFunction(args);
             case ColumnType.LONG:
-                return argsSize == 2 ? new TwoLongCoalesceFunction(position, args) : new LongCoalesceFunction(position, args, argsSize);
+                return argsSize == 2 ? new TwoLongCoalesceFunction(args) : new LongCoalesceFunction(args, argsSize);
             case ColumnType.LONG256:
-                return argsSize == 2 ? new TwoLong256CoalesceFunction(position, args) : new Long256CoalesceFunction(position, args);
+                return argsSize == 2 ? new TwoLong256CoalesceFunction(args) : new Long256CoalesceFunction(args);
             case ColumnType.INT:
-                return argsSize == 2 ? new TwoIntCoalesceFunction(position, args) : new IntCoalesceFunction(position, args, argsSize);
+                return argsSize == 2 ? new TwoIntCoalesceFunction(args) : new IntCoalesceFunction(args, argsSize);
             case ColumnType.FLOAT:
-                return argsSize == 2 ? new TwoFloatCoalesceFunction(position, args) : new FloatCoalesceFunction(position, args, argsSize);
+                return argsSize == 2 ? new TwoFloatCoalesceFunction(args) : new FloatCoalesceFunction(args, argsSize);
             case ColumnType.STRING:
             case ColumnType.SYMBOL:
                 if (argsSize == 2) {
                     int type0 = args.getQuick(0).getType();
                     if (type0 != args.getQuick(1).getType()) {
-                        return new TwoSymStrCoalesceFunction(position, args);
+                        return new TwoSymStrCoalesceFunction(args);
                     } else if (type0 == ColumnType.SYMBOL) {
-                        return new TwoSymCoalesceFunction(position, args);
+                        return new TwoSymCoalesceFunction(args);
                     } else {
-                        return new TwoStrCoalesceFunction(position, args);
+                        return new TwoStrCoalesceFunction(args);
                     }
                 }
-                return new SymStrCoalesceFunction(position, args, argsSize);
+                return new SymStrCoalesceFunction(args, argsSize);
             case ColumnType.BOOLEAN:
             case ColumnType.SHORT:
             case ColumnType.BYTE:
@@ -114,8 +117,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         private final Function args0;
         private final Function args1;
 
-        public TwoDoubleCoalesceFunction(int position, ObjList<Function> args) {
-            super(position);
+        public TwoDoubleCoalesceFunction(ObjList<Function> args) {
             assert args.size() == 2;
             this.args0 = args.getQuick(0);
             this.args1 = args.getQuick(1);
@@ -145,8 +147,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         private final ObjList<Function> args;
         private final int size;
 
-        public DoubleCoalesceFunction(int position, ObjList<Function> args, int size) {
-            super(position);
+        public DoubleCoalesceFunction(ObjList<Function> args, int size) {
             this.args = args;
             this.size = size;
         }
@@ -172,8 +173,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         private final Function args0;
         private final Function args1;
 
-        public TwoFloatCoalesceFunction(int position, ObjList<Function> args) {
-            super(position);
+        public TwoFloatCoalesceFunction(ObjList<Function> args) {
             assert args.size() == 2;
             this.args0 = args.getQuick(0);
             this.args1 = args.getQuick(1);
@@ -203,8 +203,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         private final ObjList<Function> args;
         private final int size;
 
-        public FloatCoalesceFunction(int position, ObjList<Function> args, int size) {
-            super(position);
+        public FloatCoalesceFunction(ObjList<Function> args, int size) {
             this.args = args;
             this.size = size;
         }
@@ -230,8 +229,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         private final Function args0;
         private final Function args1;
 
-        public TwoDateCoalesceFunction(int position, ObjList<Function> args) {
-            super(position);
+        public TwoDateCoalesceFunction(ObjList<Function> args) {
             assert args.size() == 2;
             this.args0 = args.getQuick(0);
             this.args1 = args.getQuick(1);
@@ -261,8 +259,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         private final ObjList<Function> args;
         private final int size;
 
-        public DateCoalesceFunction(int position, ObjList<Function> args, int size) {
-            super(position);
+        public DateCoalesceFunction(ObjList<Function> args, int size) {
             this.args = args;
             this.size = size;
         }
@@ -288,8 +285,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         private final Function args0;
         private final Function args1;
 
-        public TwoTimestampCoalesceFunction(int position, ObjList<Function> args) {
-            super(position);
+        public TwoTimestampCoalesceFunction(ObjList<Function> args) {
             assert args.size() == 2;
             this.args0 = args.getQuick(0);
             this.args1 = args.getQuick(1);
@@ -319,8 +315,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         private final ObjList<Function> args;
         private final int size;
 
-        public TimestampCoalesceFunction(int position, ObjList<Function> args) {
-            super(position);
+        public TimestampCoalesceFunction(ObjList<Function> args) {
             this.args = args;
             this.size = args.size();
         }
@@ -346,8 +341,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         private final Function args0;
         private final Function args1;
 
-        public TwoLongCoalesceFunction(int position, ObjList<Function> args) {
-            super(position);
+        public TwoLongCoalesceFunction(ObjList<Function> args) {
             assert args.size() == 2;
             this.args0 = args.getQuick(0);
             this.args1 = args.getQuick(1);
@@ -377,8 +371,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         private final ObjList<Function> args;
         private final int size;
 
-        public LongCoalesceFunction(int position, ObjList<Function> args, int size) {
-            super(position);
+        public LongCoalesceFunction(ObjList<Function> args, int size) {
             this.args = args;
             this.size = size;
         }
@@ -405,8 +398,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         private final Function args1;
         private final Function args0;
 
-        public TwoLong256CoalesceFunction(int position, ObjList<Function> args) {
-            super(position);
+        public TwoLong256CoalesceFunction(ObjList<Function> args) {
             assert args.size() == 2;
             this.args0 = args.getQuick(0);
             this.args1 = args.getQuick(1);
@@ -425,12 +417,10 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         @Override
         public void getLong256(Record rec, CharSink sink) {
             Long256 value = args0.getLong256A(rec);
-            if (isNotNull(value)) {
-                Numbers.appendLong256(value.getLong0(), value.getLong1(), value.getLong2(), value.getLong3(), sink);
-            } else {
+            if (!isNotNull(value)) {
                 value = args1.getLong256A(rec);
-                Numbers.appendLong256(value.getLong0(), value.getLong1(), value.getLong2(), value.getLong3(), sink);
             }
+            Numbers.appendLong256(value.getLong0(), value.getLong1(), value.getLong2(), value.getLong3(), sink);
         }
 
         @Override
@@ -456,8 +446,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         private final ObjList<Function> args;
         private final int size;
 
-        public Long256CoalesceFunction(int position, ObjList<Function> args) {
-            super(position);
+        public Long256CoalesceFunction(ObjList<Function> args) {
             this.args = args;
             this.size = args.size();
         }
@@ -507,8 +496,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         private final Function args0;
         private final Function args1;
 
-        public TwoIntCoalesceFunction(int position, ObjList<Function> args) {
-            super(position);
+        public TwoIntCoalesceFunction(ObjList<Function> args) {
             assert args.size() == 2;
             this.args0 = args.getQuick(0);
             this.args1 = args.getQuick(1);
@@ -538,8 +526,8 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         private final ObjList<Function> args;
         private final int size;
 
-        public IntCoalesceFunction(int position, ObjList<Function> args, int size) {
-            super(position);
+        public IntCoalesceFunction(ObjList<Function> args, int size) {
+            super();
             this.args = args;
             this.size = size;
         }
@@ -577,8 +565,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
             return args1;
         }
 
-        public TwoSymStrCoalesceFunction(int position, ObjList<Function> args) {
-            super(position);
+        public TwoSymStrCoalesceFunction(ObjList<Function> args) {
             assert args.size() == 2;
             this.args0 = args.getQuick(0);
             this.args1 = args.getQuick(1);
@@ -619,8 +606,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
             return args1;
         }
 
-        public TwoSymCoalesceFunction(int position, ObjList<Function> args) {
-            super(position);
+        public TwoSymCoalesceFunction(ObjList<Function> args) {
             assert args.size() == 2;
             this.args0 = args.getQuick(0);
             this.args1 = args.getQuick(1);
@@ -659,8 +645,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
             return args1;
         }
 
-        public TwoStrCoalesceFunction(int position, ObjList<Function> args) {
-            super(position);
+        public TwoStrCoalesceFunction(ObjList<Function> args) {
             assert args.size() == 2;
             this.args0 = args.getQuick(0);
             this.args1 = args.getQuick(1);
@@ -689,8 +674,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         private final ObjList<Function> args;
         private final int size;
 
-        public SymStrCoalesceFunction(int position, ObjList<Function> args, int size) {
-            super(position);
+        public SymStrCoalesceFunction(ObjList<Function> args, int size) {
             this.args = args;
             this.size = size;
         }

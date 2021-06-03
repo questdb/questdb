@@ -31,7 +31,7 @@ import io.questdb.griffin.engine.functions.constants.StrConstant;
 public class Constants {
     public static final String PUBLIC = "public";
     static final String[] NAMESPACES = {"pg_catalog", PUBLIC};
-    static final StrFunction PUBLIC_CONSTANT = new StrConstant(0, PUBLIC);
+    static final StrFunction PUBLIC_CONSTANT = new StrConstant(PUBLIC);
     static final int[] NAMESPACE_OIDS = {PGOids.PG_CATALOG_OID, PGOids.PG_PUBLIC_OID};
     static final CharSequence[] KEYWORDS = {
             "add",

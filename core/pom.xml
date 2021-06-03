@@ -38,7 +38,7 @@
         <argLine>-Dfile.encoding=UTF-8</argLine>
     </properties>
 
-    <version>6.0.2-SNAPSHOT</version>
+    <version>6.0.4-SNAPSHOT</version>
     <groupId>org.questdb</groupId>
     <artifactId>questdb</artifactId>
     <packaging>jar</packaging>
@@ -389,7 +389,6 @@
                                         <argument>--no-header-files</argument>
                                         <argument>--no-man-pages</argument>
                                         <argument>--compress=2</argument>
-                                        <argument>--strip-debug</argument>
                                         <argument>--vm=server</argument>
                                     </arguments>
                                     <workingDirectory>../core</workingDirectory>
@@ -538,8 +537,6 @@
                 <jdk.version>8</jdk.version>
                 <java.enforce.version>1.8.0_242</java.enforce.version>
                 <questdb.artifactid>questdb-jdk8</questdb.artifactid>
-                <compilerArg1></compilerArg1>
-                <compilerArg2></compilerArg2>
                 <excludePattern1>module-info.java</excludePattern1>
                 <excludeTestPattern1>module-info.java</excludeTestPattern1>
                 <javac.compile.source>1.8</javac.compile.source>

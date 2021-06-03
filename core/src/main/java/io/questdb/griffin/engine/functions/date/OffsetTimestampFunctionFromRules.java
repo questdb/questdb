@@ -22,34 +22,33 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.constants;
+package io.questdb.griffin.engine.functions.date;
 
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.engine.functions.StrFunction;
-import io.questdb.std.str.CharSink;
+import io.questdb.griffin.engine.functions.TimestampFunction;
+import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.std.datetime.TimeZoneRules;
 
-public class NullStrConstant extends StrFunction implements ConstantFunction {
+class OffsetTimestampFunctionFromRules extends TimestampFunction implements UnaryFunction {
+    private final Function timestamp;
+    private final TimeZoneRules rules;
+    private final int multiplier;
 
-    public NullStrConstant(int position) {
-        super(position);
+    public OffsetTimestampFunctionFromRules(Function timestamp, TimeZoneRules rules, int multiplier) {
+        this.timestamp = timestamp;
+        this.rules = rules;
+        this.multiplier = multiplier;
     }
 
     @Override
-    public CharSequence getStr(Record rec) {
-        return null;
+    public Function getArg() {
+        return timestamp;
     }
 
     @Override
-    public CharSequence getStrB(Record rec) {
-        return null;
-    }
-
-    @Override
-    public void getStr(Record rec, CharSink sink) {
-    }
-
-    @Override
-    public int getStrLen(Record rec) {
-        return -1;
+    public long getTimestamp(Record rec) {
+        final long utc = timestamp.getTimestamp(rec);
+        return utc + multiplier * rules.getOffset(utc);
     }
 }

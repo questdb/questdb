@@ -24,22 +24,46 @@
 
 package io.questdb.griffin;
 
-import io.questdb.cairo.*;
-import io.questdb.cairo.pool.ex.EntryLockedException;
-import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.griffin.model.*;
-import io.questdb.std.*;
-import io.questdb.std.str.FlyweightCharSequence;
-import io.questdb.std.str.Path;
-import io.questdb.std.str.StringSink;
-import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
+import static io.questdb.griffin.model.ExpressionNode.FUNCTION;
+import static io.questdb.griffin.model.ExpressionNode.LITERAL;
 
 import java.util.ArrayDeque;
 
-import static io.questdb.griffin.model.ExpressionNode.FUNCTION;
-import static io.questdb.griffin.model.ExpressionNode.LITERAL;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
+
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.pool.ex.EntryLockedException;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.model.AnalyticColumn;
+import io.questdb.griffin.model.ExpressionNode;
+import io.questdb.griffin.model.JoinContext;
+import io.questdb.griffin.model.QueryColumn;
+import io.questdb.griffin.model.QueryModel;
+import io.questdb.std.CharSequenceHashSet;
+import io.questdb.std.CharSequenceIntHashMap;
+import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.std.Chars;
+import io.questdb.std.IntHashSet;
+import io.questdb.std.IntList;
+import io.questdb.std.IntPriorityQueue;
+import io.questdb.std.LowerCaseCharSequenceIntHashMap;
+import io.questdb.std.LowerCaseCharSequenceObjHashMap;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.ObjList;
+import io.questdb.std.ObjectPool;
+import io.questdb.std.Transient;
+import io.questdb.std.str.FlyweightCharSequence;
+import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 
 class SqlOptimiser {
 
@@ -73,13 +97,12 @@ class SqlOptimiser {
     private final LiteralCollector literalCollector = new LiteralCollector();
     private final IntHashSet tablesSoFar = new IntHashSet();
     private final IntHashSet postFilterRemoved = new IntHashSet();
-    private final IntList nullCounts = new IntList();
-    private final ObjList<IntList> postFilterTableRefs = new ObjList<>();
+    private final ObjList<IntHashSet> postFilterTableRefs = new ObjList<>();
     private final LiteralCheckingVisitor literalCheckingVisitor = new LiteralCheckingVisitor();
     private final LiteralRewritingVisitor literalRewritingVisitor = new LiteralRewritingVisitor();
-    private final IntList literalCollectorAIndexes = new IntList();
+    private final IntHashSet literalCollectorAIndexes = new IntHashSet();
     private final ObjList<CharSequence> literalCollectorANames = new ObjList<>();
-    private final IntList literalCollectorBIndexes = new IntList();
+    private final IntHashSet literalCollectorBIndexes = new IntHashSet();
     private final ObjList<CharSequence> literalCollectorBNames = new ObjList<>();
     private final PostOrderTreeTraversalAlgo traversalAlgo;
     private final ArrayDeque<ExpressionNode> sqlNodeStack = new ArrayDeque<>();
@@ -90,7 +113,7 @@ class SqlOptimiser {
     private final CharSequenceObjHashMap<ExpressionNode> constNameToNode = new CharSequenceObjHashMap<>();
     private final IntList tempCrossIndexes = new IntList();
     private final IntList clausesToSteal = new IntList();
-    private final ObjectPool<IntList> intListPool = new ObjectPool<>(IntList::new, 16);
+    private final ObjectPool<IntHashSet> intHashSetPool = new ObjectPool<>(IntHashSet::new, 16);
     private final ObjectPool<QueryModel> queryModelPool;
     private final IntPriorityQueue orderingStack = new IntPriorityQueue();
     private final ObjectPool<QueryColumn> queryColumnPool;
@@ -449,7 +472,7 @@ class SqlOptimiser {
         }
     }
 
-    private void analyseEquals(QueryModel parent, ExpressionNode node) throws SqlException {
+    private void analyseEquals(QueryModel parent, ExpressionNode node, boolean innerPredicate) throws SqlException {
         traverseNamesAndIndices(parent, node);
 
         int aSize = literalCollectorAIndexes.size();
@@ -462,10 +485,10 @@ class SqlOptimiser {
                 if (bSize == 1
                         && literalCollector.nullCount == 0
                         // table must not be OUTER or ASOF joined
-                        && joinBarriers.excludes(parent.getJoinModels().get(literalCollectorBIndexes.getQuick(0)).getJoinType())) {
+                        && joinBarriers.excludes(parent.getJoinModels().get(literalCollectorBIndexes.get(0)).getJoinType())) {
                     // single table reference + constant
                     jc = contextPool.next();
-                    jc.slaveIndex = literalCollectorBIndexes.getQuick(0);
+                    jc.slaveIndex = literalCollectorBIndexes.get(0);
 
                     addWhereNode(parent, jc.slaveIndex, node);
                     addJoinContext(parent, jc);
@@ -475,14 +498,14 @@ class SqlOptimiser {
                     constNameToNode.put(cs, node.lhs);
                     constNameToToken.put(cs, node.token);
                 } else {
-                    parent.addParsedWhereNode(node);
+                    parent.addParsedWhereNode(node, innerPredicate);
                 }
                 break;
             case 1:
                 jc = contextPool.next();
-                int lhi = literalCollectorAIndexes.getQuick(0);
+                int lhi = literalCollectorAIndexes.get(0);
                 if (bSize == 1) {
-                    int rhi = literalCollectorBIndexes.getQuick(0);
+                    int rhi = literalCollectorBIndexes.get(0);
                     if (lhi == rhi) {
                         // single table reference
                         jc.slaveIndex = lhi;
@@ -515,7 +538,7 @@ class SqlOptimiser {
                     addJoinContext(parent, jc);
                 } else if (bSize == 0
                         && literalCollector.nullCount == 0
-                        && joinBarriers.excludes(parent.getJoinModels().get(literalCollectorAIndexes.getQuick(0)).getJoinType())) {
+                        && joinBarriers.excludes(parent.getJoinModels().get(literalCollectorAIndexes.get(0)).getJoinType())) {
                     // single table reference + constant
                     jc.slaveIndex = lhi;
                     addWhereNode(parent, lhi, node);
@@ -526,11 +549,12 @@ class SqlOptimiser {
                     constNameToNode.put(cs, node.rhs);
                     constNameToToken.put(cs, node.token);
                 } else {
-                    parent.addParsedWhereNode(node);
+                    parent.addParsedWhereNode(node, innerPredicate);
                 }
                 break;
             default:
-                parent.addParsedWhereNode(node);
+                node.innerPredicate = innerPredicate;
+                parent.addParsedWhereNode(node, innerPredicate);
                 break;
         }
     }
@@ -543,7 +567,7 @@ class SqlOptimiser {
             int bSize = literalCollectorBIndexes.size();
             if (aSize == 1 && bSize == 0) {
                 CharSequence name = literalCollectorANames.getQuick(0);
-                constNameToIndex.put(name, literalCollectorAIndexes.getQuick(0));
+                constNameToIndex.put(name, literalCollectorAIndexes.get(0));
                 constNameToNode.put(name, node.rhs);
                 constNameToToken.put(name, node.token);
             }
@@ -554,18 +578,16 @@ class SqlOptimiser {
         tablesSoFar.clear();
         postFilterRemoved.clear();
         postFilterTableRefs.clear();
-        nullCounts.clear();
 
         literalCollector.withModel(parent);
         ObjList<ExpressionNode> filterNodes = parent.getParsedWhere();
         // collect table indexes from each part of global filter
         int pc = filterNodes.size();
         for (int i = 0; i < pc; i++) {
-            IntList indexes = intListPool.next();
+            IntHashSet indexes = intHashSetPool.next();
             literalCollector.resetNullCount();
             traversalAlgo.traverse(filterNodes.getQuick(i), literalCollector.to(indexes));
             postFilterTableRefs.add(indexes);
-            nullCounts.add(literalCollector.nullCount);
         }
 
         IntList ordered = parent.getOrderedJoinModels();
@@ -579,27 +601,29 @@ class SqlOptimiser {
                     continue;
                 }
 
-                IntList refs = postFilterTableRefs.getQuick(k);
+                final ExpressionNode node = filterNodes.getQuick(k);
+
+                IntHashSet refs = postFilterTableRefs.getQuick(k);
                 int rs = refs.size();
                 if (rs == 0) {
                     // condition has no table references
                     // must evaluate as constant
                     postFilterRemoved.add(k);
-                    parent.setConstWhereClause(concatFilters(parent.getConstWhereClause(), filterNodes.getQuick(k)));
+                    parent.setConstWhereClause(concatFilters(parent.getConstWhereClause(), node));
                 } else if (rs == 1 && (
-                        nullCounts.getQuick(k) == 0
+                        node.innerPredicate
                                 // single table reference and this table is not joined via OUTER or ASOF
-                                || joinBarriers.excludes(parent.getJoinModels().getQuick(refs.getQuick(0)).getJoinType()
+                                || joinBarriers.excludes(parent.getJoinModels().getQuick(refs.get(0)).getJoinType()
                         ))) {
                     // get single table reference out of the way right away
                     // we don't have to wait until "our" table comes along
-                    addWhereNode(parent, refs.getQuick(0), filterNodes.getQuick(k));
+                    addWhereNode(parent, refs.get(0), node);
                     postFilterRemoved.add(k);
                 } else {
                     boolean qualifies = true;
                     // check if filter references table processed so far
                     for (int y = 0; y < rs; y++) {
-                        if (tablesSoFar.excludes(refs.getQuick(y))) {
+                        if (tablesSoFar.excludes(refs.get(y))) {
                             qualifies = false;
                             break;
                         }
@@ -607,7 +631,6 @@ class SqlOptimiser {
                     if (qualifies) {
                         postFilterRemoved.add(k);
                         QueryModel m = parent.getJoinModels().getQuick(index);
-                        final ExpressionNode node = filterNodes.getQuick(k);
                         // it is possible that filter references only top query via alias
                         // we will need to strip these aliases before assigning filter
                         if (index == 0) {
@@ -623,7 +646,7 @@ class SqlOptimiser {
 
     void clear() {
         contextPool.clear();
-        intListPool.clear();
+        intHashSetPool.clear();
         joinClausesSwap1.clear();
         joinClausesSwap2.clear();
         constNameToIndex.clear();
@@ -1134,6 +1157,33 @@ class SqlOptimiser {
             }
         }
         return replaced;
+    }
+
+    private boolean checkForAggregates(ExpressionNode node) {
+        sqlNodeStack.clear();
+        while (node != null) {
+            if (node.rhs != null) {
+                if (functionParser.isGroupBy(node.rhs.token)) {
+                    return true;
+                }
+                this.sqlNodeStack.push(node.rhs);
+            }
+
+            if (node.lhs != null) {
+                if (functionParser.isGroupBy(node.lhs.token)) {
+                    return true;
+                }
+                node = node.lhs;
+            } else {
+                if (!sqlNodeStack.isEmpty()) {
+                    node = this.sqlNodeStack.poll();
+                } else {
+                    node = null;
+                }
+            }
+        }
+
+        return false;
     }
 
     private void emitColumnLiteralsTopDown(ObjList<QueryColumn> columns, QueryModel target) {
@@ -1653,7 +1703,7 @@ class SqlOptimiser {
 
                     tempList.clear();
                     for (int j = 0; j < literalCollectorAIndexes.size(); j++) {
-                        int tableExpressionReference = literalCollectorAIndexes.getQuick(j);
+                        int tableExpressionReference = literalCollectorAIndexes.get(j);
                         int position = tempList.binarySearch(tableExpressionReference);
                         if (position < 0) {
                             tempList.insert(-(position + 1), tableExpressionReference);
@@ -1677,7 +1727,7 @@ class SqlOptimiser {
 
                     // by now all where clause must reference single table only and all column references have to be valid
                     // they would have been rewritten and validated as join analysis stage
-                    final int tableIndex = literalCollectorAIndexes.getQuick(0);
+                    final int tableIndex = literalCollectorAIndexes.get(0);
                     final QueryModel parent = model.getJoinModels().getQuick(tableIndex);
 
                     // Do not move where clauses that contain references
@@ -2001,10 +2051,10 @@ class SqlOptimiser {
             // optimiser can assign there correct nodes
 
             model.setWhereClause(null);
-            processJoinConditions(model, where);
+            processJoinConditions(model, where, false);
 
             for (int i = 1; i < n; i++) {
-                processJoinConditions(model, joinModels.getQuick(i).getJoinCriteria());
+                processJoinConditions(model, joinModels.getQuick(i).getJoinCriteria(), true);
             }
 
             processEmittedJoinClauses(model);
@@ -2119,7 +2169,7 @@ class SqlOptimiser {
      *
      * @param node expression n
      */
-    private void processJoinConditions(QueryModel parent, ExpressionNode node) throws SqlException {
+    private void processJoinConditions(QueryModel parent, ExpressionNode node, boolean innerPredicate) throws SqlException {
         ExpressionNode n = node;
         // pre-order traversal
         sqlNodeStack.clear();
@@ -2127,7 +2177,7 @@ class SqlOptimiser {
             if (n != null) {
                 switch (joinOps.get(n.token)) {
                     case JOIN_OP_EQUAL:
-                        analyseEquals(parent, n);
+                        analyseEquals(parent, n, innerPredicate);
                         n = null;
                         break;
                     case JOIN_OP_AND:
@@ -2137,14 +2187,15 @@ class SqlOptimiser {
                         n = n.lhs;
                         break;
                     case JOIN_OP_OR:
-                        processOrConditions(parent, n);
+                        // stub: use filter
+                        parent.addParsedWhereNode(n, innerPredicate);
                         n = null;
                         break;
                     case JOIN_OP_REGEX:
                         analyseRegex(parent, n);
                         // intentional fallthrough
                     default:
-                        parent.addParsedWhereNode(n);
+                        parent.addParsedWhereNode(n, innerPredicate);
                         n = null;
                         break;
                 }
@@ -2152,44 +2203,6 @@ class SqlOptimiser {
                 n = sqlNodeStack.poll();
             }
         }
-    }
-
-    /**
-     * There are two ways "or" conditions can go:
-     * - all "or" conditions have at least one fields in common
-     * e.g. a.x = b.x or a.x = b.y
-     * this can be implemented as a hash join where master table is "b"
-     * and slave table is "a" keyed on "a.x" so that
-     * if HashTable contains all rows of "a" keyed on "a.x"
-     * hash join algorithm can do:
-     * rows = HashTable.get(b.x);
-     * if (rows == null) {
-     * rows = HashTable.get(b.y);
-     * }
-     * <p>
-     * in this case tables can be reordered as long as "b" is processed
-     * before "a"
-     * <p>
-     * - second possibility is where all "or" conditions are random
-     * in which case query like this:
-     * <p>
-     * from a
-     * join c on a.x = c.x
-     * join b on a.x = b.x or c.y = b.y
-     * <p>
-     * can be rewritten to:
-     * <p>
-     * from a
-     * join c on a.x = c.x
-     * join b on a.x = b.x
-     * union
-     * from a
-     * join c on a.x = c.x
-     * join b on c.y = b.y
-     */
-    private void processOrConditions(QueryModel parent, ExpressionNode node) {
-        // stub: use filter
-        parent.addParsedWhereNode(node);
     }
 
     private void propagateTopDownColumns(QueryModel model) {
@@ -2777,7 +2790,7 @@ class SqlOptimiser {
         boolean useAnalyticModel = false;
         boolean useGroupByModel = false;
         boolean useOuterModel = false;
-        boolean useDistinctModel = model.isDistinct();
+        final boolean useDistinctModel = model.isDistinct();
 
         final ObjList<QueryColumn> columns = model.getBottomUpColumns();
         final QueryModel baseModel = model.getNestedModel();
@@ -2796,8 +2809,8 @@ class SqlOptimiser {
 
         // cursor model should have all columns that base model has to properly resolve duplicate names
         cursorModel.getAliasToColumnMap().putAll(baseModel.getAliasToColumnMap());
-
         // create virtual columns from select list
+
         for (int i = 0, k = columns.size(); i < k; i++) {
             QueryColumn qc = columns.getQuick(i);
             final boolean analytic = qc instanceof AnalyticColumn;
@@ -2806,6 +2819,36 @@ class SqlOptimiser {
             if (analytic && qc.getAst().type != ExpressionNode.FUNCTION) {
                 throw SqlException.$(qc.getAst().position, "Analytic function expected");
             }
+
+            if (qc.getAst().type == ExpressionNode.BIND_VARIABLE) {
+                useInnerModel = true;
+            } else if (qc.getAst().type != LITERAL) {
+                if (qc.getAst().type == ExpressionNode.FUNCTION) {
+                    if (analytic) {
+                        useAnalyticModel = true;
+                        continue;
+                    } else if (functionParser.isGroupBy(qc.getAst().token)) {
+                        useGroupByModel = true;
+                        continue;
+                    } else if (functionParser.isCursor(qc.getAst().token)) {
+                        continue;
+                    }
+                }
+                if (checkForAggregates(qc.getAst())) {
+                    useGroupByModel = true;
+                    useOuterModel = true;
+                } else {
+                    useInnerModel = true;
+                }
+            }
+        }
+
+        boolean outerVirtualIsSelectChoose = true;
+
+        // create virtual columns from select list
+        for (int i = 0, k = columns.size(); i < k; i++) {
+            QueryColumn qc = columns.getQuick(i);
+            final boolean analytic = qc instanceof AnalyticColumn;
 
             if (qc.getAst().type == LITERAL) {
                 if (Chars.endsWith(qc.getAst().token, '*')) {
@@ -2847,7 +2890,6 @@ class SqlOptimiser {
                         outerVirtualModel,
                         distinctModel
                 );
-                useInnerModel = true;
             } else {
                 // when column is direct call to aggregation function, such as
                 // select sum(x) ...
@@ -2871,7 +2913,6 @@ class SqlOptimiser {
                         final AnalyticColumn ac = (AnalyticColumn) qc;
                         replaceLiteralList(innerVirtualModel, translatingModel, baseModel, ac.getPartitionBy());
                         replaceLiteralList(innerVirtualModel, translatingModel, baseModel, ac.getOrderBy());
-                        useAnalyticModel = true;
                         continue;
                     } else if (functionParser.isGroupBy(qc.getAst().token)) {
                         qc = ensureAliasUniqueness(groupByModel, qc);
@@ -2884,7 +2925,6 @@ class SqlOptimiser {
                         distinctModel.addBottomUpColumn(ref);
                         // pull out literals
                         emitLiterals(qc.getAst(), translatingModel, innerVirtualModel, baseModel, false);
-                        useGroupByModel = true;
                         continue;
                     } else if (functionParser.isCursor(qc.getAst().token)) {
                         addCursorFunctionAsCrossJoin(
@@ -2914,13 +2954,19 @@ class SqlOptimiser {
                     for (int j = beforeSplit, n = groupByModel.getBottomUpColumns().size(); j < n; j++) {
                         emitLiterals(groupByModel.getBottomUpColumns().getQuick(i).getAst(), translatingModel, innerVirtualModel, baseModel, false);
                     }
-
-                    useGroupByModel = true;
-                    useOuterModel = true;
                 } else {
                     if (emitCursors(qc.getAst(), cursorModel, null, translatingModel, baseModel, sqlExecutionContext)) {
                         qc = ensureAliasUniqueness(innerVirtualModel, qc);
                     }
+                    if (useGroupByModel) {
+                        if (isEffectivelyConstantExpression(qc.getAst())) {
+                            outerVirtualIsSelectChoose = false;
+                            outerVirtualModel.addBottomUpColumn(qc);
+                            distinctModel.addBottomUpColumn(qc);
+                            continue;
+                        }
+                    }
+
                     addFunction(
                             qc,
                             baseModel,
@@ -2929,9 +2975,7 @@ class SqlOptimiser {
                             analyticModel,
                             groupByModel,
                             outerVirtualModel,
-                            distinctModel
-                    );
-                    useInnerModel = true;
+                            distinctModel);
                 }
             }
         }
@@ -2950,6 +2994,18 @@ class SqlOptimiser {
                     innerVirtualModel,
                     analyticModel
             );
+        }
+
+        if (useInnerModel) {
+            final ObjList<QueryColumn> innerColumns = innerVirtualModel.getBottomUpColumns();
+            useInnerModel = false;
+            for (int i = 0, k = innerColumns.size(); i < k; i++) {
+                QueryColumn qc = innerColumns.getQuick(i);
+                if (qc.getAst().type != LITERAL) {
+                    useInnerModel = true;
+                    break;
+                }
+            }
         }
 
         // check if translating model is redundant, e.g.
@@ -3010,8 +3066,7 @@ class SqlOptimiser {
             outerVirtualModel.setNestedModel(root);
             outerVirtualModel.moveLimitFrom(limitSource);
             outerVirtualModel.moveAliasFrom(limitSource);
-            // in this case outer model should be of "choose" type
-            outerVirtualModel.setSelectModelType(QueryModel.SELECT_MODEL_CHOOSE);
+            outerVirtualModel.setSelectModelType(outerVirtualIsSelectChoose ? QueryModel.SELECT_MODEL_CHOOSE : QueryModel.SELECT_MODEL_VIRTUAL);
             root = outerVirtualModel;
         }
 
@@ -3030,6 +3085,28 @@ class SqlOptimiser {
             root.setModelPosition(model.getModelPosition());
         }
         return root;
+    }
+
+    private boolean isEffectivelyConstantExpression(ExpressionNode node) {
+        sqlNodeStack.clear();
+        while (null != node) {
+            if (node.type == ExpressionNode.OPERATION) {
+                sqlNodeStack.push(node.rhs);
+                node = node.lhs;
+            }
+
+            if (!(node.type == ExpressionNode.CONSTANT || (node.type == ExpressionNode.FUNCTION && functionParser.isRuntimeConstant(node.token)))) {
+                return false;
+            }
+
+            if (sqlNodeStack.isEmpty()) {
+                node = null;
+            } else {
+                node = sqlNodeStack.poll();
+            }
+        }
+
+        return true;
     }
 
     private CharSequence setAndGetModelAlias(QueryModel model) {
@@ -3241,7 +3318,7 @@ class SqlOptimiser {
     }
 
     private class LiteralCollector implements PostOrderTreeTraversalAlgo.Visitor {
-        private IntList indexes;
+        private IntHashSet indexes;
         private ObjList<CharSequence> names;
         private int nullCount;
         private QueryModel model;
@@ -3283,7 +3360,7 @@ class SqlOptimiser {
             return this;
         }
 
-        private PostOrderTreeTraversalAlgo.Visitor to(IntList indexes) {
+        private PostOrderTreeTraversalAlgo.Visitor to(IntHashSet indexes) {
             this.indexes = indexes;
             this.names = null;
             return this;

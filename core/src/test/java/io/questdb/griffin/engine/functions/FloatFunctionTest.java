@@ -31,7 +31,7 @@ import org.junit.Test;
 public class FloatFunctionTest {
     // assert that all type casts that are not possible will throw exception
 
-    private static final FloatFunction function = new FloatFunction(25) {
+    private static final FloatFunction function = new FloatFunction() {
         @Override
         public float getFloat(Record rec) {
             return 0;
@@ -71,11 +71,6 @@ public class FloatFunctionTest {
     @Test(expected = UnsupportedOperationException.class)
     public void testGetLong() {
         function.getLong(null);
-    }
-
-    @Test
-    public void testGetPosition() {
-        Assert.assertEquals(25, function.getPosition());
     }
 
     @Test(expected = UnsupportedOperationException.class)

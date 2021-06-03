@@ -26,9 +26,7 @@ package io.questdb.tasks;
 
 import io.questdb.cairo.BitmapIndexWriter;
 import io.questdb.cairo.TableWriter;
-import io.questdb.mp.SOUnboundedCountDownLatch;
 import io.questdb.std.AbstractLockable;
-import io.questdb.std.FilesFacade;
 
 import java.util.concurrent.atomic.AtomicInteger;
 

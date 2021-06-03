@@ -31,6 +31,7 @@ import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BooleanFunction;
+import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 import java.util.concurrent.atomic.AtomicInteger;
@@ -61,15 +62,11 @@ public class TestMatchFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new TestMatchFunction(position);
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+        return new TestMatchFunction();
     }
 
     private static class TestMatchFunction extends BooleanFunction {
-
-        public TestMatchFunction(int position) {
-            super(position);
-        }
 
         @Override
         public void close() {

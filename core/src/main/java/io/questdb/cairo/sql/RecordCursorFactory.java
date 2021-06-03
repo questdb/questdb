@@ -30,6 +30,28 @@ import io.questdb.std.str.CharSink;
 
 import java.io.Closeable;
 
+/**
+ * Factory for creating a SQL execution plan.
+ * Queries may be executed more than once without changing execution plan.
+ *
+ * Interfaces which extend Closeable are not optionally-closeable.
+ * close() method must be called after other calls are complete.
+ *
+ * Example:
+ *
+ * final SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, 1);
+ * try (SqlCompiler compiler = new SqlCompiler(engine)) {
+ *     try (RecordCursorFactory factory = compiler.compile("abc", ctx).getRecordCursorFactory()) {
+ *         try (RecordCursor cursor = factory.getCursor(ctx)) {
+ *             final Record record = cursor.getRecord();
+ *             while (cursor.hasNext()) {
+ *                 // access 'record' instance for field values
+ *             }
+ *         }
+ *     }
+ * }
+ *
+ */
 public interface RecordCursorFactory extends Closeable, Sinkable {
     @Override
     default void close() {
@@ -39,8 +61,23 @@ public interface RecordCursorFactory extends Closeable, Sinkable {
         return false;
     }
 
+    /**
+     * Creates an instance of RecordCursor. Factories will typically reuse cursor instances.
+     * The calling code must not hold on to copies of the cursor.
+     *
+     * The new cursor will have refreshed its view of the data. If new data was added to table(s)
+     * the cursor will pick it up.
+     *
+     * @param executionContext name of a SQL execution context
+     * @return instance of cursor
+     */
     RecordCursor getCursor(SqlExecutionContext executionContext);
 
+    /**
+     * Metadata of the SQL result. It includes column names, indexes and types.
+     *
+     * @return metadata
+     */
     RecordMetadata getMetadata();
 
     default PageFrameCursor getPageFrameCursor(SqlExecutionContext executionContext) {

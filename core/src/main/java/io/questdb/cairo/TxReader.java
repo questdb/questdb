@@ -253,10 +253,6 @@ public class TxReader implements Closeable {
         return attachedPartitions.binarySearchBlock(0, attachedPartitions.size(), LONGS_PER_TX_ATTACHED_PARTITION_MSB, ts);
     }
 
-    int getLastPartitionIndex() {
-        return attachedPartitions.size() - LONGS_PER_TX_ATTACHED_PARTITION;
-    }
-
     long getPartitionTimestampLo(long timestamp) {
         return timestampFloorMethod != null && timestamp != Numbers.LONG_NaN ? timestampFloorMethod.floor(timestamp) : Long.MIN_VALUE;
     }

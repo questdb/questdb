@@ -32,10 +32,6 @@ import io.questdb.std.Mutable;
 public class BooleanBindVariable extends BooleanFunction implements ScalarFunction, Mutable {
     boolean value;
 
-    public BooleanBindVariable() {
-        super(0);
-    }
-
     @Override
     public void clear() {
         this.value = false;

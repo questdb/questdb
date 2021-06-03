@@ -28,11 +28,15 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.CharFunction;
 
 public class CharConstant extends CharFunction implements ConstantFunction {
+    public static final CharConstant ZERO = new CharConstant((char) 0);
     private final char value;
 
-    public CharConstant(int position, char value) {
-        super(position);
+    public CharConstant(char value) {
         this.value = value;
+    }
+
+    public static CharConstant newInstance(char value) {
+        return value != 0 ? new CharConstant(value) : ZERO;
     }
 
     @Override

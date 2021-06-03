@@ -34,8 +34,7 @@ class DoubleCaseFunction extends DoubleFunction implements MultiArgFunction {
     private final CaseFunctionPicker picker;
     private final ObjList<Function> args;
 
-    public DoubleCaseFunction(int position, CaseFunctionPicker picker, ObjList<Function> args) {
-        super(position);
+    public DoubleCaseFunction(CaseFunctionPicker picker, ObjList<Function> args) {
         this.picker = picker;
         this.args = args;
     }

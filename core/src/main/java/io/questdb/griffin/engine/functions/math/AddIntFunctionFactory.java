@@ -31,6 +31,7 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.IntFunction;
+import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
@@ -41,16 +42,16 @@ public class AddIntFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new AddIntFunc(position, args.getQuick(0), args.getQuick(1));
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+        return new AddIntFunc(args.getQuick(0), args.getQuick(1));
     }
 
     private static class AddIntFunc extends IntFunction implements BinaryFunction {
         final Function left;
         final Function right;
 
-        public AddIntFunc(int position, Function left, Function right) {
-            super(position);
+        public AddIntFunc(Function left, Function right) {
+            super();
             this.left = left;
             this.right = right;
         }

@@ -26,15 +26,18 @@ package io.questdb.griffin.engine.functions.constants;
 
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.griffin.SqlKeywords;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.std.Chars;
 
 public class SymbolConstant extends SymbolFunction implements ConstantFunction {
+    public static final SymbolConstant NULL = new SymbolConstant(null, VALUE_IS_NULL);
+    public static final SymbolConstant TRUE = new SymbolConstant("true", 0);
+    public static final SymbolConstant FALSE = new SymbolConstant("false", 0);
     private final String value;
     private final int index;
 
-    public SymbolConstant(int position, CharSequence value, int index) {
-        super(position);
+    public SymbolConstant(CharSequence value, int index) {
         if (value == null) {
             this.value = null;
             this.index = SymbolTable.VALUE_IS_NULL;
@@ -46,6 +49,22 @@ public class SymbolConstant extends SymbolFunction implements ConstantFunction {
             }
             this.index = index;
         }
+    }
+
+    public static SymbolConstant newInstance(CharSequence value) {
+        if (value == null) {
+            return NULL;
+        }
+
+        if (SqlKeywords.isTrueKeyword(value)) {
+            return TRUE;
+        }
+
+        if (SqlKeywords.isFalseKeyword(value)) {
+            return FALSE;
+        }
+
+        return new SymbolConstant(Chars.toString(value), 0);
     }
 
     @Override

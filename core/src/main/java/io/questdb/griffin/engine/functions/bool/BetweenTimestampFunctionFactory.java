@@ -28,12 +28,12 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.griffin.engine.functions.TernaryFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
+import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
@@ -44,7 +44,13 @@ public class BetweenTimestampFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) {
         Function arg = args.getQuick(0);
         Function fromFn = args.getQuick(1);
         Function toFn = args.getQuick(2);
@@ -56,9 +62,9 @@ public class BetweenTimestampFunctionFactory implements FunctionFactory {
             if (fromFnTimestamp == Numbers.LONG_NaN || toFnTimestamp == Numbers.LONG_NaN) {
                 return BooleanConstant.FALSE;
             }
-            return new ConstFunc(position, arg, fromFnTimestamp, toFnTimestamp);
+            return new ConstFunc(arg, fromFnTimestamp, toFnTimestamp);
         }
-        return new VarBetweenFunction(position, arg, fromFn, toFn);
+        return new VarBetweenFunction(arg, fromFn, toFn);
     }
 
     private static class ConstFunc extends NegatableBooleanFunction implements UnaryFunction {
@@ -66,8 +72,7 @@ public class BetweenTimestampFunctionFactory implements FunctionFactory {
         private final long from;
         private final long to;
 
-        public ConstFunc(int position, Function left, long from, long to) {
-            super(position);
+        public ConstFunc(Function left, long from, long to) {
             this.left = left;
             this.from = Math.min(from, to);
             this.to = Math.max(from, to);
@@ -92,8 +97,7 @@ public class BetweenTimestampFunctionFactory implements FunctionFactory {
         private final Function from;
         private final Function to;
 
-        public VarBetweenFunction(int position, Function left, Function from, Function to) {
-            super(position);
+        public VarBetweenFunction(Function left, Function from, Function to) {
             this.arg = left;
             this.from = from;
             this.to = to;

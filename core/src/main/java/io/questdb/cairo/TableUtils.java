@@ -110,7 +110,7 @@ public final class TableUtils {
     static final String TODO_FILE_NAME = "_todo_";
     private static final int MIN_SYMBOL_CAPACITY = 2;
     private static final int MAX_SYMBOL_CAPACITY = Numbers.ceilPow2(Integer.MAX_VALUE);
-    private static final int MAX_SYMBOL_CAPACITY_CACHED = Numbers.ceilPow2(1_000_000);
+    private static final int MAX_SYMBOL_CAPACITY_CACHED = Numbers.ceilPow2(30_000_000);
     private static final int MAX_INDEX_VALUE_BLOCK_SIZE = Numbers.ceilPow2(8 * 1024 * 1024);
     private final static Log LOG = LogFactory.getLog(TableUtils.class);
     private final static DateFormat fmtDefault;
@@ -537,7 +537,7 @@ public final class TableUtils {
         }
     }
 
-    public static void validate(FilesFacade ff, MappedReadOnlyMemory metaMem, CharSequenceIntHashMap nameIndex) {
+    public static void validate(FilesFacade ff, MappedReadOnlyMemory metaMem, LowerCaseCharSequenceIntHashMap nameIndex) {
         try {
             final int metaVersion = metaMem.getInt(TableUtils.META_OFFSET_VERSION);
             if (ColumnType.VERSION != metaVersion && metaVersion != 404) {

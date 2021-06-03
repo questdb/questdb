@@ -31,8 +31,8 @@ import org.jetbrains.annotations.NotNull;
 
 public class LastLongGroupByFunction extends FirstLongGroupByFunction {
 
-    public LastLongGroupByFunction(int position, @NotNull Function arg) {
-        super(position, arg);
+    public LastLongGroupByFunction(@NotNull Function arg) {
+        super(arg);
     }
 
     @Override

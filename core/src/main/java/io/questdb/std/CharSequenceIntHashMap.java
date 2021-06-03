@@ -128,7 +128,9 @@ public class CharSequenceIntHashMap extends AbstractCharSequenceHashSet {
     public void putIfAbsent(CharSequence key, int value) {
         int index = keyIndex(key);
         if (index > -1) {
-            putAt0(index, Chars.toString(key), value);
+            String keyString = Chars.toString(key);
+            putAt0(index, keyString, value);
+            list.add(keyString);
         }
     }
 

@@ -82,7 +82,7 @@ public class TxnScoreboard implements Closeable {
         if (acquireTxn(mem, txn)) {
             return;
         }
-        throw CairoException.instance(0).put("max txn-txn-inflight limit reached [txn=").put(txn).put(", min=").put(getMin()).put(']');
+        throw CairoException.instance(0).put("max txn-inflight limit reached [txn=").put(txn).put(", min=").put(getMin()).put(']');
     }
 
     public long getMin() {

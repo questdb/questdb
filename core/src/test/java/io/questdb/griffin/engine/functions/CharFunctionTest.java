@@ -33,7 +33,7 @@ import org.junit.Test;
 public class CharFunctionTest {
     // assert that all type casts that are not possible will throw exception
 
-    private static final CharFunction function = new CharFunction(25) {
+    private static final CharFunction function = new CharFunction() {
         @Override
         public char getChar(Record rec) {
             return 0x34;
@@ -63,11 +63,6 @@ public class CharFunctionTest {
     @Test(expected = UnsupportedOperationException.class)
     public void testGetDate() {
         function.getDate(null);
-    }
-
-    @Test
-    public void testGetPosition() {
-        Assert.assertEquals(25, function.getPosition());
     }
 
     @Test(expected = UnsupportedOperationException.class)

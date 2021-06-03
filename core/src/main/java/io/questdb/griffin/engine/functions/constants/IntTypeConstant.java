@@ -33,7 +33,7 @@ public class IntTypeConstant extends IntFunction implements TypeConstant {
     public static final IntTypeConstant INSTANCE = new IntTypeConstant();
 
     private IntTypeConstant() {
-        super(0);
+        super();
     }
 
     @Override

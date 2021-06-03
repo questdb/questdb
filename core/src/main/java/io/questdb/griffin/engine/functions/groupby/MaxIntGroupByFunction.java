@@ -39,8 +39,8 @@ public class MaxIntGroupByFunction extends IntFunction implements GroupByFunctio
     private final Function arg;
     private int valueIndex;
 
-    public MaxIntGroupByFunction(int position, @NotNull Function arg) {
-        super(position);
+    public MaxIntGroupByFunction(@NotNull Function arg) {
+        super();
         this.arg = arg;
     }
 

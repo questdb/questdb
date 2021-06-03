@@ -27,6 +27,7 @@ import { useSelector } from "react-redux"
 import styled from "styled-components"
 import { CodeSSlash } from "@styled-icons/remix-line/CodeSSlash"
 import { Upload2 } from "@styled-icons/remix-line/Upload2"
+import { Settings2 } from "@styled-icons/evaicons-solid/Settings2"
 
 import { PopperHover, PrimaryToggleButton, Tooltip } from "components"
 import { selectors } from "store"
@@ -37,7 +38,7 @@ const Wrapper = styled.div`
   height: calc(100% - 4rem);
   flex: 0 0 4.5rem;
   flex-direction: column;
-  border-right: 1px solid rgba(0, 0, 0, 0.1);
+
   background: ${color("draculaBackgroundDarker")};
 `
 
@@ -62,9 +63,18 @@ type NavigationProps = Readonly<{
 
 const Navigation = styled(PrimaryToggleButton)<NavigationProps>`
   display: flex;
+  flex-direction: column;
   flex: 0 0 5rem;
   align-items: center;
   justify-content: center;
+
+  & > span {
+    margin-left: 0 !important;
+  }
+
+  & > :not(:first-child) {
+    margin-top: 0.3rem;
+  }
 `
 
 const DisabledNavigation = styled.div`
@@ -81,7 +91,7 @@ const DisabledNavigation = styled.div`
   }
 `
 
-type Tab = "console" | "import"
+type Tab = "console" | "import" | "settings"
 
 const Sidebar = () => {
   const [selected, setSelected] = useState<Tab>("console")
@@ -91,22 +101,42 @@ const Sidebar = () => {
   const handleImportClick = useCallback(() => {
     setSelected("import")
   }, [])
+  const handleSettingsClick = useCallback(() => {
+    setSelected("settings")
+  }, [])
   const { readOnly } = useSelector(selectors.console.getConfig)
 
   useEffect(() => {
     const consolePanel = document.querySelector<HTMLElement>(".js-sql-panel")
     const importPanel = document.querySelector<HTMLElement>(".js-import-panel")
+    const settingsPanel = document.querySelector<HTMLElement>(
+      ".js-settings-panel",
+    )
 
-    if (!consolePanel || !importPanel) {
+    if (!consolePanel || !importPanel || !settingsPanel) {
       return
     }
 
-    if (selected === "import") {
-      consolePanel.style.display = "none"
-      importPanel.style.display = "flex"
-    } else {
-      consolePanel.style.display = "flex"
-      importPanel.style.display = "none"
+    switch (selected) {
+      case "import": {
+        consolePanel.style.display = "none"
+        importPanel.style.display = "flex"
+        settingsPanel.style.display = "none"
+        break
+      }
+      case "settings": {
+        consolePanel.style.display = "none"
+        importPanel.style.display = "none"
+        settingsPanel.style.display = "flex"
+        break
+      }
+
+      case "console":
+      default: {
+        consolePanel.style.display = "flex"
+        importPanel.style.display = "none"
+        settingsPanel.style.display = "none"
+      }
     }
   }, [selected])
 
@@ -170,6 +200,46 @@ const Sidebar = () => {
             </>
           ) : (
             <>Import</>
+          )}
+        </Tooltip>
+      </PopperHover>
+
+      <PopperHover
+        delay={readOnly ? 0 : 350}
+        placement="right"
+        trigger={
+          readOnly ? (
+            <DisabledNavigation>
+              <Navigation
+                direction="left"
+                disabled
+                onClick={handleSettingsClick}
+                selected={selected === "settings"}
+              >
+                <Settings2 size="18px" />
+              </Navigation>
+            </DisabledNavigation>
+          ) : (
+            <Navigation
+              direction="left"
+              onClick={handleSettingsClick}
+              selected={selected === "settings"}
+            >
+              <Settings2 size="18px" />
+            </Navigation>
+          )
+        }
+      >
+        <Tooltip>
+          {readOnly ? (
+            <>
+              <b>Settings</b> is currently disabled.
+              <br />
+              To use this feature, turn <b>read-only</b> mode to <i>false</i> in
+              the configuration file
+            </>
+          ) : (
+            <>Settings</>
           )}
         </Tooltip>
       </PopperHover>

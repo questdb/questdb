@@ -22,8 +22,23 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.sql;
+package io.questdb.griffin;
 
-public interface DelegatingRecord extends Record {
-    void of(Record base);
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableModel;
+import io.questdb.std.NumericException;
+import org.junit.Test;
+
+public class SimpleTableTest extends AbstractGriffinTest {
+    @Test
+    public void testWhereIsColumnNameInsensitive() throws SqlException, NumericException {
+        try (TableModel tm = new TableModel(configuration, "tab1", PartitionBy.NONE)) {
+            tm.timestamp("ts").col("ID", ColumnType.INT);
+            createPopulateTable(tm, 2, "2020-01-01", 1);
+        }
+
+        assertSql("select ts from tab1 where id > 1", "ts\n" +
+                "2020-01-01T00:00:00.000000Z\n");
+    }
 }

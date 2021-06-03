@@ -36,6 +36,11 @@ public class ProcCatalogueFunctionFactory extends AbstractEmptyCatalogueFunction
         super("pg_proc()", METADATA);
     }
 
+    @Override
+    public boolean isRuntimeConstant() {
+        return true;
+    }
+
     static {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
         metadata.add(new TableColumnMetadata("oid", ColumnType.INT, null));

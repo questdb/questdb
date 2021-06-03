@@ -203,7 +203,7 @@ public class HttpMultipartContentParser implements Closeable, Mutable {
                             break;
                         default:
                             // can only be BOUNDARY_NO_MATCH:
-                            ptr = onChunkWithRetryHandle(listener, boundary.getLo(), boundary.getLo() + p, BODY_BROKEN, ptr, true);
+                            onChunkWithRetryHandle(listener, boundary.getLo(), boundary.getLo() + p, BODY_BROKEN, ptr, true);
                             break;
                     }
                     break;

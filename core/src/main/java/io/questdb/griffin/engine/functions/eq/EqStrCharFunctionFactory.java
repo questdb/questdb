@@ -34,6 +34,7 @@ import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.ConstantFunction;
 import io.questdb.std.Chars;
+import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class EqStrCharFunctionFactory implements FunctionFactory {
@@ -48,7 +49,7 @@ public class EqStrCharFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         // there are optimisation opportunities
         // 1. when one of args is constant null comparison can boil down to checking
         //    length of non-constant (must be -1)
@@ -60,28 +61,27 @@ public class EqStrCharFunctionFactory implements FunctionFactory {
         if (strFunc.isConstant() && !charFunc.isConstant()) {
             CharSequence str = strFunc.getStr(null);
             if (str == null || str.length() != 1) {
-                return new NegatedAwareBooleanConstantFunc(position);
+                return new NegatedAwareBooleanConstantFunc();
             }
-            return new ConstStrFunc(position, charFunc, str.charAt(0));
+            return new ConstStrFunc(charFunc, str.charAt(0));
         }
 
         if (!strFunc.isConstant() && charFunc.isConstant()) {
-            return new ConstChrFunc(position, strFunc, charFunc.getChar(null));
+            return new ConstChrFunc(strFunc, charFunc.getChar(null));
         }
 
         if (strFunc.isConstant() && charFunc.isConstant()) {
-            return new ConstStrConstChrFunc(position, Chars.equalsNc(strFunc.getStr(null), charFunc.getChar(null)));
+            return new ConstStrConstChrFunc(Chars.equalsNc(strFunc.getStr(null), charFunc.getChar(null)));
         }
 
-        return new Func(position, strFunc, charFunc);
+        return new Func(strFunc, charFunc);
     }
 
     private static class ConstChrFunc extends NegatableBooleanFunction implements UnaryFunction {
         private final Function strFunc;
         private final char chrConst;
 
-        public ConstChrFunc(int position, Function strFunc, char chrConst) {
-            super(position);
+        public ConstChrFunc(Function strFunc, char chrConst) {
             this.strFunc = strFunc;
             this.chrConst = chrConst;
         }
@@ -101,8 +101,7 @@ public class EqStrCharFunctionFactory implements FunctionFactory {
         private final Function chrFunc;
         private final char chrConst;
 
-        public ConstStrFunc(int position, Function chrFunc, char chrConst) {
-            super(position);
+        public ConstStrFunc(Function chrFunc, char chrConst) {
             this.chrFunc = chrFunc;
             this.chrConst = chrConst;
         }
@@ -121,8 +120,7 @@ public class EqStrCharFunctionFactory implements FunctionFactory {
     private static class ConstStrConstChrFunc extends NegatableBooleanFunction implements ConstantFunction {
         private final boolean equals;
 
-        public ConstStrConstChrFunc(int position, boolean equals) {
-            super(position);
+        public ConstStrConstChrFunc(boolean equals) {
             this.equals = equals;
         }
 
@@ -134,10 +132,6 @@ public class EqStrCharFunctionFactory implements FunctionFactory {
 
     private static class NegatedAwareBooleanConstantFunc extends NegatableBooleanFunction implements ConstantFunction {
 
-        public NegatedAwareBooleanConstantFunc(int position) {
-            super(position);
-        }
-
         @Override
         public boolean getBool(Record rec) {
             return negated;
@@ -148,8 +142,7 @@ public class EqStrCharFunctionFactory implements FunctionFactory {
         private final Function strFunc;
         private final Function chrFunc;
 
-        public Func(int position, Function strFunc, Function chrFunc) {
-            super(position);
+        public Func(Function strFunc, Function chrFunc) {
             this.strFunc = strFunc;
             this.chrFunc = chrFunc;
         }

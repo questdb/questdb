@@ -30,8 +30,8 @@ import io.questdb.griffin.engine.functions.SymbolFunction;
 import org.jetbrains.annotations.NotNull;
 
 public class LastSymbolGroupByFunction extends FirstSymbolGroupByFunction {
-    public LastSymbolGroupByFunction(int position, @NotNull SymbolFunction arg) {
-        super(position, arg);
+    public LastSymbolGroupByFunction(@NotNull SymbolFunction arg) {
+        super(arg);
     }
 
     @Override

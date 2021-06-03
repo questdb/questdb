@@ -35,12 +35,6 @@ import io.questdb.std.str.CharSink;
 
 public abstract class LongFunction implements ScalarFunction {
 
-    private final int position;
-
-    public LongFunction(int position) {
-        this.position = position;
-    }
-
     @Override
     public final char getChar(Record rec) {
         throw new UnsupportedOperationException();
@@ -84,11 +78,6 @@ public abstract class LongFunction implements ScalarFunction {
     @Override
     public final int getInt(Record rec) {
         throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public int getPosition() {
-        return position;
     }
 
     @Override

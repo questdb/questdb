@@ -22,23 +22,37 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.constants;
+package io.questdb.griffin.engine.functions.math;
 
-import io.questdb.std.str.StringSink;
-import org.junit.Assert;
+import io.questdb.griffin.AbstractGriffinTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
-public class NullStrConstantTest {
-    @Test
-    public void testConstant() {
-        NullStrConstant constant = new NullStrConstant(0);
-        Assert.assertTrue(constant.isConstant());
-        Assert.assertNull(constant.getStr(null));
-        Assert.assertNull(constant.getStrB(null));
-        Assert.assertEquals(-1, constant.getStrLen(null));
+public class LogFunctionFactoryTest extends AbstractGriffinTest {
 
-        StringSink sink = new StringSink();
-        constant.getStr(null, sink);
-        Assert.assertEquals(0, sink.length());
+    @Test
+    public void testLogDouble() throws Exception {
+        assertLog("select log(9989.2233)", "9.209262120872339\n");
+    }
+
+    @Test
+    public void testLogDoubleNull() throws Exception {
+        assertLog("select log(NaN)", "NaN\n");
+    }
+
+    @Test
+    public void testLogInt() throws Exception {
+        assertLog("select log(8965)", "9.101083386039234\n");
+    }
+
+    private void assertLog(String sql, String expected) throws Exception {
+        assertMemoryLeak(() -> TestUtils.assertSql(
+                compiler,
+                sqlExecutionContext,
+                sql,
+                sink,
+                "log\n" +
+                        expected
+        ));
     }
 }

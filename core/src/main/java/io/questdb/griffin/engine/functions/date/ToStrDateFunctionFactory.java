@@ -32,8 +32,8 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.griffin.engine.functions.constants.NullStrConstant;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
+import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.datetime.DateFormat;
@@ -54,11 +54,17 @@ public class ToStrDateFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
         Function fmt = args.getQuick(1);
         CharSequence format = fmt.getStr(null);
         if (format == null) {
-            throw SqlException.$(fmt.getPosition(), "format must not be null");
+            throw SqlException.$(argPositions.getQuick(1), "format must not be null");
         }
 
         DateFormat dateFormat = tlCompiler.get().compile(fmt.getStr(null));
@@ -66,16 +72,16 @@ public class ToStrDateFunctionFactory implements FunctionFactory {
         if (var.isConstant()) {
             long value = var.getDate(null);
             if (value == Numbers.LONG_NaN) {
-                return new NullStrConstant(position);
+                return StrConstant.NULL;
             }
 
             StringSink sink = tlSink.get();
             sink.clear();
             dateFormat.format(value, configuration.getDefaultDateLocale(), "Z", sink);
-            return new StrConstant(position, sink);
+            return new StrConstant(sink);
         }
 
-        return new ToCharDateVCFFunc(position, args.getQuick(0), tlCompiler.get().compile(format), configuration.getDefaultDateLocale());
+        return new ToCharDateVCFFunc(args.getQuick(0), tlCompiler.get().compile(format), configuration.getDefaultDateLocale());
     }
 
     private static class ToCharDateVCFFunc extends StrFunction implements UnaryFunction {
@@ -85,8 +91,7 @@ public class ToStrDateFunctionFactory implements FunctionFactory {
         final StringSink sink1;
         final StringSink sink2;
 
-        public ToCharDateVCFFunc(int position, Function arg, DateFormat format, DateLocale locale) {
-            super(position);
+        public ToCharDateVCFFunc(Function arg, DateFormat format, DateLocale locale) {
             this.arg = arg;
             this.format = format;
             this.locale = locale;

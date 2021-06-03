@@ -846,7 +846,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         final int topSlotSize = columnSlotSize / 2;
         final int idx = getPrimaryColumnIndex(columnBase, 0);
         columns.insert(idx, columnSlotSize);
-        columns.set(idx, columnBase + columnSlotSize, NullColumn.INSTANCE);
+        columns.set(idx, columnBase + columnSlotSize + 1, NullColumn.INSTANCE);
         bitmapIndexes.insert(idx, columnSlotSize);
         bitmapIndexes.set(idx, columnBase + columnSlotSize, null);
         columnTops.insert(topBase, topSlotSize);
@@ -1107,7 +1107,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             final int primaryIndex = getPrimaryColumnIndex(columnBase, columnIndex);
             final int secondaryIndex = primaryIndex + 1;
 
-            MappedReadOnlyMemory mem1 = columns.getQuick(primaryIndex);
+            MappedReadOnlyMemory mem1 =  columns.getQuick(primaryIndex);
             MappedReadOnlyMemory mem2 = columns.getQuick(secondaryIndex);
 
             if (ff.exists(TableUtils.dFile(path.trimTo(plen), name))) {

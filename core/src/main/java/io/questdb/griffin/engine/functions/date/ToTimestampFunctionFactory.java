@@ -28,10 +28,10 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
@@ -44,17 +44,16 @@ public class ToTimestampFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         final Function arg = args.getQuick(0);
-        return new ToTimestampFunction(position, arg);
+        return new ToTimestampFunction(arg);
     }
 
     public static final class ToTimestampFunction extends TimestampFunction implements UnaryFunction {
 
         private final Function arg;
 
-        public ToTimestampFunction(int position, Function arg) {
-            super(position);
+        public ToTimestampFunction(Function arg) {
             this.arg = arg;
         }
 

@@ -49,14 +49,23 @@ public class AttributeCatalogueFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+    public boolean isRuntimeConstant() {
+        return true;
+    }
+
+    @Override
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         return new CursorFunction(
-                position,
                 new AttributeCatalogueCursorFactory(
                         configuration,
                         METADATA
                 )
-        );
+        ) {
+            @Override
+            public boolean isRuntimeConstant() {
+                return true;
+            }
+        };
     }
 
     private static class AttributeCatalogueCursorFactory extends AbstractRecordCursorFactory {
@@ -212,7 +221,6 @@ public class AttributeCatalogueFunctionFactory implements FunctionFactory {
             public CharSequence name = null;
             public final short[] shortValues = new short[9];
             public final int[] intValues = new int[9];
-            public int type = -1;
 
             @Override
             public short getShort(int col) {

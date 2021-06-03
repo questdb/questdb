@@ -33,10 +33,6 @@ public class SymbolTypeConstant extends SymbolFunction implements TypeConstant {
 
     public static final SymbolTypeConstant INSTANCE = new SymbolTypeConstant();
 
-    private SymbolTypeConstant() {
-        super(0);
-    }
-
     @Override
     public boolean isSymbolTableStatic() {
         return false;

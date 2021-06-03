@@ -31,13 +31,11 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.griffin.engine.functions.MultiArgFunction;
+import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
+import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.model.IntervalUtils;
-import io.questdb.std.LongList;
-import io.questdb.std.Numbers;
-import io.questdb.std.NumericException;
-import io.questdb.std.ObjList;
+import io.questdb.std.*;
 
 public class InTimestampTimestampFunctionFactory implements FunctionFactory {
     @Override
@@ -46,7 +44,7 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
         boolean allConst = true;
         for (int i = 1, n = args.size(); i < n; i++) {
             Function func = args.getQuick(i);
@@ -66,13 +64,19 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
         }
 
         if (allConst) {
-            return new InTimestampConstFunction(position, args.getQuick(0), parseToTs(args));
+            return new InTimestampConstFunction(args.getQuick(0), parseToTs(args, argPositions));
         }
+
+        if (args.size() == 2 && args.get(1).getType() == ColumnType.STRING) {
+            // special case - one argument and it a string
+            return new InTimestampStrFunctionFactory.EqTimestampStrFunction(args.get(0), args.get(1));
+        }
+
         // have to copy, args is mutable
-        return new InTimestampVarFunction(position, new ObjList<>(args));
+        return new InTimestampVarFunction(new ObjList<>(args));
     }
 
-    private LongList parseToTs(ObjList<Function> args) throws SqlException {
+    private LongList parseToTs(ObjList<Function> args, IntList argPositions) throws SqlException {
         LongList res = new LongList(args.size() - 1);
         res.extendAndSet(args.size() - 2, 0);
 
@@ -87,7 +91,7 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
                     break;
                 case ColumnType.STRING:
                     CharSequence tsValue = func.getStr(null);
-                    val = (tsValue != null) ? tryParseTimestamp(tsValue, func.getPosition()) : Numbers.LONG_NaN;
+                    val = (tsValue != null) ? tryParseTimestamp(tsValue, argPositions.getQuick(i)) : Numbers.LONG_NaN;
                     break;
             }
             res.setQuick(i - 1, val);
@@ -105,11 +109,10 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class InTimestampVarFunction extends BooleanFunction implements MultiArgFunction {
+    private static class InTimestampVarFunction extends NegatableBooleanFunction implements MultiArgFunction {
         private final ObjList<Function> args;
 
-        public InTimestampVarFunction(int position, ObjList<Function> args) {
-            super(position);
+        public InTimestampVarFunction(ObjList<Function> args) {
             this.args = args;
         }
 
@@ -122,7 +125,7 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
         public boolean getBool(Record rec) {
             long ts = args.getQuick(0).getTimestamp(rec);
             if (ts == Numbers.LONG_NaN) {
-                return false;
+                return negated;
             }
 
             for (int i = 1, n = args.size(); i < n; i++) {
@@ -140,31 +143,35 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
                         break;
                 }
                 if (val == ts) {
-                    return true;
+                    return !negated;
                 }
             }
-            return false;
+            return negated;
         }
     }
 
-    private static class InTimestampConstFunction extends BooleanFunction {
+    private static class InTimestampConstFunction extends NegatableBooleanFunction implements UnaryFunction {
         private final Function tsFunc;
         private final LongList inList;
 
-        public InTimestampConstFunction(int position, Function tsFunc, LongList longList) {
-            super(position);
+        public InTimestampConstFunction(Function tsFunc, LongList longList) {
             this.tsFunc = tsFunc;
             this.inList = longList;
+        }
+
+        @Override
+        public Function getArg() {
+            return tsFunc;
         }
 
         @Override
         public boolean getBool(Record rec) {
             long ts = tsFunc.getTimestamp(rec);
             if (ts == Numbers.LONG_NaN) {
-                return false;
+                return negated;
             }
 
-            return inList.binarySearch(ts) >= 0;
+            return negated != inList.binarySearch(ts) >= 0;
         }
     }
 }

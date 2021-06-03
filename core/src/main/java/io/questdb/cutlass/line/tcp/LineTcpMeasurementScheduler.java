@@ -24,24 +24,8 @@
 
 package io.questdb.cutlass.line.tcp;
 
-import java.io.Closeable;
-import java.util.Arrays;
-import java.util.concurrent.locks.ReadWriteLock;
-
-import org.jetbrains.annotations.NotNull;
-
 import io.questdb.Telemetry;
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.CairoException;
-import io.questdb.cairo.CairoSecurityContext;
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.EntryUnavailableException;
-import io.questdb.cairo.TableReader;
-import io.questdb.cairo.TableReaderMetadata;
-import io.questdb.cairo.TableStructure;
-import io.questdb.cairo.TableUtils;
-import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.*;
 import io.questdb.cairo.TableWriter.Row;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.SymbolTable;
@@ -50,30 +34,22 @@ import io.questdb.cutlass.line.LineProtoTimestampAdapter;
 import io.questdb.cutlass.line.tcp.NewLineProtoParser.ProtoEntity;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.mp.FanOut;
-import io.questdb.mp.Job;
-import io.questdb.mp.MPSequence;
-import io.questdb.mp.RingQueue;
-import io.questdb.mp.SCSequence;
-import io.questdb.mp.Sequence;
-import io.questdb.mp.WorkerPool;
+import io.questdb.mp.*;
 import io.questdb.network.IODispatcher;
 import io.questdb.network.IOOperation;
 import io.questdb.network.IORequestProcessor;
-import io.questdb.std.CharSequenceIntHashMap;
-import io.questdb.std.CharSequenceObjHashMap;
-import io.questdb.std.Chars;
-import io.questdb.std.Misc;
-import io.questdb.std.ObjIntHashMap;
-import io.questdb.std.ObjList;
-import io.questdb.std.Unsafe;
-import io.questdb.std.Vect;
+import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.DirectCharSink;
 import io.questdb.std.str.FloatingDirectCharSink;
 import io.questdb.std.str.Path;
 import io.questdb.tasks.TelemetryTask;
+import org.jetbrains.annotations.NotNull;
+
+import java.io.Closeable;
+import java.util.Arrays;
+import java.util.concurrent.locks.ReadWriteLock;
 
 class LineTcpMeasurementScheduler implements Closeable {
     private static final Log LOG = LogFactory.getLog(LineTcpMeasurementScheduler.class);
@@ -194,7 +170,7 @@ class LineTcpMeasurementScheduler implements Closeable {
     }
 
     @NotNull
-    private TableUpdateDetails assignTableToThread(String tableName, int keyIndex) {
+    private TableUpdateDetails assignTableToThread(String tableName) {
         TableUpdateDetails tableUpdateDetails;
         calcThreadLoad();
         int leastLoad = Integer.MAX_VALUE;
@@ -206,6 +182,8 @@ class LineTcpMeasurementScheduler implements Closeable {
             }
         }
         tableUpdateDetails = new TableUpdateDetails(tableName, threadId, netIoJobs);
+
+        int keyIndex = tableUpdateDetailsByTableName.keyIndex(tableName);
         tableUpdateDetailsByTableName.putAt(keyIndex, tableName, tableUpdateDetails);
         LOG.info().$("assigned ").$(tableName).$(" to thread ").$(threadId).$();
         return tableUpdateDetails;
@@ -215,8 +193,13 @@ class LineTcpMeasurementScheduler implements Closeable {
         Arrays.fill(loadByThread, 0);
         ObjList<CharSequence> tableNames = tableUpdateDetailsByTableName.keys();
         for (int n = 0, sz = tableNames.size(); n < sz; n++) {
-            TableUpdateDetails stats = tableUpdateDetailsByTableName.get(tableNames.get(n));
-            loadByThread[stats.writerThreadId] += stats.nUpdates;
+            final CharSequence tableName = tableNames.getQuick(n);
+            final TableUpdateDetails stats = tableUpdateDetailsByTableName.get(tableName);
+            if (stats != null) {
+                loadByThread[stats.writerThreadId] += stats.nUpdates;
+            } else {
+                LOG.error().$("could not find static for table [name=").$(tableName).I$();
+            }
         }
     }
 
@@ -366,13 +349,13 @@ class LineTcpMeasurementScheduler implements Closeable {
 
                 keyIndex = idleTableUpdateDetailsByTableName.keyIndex(tableName);
                 if (keyIndex < 0) {
-                    LOG.info().$("idle table going active [tableName=").$(tableName).$(']').$();
+                    LOG.info().$("idle table going active [tableName=").$(tableName).I$();
                     tableUpdateDetails = idleTableUpdateDetailsByTableName.valueAt(keyIndex);
                     idleTableUpdateDetailsByTableName.removeAt(keyIndex);
                     tableUpdateDetailsByTableName.put(tableUpdateDetails.tableName, tableUpdateDetails);
                 } else {
                     TelemetryTask.doStoreTelemetry(engine, Telemetry.SYSTEM_ILP_RESERVE_WRITER, Telemetry.ORIGIN_ILP_TCP);
-                    tableUpdateDetails = assignTableToThread(tableName, keyIndex);
+                    tableUpdateDetails = assignTableToThread(tableName);
                 }
             }
 
@@ -572,7 +555,6 @@ class LineTcpMeasurementScheduler implements Closeable {
             this.tableUpdateDetails = tableUpdateDetails;
         }
 
-        @SuppressWarnings("resource")
         void processMeasurementEvent(WriterJob job) {
             Row row = null;
             try {
@@ -600,7 +582,9 @@ class LineTcpMeasurementScheduler implements Closeable {
                         long nameHi = bufPos + colNameLen;
                         job.charSink.clear();
                         if (!Chars.utf8Decode(nameLo, nameHi, job.charSink)) {
-                            throw CairoException.instance(0).put("invalid UTF8 in column name ").put(job.floatingCharSink.asCharSequence(nameLo, nameHi));
+                            throw CairoException.instance(0)
+                                    .put("invalid UTF8 in column name ")
+                                    .put(job.floatingCharSink.asCharSequence(nameLo, nameHi));
                         }
                         bufPos = nameHi;
                         entityType = Unsafe.getUnsafe().getByte(bufPos);
@@ -614,8 +598,10 @@ class LineTcpMeasurementScheduler implements Closeable {
                             if (TableUtils.isValidInfluxColumnName(job.charSink)) {
                                 writer.addColumn(job.charSink, colType);
                             } else {
-                                throw CairoException.instance(0).put("invalid column name [table=").put(writer.getTableName())
-                                        .put(", columnName=").put(job.charSink).put(']');
+                                throw CairoException.instance(0)
+                                        .put("invalid column name [table=").put(writer.getTableName())
+                                        .put(", columnName=").put(job.charSink)
+                                        .put(']');
                             }
                             // Reset to beginning of entities
                             bufPos = firstEntityBufPos;
@@ -655,21 +641,30 @@ class LineTcpMeasurementScheduler implements Closeable {
 
                                 case ColumnType.INT:
                                     if (v < Integer.MIN_VALUE || v > Integer.MAX_VALUE) {
-                                        throw CairoException.instance(0).put("line protocol integer is out of int bounds [columnIndex=").put(colIndex).put(", v=").put(v).put(']');
+                                        throw CairoException.instance(0)
+                                                .put("line protocol integer is out of int bounds [columnIndex=").put(colIndex)
+                                                .put(", v=").put(v)
+                                                .put(']');
                                     }
                                     row.putInt(colIndex, (int) v);
                                     break;
 
                                 case ColumnType.SHORT:
                                     if (v < Short.MIN_VALUE || v > Short.MAX_VALUE) {
-                                        throw CairoException.instance(0).put("line protocol integer is out of short bounds [columnIndex=").put(colIndex).put(", v=").put(v).put(']');
+                                        throw CairoException.instance(0)
+                                                .put("line protocol integer is out of short bounds [columnIndex=").put(colIndex)
+                                                .put(", v=").put(v)
+                                                .put(']');
                                     }
                                     row.putShort(colIndex, (short) v);
                                     break;
 
                                 case ColumnType.BYTE:
                                     if (v < Byte.MIN_VALUE || v > Byte.MAX_VALUE) {
-                                        throw CairoException.instance(0).put("line protocol integer is out of byte bounds [columnIndex=").put(colIndex).put(", v=").put(v).put(']');
+                                        throw CairoException.instance(0)
+                                                .put("line protocol integer is out of byte bounds [columnIndex=").put(colIndex)
+                                                .put(", v=").put(v)
+                                                .put(']');
                                     }
                                     row.putByte(colIndex, (byte) v);
                                     break;
@@ -683,7 +678,10 @@ class LineTcpMeasurementScheduler implements Closeable {
                                     break;
 
                                 default:
-                                    throw CairoException.instance(0).put("expected a line protocol integer [entityType=").put(entityType).put(']');
+                                    throw CairoException.instance(0)
+                                            .put("cast error for line protocol integer [columnIndex=").put(colIndex)
+                                            .put(", columnType=").put(ColumnType.nameOf(colType))
+                                            .put(']');
                             }
                             break;
                         }
@@ -702,7 +700,10 @@ class LineTcpMeasurementScheduler implements Closeable {
                                     break;
 
                                 default:
-                                    throw CairoException.instance(0).put("expected a line protocol float [entityType=").put(entityType).put(']');
+                                    throw CairoException.instance(0)
+                                            .put("cast error for line protocol float [columnIndex=").put(colIndex)
+                                            .put(", columnType=").put(ColumnType.nameOf(colType))
+                                            .put(']');
                             }
                             break;
                         }
@@ -724,8 +725,10 @@ class LineTcpMeasurementScheduler implements Closeable {
                             if (colType == ColumnType.STRING) {
                                 row.putStr(colIndex, job.floatingCharSink);
                             } else {
-                                throw CairoException.instance(0).put("line protocol STRING cannot be inserted into column type ").put(ColumnType.nameOf(colType)).put(") [entityType=")
-                                        .put(entityType).put(']');
+                                throw CairoException.instance(0)
+                                        .put("cast error for line protocol string [columnIndex=").put(colIndex)
+                                        .put(", columnType=").put(ColumnType.nameOf(colType))
+                                        .put(']');
                             }
                             break;
                         }
@@ -1117,8 +1120,11 @@ class LineTcpMeasurementScheduler implements Closeable {
         public void addTableUpdateDetails(TableUpdateDetails tableUpdateDetails) {
             localTableUpdateDetailsByTableName.put(tableUpdateDetails.tableName, tableUpdateDetails);
             tableUpdateDetails.nNetworkIoWorkers++;
-            LOG.info().$("network IO thread using table [workerId=").$(workerId).$(", tableName=").$(tableUpdateDetails.tableName).$(", nNetworkIoWorkers=")
-                    .$(tableUpdateDetails.nNetworkIoWorkers).$(']').$();
+            LOG.info()
+                    .$("network IO thread using table [workerId=").$(workerId)
+                    .$(", tableName=").$(tableUpdateDetails.tableName)
+                    .$(", nNetworkIoWorkers=").$(tableUpdateDetails.nNetworkIoWorkers)
+                    .$(']').$();
         }
 
         @Override
@@ -1181,9 +1187,11 @@ class LineTcpMeasurementScheduler implements Closeable {
                                 LineTcpMeasurementEvent event = queue.get(seq);
                                 event.createReleaseWriterEvent(tableUpdateDetails);
                                 removeTableUpdateDetails(tableUpdateDetails);
-                                tableUpdateDetailsByTableName.remove(tableUpdateDetails.tableName);
-                                idleTableUpdateDetailsByTableName.put(tableUpdateDetails.tableName, tableUpdateDetails);
+                                final CharSequence tableName = tableUpdateDetails.tableName;
+                                tableUpdateDetailsByTableName.remove(tableName);
+                                idleTableUpdateDetailsByTableName.put(tableName, tableUpdateDetails);
                                 pubSeq.done(seq);
+                                LOG.info().$("active table going idle [tableName=").$(tableName).I$();
                             }
                             return true;
                         } else {

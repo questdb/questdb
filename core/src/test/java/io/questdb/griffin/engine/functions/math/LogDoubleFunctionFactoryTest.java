@@ -22,9 +22,26 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.pgwire;
+package io.questdb.griffin.engine.functions.math;
 
-@FunctionalInterface
-public interface BindVariableSetter {
-    void set(int index, long address, int valueLen);
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.AbstractFunctionFactoryTest;
+import org.junit.Test;
+
+public class LogDoubleFunctionFactoryTest extends AbstractFunctionFactoryTest {
+
+    @Test
+    public void testPositive() throws SqlException {
+        call(2.0).andAssert(0.6931471805599453, 0.0000000001);
+    }
+
+    @Test
+    public void testNegative() throws SqlException {
+        call(-2.0).andAssert(Double.NaN, 0.000001);
+    }
+
+    @Override
+    protected FunctionFactory getFunctionFactory() { return new LogDoubleFunctionFactory();
+    }
 }

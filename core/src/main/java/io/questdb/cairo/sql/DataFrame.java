@@ -26,12 +26,24 @@ package io.questdb.cairo.sql;
 
 import io.questdb.cairo.BitmapIndexReader;
 
+/**
+ * Interface for retrieving information about a data frame.
+ */
 public interface DataFrame {
     BitmapIndexReader getBitmapIndexReader(int columnIndex, int direction);
 
+    /**
+     * @return numeric index of the current partition
+     */
     int getPartitionIndex();
 
+    /**
+     * @return last row of a data frame
+     */
     long getRowHi();
 
+    /**
+     * @return first row of a data frame
+     */
     long getRowLo();
 }

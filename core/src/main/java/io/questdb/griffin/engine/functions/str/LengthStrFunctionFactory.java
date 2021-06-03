@@ -31,6 +31,7 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class LengthStrFunctionFactory implements FunctionFactory {
@@ -40,15 +41,14 @@ public class LengthStrFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new LengthStrVFunc(position, args.getQuick(0));
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+        return new LengthStrVFunc(args.getQuick(0));
     }
 
     private static class LengthStrVFunc extends IntFunction implements UnaryFunction {
         private final Function arg;
 
-        public LengthStrVFunc(int position, Function arg) {
-            super(position);
+        public LengthStrVFunc(Function arg) {
             this.arg = arg;
         }
 

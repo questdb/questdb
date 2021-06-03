@@ -31,8 +31,8 @@ import org.jetbrains.annotations.NotNull;
 
 public class LastFloatGroupByFunction extends FirstFloatGroupByFunction {
 
-    public LastFloatGroupByFunction(int position, @NotNull Function arg) {
-        super(position, arg);
+    public LastFloatGroupByFunction(@NotNull Function arg) {
+        super(arg);
     }
 
     @Override

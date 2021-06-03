@@ -44,8 +44,6 @@ class StringToStringArrayFunction extends StrArrayFunction {
     private final ObjList<CharSequence> items = new ObjList<>();
 
     StringToStringArrayFunction(int position, CharSequence type) throws SqlException {
-        super(position);
-
         if (type == null) {
             throw SqlException.$(position, "NULL is not allowed");
         }

@@ -31,10 +31,6 @@ import io.questdb.griffin.engine.functions.ByteFunction;
 public class ByteTypeConstant extends ByteFunction implements TypeConstant {
     public static final ByteTypeConstant INSTANCE = new ByteTypeConstant();
 
-    private ByteTypeConstant() {
-        super(0);
-    }
-
     @Override
     public byte getByte(Record rec) {
         return 0;
