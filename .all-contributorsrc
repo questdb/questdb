@@ -353,6 +353,15 @@
         "ideas",
         "code"
       ]
+    },
+    {
+      "login": "rrjanbiah",
+      "name": "R. Rajesh Jeba Anbiah",
+      "avatar_url": "https://avatars.githubusercontent.com/u/4907427?v=4",
+      "profile": "https://github.com/rrjanbiah",
+      "contributions": [
+        "bug"
+      ]
     }
   ],
   "badgeTemplate": "[![All Contributors](https://img.shields.io/badge/all_contributors-<%= contributors.length %>-orange.svg)](#contributors)",
