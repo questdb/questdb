@@ -33,10 +33,13 @@ import io.questdb.std.Transient;
 import io.questdb.std.str.Path;
 
 import java.io.Closeable;
+import java.util.concurrent.locks.LockSupport;
 
 public class TxnScoreboard implements Closeable {
 
     private static final Log LOG = LogFactory.getLog(TxnScoreboard.class);
+    private static final int WINDOWS_ACCESS_DENIED_ERRNO = 5;
+    private static final int MAX_FILE_OPEN_RETRIES = 64;
 
     private final long fd;
     private final long mem;
@@ -120,7 +123,13 @@ public class TxnScoreboard implements Closeable {
             if (ff.remove(path)) {
                 LOG.debug().$("no usage detected and file truncate [file=").$(path).I$();
             }
-            return TableUtils.openRW(ff, path, LOG);
+            long fd = ff.openRW(path);
+            if (fd > -1) {
+                LOG.debug().$("open [file=").$(path).$(", fd=").$(fd).$(']').$();
+                return fd;
+            }
+
+            return retryFileOpen(ff, path);
         } else {
             long fd = TableUtils.openRW(ff, path, LOG);
             // On Linux use flock and truncate to clean file once opened.
@@ -129,13 +138,29 @@ public class TxnScoreboard implements Closeable {
             if (isTruncated > 0) {
                 LOG.debug().$("no usage detected and file truncate [file=").$(path).$(", fd=").$(fd).$(']').$();
             }
-
-            if (isTruncated < 0) {
-                ff.close(fd);
-                throw CairoException.instance(ff.errno()).put("Could not lock [file=").put(path).put(']');
+            if (isTruncated == 0) {
+                return fd;
             }
-            return fd;
+
+            ff.close(fd);
+            throw CairoException.instance(ff.errno()).put("Could not lock [file=").put(path).put(']');
         }
+    }
+
+    private static long retryFileOpen(FilesFacade ff, Path path) {
+        long fd;
+        // Do few retries, deleting and opening the same file from different threads can result to errno 5.
+        int i = 0;
+        while (ff.errno() == WINDOWS_ACCESS_DENIED_ERRNO && i++ < MAX_FILE_OPEN_RETRIES) {
+            fd = ff.openRW(path);
+            if (fd > -1) {
+                LOG.debug().$("open [file=").$(path).$(", fd=").$(fd).$(']').$();
+                return fd;
+            }
+            LockSupport.parkNanos(1);
+        }
+
+        throw CairoException.instance(ff.errno()).put("could not open read-write [file=").put(path).put(']');
     }
 
     private native static boolean acquireTxn0(long pTxnScoreboard, long txn);
