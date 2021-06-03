@@ -231,7 +231,7 @@ public class ServerMain {
                 System.err.println(new Date() + " QuestDB is down");
             }));
         } catch (NetworkError e) {
-            log.error().$(e.getMessage()).$();
+            log.error().$("Network error: ").$(e.getMessage()).$();
             LockSupport.parkNanos(10000000L);
             System.exit(55);
         }
