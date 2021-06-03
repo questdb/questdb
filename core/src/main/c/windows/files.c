@@ -523,23 +523,8 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_lock
 
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_lockTruncate
         (JNIEnv *e, jclass cl, jlong fd) {
-    int result = 0;
-
-    if (LockFileEx((HANDLE) fd,LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY, 0, 0, 1, 0)) {
-        if (set_file_pos((HANDLE) fd, 0) && SetEndOfFile((HANDLE) fd)) {
-            result = 1;
-        } else {
-            SaveLastError();
-            return -1;
-        }
-    }
-
-    if (!LockFileEx((HANDLE) fd,0, 0, 0, 1, 0)) {
-        SaveLastError();
-        return -1;
-    }
-
-    return result;
+    // Not supported
+    return -2;
 }
 
 JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_rename(JNIEnv *e, jclass cl, jlong lpszOld, jlong lpszNew) {

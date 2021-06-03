@@ -46,8 +46,7 @@ public class TxnScoreboard implements Closeable {
     public TxnScoreboard(FilesFacade ff, @Transient Path root, int entryCount) {
         this.ff = ff;
         root.concat(TableUtils.TXN_SCOREBOARD_FILE_NAME).$();
-        this.fd = TableUtils.openRW(ff, root, LOG);
-        TableUtils.tryCleanExclusively(ff, root, fd, LOG);
+        this.fd = openWithSafeCleanup(ff, root);
         int pow2EntryCount = Numbers.ceilPow2(entryCount);
         this.size = TxnScoreboard.getScoreboardSize(pow2EntryCount);
         if (!ff.allocate(fd, this.size)) {
@@ -107,6 +106,35 @@ public class TxnScoreboard implements Closeable {
         assert pTxnScoreboard > 0;
         LOG.debug().$("release  [p=").$(pTxnScoreboard).$(", txn=").$(txn).$(']').$();
         releaseTxn0(pTxnScoreboard, txn);
+    }
+
+
+    private static long openWithSafeCleanup(FilesFacade ff, Path path) {
+        // If a reader does not release txn in the scoreboard
+        // because of process termination
+        // the txn is locked forever and eventually scoreboard fails with txn-inflight error.
+        // To prevent it try to clean scoreboard on opening if noone has it opened yet.
+        if (ff.isRestrictedFileSystem()) {
+            // On Windows simply attempt to delete the file
+            // If file is in use, delete attempt fails but it's ok to ignore since it will happen in most of the cases
+            if (ff.remove(path)) {
+                LOG.debug().$("no usage detected and file truncate [file=").$(path).I$();
+            }
+            return TableUtils.openRW(ff, path, LOG);
+        } else {
+            long fd = TableUtils.openRW(ff, path, LOG);
+            // On Linux use flock and truncate to clean file once opened.
+            // tryCleanExclusively will keep shared lock which releases on file close.
+            int isTruncated = ff.tryExclusiveLockTruncate(fd);
+            if (isTruncated > 0) {
+                LOG.debug().$("no usage detected and file truncate [file=").$(path).$(", fd=").$(fd).$(']').$();
+            }
+
+            if (isTruncated < 0) {
+                throw CairoException.instance(ff.errno()).put("Could not lock [file=").put(path).put(']');
+            }
+            return fd;
+        }
     }
 
     private native static boolean acquireTxn0(long pTxnScoreboard, long txn);

@@ -362,17 +362,6 @@ public final class TableUtils {
         return fd;
     }
 
-    public static void tryCleanExclusively(FilesFacade ff, LPSZ path, long fd, Log log) {
-        int isTruncated = ff.tryExclusiveLockTruncate(fd);
-        if (isTruncated > 0) {
-            log.debug().$("no usage detected and file truncate [file=").$(path).$(", fd=").$(fd).$(']').$();
-        }
-
-        if (isTruncated < 0) {
-            throw CairoException.instance(ff.errno()).put("Could not lock [file=").put(path).put(']');
-        }
-    }
-
     public static void lockName(Path path) {
         path.put(".lock").$();
     }
