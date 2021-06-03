@@ -118,6 +118,26 @@ public final class TableUtils {
     private TableUtils() {
     }
 
+    public static void clearScoreboard(Path path, FilesFacade ff) {
+        path.concat(TableUtils.TXN_SCOREBOARD_FILE_NAME).$();
+        if (ff.fsLocksOpenedFiles()) {
+            // On Windows simply attempt to delete the file
+            // If file is in use, delete attempt fails but it's ok to ignore since it will happen in most of the cases
+            if (ff.remove(path)) {
+                LOG.debug().$("no usage detected and file truncate [file=").$(path).I$();
+            }
+        } else {
+            long fd = ff.openRW(path);
+            if (fd < 0) {
+                return;
+            }
+            // On Linux use flock and truncate to clean file once opened.
+            // tryCleanExclusively will keep shared lock which releases on file close.
+            ff.tryExclusiveLockTruncate(fd);
+            ff.close(fd);
+        }
+    }
+
     public static void createTable(
             FilesFacade ff,
             AppendOnlyVirtualMemory memory,
