@@ -137,6 +137,7 @@ public class TxnScoreboard implements Closeable {
             int isTruncated = ff.tryExclusiveLockTruncate(fd);
             if (isTruncated > 0) {
                 LOG.debug().$("no usage detected and file truncate [file=").$(path).$(", fd=").$(fd).$(']').$();
+                return fd;
             }
             if (isTruncated == 0) {
                 return fd;
