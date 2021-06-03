@@ -33,7 +33,7 @@ import org.jetbrains.annotations.NotNull;
 class LatestByAllIndexedRecordCursor extends AbstractRecordListCursor {
     private final int columnIndex;
 
-    private long bias = 0;
+    private long indexShift = 0;
     private long aIndex;
     private long aLimit;
 
@@ -54,28 +54,29 @@ class LatestByAllIndexedRecordCursor extends AbstractRecordListCursor {
 
     @Override
     public void toTop() {
-        aIndex = bias;
+        aIndex = indexShift;
     }
 
     @Override
     public long size() {
-        return aLimit - bias;
+        return aLimit - indexShift;
     }
 
     @Override
     protected void buildTreeMap(SqlExecutionContext executionContext) {
         int keyCount = getSymbolTable(columnIndex).size() + 1;
-        int keyLo = 0;
-        int keyHi = keyCount;
+
+        long keyLo = 0;
+        long keyHi = keyCount;
 
         rows.extend(keyCount);
         rows.setPos(rows.getCapacity());
         rows.zero(0);
 
         long rowCount = 0;
-        long argsAddress = ArgumentsWrapper.allocateMemory();
-        ArgumentsWrapper.setRowsAddress(argsAddress, rows.getAddress());
-        ArgumentsWrapper.setRowsCapacity(argsAddress, rows.getCapacity());
+        long argsAddress = LatestByArguments.allocateMemory();
+        LatestByArguments.setRowsAddress(argsAddress, rows.getAddress());
+        LatestByArguments.setRowsCapacity(argsAddress, rows.getCapacity());
 
         DataFrame frame;
         // frame metadata is based on TableReader, which is "full" metadata
@@ -86,9 +87,9 @@ class LatestByAllIndexedRecordCursor extends AbstractRecordListCursor {
             final long rowLo = frame.getRowLo();
             final long rowHi = frame.getRowHi() - 1;
 
-            ArgumentsWrapper.setKeyLo(argsAddress, keyLo);
-            ArgumentsWrapper.setKeyHi(argsAddress, keyHi);
-            ArgumentsWrapper.setRowsSize(argsAddress, rows.size());
+            LatestByArguments.setKeyLo(argsAddress, keyLo);
+            LatestByArguments.setKeyHi(argsAddress, keyHi);
+            LatestByArguments.setRowsSize(argsAddress, rows.size());
 
             BitmapIndexUtilsNative.latestScanBackward(
                     indexReader.getKeyBaseAddress(),
@@ -101,11 +102,11 @@ class LatestByAllIndexedRecordCursor extends AbstractRecordListCursor {
                     frame.getPartitionIndex(), indexReader.getValueBlockCapacity()
             );
 
-            rowCount += ArgumentsWrapper.getRowsSize(argsAddress);
-            keyLo = (int)ArgumentsWrapper.getKeyLo(argsAddress);
-            keyHi = (int)ArgumentsWrapper.getKeyHi(argsAddress) + 1;
+            rowCount += LatestByArguments.getRowsSize(argsAddress);
+            keyLo = LatestByArguments.getKeyLo(argsAddress);
+            keyHi = LatestByArguments.getKeyHi(argsAddress) + 1;
         }
-        ArgumentsWrapper.releaseMemory(argsAddress);
+        LatestByArguments.releaseMemory(argsAddress);
 
         // we have to sort rows because multiple symbols
         // are liable to be looked up out of order
@@ -113,59 +114,11 @@ class LatestByAllIndexedRecordCursor extends AbstractRecordListCursor {
         rows.sortAsUnsigned();
 
         //skip "holes"
-        while(rows.get(bias) <= 0) {
-            bias++;
+        while(rows.get(indexShift) <= 0) {
+            indexShift++;
         }
 
         aLimit = rows.size();
-        aIndex = bias;
-    }
-
-    static final class ArgumentsWrapper {
-        private static final long KEY_LO_OFFSET = 0*8;
-        private static final long KEY_HI_OFFSET = 1*8;
-        private static final long ROWS_ADDRESS_OFFSET = 2*8;
-        private static final long ROWS_CAPACITY_OFFSET = 3*8;
-        private static final long ROWS_SIZE_OFFSET = 4*8;
-        private static final long MEMORY_SIZE = 5*8;
-
-        public static long allocateMemory() {
-            return Unsafe.calloc(MEMORY_SIZE);
-        }
-
-        public static void releaseMemory(long address) {
-            Unsafe.free(address, MEMORY_SIZE);
-        }
-
-        public static long getKeyLo(long address) {
-            return Unsafe.getUnsafe().getLong(address + KEY_LO_OFFSET);
-        }
-        public static long getKeyHi(long address) {
-            return Unsafe.getUnsafe().getLong(address + KEY_HI_OFFSET);
-        }
-        public static long getRowsAddress(long address) {
-            return Unsafe.getUnsafe().getLong(address + ROWS_ADDRESS_OFFSET);
-        }
-        public static long getRowsCapacity(long address) {
-            return Unsafe.getUnsafe().getLong(address + ROWS_CAPACITY_OFFSET);
-        }
-        public static long getRowsSize(long address) {
-            return Unsafe.getUnsafe().getLong(address + ROWS_SIZE_OFFSET);
-        }
-        public static void setKeyLo(long address, long lo) {
-            Unsafe.getUnsafe().putLong(address + KEY_LO_OFFSET, lo);
-        }
-        public static void setKeyHi(long address, long up) {
-            Unsafe.getUnsafe().putLong(address + KEY_HI_OFFSET, up);
-        }
-        public static void setRowsAddress(long address, long addr) {
-            Unsafe.getUnsafe().putLong(address + ROWS_ADDRESS_OFFSET, addr);
-        }
-        public static void setRowsCapacity(long address, long cap) {
-            Unsafe.getUnsafe().putLong(address + ROWS_CAPACITY_OFFSET, cap);
-        }
-        public static void setRowsSize(long address, long size) {
-            Unsafe.getUnsafe().getLong(address + ROWS_SIZE_OFFSET, size);
-        }
+        aIndex = indexShift;
     }
 }

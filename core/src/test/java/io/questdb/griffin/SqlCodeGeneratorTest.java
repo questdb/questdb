@@ -2050,15 +2050,15 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " rnd_double(0)*100," +
                         " rnd_double(0)*100," +
                         " rnd_double(0)*100," +
-                        " rnd_double(0)*100," +
+                        " 46.578761277152225," +
                         " 'VTJW'" +
                         " from long_sequence(1)" +
                         ") timestamp (t)",
                 "a\tk\tb\n" +
-                        "78.83065830055033\t1970-01-04T11:20:00.000000Z\tVTJW\n" +
                         "51.85631921367574\t1970-01-19T12:26:40.000000Z\tCPSW\n" +
                         "50.25890936351257\t1970-01-20T16:13:20.000000Z\tRXGZ\n" +
-                        "72.604681060764\t1970-01-22T23:46:40.000000Z\t\n",
+                        "72.604681060764\t1970-01-22T23:46:40.000000Z\t\n" +
+                        "46.578761277152225\t2019-01-01T00:00:00.000000Z\tVTJW\n",
                 true,
                 true,
                 true
@@ -2090,7 +2090,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " from long_sequence(1)" +
                         ") timestamp (t)",
                 "a\tb\tc\tk\n" +
-                        "67.52509547112409\tCPSW\tSXUX\t1970-01-21T20:00:00.000000Z\n" +
                         "94.41658975532606\tVTJW\tSXUX\t2019-01-01T00:00:00.000000Z\n",
                 true,
                 true,
@@ -2139,7 +2138,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                             sink,
                             "id\tvendor\tts\n" +
                                     "1878619626\tKK\t1970-01-01T00:01:39.200000Z\n" +
-                                    "801241758\tTT\t1970-01-01T00:01:39.800000Z\n" +
                                     "371958898\tDD\t1970-01-02T00:01:39.900000Z\n" +
                                     "1699760758\tPP\t1970-01-03T00:01:39.100000Z\n"
                     );
