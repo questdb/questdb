@@ -523,8 +523,11 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_findType
 
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_lock
         (JNIEnv *e, jclass cl, jlong fd, jint flags) {
+    OVERLAPPED sOverlapped;
+    sOverlapped.Offset = 0;
+    sOverlapped.OffsetHigh = 0;
     if (flags & LOCK_UN) {
-        if (UnlockFileEx((HANDLE) fd, 0, 0, 1, 0)) {
+        if (UnlockFileEx((HANDLE) fd, 0, 0, 1, &sOverlapped)) {
             return 0;
         }
     } else {
@@ -535,7 +538,7 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_lock
         if (flags & LOCK_NB) {
             winFlags |= LOCKFILE_FAIL_IMMEDIATELY;
         }
-        if (LockFileEx((HANDLE) fd, winFlags, 0, 0, 1, 0)) {
+        if (LockFileEx((HANDLE) fd, winFlags, 0, 0, 1, &sOverlapped)) {
             return 0;
         }
     }
