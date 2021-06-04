@@ -65,6 +65,16 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getO3PurgeDiscoveryQueueCapacity() {
+        return 1024;
+    }
+
+    @Override
+    public int getO3PurgeQueueCapacity() {
+        return 1024;
+    }
+
+    @Override
     public int getSqlCopyBufferSize() {
         return 1024 * 1024;
     }
@@ -212,11 +222,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public boolean isO3QuickSortEnabled() {
-        return false;
-    }
-
-    @Override
     public int getSqlCharacterStoreSequencePoolCapacity() {
         return 64;
     }
@@ -259,6 +264,16 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getSqlMapPageSize() {
         return 16 * Numbers.SIZE_1MB;
+    }
+
+    @Override
+    public int getSqlDistinctTimestampKeyCapacity() {
+        return 256;
+    }
+
+    @Override
+    public double getSqlDistinctTimestampLoadFactor() {
+        return 0.5;
     }
 
     @Override
@@ -512,16 +527,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getO3PurgeDiscoveryQueueCapacity() {
-        return 1024;
-    }
-
-    @Override
-    public int getO3PurgeQueueCapacity() {
-        return 1024;
-    }
-
-    @Override
     public int getTxnScoreboardEntryCount() {
         return 8192;
     }
@@ -534,5 +539,10 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public long getCommitLag() {
         return 0;
+    }
+
+    @Override
+    public boolean isO3QuickSortEnabled() {
+        return false;
     }
 }
