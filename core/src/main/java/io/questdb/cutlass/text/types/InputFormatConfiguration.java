@@ -39,6 +39,8 @@ import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.datetime.microtime.TimestampFormatFactory;
 import io.questdb.std.datetime.millitime.DateFormatFactory;
 
+import java.io.File;
+import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 
@@ -146,9 +148,16 @@ public class InputFormatConfiguration {
         final JsonParser parser = this::onJsonEvent;
 
         LOG.info().$("loading [from=").$(adapterSetConfigurationFileName).$(']').$();
-        try (InputStream stream = this.getClass().getResourceAsStream(adapterSetConfigurationFileName)) {
+        InputStream stream = null;
+        try {
+            stream = this.getClass().getResourceAsStream(adapterSetConfigurationFileName);
             if (stream == null) {
-                throw JsonException.$(0, "could not find [resource=").put(adapterSetConfigurationFileName).put(']');
+                File f = new File(adapterSetConfigurationFileName);
+                if (f.canRead()) {
+                    stream = new FileInputStream(f);
+                } else {
+                    throw JsonException.$(0, "could not find [resource=").put(adapterSetConfigurationFileName).put(']');
+                }
             }
             // here is where using direct memory is very disadvantageous
             // we will copy buffer twice to parse json, but luckily contents should be small
@@ -170,6 +179,12 @@ public class InputFormatConfiguration {
             }
         } catch (IOException e) {
             throw JsonException.$(0, "could not read [resource=").put(adapterSetConfigurationFileName).put(']');
+        } finally {
+            try {
+                stream.close();
+            } catch (IOException e) {
+                throw JsonException.$(0, "could not read [resource=").put(adapterSetConfigurationFileName).put(']');
+            }
         }
     }
 
