@@ -118,40 +118,6 @@ public final class TableUtils {
     private TableUtils() {
     }
 
-    public static void clearScoreboardByDirectory(Path path, FilesFacade ff) {
-        path.concat(TableUtils.TXN_SCOREBOARD_FILE_NAME).$();
-        if (ff.fsLocksOpenedFiles()) {
-            // On Windows simply attempt to delete the file
-            // If file is in use, delete attempt fails but it's ok to ignore since it will happen in most of the cases
-            if (ff.remove(path)) {
-                LOG.debug().$("no usage detected and file truncate [file=").$(path).I$();
-            }
-        } else {
-            long fd = ff.openRW(path);
-            if (fd < 0) {
-                return;
-            }
-            // On Linux use flock and truncate to clean file once opened.
-            // tryCleanExclusively will keep shared lock which releases on file close.
-            ff.tryExclusiveLockTruncate(fd);
-            ff.close(fd);
-        }
-    }
-
-    public static void clearScoreboardByFileDescriptor(Path filePath, long fd, FilesFacade ff) {
-        if (ff.fsLocksOpenedFiles()) {
-            // On Windows simply attempt to delete the file
-            // If file is in use, delete attempt fails but it's ok to ignore since it will happen in most of the cases
-            if (ff.remove(filePath)) {
-                LOG.debug().$("no usage detected and file truncate [file=").$(filePath).I$();
-            }
-        } else {
-            // On Linux use flock and truncate to clean file once opened.
-            // tryCleanExclusively will keep shared lock which releases on file close.
-            ff.tryExclusiveLockTruncate(fd);
-        }
-    }
-
     public static void createTable(
             FilesFacade ff,
             AppendOnlyVirtualMemory memory,
@@ -915,6 +881,15 @@ public final class TableUtils {
             return fd;
         }
         throw CairoException.instance(ff.errno()).put("could not open read-write [file=").put(path).put(']');
+    }
+
+    static long openCleanRW(FilesFacade ff, LPSZ path, long size, Log log) {
+        final long fd = ff.openCleanRW(path, size);
+        if (fd > -1) {
+            log.debug().$("open clean [file=").$(path).$(", fd=").$(fd).$(']').$();
+            return fd;
+        }
+        throw CairoException.instance(ff.errno()).put("could not open read-write with clean allocation [file=").put(path).put(']');
     }
 
     static {

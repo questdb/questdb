@@ -233,20 +233,6 @@ public class ReaderPoolTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testConcurrentOpenClearScoreboardOnce() throws Exception {
-        AtomicInteger truncateCount = new AtomicInteger();
-        ff = new FilesFacadeImpl() {
-            @Override
-            public int tryExclusiveLockTruncate(long fd) {
-                truncateCount.incrementAndGet();
-                return super.tryExclusiveLockTruncate(fd);
-            }
-        };
-        testConcurrentOpenAndClose();
-        Assert.assertEquals(CONCURRENT_READER_COUNT, truncateCount.get());
-    }
-
-    @Test
     public void testConcurrentRead() throws Exception {
         final int readerCount = 5;
         int threadCount = 2;

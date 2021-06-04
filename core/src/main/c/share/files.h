@@ -106,8 +106,8 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_lock
  * Method:    lock
  * Signature: (J)I
  */
-JNIEXPORT jint JNICALL Java_io_questdb_std_Files_lockTruncate
-        (JNIEnv *, jclass, jlong);
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_openCleanRW
+        (JNIEnv *e, jclass cl, jlong lpszName, jlong size);
 
 /*
  * Class:     com_questdb_std_Files

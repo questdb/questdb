@@ -100,6 +100,8 @@ public interface FilesFacade {
 
     long openRW(LPSZ name);
 
+    long openCleanRW(LPSZ name, long size);
+
     long read(long fd, long buf, long size, long offset);
 
     boolean remove(LPSZ name);
@@ -113,8 +115,6 @@ public interface FilesFacade {
     boolean truncate(long fd, long size);
 
     boolean allocate(long fd, long size);
-
-    int tryExclusiveLockTruncate(long fd);
 
     long write(long fd, long address, long len, long offset);
 }

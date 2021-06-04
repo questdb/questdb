@@ -141,8 +141,6 @@ public final class Files {
 
     public static native int lock(long fd, int flags);
 
-    public static native int lockTruncate(long fd);
-
     public static int mkdir(LPSZ path, int mode) {
         return mkdir(path.address(), mode);
     }
@@ -212,6 +210,10 @@ public final class Files {
 
     public static long openRW(LPSZ lpsz) {
         return bumpFileCount(openRW(lpsz.address()));
+    }
+
+    public static long openCleanRW(LPSZ lpsz, long size) {
+        return bumpFileCount(openCleanRW(lpsz.address(), size));
     }
 
     public native static long read(long fd, long address, long len, long offset);
@@ -315,6 +317,8 @@ public final class Files {
     private native static long openRO(long lpszName);
 
     private native static long openRW(long lpszName);
+
+    public native static long openCleanRW(long lpszName, long size);
 
     private native static long openAppend(long lpszName);
 

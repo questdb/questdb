@@ -24,12 +24,16 @@
 
 package io.questdb.cairo;
 
+import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
+
+import java.util.concurrent.atomic.AtomicInteger;
 
 public class TxnScoreboardTest extends AbstractCairoTest {
     @Test
@@ -133,7 +137,7 @@ public class TxnScoreboardTest extends AbstractCairoTest {
     public void testCleanFailsNoResourceLeak() throws Exception {
         FilesFacade ff = new FilesFacadeImpl() {
             @Override
-            public int tryExclusiveLockTruncate(long fd) {
+            public long openCleanRW(LPSZ name, long fd) {
                 return -1;
             }
         };
@@ -141,7 +145,11 @@ public class TxnScoreboardTest extends AbstractCairoTest {
         if (!ff.fsLocksOpenedFiles()) {
             assertMemoryLeak(() -> {
                 try (final Path shmPath = new Path()) {
-                    TableUtils.clearScoreboardByDirectory(shmPath, ff);
+                    try (TxnScoreboard ignored = new TxnScoreboard(FilesFacadeImpl.INSTANCE, shmPath.of(root), 2048)) {
+                        Assert.fail();
+                    } catch (CairoException ex) {
+                        TestUtils.assertContains(ex.getFlyweightMessage(), "could not open read-write with clean allocation");
+                    }
                 }
             });
         }
@@ -162,13 +170,39 @@ public class TxnScoreboardTest extends AbstractCairoTest {
 
 
             // second open is exclusive, file should be truncated
-            TableUtils.clearScoreboardByDirectory(shmPath, FilesFacadeImpl.INSTANCE);
             try (
                     final TxnScoreboard scoreboard2 = new TxnScoreboard(FilesFacadeImpl.INSTANCE, shmPath.of(root), 2048)
             ) {
                 Assert.assertEquals(0, scoreboard2.getMin());
             }
         }
+    }
+
+    @Test
+    public void testStressOpenParallel() {
+        int parallel = 16;
+        int iterations = (int) 1E3;
+        SOCountDownLatch latch = new SOCountDownLatch(parallel);
+        AtomicInteger errors = new AtomicInteger();
+        for (int i = 0; i < parallel; i++) {
+            new Thread(() -> {
+
+                try (final Path shmPath = new Path()) {
+                    for (int j = 0; j < iterations; j++) {
+                        try (TxnScoreboard ignored = new TxnScoreboard(FilesFacadeImpl.INSTANCE, shmPath.of(root), 1024)) {
+                        } catch (Exception ex) {
+                            ex.printStackTrace();
+                            errors.incrementAndGet();
+                            break;
+                        }
+                    }
+                    latch.countDown();
+                }
+            }).start();
+        }
+
+        latch.await();
+        Assert.assertEquals(0, errors.get());
     }
 
     @Test
@@ -186,7 +220,6 @@ public class TxnScoreboardTest extends AbstractCairoTest {
             }
 
             // second open is exclusive, file should be truncated
-            TableUtils.clearScoreboardByDirectory(shmPath, ff);
             try (
                     final TxnScoreboard scoreboard2 = new TxnScoreboard(ff, shmPath.of(root), 2048)
             ) {
@@ -197,7 +230,6 @@ public class TxnScoreboardTest extends AbstractCairoTest {
                 }
 
                 // This should not obtain exclusive lock even though file was empty when scoreboard2 put shared lock
-                TableUtils.clearScoreboardByDirectory(shmPath, ff);
                 try (
                         final TxnScoreboard scoreboard3 = new TxnScoreboard(ff, shmPath.of(root), 2048)
                 ) {
@@ -225,7 +257,6 @@ public class TxnScoreboardTest extends AbstractCairoTest {
                     Assert.assertEquals(1499, scoreboard.getMin());
                 }
 
-                TableUtils.clearScoreboardByDirectory(shmPath, FilesFacadeImpl.INSTANCE);
                 try (
                         final TxnScoreboard scoreboard2 = new TxnScoreboard(FilesFacadeImpl.INSTANCE, shmPath.of(root), 2048)
                 ) {

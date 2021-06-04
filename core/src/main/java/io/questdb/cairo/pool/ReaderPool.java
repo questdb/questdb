@@ -24,7 +24,10 @@
 
 package io.questdb.cairo.pool;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.EntryUnavailableException;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cairo.pool.ex.PoolClosedException;
 import io.questdb.log.Log;
@@ -284,11 +287,6 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
             Entry other = entries.putIfAbsent(name, e);
             if (other != null) {
                 e = other;
-            } else {
-                try (Path p = pathPool.get()) {
-                    p.of(getConfiguration().getRoot()).concat(name);
-                    TableUtils.clearScoreboardByDirectory(p, getConfiguration().getFilesFacade());
-                }
             }
         }
         return e;

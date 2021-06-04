@@ -338,12 +338,12 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_lockTruncate
 
         // release lock
         if (flock((int) fd, LOCK_UN) == 0) {
-            return 0;
+            return 1;
         }
     }
 
-    // error, cannot block
-    return -2;
+    // cannot put exclusive lock
+    return 0;
 }
 
 JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_rename
