@@ -23,8 +23,6 @@
  ******************************************************************************/
 
 #include "bitmap_index_utils.h"
-#include <algorithm>
-#include <cassert>
 #include <atomic>
 
 void latest_scan_backward(int64_t keys_memory_addr, int64_t keys_memory_size, int64_t values_memory_addr,
@@ -41,13 +39,9 @@ void latest_scan_backward(int64_t keys_memory_addr, int64_t keys_memory_size, in
     auto key_count = header->key_count;
 
     auto key_begin = out_args->key_lo;
-//    auto key_end = std::min(out_args->key_hi, key_count);
     auto key_end = out_args->key_hi;
 
-    assert(out_args->rows_address > 0);
     auto rows = reinterpret_cast<int64_t*>(out_args->rows_address);
-    auto rows_capacity = out_args->rows_capacity;
-    assert(rows_capacity > 0 && rows_capacity >= key_end);
 
     const auto vblock_capacity = vblock_capacity_mask + 1;
 
@@ -85,16 +79,17 @@ void latest_scan_backward(int64_t keys_memory_addr, int64_t keys_memory_size, in
         }
         bool update_range = true;
         if(value_count > 0) {
-            bool is_offset_in_mapped_area = last_vblock_offset + vblock_size <= value_memory_size;
+            int64_t vblock_end_offset = last_vblock_offset + vblock_size;
+            bool is_offset_in_mapped_area = vblock_end_offset <= value_memory_size;
 
             if (!is_kblock_consistent || !is_offset_in_mapped_area) {
                 // can trust only first vblock offset
                 last_vblock_offset = first_vblock_offset;
-                int64_t vblock_end_offset = last_vblock_offset + vblock_size;
-                auto link = reinterpret_cast<const value_block_link *>(vblock_end_offset - sizeof(value_block_link));
+                auto link = reinterpret_cast<const value_block_link *>(values_memory + last_vblock_offset + vblock_size - sizeof(value_block_link));
                 int64_t block_traversed = 1;
-                while(link->next && link->next + vblock_size < value_memory_size) {
+                while(link->next && link->next + vblock_size <= value_memory_size) {
                     last_vblock_offset = link->next;
+                    link = reinterpret_cast<const value_block_link *>(values_memory + last_vblock_offset + vblock_size - sizeof(value_block_link));
                     block_traversed += 1;
                 }
                 //assuming blocks are full
@@ -137,7 +132,7 @@ void latest_scan_backward(int64_t keys_memory_addr, int64_t keys_memory_size, in
 extern "C" {
 
 JNIEXPORT void JNICALL
-Java_io_questdb_std_BitmapIndexUtilsNative_latestScanBackward(JNIEnv *env, jclass cl
+Java_io_questdb_std_BitmapIndexUtilsNative_latestScanBackward0(JNIEnv *env, jclass cl
                                                 , jlong keysMemory
                                                 , jlong keysMemorySize
                                                 , jlong valuesMemory
@@ -148,12 +143,6 @@ Java_io_questdb_std_BitmapIndexUtilsNative_latestScanBackward(JNIEnv *env, jclas
                                                 , jlong minValue
                                                 , jint partitionIndex
                                                 , jint blockValueCountMod) {
-
-    assert(keysMemory > 0);
-    assert(keysMemorySize > 0);
-    assert(valuesMemory > 0);
-    assert(valuesMemorySize > 0);
-    assert(argsMemory > 0);
 
     latest_scan_backward(keysMemory, keysMemorySize, valuesMemory, valuesMemorySize, argsMemory, unIndexedNullCount,
                          maxValue, minValue, partitionIndex, blockValueCountMod);
