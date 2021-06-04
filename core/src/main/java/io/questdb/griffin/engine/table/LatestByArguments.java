@@ -70,6 +70,6 @@ public final class LatestByArguments {
         Unsafe.getUnsafe().putLong(address + ROWS_CAPACITY_OFFSET, cap);
     }
     public static void setRowsSize(long address, long size) {
-        Unsafe.getUnsafe().getLong(address + ROWS_SIZE_OFFSET, size);
+        Unsafe.getUnsafe().putLong(address + ROWS_SIZE_OFFSET, size);
     }
 }
