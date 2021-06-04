@@ -45,7 +45,6 @@ import java.util.concurrent.locks.LockSupport;
 
 public class ReaderPoolTest extends AbstractCairoTest {
     private static final Log LOG = LogFactory.getLog(ReaderPoolTest.class);
-    private static final int CONCURRENT_READER_COUNT = 5;
 
     @Before
     public void setUpInstance() {
@@ -187,11 +186,12 @@ public class ReaderPoolTest extends AbstractCairoTest {
 
     @Test
     public void testConcurrentOpenAndClose() throws Exception {
+        final int readerCount = 5;
         int threadCount = 2;
         final int iterations = 1000;
 
-        final String[] names = new String[CONCURRENT_READER_COUNT];
-        for (int i = 0; i < CONCURRENT_READER_COUNT; i++) {
+        final String[] names = new String[readerCount];
+        for (int i = 0; i < readerCount; i++) {
             names[i] = "x" + i;
             try (TableModel model = new TableModel(configuration, names[i], PartitionBy.NONE).col("ts", ColumnType.DATE)) {
                 CairoTestUtils.create(model);
@@ -211,7 +211,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
                         barrier.await();
 
                         for (int i1 = 0; i1 < iterations; i1++) {
-                            String m = names[rnd.nextPositiveInt() % CONCURRENT_READER_COUNT];
+                            String m = names[rnd.nextPositiveInt() % readerCount];
 
                             try (TableReader ignored = pool.get(m)) {
                                 LockSupport.parkNanos(100);

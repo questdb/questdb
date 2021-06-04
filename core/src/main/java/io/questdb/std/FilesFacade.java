@@ -29,10 +29,6 @@ import io.questdb.std.str.Path;
 
 public interface FilesFacade {
     long MAP_FAILED = -1;
-    int LOCK_SH = 1;
-    int LOCK_EX = 2;
-    int LOCK_UN = 8;
-    int LOCK_NB = 4;
 
     long append(long fd, long buf, int len);
 
@@ -77,8 +73,6 @@ public interface FilesFacade {
     long length(LPSZ name);
 
     int lock(long fd);
-
-    int lock(long fd, int flags);
 
     int mkdir(LPSZ path, int mode);
 

@@ -99,12 +99,12 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_length
  * Signature: (J)I
  */
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_lock
-        (JNIEnv *, jclass, jlong, jint flags);
+        (JNIEnv *, jclass, jlong);
 
 /*
  * Class:     com_questdb_std_Files
- * Method:    lock
- * Signature: (J)I
+ * Method:    openCleanRW
+ * Signature: (JJ)J
  */
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_openCleanRW
         (JNIEnv *e, jclass cl, jlong lpszName, jlong size);

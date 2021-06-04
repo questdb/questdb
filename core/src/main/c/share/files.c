@@ -21,6 +21,7 @@
  *  limitations under the License.
  *
  ******************************************************************************/
+
 #include <unistd.h>
 #include <sys/stat.h>
 #include <fcntl.h>
@@ -320,8 +321,8 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_findType
 }
 
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_lock
-        (JNIEnv *e, jclass cl, jlong fd, jint flags) {
-    return flock((int) fd, flags);
+        (JNIEnv *e, jclass cl, jlong fd) {
+    return flock((int) fd, LOCK_EX | LOCK_NB);
 }
 
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_openCleanRW
