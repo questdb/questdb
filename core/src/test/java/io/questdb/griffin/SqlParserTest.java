@@ -2570,20 +2570,6 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testInsertAsSelectBadLag() throws Exception {
-        assertSyntaxError(
-                "insert batch 2 lag aa into x select * from y",
-                19, "bad long integer",
-                modelOf("x")
-                        .col("a", ColumnType.INT)
-                        .col("b", ColumnType.STRING),
-                modelOf("y")
-                        .col("c", ColumnType.INT)
-                        .col("d", ColumnType.STRING)
-        );
-    }
-
-    @Test
     public void testInsertAsSelectBatchSize() throws SqlException {
         assertModel(
                 "insert batch 15000 into x select-choose c, d from (select [c, d] from y)",
@@ -2602,7 +2588,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     public void testInsertAsSelectBatchSizeAndLag() throws SqlException {
         assertModel(
                 "insert batch 10000 lag 100000 into x select-choose c, d from (select [c, d] from y)",
-                "insert batch 10000 lag 100000 into x select * from y",
+                "insert batch 10000 commitLag 100ms into x select * from y",
                 ExecutionModel.INSERT,
                 modelOf("x")
                         .col("a", ColumnType.INT)
@@ -2669,8 +2655,8 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testInsertAsSelectNegativeLag() throws Exception {
         assertSyntaxError(
-                "insert batch 2 lag -4 into x select * from y",
-                20, "lag must be a positive integer microseconds",
+                "insert batch 2 commitLag -4s into x select * from y",
+                26, "invalid interval qualifier -",
                 modelOf("x")
                         .col("a", ColumnType.INT)
                         .col("b", ColumnType.STRING),
