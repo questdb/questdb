@@ -45,4 +45,32 @@ public class DirectLongListTest {
         }
         Assert.assertEquals(expected, Unsafe.getMemUsed());
     }
+
+    @Test
+    public void testCapacityAndSize() {
+        // use logger so that static memory allocation happens before our control measurement
+        LOG.info().$("testCapacityAndSize").$();
+        long expected = Unsafe.getMemUsed();
+        DirectLongList list = new DirectLongList(1024);
+        Assert.assertEquals(1024, list.getCapacity());
+        list.extend(2048);
+        Assert.assertEquals(2048, list.getCapacity());
+        Assert.assertEquals(0, list.size());
+        long addr = list.getAddress();
+        Unsafe.getUnsafe().putLong(addr, 42);
+        Assert.assertEquals(42, list.get(0));
+        for (long i = 0; i < list.getCapacity(); ++i) {
+            list.add(i);
+        }
+        for (long i = 0; i < list.size(); ++i) {
+            Assert.assertEquals(i, list.get(i));
+        }
+        list.clear(0);
+        Assert.assertEquals(0, list.size());
+        for (long i = 0; i < list.getCapacity(); ++i) {
+            Assert.assertEquals(0, list.get(i));
+        }
+        list.close(); //release memory
+        Assert.assertEquals(expected, Unsafe.getMemUsed());
+    }
 }

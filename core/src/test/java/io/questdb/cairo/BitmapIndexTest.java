@@ -28,6 +28,7 @@ import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.vm.AppendOnlyVirtualMemory;
 import io.questdb.cairo.vm.PagedMappedReadWriteMemory;
 import io.questdb.cairo.vm.PagedSlidingReadOnlyMemory;
+import io.questdb.griffin.engine.table.LatestByArguments;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
@@ -828,6 +829,139 @@ public class BitmapIndexTest extends AbstractCairoTest {
             }
             assertWriterConstructorFail("Key count");
         });
+    }
+
+    @Test
+    public void testCppLatesByIndexReader() {
+        final int valueBlockCapacity = 256;
+        final long keyCount = 5;
+        create(configuration, path.trimTo(plen), "x", valueBlockCapacity);
+
+        try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration, path, "x")) {
+            for (int i = 0; i < keyCount; i++) {
+                for (int j = 0; j <= i; j++) {
+                    writer.add(i, j);
+                }
+            }
+        }
+
+        DirectLongList rows = new DirectLongList(keyCount);
+
+        rows.extend(keyCount);
+        rows.setPos(rows.getCapacity());
+        rows.zero(0);
+
+        try (BitmapIndexBwdReader reader = new BitmapIndexBwdReader(configuration, path.trimTo(plen), "x", 0)) {
+            long argsAddress = LatestByArguments.allocateMemory();
+            LatestByArguments.setRowsAddress(argsAddress, rows.getAddress());
+            LatestByArguments.setRowsCapacity(argsAddress, rows.getCapacity());
+
+            LatestByArguments.setKeyLo(argsAddress, 0);
+            LatestByArguments.setKeyHi(argsAddress, keyCount);
+            LatestByArguments.setRowsSize(argsAddress, rows.size());
+
+            long keyAddr = reader.getKeyBaseAddress();
+            long valAddr = reader.getValueBaseAddress();
+
+            BitmapIndexUtilsNative.latestScanBackward(
+                    reader.getKeyBaseAddress(),
+                    reader.getKeyMemorySize(),
+                    reader.getValueBaseAddress(),
+                    reader.getValueMemorySize(),
+                    argsAddress,
+                    reader.getUnIndexedNullCount(),
+                    Long.MAX_VALUE, 0,
+                    0, valueBlockCapacity - 1
+            );
+
+            long rowCount = LatestByArguments.getRowsSize(argsAddress);
+            Assert.assertEquals(keyCount, rowCount);
+            long keyLo = LatestByArguments.getKeyLo(argsAddress);
+            Assert.assertEquals(Long.MAX_VALUE, keyLo);
+            long keyHi = LatestByArguments.getKeyHi(argsAddress);
+            Assert.assertEquals(Long.MIN_VALUE, keyHi);
+
+            LatestByArguments.releaseMemory(argsAddress);
+
+            for (int i = 0; i < rows.getCapacity(); ++i) {
+                Assert.assertEquals(i, Rows.toLocalRowID(rows.get(i) - 1));
+            }
+        }
+        rows.close();
+    }
+
+    @Test
+    public void testCppLatesByIndexReaderIgnoreUpdates() {
+        final int valueBlockCapacity = 32;
+        final long keyCount = 1024;
+        create(configuration, path.trimTo(plen), "x", valueBlockCapacity);
+
+        try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration, path, "x")) {
+            for (int i = 0; i < keyCount; i++) {
+                for (int j = 0; j <= i; j++) {
+                    writer.add(i, j);
+                }
+            }
+        }
+
+        DirectLongList rows = new DirectLongList(keyCount);
+
+        rows.extend(keyCount);
+        rows.setPos(rows.getCapacity());
+        rows.zero(0);
+
+        //fixing memory mapping here
+        BitmapIndexBwdReader reader = new BitmapIndexBwdReader(configuration, path.trimTo(plen), "x", 0);
+
+        // we should ignore this update
+        try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration, path, "x")) {
+            for (int i = (int)keyCount; i < keyCount*2; i++) {
+                writer.add(i, 2L*i);
+            }
+        }
+        // and this one
+        try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration, path, "x")) {
+            for (int i = 0; i < keyCount; i++) {
+                writer.add((int)keyCount - 1, 10L*i);
+            }
+        }
+
+        long argsAddress = LatestByArguments.allocateMemory();
+        LatestByArguments.setRowsAddress(argsAddress, rows.getAddress());
+        LatestByArguments.setRowsCapacity(argsAddress, rows.getCapacity());
+
+        LatestByArguments.setKeyLo(argsAddress, 0);
+        LatestByArguments.setKeyHi(argsAddress, keyCount);
+        LatestByArguments.setRowsSize(argsAddress, rows.size());
+
+        long keyAddr = reader.getKeyBaseAddress();
+        long valAddr = reader.getValueBaseAddress();
+
+        BitmapIndexUtilsNative.latestScanBackward(
+                reader.getKeyBaseAddress(),
+                reader.getKeyMemorySize(),
+                reader.getValueBaseAddress(),
+                reader.getValueMemorySize(),
+                argsAddress,
+                reader.getUnIndexedNullCount(),
+                Long.MAX_VALUE, 0,
+                0, valueBlockCapacity - 1
+        );
+
+        long rowCount = LatestByArguments.getRowsSize(argsAddress);
+        Assert.assertEquals(keyCount, rowCount);
+        long keyLo = LatestByArguments.getKeyLo(argsAddress);
+        Assert.assertEquals(Long.MAX_VALUE, keyLo);
+        long keyHi = LatestByArguments.getKeyHi(argsAddress);
+        Assert.assertEquals(Long.MIN_VALUE, keyHi);
+
+        LatestByArguments.releaseMemory(argsAddress);
+
+        for (int i = 0; i < rows.getCapacity(); ++i) {
+            Assert.assertEquals(i, Rows.toLocalRowID(rows.get(i) - 1));
+        }
+        rows.close();
+        reader.close();
     }
 
     private static void indexInts(PagedSlidingReadOnlyMemory srcMem, BitmapIndexWriter writer, long hi) {
