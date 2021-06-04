@@ -24,13 +24,8 @@
 
 package io.questdb.griffin.engine.groupby;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.EntityColumnFilter;
-import io.questdb.cairo.RecordSink;
-import io.questdb.cairo.RecordSinkFactory;
-import io.questdb.cairo.map.Map;
-import io.questdb.cairo.map.MapFactory;
-import io.questdb.cairo.map.MapKey;
+import io.questdb.cairo.*;
+import io.questdb.cairo.map.*;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.BytecodeAssembler;
@@ -59,7 +54,14 @@ public class DistinctTimeSeriesRecordCursorFactory implements RecordCursorFactor
         // sink will be storing record columns to map key
         columnFilter.of(metadata.getColumnCount());
         RecordSink recordSink = RecordSinkFactory.getInstance(asm, metadata, columnFilter, false);
-        this.dataMap = MapFactory.createMap(configuration, metadata);
+        this.dataMap = new FastMap(
+                configuration.getSqlMapPageSize(),
+                metadata,
+                configuration.getSqlDistinctTimestampKeyCapacity(),
+                configuration.getSqlDistinctTimestampLoadFactor(),
+                Integer.MAX_VALUE
+        ) ;
+
         this.base = base;
         this.metadata = metadata;
         this.cursor = new DistinctTimeSeriesRecordCursor(

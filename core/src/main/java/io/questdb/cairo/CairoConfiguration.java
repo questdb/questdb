@@ -120,6 +120,10 @@ public interface CairoConfiguration {
 
     int getSqlMapPageSize();
 
+    int getSqlDistinctTimestampKeyCapacity();
+
+    double getSqlDistinctTimestampLoadFactor();
+
     int getSqlMapMaxPages();
 
     int getSqlMapMaxResizes();
