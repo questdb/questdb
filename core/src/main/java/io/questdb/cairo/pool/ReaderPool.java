@@ -310,7 +310,7 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
         if (Unsafe.arrayGetVolatile(e.allocations, index) != UNALLOCATED) {
 
             LOG.debug().$('\'').$(name).$("' is back [at=").$(e.index).$(':').$(index).$(", thread=").$(thread).$(']').$();
-            notifyListener(thread, name, PoolListener.EV_RETURN, reader.entry.index, index);
+            notifyListener(thread, name, PoolListener.EV_RETURN, e.index, index);
 
             e.releaseTimes[index] = clock.getTicks();
             Unsafe.arrayPutOrdered(e.allocations, index, UNALLOCATED);
