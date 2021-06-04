@@ -229,6 +229,21 @@ public class FilesTest {
         }
     }
 
+    @Test
+    public void testOpenCleanRWAllocatesToSize() throws Exception {
+        File temp = temporaryFolder.getRoot();
+        try (Path path = new Path().of(temp.getAbsolutePath()).concat("openCleanRWParallel").$()) {
+            long fd = Files.openCleanRW(path, 1024);
+            Assert.assertTrue(Files.exists(path));
+            Assert.assertEquals(1024, Files.length(path));
+
+            long fd2 = Files.openCleanRW(path, 2048);
+            Assert.assertEquals(2048, Files.length(path));
+
+            Files.close(fd);
+            Files.close(fd2);
+        }
+    }
 
     @Test
     public void testFailsToAllocateWhenNotEnoughSpace() throws Exception {

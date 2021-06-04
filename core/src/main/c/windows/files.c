@@ -562,10 +562,11 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_openCleanRW
 
     HANDLE handle = (HANDLE) fd;
 
-    if (Java_io_questdb_std_Files_length(e, cl, fd) > 0) {
+    jlong fileSize = Java_io_questdb_std_Files_length(e, cl, fd);
+    if (fileSize > 0) {
         if (LockFileEx(handle, LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY, 0, 0, 1, &sOverlapped)) {
             // truncate file to 1 byte
-            if (Java_io_questdb_std_Files_truncate(e, cl, handle, 1)) {
+            if (Java_io_questdb_std_Files_truncate(e, cl, handle, 1) == JNI_TRUE) {
                 // write first byte to 0
                 int writtenCount = 0;
                 byte buff[0] = {0};
@@ -573,8 +574,7 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_openCleanRW
                     writtenCount == 1) {
 
                     // extend file to `size`
-                    if (Java_io_questdb_std_Files_truncate(e, cl, fd, size)) {
-
+                    if (Java_io_questdb_std_Files_allocate(e, cl, fd, size) == JNI_TRUE) {
                         // downgrade to shared lock
                         if (UnlockFileEx(handle, 0, 0, 1, &sOverlapped)) {
                             if (LockFileEx(handle, 0, 0, 0, 1, &sOverlapped)) {
@@ -586,9 +586,12 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_openCleanRW
                 }
             }
         } else {
-            // put a shared lock
-            if (LockFileEx(handle, 0, 0, 0, 1, &sOverlapped)) {
-                return fd;
+            // extend file to `size`
+            if (fileSize >= size || Java_io_questdb_std_Files_allocate(e, cl, fd, size) == JNI_TRUE) {
+                // put a shared lock
+                if (LockFileEx(handle, 0, 0, 0, 1, &sOverlapped)) {
+                    return fd;
+                }
             }
         }
     } else {

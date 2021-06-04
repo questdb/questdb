@@ -142,17 +142,15 @@ public class TxnScoreboardTest extends AbstractCairoTest {
             }
         };
 
-        if (!ff.fsLocksOpenedFiles()) {
-            assertMemoryLeak(() -> {
-                try (final Path shmPath = new Path()) {
-                    try (TxnScoreboard ignored = new TxnScoreboard(FilesFacadeImpl.INSTANCE, shmPath.of(root), 2048)) {
-                        Assert.fail();
-                    } catch (CairoException ex) {
-                        TestUtils.assertContains(ex.getFlyweightMessage(), "could not open read-write with clean allocation");
-                    }
+        assertMemoryLeak(() -> {
+            try (final Path shmPath = new Path()) {
+                try (TxnScoreboard ignored = new TxnScoreboard(ff, shmPath.of(root), 2048)) {
+                    Assert.fail();
+                } catch (CairoException ex) {
+                    TestUtils.assertContains(ex.getFlyweightMessage(), "could not open read-write with clean allocation");
                 }
-            });
-        }
+            }
+        });
     }
 
     @Test
