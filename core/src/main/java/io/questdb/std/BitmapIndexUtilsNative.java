@@ -25,7 +25,23 @@
 package io.questdb.std;
 
 public class BitmapIndexUtilsNative {
-    public static native void latestScanBackward(long keysMemory, long keysMemorySize, long valuesMemory,
+    public static void latestScanBackward(long keysMemory, long keysMemorySize, long valuesMemory,
+                                                   long valuesMemorySize, long argsMemory, long unIndexedNullCount,
+                                                   long maxValue, long minValue,
+                                                   int partitionIndex, int blockValueCountMod) {
+        assert keysMemory > 0;
+        assert keysMemorySize > 0;
+        assert valuesMemory > 0;
+        assert valuesMemorySize > 0;
+        assert argsMemory > 0;
+        assert partitionIndex >= 0;
+        assert blockValueCountMod + 1 == Numbers.ceilPow2(blockValueCountMod + 1);
+
+        latestScanBackward0(keysMemory, keysMemorySize, valuesMemory, valuesMemorySize, argsMemory, unIndexedNullCount,
+                maxValue, minValue, partitionIndex, blockValueCountMod);
+    }
+
+    private static native void latestScanBackward0(long keysMemory, long keysMemorySize, long valuesMemory,
                                                  long valuesMemorySize, long argsMemory, long unIndexedNullCount,
                                                  long maxValue, long minValue,
                                                  int partitionIndex, int blockValueCountMod);
