@@ -166,7 +166,12 @@ public class FilesFacadeImpl implements FilesFacade {
 
     @Override
     public int lock(long fd) {
-        return Files.lock(fd);
+        return Files.lock(fd, LOCK_EX | LOCK_NB);
+    }
+
+    @Override
+    public int lock(long fd, int flags) {
+        return Files.lock(fd, flags);
     }
 
     @Override

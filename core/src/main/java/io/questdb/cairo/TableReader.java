@@ -89,7 +89,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             this.columnCount = this.metadata.getColumnCount();
             this.columnCountBits = getColumnBits(columnCount);
             int partitionBy = this.metadata.getPartitionBy();
-            this.txnScoreboard = new TxnScoreboard(ff, path.trimTo(rootLen), configuration.getTxnScoreboardEntryCount());
+            this.txnScoreboard = new TxnScoreboard(ff, path.trimTo(rootLen), configuration.getTxnScoreboardEntryCount(), false);
             path.trimTo(rootLen);
             LOG.debug()
                     .$("open [id=").$(metadata.getId())

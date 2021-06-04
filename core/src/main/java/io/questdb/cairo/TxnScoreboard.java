@@ -33,13 +33,10 @@ import io.questdb.std.Transient;
 import io.questdb.std.str.Path;
 
 import java.io.Closeable;
-import java.util.concurrent.locks.LockSupport;
 
 public class TxnScoreboard implements Closeable {
 
     private static final Log LOG = LogFactory.getLog(TxnScoreboard.class);
-    private static final int WINDOWS_ACCESS_DENIED_ERRNO = 5;
-    private static final int MAX_FILE_OPEN_RETRIES = 64;
 
     private final long fd;
     private final long mem;
@@ -47,14 +44,22 @@ public class TxnScoreboard implements Closeable {
     private final FilesFacade ff;
 
     public TxnScoreboard(FilesFacade ff, @Transient Path root, int entryCount) {
+        this(ff, root, entryCount, false);
+    }
+
+    public TxnScoreboard(FilesFacade ff, @Transient Path root, int entryCount, boolean cleanScoreboard) {
         this.ff = ff;
         root.concat(TableUtils.TXN_SCOREBOARD_FILE_NAME).$();
-        this.fd = TableUtils.openRW(ff, root, LOG);;
+        this.fd = TableUtils.openRW(ff, root, LOG);
+        if (cleanScoreboard) {
+            TableUtils.clearScoreboardByFileDescriptor(root, this.fd, ff);
+        }
+        ff.lock(this.fd, FilesFacade.LOCK_SH);
         int pow2EntryCount = Numbers.ceilPow2(entryCount);
         this.size = TxnScoreboard.getScoreboardSize(pow2EntryCount);
         if (!ff.allocate(fd, this.size)) {
             ff.close(fd);
-            throw CairoException.instance(ff.errno()).put("not enough space on disk? [name=").put(root).put(", size=").put(this.size).put(']') ;
+            throw CairoException.instance(ff.errno()).put("not enough space on disk? [name=").put(root).put(", size=").put(this.size).put(']');
         }
         // truncate is required to give file a size
         // the allocate above does not seem to update file system's size entry

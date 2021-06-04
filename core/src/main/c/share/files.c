@@ -320,15 +320,14 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_findType
 }
 
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_lock
-        (JNIEnv *e, jclass cl, jlong fd) {
-    return flock((int) fd, LOCK_EX | LOCK_NB);
+        (JNIEnv *e, jclass cl, jlong fd, jint flags) {
+    return flock((int) fd, flags);
 }
 
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_lockTruncate
         (JNIEnv *e, jclass cl, jlong fd) {
-    int result = 0;
 
-    // lock exclusively non-blocking specifies non blocking mode
+    // lock exclusively non-blocking
     if (flock((int) fd, LOCK_EX | LOCK_NB) == 0) {
         int tr = ftruncate(fd, 0);
         // truncate error
@@ -336,18 +335,15 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_lockTruncate
             // error
             return -1;
         }
-        // remove exclusive lock and blocking shared lock
-        result = 1;
+
+        // release lock
+        if (flock((int) fd, LOCK_UN) == 0) {
+            return 0;
+        }
     }
 
-    // keep shared lock
-    if (flock((int) fd, LOCK_SH) == 0) {
-        // not truncated
-        return result;
-    }
-
-    // error
-    return -1;
+    // error, cannot block
+    return -2;
 }
 
 JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_rename

@@ -30,6 +30,7 @@ import io.questdb.cairo.pool.ex.PoolClosedException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.ConcurrentHashMap;
+import io.questdb.std.ThreadLocal;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 
@@ -46,6 +47,7 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
     private static final int NEXT_OPEN = 0;
     private static final int NEXT_ALLOCATED = 1;
     private static final int NEXT_LOCKED = 2;
+    private static final ThreadLocal<Path> pathPool = new ThreadLocal<>(Path::new);
     private final ConcurrentHashMap<Entry> entries = new ConcurrentHashMap<>();
     private final int maxSegments;
     private final int maxEntries;
@@ -283,9 +285,9 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
             if (other != null) {
                 e = other;
             } else {
-                try (Path p = new Path()){
+                try (Path p = pathPool.get()) {
                     p.of(getConfiguration().getRoot()).concat(name);
-                    TableUtils.clearScoreboard(p.$(), getConfiguration().getFilesFacade());
+                    TableUtils.clearScoreboardByDirectory(p, getConfiguration().getFilesFacade());
                 }
             }
         }

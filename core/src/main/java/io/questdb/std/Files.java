@@ -139,7 +139,7 @@ public final class Files {
 
     public native static long length(long fd);
 
-    public static native int lock(long fd);
+    public static native int lock(long fd, int flags);
 
     public static native int lockTruncate(long fd);
 

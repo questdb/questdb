@@ -33,6 +33,16 @@
 #include "../share/files.h"
 #include "errno.h"
 
+#ifndef	_SYS_FILE_H
+/* Operations for the `flock' call in linux. Java passes linux flags.  */
+#define	LOCK_SH	1	/* Shared lock.  */
+#define	LOCK_EX	2 	/* Exclusive lock.  */
+#define	LOCK_UN	8	/* Unlock.  */
+
+/* Can be OR'd in to one of the above.  */
+#define	LOCK_NB	4	/* Don't block when locking.  */
+#endif
+
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_copy
         (JNIEnv *e, jclass cls, jlong lpszFrom, jlong lpszTo) {
     const char *from = (const char *) lpszFrom;
@@ -512,9 +522,22 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_findType
 }
 
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_lock
-        (JNIEnv *e, jclass cl, jlong fd) {
-    if (LockFile((HANDLE) fd, 0, 0, 1, 0)) {
-        return 0;
+        (JNIEnv *e, jclass cl, jlong fd, jint flags) {
+    if (flags & LOCK_UN) {
+        if (UnlockFileEx((HANDLE) fd, 0, 0, 1, 0)) {
+            return 0;
+        }
+    } else {
+        int winFlags = 0;
+        if (flags & LOCK_EX) {
+            winFlags |= LOCKFILE_EXCLUSIVE_LOCK;
+        }
+        if (flags & LOCK_NB) {
+            winFlags |= LOCKFILE_FAIL_IMMEDIATELY;
+        }
+        if (LockFileEx((HANDLE) fd, winFlags, 0, 0, 1, 0)) {
+            return 0;
+        }
     }
 
     SaveLastError();

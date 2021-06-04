@@ -233,7 +233,8 @@ public class TableWriter implements Closeable {
             this.metadata = new TableWriterMetadata(ff, metaMem);
             this.partitionBy = metaMem.getInt(META_OFFSET_PARTITION_BY);
             this.txFile = new TxWriter(ff, path, partitionBy);
-            this.txnScoreboard = new TxnScoreboard(ff, path.trimTo(rootLen), configuration.getTxnScoreboardEntryCount());
+            path.trimTo(rootLen);
+            this.txnScoreboard = new TxnScoreboard(ff, path, configuration.getTxnScoreboardEntryCount(), true);
             path.trimTo(rootLen);
             // we have to do truncate repair at this stage of constructor
             // because this operation requires metadata

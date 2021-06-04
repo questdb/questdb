@@ -24,15 +24,12 @@
 
 package io.questdb.cairo;
 
-import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
-
-import java.util.concurrent.atomic.AtomicInteger;
 
 public class TxnScoreboardTest extends AbstractCairoTest {
     @Test
@@ -133,7 +130,7 @@ public class TxnScoreboardTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCleanFails() throws Exception {
+    public void testCleanFailsNoResourceLeak() throws Exception {
         FilesFacade ff = new FilesFacadeImpl() {
             @Override
             public int tryExclusiveLockTruncate(long fd) {
@@ -144,7 +141,7 @@ public class TxnScoreboardTest extends AbstractCairoTest {
         if (!ff.fsLocksOpenedFiles()) {
             assertMemoryLeak(() -> {
                 try (final Path shmPath = new Path()) {
-                    TableUtils.clearScoreboard(shmPath, ff);
+                    TableUtils.clearScoreboardByDirectory(shmPath, ff);
                 }
             });
         }
@@ -165,7 +162,7 @@ public class TxnScoreboardTest extends AbstractCairoTest {
 
 
             // second open is exclusive, file should be truncated
-            TableUtils.clearScoreboard(shmPath, FilesFacadeImpl.INSTANCE);
+            TableUtils.clearScoreboardByDirectory(shmPath, FilesFacadeImpl.INSTANCE);
             try (
                     final TxnScoreboard scoreboard2 = new TxnScoreboard(FilesFacadeImpl.INSTANCE, shmPath.of(root), 2048)
             ) {
@@ -189,7 +186,7 @@ public class TxnScoreboardTest extends AbstractCairoTest {
             }
 
             // second open is exclusive, file should be truncated
-            TableUtils.clearScoreboard(shmPath, ff);
+            TableUtils.clearScoreboardByDirectory(shmPath, ff);
             try (
                     final TxnScoreboard scoreboard2 = new TxnScoreboard(ff, shmPath.of(root), 2048)
             ) {
@@ -200,7 +197,7 @@ public class TxnScoreboardTest extends AbstractCairoTest {
                 }
 
                 // This should not obtain exclusive lock even though file was empty when scoreboard2 put shared lock
-                TableUtils.clearScoreboard(shmPath, ff);
+                TableUtils.clearScoreboardByDirectory(shmPath, ff);
                 try (
                         final TxnScoreboard scoreboard3 = new TxnScoreboard(ff, shmPath.of(root), 2048)
                 ) {
@@ -228,7 +225,7 @@ public class TxnScoreboardTest extends AbstractCairoTest {
                     Assert.assertEquals(1499, scoreboard.getMin());
                 }
 
-                TableUtils.clearScoreboard(shmPath, FilesFacadeImpl.INSTANCE);
+                TableUtils.clearScoreboardByDirectory(shmPath, FilesFacadeImpl.INSTANCE);
                 try (
                         final TxnScoreboard scoreboard2 = new TxnScoreboard(FilesFacadeImpl.INSTANCE, shmPath.of(root), 2048)
                 ) {
