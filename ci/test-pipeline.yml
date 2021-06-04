@@ -125,7 +125,7 @@ stages:
             displayName: "Diff coverage PR report"
             env:
               CODE_COVERAGE_TOOL_OPTION: "$(CODE_COVERAGE_TOOL_OPTION)"
-              SYSTEM_ACCESSTOKEN: $(GH_TOKEN)
+              SYSTEM_ACCESSTOKEN: $(System.AccessToken)
               PR_ID: $(System.PullRequest.PullRequestNumber)
               SOURCES: $(Build.SourcesDirectory)
               COVERAGE_REPORT_PATH: core/CCReport43F6D5EF/jacoco.xml
