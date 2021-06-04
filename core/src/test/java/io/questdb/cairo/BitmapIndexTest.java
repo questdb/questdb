@@ -832,7 +832,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCppLatesByIndexReader() {
+    public void testCppLatestByIndexReader() {
         final int valueBlockCapacity = 256;
         final long keyCount = 5;
         create(configuration, path.trimTo(plen), "x", valueBlockCapacity);
@@ -859,9 +859,6 @@ public class BitmapIndexTest extends AbstractCairoTest {
             LatestByArguments.setKeyLo(argsAddress, 0);
             LatestByArguments.setKeyHi(argsAddress, keyCount);
             LatestByArguments.setRowsSize(argsAddress, rows.size());
-
-            long keyAddr = reader.getKeyBaseAddress();
-            long valAddr = reader.getValueBaseAddress();
 
             BitmapIndexUtilsNative.latestScanBackward(
                     reader.getKeyBaseAddress(),
@@ -891,7 +888,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCppLatesByIndexReaderIgnoreUpdates() {
+    public void testCppLatestByIndexReaderIgnoreUpdates() {
         final int valueBlockCapacity = 32;
         final long keyCount = 1024;
         create(configuration, path.trimTo(plen), "x", valueBlockCapacity);
@@ -933,9 +930,6 @@ public class BitmapIndexTest extends AbstractCairoTest {
         LatestByArguments.setKeyLo(argsAddress, 0);
         LatestByArguments.setKeyHi(argsAddress, keyCount);
         LatestByArguments.setRowsSize(argsAddress, rows.size());
-
-        long keyAddr = reader.getKeyBaseAddress();
-        long valAddr = reader.getValueBaseAddress();
 
         BitmapIndexUtilsNative.latestScanBackward(
                 reader.getKeyBaseAddress(),
