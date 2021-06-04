@@ -181,7 +181,9 @@ public class InputFormatConfiguration {
             throw JsonException.$(0, "could not read [resource=").put(adapterSetConfigurationFileName).put(']');
         } finally {
             try {
-                stream.close();
+                if (stream != null) {
+                    stream.close();
+                }
             } catch (IOException e) {
                 throw JsonException.$(0, "could not read [resource=").put(adapterSetConfigurationFileName).put(']');
             }
