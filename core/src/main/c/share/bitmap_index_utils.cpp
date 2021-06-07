@@ -116,6 +116,8 @@ void latest_scan_backward(int64_t keys_memory_addr, int64_t keys_memory_size, in
         if (k == 0 && unindexed_null_count > 0) {
             if (rows[k] <= 0 && unindexed_null_count - 1 >= min_value) {
                 rows[k] = ((int64_t) partition_index << 44) + unindexed_null_count;
+                row_count += 1;
+                update_range = false;
             }
         }
 

@@ -923,6 +923,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
             }
         }
 
+
         long argsAddress = LatestByArguments.allocateMemory();
         LatestByArguments.setRowsAddress(argsAddress, rows.getAddress());
         LatestByArguments.setRowsCapacity(argsAddress, rows.getCapacity());
@@ -956,6 +957,110 @@ public class BitmapIndexTest extends AbstractCairoTest {
         }
         rows.close();
         reader.close();
+    }
+
+    @Test
+    public void testCppLatestByIndexReaderIndexedWithTruncate() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final int timestampIncrement = 1000000 * 60 * 5;
+            final int M = 1000;
+            final int N = 100;
+            final int indexBlockCapacity = 32;
+            // separate two symbol columns with primitive. It will make problems apparent if index does not shift correctly
+            try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE).
+                    col("a", ColumnType.STRING).
+                    col("b", ColumnType.SYMBOL).indexed(true, indexBlockCapacity).
+                    col("i", ColumnType.INT).
+                    timestamp()
+            ) {
+                CairoTestUtils.create(model);
+            }
+
+            final Rnd rnd = new Rnd();
+            final String[] symbols = new String[N];
+
+            for (int i = 0; i < N; i++) {
+                symbols[i] = rnd.nextChars(8).toString();
+            }
+
+            // prepare the data
+            long timestamp = 0;
+            try (TableWriter writer = new TableWriter(configuration, "x")) {
+                for (int i = 0; i < M; i++) {
+                    TableWriter.Row row = writer.newRow(timestamp += timestampIncrement);
+                    row.putStr(0, rnd.nextChars(20));
+                    row.putSym(1, symbols[rnd.nextPositiveInt() % N]);
+                    row.putInt(2, rnd.nextInt());
+                    row.append();
+                }
+                writer.commit();
+                rnd.reset();
+
+                writer.addColumn(
+                        "c",
+                        ColumnType.SYMBOL,
+                        Numbers.ceilPow2(N),
+                        true,
+                        true,
+                        indexBlockCapacity,
+                        false
+                );
+                for (int i = 0; i < M; i++) {
+                    TableWriter.Row row = writer.newRow(timestamp += timestampIncrement);
+                    row.putStr(0, rnd.nextChars(20));
+                    row.putSym(1, symbols[rnd.nextPositiveInt() % N]);
+                    row.putInt(2, rnd.nextInt());
+                    row.putSym(4, symbols[rnd.nextPositiveInt() % N]);
+                    row.append();
+                }
+                writer.commit();
+                DirectLongList rows = new DirectLongList(N);
+
+                rows.setPos(rows.getCapacity());
+                rows.zero(0);
+
+
+                try (TableReader tableReader = new TableReader(configuration, "x")) {
+                    tableReader.openPartition(0);
+                    final int columnBase = tableReader.getColumnBase(0);
+                    final int columnIndex = tableReader.getMetadata().getColumnIndex("c");
+                    BitmapIndexReader reader = tableReader.getBitmapIndexReader(0,
+                            columnBase, columnIndex, BitmapIndexReader.DIR_BACKWARD);
+
+                    long columnTop = tableReader.getColumnTop(columnBase, columnIndex);
+
+                    long argsAddress = LatestByArguments.allocateMemory();
+
+                    LatestByArguments.setRowsAddress(argsAddress, rows.getAddress());
+                    LatestByArguments.setRowsCapacity(argsAddress, rows.getCapacity());
+
+                    LatestByArguments.setKeyLo(argsAddress, 0);
+                    LatestByArguments.setKeyHi(argsAddress, N);
+                    LatestByArguments.setRowsSize(argsAddress, rows.size());
+                    BitmapIndexUtilsNative.latestScanBackward(
+                            reader.getKeyBaseAddress(),
+                            reader.getKeyMemorySize(),
+                            reader.getValueBaseAddress(),
+                            reader.getValueMemorySize(),
+                            argsAddress,
+                            columnTop,
+                            Long.MAX_VALUE, 0,
+                            0, indexBlockCapacity - 1
+                    );
+
+                    long rowCount = LatestByArguments.getRowsSize(argsAddress);
+                    Assert.assertEquals(N, rowCount);
+                    long keyLo = LatestByArguments.getKeyLo(argsAddress);
+                    Assert.assertEquals(Long.MAX_VALUE, keyLo);
+                    long keyHi = LatestByArguments.getKeyHi(argsAddress);
+                    Assert.assertEquals(Long.MIN_VALUE, keyHi);
+
+                    LatestByArguments.releaseMemory(argsAddress);
+                    Assert.assertEquals(columnTop - 1, Rows.toLocalRowID(rows.get(0) - 1));
+                }
+                rows.close();
+            }
+        });
     }
 
     private static void indexInts(PagedSlidingReadOnlyMemory srcMem, BitmapIndexWriter writer, long hi) {
