@@ -671,7 +671,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
             this.lineTcpEnabled = getBoolean(properties, env, "line.tcp.enabled", true);
             if (lineTcpEnabled) {
-                lineTcpNetActiveConnectionLimit = getInt(properties, env, "line.tcp.net.active.connection.limit", 10);
+                lineTcpNetActiveConnectionLimit = getInt(properties, env, "line.tcp.net.active.connection.limit", 256);
                 parseBindTo(properties, env, "line.tcp.net.bind.to", "0.0.0.0:9009", (a, p) -> {
                     lineTcpNetBindIPv4Address = a;
                     lineTcpNetBindPort = p;
