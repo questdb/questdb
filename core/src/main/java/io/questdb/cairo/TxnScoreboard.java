@@ -48,11 +48,13 @@ public class TxnScoreboard implements Closeable {
         root.concat(TableUtils.TXN_SCOREBOARD_FILE_NAME).$();
         int pow2EntryCount = Numbers.ceilPow2(entryCount);
         this.size = TxnScoreboard.getScoreboardSize(pow2EntryCount);
+
+        // openCleanRW opens the file, make it of the right size
+        // Also it tries to clean the file up if nothing else
+        // has the file opened. This call leaves a shared lock on the file
+        // which is closed with file descriptor close (or process exit).
         this.fd = TableUtils.openCleanRW(ff, root, this.size, LOG);
 
-        // truncate is required to give file a size
-        // the allocate above does not seem to update file system's size entry
-        ff.truncate(fd, this.size);
         this.mem = ff.mmap(fd, this.size, 0, Files.MAP_RW);
         if (mem == -1) {
             ff.close(fd);
