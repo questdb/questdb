@@ -193,8 +193,7 @@ public final class Unsafe {
     }
 
     public static void recordMemAlloc(long size) {
-        long mem = MEM_USED.addAndGet(size);
-        assert mem >= 0;
+        MEM_USED.addAndGet(size);
     }
 
     private static int msb(int value) {
