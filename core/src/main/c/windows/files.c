@@ -548,7 +548,7 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_openCleanRW
                     writtenCount == 1) {
 
                     // extend file to `size`
-                    if (Java_io_questdb_std_Files_truncate(e, cl, fd, size) == JNI_TRUE) {
+                    if (Java_io_questdb_std_Files_allocate(e, cl, fd, size) == JNI_TRUE) {
                         // downgrade to shared lock
                         if (UnlockFileEx(handle, 0, 0, 1, &sOverlapped)) {
                             if (LockFileEx(handle, 0, 0, 0, 1, &sOverlapped)) {
@@ -561,7 +561,7 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_openCleanRW
             }
         } else {
             // extend file to `size`
-            if (fileSize >= size || Java_io_questdb_std_Files_truncate(e, cl, fd, size) == JNI_TRUE) {
+            if (fileSize >= size || Java_io_questdb_std_Files_allocate(e, cl, fd, size) == JNI_TRUE) {
                 // put a shared lock
                 if (LockFileEx(handle, 0, 0, 0, 1, &sOverlapped)) {
                     return fd;

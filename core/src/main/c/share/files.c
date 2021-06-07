@@ -341,7 +341,7 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_openCleanRW
             // truncate file to 0 byte
             if (ftruncate(fd, 0) == 0) {
                 // allocate file to `size`
-                if (Java_io_questdb_std_Files_truncate(e, cl, fd, size) == JNI_TRUE) {
+                if (Java_io_questdb_std_Files_allocate(e, cl, fd, size) == JNI_TRUE) {
                     // downgrade to shared lock
                     if (flock((int) fd, LOCK_SH) == 0) {
                         // success
@@ -350,7 +350,7 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_openCleanRW
                 }
             }
         } else {
-            if (fileSize >= size || Java_io_questdb_std_Files_truncate(e, cl, fd, size) == JNI_TRUE) {
+            if (fileSize >= size || Java_io_questdb_std_Files_allocate(e, cl, fd, size) == JNI_TRUE) {
                 // put a shared lock
                 if (flock((int) fd, LOCK_SH) == 0) {
                     // success
@@ -360,7 +360,7 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_openCleanRW
         }
     } else {
         // file size is already 0, no cleanup but allocate the file.
-        if (Java_io_questdb_std_Files_truncate(e, cl, fd, size) == JNI_TRUE && flock((int) fd, LOCK_SH) == 0) {
+        if (Java_io_questdb_std_Files_allocate(e, cl, fd, size) == JNI_TRUE && flock((int) fd, LOCK_SH) == 0) {
             // success
             return fd;
         }
