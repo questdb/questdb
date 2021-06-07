@@ -642,6 +642,8 @@ public class ReaderPoolTest extends AbstractCairoTest {
                     count++;
                 }
             }
+            // todo: test sometimes fail there, review how threads in test interact and why
+            //    count is liable to be 0
             Assert.assertTrue(count > 0);
 
             LOG.info().$("testLockBusyReader END").$();
