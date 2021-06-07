@@ -37,6 +37,15 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 public class TxnScoreboardTest extends AbstractCairoTest {
     @Test
+    public void testLimitsLoop() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            for (int i = 0; i < 10000; i++) {
+                testLimits();
+            }
+        });
+    }
+
+    @Test
     public void testLimits() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             int expect = 2048;
@@ -94,157 +103,75 @@ public class TxnScoreboardTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testWideRange() {
-        try (
-                final Path shmPath = new Path();
-                final TxnScoreboard scoreboard = new TxnScoreboard(FilesFacadeImpl.INSTANCE, shmPath.of(root), 1024)
-        ) {
-            scoreboard.acquireTxn(15);
-            scoreboard.releaseTxn(15);
-            scoreboard.acquireTxn(900992);
-        }
-    }
-
-    @Test
-    public void testCrawl() {
-        try (final Path shmPath = new Path()) {
+    public void testWideRange() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
             try (
+                    final Path shmPath = new Path();
                     final TxnScoreboard scoreboard = new TxnScoreboard(FilesFacadeImpl.INSTANCE, shmPath.of(root), 1024)
             ) {
-                for (int i = 0; i < 1500; i++) {
-                    scoreboard.acquireTxn(i);
-                    scoreboard.releaseTxn(i);
-                }
-                Assert.assertEquals(1499, scoreboard.getMin());
-
-                // increase scoreboard size
-                try (
-                        final TxnScoreboard scoreboard2 = new TxnScoreboard(FilesFacadeImpl.INSTANCE, shmPath.of(root), 2048)
-                ) {
-                    Assert.assertEquals(1499, scoreboard2.getMin());
-                    for (int i = 1500; i < 3000; i++) {
-                        scoreboard2.acquireTxn(i);
-                        scoreboard2.releaseTxn(i);
-                    }
-                    Assert.assertEquals(2999, scoreboard2.getMin());
-                    Assert.assertEquals(2999, scoreboard.getMin());
-                }
+                scoreboard.acquireTxn(15);
+                scoreboard.releaseTxn(15);
+                scoreboard.acquireTxn(900992);
             }
-        }
+        });
     }
 
     @Test
-    public void testCleanFailsNoResourceLeak() throws Exception {
-        FilesFacade ff = new FilesFacadeImpl() {
-            @Override
-            public long openCleanRW(LPSZ name, long fd) {
-                return -1;
-            }
-        };
-
-        assertMemoryLeak(() -> {
+    public void testCrawl() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
             try (final Path shmPath = new Path()) {
-                try (TxnScoreboard ignored = new TxnScoreboard(ff, shmPath.of(root), 2048)) {
-                    Assert.fail();
-                } catch (CairoException ex) {
-                    TestUtils.assertContains(ex.getFlyweightMessage(), "could not open read-write with clean allocation");
+                try (
+                        final TxnScoreboard scoreboard = new TxnScoreboard(FilesFacadeImpl.INSTANCE, shmPath.of(root), 1024)
+                ) {
+                    for (int i = 0; i < 1500; i++) {
+                        scoreboard.acquireTxn(i);
+                        scoreboard.releaseTxn(i);
+                    }
+                    Assert.assertEquals(1499, scoreboard.getMin());
+
+                    // increase scoreboard size
+                    try (
+                            final TxnScoreboard scoreboard2 = new TxnScoreboard(FilesFacadeImpl.INSTANCE, shmPath.of(root), 2048)
+                    ) {
+                        Assert.assertEquals(1499, scoreboard2.getMin());
+                        for (int i = 1500; i < 3000; i++) {
+                            scoreboard2.acquireTxn(i);
+                            scoreboard2.releaseTxn(i);
+                        }
+                        Assert.assertEquals(2999, scoreboard2.getMin());
+                        Assert.assertEquals(2999, scoreboard.getMin());
+                    }
                 }
             }
         });
     }
 
     @Test
-    public void testCleanOnExclusiveOpen() {
-        try (final Path shmPath = new Path()) {
-            try (
-                    final TxnScoreboard scoreboard = new TxnScoreboard(FilesFacadeImpl.INSTANCE, shmPath.of(root), 1024)
-            ) {
-                for (int i = 0; i < 1500; i++) {
-                    scoreboard.acquireTxn(i);
-                    scoreboard.releaseTxn(i);
+    public void testCleanFailsNoResourceLeak() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            FilesFacade ff = new FilesFacadeImpl() {
+                @Override
+                public long openCleanRW(LPSZ name, long fd) {
+                    return -1;
                 }
-                Assert.assertEquals(1499, scoreboard.getMin());
-            }
+            };
 
-
-            // second open is exclusive, file should be truncated
-            try (
-                    final TxnScoreboard scoreboard2 = new TxnScoreboard(FilesFacadeImpl.INSTANCE, shmPath.of(root), 2048)
-            ) {
-                Assert.assertEquals(0, scoreboard2.getMin());
-            }
-        }
-    }
-
-    @Test
-    public void testStressOpenParallel() {
-        int parallel = 16;
-        int iterations = (int) 1E3;
-        SOCountDownLatch latch = new SOCountDownLatch(parallel);
-        AtomicInteger errors = new AtomicInteger();
-        for (int i = 0; i < parallel; i++) {
-            new Thread(() -> {
-
+            assertMemoryLeak(() -> {
                 try (final Path shmPath = new Path()) {
-                    for (int j = 0; j < iterations; j++) {
-                        try (TxnScoreboard ignored = new TxnScoreboard(FilesFacadeImpl.INSTANCE, shmPath.of(root), 1024)) {
-                        } catch (Exception ex) {
-                            ex.printStackTrace();
-                            errors.incrementAndGet();
-                            break;
-                        }
+                    try (TxnScoreboard ignored = new TxnScoreboard(ff, shmPath.of(root), 2048)) {
+                        Assert.fail();
+                    } catch (CairoException ex) {
+                        TestUtils.assertContains(ex.getFlyweightMessage(), "could not open read-write with clean allocation");
                     }
-                    latch.countDown();
                 }
-            }).start();
-        }
-
-        latch.await();
-        Assert.assertEquals(0, errors.get());
+            });
+        });
     }
 
     @Test
-    public void testCleanOnExclusiveOpenLocksFile() {
-        try (final Path shmPath = new Path()) {
-            FilesFacade ff = FilesFacadeImpl.INSTANCE;
-            try (
-                    final TxnScoreboard scoreboard = new TxnScoreboard(ff, shmPath.of(root), 1024)
-            ) {
-                for (int i = 0; i < 1500; i++) {
-                    scoreboard.acquireTxn(i);
-                    scoreboard.releaseTxn(i);
-                }
-                Assert.assertEquals(1499, scoreboard.getMin());
-            }
-
-            // second open is exclusive, file should be truncated
-            try (
-                    final TxnScoreboard scoreboard2 = new TxnScoreboard(ff, shmPath.of(root), 2048)
-            ) {
-                Assert.assertEquals(0, scoreboard2.getMin());
-                for (int i = 0; i < 10; i++) {
-                    scoreboard2.acquireTxn(i);
-                    scoreboard2.releaseTxn(i);
-                }
-
-                // This should not obtain exclusive lock even though file was empty when scoreboard2 put shared lock
-                try (
-                        final TxnScoreboard scoreboard3 = new TxnScoreboard(ff, shmPath.of(root), 2048)
-                ) {
-                    Assert.assertEquals(9, scoreboard2.getMin());
-                    Assert.assertEquals(9, scoreboard3.getMin());
-                }
-
-            }
-        }
-    }
-
-    @Test
-    public void testDoesNotCleanOnNonExclusiveOpen() {
-        try (final Path shmPath = new Path()) {
-            try (
-                    final TxnScoreboard rootBoard = new TxnScoreboard(FilesFacadeImpl.INSTANCE, shmPath.of(root), 2048)
-            ) {
+    public void testCleanOnExclusiveOpen() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final Path shmPath = new Path()) {
                 try (
                         final TxnScoreboard scoreboard = new TxnScoreboard(FilesFacadeImpl.INSTANCE, shmPath.of(root), 1024)
                 ) {
@@ -255,62 +182,159 @@ public class TxnScoreboardTest extends AbstractCairoTest {
                     Assert.assertEquals(1499, scoreboard.getMin());
                 }
 
+
+                // second open is exclusive, file should be truncated
                 try (
                         final TxnScoreboard scoreboard2 = new TxnScoreboard(FilesFacadeImpl.INSTANCE, shmPath.of(root), 2048)
                 ) {
-                    Assert.assertEquals(1499, scoreboard2.getMin());
-                    for (int i = 1500; i < 3000; i++) {
-                        scoreboard2.acquireTxn(i);
-                        scoreboard2.releaseTxn(i);
-                    }
-                    Assert.assertEquals(2999, scoreboard2.getMin());
+                    Assert.assertEquals(0, scoreboard2.getMin());
                 }
-
-                Assert.assertEquals(2999, rootBoard.getMin());
             }
-        }
+        });
     }
 
     @Test
-    public void testVanilla() {
-        try (
-                final Path shmPath = new Path();
-                final TxnScoreboard scoreboard2 = new TxnScoreboard(FilesFacadeImpl.INSTANCE, shmPath.of(root), 1024)
-        ) {
-            try (TxnScoreboard scoreboard1 = new TxnScoreboard(FilesFacadeImpl.INSTANCE, shmPath.of(root), 1024)) {
-                scoreboard1.acquireTxn(67);
-                scoreboard1.acquireTxn(68);
-                scoreboard1.acquireTxn(68);
-                scoreboard1.acquireTxn(69);
-                scoreboard1.acquireTxn(70);
-                scoreboard1.acquireTxn(71);
-
-                scoreboard1.releaseTxn(68);
-                Assert.assertEquals(67, scoreboard1.getMin());
-                Assert.assertFalse(scoreboard2.isTxnAvailable(68));
-                scoreboard1.releaseTxn(68);
-                Assert.assertEquals(67, scoreboard1.getMin());
-                scoreboard1.releaseTxn(67);
-                Assert.assertEquals(69, scoreboard1.getMin());
-
-                scoreboard1.releaseTxn(69);
-                Assert.assertEquals(70, scoreboard1.getMin());
-                scoreboard1.releaseTxn(71);
-                Assert.assertTrue(scoreboard1.isTxnAvailable(71));
-                Assert.assertEquals(70, scoreboard1.getMin());
-                scoreboard1.releaseTxn(70);
-                Assert.assertEquals(71, scoreboard1.getMin());
-
-                scoreboard1.acquireTxn(72);
+    public void testStressOpenParallel() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            int parallel = 16;
+            int iterations = (int) 1E3;
+            SOCountDownLatch latch = new SOCountDownLatch(parallel);
+            AtomicInteger errors = new AtomicInteger();
+            for (int i = 0; i < parallel; i++) {
+                new Thread(() -> {
+                    try (final Path shmPath = new Path()) {
+                        for (int j = 0; j < iterations; j++) {
+                            try (TxnScoreboard ignored = new TxnScoreboard(FilesFacadeImpl.INSTANCE, shmPath.of(root), 1024)) {
+                            } catch (Exception ex) {
+                                ex.printStackTrace();
+                                errors.incrementAndGet();
+                                break;
+                            }
+                        }
+                    }
+                    latch.countDown();
+                }).start();
             }
-            scoreboard2.acquireTxn(72);
-            Assert.assertEquals(2, scoreboard2.getActiveReaderCount(72));
 
-            scoreboard2.releaseTxn(72);
-            scoreboard2.releaseTxn(72);
-            Assert.assertEquals(0, scoreboard2.getActiveReaderCount(72));
+            latch.await();
+            Assert.assertEquals(0, errors.get());
+        });
+    }
 
-            Assert.assertTrue(scoreboard2.isTxnAvailable(77));
-        }
+    @Test
+    public void testCleanOnExclusiveOpenLocksFile() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final Path shmPath = new Path()) {
+                FilesFacade ff = FilesFacadeImpl.INSTANCE;
+                try (
+                        final TxnScoreboard scoreboard = new TxnScoreboard(ff, shmPath.of(root), 1024)
+                ) {
+                    for (int i = 0; i < 1500; i++) {
+                        scoreboard.acquireTxn(i);
+                        scoreboard.releaseTxn(i);
+                    }
+                    Assert.assertEquals(1499, scoreboard.getMin());
+                }
+
+                // second open is exclusive, file should be truncated
+                try (
+                        final TxnScoreboard scoreboard2 = new TxnScoreboard(ff, shmPath.of(root), 2048)
+                ) {
+                    Assert.assertEquals(0, scoreboard2.getMin());
+                    for (int i = 0; i < 10; i++) {
+                        scoreboard2.acquireTxn(i);
+                        scoreboard2.releaseTxn(i);
+                    }
+
+                    // This should not obtain exclusive lock even though file was empty when scoreboard2 put shared lock
+                    try (
+                            final TxnScoreboard scoreboard3 = new TxnScoreboard(ff, shmPath.of(root), 2048)
+                    ) {
+                        Assert.assertEquals(9, scoreboard2.getMin());
+                        Assert.assertEquals(9, scoreboard3.getMin());
+                    }
+
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testDoesNotCleanOnNonExclusiveOpen() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final Path shmPath = new Path()) {
+                try (
+                        final TxnScoreboard rootBoard = new TxnScoreboard(FilesFacadeImpl.INSTANCE, shmPath.of(root), 2048)
+                ) {
+                    try (
+                            final TxnScoreboard scoreboard = new TxnScoreboard(FilesFacadeImpl.INSTANCE, shmPath.of(root), 1024)
+                    ) {
+                        for (int i = 0; i < 1500; i++) {
+                            scoreboard.acquireTxn(i);
+                            scoreboard.releaseTxn(i);
+                        }
+                        Assert.assertEquals(1499, scoreboard.getMin());
+                    }
+
+                    try (
+                            final TxnScoreboard scoreboard2 = new TxnScoreboard(FilesFacadeImpl.INSTANCE, shmPath.of(root), 2048)
+                    ) {
+                        Assert.assertEquals(1499, scoreboard2.getMin());
+                        for (int i = 1500; i < 3000; i++) {
+                            scoreboard2.acquireTxn(i);
+                            scoreboard2.releaseTxn(i);
+                        }
+                        Assert.assertEquals(2999, scoreboard2.getMin());
+                    }
+
+                    Assert.assertEquals(2999, rootBoard.getMin());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testVanilla() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (
+                    final Path shmPath = new Path();
+                    final TxnScoreboard scoreboard2 = new TxnScoreboard(FilesFacadeImpl.INSTANCE, shmPath.of(root), 1024)
+            ) {
+                try (TxnScoreboard scoreboard1 = new TxnScoreboard(FilesFacadeImpl.INSTANCE, shmPath.of(root), 1024)) {
+                    scoreboard1.acquireTxn(67);
+                    scoreboard1.acquireTxn(68);
+                    scoreboard1.acquireTxn(68);
+                    scoreboard1.acquireTxn(69);
+                    scoreboard1.acquireTxn(70);
+                    scoreboard1.acquireTxn(71);
+
+                    scoreboard1.releaseTxn(68);
+                    Assert.assertEquals(67, scoreboard1.getMin());
+                    Assert.assertFalse(scoreboard2.isTxnAvailable(68));
+                    scoreboard1.releaseTxn(68);
+                    Assert.assertEquals(67, scoreboard1.getMin());
+                    scoreboard1.releaseTxn(67);
+                    Assert.assertEquals(69, scoreboard1.getMin());
+
+                    scoreboard1.releaseTxn(69);
+                    Assert.assertEquals(70, scoreboard1.getMin());
+                    scoreboard1.releaseTxn(71);
+                    Assert.assertTrue(scoreboard1.isTxnAvailable(71));
+                    Assert.assertEquals(70, scoreboard1.getMin());
+                    scoreboard1.releaseTxn(70);
+                    Assert.assertEquals(71, scoreboard1.getMin());
+
+                    scoreboard1.acquireTxn(72);
+                }
+                scoreboard2.acquireTxn(72);
+                Assert.assertEquals(2, scoreboard2.getActiveReaderCount(72));
+
+                scoreboard2.releaseTxn(72);
+                scoreboard2.releaseTxn(72);
+                Assert.assertEquals(0, scoreboard2.getActiveReaderCount(72));
+
+                Assert.assertTrue(scoreboard2.isTxnAvailable(77));
+            }
+        });
     }
 }
