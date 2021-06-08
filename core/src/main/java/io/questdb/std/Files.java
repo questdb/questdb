@@ -51,12 +51,20 @@ public final class Files {
 
     public native static long append(long fd, long address, long len);
 
+    private static Exception[] stackTraces = new Exception[100];
+
     public static synchronized boolean auditClose(long fd) {
         if (fd < 0) {
             throw new IllegalStateException("Invalid fd " + fd);
         }
+
         if (openFds.remove(fd) == -1) {
+            if (fd > 80 && fd < 100) {
+                stackTraces[(int)fd].printStackTrace();
+            }
             throw new IllegalStateException("fd " + fd + " is already closed!");
+        } else if (fd > 80 && fd < 100) {
+            stackTraces[(int)fd] = new Exception(String.valueOf(fd));
         }
         return true;
     }
