@@ -65,12 +65,12 @@ public class DirectLongList implements Mutable, Closeable {
     }
 
     public final void add(DirectLongList that) {
-        long thatCapacity = that.limit - that.pos;
-        if (limit - pos < thatCapacity) {
-            extendBytes(this.capacity + thatCapacity - (limit - pos));
+        long thatSize = that.pos - that.start;
+        if (limit - pos < thatSize) {
+            extendBytes(this.capacity + thatSize - (limit - pos));
         }
-        Vect.memcpy(that.start, this.pos, thatCapacity);
-        this.pos += thatCapacity;
+        Vect.memcpy(that.start, this.pos, thatSize);
+        this.pos += thatSize;
     }
 
     public void sortAsUnsigned() {
