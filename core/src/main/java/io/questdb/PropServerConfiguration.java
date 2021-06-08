@@ -39,6 +39,7 @@ import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.cutlass.text.types.InputFormatConfiguration;
 import io.questdb.griffin.SqlInterruptorConfiguration;
 import io.questdb.log.Log;
+import io.questdb.metrics.MetricsConfiguration;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.network.*;
 import io.questdb.std.*;
@@ -200,6 +201,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long instanceHashHi;
     private final int sqlTxnScoreboardEntryCount;
     private final boolean o3QuickSortEnabled;
+    private final MetricsConfiguration metricsConfiguration = new PropMetricsConfiguration();
+    private final boolean metricsEnabled;
     private final int sqlDistinctTimestampKeyCapacity;
     private final double sqlDistinctTimestampLoadFactor;
     private boolean httpAllowDeflateBeforeSend;
@@ -671,7 +674,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
             this.lineTcpEnabled = getBoolean(properties, env, "line.tcp.enabled", true);
             if (lineTcpEnabled) {
-                lineTcpNetActiveConnectionLimit = getInt(properties, env, "line.tcp.net.active.connection.limit", 10);
+                lineTcpNetActiveConnectionLimit = getInt(properties, env, "line.tcp.net.active.connection.limit", 256);
                 parseBindTo(properties, env, "line.tcp.net.bind.to", "0.0.0.0:9009", (a, p) -> {
                     lineTcpNetBindIPv4Address = a;
                     lineTcpNetBindPort = p;
@@ -736,6 +739,8 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sharedWorkerYieldThreshold = getLong(properties, env, "shared.worker.yield.threshold", 10);
             this.sharedWorkerSleepThreshold = getLong(properties, env, "shared.worker.sleep.threshold", 10000);
 
+            this.metricsEnabled = getBoolean(properties, env, "metrics.enabled", false);
+
             this.buildInformation = buildInformation;
         }
     }
@@ -773,6 +778,11 @@ public class PropServerConfiguration implements ServerConfiguration {
     @Override
     public PGWireConfiguration getPGWireConfiguration() {
         return pgWireConfiguration;
+    }
+
+    @Override
+    public MetricsConfiguration getMetricsConfiguration() {
+        return metricsConfiguration;
     }
 
     private int[] getAffinity(Properties properties, @Nullable Map<String, String> env, String key, int httpWorkerCount) throws ServerConfigurationException {
@@ -2604,6 +2614,14 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isEnabled() {
             return httpMinServerEnabled;
+        }
+    }
+
+    private class PropMetricsConfiguration implements MetricsConfiguration {
+
+        @Override
+        public boolean isEnabled() {
+            return metricsEnabled;
         }
     }
 }

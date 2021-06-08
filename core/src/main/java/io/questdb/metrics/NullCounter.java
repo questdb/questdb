@@ -22,32 +22,29 @@
  *
  ******************************************************************************/
 
-package io.questdb;
+package io.questdb.metrics;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cutlass.http.HttpMinServerConfiguration;
-import io.questdb.cutlass.http.HttpServerConfiguration;
-import io.questdb.cutlass.line.tcp.LineTcpReceiverConfiguration;
-import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
-import io.questdb.cutlass.pgwire.PGWireConfiguration;
-import io.questdb.metrics.MetricsConfiguration;
-import io.questdb.mp.WorkerPoolConfiguration;
+import io.questdb.std.str.CharSink;
 
-public interface ServerConfiguration {
+class NullCounter implements Counter, CounterWithOneLabel, CounterWithTwoLabels {
+    static final NullCounter INSTANCE = new NullCounter();
 
-    CairoConfiguration getCairoConfiguration();
+    private NullCounter() {
+    }
 
-    HttpServerConfiguration getHttpServerConfiguration();
+    @Override
+    public void inc() {
+    }
 
-    HttpMinServerConfiguration getHttpMinServerConfiguration();
+    @Override
+    public void inc(short label0) {
+    }
 
-    LineUdpReceiverConfiguration getLineUdpReceiverConfiguration();
+    @Override
+    public void inc(short label0, short label1) {
+    }
 
-    LineTcpReceiverConfiguration getLineTcpReceiverConfiguration();
-
-    WorkerPoolConfiguration getWorkerPoolConfiguration();
-
-    PGWireConfiguration getPGWireConfiguration();
-
-    MetricsConfiguration getMetricsConfiguration();
+    @Override
+    public void scrapeIntoPrometheus(CharSink sink) {
+    }
 }
