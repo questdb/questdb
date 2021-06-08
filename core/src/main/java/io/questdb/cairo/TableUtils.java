@@ -883,6 +883,15 @@ public final class TableUtils {
         throw CairoException.instance(ff.errno()).put("could not open read-write [file=").put(path).put(']');
     }
 
+    static long openCleanRW(FilesFacade ff, LPSZ path, long size, Log log) {
+        final long fd = ff.openCleanRW(path, size);
+        if (fd > -1) {
+            log.debug().$("open clean [file=").$(path).$(", fd=").$(fd).$(']').$();
+            return fd;
+        }
+        throw CairoException.instance(ff.errno()).put("could not open read-write with clean allocation [file=").put(path).put(']');
+    }
+
     static {
         TimestampFormatCompiler compiler = new TimestampFormatCompiler();
         fmtDay = compiler.compile("yyyy-MM-dd");
