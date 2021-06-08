@@ -186,7 +186,7 @@ public class LineTcpServerTest extends AbstractCairoTest {
                 tableIndex.put("weather" + i, new AtomicInteger());
             }
 
-            // One engine hook for each writer
+            // One engine hook for all writers
             Object monitor = new Object();
             engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
                 if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN) {
