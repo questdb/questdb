@@ -367,7 +367,11 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_openCleanRW
     }
 
     // Any non-happy path comes here.
+    // Save errno before close.
+    int errnoTmp = errno;
     close(fd);
+    // Restore real errno
+    errno = errnoTmp;
     return -1;
 }
 
