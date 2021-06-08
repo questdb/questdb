@@ -13,7 +13,25 @@ public class AggressiveRecvLineTcpConnectionContext extends LineTcpConnectionCon
         read();
         do {
             rc = parseMeasurements(netIoJob);
-        } while (rc == IOContextResult.NEEDS_READ && read());
+        } while (rc == IOContextResult.NEEDS_READ && (read()));
         return rc;
+    }
+
+    @Override
+    protected boolean read() {
+        if (super.read()) {
+            return true;
+        }
+
+        long remaining = 10_000;
+
+        while (remaining > 0) {
+            if (super.read()) {
+                return true;
+            }
+            remaining--;
+        }
+
+        return false;
     }
 }
