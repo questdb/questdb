@@ -153,7 +153,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                 for (int n = 0, sz = tableNames.size(); n < sz; n++) {
                     TableUpdateDetails updateDetails = tableUpdateDetailsByTableName.get(tableNames.get(n));
                     if (!updateDetails.assignedToJob) {
-                        updateDetails.close(-1);
+                        updateDetails.close();
                     }
                 }
                 tableUpdateDetailsByTableName.clear();
@@ -762,7 +762,7 @@ class LineTcpMeasurementScheduler implements Closeable {
         }
     }
 
-    class TableUpdateDetails {
+    class TableUpdateDetails implements Closeable {
         final String tableName;
         private final ThreadLocalDetails[] localDetailsArray;
         private int writerThreadId;
@@ -786,19 +786,25 @@ class LineTcpMeasurementScheduler implements Closeable {
             lastCommitMillis = milliClock.getTicks();
         }
 
-        private void close(int threadId) {
-            if (writerThreadId != Integer.MIN_VALUE && (!assignedToJob || writerThreadId == threadId)) {
-                LOG.info().$("closing table [tableName=").$(tableName).$(']').$();
-                if (null != writer) {
-                    writer.commit();
-                    writer.close();
-                    writer = null;
+        @Override
+        public void close() {
+            if (writerThreadId != Integer.MIN_VALUE) {
+                tableUpdateDetailsLock.writeLock().lock();
+                try {
+                    LOG.info().$("closing table [tableName=").$(tableName).$(']').$();
+                    if (null != writer) {
+                        writer.commit();
+                        writer.close();
+                        writer = null;
+                    }
+                    for (int n = 0; n < localDetailsArray.length; n++) {
+                        localDetailsArray[n].close();
+                        localDetailsArray[n] = null;
+                    }
+                    writerThreadId = Integer.MIN_VALUE;
+                } finally {
+                    tableUpdateDetailsLock.writeLock().unlock();
                 }
-                for (int n = 0; n < localDetailsArray.length; n++) {
-                    localDetailsArray[n].close();
-                    localDetailsArray[n] = null;
-                }
-                writerThreadId = Integer.MIN_VALUE;
             }
         }
 
@@ -980,9 +986,7 @@ class LineTcpMeasurementScheduler implements Closeable {
             Misc.free(path);
             Misc.free(charSink);
             Misc.free(floatingCharSink);
-            for (int n = 0; n < assignedTables.size(); n++) {
-                assignedTables.getQuick(n).close(workerId);
-            }
+            Misc.freeObjList(assignedTables);
             assignedTables.clear();
         }
 
