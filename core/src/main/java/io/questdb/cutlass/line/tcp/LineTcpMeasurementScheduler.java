@@ -794,12 +794,10 @@ class LineTcpMeasurementScheduler implements Closeable {
                     LOG.info().$("closing table [tableName=").$(tableName).$(']').$();
                     if (null != writer) {
                         writer.commit();
-                        writer.close();
-                        writer = null;
+                        writer = Misc.free(writer);
                     }
                     for (int n = 0; n < localDetailsArray.length; n++) {
-                        localDetailsArray[n].close();
-                        localDetailsArray[n] = null;
+                        localDetailsArray[n] = Misc.free(localDetailsArray[n]);
                     }
                     writerThreadId = Integer.MIN_VALUE;
                 } finally {
