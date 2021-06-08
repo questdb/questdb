@@ -153,7 +153,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                 for (int n = 0, sz = tableNames.size(); n < sz; n++) {
                     TableUpdateDetails updateDetails = tableUpdateDetailsByTableName.get(tableNames.get(n));
                     if (!updateDetails.assignedToJob) {
-                        updateDetails.close();
+                        updateDetails.close(-1);
                     }
                 }
                 tableUpdateDetailsByTableName.clear();
@@ -762,7 +762,7 @@ class LineTcpMeasurementScheduler implements Closeable {
         }
     }
 
-    class TableUpdateDetails implements Closeable {
+    class TableUpdateDetails {
         final String tableName;
         private final ThreadLocalDetails[] localDetailsArray;
         private int writerThreadId;
@@ -786,9 +786,8 @@ class LineTcpMeasurementScheduler implements Closeable {
             lastCommitMillis = milliClock.getTicks();
         }
 
-        @Override
-        public void close() {
-            if (writerThreadId != Integer.MIN_VALUE) {
+        private void close(int threadId) {
+            if (writerThreadId != Integer.MIN_VALUE && (!assignedToJob || writerThreadId == threadId)) {
                 LOG.info().$("closing table [tableName=").$(tableName).$(']').$();
                 if (null != writer) {
                     writer.commit();
@@ -981,7 +980,9 @@ class LineTcpMeasurementScheduler implements Closeable {
             Misc.free(path);
             Misc.free(charSink);
             Misc.free(floatingCharSink);
-            Misc.freeObjList(assignedTables);
+            for (int n = 0; n < assignedTables.size(); n++) {
+                assignedTables.getQuick(n).close(workerId);
+            }
             assignedTables.clear();
         }
 
