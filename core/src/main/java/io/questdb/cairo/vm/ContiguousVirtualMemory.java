@@ -33,7 +33,7 @@ import org.jetbrains.annotations.NotNull;
 import java.io.Closeable;
 
 /**
- * A version of {@link PagedVirtualMemory} that uses a single contiguous memory region instead of pages. Note that it still has the concept of a page such that the contiguous memory region will setSize in page sizes.
+ * A version of {@link PagedVirtualMemory} that uses a single contiguous memory region instead of pages. Note that it still has the concept of a page such that the contiguous memory region will extend in page sizes.
  *
  * @author Patrick Mackinlay
  */
@@ -95,7 +95,7 @@ public class ContiguousVirtualMemory extends AbstractContiguousMemory
     }
 
     @Override
-    public void setSize(long size) {
+    public void extend(long size) {
         long nPages = (size >>> pageSizeMsb) + 1;
         size = nPages << pageSizeMsb;
         final long oldSize = size();
@@ -107,6 +107,15 @@ public class ContiguousVirtualMemory extends AbstractContiguousMemory
             LOG.debug().$("extended [oldBase=").$(baseAddress).$(", newBase=").$(newBaseAddress).$(", oldSize=").$(oldSize).$(", newSize=").$(size).$(']').$();
         }
         handleMemoryReallocation(newBaseAddress, size);
+    }
+
+    @Override
+    public void truncate() {
+        // our "extend" implementation will reduce size as well as
+        // extend it
+        extend(0);
+        // reset append offset
+        appendAddress = baseAddress;
     }
 
     @Override
@@ -153,6 +162,7 @@ public class ContiguousVirtualMemory extends AbstractContiguousMemory
      *
      * @param bytes number of bytes to skip
      */
+    @Override
     public void skip(long bytes) {
         checkAndExtend(appendAddress + bytes);
         appendAddress += bytes;
@@ -169,7 +179,7 @@ public class ContiguousVirtualMemory extends AbstractContiguousMemory
         if (address <= baseAddressHi) {
             return;
         }
-        setSize(address - baseAddress);
+        extend(address - baseAddress);
     }
 
     protected long getMapPageSize() {

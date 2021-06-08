@@ -103,6 +103,7 @@ public class Long256Impl implements Long256Sink, Long256, Sinkable, Long256Accep
         this.l3 = l3;
     }
 
+    // todo: unite
     public void setAll(long l0, long l1, long l2, long l3) {
         this.l0 = l0;
         this.l1 = l1;

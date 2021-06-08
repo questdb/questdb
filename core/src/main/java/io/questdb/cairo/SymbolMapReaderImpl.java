@@ -85,7 +85,7 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
         if (symbolCount > this.symbolCount) {
             this.symbolCount = symbolCount;
             this.maxOffset = SymbolMapWriter.keyToOffset(symbolCount);
-            this.offsetMem.setSize(maxOffset);
+            this.offsetMem.extend(maxOffset);
             growCharMemToSymbolCount(symbolCount);
         } else if (symbolCount < this.symbolCount) {
             cache.remove(symbolCount + 1, this.symbolCount);
@@ -214,12 +214,12 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
         long charMemLength;
         if (symbolCount > 0) {
             long lastSymbolOffset = this.offsetMem.getLong(SymbolMapWriter.keyToOffset(symbolCount - 1));
-            this.charMem.setSize(lastSymbolOffset + 4);
+            this.charMem.extend(lastSymbolOffset + 4);
             charMemLength = lastSymbolOffset + VmUtils.getStorageLength(this.charMem.getStrLen(lastSymbolOffset));
         } else {
             charMemLength = 0;
         }
-        this.charMem.setSize(charMemLength);
+        this.charMem.extend(charMemLength);
     }
 
     private CharSequence uncachedValue(int key) {

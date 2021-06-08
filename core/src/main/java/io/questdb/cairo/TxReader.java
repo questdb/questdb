@@ -226,7 +226,7 @@ public class TxReader implements Closeable {
     }
 
     private void copyAttachedPartitionsFromTx(int txAttachedPartitionsSize, int max) {
-        roTxMem.setSize(getPartitionTableIndexOffset(symbolsCount, txAttachedPartitionsSize));
+        roTxMem.extend(getPartitionTableIndexOffset(symbolsCount, txAttachedPartitionsSize));
         attachedPartitions.setPos(txAttachedPartitionsSize);
         for (int i = max; i < txAttachedPartitionsSize; i++) {
             attachedPartitions.setQuick(i, roTxMem.getLong(getPartitionTableIndexOffset(symbolsCount, i)));

@@ -46,7 +46,7 @@ public class ExtendedOnePageMemoryTest {
             FILE_MAP_FAIL.set(true);
             sz *= 2;
             try {
-                mem.setSize(sz);
+                mem.extend(sz);
                 Assert.fail();
             } catch (CairoException ex) {
                 Assert.assertTrue(ex.getMessage().contains("Could not remap"));

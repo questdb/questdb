@@ -76,7 +76,7 @@ public class PagedMappedReadWriteMemory extends PagedVirtualMemory implements Ma
 
     @Override
     public void growToFileSize() {
-        this.setSize(ff.length(fd));
+        this.extend(ff.length(fd));
     }
 
     @Override
@@ -87,10 +87,6 @@ public class PagedMappedReadWriteMemory extends PagedVirtualMemory implements Ma
     @Override
     protected void release(int page, long address) {
         ff.munmap(address, getPageSize(page));
-    }
-
-    public boolean isOpen() {
-        return fd != -1;
     }
 
     @Override
@@ -152,7 +148,7 @@ public class PagedMappedReadWriteMemory extends PagedVirtualMemory implements Ma
     }
 
     @Override
-    public void setSize(long size) {
+    public void extend(long size) {
         jumpTo(size);
     }
 

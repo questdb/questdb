@@ -76,6 +76,11 @@ public class PagedVirtualMemory implements ReadWriteVirtualMemory, Closeable {
         }
     }
 
+    @Override
+    public void truncate() {
+        clear();
+    }
+
     public boolean isMapped(long offset, long size) {
         int pageIndex = pageIndex(offset);
         int pageEndIndex = pageIndex(offset + size - 1);
@@ -98,12 +103,7 @@ public class PagedVirtualMemory implements ReadWriteVirtualMemory, Closeable {
 
     @Override
     public void close() {
-        clearPages();
-        appendPointer = -1;
-        pageHi = -1;
-        pageLo = -1;
-        baseOffset = 1;
-        clearHotPage();
+        clear();
     }
 
     public void clear() {
@@ -689,16 +689,6 @@ public class PagedVirtualMemory implements ReadWriteVirtualMemory, Closeable {
         return address;
     }
 
-    private void clearPages() {
-        int n = pages.size();
-        if (n > 0) {
-            for (int i = 0; i < n; i++) {
-                release(i, pages.getQuick(i));
-            }
-        }
-        pages.erase();
-    }
-
     /**
      * Computes boundaries of read-only memory page to enable fast-path check of offsets
      */
@@ -893,7 +883,7 @@ public class PagedVirtualMemory implements ReadWriteVirtualMemory, Closeable {
     }
 
     @Override
-    public void setSize(long size) {
+    public void extend(long size) {
         jumpTo(size);
     }
 
@@ -1115,11 +1105,10 @@ public class PagedVirtualMemory implements ReadWriteVirtualMemory, Closeable {
     }
 
     protected final void setPageSize(long pageSize) {
-        clearPages();
+        clear();
         this.pageSize = Numbers.ceilPow2(pageSize);
         this.bits = Numbers.msb(this.pageSize);
         this.mod = this.pageSize - 1;
-        clearHotPage();
     }
 
     private void skip0(long bytes) {

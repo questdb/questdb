@@ -75,7 +75,7 @@ public abstract class AbstractIndexReader implements BitmapIndexReader {
 
         try {
             this.keyMem.of(configuration.getFilesFacade(), BitmapIndexUtils.keyFileName(path, name), pageSize, 0);
-            this.keyMem.setSize(configuration.getFilesFacade().length(this.keyMem.getFd()));
+            this.keyMem.extend(configuration.getFilesFacade().length(this.keyMem.getFd()));
             this.clock = configuration.getMicrosecondClock();
 
             // key file should already be created at least with header
@@ -126,7 +126,7 @@ public abstract class AbstractIndexReader implements BitmapIndexReader {
                 this.keyCountIncludingNulls++;
             }
             this.valueMem.of(configuration.getFilesFacade(), BitmapIndexUtils.valueFileName(path.trimTo(plen), name), pageSize, 0);
-            this.valueMem.setSize(configuration.getFilesFacade().length(this.valueMem.getFd()));
+            this.valueMem.extend(configuration.getFilesFacade().length(this.valueMem.getFd()));
         } catch (Throwable e) {
             close();
             throw e;

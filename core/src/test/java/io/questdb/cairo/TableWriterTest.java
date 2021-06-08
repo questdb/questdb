@@ -1665,7 +1665,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 mem.of(FilesFacadeImpl.INSTANCE, path, FilesFacadeImpl.INSTANCE.getPageSize());
                 mem.putLong(32, 1);
                 mem.putLong(40, 9990001L);
-                mem.setSize(48);
+                mem.extend(48);
             }
             try (TableWriter writer = new TableWriter(configuration, "all")) {
                 Assert.assertNotNull(writer);

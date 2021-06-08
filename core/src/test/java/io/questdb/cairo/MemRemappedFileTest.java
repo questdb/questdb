@@ -65,7 +65,7 @@ public class MemRemappedFileTest {
                     if (nPage == 0) {
                         readMem.of(ff, path, MAPPING_PAGE_SIZE, newSize);
                     } else {
-                        readMem.setSize(newSize);
+                        readMem.extend(newSize);
                     }
                     for (int i = 0; i < MAPPING_PAGE_SIZE; i++) {
                         actualTotal += readMem.getByte(offset);

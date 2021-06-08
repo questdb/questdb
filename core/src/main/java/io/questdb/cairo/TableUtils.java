@@ -413,7 +413,7 @@ public final class TableUtils {
         Unsafe.getUnsafe().storeFence();
         mem.putLong(0, 0); // txn
         mem.putLong(32, 0); // count
-        mem.setSize(40);
+        mem.extend(40);
     }
 
     public static void resetTxn(PagedVirtualMemory txMem, int symbolMapCount, long txn, long dataVersion, long partitionTableVersion) {

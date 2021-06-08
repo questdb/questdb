@@ -132,7 +132,7 @@ public class BitmapIndexFwdReader extends AbstractIndexReader {
         }
 
         private void jumpToPreviousValueBlock() {
-            // we don't need to setSize valueMem because we going from farthest block back to start of file
+            // we don't need to extend valueMem because we going from farthest block back to start of file
             // to closes, e.g. valueBlockOffset is decreasing.
             valueBlockOffset = getNextBlock(valueBlockOffset);
         }
@@ -143,7 +143,7 @@ public class BitmapIndexFwdReader extends AbstractIndexReader {
             } else {
                 assert key > -1 : "key must be positive integer: " + key;
                 long offset = BitmapIndexUtils.getKeyEntryOffset(key);
-                keyMem.setSize(offset + BitmapIndexUtils.KEY_ENTRY_SIZE);
+                keyMem.extend(offset + BitmapIndexUtils.KEY_ENTRY_SIZE);
                 // Read value count and last block offset atomically. In that we must orderly read value count first and
                 // value count check last. If they match - everything we read between those holds true. We must retry
                 // should these values do not match.
@@ -171,7 +171,7 @@ public class BitmapIndexFwdReader extends AbstractIndexReader {
                     }
                 }
 
-                valueMem.setSize(lastValueBlockOffset + blockCapacity);
+                valueMem.extend(lastValueBlockOffset + blockCapacity);
                 this.valueCount = valueCount;
                 if (valueCount > 0) {
                     BitmapIndexUtils.seekValueBlockLTR(valueCount, valueBlockOffset, valueMem, minValue, blockValueCountMod, SEEKER);

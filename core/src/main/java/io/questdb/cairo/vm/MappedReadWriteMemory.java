@@ -25,5 +25,7 @@
 package io.questdb.cairo.vm;
 
 public interface MappedReadWriteMemory extends Mappable, ReadWriteVirtualMemory, MappedReadOnlyMemory {
-    void setSize(long size);
+    default boolean isOpen() {
+        return getFd() != -1;
+    }
 }

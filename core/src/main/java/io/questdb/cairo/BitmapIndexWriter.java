@@ -25,8 +25,8 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.sql.RowCursor;
-import io.questdb.cairo.vm.PagedMappedReadWriteMemory;
-import io.questdb.cairo.vm.PagedVirtualMemory;
+import io.questdb.cairo.vm.ContiguousMappedReadWriteMemory;
+import io.questdb.cairo.vm.WriteOnlyVirtualMemory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
@@ -36,8 +36,8 @@ import java.io.Closeable;
 
 public class BitmapIndexWriter implements Closeable, Mutable {
     private static final Log LOG = LogFactory.getLog(BitmapIndexWriter.class);
-    private final PagedMappedReadWriteMemory keyMem = new PagedMappedReadWriteMemory();
-    private final PagedMappedReadWriteMemory valueMem = new PagedMappedReadWriteMemory();
+    private final ContiguousMappedReadWriteMemory keyMem = new ContiguousMappedReadWriteMemory();
+    private final ContiguousMappedReadWriteMemory valueMem = new ContiguousMappedReadWriteMemory();
     private final Cursor cursor = new Cursor();
     private int blockCapacity;
     private int blockValueCountMod;
@@ -59,7 +59,7 @@ public class BitmapIndexWriter implements Closeable, Mutable {
         close();
     }
 
-    public static void initKeyMemory(PagedVirtualMemory keyMem, int blockValueCount) {
+    public static void initKeyMemory(WriteOnlyVirtualMemory keyMem, int blockValueCount) {
 
         // block value count must be power of 2
         assert blockValueCount == Numbers.ceilPow2(blockValueCount);
@@ -173,14 +173,14 @@ public class BitmapIndexWriter implements Closeable, Mutable {
                 // todo: copy from source
                 if (ff.truncate(keyFd, 0)) {
                     kFdUnassigned = false;
-                    this.keyMem.of(ff, keyFd, pageSize);
+                    this.keyMem.of(ff, keyFd, null, pageSize);
                     initKeyMemory(this.keyMem, TableUtils.MIN_INDEX_VALUE_BLOCK_SIZE);
                 } else {
                     throw CairoException.instance(ff.errno()).put("Could not truncate [fd=").put(keyFd).put(']');
                 }
             } else {
                 kFdUnassigned = false;
-                this.keyMem.of(ff, keyFd, pageSize);
+                this.keyMem.of(ff, keyFd, null, pageSize);
             }
             long keyMemSize = this.keyMem.getAppendOffset();
             // check if key file header is present
@@ -211,14 +211,14 @@ public class BitmapIndexWriter implements Closeable, Mutable {
             if (init) {
                 if (ff.truncate(valueFd, 0)) {
                     vFdUnassigned = false;
-                    this.valueMem.of(ff, valueFd, pageSize);
+                    this.valueMem.of(ff, valueFd, null, pageSize);
                     this.valueMem.jumpTo(0);
                 } else {
                     throw CairoException.instance(ff.errno()).put("Could not truncate [fd=").put(valueFd).put(']');
                 }
             } else {
                 vFdUnassigned = false;
-                this.valueMem.of(ff, valueFd, pageSize);
+                this.valueMem.of(ff, valueFd, null, pageSize);
             }
             this.valueMemSize = this.keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_VALUE_MEM_SIZE);
 
@@ -257,7 +257,7 @@ public class BitmapIndexWriter implements Closeable, Mutable {
                 throw CairoException.instance(0).put("Index does not exist: ").put(path);
             }
 
-            long keyMemSize = this.keyMem.getAppendOffset();
+            long keyMemSize = this.keyMem.size();
             // check if key file header is present
             if (keyMemSize < BitmapIndexUtils.KEY_FILE_RESERVED) {
                 LOG.error().$("file too short [corrupt] ").$(path).$();
@@ -286,7 +286,7 @@ public class BitmapIndexWriter implements Closeable, Mutable {
             this.valueMem.of(configuration.getFilesFacade(), BitmapIndexUtils.valueFileName(path.trimTo(plen), name), pageSize);
             this.valueMemSize = this.keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_VALUE_MEM_SIZE);
 
-            if (this.valueMem.getAppendOffset() < this.valueMemSize) {
+            if (this.valueMem.size() < this.valueMemSize) {
                 LOG.error().$("incorrect file size [corrupt] of ").$(path).$(" [expected=").$(this.valueMemSize).$(']').$();
                 throw CairoException.instance(0).put("Incorrect file size of ").put(path);
             }

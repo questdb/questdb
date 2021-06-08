@@ -1118,7 +1118,7 @@ public class TableWriter implements Closeable {
         todoMem.putLong(24, todoTxn);
         todoMem.putLong(32, 1);
         todoMem.putLong(40, TODO_TRUNCATE);
-        todoMem.setSize(48);
+        todoMem.extend(48);
 
         for (int i = 0; i < columnCount; i++) {
             getPrimaryColumn(i).truncate();
@@ -1269,8 +1269,8 @@ public class TableWriter implements Closeable {
                         mem1.ensureFileSize(mem1.pageIndex(mem1Size));
                         mem2.ensureFileSize(mem2.pageIndex(actualPosition * Long.BYTES));
                     }
-                    mem1.setSize(mem1Size);
-                    mem2.setSize(actualPosition * Long.BYTES);
+                    mem1.extend(mem1Size);
+                    mem2.extend(actualPosition * Long.BYTES);
                     break;
                 case ColumnType.STRING:
                     assert mem2 != null;
@@ -1283,21 +1283,21 @@ public class TableWriter implements Closeable {
                         mem1.ensureFileSize(mem1.pageIndex(mem1Size));
                         mem2.ensureFileSize(mem2.pageIndex(actualPosition * Long.BYTES));
                     }
-                    mem1.setSize(mem1Size);
-                    mem2.setSize(actualPosition * Long.BYTES);
+                    mem1.extend(mem1Size);
+                    mem2.extend(actualPosition * Long.BYTES);
                     break;
                 default:
                     mem1Size = actualPosition << ColumnType.pow2SizeOf(type);
                     if (ensureFileSize) {
                         mem1.ensureFileSize(mem1.pageIndex(mem1Size));
                     }
-                    mem1.setSize(mem1Size);
+                    mem1.extend(mem1Size);
                     break;
             }
         } else {
-            mem1.setSize(0);
+            mem1.extend(0);
             if (mem2 != null) {
-                mem2.setSize(0);
+                mem2.extend(0);
             }
         }
     }
@@ -1573,10 +1573,10 @@ public class TableWriter implements Closeable {
                 txFile.cancelRow();
                 // we only have one partition, jump to start on every column
                 for (int i = 0; i < columnCount; i++) {
-                    getPrimaryColumn(i).setSize(0);
+                    getPrimaryColumn(i).extend(0);
                     AppendOnlyVirtualMemory mem = getSecondaryColumn(i);
                     if (mem != null) {
-                        mem.setSize(0);
+                        mem.extend(0);
                     }
                 }
             }
@@ -1624,7 +1624,7 @@ public class TableWriter implements Closeable {
             todoMem.putLong(32, 0);
             Unsafe.getUnsafe().storeFence();
             todoMem.putLong(24, todoTxn);
-            todoMem.setSize(40);
+            todoMem.extend(40);
         } finally {
             path.trimTo(rootLen);
         }
@@ -2223,7 +2223,7 @@ public class TableWriter implements Closeable {
                                 TableUtils.dFile(path.trimTo(plen), columnName);
 
                                 roMem.of(ff, path, ff.getPageSize(), 0);
-                                roMem.setSize((partitionSize - columnTop) << ColumnType.pow2SizeOf(ColumnType.INT));
+                                roMem.extend((partitionSize - columnTop) << ColumnType.pow2SizeOf(ColumnType.INT));
 
                                 indexer.configureWriter(configuration, path.trimTo(plen), columnName, columnTop);
                                 indexer.index(roMem, columnTop, partitionSize);
@@ -2722,7 +2722,7 @@ public class TableWriter implements Closeable {
                 LOG.debug().$("adjusted [o3RowCount=").$(getO3RowCount()).I$();
             }
         }
-        if (columns.getQuick(0).isClosed() || partitionTimestampHi < txFile.getMaxTimestamp()) {
+        if (!columns.getQuick(0).isOpen() || partitionTimestampHi < txFile.getMaxTimestamp()) {
             openPartition(txFile.getMaxTimestamp());
         }
         setAppendPosition(txFile.getTransientRowCount(), true);
@@ -4514,7 +4514,7 @@ public class TableWriter implements Closeable {
         todoMem.putLong(48, metaPrevIndex);
         Unsafe.getUnsafe().storeFence();
         todoMem.putLong(24, todoTxn);
-        todoMem.setSize(56);
+        todoMem.extend(56);
     }
 
     @FunctionalInterface

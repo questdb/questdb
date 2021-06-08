@@ -156,7 +156,7 @@ public class NullColumn implements MappedReadOnlyMemory {
     }
 
     @Override
-    public void setSize(long size) {
+    public void extend(long size) {
     }
 
     @Override

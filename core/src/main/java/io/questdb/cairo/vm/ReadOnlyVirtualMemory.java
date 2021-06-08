@@ -68,7 +68,7 @@ public interface ReadOnlyVirtualMemory {
 
     int getStrLen(long offset);
 
-    void setSize(long size);
+    void extend(long size);
 
     long size();
 

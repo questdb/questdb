@@ -32,11 +32,11 @@ public interface WriteOnlyVirtualMemory {
 
     void jumpTo(long offset);
 
-    void putBlockOfBytes(long from, long len);
-
     long putBin(BinarySequence value);
 
     long putBin(long from, long len);
+
+    void putBlockOfBytes(long from, long len);
 
     void putBool(boolean value);
 
@@ -99,4 +99,10 @@ public interface WriteOnlyVirtualMemory {
     void putStr(long offset, CharSequence value);
 
     void putStr(long offset, CharSequence value, int pos, int len);
+
+    void skip(long bytes);
+
+    long getAppendOffset();
+
+    void truncate();
 }

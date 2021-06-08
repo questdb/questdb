@@ -31,6 +31,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.str.LPSZ;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 public class ContiguousMappedReadWriteMemory extends AbstractContiguousMemory
         implements MappedReadWriteMemory, ContiguousReadWriteVirtualMemory {
@@ -47,6 +48,7 @@ public class ContiguousMappedReadWriteMemory extends AbstractContiguousMemory
     public ContiguousMappedReadWriteMemory(FilesFacade ff, LPSZ name, long pageSize, long size) {
         of(ff, name, pageSize, size);
     }
+
 
     public ContiguousMappedReadWriteMemory(FilesFacade ff, LPSZ name, long size) {
         of(ff, name, 0, size);
@@ -98,6 +100,7 @@ public class ContiguousMappedReadWriteMemory extends AbstractContiguousMemory
 
     @Override
     public void of(FilesFacade ff, LPSZ name, long pageSize) {
+        this.pageSizeMsb = Numbers.msb(pageSize);
         openFile(ff, name);
         map(ff, name, ff.length(fd));
     }
@@ -122,7 +125,7 @@ public class ContiguousMappedReadWriteMemory extends AbstractContiguousMemory
     }
 
     @Override
-    public void setSize(long newSize) {
+    public void extend(long newSize) {
         if (newSize > grownLength) {
             grownLength = newSize;
         }
@@ -130,6 +133,17 @@ public class ContiguousMappedReadWriteMemory extends AbstractContiguousMemory
         if (newSize > size) {
             setSize0(newSize);
         }
+    }
+
+    @Override
+    public void truncate() {
+        grownLength = 0;
+        if (page != -1) {
+            ff.munmap(page, size);
+            this.size = 0;
+            this.page = -1;
+        }
+        ff.truncate(fd, 0);
     }
 
     public long size() {
@@ -143,7 +157,7 @@ public class ContiguousMappedReadWriteMemory extends AbstractContiguousMemory
 
     @Override
     public void growToFileSize() {
-        setSize(ff.length(fd));
+        extend(ff.length(fd));
     }
 
     @Override
@@ -157,7 +171,13 @@ public class ContiguousMappedReadWriteMemory extends AbstractContiguousMemory
         putLong256(hexString, start, end, long256Acceptor);
     }
 
-    public void of(FilesFacade ff, long fd, LPSZ name, long size) {
+    @Override
+    public void skip(long bytes) {
+        checkAndExtend(appendAddress + bytes);
+        appendAddress += bytes;
+    }
+
+    public void of(FilesFacade ff, long fd, @Nullable CharSequence name, long size) {
         close();
         this.ff = ff;
         this.fd = fd;
@@ -170,10 +190,10 @@ public class ContiguousMappedReadWriteMemory extends AbstractContiguousMemory
         if (address <= page + size) {
             return;
         }
-        setSize(address - page);
+        extend(address - page);
     }
 
-    protected void map(FilesFacade ff, LPSZ name, long size) {
+    protected void map(FilesFacade ff, @Nullable CharSequence name, long size) {
         size = Math.min(ff.length(fd), size);
         this.size = size;
         if (size > 0) {
@@ -201,11 +221,7 @@ public class ContiguousMappedReadWriteMemory extends AbstractContiguousMemory
     private void openFile(FilesFacade ff, LPSZ name) {
         close();
         this.ff = ff;
-        boolean exists = ff.exists(name);
-        if (!exists) {
-            throw CairoException.instance(0).put("File not found: ").put(name);
-        }
-        fd = TableUtils.openRW(ff, name, LOG);
+        fd = TableUtils.openFileRWOrFail(ff, name);
     }
 
     private void setSize0(long newSize) {

@@ -101,7 +101,7 @@ public class ContiguousMappedReadOnlyMemory extends AbstractContiguousMemory
     }
 
     @Override
-    public void setSize(long newSize) {
+    public void extend(long newSize) {
         grownLength = Math.max(newSize, grownLength);
         if (newSize > size) {
             setSize0(newSize);
@@ -119,7 +119,7 @@ public class ContiguousMappedReadOnlyMemory extends AbstractContiguousMemory
 
     @Override
     public void growToFileSize() {
-        setSize(ff.length(fd));
+        extend(ff.length(fd));
     }
 
     protected void map(FilesFacade ff, LPSZ name, long size) {

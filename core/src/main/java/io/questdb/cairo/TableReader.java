@@ -537,7 +537,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             // subtract column top
             switch (type) {
                 default:
-                    mem1.setSize(rowCount << ColumnType.pow2SizeOf(type));
+                    mem1.extend(rowCount << ColumnType.pow2SizeOf(type));
                     break;
                 case ColumnType.BINARY:
                     growBin(mem1, mem2, rowCount);
@@ -551,24 +551,24 @@ public class TableReader implements Closeable, SymbolTableSource {
 
     private static void growStr(ReadOnlyVirtualMemory mem1, ReadOnlyVirtualMemory mem2, long rowCount) {
         assert mem2 != null;
-        mem2.setSize(rowCount * 8);
+        mem2.extend(rowCount * 8);
         final long offset = mem2.getLong((rowCount - 1) * 8);
-        mem1.setSize(offset + 4);
+        mem1.extend(offset + 4);
         final int len = mem1.getInt(offset);
         if (len > 0) {
-            mem1.setSize(offset + VmUtils.getStorageLength(len));
+            mem1.extend(offset + VmUtils.getStorageLength(len));
         }
     }
 
     private static void growBin(ReadOnlyVirtualMemory mem1, ReadOnlyVirtualMemory mem2, long rowCount) {
         assert mem2 != null;
-        mem2.setSize(rowCount * 8);
+        mem2.extend(rowCount * 8);
         final long offset = mem2.getLong((rowCount - 1) * 8);
         // setSize data column to value offset + length, so that we can read length
-        mem1.setSize(offset + 8);
+        mem1.extend(offset + 8);
         final long len = mem1.getLong(offset);
         if (len > 0) {
-            mem1.setSize(offset + len + 8);
+            mem1.extend(offset + len + 8);
         }
     }
 

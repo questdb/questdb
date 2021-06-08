@@ -95,10 +95,6 @@ public class AppendOnlyVirtualMemory extends PagedVirtualMemory implements Mappe
         throw new UnsupportedOperationException();
     }
 
-    public boolean isClosed() {
-        return fd == -1;
-    }
-
     public long mapPage(int page) {
         ensureFileSize(page);
         long offset = pageOffset(page);
@@ -108,7 +104,6 @@ public class AppendOnlyVirtualMemory extends PagedVirtualMemory implements Mappe
             return address;
         }
         mappedPage = -1;
-//        new Exception("could not mmap").printStackTrace();
         throw CairoException.instance(ff.errno()).put("could not mmap for append fd=").put(fd).put(", offset=").put(offset).put(", size=").put(getMapPageSize());
     }
 
@@ -147,7 +142,7 @@ public class AppendOnlyVirtualMemory extends PagedVirtualMemory implements Mappe
         return fd;
     }
 
-    public final void setSize(long size) {
+    public final void extend(long size) {
         jumpTo(size);
     }
 
