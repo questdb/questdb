@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.http;
 
+import io.questdb.Metrics;
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cutlass.NetUtils;
@@ -95,6 +96,7 @@ public class IODispatcherTest {
     @Rule
     public TemporaryFolder temp = new TemporaryFolder();
     private long configuredMaxQueryResponseRowLimit = Long.MAX_VALUE;
+    private static Metrics metrics = Metrics.enabled();
 
     public static void createTestTable(CairoConfiguration configuration, int n) {
         try (TableModel model = new TableModel(configuration, "y", PartitionBy.NONE)) {
@@ -475,7 +477,8 @@ public class IODispatcherTest {
                         ),
                         null,
                         LOG,
-                        cairoEngine
+                        cairoEngine,
+                        metrics
                 )) {
 
             // upload file
@@ -541,7 +544,8 @@ public class IODispatcherTest {
                         }),
                         null,
                         LOG,
-                        cairoEngine
+                        cairoEngine,
+                        metrics
                 )) {
 
             // upload file
@@ -1651,7 +1655,8 @@ public class IODispatcherTest {
                                 httpConfiguration.getJsonQueryProcessorConfiguration(),
                                 engine,
                                 null,
-                                workerPool.getWorkerCount()
+                                workerPool.getWorkerCount(),
+                                metrics
                         );
                     }
 
@@ -2144,7 +2149,8 @@ public class IODispatcherTest {
                                 httpConfiguration.getJsonQueryProcessorConfiguration(),
                                 engine,
                                 null,
-                                workerPool.getWorkerCount()
+                                workerPool.getWorkerCount(),
+                                metrics
                         );
                     }
 
@@ -3279,7 +3285,8 @@ public class IODispatcherTest {
                                 httpConfiguration.getJsonQueryProcessorConfiguration(),
                                 engine,
                                 null,
-                                workerPool.getWorkerCount()
+                                workerPool.getWorkerCount(),
+                                metrics
                         );
                     }
 
@@ -3483,7 +3490,8 @@ public class IODispatcherTest {
                                 httpConfiguration.getJsonQueryProcessorConfiguration(),
                                 engine,
                                 null,
-                                workerPool.getWorkerCount());
+                                workerPool.getWorkerCount(),
+                                metrics);
                     }
 
                     @Override
@@ -3574,7 +3582,8 @@ public class IODispatcherTest {
                                 httpConfiguration.getJsonQueryProcessorConfiguration(),
                                 engine,
                                 null,
-                                workerPool.getWorkerCount());
+                                workerPool.getWorkerCount(),
+                                metrics);
                     }
 
                     @Override
@@ -3679,7 +3688,7 @@ public class IODispatcherTest {
                     @Override
                     public HttpRequestProcessor newInstance() {
                         return new JsonQueryProcessor(httpConfiguration.getJsonQueryProcessorConfiguration(), engine,
-                                null, workerPool.getWorkerCount());
+                                null, workerPool.getWorkerCount(), metrics);
                     }
 
                     @Override

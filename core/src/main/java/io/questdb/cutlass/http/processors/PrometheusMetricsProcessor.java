@@ -22,32 +22,31 @@
  *
  ******************************************************************************/
 
-package io.questdb;
+package io.questdb.cutlass.http.processors;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cutlass.http.HttpMinServerConfiguration;
-import io.questdb.cutlass.http.HttpServerConfiguration;
-import io.questdb.cutlass.line.tcp.LineTcpReceiverConfiguration;
-import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
-import io.questdb.cutlass.pgwire.PGWireConfiguration;
-import io.questdb.metrics.MetricsConfiguration;
-import io.questdb.mp.WorkerPoolConfiguration;
+import io.questdb.cutlass.http.HttpChunkedResponseSocket;
+import io.questdb.cutlass.http.HttpConnectionContext;
+import io.questdb.cutlass.http.HttpRequestProcessor;
+import io.questdb.metrics.Scrapable;
+import io.questdb.network.PeerDisconnectedException;
+import io.questdb.network.PeerIsSlowToReadException;
 
-public interface ServerConfiguration {
+public class PrometheusMetricsProcessor implements HttpRequestProcessor {
+    private static final CharSequence CONTENT_TYPE_TEXT = "text/plain; version=0.0.4; charset=utf-8";
+    private final Scrapable metrics;
 
-    CairoConfiguration getCairoConfiguration();
+    public PrometheusMetricsProcessor(Scrapable metrics) {
+        this.metrics = metrics;
+    }
 
-    HttpServerConfiguration getHttpServerConfiguration();
+    @Override
+    public void onRequestComplete(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        HttpChunkedResponseSocket r = context.getChunkedResponseSocket();
+        r.status(200, CONTENT_TYPE_TEXT);
+        r.sendHeader();
 
-    HttpMinServerConfiguration getHttpMinServerConfiguration();
+        metrics.scrapeIntoPrometheus(r);
 
-    LineUdpReceiverConfiguration getLineUdpReceiverConfiguration();
-
-    LineTcpReceiverConfiguration getLineTcpReceiverConfiguration();
-
-    WorkerPoolConfiguration getWorkerPoolConfiguration();
-
-    PGWireConfiguration getPGWireConfiguration();
-
-    MetricsConfiguration getMetricsConfiguration();
+        r.done();
+    }
 }
