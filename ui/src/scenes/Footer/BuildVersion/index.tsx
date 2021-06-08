@@ -1,11 +1,13 @@
 import { QuestContext } from "providers"
-import React, { useContext, useEffect, useState } from "react"
+import React, { useCallback, useContext, useEffect, useState } from "react"
+import { useDispatch } from "react-redux"
 import styled from "styled-components"
 import * as QuestDB from "utils/questdb"
-import { CopyToClipboard } from "react-copy-to-clipboard"
 import { ClipboardCopy } from "@styled-icons/heroicons-outline/ClipboardCopy"
-import { SecondaryButton } from "components"
+import { SecondaryButton, Text } from "components"
 import { formatVersion } from "./services"
+import { actions } from "store"
+import { NotificationType } from "types"
 
 const Wrapper = styled.div`
   display: flex;
@@ -26,6 +28,7 @@ const CopyButton = styled(SecondaryButton)`
 const BuildVersion = () => {
   const { quest } = useContext(QuestContext)
   const [buildVersion, setBuildVersion] = useState("")
+  const dispatch = useDispatch()
 
   useEffect(() => {
     void quest.queryRaw("select build", { limit: "0,1000" }).then((result) => {
@@ -39,14 +42,37 @@ const BuildVersion = () => {
 
   const version = formatVersion(buildVersion)
 
+  const handleCopy = useCallback(() => {
+    void navigator.clipboard
+      .writeText(version)
+      .then(() => {
+        dispatch(
+          actions.query.addNotification({
+            title: (
+              <Text color="draculaForeground">Build version copied !</Text>
+            ),
+            type: NotificationType.SUCCESS,
+          }),
+        )
+      })
+      .catch(() => {
+        dispatch(
+          actions.query.addNotification({
+            title: (
+              <Text color="draculaForeground">Build version copy error</Text>
+            ),
+            type: NotificationType.ERROR,
+          }),
+        )
+      })
+  }, [version, dispatch])
+
   return (
     <Wrapper>
-      <CopyToClipboard text={buildVersion}>
-        <CopyButton title="Copy Build Version">
-          <span>{version}</span>
-          <ClipboardCopy size="18px" />
-        </CopyButton>
-      </CopyToClipboard>
+      <CopyButton onClick={handleCopy} title="Copy Build Version">
+        <span>{version}</span>
+        <ClipboardCopy size="18px" />
+      </CopyButton>
     </Wrapper>
   )
 }
