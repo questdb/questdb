@@ -22,32 +22,19 @@
  *
  ******************************************************************************/
 
-package io.questdb;
+package io.questdb.cutlass.http.processors;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cutlass.http.HttpMinServerConfiguration;
-import io.questdb.cutlass.http.HttpServerConfiguration;
-import io.questdb.cutlass.line.tcp.LineTcpReceiverConfiguration;
-import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
-import io.questdb.cutlass.pgwire.PGWireConfiguration;
-import io.questdb.metrics.MetricsConfiguration;
-import io.questdb.mp.WorkerPoolConfiguration;
+import io.questdb.metrics.Counter;
+import io.questdb.metrics.MetricsRegistry;
 
-public interface ServerConfiguration {
+public class JsonQueryMetrics {
+    private final Counter queriesCounter;
 
-    CairoConfiguration getCairoConfiguration();
+    public JsonQueryMetrics(MetricsRegistry metricsRegistry) {
+        this.queriesCounter = metricsRegistry.newCounter("json_queries");
+    }
 
-    HttpServerConfiguration getHttpServerConfiguration();
-
-    HttpMinServerConfiguration getHttpMinServerConfiguration();
-
-    LineUdpReceiverConfiguration getLineUdpReceiverConfiguration();
-
-    LineTcpReceiverConfiguration getLineTcpReceiverConfiguration();
-
-    WorkerPoolConfiguration getWorkerPoolConfiguration();
-
-    PGWireConfiguration getPGWireConfiguration();
-
-    MetricsConfiguration getMetricsConfiguration();
+    public void markStart() {
+        queriesCounter.inc();
+    }
 }

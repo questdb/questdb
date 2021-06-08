@@ -24,6 +24,7 @@
 
 package io.questdb.griffin;
 
+import io.questdb.Metrics;
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.*;
@@ -42,6 +43,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
     protected static BindVariableService bindVariableService;
     protected static SqlExecutionContext sqlExecutionContext;
     protected static SqlCompiler compiler;
+    protected static Metrics metrics = Metrics.enabled();
 
     public static void assertReader(String expected, CharSequence tableName) {
         try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), tableName)) {

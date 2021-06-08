@@ -34,6 +34,7 @@ import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.engine.groupby.vect.GroupByJob;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.Metrics;
 import io.questdb.mp.EagerThreadSetup;
 import io.questdb.mp.Job;
 import io.questdb.mp.WorkerPool;
@@ -193,14 +194,16 @@ public class HttpServer implements Closeable {
             HttpServerConfiguration configuration,
             WorkerPool sharedWorkerPool,
             Log workerPoolLog,
-            CairoEngine cairoEngine
+            CairoEngine cairoEngine,
+            Metrics metrics
     ) {
         return create(
                 configuration,
                 sharedWorkerPool,
                 workerPoolLog,
                 cairoEngine,
-                null
+                null,
+                metrics
         );
     }
 
@@ -210,7 +213,8 @@ public class HttpServer implements Closeable {
             WorkerPool sharedWorkerPool,
             Log workerPoolLog,
             CairoEngine cairoEngine,
-            @Nullable FunctionFactoryCache functionFactoryCache
+            @Nullable FunctionFactoryCache functionFactoryCache,
+            Metrics metrics
     ) {
         return WorkerPoolAwareConfiguration.create(
                 configuration,
@@ -218,7 +222,8 @@ public class HttpServer implements Closeable {
                 workerPoolLog,
                 cairoEngine,
                 CREATE0,
-                functionFactoryCache
+                functionFactoryCache,
+                metrics
         );
     }
 
@@ -228,7 +233,8 @@ public class HttpServer implements Closeable {
             WorkerPool sharedWorkerPool,
             Log workerPoolLog,
             CairoEngine cairoEngine,
-            @Nullable FunctionFactoryCache functionFactoryCache
+            @Nullable FunctionFactoryCache functionFactoryCache,
+            Metrics metrics
     ) {
         return WorkerPoolAwareConfiguration.create(
                 configuration,
@@ -236,7 +242,8 @@ public class HttpServer implements Closeable {
                 workerPoolLog,
                 cairoEngine,
                 CREATE_MIN,
-                functionFactoryCache
+                functionFactoryCache,
+                metrics
         );
     }
 
@@ -268,7 +275,8 @@ public class HttpServer implements Closeable {
             WorkerPool workerPool,
             boolean localPool,
             MessageBus messageBus,
-            FunctionFactoryCache functionFactoryCache
+            FunctionFactoryCache functionFactoryCache,
+            Metrics metrics
     ) {
         final HttpServer s = new HttpServer(configuration, workerPool, localPool);
         QueryCache.configure(configuration);
@@ -277,7 +285,8 @@ public class HttpServer implements Closeable {
                 cairoEngine,
                 messageBus,
                 workerPool.getWorkerCount(),
-                functionFactoryCache);
+                functionFactoryCache,
+                metrics);
         addDefaultEndpoints(s, configuration, cairoEngine, workerPool, messageBus, jsonQueryProcessorBuilder, functionFactoryCache);
         return s;
     }
@@ -288,7 +297,8 @@ public class HttpServer implements Closeable {
             WorkerPool workerPool,
             boolean localPool,
             MessageBus messageBus,
-            FunctionFactoryCache functionFactoryCache
+            FunctionFactoryCache functionFactoryCache,
+            Metrics metrics
     ) {
         final HttpServer s = new HttpServer(configuration, workerPool, localPool);
         s.bind(new HttpRequestProcessorFactory() {
@@ -299,9 +309,22 @@ public class HttpServer implements Closeable {
 
             @Override
             public String getUrl() {
-                return "*";
+                return metrics.isEnabled() ? "/status" : "*";
             }
         });
+        if (metrics.isEnabled()) {
+            s.bind(new HttpRequestProcessorFactory() {
+                @Override
+                public HttpRequestProcessor newInstance() {
+                    return new PrometheusMetricsProcessor(metrics);
+                }
+
+                @Override
+                public String getUrl() {
+                    return "/metrics";
+                }
+            });
+        }
         return s;
     }
 

@@ -22,32 +22,31 @@
  *
  ******************************************************************************/
 
-package io.questdb;
+package io.questdb.metrics;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cutlass.http.HttpMinServerConfiguration;
-import io.questdb.cutlass.http.HttpServerConfiguration;
-import io.questdb.cutlass.line.tcp.LineTcpReceiverConfiguration;
-import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
-import io.questdb.cutlass.pgwire.PGWireConfiguration;
-import io.questdb.metrics.MetricsConfiguration;
-import io.questdb.mp.WorkerPoolConfiguration;
+import io.questdb.std.str.CharSink;
 
-public interface ServerConfiguration {
+import java.util.concurrent.atomic.LongAdder;
 
-    CairoConfiguration getCairoConfiguration();
+class CounterImpl implements Counter {
+    private final CharSequence name;
+    private final LongAdder counter;
 
-    HttpServerConfiguration getHttpServerConfiguration();
+    CounterImpl(CharSequence name) {
+        this.name = name;
+        this.counter = new LongAdder();
+    }
 
-    HttpMinServerConfiguration getHttpMinServerConfiguration();
+    @Override
+    public void inc() {
+        counter.increment();
+    }
 
-    LineUdpReceiverConfiguration getLineUdpReceiverConfiguration();
-
-    LineTcpReceiverConfiguration getLineTcpReceiverConfiguration();
-
-    WorkerPoolConfiguration getWorkerPoolConfiguration();
-
-    PGWireConfiguration getPGWireConfiguration();
-
-    MetricsConfiguration getMetricsConfiguration();
+    @Override
+    public void scrapeIntoPrometheus(CharSink sink) {
+        PrometheusFormatUtils.appendCounterType(name, sink);
+        PrometheusFormatUtils.appendCounterNamePrefix(name, sink);
+        PrometheusFormatUtils.appendSampleLineSuffix(sink, counter.longValue());
+        PrometheusFormatUtils.appendNewLine(sink);
+    }
 }
