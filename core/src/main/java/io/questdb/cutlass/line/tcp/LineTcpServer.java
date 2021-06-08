@@ -121,11 +121,14 @@ public class LineTcpServer implements Closeable {
             ObjectFactory<LineTcpConnectionContext> factory;
             if (null == configuration.getAuthDbPath()) {
                 if (configuration.isIOAggressiveRecv()) {
+                    LOG.info().$("using aggressive context").$();
                     factory = () -> new AggressiveRecvLineTcpConnectionContext(configuration, scheduler);
                 } else {
+                    LOG.info().$("using default context").$();
                     factory = () -> new LineTcpConnectionContext(configuration, scheduler);
                 }
             } else {
+                LOG.info().$("using authenticating context").$();
                 AuthDb authDb = new AuthDb(configuration);
                 factory = () -> new LineTcpAuthConnectionContext(configuration, authDb, scheduler);
             }
