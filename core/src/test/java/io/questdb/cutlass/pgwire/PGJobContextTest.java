@@ -2239,7 +2239,8 @@ nodejs code:
                     null,
                     LOG,
                     engine,
-                    compiler.getFunctionFactoryCache()
+                    compiler.getFunctionFactoryCache(),
+                    metrics
             )) {
                 Properties properties = new Properties();
                 properties.setProperty("user", "admin");
@@ -3451,7 +3452,8 @@ nodejs code:
                 null,
                 LOG,
                 engine,
-                compiler.getFunctionFactoryCache()
+                compiler.getFunctionFactoryCache(),
+                metrics
         );
     }
 

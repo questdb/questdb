@@ -22,32 +22,40 @@
  *
  ******************************************************************************/
 
-package io.questdb;
+package io.questdb.metrics;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cutlass.http.HttpMinServerConfiguration;
-import io.questdb.cutlass.http.HttpServerConfiguration;
-import io.questdb.cutlass.line.tcp.LineTcpReceiverConfiguration;
-import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
-import io.questdb.cutlass.pgwire.PGWireConfiguration;
-import io.questdb.metrics.MetricsConfiguration;
-import io.questdb.mp.WorkerPoolConfiguration;
+import io.questdb.std.str.CharSink;
 
-public interface ServerConfiguration {
+class PrometheusFormatUtils {
+    static final CharSequence TYPE_PREFIX = "# TYPE questdb_";
+    static final CharSequence METRIC_NAME_PREFIX = "questdb_";
+    static final char LF = '\n';
 
-    CairoConfiguration getCairoConfiguration();
+    static void appendNewLine(CharSink sink) {
+        sink.put(LF);
+    }
 
-    HttpServerConfiguration getHttpServerConfiguration();
+    static void appendSampleLineSuffix(CharSink sink, long value) {
+        sink.put(' ');
+        sink.put(value);
+        sink.put(LF);
+    }
 
-    HttpMinServerConfiguration getHttpMinServerConfiguration();
+    static void appendLabel(CharSink sink, CharSequence labelName, CharSequence labelValue) {
+        sink.put(labelName);
+        sink.put('=');
+        sink.putQuoted(labelValue);
+    }
 
-    LineUdpReceiverConfiguration getLineUdpReceiverConfiguration();
+    static void appendCounterType(CharSequence name, CharSink sink) {
+        sink.put(TYPE_PREFIX);
+        sink.put(name);
+        sink.put("_total counter\n");
+    }
 
-    LineTcpReceiverConfiguration getLineTcpReceiverConfiguration();
-
-    WorkerPoolConfiguration getWorkerPoolConfiguration();
-
-    PGWireConfiguration getPGWireConfiguration();
-
-    MetricsConfiguration getMetricsConfiguration();
+    static void appendCounterNamePrefix(CharSequence name, CharSink sink) {
+        sink.put(METRIC_NAME_PREFIX);
+        sink.put(name);
+        sink.put("_total");
+    }
 }

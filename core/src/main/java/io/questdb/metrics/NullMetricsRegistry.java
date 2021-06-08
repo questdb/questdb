@@ -22,32 +22,35 @@
  *
  ******************************************************************************/
 
-package io.questdb;
+package io.questdb.metrics;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cutlass.http.HttpMinServerConfiguration;
-import io.questdb.cutlass.http.HttpServerConfiguration;
-import io.questdb.cutlass.line.tcp.LineTcpReceiverConfiguration;
-import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
-import io.questdb.cutlass.pgwire.PGWireConfiguration;
-import io.questdb.metrics.MetricsConfiguration;
-import io.questdb.mp.WorkerPoolConfiguration;
+import io.questdb.std.str.CharSink;
 
-public interface ServerConfiguration {
+public class NullMetricsRegistry implements MetricsRegistry {
 
-    CairoConfiguration getCairoConfiguration();
+    @Override
+    public Counter newCounter(CharSequence name) {
+        return NullCounter.INSTANCE;
+    }
 
-    HttpServerConfiguration getHttpServerConfiguration();
+    @Override
+    public CounterWithOneLabel newCounter(CharSequence name, CharSequence labelName0, CharSequence[] labelValues0) {
+        return NullCounter.INSTANCE;
+    }
 
-    HttpMinServerConfiguration getHttpMinServerConfiguration();
+    @Override
+    public CounterWithTwoLabels newCounter(CharSequence name,
+                                           CharSequence labelName0, CharSequence[] labelValues0,
+                                           CharSequence labelName1, CharSequence[] labelValues1) {
+        return NullCounter.INSTANCE;
+    }
 
-    LineUdpReceiverConfiguration getLineUdpReceiverConfiguration();
+    @Override
+    public Gauge newGauge(CharSequence name) {
+        return NullGauge.INSTANCE;
+    }
 
-    LineTcpReceiverConfiguration getLineTcpReceiverConfiguration();
-
-    WorkerPoolConfiguration getWorkerPoolConfiguration();
-
-    PGWireConfiguration getPGWireConfiguration();
-
-    MetricsConfiguration getMetricsConfiguration();
+    @Override
+    public void scrapeIntoPrometheus(CharSink sink) {
+    }
 }

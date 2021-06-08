@@ -22,32 +22,17 @@
  *
  ******************************************************************************/
 
-package io.questdb;
+package io.questdb.metrics;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cutlass.http.HttpMinServerConfiguration;
-import io.questdb.cutlass.http.HttpServerConfiguration;
-import io.questdb.cutlass.line.tcp.LineTcpReceiverConfiguration;
-import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
-import io.questdb.cutlass.pgwire.PGWireConfiguration;
-import io.questdb.metrics.MetricsConfiguration;
-import io.questdb.mp.WorkerPoolConfiguration;
+public interface MetricsRegistry extends Scrapable {
 
-public interface ServerConfiguration {
+    Counter newCounter(CharSequence name);
 
-    CairoConfiguration getCairoConfiguration();
+    CounterWithOneLabel newCounter(CharSequence name, CharSequence labelName0, CharSequence[] labelValues0);
 
-    HttpServerConfiguration getHttpServerConfiguration();
+    CounterWithTwoLabels newCounter(CharSequence name,
+                                    CharSequence labelName0, CharSequence[] labelValues0,
+                                    CharSequence labelName1, CharSequence[] labelValues1);
 
-    HttpMinServerConfiguration getHttpMinServerConfiguration();
-
-    LineUdpReceiverConfiguration getLineUdpReceiverConfiguration();
-
-    LineTcpReceiverConfiguration getLineTcpReceiverConfiguration();
-
-    WorkerPoolConfiguration getWorkerPoolConfiguration();
-
-    PGWireConfiguration getPGWireConfiguration();
-
-    MetricsConfiguration getMetricsConfiguration();
+    Gauge newGauge(CharSequence name);
 }
