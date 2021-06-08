@@ -37,6 +37,9 @@ import org.junit.rules.TemporaryFolder;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.atomic.AtomicInteger;
 
 public class FilesTest {
 
@@ -183,6 +186,62 @@ public class FilesTest {
             } finally {
                 Files.close(fd);
             }
+        }
+    }
+
+    @Test
+    public void testOpenCleanRWParallel() throws Exception {
+        File temp = temporaryFolder.getRoot();
+        int threadCount = 15;
+        int iteration = 10;
+        int fileSize = 1024;
+
+        try (Path path = new Path().of(temp.getAbsolutePath()).concat("openCleanRWParallel").$()) {
+            Assert.assertFalse(Files.exists(path));
+
+            final CyclicBarrier barrier = new CyclicBarrier(threadCount);
+            final CountDownLatch halt = new CountDownLatch(threadCount);
+            final AtomicInteger errors = new AtomicInteger();
+
+            for (int k = 0; k < threadCount; k++) {
+                new Thread(() -> {
+                    try {
+                        barrier.await();
+                        for (int i = 0; i < iteration; i++) {
+                            long fd = Files.openCleanRW(path, fileSize);
+                            if (fd < 0) {
+                                errors.incrementAndGet();
+                            }
+                        }
+                    } catch (Exception e) {
+                        e.printStackTrace();
+                        errors.incrementAndGet();
+                    } finally {
+                        halt.countDown();
+                    }
+                }).start();
+            }
+
+            halt.await();
+            Assert.assertEquals(0, errors.get());
+            Assert.assertTrue(Files.exists(path));
+            Assert.assertEquals(fileSize, Files.length(path));
+        }
+    }
+
+    @Test
+    public void testOpenCleanRWAllocatesToSize() throws Exception {
+        File temp = temporaryFolder.getRoot();
+        try (Path path = new Path().of(temp.getAbsolutePath()).concat("openCleanRWParallel").$()) {
+            long fd = Files.openCleanRW(path, 1024);
+            Assert.assertTrue(Files.exists(path));
+            Assert.assertEquals(1024, Files.length(path));
+
+            long fd2 = Files.openCleanRW(path, 2048);
+            Assert.assertEquals(2048, Files.length(path));
+
+            Files.close(fd);
+            Files.close(fd2);
         }
     }
 
