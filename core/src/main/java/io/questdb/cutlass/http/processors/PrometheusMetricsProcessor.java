@@ -22,10 +22,31 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.rnd;
+package io.questdb.cutlass.http.processors;
 
-import io.questdb.std.Rnd;
+import io.questdb.cutlass.http.HttpChunkedResponseSocket;
+import io.questdb.cutlass.http.HttpConnectionContext;
+import io.questdb.cutlass.http.HttpRequestProcessor;
+import io.questdb.metrics.Scrapable;
+import io.questdb.network.PeerDisconnectedException;
+import io.questdb.network.PeerIsSlowToReadException;
 
-public interface RandomFunction {
-    void init(Rnd rnd);
+public class PrometheusMetricsProcessor implements HttpRequestProcessor {
+    private static final CharSequence CONTENT_TYPE_TEXT = "text/plain; version=0.0.4; charset=utf-8";
+    private final Scrapable metrics;
+
+    public PrometheusMetricsProcessor(Scrapable metrics) {
+        this.metrics = metrics;
+    }
+
+    @Override
+    public void onRequestComplete(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        HttpChunkedResponseSocket r = context.getChunkedResponseSocket();
+        r.status(200, CONTENT_TYPE_TEXT);
+        r.sendHeader();
+
+        metrics.scrapeIntoPrometheus(r);
+
+        r.done();
+    }
 }

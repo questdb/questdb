@@ -193,7 +193,8 @@ public final class Unsafe {
     }
 
     public static void recordMemAlloc(long size) {
-        MEM_USED.addAndGet(size);
+        long mem = MEM_USED.addAndGet(size);
+        assert mem >= 0;
     }
 
     private static int msb(int value) {
@@ -204,6 +205,8 @@ public final class Unsafe {
     /**
      * Equivalent to {@link AccessibleObject#setAccessible(boolean) AccessibleObject.setAccessible(true)}, except that
      * it does not produce an illegal access error or warning.
+     *
+     * @param accessibleObject the instance to make accessible
      */
     public static void makeAccessible(AccessibleObject accessibleObject) {
         UNSAFE.putBooleanVolatile(accessibleObject, OVERRIDE, true);

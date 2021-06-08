@@ -22,8 +22,17 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.sql;
+package io.questdb.metrics;
 
-public interface DelegatingRecord extends Record {
-    void of(Record base);
+public interface MetricsRegistry extends Scrapable {
+
+    Counter newCounter(CharSequence name);
+
+    CounterWithOneLabel newCounter(CharSequence name, CharSequence labelName0, CharSequence[] labelValues0);
+
+    CounterWithTwoLabels newCounter(CharSequence name,
+                                    CharSequence labelName0, CharSequence[] labelValues0,
+                                    CharSequence labelName1, CharSequence[] labelValues1);
+
+    Gauge newGauge(CharSequence name);
 }

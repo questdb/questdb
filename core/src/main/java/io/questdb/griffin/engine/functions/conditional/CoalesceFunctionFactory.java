@@ -76,7 +76,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
             case ColumnType.LONG256:
                 return argsSize == 2 ? new TwoLong256CoalesceFunction(args) : new Long256CoalesceFunction(args);
             case ColumnType.INT:
-                return argsSize == 2 ? new TwoIntCoalesceFunction(position, args) : new IntCoalesceFunction(position, args, argsSize);
+                return argsSize == 2 ? new TwoIntCoalesceFunction(args) : new IntCoalesceFunction(args, argsSize);
             case ColumnType.FLOAT:
                 return argsSize == 2 ? new TwoFloatCoalesceFunction(args) : new FloatCoalesceFunction(args, argsSize);
             case ColumnType.STRING:
@@ -417,12 +417,10 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         @Override
         public void getLong256(Record rec, CharSink sink) {
             Long256 value = args0.getLong256A(rec);
-            if (isNotNull(value)) {
-                Numbers.appendLong256(value.getLong0(), value.getLong1(), value.getLong2(), value.getLong3(), sink);
-            } else {
+            if (!isNotNull(value)) {
                 value = args1.getLong256A(rec);
-                Numbers.appendLong256(value.getLong0(), value.getLong1(), value.getLong2(), value.getLong3(), sink);
             }
+            Numbers.appendLong256(value.getLong0(), value.getLong1(), value.getLong2(), value.getLong3(), sink);
         }
 
         @Override
@@ -498,8 +496,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         private final Function args0;
         private final Function args1;
 
-        public TwoIntCoalesceFunction(int position, ObjList<Function> args) {
-            super();
+        public TwoIntCoalesceFunction(ObjList<Function> args) {
             assert args.size() == 2;
             this.args0 = args.getQuick(0);
             this.args1 = args.getQuick(1);
@@ -529,7 +526,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         private final ObjList<Function> args;
         private final int size;
 
-        public IntCoalesceFunction(int position, ObjList<Function> args, int size) {
+        public IntCoalesceFunction(ObjList<Function> args, int size) {
             super();
             this.args = args;
             this.size = size;

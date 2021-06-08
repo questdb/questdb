@@ -1048,7 +1048,6 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         if (index > -1) {
             wrapper = namedStatementWrapperPool.pop();
             wrapper.queryText = Chars.toString(queryText);
-            wrapper.tag = queryTag;
             namedStatementMap.putAt(index, Chars.toString(statementName), wrapper);
             this.activeBindVariableTypes = wrapper.bindVariableTypes;
             this.activeSelectColumnTypes = wrapper.selectColumnTypes;
@@ -2142,10 +2141,8 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         public final IntList bindVariableTypes = new IntList();
         public final IntList selectColumnTypes = new IntList();
         public CharSequence queryText = null;
-        public CharSequence tag;
 
         public void clear() {
-            tag = null;
             queryText = null;
             bindVariableTypes.clear();
             selectColumnTypes.clear();

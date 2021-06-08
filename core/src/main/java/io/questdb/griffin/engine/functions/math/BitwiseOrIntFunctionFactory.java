@@ -28,7 +28,6 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.IntFunction;
@@ -43,18 +42,30 @@ public class BitwiseOrIntFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        return new BitOrIntFunction(position, args.getQuick(0), args.getQuick(1));
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) {
+        return new BitOrIntFunction(args.getQuick(0), args.getQuick(1));
     }
 
     public static final class BitOrIntFunction extends IntFunction implements BinaryFunction {
         private final Function left;
         private final Function right;
 
-        public BitOrIntFunction(int position, Function left, Function right) {
-            super();
+        public BitOrIntFunction(Function left, Function right) {
             this.left = left;
             this.right = right;
+        }
+
+        @Override
+        public int getInt(Record rec) {
+            final int l = left.getInt(rec);
+            final int r = right.getInt(rec);
+            return l != Numbers.INT_NaN && r != Numbers.INT_NaN ? l | r : Numbers.INT_NaN;
         }
 
         @Override
@@ -65,13 +76,6 @@ public class BitwiseOrIntFunctionFactory implements FunctionFactory {
         @Override
         public Function getRight() {
             return right;
-        }
-
-        @Override
-        public int getInt(Record rec) {
-            final int l = left.getInt(rec);
-            final int r = right.getInt(rec);
-            return l != Numbers.INT_NaN && r != Numbers.INT_NaN ? l | r : Numbers.INT_NaN;
         }
     }
 }

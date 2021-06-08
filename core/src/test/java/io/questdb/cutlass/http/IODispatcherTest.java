@@ -24,13 +24,11 @@
 
 package io.questdb.cutlass.http;
 
+import io.questdb.Metrics;
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cutlass.NetUtils;
-import io.questdb.cutlass.http.processors.JsonQueryProcessor;
-import io.questdb.cutlass.http.processors.QueryCache;
-import io.questdb.cutlass.http.processors.StaticContentProcessor;
-import io.questdb.cutlass.http.processors.TextImportProcessor;
+import io.questdb.cutlass.http.processors.*;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -98,6 +96,7 @@ public class IODispatcherTest {
     @Rule
     public TemporaryFolder temp = new TemporaryFolder();
     private long configuredMaxQueryResponseRowLimit = Long.MAX_VALUE;
+    private static Metrics metrics = Metrics.enabled();
 
     public static void createTestTable(CairoConfiguration configuration, int n) {
         try (TableModel model = new TableModel(configuration, "y", PartitionBy.NONE)) {
@@ -478,7 +477,8 @@ public class IODispatcherTest {
                         ),
                         null,
                         LOG,
-                        cairoEngine
+                        cairoEngine,
+                        metrics
                 )) {
 
             // upload file
@@ -544,7 +544,8 @@ public class IODispatcherTest {
                         }),
                         null,
                         LOG,
-                        cairoEngine
+                        cairoEngine,
+                        metrics
                 )) {
 
             // upload file
@@ -1654,7 +1655,8 @@ public class IODispatcherTest {
                                 httpConfiguration.getJsonQueryProcessorConfiguration(),
                                 engine,
                                 null,
-                                workerPool.getWorkerCount()
+                                workerPool.getWorkerCount(),
+                                metrics
                         );
                     }
 
@@ -2147,7 +2149,8 @@ public class IODispatcherTest {
                                 httpConfiguration.getJsonQueryProcessorConfiguration(),
                                 engine,
                                 null,
-                                workerPool.getWorkerCount()
+                                workerPool.getWorkerCount(),
+                                metrics
                         );
                     }
 
@@ -3282,7 +3285,8 @@ public class IODispatcherTest {
                                 httpConfiguration.getJsonQueryProcessorConfiguration(),
                                 engine,
                                 null,
-                                workerPool.getWorkerCount()
+                                workerPool.getWorkerCount(),
+                                metrics
                         );
                     }
 
@@ -3486,7 +3490,8 @@ public class IODispatcherTest {
                                 httpConfiguration.getJsonQueryProcessorConfiguration(),
                                 engine,
                                 null,
-                                workerPool.getWorkerCount());
+                                workerPool.getWorkerCount(),
+                                metrics);
                     }
 
                     @Override
@@ -3577,7 +3582,8 @@ public class IODispatcherTest {
                                 httpConfiguration.getJsonQueryProcessorConfiguration(),
                                 engine,
                                 null,
-                                workerPool.getWorkerCount());
+                                workerPool.getWorkerCount(),
+                                metrics);
                     }
 
                     @Override
@@ -3682,7 +3688,7 @@ public class IODispatcherTest {
                     @Override
                     public HttpRequestProcessor newInstance() {
                         return new JsonQueryProcessor(httpConfiguration.getJsonQueryProcessorConfiguration(), engine,
-                                null, workerPool.getWorkerCount());
+                                null, workerPool.getWorkerCount(), metrics);
                     }
 
                     @Override
@@ -3870,7 +3876,7 @@ public class IODispatcherTest {
         assertMemoryLeak(() -> {
             HttpServerConfiguration httpServerConfiguration = new DefaultHttpServerConfiguration();
 
-            int N = 200;
+            int N = 15;
 
             AtomicInteger openCount = new AtomicInteger(0);
             AtomicInteger closeCount = new AtomicInteger(0);
@@ -3878,7 +3884,7 @@ public class IODispatcherTest {
             final IODispatcherConfiguration configuration = new DefaultIODispatcherConfiguration() {
                 @Override
                 public int getActiveConnectionLimit() {
-                    return 15;
+                    return N;
                 }
             };
 
@@ -3907,8 +3913,7 @@ public class IODispatcherTest {
 
                             @Override
                             public HttpRequestProcessor getDefaultProcessor() {
-                                return new HttpRequestProcessor() {
-                                };
+                                return new HealthCheckProcessor();
                             }
 
                             @Override
@@ -3929,23 +3934,68 @@ public class IODispatcherTest {
                     serverHaltLatch.countDown();
                 }).start();
 
+                LongList openFds = new LongList();
 
-                for (int i = 0; i < N; i++) {
-                    long fd = Net.socketTcp(true);
-                    long sockAddr = Net.sockaddr("127.0.0.1", 9001);
-                    try {
+                final long sockAddr = Net.sockaddr("127.0.0.1", 9001);
+                final long buf = Unsafe.malloc(4096);
+                try {
+                    for (int i = 0; i < N; i++) {
+                        long fd = Net.socketTcp(true);
                         Assert.assertTrue(fd > -1);
                         Assert.assertEquals(0, Net.connect(fd, sockAddr));
-                        Assert.assertEquals(0, Net.close(fd));
-                        LOG.info().$("closed [fd=").$(fd).$(']').$();
-                    } finally {
-                        Net.freeSockAddr(sockAddr);
+                        openFds.add(fd);
                     }
-                }
 
-                Assert.assertFalse(configuration.getActiveConnectionLimit() < dispatcher.getConnectionCount());
-                serverRunning.set(false);
-                serverHaltLatch.await();
+                    // let dispatcher catchup
+                    while (dispatcher.getConnectionCount() < N) {
+                        LockSupport.parkNanos(1);
+                    }
+
+                    final String request = "GET /status?x=1&a=%26b&c&d=x HTTP/1.1\r\n" +
+                            "Host: localhost:9000\r\n" +
+                            "Connection: keep-alive\r\n" +
+                            "Cache-Control: max-age=0\r\n" +
+                            "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8\r\n" +
+                            "User-Agent: Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/31.0.1650.48 Safari/537.36\r\n" +
+                            "Accept-Encoding: gzip,deflate,sdch\r\n" +
+                            "Accept-Language: en-US,en;q=0.8\r\n" +
+                            "Cookie: textwrapon=false; textautoformat=false; wysiwyg=textarea\r\n" +
+                            "\r\n";
+
+                    long mem = TestUtils.toMemory(request);
+                    try {
+                        for (int i = 0; i < N; i++) {
+                            long fd = openFds.getQuick(i);
+                            Assert.assertEquals(request.length(), Net.send(fd, mem, request.length()));
+                            // ensure we have response from server
+                            Assert.assertTrue(0 < Net.recv(fd, buf, 64));
+                        }
+
+                        long fd = Net.socketTcp(true);
+                        try {
+                            Net.connect(fd, sockAddr);
+
+                            Assert.assertEquals(request.length(), Net.send(fd, mem, request.length()));
+                            // ensure we got disconnected
+                            Assert.assertTrue(0 > Net.recv(fd, buf, 64));
+
+                        } finally {
+                            Net.close(fd);
+                        }
+                    } finally {
+                        // close all fds we built up so far
+                        for (int i = 0; i < N; i++) {
+                            Net.close(openFds.getQuick(i));
+                        }
+                        Unsafe.free(mem, request.length());
+                    }
+                } finally {
+                    Net.freeSockAddr(sockAddr);
+                    Unsafe.free(buf, 4096);
+                    Assert.assertFalse(configuration.getActiveConnectionLimit() < dispatcher.getConnectionCount());
+                    serverRunning.set(false);
+                    serverHaltLatch.await();
+                }
             }
         });
     }

@@ -41,11 +41,11 @@ public class AbsLongFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new AbsFunction(position, args.getQuick(0));
+        return new AbsFunction(args.getQuick(0));
     }
 
     private static class AbsFunction extends AbstractUnaryLongFunction {
-        public AbsFunction(int position, Function arg) {
+        public AbsFunction(Function arg) {
             super(arg);
         }
 

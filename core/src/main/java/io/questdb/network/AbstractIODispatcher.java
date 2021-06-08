@@ -102,13 +102,6 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
     }
 
     @Override
-    public void setup() {
-        if (ioContextFactory instanceof EagerThreadSetup) {
-            ((EagerThreadSetup) ioContextFactory).setup();
-        }
-    }
-
-    @Override
     public void close() {
         processDisconnects();
         nf.close(serverFd, LOG);
@@ -163,8 +156,15 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
         disconnectPubSeq.done(cursor);
     }
 
+    @Override
+    public void setup() {
+        if (ioContextFactory instanceof EagerThreadSetup) {
+            ((EagerThreadSetup) ioContextFactory).setup();
+        }
+    }
+
     protected void accept(long timestamp) {
-        while (this.connectionCount.get() < activeConnectionLimit) {
+        while (true) {
             // this accept is greedy, rather than to rely on epoll(or similar) to
             // fire accept requests at us one at a time we will be actively accepting
             // until nothing left.
@@ -176,6 +176,16 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
                     LOG.error().$("could not accept [ret=").$(fd).$(", errno=").$(nf.errno()).$(']').$();
                 }
                 return;
+            }
+
+            final int connectionCount = this.connectionCount.get();
+            if (connectionCount >= activeConnectionLimit) {
+                LOG.error().$("connection limit exceeded [fd=").$(fd)
+                        .$(", connectionCount=").$(connectionCount)
+                        .$(", activeConnectionLimit=").$(activeConnectionLimit)
+                        .$(']').$();
+                nf.close(fd, LOG);
+                continue;
             }
 
             if (nf.configureNonBlocking(fd) < 0) {

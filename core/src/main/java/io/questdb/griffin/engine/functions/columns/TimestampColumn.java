@@ -32,7 +32,7 @@ import io.questdb.std.ObjList;
 import static io.questdb.griffin.engine.functions.columns.ColumnUtils.STATIC_COLUMN_COUNT;
 
 public class TimestampColumn extends TimestampFunction implements ScalarFunction {
-    private static ObjList<TimestampColumn> COLUMNS = new ObjList<>(STATIC_COLUMN_COUNT);
+    private static final ObjList<TimestampColumn> COLUMNS = new ObjList<>(STATIC_COLUMN_COUNT);
     private final int columnIndex;
 
     public TimestampColumn(int columnIndex) {

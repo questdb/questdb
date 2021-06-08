@@ -1303,7 +1303,7 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext,
                 "create table y as (x union all top)",
                 "y order by ts",
-                "insert batch 100000 lag 180000000 into x select * from top",
+                "insert batch 100000 commitLag 180s into x select * from top",
                 "x"
         );
 
@@ -1377,7 +1377,7 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext,
                 "create table y as (x union all top)",
                 "y order by ts",
-                "insert batch 2000000 lag 180000000 into x select * from top",
+                "insert batch 2000000 commitLag 180s into x select * from top",
                 "x"
         );
 
@@ -1451,7 +1451,7 @@ public class O3Test extends AbstractO3Test {
                 // combination of row count in "top" table, batch size and lag value land
                 // rows into single partition, which causes internal state to corrupt
                 // please do not change these values unless you know what you're doing
-                "insert batch 100 lag 300000000 into x select * from top"
+                "insert batch 100 commitLag 300s into x select * from top"
         );
 
         assertIndexConsistency(compiler, sqlExecutionContext);
@@ -5131,7 +5131,7 @@ public class O3Test extends AbstractO3Test {
                 TestUtils.insert(compiler, sqlExecutionContext, "insert into x values(0, 'abc', to_timestamp('2019-08-15T16:03:06.595', 'yyyy-MM-dd:HH:mm:ss.SSSUUU'))");
                 Assert.fail();
             } catch (CairoException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "timestamps before 0001-01-01 are not allowed for O3");
+                TestUtils.assertContains(e.getFlyweightMessage(), "timestamps before 1970-01-01 are not allowed for O3");
             }
         });
     }
@@ -5264,7 +5264,7 @@ public class O3Test extends AbstractO3Test {
 
         final Rnd rnd = new Rnd();
         try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x")) {
-            long ts = 0;
+            long ts = 1000000 * 1000L;
             long step = 1000000;
             TxnScoreboard txnScoreboard = w.getTxnScoreboard();
             for (int i = 0; i < 1000; i++) {

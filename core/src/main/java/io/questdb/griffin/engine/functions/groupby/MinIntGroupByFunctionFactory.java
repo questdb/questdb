@@ -44,6 +44,6 @@ public class MinIntGroupByFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new MinIntGroupByFunction(position, args.getQuick(0));
+        return new MinIntGroupByFunction(args.getQuick(0));
     }
 }

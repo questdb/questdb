@@ -42,15 +42,21 @@ public class NullIfIFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new NullIfIFunction(position, args.getQuick(0), args.getQuick(1).getInt(null));
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) {
+        return new NullIfIFunction(args.getQuick(0), args.getQuick(1).getInt(null));
     }
 
     private static class NullIfIFunction extends IntFunction implements UnaryFunction {
         private final Function value;
         private final int replacement;
 
-        public NullIfIFunction(int position, Function value, int replacement) {
+        public NullIfIFunction(Function value, int replacement) {
             super();
             this.value = value;
             this.replacement = replacement;

@@ -44,16 +44,12 @@ public class RndIntFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new RndFunction(position);
+        return new RndFunction();
     }
 
     private static class RndFunction extends IntFunction implements Function {
 
         private Rnd rnd;
-
-        public RndFunction(int position) {
-            super();
-        }
 
         @Override
         public int getInt(Record rec) {

@@ -353,6 +353,80 @@
         "ideas",
         "code"
       ]
+    },
+    {
+      "login": "rrjanbiah",
+      "name": "R. Rajesh Jeba Anbiah",
+      "avatar_url": "https://avatars.githubusercontent.com/u/4907427?v=4",
+      "profile": "https://github.com/rrjanbiah",
+      "contributions": [
+        "bug"
+      ]
+    },
+    {
+      "login": "sarunas-stasaitis",
+      "name": "sarunas-stasaitis",
+      "avatar_url": "https://avatars.githubusercontent.com/u/57004257?v=4",
+      "profile": "https://github.com/sarunas-stasaitis",
+      "contributions": [
+        "bug"
+      ]
+    },
+    {
+      "login": "RiccardoGiro",
+      "name": "Riccardo",
+      "avatar_url": "https://avatars.githubusercontent.com/u/60734967?v=4",
+      "profile": "https://github.com/RiccardoGiro",
+      "contributions": [
+        "bug"
+      ]
+    },
+    {
+      "login": "duggar",
+      "name": "duggar",
+      "avatar_url": "https://avatars.githubusercontent.com/u/37486846?v=4",
+      "profile": "https://github.com/duggar",
+      "contributions": [
+        "bug"
+      ]
+    },
+    {
+      "login": "postol",
+      "name": "postol",
+      "avatar_url": "https://avatars.githubusercontent.com/u/7983951?v=4",
+      "profile": "https://github.com/postol",
+      "contributions": [
+        "bug"
+      ]
+    },
+    {
+      "login": "petrjahoda",
+      "name": "Petr Jahoda",
+      "avatar_url": "https://avatars.githubusercontent.com/u/45359845?v=4",
+      "profile": "https://github.com/petrjahoda",
+      "contributions": [
+        "bug"
+      ]
+    },
+    {
+      "login": "t00",
+      "name": "Michal Turecki",
+      "avatar_url": "https://avatars.githubusercontent.com/u/1933165?v=4",
+      "profile": "https://www.turecki.net",
+      "contributions": [
+        "bug"
+      ]
+    },
+    {
+      "login": "snenkov",
+      "name": "Stelian Nenkov",
+      "avatar_url": "https://avatars.githubusercontent.com/u/13110986?v=4",
+      "profile": "https://github.com/snenkov",
+      "contributions": [
+        "userTesting",
+        "bug",
+        "ideas"
+      ]
     }
   ],
   "badgeTemplate": "[![All Contributors](https://img.shields.io/badge/all_contributors-<%= contributors.length %>-orange.svg)](#contributors)",

@@ -221,7 +221,7 @@ public class PropServerConfigurationTest {
 
         // influxdb line TCP protocol
         Assert.assertTrue(configuration.getLineTcpReceiverConfiguration().isEnabled());
-        Assert.assertEquals(10, configuration.getLineTcpReceiverConfiguration().getNetDispatcherConfiguration().getActiveConnectionLimit());
+        Assert.assertEquals(256, configuration.getLineTcpReceiverConfiguration().getNetDispatcherConfiguration().getActiveConnectionLimit());
         Assert.assertEquals(0, configuration.getLineTcpReceiverConfiguration().getNetDispatcherConfiguration().getBindIPv4Address());
         Assert.assertEquals(9009, configuration.getLineTcpReceiverConfiguration().getNetDispatcherConfiguration().getBindPort());
         Assert.assertEquals(1024, configuration.getLineTcpReceiverConfiguration().getNetDispatcherConfiguration().getEventCapacity());
@@ -258,6 +258,8 @@ public class PropServerConfigurationTest {
         Assert.assertEquals("Unknown Version", configuration.getCairoConfiguration().getBuildInformation().getQuestDbVersion());
         Assert.assertEquals("Unknown Version", configuration.getCairoConfiguration().getBuildInformation().getJdkVersion());
         Assert.assertEquals("Unknown Version", configuration.getCairoConfiguration().getBuildInformation().getCommitHash());
+
+        Assert.assertFalse(configuration.getMetricsConfiguration().isEnabled());
     }
 
     @Test
@@ -530,6 +532,9 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(2_000_000, configuration.getCairoConfiguration().getCommitLag());
             Assert.assertEquals(100000, configuration.getCairoConfiguration().getMaxUncommittedRows());
 
+            Assert.assertEquals(256, configuration.getCairoConfiguration().getSqlDistinctTimestampKeyCapacity());
+            Assert.assertEquals(0.4, configuration.getCairoConfiguration().getSqlDistinctTimestampLoadFactor(), 0.001);
+
             Assert.assertEquals(167903521, configuration.getLineUdpReceiverConfiguration().getBindIPv4Address());
             Assert.assertEquals(9915, configuration.getLineUdpReceiverConfiguration().getPort());
             Assert.assertEquals(-536805119, configuration.getLineUdpReceiverConfiguration().getGroupIPv4Address());
@@ -580,6 +585,8 @@ public class PropServerConfigurationTest {
             Assert.assertFalse(configuration.getHttpServerConfiguration().getHttpContextConfiguration().getServerKeepAlive());
             Assert.assertEquals("HTTP/1.0 ", configuration.getHttpServerConfiguration().getHttpContextConfiguration().getHttpVersion());
             Assert.assertEquals(33554432L, configuration.getCairoConfiguration().getAppendPageSize());
+
+            Assert.assertTrue(configuration.getMetricsConfiguration().isEnabled());
         }
     }
 

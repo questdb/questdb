@@ -22,9 +22,9 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.pgwire;
+package io.questdb.metrics;
 
-@FunctionalInterface
-public interface BindVariableSetter {
-    void set(int index, long address, int valueLen);
+public interface CounterWithTwoLabels extends Scrapable {
+
+    void inc(short label0, short label1);
 }

@@ -39,10 +39,6 @@ public class SymbolColumn extends SymbolFunction implements ScalarFunction {
         this.symbolTableStatic = symbolTableStatic;
     }
 
-    public int getColumnIndex() {
-        return columnIndex;
-    }
-
     @Override
     public int getInt(Record rec) {
         return rec.getInt(columnIndex);

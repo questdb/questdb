@@ -1,5 +1,5 @@
 import { format } from "date-fns/fp"
-import React, { useCallback, useState } from "react"
+import React, { useCallback, useContext, useState } from "react"
 import { useDispatch } from "react-redux"
 import { CSSTransition } from "react-transition-group"
 import { Close } from "@styled-icons/remix-line/Close"
@@ -9,6 +9,7 @@ import styled, { css, keyframes } from "styled-components"
 
 import { bezierTransition, Text, Toast, TransitionDuration } from "components"
 import { actions } from "store"
+import { LocalStorageContext } from "providers/LocalStorageProvider"
 import { Color, NotificationShape, NotificationType } from "types"
 import { color } from "utils"
 
@@ -62,7 +63,10 @@ const disappear = keyframes`
   }
 `
 
-const Out = styled.div<{ animationPlay: AnimationPlay }>`
+const Out = styled.div<{
+  animationPlay: AnimationPlay
+  animationDelay: number
+}>`
   position: absolute;
   bottom: 0;
   left: 0;
@@ -87,7 +91,8 @@ const Out = styled.div<{ animationPlay: AnimationPlay }>`
     width: 100%;
     height: 2px;
     background: ${color("gray2")};
-    animation: ${disappear} 120s linear 0s 1 normal forwards;
+    animation: ${disappear} ${({ animationDelay }) => animationDelay}s linear 0s
+      1 normal forwards;
     animation-play-state: ${({ animationPlay }) => animationPlay};
   }
 `
@@ -117,6 +122,7 @@ const getBorderColor = (type: NotificationType): Color => {
 }
 
 const Notification = ({ createdAt, line1, title, type, ...rest }: Props) => {
+  const { notificationDelay } = useContext(LocalStorageContext)
   const [pinned, setPinned] = useState(false)
   const [animationPlay, setAnimationPlay] = useState<AnimationPlay>("running")
   const dispatch = useDispatch()
@@ -154,6 +160,7 @@ const Notification = ({ createdAt, line1, title, type, ...rest }: Props) => {
 
         {!pinned && (
           <Out
+            animationDelay={notificationDelay}
             animationPlay={animationPlay}
             onAnimationEnd={handleCloseClick}
           />

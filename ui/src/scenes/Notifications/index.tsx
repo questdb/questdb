@@ -1,10 +1,11 @@
-import React from "react"
+import React, { useContext } from "react"
 import { useSelector } from "react-redux"
 import { TransitionGroup } from "react-transition-group"
 import { createGlobalStyle } from "styled-components"
 
 import { slideTransition } from "components"
 import { selectors } from "store"
+import { LocalStorageContext } from "providers/LocalStorageProvider"
 
 import Notification from "./Notification"
 
@@ -23,6 +24,11 @@ const NotificationsStyles = createGlobalStyle`
 
 const Notifications = () => {
   const notifications = useSelector(selectors.query.getNotifications)
+  const { isNotificationEnabled } = useContext(LocalStorageContext)
+
+  if (!isNotificationEnabled) {
+    return <></>
+  }
 
   return (
     <>
@@ -34,7 +40,6 @@ const Notifications = () => {
             {...notification}
           />
         ))}
-        <></>
       </TransitionGroup>
     </>
   )

@@ -49,11 +49,10 @@ import questdbMode from "./questdbMode"
 import {
   getQueryFromCursor,
   getQueryFromSelection,
-  loadPreferences,
   Request,
-  savePreferences,
   toTextPosition,
 } from "./utils"
+import { usePreferences } from "./usePreferences"
 import { QuestContext } from "providers"
 
 const Content = styled(PaneContent)`
@@ -81,6 +80,7 @@ enum Command {
 }
 
 const Ace = () => {
+  const { loadPreferences, savePreferences } = usePreferences()
   const { quest } = useContext(QuestContext)
   const [request, setRequest] = useState<Request | undefined>()
   const [value, setValue] = useState("")
@@ -101,15 +101,19 @@ const Ace = () => {
     }
   }, [request, quest, dispatch, running])
 
+  // Save preferences when we run a query
   useEffect(() => {
-    if (!aceEditor.current) {
-      return
-    }
+    const editor = aceEditor?.current?.editor
 
-    const { editor } = aceEditor.current
-
-    if (running) {
+    if (running && editor) {
       savePreferences(editor)
+    }
+  }, [running, savePreferences])
+
+  useEffect(() => {
+    const editor = aceEditor?.current?.editor
+
+    if (running && editor) {
       const markers = editor.session.getMarkers(true)
 
       if (markers) {

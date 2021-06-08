@@ -30,6 +30,7 @@ import io.questdb.cutlass.http.HttpServerConfiguration;
 import io.questdb.cutlass.line.tcp.LineTcpReceiverConfiguration;
 import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
 import io.questdb.cutlass.pgwire.PGWireConfiguration;
+import io.questdb.metrics.MetricsConfiguration;
 import io.questdb.mp.WorkerPoolConfiguration;
 
 public interface ServerConfiguration {
@@ -47,4 +48,6 @@ public interface ServerConfiguration {
     WorkerPoolConfiguration getWorkerPoolConfiguration();
 
     PGWireConfiguration getPGWireConfiguration();
+
+    MetricsConfiguration getMetricsConfiguration();
 }

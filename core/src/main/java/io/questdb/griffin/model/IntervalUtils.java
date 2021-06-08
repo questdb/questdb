@@ -391,7 +391,7 @@ public final class IntervalUtils {
         }
 
         if (lim - p < 2) {
-            checkChar(seq, p++, lim, 'Z');
+            checkChar(seq, p, lim, 'Z');
             return 0;
         }
 
@@ -405,7 +405,7 @@ public final class IntervalUtils {
                 checkChar(seq, p++, lim, ':');
             }
 
-            if (checkLenStrict(p, lim, 2)) {
+            if (checkLenStrict(p, lim)) {
                 int min = Numbers.parseInt(seq, p, p + 2);
                 checkRange(min, 0, 59);
                 return tzSign*(hour * Timestamps.HOUR_MICROS + min * Timestamps.MINUTE_MICROS);
@@ -460,23 +460,22 @@ public final class IntervalUtils {
      * @param intervals 2 lists of intervals concatenated in 1
      */
     static void unionInplace(LongList intervals, int dividerIndex) {
-        final int sizeA = dividerIndex;
-        final int sizeB = sizeA + (intervals.size() - dividerIndex);
+        final int sizeB = dividerIndex + (intervals.size() - dividerIndex);
         int aLower = 0;
 
-        int intervalB = sizeA;
+        int intervalB = dividerIndex;
         int writePoint = 0;
 
         int aUpperSize = sizeB;
         int aUpper = sizeB;
         long aLo = 0, aHi = 0, bLo = 0, bHi = 0;
 
-        while (aLower < sizeA || aUpper < aUpperSize || intervalB < sizeB) {
+        while (aLower < dividerIndex || aUpper < aUpperSize || intervalB < sizeB) {
 
             // This tries to get either interval from A or from B
             // where it's available
             // and union with last interval in writePoint position
-            boolean hasA = aLower < sizeA || aUpper < aUpperSize;
+            boolean hasA = aLower < dividerIndex || aUpper < aUpperSize;
             if (hasA) {
                 int intervalA = aUpper < aUpperSize ? aUpper : aLower;
                 aLo = intervals.getQuick(intervalA);
@@ -521,8 +520,8 @@ public final class IntervalUtils {
             }
 
             // new interval to save
-            assert writePoint <= aLower || writePoint >= sizeA;
-            if (writePoint == aLower && aLower < sizeA) {
+            assert writePoint <= aLower || writePoint >= dividerIndex;
+            if (writePoint == aLower && aLower < dividerIndex) {
                 // We cannot keep A position, it will be overwritten
                 // Copy a point to A area instead
                 intervals.add(intervals.getQuick(writePoint));
@@ -701,8 +700,8 @@ public final class IntervalUtils {
         throw NumericException.INSTANCE;
     }
 
-    private static boolean checkLenStrict(int p, int lim, int len) throws NumericException {
-        if (lim - p == len) {
+    private static boolean checkLenStrict(int p, int lim) throws NumericException {
+        if (lim - p == 2) {
             return true;
         }
         if (lim <= p) {
