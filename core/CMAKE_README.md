@@ -34,8 +34,8 @@ reload the profile
 3. Open new shell to apply JAVA_HOME export and run cmake 
 
 ```bash
-cmake .
-make  
+cmake -DCMAKE_BUILD_TYPE=Release  -B build/release -H.
+cmake -B build/release -DCMAKE_BUILD_TYPE=Release .
 ```
 
 it is also possible to compile using g++ as c++ compiler instead of default clang 

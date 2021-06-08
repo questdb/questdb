@@ -540,10 +540,10 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_openCleanRW
     if (fileSize > 0) {
         if (LockFileEx(handle, LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY, 0, 0, 1, &sOverlapped)) {
             // truncate file to 1 byte
-            if (Java_io_questdb_std_Files_truncate(e, cl, handle, 1) == JNI_TRUE) {
+            if (Java_io_questdb_std_Files_truncate(e, cl, fd, 1) == JNI_TRUE) {
                 // write first byte to 0
-                int writtenCount = 0;
-                byte buff[0] = {0};
+                DWORD writtenCount = 0;
+                byte buff[1] = {0};
                 if (set_file_pos(handle, 0) && WriteFile(handle, (LPCVOID) &buff, (DWORD) 1, &writtenCount, NULL) &&
                     writtenCount == 1) {
 
@@ -578,7 +578,7 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_openCleanRW
 
     // Any non-happy path comes here.
     SaveLastError();
-    close(fd);
+    CloseHandle(handle);
     return -1;
 
 }
