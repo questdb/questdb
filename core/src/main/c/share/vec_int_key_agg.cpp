@@ -1143,7 +1143,6 @@ template<typename TO_INT>
 void kIntMaxInt(TO_INT *to_int, jlong pRosti, jlong pKeys, jlong pInt, jlong count, jint valueOffset) {
     auto map = reinterpret_cast<rosti_t *>(pRosti);
     const auto *pi = reinterpret_cast<jint *>(pInt);
-    const auto shift = map->slot_size_shift_;
     const auto value_offset = map->value_offsets_[valueOffset];
     for (int i = 0; i < count; i++) {
         MM_PREFETCH_T0(pi + i + 16);
