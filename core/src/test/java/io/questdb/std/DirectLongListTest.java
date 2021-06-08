@@ -70,7 +70,60 @@ public class DirectLongListTest {
         for (long i = 0; i < list.getCapacity(); ++i) {
             Assert.assertEquals(0, list.get(i));
         }
+        list.setPos(42);
+        Assert.assertEquals(42, list.size());
+        list.clear();
+        Assert.assertEquals(0, list.size());
         list.close(); //release memory
         Assert.assertEquals(expected, Unsafe.getMemUsed());
+    }
+
+    @Test
+    public void testAddList() {
+        DirectLongList list = new DirectLongList(256);
+        DirectLongList list2 = new DirectLongList(256);
+        final int N = 100;
+        for (int i = 0; i < N; ++i) {
+            list.add(i);
+            list2.add(N + i);
+        }
+        list.add(list2);
+        Assert.assertEquals(256, list.getCapacity());
+        Assert.assertEquals(2*N, list.size());
+        for (long i = 0; i < list.size(); ++i) {
+            Assert.assertEquals(i, list.get(i));
+        }
+        list.close();
+        list2.close();
+    }
+
+    @Test
+    public void testAddListExpand() {
+        DirectLongList list = new DirectLongList(128);
+        DirectLongList list2 = new DirectLongList(128);
+        final int N = 100;
+        for (int i = 0; i < N; ++i) {
+            list.add(i);
+            list2.add(N + i);
+        }
+        list.add(list2);
+        Assert.assertEquals(200, list.getCapacity()); //128 + 100 - 28
+        Assert.assertEquals(2*N, list.size());
+        for (long i = 0; i < list.size(); ++i) {
+            Assert.assertEquals(i, list.get(i));
+        }
+        list.close();
+        list2.close();
+    }
+    @Test
+    public void testSearch() {
+        DirectLongList list = new DirectLongList(256);
+        final int N = 100;
+        for (int i = 0; i < N; ++i) {
+            list.add(i);
+        }
+        Assert.assertEquals(N/2, list.scanSearch(N/2, 0, list.size()));
+        Assert.assertEquals(N/2, list.binarySearch(N/2));
+        list.close();
     }
 }
