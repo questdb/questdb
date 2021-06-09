@@ -49,7 +49,9 @@ import org.junit.Test;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.security.PrivateKey;
+import java.util.HashMap;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.LockSupport;
 
 public class LineTcpServerTest extends AbstractCairoTest {
@@ -176,64 +178,110 @@ public class LineTcpServerTest extends AbstractCairoTest {
                     "weather,location=us-eastcoast temperature=89 1465839830102400200\n" +
                     "weather,location=us-westcost temperature=82 1465839830102500200\n";
 
-            send(lineData, "weather", true);
-
             int iterations = 8;
             int threadCount = 8;
-            SOCountDownLatch threadPushFinished = new SOCountDownLatch(threadCount);
-            for (int i = 0; i < threadCount; i++) {
-                final String threadTable = "weather" + i;
-                final String lineDataThread = lineData.replace("weather", threadTable);
-                send(lineDataThread, threadTable, false);
-                new Thread(() -> {
-                    try {
-                        for (int n = 0; n < iterations; n++) {
-                            Thread.sleep(minIdleMsBeforeWriterRelease - 50);
-                            send(lineDataThread, threadTable, false);
-                        }
-                    } catch (Exception e) {
-                        e.printStackTrace();
-                    } finally {
-                        threadPushFinished.countDown();
+            HashMap<String, AtomicInteger> tableIndex = new HashMap<>();
+            tableIndex.put("weather", new AtomicInteger());
+            for(int i = 1; i < threadCount; i++) {
+                tableIndex.put("weather" + i, new AtomicInteger());
+            }
+
+            // One engine hook for all writers
+            Object monitor = new Object();
+            engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
+                if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN) {
+                    AtomicInteger ai = tableIndex.get(name.toString());
+                    ai.incrementAndGet();
+                    synchronized (monitor) {
+                        monitor.notifyAll();
                     }
-                }).start();
-            }
+                }
+            });
 
-            send(lineData, "weather", true);
+            try {
+                sendWait(lineData, tableIndex, monitor, 1, "weather");
+                SOCountDownLatch threadPushFinished = new SOCountDownLatch(threadCount - 1);
+                for (int i = 1; i < threadCount; i++) {
+                    final String threadTable = "weather" + i;
+                    final String lineDataThread = lineData.replace("weather", threadTable);
+                    sendNoWait(threadTable, lineDataThread);
+                    new Thread(() -> {
+                        try {
+                            for (int n = 0; n < iterations; n++) {
+                                Thread.sleep(minIdleMsBeforeWriterRelease-50);
+                                send(lineDataThread, threadTable, false);
+                            }
+                        } catch (Exception e) {
+                            e.printStackTrace();
+                        } finally {
+                            threadPushFinished.countDown();
+                        }
+                    }).start();
+                }
 
-            try (TableWriter w = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "weather")) {
-                w.truncate();
-            }
+                sendWait(lineData, tableIndex, monitor, 2, "weather");
+                try (TableWriter w = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "weather")) {
+                    w.truncate();
+                }
+                sendWait(lineData, tableIndex, monitor, 4, "weather");
 
-            String lineData2 = "weather,location=us-midwest temperature=85 1465839830102300200\n" +
-                    "weather,location=us-eastcoast temperature=89 1465839830102400200\n" +
-                    "weather,location=us-westcost temperature=82 1465839830102500200\n";
-            send(lineData2, "weather");
+                String header = "location\ttemperature\ttimestamp\n";
+                String[] lines = {"us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\n",
+                        "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\n",
+                        "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\n"};
+                String expected = header + lines[0] + lines[1] + lines[2];
+                assertTable(expected, "weather");
 
-            String line1 = "us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\n";
-            String line2 = "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\n";
-            String line3 = "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\n";
-            String header = "location\ttemperature\ttimestamp\n";
-            String[] lines = {line1, line2, line3 };
-            String expected = header + line1 + line2 + line3;
-            assertTable(expected, "weather");
+                // Concatenate iterations + 2 of identical isert results
+                // to assert against weather 1-8 tables
+                StringBuilder expectedSB = new StringBuilder(header);
+                for (int l = 0; l < lines.length; l++) {
+                    expectedSB.append(Chars.repeat(lines[l], iterations + 1));
+                }
+                String expectedILPAsync = expectedSB.toString();
 
-            StringBuilder expectedSB = new StringBuilder(header);
-            for(int l = 0; l < lines.length; l++) {
-                for (int it = 0; it < iterations + 2; it++) {
-                    expectedSB.append(lines[l]);
-                }            }
-            String expected2 = expectedSB.toString();
-
-            threadPushFinished.await();
-            for (int i = 0; i < threadCount; i++) {
-                // Wait writer to be released and check.
-                String tableName = "weather" + i;
-                final String lineDataThread = lineData.replace("weather", tableName);
-                send(lineDataThread, tableName, true);
-                assertTable(expected2, tableName);
+                // Wait async ILP send threads to finish.
+                threadPushFinished.await();
+                for (int i = 1; i < threadCount; i++) {
+                    // Wait writer to be released and check.
+                    String tableName = "weather" + i;
+                    int releasedCount = tableIndex.get(tableName).get();
+                    try {
+                        assertTable(expectedILPAsync, tableName);
+                    } catch (AssertionError e) {
+                        // Wait one more writer release before re-trying to compare
+                        wait(tableIndex, monitor, releasedCount + 1, tableName, minIdleMsBeforeWriterRelease);
+                        assertTable(expectedILPAsync, tableName);
+                    }
+                }
+            } finally {
+                // Clean engine hook
+                engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {});
             }
         });
+    }
+
+    private void sendNoWait(String threadTable, String lineDataThread) {
+        send(lineDataThread, threadTable, false);
+    }
+
+    private void sendWait(String lineData, HashMap<String, AtomicInteger> tableIndex, Object monitor, int waitValue, String tableName) {
+        send(lineData, tableName, false);
+        wait(tableIndex, monitor, waitValue, tableName, minIdleMsBeforeWriterRelease * 2);
+    }
+
+    private void wait(HashMap<String, AtomicInteger> tableIndex, Object monitor, int waitValue, String tableName, long maxWaitMs) {
+        try {
+            long waitStart = System.currentTimeMillis();
+            AtomicInteger counter = tableIndex.get(tableName);
+            while (waitValue > counter.get() && System.currentTimeMillis() - waitStart <= maxWaitMs) {
+                synchronized (monitor) {
+                    monitor.wait(maxWaitMs);
+                }
+            }
+        } catch (InterruptedException ex) {
+            ex.printStackTrace();
+        }
     }
 
     @Test
@@ -417,14 +465,15 @@ public class LineTcpServerTest extends AbstractCairoTest {
         minIdleMsBeforeWriterRelease = 250;
         assertMemoryLeak(() -> {
             path = new Path(4096);
-            try {
-                LineTcpServer tcpServer = LineTcpServer.create(lineConfiguration, sharedWorkerPool, LOG, engine);
+            try (LineTcpServer tcpServer = LineTcpServer.create(lineConfiguration, sharedWorkerPool, LOG, engine)) {
                 sharedWorkerPool.assignCleaner(Path.CLEANER);
                 sharedWorkerPool.start(LOG);
-                r.run();
-                sharedWorkerPool.halt();
-                Misc.free(tcpServer);
-                Path.clearThreadLocals();
+                try {
+                    r.run();
+                } finally {
+                    sharedWorkerPool.halt();
+                    Path.clearThreadLocals();
+                }
             } finally {
                 Misc.free(path);
             }

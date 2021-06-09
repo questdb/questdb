@@ -789,17 +789,20 @@ class LineTcpMeasurementScheduler implements Closeable {
         @Override
         public void close() {
             if (writerThreadId != Integer.MIN_VALUE) {
-                LOG.info().$("closing table [tableName=").$(tableName).$(']').$();
-                if (null != writer) {
-                    writer.commit();
-                    writer.close();
-                    writer = null;
+                tableUpdateDetailsLock.writeLock().lock();
+                try {
+                    LOG.info().$("closing table [tableName=").$(tableName).$(']').$();
+                    if (null != writer) {
+                        writer.commit();
+                        writer = Misc.free(writer);
+                    }
+                    for (int n = 0; n < localDetailsArray.length; n++) {
+                        localDetailsArray[n] = Misc.free(localDetailsArray[n]);
+                    }
+                    writerThreadId = Integer.MIN_VALUE;
+                } finally {
+                    tableUpdateDetailsLock.writeLock().unlock();
                 }
-                for (int n = 0; n < localDetailsArray.length; n++) {
-                    localDetailsArray[n].close();
-                    localDetailsArray[n] = null;
-                }
-                writerThreadId = Integer.MIN_VALUE;
             }
         }
 

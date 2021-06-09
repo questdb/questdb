@@ -22,17 +22,17 @@ stages:
           - checkout: none
           - bash: |
               if [ -z "$PR_ID" ]
-                then
+              then
                 # No PR - cannot detect changed files, default to true
                 echo "##vso[task.setvariable variable=SOURCE_CODE_CHANGED;isOutput=true]true"
-                else
-                  CHANGED_CORE_FILES=$(curl https://api.github.com/repos/questdb/questdb/pulls/$PR_ID/files -s  | grep -oP 'filename": "core/*\/\K[^.]+')
-                  if [ -z "$CHANGED_CORE_FILES" ]
+              else
+                CHANGED_CORE_FILES=$(curl https://api.github.com/repos/questdb/questdb/pulls/$PR_ID/files -s  | grep -oP 'filename": "core/*\/\K[^.]+')
+                if [ -z "$CHANGED_CORE_FILES" ]
                   then
                     echo "##vso[task.setvariable variable=SOURCE_CODE_CHANGED;isOutput=true]false"
                   else
                     echo "##vso[task.setvariable variable=SOURCE_CODE_CHANGED;isOutput=true]true"
-                  fi
+                fi
               fi
             env:
               PR_ID: $(System.PullRequest.PullRequestNumber)
@@ -125,6 +125,7 @@ stages:
             displayName: "Diff coverage PR report"
             env:
               CODE_COVERAGE_TOOL_OPTION: "$(CODE_COVERAGE_TOOL_OPTION)"
+              IF_FORK: "$(IF_FORK)"
               SYSTEM_ACCESSTOKEN: $(GH_TOKEN)
               PR_ID: $(System.PullRequest.PullRequestNumber)
               SOURCES: $(Build.SourcesDirectory)
