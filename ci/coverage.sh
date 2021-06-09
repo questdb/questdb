@@ -15,7 +15,9 @@ else
     IS_FORK=$(curl https://api.github.com/repos/questdb/questdb/pulls/$1/files -s | grep -e "\"fork\": true")
     if [ -z "$IS_FORK" ]
     then
-        echo "##vso[task.setvariable variable=IF_FORK;]YES"
+      echo "##vso[task.setvariable variable=IF_FORK;]NO"
+    else
+      echo "##vso[task.setvariable variable=IF_FORK;]YES"
     fi
 fi
 
