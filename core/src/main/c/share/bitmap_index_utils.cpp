@@ -23,20 +23,18 @@
  ******************************************************************************/
 
 #include "bitmap_index_utils.h"
-#include <atomic>
 
-void latest_scan_backward(int64_t keys_memory_addr, int64_t keys_memory_size, int64_t values_memory_addr,
-                          int64_t value_memory_size, int64_t args_memory_addr, int64_t unindexed_null_count,
-                          int64_t max_value, int64_t min_value, int32_t partition_index, int32_t vblock_capacity_mask) {
+void latest_scan_backward(uint64_t keys_memory_addr, size_t keys_memory_size, uint64_t values_memory_addr,
+                          size_t value_memory_size, uint64_t args_memory_addr, int64_t unindexed_null_count,
+                          int64_t max_value, int64_t min_value, int32_t partition_index, uint32_t vblock_capacity_mask) {
 
     auto keys_memory = reinterpret_cast<const uint8_t *>(keys_memory_addr);
     auto values_memory = reinterpret_cast<const uint8_t *>(values_memory_addr);
     auto out_args = reinterpret_cast<out_arguments *>(args_memory_addr);
 
-    auto header  = reinterpret_cast<const key_header *>(keys_memory);
-    auto keys  = reinterpret_cast<const key_entry *>(keys_memory + sizeof(key_header));
+    keys_reader keys(keys_memory, keys_memory_size);
 
-    auto key_count = header->key_count;
+    auto key_count = keys.key_count();
 
     auto key_begin = out_args->key_lo;
     auto key_end = out_args->key_hi;
@@ -47,7 +45,6 @@ void latest_scan_backward(int64_t keys_memory_addr, int64_t keys_memory_size, in
 
     int64_t local_key_begin = std::numeric_limits<int64_t>::max();
     int64_t local_key_end = std::numeric_limits<int64_t>::min();
-    int64_t vblock_size = vblock_capacity * 8 + 16;
 
     auto row_count = 0;
     for(int64_t k = key_begin; k < key_end; ++k) {
@@ -59,63 +56,43 @@ void latest_scan_backward(int64_t keys_memory_addr, int64_t keys_memory_size, in
 
         if (rows[k] > 0) continue;
 
-        int64_t value_count = 0;
-        int64_t last_vblock_offset = 0;
-        int64_t first_vblock_offset = 0;
-        auto retries_count = 10;
-        bool is_kblock_consistent = false;
-        while(retries_count--) {
-            value_count = keys[k].value_count;
-            std::atomic_thread_fence(std::memory_order_acquire);
-            if (keys[k].count_check == value_count) {
-                first_vblock_offset = keys[k].first_value_block_offset;
-                last_vblock_offset = keys[k].last_value_block_offset;
-                std::atomic_thread_fence(std::memory_order_acquire);
-                if (keys[k].value_count == value_count) {
-                    is_kblock_consistent = true;
-                    break;
-                }
-            }
-        }
+        auto key = keys[k];
+        int64_t value_count = key.value_count;
         bool update_range = true;
-        if(value_count > 0) {
-            int64_t vblock_end_offset = last_vblock_offset + vblock_size;
-            bool is_offset_in_mapped_area = vblock_end_offset <= value_memory_size;
 
-            if (!is_kblock_consistent || !is_offset_in_mapped_area) {
-                // can trust only first vblock offset
-                last_vblock_offset = first_vblock_offset;
-                auto link = reinterpret_cast<const value_block_link *>(values_memory + last_vblock_offset + vblock_size - sizeof(value_block_link));
+        if(value_count > 0) {
+            block<int64_t> tail(values_memory, key.last_value_block_offset, vblock_capacity);
+            block<int64_t> inconsistent_tail(values_memory, key.first_value_block_offset, vblock_capacity);
+
+            bool is_offset_in_mapped_area = tail.offset() + tail.memory_size() <= value_memory_size;
+            bool is_inconsistent = !key.is_block_consistent || !is_offset_in_mapped_area;
+            if (is_inconsistent) {
+                // can trust only first block offset
                 int64_t block_traversed = 1;
-                while(link->next && link->next + vblock_size <= value_memory_size) {
-                    last_vblock_offset = link->next;
-                    link = reinterpret_cast<const value_block_link *>(values_memory + last_vblock_offset + vblock_size - sizeof(value_block_link));
+                while (inconsistent_tail.next_offset()
+                       && inconsistent_tail.next_offset() + inconsistent_tail.memory_size() <= value_memory_size) {
+                    inconsistent_tail.move_next();
                     block_traversed += 1;
                 }
                 //assuming blocks are full
-                value_count = vblock_capacity*block_traversed;
+                value_count = vblock_capacity * block_traversed;
             }
 
-            auto values = reinterpret_cast<const int64_t *>(values_memory);
-            auto res = seekValueBlockRTL(value_count, last_vblock_offset, values, max_value,
-                                         vblock_capacity_mask);
-            value_count = res.first;
-            last_vblock_offset = res.second;
+            auto current_block = is_inconsistent ? inconsistent_tail : tail;
+            value_count = scan_blocks_backward<int64_t>(current_block, value_count, max_value);
             if (value_count > 0) {
-                uint64_t cell_index = --value_count & vblock_capacity_mask;
-                int64_t local_row_id = values[last_vblock_offset / 8 + cell_index];
+                int64_t local_row_id = current_block[value_count - 1];
                 if (local_row_id >= min_value) {
-                    rows[k] = ((int64_t) partition_index << 44) + local_row_id + 1;
+                    rows[k] = to_row_id(partition_index, local_row_id) + 1;
                     row_count += 1;
                     update_range = false;
                 }
             }
         }
-
         // unindexed nulls case
         if (k == 0 && unindexed_null_count > 0) {
             if (rows[k] <= 0 && unindexed_null_count - 1 >= min_value) {
-                rows[k] = ((int64_t) partition_index << 44) + unindexed_null_count;
+                rows[k] = to_row_id(partition_index, unindexed_null_count);
                 row_count += 1;
                 update_range = false;
             }
@@ -131,6 +108,7 @@ void latest_scan_backward(int64_t keys_memory_addr, int64_t keys_memory_size, in
     out_args->rows_size = row_count;
 }
 
+
 extern "C" {
 
 JNIEXPORT void JNICALL
@@ -145,7 +123,6 @@ Java_io_questdb_std_BitmapIndexUtilsNative_latestScanBackward0(JNIEnv *env, jcla
                                                 , jlong minValue
                                                 , jint partitionIndex
                                                 , jint blockValueCountMod) {
-
     latest_scan_backward(keysMemory, keysMemorySize, valuesMemory, valuesMemorySize, argsMemory, unIndexedNullCount,
                          maxValue, minValue, partitionIndex, blockValueCountMod);
 }
