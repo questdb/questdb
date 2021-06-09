@@ -78,7 +78,6 @@ public class RndStringRndListFunctionFactory implements FunctionFactory {
         private final ContiguousVirtualMemory idxMem;
         private final int strLo;
         private final int strHi;
-        private final int nullRate;
         private Rnd rnd;
 
         public Func(ContiguousVirtualMemory strMem, ContiguousVirtualMemory idxMem, int strLo, int strHi, int strCount, int nullRate) {
@@ -87,7 +86,6 @@ public class RndStringRndListFunctionFactory implements FunctionFactory {
             this.idxMem = idxMem;
             this.strLo = strLo;
             this.strHi = strHi;
-            this.nullRate = nullRate;
         }
 
         @Override
@@ -126,7 +124,6 @@ public class RndStringRndListFunctionFactory implements FunctionFactory {
         private final ContiguousVirtualMemory strMem;
         private final ContiguousVirtualMemory idxMem;
         private final int strLen;
-        private final int nullRate;
         private Rnd rnd;
 
         public FixedFunc(ContiguousVirtualMemory strMem, ContiguousVirtualMemory idxMem, int strLen, int strCount, int nullRate) {
@@ -134,7 +131,6 @@ public class RndStringRndListFunctionFactory implements FunctionFactory {
             this.strMem = strMem;
             this.idxMem = idxMem;
             this.strLen = strLen;
-            this.nullRate = nullRate;
         }
 
         @Override

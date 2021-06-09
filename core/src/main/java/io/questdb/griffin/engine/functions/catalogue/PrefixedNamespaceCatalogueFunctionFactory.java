@@ -39,6 +39,12 @@ public class PrefixedNamespaceCatalogueFunctionFactory implements FunctionFactor
         return "pg_catalog.pg_namespace()";
     }
 
+    @Override
+    public boolean isRuntimeConstant() {
+        return true;
+    }
+
+    @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         return new CursorFunction(
                 new GenericRecordCursorFactory(
@@ -46,6 +52,11 @@ public class PrefixedNamespaceCatalogueFunctionFactory implements FunctionFactor
                         new NamespaceCatalogueCursor(),
                         false
                 )
-        );
+        ) {
+            @Override
+            public boolean isRuntimeConstant() {
+                return true;
+            }
+        };
     }
 }

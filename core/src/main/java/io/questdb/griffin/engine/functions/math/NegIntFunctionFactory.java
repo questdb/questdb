@@ -42,15 +42,20 @@ public class NegIntFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new Func(position, args.getQuick(0));
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) {
+        return new Func(args.getQuick(0));
     }
 
     private static class Func extends IntFunction implements UnaryFunction {
         final Function arg;
 
-        public Func(int position, Function arg) {
-            super();
+        public Func(Function arg) {
             this.arg = arg;
         }
 
@@ -61,11 +66,8 @@ public class NegIntFunctionFactory implements FunctionFactory {
 
         @Override
         public int getInt(Record rec) {
-            int value = arg.getInt(rec);
-            if (value == Numbers.INT_NaN) {
-                return Numbers.INT_NaN;
-            }
-            return -value;
+            final int value = arg.getInt(rec);
+            return value != Numbers.INT_NaN ? -value : Numbers.INT_NaN;
         }
     }
 }

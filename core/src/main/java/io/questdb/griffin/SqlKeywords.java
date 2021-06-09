@@ -541,17 +541,6 @@ public class SqlKeywords {
                 && (tok.charAt(i)) == 'r';
     }
 
-    public static boolean isLag(CharSequence tok) {
-        if (tok.length() != 3) {
-            return false;
-        }
-
-        int i = 0;
-        return (tok.charAt(i++)) == 'l'
-                && (tok.charAt(i++)) == 'a'
-                && (tok.charAt(i)) == 'g';
-    }
-
     public static boolean isInKeyword(CharSequence tok) {
         if (tok.length() != 2) {
             return false;

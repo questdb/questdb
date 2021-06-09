@@ -28,6 +28,9 @@ import io.questdb.std.IntObjHashMap;
 import io.questdb.std.Long256;
 import io.questdb.std.LowerCaseAsciiCharSequenceIntHashMap;
 
+/**
+ * Column types as numeric (integer) values
+ */
 public final class ColumnType {
     // column type version as written to the metadata file
     public static final int VERSION = 419;
@@ -72,7 +75,7 @@ public final class ColumnType {
             /* 7  TIMESTAMP*/, {LONG}
             /* 8  FLOAT    */, {DOUBLE}
             /* 9  DOUBLE    */, {}
-            /* 10 STRING    */, {} // STRING can be cast to TIMESTAMP, but it's handled in a  special way
+            /* 10 STRING    */, {} // STRING can be cast to TIMESTAMP, but it's handled in a special way
             /* 11 SYMBOL    */, {STRING}
     };
 
@@ -80,7 +83,6 @@ public final class ColumnType {
     private static final int[] overloadPriorityMatrix;
 
     static {
-        assert OVERLOAD_MATRIX_SIZE > MAX;
         overloadPriorityMatrix = new int[OVERLOAD_MATRIX_SIZE * OVERLOAD_MATRIX_SIZE];
         for (int i = -1; i < MAX; i++) {
             for (int j = 0; j < MAX; j++) {

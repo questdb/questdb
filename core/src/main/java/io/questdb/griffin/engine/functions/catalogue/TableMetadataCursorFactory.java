@@ -27,7 +27,6 @@ package io.questdb.griffin.engine.functions.catalogue;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.log.Log;
@@ -48,44 +47,51 @@ public class TableMetadataCursorFactory implements FunctionFactory {
     private static final int designatedTimestampColumn;
     private static final Log LOG = LogFactory.getLog(TableMetadataCursorFactory.class);
 
-    static {
-        final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("id", ColumnType.INT, null));
-        idColumn = metadata.getColumnCount() - 1;
-        metadata.add(new TableColumnMetadata("name", ColumnType.STRING, null));
-        nameColumn = metadata.getColumnCount() - 1;
-        metadata.add(new TableColumnMetadata("designatedTimestamp", ColumnType.STRING, null));
-        designatedTimestampColumn = metadata.getColumnCount() - 1;
-        metadata.add(new TableColumnMetadata("partitionBy", ColumnType.STRING, null));
-        partitionByColumn = metadata.getColumnCount() - 1;
-        metadata.add(new TableColumnMetadata("maxUncommittedRows", ColumnType.INT, null));
-        maxUncommittedRowsColumn = metadata.getColumnCount() - 1;
-        metadata.add(new TableColumnMetadata("commitLag", ColumnType.LONG, null));
-        commitLagColumn = metadata.getColumnCount() - 1;
-        METADATA = metadata;
-    }
-
     @Override
     public String getSignature() {
         return "tables()";
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    public boolean isRuntimeConstant() {
+        return true;
+    }
+
+    @Override
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) {
         return new CursorFunction(
                 new TableMetadataCursor(configuration.getFilesFacade(), configuration.getRoot())
-        );
+        ) {
+            @Override
+            public boolean isRuntimeConstant() {
+                return true;
+            }
+        };
     }
 
     private static class TableMetadataCursor implements RecordCursorFactory {
         private final FilesFacade ff;
-        private Path path;
         private final TableListRecordCursor cursor;
+        private Path path;
 
         public TableMetadataCursor(FilesFacade ff, CharSequence dbRoot) {
             this.ff = ff;
             path = new Path().of(dbRoot).$();
             cursor = new TableListRecordCursor();
+        }
+
+        @Override
+        public void close() {
+            if (null != path) {
+                path.close();
+                path = null;
+            }
         }
 
         @Override
@@ -101,14 +107,6 @@ public class TableMetadataCursorFactory implements FunctionFactory {
         @Override
         public boolean recordCursorSupportsRandomAccess() {
             return false;
-        }
-
-        @Override
-        public void close() {
-            if (null != path) {
-                path.close();
-                path = null;
-            }
         }
 
         private class TableListRecordCursor implements RecordCursor {
@@ -156,15 +154,6 @@ public class TableMetadataCursorFactory implements FunctionFactory {
                 }
             }
 
-            public TableListRecordCursor of(SqlExecutionContext executionContext) {
-                toTop();
-                if (metaReader == null) {
-                    // Assuming FilesFacade does not chang in real execution
-                    metaReader = new TableReaderMetadata(executionContext.getCairoEngine().getConfiguration().getFilesFacade());
-                }
-                return this;
-            }
-
             @Override
             public Record getRecordB() {
                 throw new UnsupportedOperationException();
@@ -185,11 +174,39 @@ public class TableMetadataCursorFactory implements FunctionFactory {
                 return -1;
             }
 
+            public TableListRecordCursor of(SqlExecutionContext executionContext) {
+                toTop();
+                if (metaReader == null) {
+                    // Assuming FilesFacade does not chang in real execution
+                    metaReader = new TableReaderMetadata(executionContext.getCairoEngine().getConfiguration().getFilesFacade());
+                }
+                return this;
+            }
+
             public class TableListRecord implements Record {
                 private int tableId;
                 private int maxUncommittedRows;
                 private long commitLag;
                 private int partitionBy;
+
+                @Override
+                public int getInt(int col) {
+                    if (col == idColumn) {
+                        return tableId;
+                    }
+                    if (col == maxUncommittedRowsColumn) {
+                        return maxUncommittedRows;
+                    }
+                    return Numbers.INT_NaN;
+                }
+
+                @Override
+                public long getLong(int col) {
+                    if (col == commitLagColumn) {
+                        return commitLag;
+                    }
+                    return Numbers.LONG_NaN;
+                }
 
                 @Override
                 public CharSequence getStr(int col) {
@@ -210,25 +227,6 @@ public class TableMetadataCursorFactory implements FunctionFactory {
                 @Override
                 public CharSequence getStrB(int col) {
                     return getStr(col);
-                }
-
-                @Override
-                public int getInt(int col) {
-                    if (col == idColumn) {
-                        return tableId;
-                    }
-                    if (col == maxUncommittedRowsColumn) {
-                        return maxUncommittedRows;
-                    }
-                    return Numbers.INT_NaN;
-                }
-
-                @Override
-                public long getLong(int col) {
-                    if (col == commitLagColumn) {
-                        return commitLag;
-                    }
-                    return Numbers.LONG_NaN;
                 }
 
                 @Override
@@ -264,5 +262,22 @@ public class TableMetadataCursorFactory implements FunctionFactory {
                 }
             }
         }
+    }
+
+    static {
+        final GenericRecordMetadata metadata = new GenericRecordMetadata();
+        metadata.add(new TableColumnMetadata("id", ColumnType.INT, null));
+        idColumn = metadata.getColumnCount() - 1;
+        metadata.add(new TableColumnMetadata("name", ColumnType.STRING, null));
+        nameColumn = metadata.getColumnCount() - 1;
+        metadata.add(new TableColumnMetadata("designatedTimestamp", ColumnType.STRING, null));
+        designatedTimestampColumn = metadata.getColumnCount() - 1;
+        metadata.add(new TableColumnMetadata("partitionBy", ColumnType.STRING, null));
+        partitionByColumn = metadata.getColumnCount() - 1;
+        metadata.add(new TableColumnMetadata("maxUncommittedRows", ColumnType.INT, null));
+        maxUncommittedRowsColumn = metadata.getColumnCount() - 1;
+        metadata.add(new TableColumnMetadata("commitLag", ColumnType.LONG, null));
+        commitLagColumn = metadata.getColumnCount() - 1;
+        METADATA = metadata;
     }
 }

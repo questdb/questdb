@@ -25,15 +25,7 @@
 package io.questdb.griffin.model;
 
 public interface IntervalModel {
-    boolean hasIntervals();
-
     void intersectIntervals(long lo, long hi);
 
     void intersectIntervals(CharSequence seq, int lo, int lim, int position);
-
-    void subtractIntervals(long lo, long hi);
-
-    void subtractIntervals(CharSequence seq, int lo, int lim, int position);
-
-    boolean isEmptySet();
 }

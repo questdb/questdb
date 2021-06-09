@@ -39,6 +39,7 @@ public class FunctionFactoryCache {
     private final CharSequenceObjHashMap<ObjList<FunctionFactoryDescriptor>> factories = new CharSequenceObjHashMap<>();
     private final CharSequenceHashSet groupByFunctionNames = new CharSequenceHashSet();
     private final CharSequenceHashSet cursorFunctionNames = new CharSequenceHashSet();
+    private final CharSequenceHashSet runtimeConstantFunctionNames = new CharSequenceHashSet();
 
     public FunctionFactoryCache(CairoConfiguration configuration, Iterable<FunctionFactory> functionFactories) {
         boolean enableTestFactories = configuration.enableTestFactories();
@@ -77,6 +78,8 @@ public class FunctionFactoryCache {
                         groupByFunctionNames.add(name);
                     } else if (factory.isCursor()) {
                         cursorFunctionNames.add(name);
+                    } else if (factory.isRuntimeConstant()) {
+                        runtimeConstantFunctionNames.add(name);
                     }
                 } catch (SqlException e) {
                     LOG.error().$((Sinkable) e).$(" [signature=").$(factory.getSignature()).$(",class=").$(factory.getClass().getName()).$(']').$();
@@ -103,6 +106,10 @@ public class FunctionFactoryCache {
 
     public boolean isGroupBy(CharSequence name) {
         return groupByFunctionNames.contains(name);
+    }
+
+    public boolean isRuntimeConstant(CharSequence name) {
+        return runtimeConstantFunctionNames.contains(name);
     }
 
     private void addFactoryToList(CharSequenceObjHashMap<ObjList<FunctionFactoryDescriptor>> list, FunctionFactory factory) throws SqlException {

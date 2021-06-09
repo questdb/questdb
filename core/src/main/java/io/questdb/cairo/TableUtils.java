@@ -110,7 +110,7 @@ public final class TableUtils {
     static final String TODO_FILE_NAME = "_todo_";
     private static final int MIN_SYMBOL_CAPACITY = 2;
     private static final int MAX_SYMBOL_CAPACITY = Numbers.ceilPow2(Integer.MAX_VALUE);
-    private static final int MAX_SYMBOL_CAPACITY_CACHED = Numbers.ceilPow2(1_000_000);
+    private static final int MAX_SYMBOL_CAPACITY_CACHED = Numbers.ceilPow2(30_000_000);
     private static final int MAX_INDEX_VALUE_BLOCK_SIZE = Numbers.ceilPow2(8 * 1024 * 1024);
     private final static Log LOG = LogFactory.getLog(TableUtils.class);
     private final static DateFormat fmtDefault;
@@ -881,6 +881,15 @@ public final class TableUtils {
             return fd;
         }
         throw CairoException.instance(ff.errno()).put("could not open read-write [file=").put(path).put(']');
+    }
+
+    static long openCleanRW(FilesFacade ff, LPSZ path, long size, Log log) {
+        final long fd = ff.openCleanRW(path, size);
+        if (fd > -1) {
+            log.debug().$("open clean [file=").$(path).$(", fd=").$(fd).$(']').$();
+            return fd;
+        }
+        throw CairoException.instance(ff.errno()).put("could not open read-write with clean allocation [file=").put(path).put(']');
     }
 
     static {

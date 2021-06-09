@@ -39,7 +39,7 @@ public class FirstIntGroupByFunction extends IntFunction implements GroupByFunct
     private final Function arg;
     private int valueIndex;
 
-    public FirstIntGroupByFunction(int position, @NotNull Function arg) {
+    public FirstIntGroupByFunction(@NotNull Function arg) {
         super();
         this.arg = arg;
     }

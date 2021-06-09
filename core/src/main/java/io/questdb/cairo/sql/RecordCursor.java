@@ -26,23 +26,61 @@ package io.questdb.cairo.sql;
 
 import java.io.Closeable;
 
+/**
+ * A cursor for managing position of operations over multiple records
+ *
+ * Interfaces which extend Closeable are not optionally-closeable.
+ * close() method must be called after other calls are complete.
+ */
 public interface RecordCursor extends Closeable, SymbolTableSource {
+    /**
+     * RecordCursor must be closed after other method calls are finished.
+     */
     @Override
     void close();
 
+    /**
+     * @return record at current position
+     */
     Record getRecord();
 
+    /**
+     * @param columnIndex numeric index of the column
+     * @return instance of symbol table or null, when column is not Symbol
+     */
     default SymbolTable getSymbolTable(int columnIndex) {
         throw new UnsupportedOperationException();
     }
 
+    /**
+     * @return true if more records may be accessed, otherwise false
+     */
     boolean hasNext();
 
+    /**
+     * May be used to compare references with getRecord
+     * @return record at current position
+     */
     Record getRecordB();
 
+    /**
+     * Positions record at given rowid. The rowid must have been previously obtained from Record instance.
+     * @param record to position
+     * @param atRowId rowid of the desired record
+     */
     void recordAt(Record record, long atRowId);
 
+    /**
+     * Return the cursor to the beginning of the page frame.
+     * Sets location to first column.
+     */
     void toTop();
 
+    /**
+     * Not every record cursor has a size, may return -1, in this case, keep going until next()
+     * indicated there are no more records to access.
+     *
+     * @return size of records available to the cursor
+     */
     long size();
 }

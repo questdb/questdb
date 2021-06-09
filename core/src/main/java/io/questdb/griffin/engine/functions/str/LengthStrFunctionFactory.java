@@ -42,14 +42,13 @@ public class LengthStrFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new LengthStrVFunc(position, args.getQuick(0));
+        return new LengthStrVFunc(args.getQuick(0));
     }
 
     private static class LengthStrVFunc extends IntFunction implements UnaryFunction {
         private final Function arg;
 
-        public LengthStrVFunc(int position, Function arg) {
-            super();
+        public LengthStrVFunc(Function arg) {
             this.arg = arg;
         }
 

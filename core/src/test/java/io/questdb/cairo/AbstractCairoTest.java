@@ -25,6 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.MessageBus;
+import io.questdb.Metrics;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.log.Log;
@@ -59,6 +60,7 @@ public class AbstractCairoTest {
     protected static FilesFacade ff;
     protected static long configOverrideCommitLag = -1;
     protected static int configOverrideMaxUncommittedRows = -1;
+    protected static Metrics metrics = Metrics.enabled();
 
     @Rule
     public TestName testName = new TestName();

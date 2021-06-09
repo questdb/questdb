@@ -44,6 +44,6 @@ public class LastIntGroupByFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new LastIntGroupByFunction(position, args.getQuick(0));
+        return new LastIntGroupByFunction(args.getQuick(0));
     }
 }

@@ -36,6 +36,11 @@ public class DescriptionCatalogueFunctionFactory extends AbstractEmptyCatalogueF
         super("pg_description()", METADATA);
     }
 
+    @Override
+    public boolean isRuntimeConstant() {
+        return true;
+    }
+
     static {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
         metadata.add(new TableColumnMetadata("objoid", ColumnType.INT, null));

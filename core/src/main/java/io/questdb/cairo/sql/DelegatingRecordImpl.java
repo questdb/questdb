@@ -28,7 +28,7 @@ import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.str.CharSink;
 
-public class DelegatingRecordImpl implements DelegatingRecord {
+public class DelegatingRecordImpl implements Record {
     private Record base;
 
     public void of(Record base) {
@@ -38,16 +38,6 @@ public class DelegatingRecordImpl implements DelegatingRecord {
     @Override
     public BinarySequence getBin(int col) {
         return base.getBin(col);
-    }
-
-    @Override
-    public int getInt(int col) {
-        return base.getInt(col);
-    }
-
-    @Override
-    public long getLong(int col) {
-        return base.getLong(col);
     }
 
     @Override
@@ -66,6 +56,11 @@ public class DelegatingRecordImpl implements DelegatingRecord {
     }
 
     @Override
+    public char getChar(int col) {
+        return base.getChar(col);
+    }
+
+    @Override
     public long getDate(int col) {
         return base.getDate(col);
     }
@@ -81,23 +76,13 @@ public class DelegatingRecordImpl implements DelegatingRecord {
     }
 
     @Override
-    public short getShort(int col) {
-        return base.getShort(col);
+    public int getInt(int col) {
+        return base.getInt(col);
     }
 
     @Override
-    public char getChar(int col) {
-        return base.getChar(col);
-    }
-
-    @Override
-    public CharSequence getStr(int col) {
-        return base.getStr(col);
-    }
-
-    @Override
-    public void getStr(int col, CharSink sink) {
-        base.getStr(col, sink);
+    public long getLong(int col) {
+        return base.getLong(col);
     }
 
     @Override
@@ -113,6 +98,26 @@ public class DelegatingRecordImpl implements DelegatingRecord {
     @Override
     public Long256 getLong256B(int col) {
         return base.getLong256B(col);
+    }
+
+    @Override
+    public Record getRecord(int col) {
+        return base.getRecord(col);
+    }
+
+    @Override
+    public short getShort(int col) {
+        return base.getShort(col);
+    }
+
+    @Override
+    public CharSequence getStr(int col) {
+        return base.getStr(col);
+    }
+
+    @Override
+    public void getStr(int col, CharSink sink) {
+        base.getStr(col, sink);
     }
 
     @Override
@@ -138,10 +143,5 @@ public class DelegatingRecordImpl implements DelegatingRecord {
     @Override
     public long getTimestamp(int col) {
         return base.getTimestamp(col);
-    }
-
-    @Override
-    public Record getRecord(int col) {
-        return base.getRecord(col);
     }
 }

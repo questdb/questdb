@@ -148,7 +148,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
         if (function == null) {
             throw SqlException.position(position).put("undefined bind variable: ").put(name);
         }
-        return new NamedParameterLinkFunction(Chars.toString(name), function.getType(), position);
+        return new NamedParameterLinkFunction(Chars.toString(name), function.getType());
     }
 
     public int getFunctionCount() {
@@ -165,6 +165,10 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
 
     public boolean isGroupBy(CharSequence token) {
         return functionFactoryCache.isGroupBy(token);
+    }
+
+    public boolean isRuntimeConstant(CharSequence token) {
+        return functionFactoryCache.isRuntimeConstant(token);
     }
 
     public boolean isValidNoArgFunction(ExpressionNode node) {
@@ -273,7 +277,6 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
                     functionStack.push(createFunction(node, null, null));
                     break;
             }
-            positionStack.push(node.position);
         } else {
             mutableArgs.clear();
             mutableArgs.setPos(argCount);
@@ -284,8 +287,8 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
                 mutableArgPositions.setQuick(n, positionStack.pop());
             }
             functionStack.push(createFunction(node, mutableArgs, mutableArgPositions));
-            positionStack.push(node.position);
         }
+        positionStack.push(node.position);
     }
 
     private static SqlException invalidFunction(ExpressionNode node, ObjList<Function> args) {

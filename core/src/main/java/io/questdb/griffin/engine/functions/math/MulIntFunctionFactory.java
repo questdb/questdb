@@ -42,15 +42,14 @@ public class MulIntFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new Func(position, args.getQuick(0), args.getQuick(1));
+        return new Func(args.getQuick(0), args.getQuick(1));
     }
 
     private static final class Func extends IntFunction implements BinaryFunction {
         private final Function left;
         private final Function right;
 
-        public Func(int position, Function left, Function right) {
-            super();
+        public Func(Function left, Function right) {
             this.left = left;
             this.right = right;
         }
