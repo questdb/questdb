@@ -3,8 +3,12 @@ package io.questdb.cutlass.line.tcp;
 import io.questdb.cutlass.line.tcp.LineTcpMeasurementScheduler.NetworkIOJob;
 
 public class AggressiveRecvLineTcpConnectionContext extends LineTcpConnectionContext {
+
+    private final int aggressiveReadRetryCount;
+
     AggressiveRecvLineTcpConnectionContext(LineTcpReceiverConfiguration configuration, LineTcpMeasurementScheduler scheduler) {
         super(configuration, scheduler);
+        this.aggressiveReadRetryCount = configuration.getAggressiveReadRetryCount();
     }
 
     @Override
@@ -13,7 +17,7 @@ public class AggressiveRecvLineTcpConnectionContext extends LineTcpConnectionCon
         read();
         do {
             rc = parseMeasurements(netIoJob);
-        } while (rc == IOContextResult.NEEDS_READ && (read()));
+        } while (rc == IOContextResult.NEEDS_READ && read());
         return rc;
     }
 
@@ -23,7 +27,7 @@ public class AggressiveRecvLineTcpConnectionContext extends LineTcpConnectionCon
             return true;
         }
 
-        long remaining = 10_000;
+        int remaining = aggressiveReadRetryCount;
 
         while (remaining > 0) {
             if (super.read()) {

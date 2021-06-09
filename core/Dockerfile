@@ -7,9 +7,7 @@ WORKDIR /build
 
 RUN curl -L "https://www.mirrorservice.org/sites/ftp.apache.org/maven/maven-3/3.6.3/binaries/apache-maven-3.6.3-bin.zip" --output maven.zip \
   && unzip maven.zip \
-  && git clone --progress https://github.com/questdb/questdb.git \
-  && cd questdb \
-  && git checkout fix_docker
+  && git clone --depth=1 --progress --verbose https://github.com/questdb/questdb.git
 
 WORKDIR /build/questdb
 
@@ -54,4 +52,4 @@ EXPOSE 9009/tcp
 #
 # then one can create 'log.conf' in the 'conf' dir and override logger fully
 #
-CMD ["/app/bin/java", "-Debug", "-Dout=conf/log.conf", "-m", "io.questdb/io.questdb.ServerMain", "-d", "/root/.questdb", "-f"]
+CMD ["/app/bin/java", "-Dout=conf/log.conf", "-m", "io.questdb/io.questdb.ServerMain", "-d", "/root/.questdb", "-f"]

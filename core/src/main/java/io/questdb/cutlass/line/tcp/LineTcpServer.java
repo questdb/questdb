@@ -120,7 +120,7 @@ public class LineTcpServer implements Closeable {
         public LineTcpConnectionContextFactory(LineTcpReceiverConfiguration configuration) {
             ObjectFactory<LineTcpConnectionContext> factory;
             if (null == configuration.getAuthDbPath()) {
-                if (configuration.isIOAggressiveRecv()) {
+                if (configuration.getAggressiveReadRetryCount() > 0) {
                     LOG.info().$("using aggressive context").$();
                     factory = () -> new AggressiveRecvLineTcpConnectionContext(configuration, scheduler);
                 } else {
