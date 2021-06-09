@@ -729,7 +729,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                 if (null != lineTcpAuthDbPath) {
                     this.lineTcpAuthDbPath = new File(root, this.lineTcpAuthDbPath).getAbsolutePath();
                 }
-                this.lineTcpAggressiveRecv = getBoolean(properties, env, "line.tcp.io.aggressive.recv", true);
+                this.lineTcpAggressiveRecv = getBoolean(properties, env, "line.tcp.io.aggressive.recv", false);
                 this.minIdleMsBeforeWriterRelease = getLong(properties, env, "line.tcp.min.idle.ms.before.writer.release", 10_000);
             }
 
