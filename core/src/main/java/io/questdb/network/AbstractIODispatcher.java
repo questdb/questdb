@@ -30,7 +30,9 @@ import io.questdb.mp.*;
 import io.questdb.std.LongMatrix;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.locks.LockSupport;
 
 public abstract class AbstractIODispatcher<C extends IOContext> extends SynchronizedJob implements IODispatcher<C>, EagerThreadSetup {
     protected static final int M_TIMESTAMP = 0;
@@ -48,7 +50,7 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
     protected final IOContextFactory<C> ioContextFactory;
     protected final NetworkFacade nf;
     protected final int initialBias;
-    protected final AtomicInteger connectionCount = new AtomicInteger();
+    private final AtomicInteger connectionCount = new AtomicInteger();
     protected final RingQueue<IOEvent<C>> disconnectQueue;
     protected final MPSequence disconnectPubSeq;
     protected final SCSequence disconnectSubSeq;
@@ -57,6 +59,8 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
     protected final LongMatrix<C> pending = new LongMatrix<>(4);
     private final int sndBufSize;
     private final int rcvBufSize;
+    private final AtomicBoolean listenRegistrationLock = new AtomicBoolean();
+    private boolean listening;
 
     public AbstractIODispatcher(
             IODispatcherConfiguration configuration,
@@ -99,6 +103,7 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
                     configuration.getBindPort()
             );
         }
+        listening = true;
     }
 
     @Override
@@ -164,7 +169,8 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
     }
 
     protected void accept(long timestamp) {
-        while (true) {
+        int conCount = this.connectionCount.get();
+        while (conCount < activeConnectionLimit) {
             // this accept is greedy, rather than to rely on epoll(or similar) to
             // fire accept requests at us one at a time we will be actively accepting
             // until nothing left.
@@ -175,29 +181,19 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
                 if (nf.errno() != Net.EWOULDBLOCK) {
                     LOG.error().$("could not accept [ret=").$(fd).$(", errno=").$(nf.errno()).$(']').$();
                 }
-                return;
-            }
-
-            final int connectionCount = this.connectionCount.get();
-            if (connectionCount >= activeConnectionLimit) {
-                LOG.error().$("connection limit exceeded [fd=").$(fd)
-                        .$(", connectionCount=").$(connectionCount)
-                        .$(", activeConnectionLimit=").$(activeConnectionLimit)
-                        .$(']').$();
-                nf.close(fd, LOG);
-                continue;
+                break;
             }
 
             if (nf.configureNonBlocking(fd) < 0) {
                 LOG.error().$("could not configure non-blocking [fd=").$(fd).$(", errno=").$(nf.errno()).$(']').$();
                 nf.close(fd, LOG);
-                return;
+                break;
             }
 
             if (nf.setTcpNoDelay(fd, true) < 0) {
                 LOG.error().$("could not configure no delay [fd=").$(fd).$(", errno=").$(nf.errno()).$(']').$();
                 nf.close(fd, LOG);
-                return;
+                break;
             }
 
             if (sndBufSize > 0) {
@@ -209,8 +205,24 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
             }
 
             LOG.info().$("connected [ip=").$ip(nf.getPeerIP(fd)).$(", fd=").$(fd).$(']').$();
-            this.connectionCount.incrementAndGet();
+            conCount = connectionCount.incrementAndGet();
             addPending(fd, timestamp);
+        }
+
+        if (conCount >= activeConnectionLimit) {
+            // connectionCount may be less than tlConCount due to action in other threads, but not more
+            while (!listenRegistrationLock.compareAndSet(false, true)) {
+                LockSupport.parkNanos(1);
+            }
+            try {
+                if (connectionCount.get() >= activeConnectionLimit) {
+                    unregisterListenerFd();
+                    listening = false;
+                    LOG.info().$("max connection limit reached, unregistered listener[serverFd=").$(serverFd).I$();
+                }
+            } finally {
+                listenRegistrationLock.set(false);
+            }
         }
     }
 
@@ -241,7 +253,20 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
                 .$(']').$();
         nf.close(fd, LOG);
         ioContextFactory.done(context);
-        connectionCount.decrementAndGet();
+        if (connectionCount.getAndDecrement() >= activeConnectionLimit) {
+            while (!listenRegistrationLock.compareAndSet(false, true)) {
+                LockSupport.parkNanos(1);
+            }
+            try {
+                if (connectionCount.get() < activeConnectionLimit) {
+                    registerListenerFd();
+                    listening = true;
+                    LOG.info().$("below maximum connection limit, registered listener[serverFd=").$(serverFd).I$();
+                }
+            } finally {
+                listenRegistrationLock.set(false);
+            }
+        }
     }
 
     protected void logSuccess(IODispatcherConfiguration configuration) {
@@ -252,6 +277,10 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
     }
 
     protected abstract void pendingAdded(int index);
+
+    protected abstract void registerListenerFd();
+
+    protected abstract void unregisterListenerFd();
 
     protected void processDisconnects() {
         disconnectSubSeq.consumeAll(disconnectQueue, this.disconnectContextRef);
@@ -264,5 +293,17 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
         evt.operation = operation;
         ioEventPubSeq.done(cursor);
         LOG.debug().$("fired [fd=").$(context.getFd()).$(", op=").$(evt.operation).$(", pos=").$(cursor).$(']').$();
+    }
+
+    @Override
+    public boolean isListening() {
+        while (!listenRegistrationLock.compareAndSet(false, true)) {
+            LockSupport.parkNanos(1);
+        }
+        try {
+            return listening;
+        } finally {
+            listenRegistrationLock.set(false);
+        }
     }
 }

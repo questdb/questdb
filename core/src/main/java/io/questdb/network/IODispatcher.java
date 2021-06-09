@@ -36,4 +36,6 @@ public interface IODispatcher<C extends IOContext> extends Closeable, Job {
     boolean processIOQueue(IORequestProcessor<C> processor);
 
     void disconnect(C context);
+
+    public boolean isListening();
 }

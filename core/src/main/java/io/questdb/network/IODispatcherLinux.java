@@ -35,7 +35,7 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
     ) {
         super(configuration, ioContextFactory);
         this.epoll = new Epoll(configuration.getEpollFacade(), configuration.getEventCapacity());
-        this.epoll.listen(serverFd);
+        registerListenerFd();
         logSuccess(configuration);
     }
 
@@ -165,5 +165,15 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
         }
 
         return processRegistrations(timestamp) || useful;
+    }
+
+    @Override
+    protected void registerListenerFd() {
+        this.epoll.listen(serverFd);
+    }
+
+    @Override
+    protected void unregisterListenerFd() {
+        this.epoll.removeListen(serverFd);
     }
 }

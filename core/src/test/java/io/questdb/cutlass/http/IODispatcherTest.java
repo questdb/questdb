@@ -57,6 +57,7 @@ import org.junit.rules.TemporaryFolder;
 import java.io.InputStream;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
@@ -3876,7 +3877,9 @@ public class IODispatcherTest {
         assertMemoryLeak(() -> {
             HttpServerConfiguration httpServerConfiguration = new DefaultHttpServerConfiguration();
 
-            int N = 15;
+            final int listenBackLog = 10;
+            final int activeConnectionLimit = 5;
+            final int nExcessConnections = 20;
 
             AtomicInteger openCount = new AtomicInteger(0);
             AtomicInteger closeCount = new AtomicInteger(0);
@@ -3884,7 +3887,12 @@ public class IODispatcherTest {
             final IODispatcherConfiguration configuration = new DefaultIODispatcherConfiguration() {
                 @Override
                 public int getActiveConnectionLimit() {
-                    return N;
+                    return activeConnectionLimit;
+                }
+
+                @Override
+                public int getListenBacklog() {
+                    return listenBackLog;
                 }
             };
 
@@ -3938,6 +3946,7 @@ public class IODispatcherTest {
 
                 final long sockAddr = Net.sockaddr("127.0.0.1", 9001);
                 final long buf = Unsafe.malloc(4096);
+                final int N = activeConnectionLimit + listenBackLog;
                 try {
                     for (int i = 0; i < N; i++) {
                         long fd = Net.socketTcp(true);
@@ -3947,7 +3956,12 @@ public class IODispatcherTest {
                     }
 
                     // let dispatcher catchup
-                    while (dispatcher.getConnectionCount() < N) {
+                    long startNanos = System.nanoTime();
+                    while (dispatcher.isListening()) {
+                        long endNanos = System.nanoTime();
+                        if (TimeUnit.NANOSECONDS.toSeconds(endNanos - startNanos) > 30) {
+                            Assert.fail("Timed out waiting for despatcher to stop listening");
+                        }
                         LockSupport.parkNanos(1);
                     }
 
@@ -3961,32 +3975,40 @@ public class IODispatcherTest {
                             "Accept-Language: en-US,en;q=0.8\r\n" +
                             "Cookie: textwrapon=false; textautoformat=false; wysiwyg=textarea\r\n" +
                             "\r\n";
-
                     long mem = TestUtils.toMemory(request);
+
+                    // Active connection limit is reached and backlog is full, check we get connection closed
+                    for (int i = 0; i < nExcessConnections; i++) {
+                        long fd = Net.socketTcp(true);
+                        if (fd > 0) {
+                            int nSent = Net.send(fd, mem, request.length());
+                            Assert.assertTrue(nSent < 0);
+                            Net.close(fd);
+                        }
+                    }
+
                     try {
                         for (int i = 0; i < N; i++) {
+                            if (i == activeConnectionLimit) {
+                                for (int j = 0; j < activeConnectionLimit; j++) {
+                                    Net.close(openFds.getQuick(j));
+                                }
+                            }
+
                             long fd = openFds.getQuick(i);
                             Assert.assertEquals(request.length(), Net.send(fd, mem, request.length()));
                             // ensure we have response from server
                             Assert.assertTrue(0 < Net.recv(fd, buf, 64));
-                        }
 
-                        long fd = Net.socketTcp(true);
-                        try {
-                            Net.connect(fd, sockAddr);
-
-                            Assert.assertEquals(request.length(), Net.send(fd, mem, request.length()));
-                            // ensure we got disconnected
-                            Assert.assertTrue(0 > Net.recv(fd, buf, 64));
-
-                        } finally {
-                            Net.close(fd);
+                            if (i < activeConnectionLimit) {
+                                // dont close any connections until the first connections have been processed and check that the dispatcher
+                                // is not listening
+                                Assert.assertFalse(dispatcher.isListening());
+                            } else {
+                                Net.close(fd);
+                            }
                         }
                     } finally {
-                        // close all fds we built up so far
-                        for (int i = 0; i < N; i++) {
-                            Net.close(openFds.getQuick(i));
-                        }
                         Unsafe.free(mem, request.length());
                     }
                 } finally {
