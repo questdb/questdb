@@ -169,8 +169,8 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
     }
 
     protected void accept(long timestamp) {
-        int conCount = this.connectionCount.get();
-        while (conCount < activeConnectionLimit) {
+        int tlConCount = this.connectionCount.get();
+        while (tlConCount < activeConnectionLimit) {
             // this accept is greedy, rather than to rely on epoll(or similar) to
             // fire accept requests at us one at a time we will be actively accepting
             // until nothing left.
@@ -205,11 +205,11 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
             }
 
             LOG.info().$("connected [ip=").$ip(nf.getPeerIP(fd)).$(", fd=").$(fd).$(']').$();
-            conCount = connectionCount.incrementAndGet();
+            tlConCount = connectionCount.incrementAndGet();
             addPending(fd, timestamp);
         }
 
-        if (conCount >= activeConnectionLimit) {
+        if (tlConCount >= activeConnectionLimit) {
             // connectionCount may be less than tlConCount due to action in other threads, but not more
             while (!listenRegistrationLock.compareAndSet(false, true)) {
                 LockSupport.parkNanos(1);
