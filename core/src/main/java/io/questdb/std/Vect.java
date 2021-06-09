@@ -57,24 +57,69 @@ public final class Vect {
     public static native void copyFromTimestampIndex(long pIndex, long indexLo, long indexHi, long pTs);
 
     public static long findFirstLastInFrame(
+            long sampleByStart,
             long startRowId,
             long pageSize,
-            long timestampBuff,
+            long timestampColAddress,
             TimestampSampler timestampSampler,
-            int key,
-            long symbolIndexBuff,
+            long symbolIndexAddress,
             long symbolIndexSize,
-            long timestampOutBuff,
-            long firstRowIdOutBuff,
-            long lastRowIdOutBuff) {
-        if (pageSize > 0 && symbolIndexSize > 0) {
-            long firstTs = Unsafe.getUnsafe().getLong(timestampBuff);
-            int resultOffset = 0;
-            long scanIndex = 0;
-            while (scanIndex < pageSize) {
+            long indexFrameIndex,
+            long timestampOutAddress,
+            long firstRowIdOutAddress,
+            long lastRowIdOutAddress,
+            long outRowIdSize
+    ) {
+        if (startRowId < pageSize && indexFrameIndex < symbolIndexSize) {
+            // Sample by window start, end
+            long sampleByEnd = timestampSampler.nextTimestamp(sampleByStart);
+            long outIndex = 0;
+            long maxOutRows = outRowIdSize - 1;
 
+            long iIndex = indexFrameIndex;
+            long indexRowId = 0;
+            for (; iIndex < symbolIndexSize; iIndex++) {
+                indexRowId = Unsafe.getUnsafe().getLong(symbolIndexAddress + iIndex * Long.BYTES);
+                long indexRowIdPageOffset = indexRowId - startRowId;
+
+                if (indexRowIdPageOffset < pageSize) {
+                    long indexRowTimestamp = Unsafe.getUnsafe().getLong(timestampColAddress + indexRowIdPageOffset * Long.BYTES);
+
+                    if (indexRowTimestamp < sampleByStart) {
+                        // Fast path, skip index rowid when it fails before current window
+                        continue;
+                    }
+
+                    while (indexRowTimestamp >= sampleByEnd) {
+                        // Go to next sample by window.
+                        sampleByStart = sampleByEnd;
+                        sampleByEnd = timestampSampler.nextTimestamp(sampleByStart);
+                    }
+
+                    if (indexRowTimestamp >= sampleByStart && indexRowTimestamp < sampleByEnd) {
+                        Unsafe.getUnsafe().putLong(timestampOutAddress + outIndex * Long.BYTES, sampleByStart);
+                        Unsafe.getUnsafe().putLong(firstRowIdOutAddress + outIndex * Long.BYTES, indexRowId);
+                        outIndex++;
+
+                        // Go to next sample by window.
+                        sampleByStart = sampleByEnd;
+                        sampleByEnd = timestampSampler.nextTimestamp(sampleByStart);
+
+                        if (outIndex > maxOutRows) {
+                            break;
+                        }
+                    }
+                } else {
+                    break;
+                }
             }
+
+            Unsafe.getUnsafe().putLong(timestampOutAddress + outIndex * Long.BYTES, sampleByStart);
+            Unsafe.getUnsafe().putLong(firstRowIdOutAddress + outIndex * Long.BYTES, iIndex);
+            Unsafe.getUnsafe().putLong(lastRowIdOutAddress + outIndex * Long.BYTES, indexRowId);
+            return outIndex;
         }
+        return 0;
     }
 
     public static native void flattenIndex(long pIndex, long count);

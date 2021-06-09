@@ -38,9 +38,9 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
     private final GenericRecordMetadata groupByMetadata;
     private final int timestampIndex;
     private static final long BUFF_SIZE = 4096;
-    private long timestampOutBuff;
-    private long firstRowIdOutBuff;
-    private long lastRowIdOutBuff;
+    private final long timestampOutAddress;
+    private final long firstRowIdOutAddress;
+    private final long lastRowIdOutAddress;
     private final int gropuBySymbolColIndex;
 
     public SampleByFirstLastRecordCursorFactory(
@@ -55,18 +55,18 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
         this.timestampSampler = timestampSampler;
         this.groupByMetadata = groupByMetadata;
         this.timestampIndex = timestampIndex;
-        timestampOutBuff = Unsafe.malloc(BUFF_SIZE * Long.BYTES);
-        firstRowIdOutBuff = Unsafe.malloc(BUFF_SIZE * Long.BYTES);
-        lastRowIdOutBuff = Unsafe.malloc(BUFF_SIZE * Long.BYTES);
+        timestampOutAddress = Unsafe.malloc(BUFF_SIZE * Long.BYTES);
+        firstRowIdOutAddress = Unsafe.malloc(BUFF_SIZE * Long.BYTES);
+        lastRowIdOutAddress = Unsafe.malloc(BUFF_SIZE * Long.BYTES);
         gropuBySymbolColIndex = 1;
     }
 
     @Override
     public void close() {
         base.close();
-        Unsafe.free(timestampOutBuff, BUFF_SIZE * Long.BYTES);
-        Unsafe.free(firstRowIdOutBuff, BUFF_SIZE * Long.BYTES);
-        Unsafe.free(lastRowIdOutBuff, BUFF_SIZE * Long.BYTES);
+        Unsafe.free(timestampOutAddress, BUFF_SIZE * Long.BYTES);
+        Unsafe.free(firstRowIdOutAddress, BUFF_SIZE * Long.BYTES);
+        Unsafe.free(lastRowIdOutAddress, BUFF_SIZE * Long.BYTES);
     }
 
     @Override
@@ -88,15 +88,20 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
         private final PageFrameCursor pageFrameCursor;
         private final SymbolMapReader symbolsReader;
         private PageFrame currentFrame;
-        private SampleByFirstLastRecord record = new SampleByFirstLastRecord();
+        private final SampleByFirstLastRecord record = new SampleByFirstLastRecord();
         private long currentRow;
         private long rowsFound;
         private IndexFrameCursor indexCursor;
+        private long firstRowId = -1;
+        private long firstTimestamp = -1;
+        private long pageRowSize = -1;
+        private IndexFrame indexFrame;
+        private long indexFrameIndex = -1;
+        private BitmapIndexReader symbolIndexReader;
 
         public SampleByFirstLastRecordCursor(PageFrameCursor pageFrameCursor) {
             this.pageFrameCursor = pageFrameCursor;
             this.symbolsReader = pageFrameCursor.getSymbolMapReader(gropuBySymbolColIndex);
-            currentRow = -1;
         }
 
         @Override
@@ -110,53 +115,89 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
         }
 
         @Override
+        public SymbolTable getSymbolTable(int columnIndex) {
+            return pageFrameCursor.getSymbolMapReader(columnIndex);
+        }
+
+        @Override
         public boolean hasNext() {
-            if (currentFrame == null) {
-                currentFrame = pageFrameCursor.next();
+            if (currentRow >= rowsFound) {
+                if (pageRowSize <= firstRowId) {
+                    currentFrame = pageFrameCursor.next();
+                    if (currentFrame != null) {
+                        symbolIndexReader = currentFrame.getBitmapIndexReader(gropuBySymbolColIndex, BitmapIndexReader.DIR_FORWARD);
+                        pageRowSize = currentFrame.getPageSize(timestampIndex) / Long.BYTES;
+                        firstRowId = currentFrame.getFirstRowId();
+                        indexCursor = null;
+                    }
+                }
+
                 if (currentFrame == null) {
                     return false;
                 }
+
                 findInFrame(currentFrame);
+                currentRow = -1;
             }
 
+            // No else, first if sets currentRow
             if (++currentRow < rowsFound) {
                 record.of(currentRow);
-                if (currentRow == rowsFound) {
-                    currentFrame = null;
-                }
                 return true;
             }
             return false;
         }
 
         private void findInFrame(PageFrame currentFrame) {
-            long timestampBuff = currentFrame.getPageAddress(timestampIndex);
-            long pageSize = currentFrame.getPageSize(timestampIndex);
+            long timestampColumnAddress = currentFrame.getPageAddress(timestampIndex);
+            long lastFrameRowId = firstRowId + pageRowSize;
 
-            BitmapIndexReader symbolIndexReader = currentFrame.getBitmapIndexReader(gropuBySymbolColIndex, BitmapIndexReader.DIR_FORWARD);
-            int key = 0;
+            // TODO: find key id from query
+            int key = 1;
+
             if (indexCursor == null) {
-                indexCursor = symbolIndexReader.getNextFrame(key, currentFrame.getFirstRowId(), currentFrame.getFirstRowId() + pageSize);
+                indexCursor = symbolIndexReader.getNextFrame(key, firstRowId, lastFrameRowId);
             }
 
-            IndexFrame frame = indexCursor.getNext();
-            rowsFound = Vect.findFirstLastInFrame(
-                    pageSize,
-                    timestampBuff,
-                    timestampSampler,
-                    key,
-                    frame.getAddress(),
-                    frame.getSize(),
-                    timestampOutBuff,
-                    firstRowIdOutBuff,
-                    lastRowIdOutBuff);
+            if (indexFrame == null || indexFrameIndex >= indexFrame.getSize()) {
+                indexFrame = indexCursor.getNext();
+                indexFrameIndex = 0;
+            }
 
-            currentRow = -1;
+            if (firstTimestamp == -1 && indexFrame.getSize() > 0) {
+                long rowId = Unsafe.getUnsafe().getLong(indexFrame.getAddress());
+                firstTimestamp = Unsafe.getUnsafe().getLong(timestampColumnAddress + rowId * Long.BYTES);
+            }
+
+            rowsFound = Vect.findFirstLastInFrame(
+                    firstTimestamp,
+                    firstRowId,
+                    pageRowSize,
+                    timestampColumnAddress,
+                    timestampSampler,
+                    indexFrame.getAddress(),
+                    indexFrame.getSize(),
+                    indexFrameIndex,
+                    timestampOutAddress,
+                    firstRowIdOutAddress,
+                    lastRowIdOutAddress,
+                    BUFF_SIZE);
+
+            if (rowsFound > 0) {
+                assert rowsFound < BUFF_SIZE;
+
+                // Read output timestamp and rowId to resume at the end of the output buffers
+                indexFrameIndex = Unsafe.getUnsafe().getLong(firstRowIdOutAddress + rowsFound * Long.BYTES);
+                long nextFirstRowId = Unsafe.getUnsafe().getLong(lastRowIdOutAddress + rowsFound * Long.BYTES);
+                assert nextFirstRowId > firstRowId;
+                firstRowId = nextFirstRowId;
+                firstTimestamp = Unsafe.getUnsafe().getLong(timestampColumnAddress + rowsFound * Long.BYTES);
+            }
         }
 
         @Override
         public Record getRecordB() {
-            return null;
+            throw new UnsupportedOperationException();
         }
 
         @Override
@@ -167,6 +208,14 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
         @Override
         public void toTop() {
             currentFrame = null;
+            currentRow = 0;
+            rowsFound = 0;
+            firstRowId = -1;
+            firstTimestamp = -1;
+            pageRowSize = -1;
+            indexFrame = null;
+            indexFrameIndex = -1;
+            indexCursor = null;
             pageFrameCursor.toTop();
         }
 
@@ -176,36 +225,44 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
         }
 
         private class SampleByFirstLastRecord implements Record {
-            private long firstRowIndex;
+            private long rowId;
 
             public SampleByFirstLastRecord of(long currentRow) {
-                firstRowIndex = Unsafe.getUnsafe().getLong(firstRowIdOutBuff + currentRow * Long.BYTES);
+                rowId = Unsafe.getUnsafe().getLong(firstRowIdOutAddress + currentRow * Long.BYTES);
                 return this;
             }
 
             @Override
             public long getTimestamp(int col) {
                 if (col == timestampIndex) {
-                    return Unsafe.getUnsafe().getLong(timestampOutBuff + currentRow * Long.BYTES);
+                    // Special case - timestamp the sample by runs on
+                    // Take it from timestampOutBuff instead of column
+                    // It's the value of the beginning of the group, not where the first row found
+                    return Unsafe.getUnsafe().getLong(timestampOutAddress + currentRow * Long.BYTES);
                 }
 
-                return Unsafe.getUnsafe().getLong(currentFrame.getPageAddress(col) + firstRowIndex * Long.BYTES);
+                return Unsafe.getUnsafe().getLong(currentFrame.getPageAddress(col) + rowId * Long.BYTES);
             }
 
             @Override
             public long getLong(int col) {
-                return Unsafe.getUnsafe().getLong(currentFrame.getPageAddress(col) + firstRowIndex * Long.BYTES);
+                return Unsafe.getUnsafe().getLong(currentFrame.getPageAddress(col) + rowId * Long.BYTES);
             }
 
             @Override
             public double getDouble(int col) {
-                return Unsafe.getUnsafe().getDouble(currentFrame.getPageAddress(col) + firstRowIndex * Double.BYTES);
+                return Unsafe.getUnsafe().getDouble(currentFrame.getPageAddress(col) + rowId * Double.BYTES);
             }
 
             @Override
             public CharSequence getSym(int col) {
-                int symbolId = Unsafe.getUnsafe().getInt(currentFrame.getPageAddress(col) + firstRowIndex * Double.BYTES);
+                int symbolId = Unsafe.getUnsafe().getInt(currentFrame.getPageAddress(col) + rowId * Integer.BYTES);
                 return symbolsReader.valueBOf(symbolId);
+            }
+
+            @Override
+            public int getInt(int col) {
+                return Unsafe.getUnsafe().getInt(currentFrame.getPageAddress(col) + rowId * Integer.BYTES);
             }
         }
     }
