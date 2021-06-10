@@ -6,6 +6,7 @@ import * as QuestDB from "utils/questdb"
 import { actions } from "store"
 import { Text } from "components"
 import { NotificationType } from "types"
+import { formatTableSchemaQueryResult } from "./services"
 
 type Props = {
   name: string
@@ -16,32 +17,35 @@ const ContextualMenu = ({ name }: Props) => {
   const dispatch = useDispatch()
 
   const handleCopySchemaToClipboard = useCallback(() => {
-    void quest.queryRaw("select build", { limit: "0,1000" }).then((result) => {
-      if (result.type === QuestDB.Type.DQL) {
-        if (result.count === 1) {
-          void navigator.clipboard.writeText(result.dataset[0][0]).then(() => {
+    void quest
+      .queryRaw(`table_columns('${name}')`)
+      .then((result) => {
+        if (result.type === QuestDB.Type.DQL && result.count > 0) {
+          const formattedResult = formatTableSchemaQueryResult(name, result)
+          void navigator.clipboard.writeText(formattedResult).then(() => {
             dispatch(
               actions.query.addNotification({
                 title: (
-                  <Text color="draculaForeground">DB Schema copied !</Text>
+                  <Text color="draculaForeground">Table Schema copied !</Text>
                 ),
+                line1: <Text color="draculaForeground">{formattedResult}</Text>,
                 type: NotificationType.SUCCESS,
               }),
             )
           })
-        } else {
-          dispatch(
-            actions.query.addNotification({
-              title: (
-                <Text color="draculaForeground">DB Schema copy error</Text>
-              ),
-              type: NotificationType.ERROR,
-            }),
-          )
         }
-      }
-    })
-  }, [quest, dispatch])
+      })
+      .catch(() => {
+        dispatch(
+          actions.query.addNotification({
+            title: (
+              <Text color="draculaForeground">Table Schema copy error</Text>
+            ),
+            type: NotificationType.ERROR,
+          }),
+        )
+      })
+  }, [quest, dispatch, name])
 
   return (
     <ContextMenu id={name}>

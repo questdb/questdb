@@ -34,17 +34,15 @@ const BuildVersion = () => {
     void quest.queryRaw("select build", { limit: "0,1000" }).then((result) => {
       if (result.type === QuestDB.Type.DQL) {
         if (result.count === 1) {
-          setBuildVersion(result.dataset[0][0])
+          setBuildVersion(formatVersion(result.dataset[0][0]))
         }
       }
     })
   })
 
-  const version = formatVersion(buildVersion)
-
   const handleCopy = useCallback(() => {
     void navigator.clipboard
-      .writeText(version)
+      .writeText(buildVersion)
       .then(() => {
         dispatch(
           actions.query.addNotification({
@@ -65,12 +63,12 @@ const BuildVersion = () => {
           }),
         )
       })
-  }, [version, dispatch])
+  }, [buildVersion, dispatch])
 
   return (
     <Wrapper>
       <CopyButton onClick={handleCopy} title="Copy Build Version">
-        <span>{version}</span>
+        <span>{buildVersion}</span>
         <ClipboardCopy size="18px" />
       </CopyButton>
     </Wrapper>
