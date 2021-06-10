@@ -111,10 +111,15 @@ public class IODispatcherWindows<C extends IOContext> extends AbstractIODispatch
 
         processDisconnects();
 
-        int count = sf.select(readFdSet.address, writeFdSet.address, 0);
-        if (count < 0) {
-            LOG.error().$("Error in select(): ").$(nf.errno()).$();
-            return false;
+        int count;
+        if (readFdSet.getCount() > 0 || writeFdSet.getCount() > 0) {
+            count = sf.select(readFdSet.address, writeFdSet.address, 0);
+            if (count < 0) {
+                LOG.error().$("Error in select(): ").$(nf.errno()).$();
+                return false;
+            }
+        } else {
+            count = 0;
         }
 
         final long timestamp = clock.getTicks();
