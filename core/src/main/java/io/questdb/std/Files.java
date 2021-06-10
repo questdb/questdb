@@ -24,13 +24,13 @@
 
 package io.questdb.std;
 
+import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Path;
+
 import java.io.File;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.atomic.AtomicLong;
-
-import io.questdb.std.str.LPSZ;
-import io.questdb.std.str.Path;
 
 public final class Files {
 
@@ -212,6 +212,10 @@ public final class Files {
         return bumpFileCount(openRW(lpsz.address()));
     }
 
+    public static long openCleanRW(LPSZ lpsz, long size) {
+        return bumpFileCount(openCleanRW(lpsz.address(), size));
+    }
+
     public native static long read(long fd, long address, long len, long offset);
 
     public static boolean remove(LPSZ lpsz) {
@@ -313,6 +317,8 @@ public final class Files {
     private native static long openRO(long lpszName);
 
     private native static long openRW(long lpszName);
+
+    public native static long openCleanRW(long lpszName, long size);
 
     private native static long openAppend(long lpszName);
 

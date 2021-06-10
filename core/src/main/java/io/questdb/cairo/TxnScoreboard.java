@@ -46,13 +46,10 @@ public class TxnScoreboard implements Closeable {
     public TxnScoreboard(FilesFacade ff, @Transient Path root, int entryCount) {
         this.ff = ff;
         root.concat(TableUtils.TXN_SCOREBOARD_FILE_NAME).$();
-        this.fd = TableUtils.openRW(ff, root, LOG);
         int pow2EntryCount = Numbers.ceilPow2(entryCount);
         this.size = TxnScoreboard.getScoreboardSize(pow2EntryCount);
-        if (!ff.allocate(fd, this.size)) {
-            ff.close(fd);
-            throw CairoException.instance(ff.errno()).put("not enough space on disk? [name=").put(root).put(", size=").put(this.size).put(']') ;
-        }
+        this.fd = TableUtils.openCleanRW(ff, root, this.size, LOG);
+
         // truncate is required to give file a size
         // the allocate above does not seem to update file system's size entry
         ff.truncate(fd, this.size);

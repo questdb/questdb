@@ -43,6 +43,8 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.LockSupport;
 
 public class NetTest {
+    private int port = 9992;
+
     @Test
     public void testNoLinger() throws InterruptedException, BrokenBarrierException {
         bindAcceptConnectClose();
@@ -92,7 +94,7 @@ public class NetTest {
     }
 
     private void bindAcceptConnectClose() throws InterruptedException, BrokenBarrierException {
-        int port = 9992;
+        int port = this.port++;
         long fd = Net.socketTcp(true);
         Assert.assertTrue(fd > 0);
         Assert.assertTrue(Net.bindTcp(fd, 0, port));
@@ -112,7 +114,6 @@ public class NetTest {
                 Net.appendIP4(sink, Net.getPeerIP(clientfd));
                 Net.configureNoLinger(clientfd);
                 Net.close(clientfd);
-                haltLatch.countDown();
             } catch (Exception e) {
                 threadFailed.set(true);
                 e.printStackTrace();
@@ -124,7 +125,15 @@ public class NetTest {
         barrier.await();
         long clientFd = Net.socketTcp(true);
         long sockAddr = Net.sockaddr("127.0.0.1", port);
-        Assert.assertEquals(0, Net.connect(clientFd, sockAddr));
+        long sockFd = -1;
+        for(int i = 0; i < 2000; i++) {
+            sockFd = Net.connect(clientFd, sockAddr);
+            if (sockFd >= 0) {
+                break;
+            }
+            Thread.sleep(5);
+        }
+        Assert.assertEquals(0, sockFd);
         Assert.assertTrue(haltLatch.await(10, TimeUnit.SECONDS));
         Net.close(clientFd);
         Net.close(fd);
@@ -135,7 +144,7 @@ public class NetTest {
 
     @Test
     public void testSendAndRecvBuffer() throws InterruptedException, BrokenBarrierException {
-        int port = 9992;
+        int port = this.port++;
         long fd = Net.socketTcp(true);
         Assert.assertTrue(fd > 0);
         Assert.assertTrue(Net.bindTcp(fd, 0, port));

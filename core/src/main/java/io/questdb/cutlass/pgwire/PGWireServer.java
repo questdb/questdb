@@ -30,6 +30,7 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.Metrics;
 import io.questdb.mp.EagerThreadSetup;
 import io.questdb.mp.Job;
 import io.questdb.mp.WorkerPool;
@@ -108,15 +109,17 @@ public class PGWireServer implements Closeable {
             WorkerPool sharedWorkerPool,
             Log log,
             CairoEngine cairoEngine,
-            FunctionFactoryCache functionFactoryCache
+            FunctionFactoryCache functionFactoryCache,
+            Metrics metrics
     ) {
         return WorkerPoolAwareConfiguration.create(
                 configuration,
                 sharedWorkerPool,
                 log,
                 cairoEngine,
-                (conf, engine, workerPool, local, bus, functionFactoryCache1) -> new PGWireServer(conf, cairoEngine, workerPool, local, bus, functionFactoryCache1),
-                functionFactoryCache
+                (conf, engine, workerPool, local, bus, functionFactoryCache1, metrics1) -> new PGWireServer(conf, cairoEngine, workerPool, local, bus, functionFactoryCache1),
+                functionFactoryCache,
+                metrics
         );
     }
 

@@ -325,6 +325,56 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_lock
     return flock((int) fd, LOCK_EX | LOCK_NB);
 }
 
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_openCleanRW
+        (JNIEnv *e, jclass cl, jlong lpszName, jlong size) {
+
+    jlong fd = open((const char *) lpszName, O_CREAT | O_RDWR, 0644);
+
+    if (fd < -1) {
+        // error opening / creating file
+        return fd;
+    }
+
+    jlong fileSize = Java_io_questdb_std_Files_length(e, cl, fd);
+    if (fileSize > 0) {
+        if (flock((int)fd, LOCK_EX | LOCK_NB) == 0) {
+            // truncate file to 0 byte
+            if (ftruncate(fd, 0) == 0) {
+                // allocate file to `size`
+                if (Java_io_questdb_std_Files_allocate(e, cl, fd, size) == JNI_TRUE) {
+                    // downgrade to shared lock
+                    if (flock((int) fd, LOCK_SH) == 0) {
+                        // success
+                        return fd;
+                    }
+                }
+            }
+        } else {
+            if (fileSize >= size || Java_io_questdb_std_Files_allocate(e, cl, fd, size) == JNI_TRUE) {
+                // put a shared lock
+                if (flock((int) fd, LOCK_SH) == 0) {
+                    // success
+                    return fd;
+                }
+            }
+        }
+    } else {
+        // file size is already 0, no cleanup but allocate the file.
+        if (Java_io_questdb_std_Files_allocate(e, cl, fd, size) == JNI_TRUE && flock((int) fd, LOCK_SH) == 0) {
+            // success
+            return fd;
+        }
+    }
+
+    // Any non-happy path comes here.
+    // Save errno before close.
+    int errnoTmp = errno;
+    close(fd);
+    // Restore real errno
+    errno = errnoTmp;
+    return -1;
+}
+
 JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_rename
         (JNIEnv *e, jclass cls, jlong lpszOld, jlong lpszNew) {
     return (jboolean) (rename((const char *) lpszOld, (const char *) lpszNew) == 0);
