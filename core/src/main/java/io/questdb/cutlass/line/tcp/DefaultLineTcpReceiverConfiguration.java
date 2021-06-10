@@ -133,12 +133,12 @@ public class DefaultLineTcpReceiverConfiguration implements LineTcpReceiverConfi
     }
 
     @Override
-    public boolean isIOAggressiveRecv() {
-        return false;
+    public long getWriterIdleTimeout() {
+        return 30_000;
     }
 
     @Override
-    public long getWriterIdleTimeout() {
-        return 30_000;
+    public int getAggressiveReadRetryCount() {
+        return 0;
     }
 }

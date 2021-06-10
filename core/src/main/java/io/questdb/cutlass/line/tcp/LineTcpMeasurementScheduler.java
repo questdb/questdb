@@ -153,7 +153,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                 for (int n = 0, sz = tableNames.size(); n < sz; n++) {
                     TableUpdateDetails updateDetails = tableUpdateDetailsByTableName.get(tableNames.get(n));
                     if (!updateDetails.assignedToJob) {
-                        updateDetails.close();
+                        updateDetails.closeNoLock();
                     }
                 }
                 tableUpdateDetailsByTableName.clear();
@@ -788,21 +788,25 @@ class LineTcpMeasurementScheduler implements Closeable {
 
         @Override
         public void close() {
+            tableUpdateDetailsLock.writeLock().lock();
+            try {
+                closeNoLock();
+            } finally {
+                tableUpdateDetailsLock.writeLock().unlock();
+            }
+        }
+
+        private void closeNoLock() {
             if (writerThreadId != Integer.MIN_VALUE) {
-                tableUpdateDetailsLock.writeLock().lock();
-                try {
-                    LOG.info().$("closing table [tableName=").$(tableName).$(']').$();
-                    if (null != writer) {
-                        writer.commit();
-                        writer = Misc.free(writer);
-                    }
-                    for (int n = 0; n < localDetailsArray.length; n++) {
-                        localDetailsArray[n] = Misc.free(localDetailsArray[n]);
-                    }
-                    writerThreadId = Integer.MIN_VALUE;
-                } finally {
-                    tableUpdateDetailsLock.writeLock().unlock();
+                LOG.info().$("closing table [tableName=").$(tableName).$(']').$();
+                if (null != writer) {
+                    writer.commit();
+                    writer = Misc.free(writer);
                 }
+                for (int n = 0; n < localDetailsArray.length; n++) {
+                    localDetailsArray[n] = Misc.free(localDetailsArray[n]);
+                }
+                writerThreadId = Integer.MIN_VALUE;
             }
         }
 
