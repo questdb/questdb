@@ -32,6 +32,7 @@ import io.questdb.cutlass.line.LineProtoSender;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
+import io.questdb.mp.SOUnboundedCountDownLatch;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.network.DefaultIODispatcherConfiguration;
@@ -49,9 +50,7 @@ import org.junit.Test;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.security.PrivateKey;
-import java.util.HashMap;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.LockSupport;
 
 public class LineTcpServerTest extends AbstractCairoTest {
@@ -95,6 +94,7 @@ public class LineTcpServerTest extends AbstractCairoTest {
     private String authKeyId = null;
     private int msgBufferSize = 1024;
     private long minIdleMsBeforeWriterRelease = 30000;
+    private int aggressiveReadRetryCount = 0;
     private final LineTcpReceiverConfiguration lineConfiguration = new DefaultLineTcpReceiverConfiguration() {
         @Override
         public IODispatcherConfiguration getNetDispatcherConfiguration() {
@@ -151,6 +151,11 @@ public class LineTcpServerTest extends AbstractCairoTest {
         public long getWriterIdleTimeout() {
             return minIdleMsBeforeWriterRelease;
         }
+
+        @Override
+        public int getAggressiveReadRetryCount() {
+            return aggressiveReadRetryCount;
+        }
     };
 
     private Path path;
@@ -179,26 +184,21 @@ public class LineTcpServerTest extends AbstractCairoTest {
 
             int iterations = 8;
             int threadCount = 8;
-            HashMap<String, AtomicInteger> tableIndex = new HashMap<>();
-            tableIndex.put("weather", new AtomicInteger());
+            CharSequenceObjHashMap<SOUnboundedCountDownLatch> tableIndex = new CharSequenceObjHashMap<>();
+            tableIndex.put("weather", new SOUnboundedCountDownLatch());
             for (int i = 1; i < threadCount; i++) {
-                tableIndex.put("weather" + i, new AtomicInteger());
+                tableIndex.put("weather" + i, new SOUnboundedCountDownLatch());
             }
 
             // One engine hook for all writers
-            Object monitor = new Object();
             engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
                 if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN) {
-                    AtomicInteger ai = tableIndex.get(name.toString());
-                    ai.incrementAndGet();
-                    synchronized (monitor) {
-                        monitor.notifyAll();
-                    }
+                    tableIndex.get(name).countDown();
                 }
             });
 
             try {
-                sendWait(lineData, tableIndex, monitor, 1, "weather");
+                sendAndWait(lineData, tableIndex, 1);
                 SOCountDownLatch threadPushFinished = new SOCountDownLatch(threadCount - 1);
                 for (int i = 1; i < threadCount; i++) {
                     final String threadTable = "weather" + i;
@@ -218,11 +218,11 @@ public class LineTcpServerTest extends AbstractCairoTest {
                     }).start();
                 }
 
-                sendWait(lineData, tableIndex, monitor, 2, "weather");
+                sendAndWait(lineData, tableIndex, 2);
                 try (TableWriter w = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "weather")) {
                     w.truncate();
                 }
-                sendWait(lineData, tableIndex, monitor, 4, "weather");
+                sendAndWait(lineData, tableIndex, 4);
 
                 String header = "location\ttemperature\ttimestamp\n";
                 String[] lines = {"us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\n",
@@ -231,12 +231,11 @@ public class LineTcpServerTest extends AbstractCairoTest {
                 String expected = header + lines[0] + lines[1] + lines[2];
                 assertTable(expected, "weather");
 
+                // Concatenate iterations + 2 of identical insert results
+                // to assert against weather 1-8 tables
                 StringBuilder expectedSB = new StringBuilder(header);
                 for (int l = 0; l < lines.length; l++) {
-                    //noinspection StringRepeatCanBeUsed
-                    for (int it = 0; it < iterations + 2; it++) {
-                        expectedSB.append(lines[l]);
-                    }
+                    expectedSB.append(Chars.repeat(lines[l], iterations + 1));
                 }
 
                 // Wait async ILP send threads to finish.
@@ -244,12 +243,12 @@ public class LineTcpServerTest extends AbstractCairoTest {
                 for (int i = 1; i < threadCount; i++) {
                     // Wait writer to be released and check.
                     String tableName = "weather" + i;
-                    int releasedCount = tableIndex.get(tableName).get();
+                    int releasedCount = tableIndex.get(tableName).getCount();
                     try {
                         assertTable(expectedSB, tableName);
                     } catch (AssertionError e) {
                         // Wait one more writer release before re-trying to compare
-                        wait(tableIndex, monitor, releasedCount + 1, tableName, minIdleMsBeforeWriterRelease);
+                        tableIndex.get(tableName).await(releasedCount + 1);
                         assertTable(expectedSB, tableName);
                     }
                 }
@@ -267,8 +266,14 @@ public class LineTcpServerTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testUnauthenticatedAggressive() throws Exception {
+        aggressiveReadRetryCount = 1;
+        test(null, null, 200, 1_000, false);
+    }
+
+    @Test
     public void testWriter17Fields() throws Exception {
-        int defautlMeasurementSize = maxMeasurementSize;
+        int defaultMeasurementSize = maxMeasurementSize;
         String lineData = "tableCRASH,tag_n_1=1,tag_n_2=2,tag_n_3=3,tag_n_4=4,tag_n_5=5,tag_n_6=6," +
                 "tag_n_7=7,tag_n_8=8,tag_n_9=9,tag_n_10=10,tag_n_11=11,tag_n_12=12,tag_n_13=13," +
                 "tag_n_14=14,tag_n_15=15,tag_n_16=16,tag_n_17=17 value=42.4 1619509249714000000\n";
@@ -282,7 +287,7 @@ public class LineTcpServerTest extends AbstractCairoTest {
                 assertTable(expected, "tableCRASH");
             });
         } finally {
-            maxMeasurementSize = defautlMeasurementSize;
+            maxMeasurementSize = defaultMeasurementSize;
         }
     }
 
@@ -299,7 +304,7 @@ public class LineTcpServerTest extends AbstractCairoTest {
             CairoTestUtils.createTableWithVersion(m, ColumnType.VERSION);
         }
 
-        int defautlMeasurementSize = maxMeasurementSize;
+        int defaultMeasurementSize = maxMeasurementSize;
         String lineData = "messages id=843530699759026177i,author=820703963477180437i,guild=820704412095479830i,channel=820704412095479833i,flags=6i\n";
         try {
             maxMeasurementSize = lineData.length();
@@ -310,7 +315,7 @@ public class LineTcpServerTest extends AbstractCairoTest {
                 assertTable(expected, "messages");
             });
         } finally {
-            maxMeasurementSize = defautlMeasurementSize;
+            maxMeasurementSize = defaultMeasurementSize;
         }
     }
 
@@ -442,7 +447,7 @@ public class LineTcpServerTest extends AbstractCairoTest {
         minIdleMsBeforeWriterRelease = 250;
         assertMemoryLeak(() -> {
             path = new Path(4096);
-            try (LineTcpServer tcpServer = LineTcpServer.create(lineConfiguration, sharedWorkerPool, LOG, engine)) {
+            try (LineTcpServer ignored = LineTcpServer.create(lineConfiguration, sharedWorkerPool, LOG, engine)) {
                 sharedWorkerPool.assignCleaner(Path.CLEANER);
                 sharedWorkerPool.start(LOG);
                 try {
@@ -501,13 +506,17 @@ public class LineTcpServerTest extends AbstractCairoTest {
         send(lineData, tableName, true);
     }
 
-    private void sendNoWait(String threadTable, String lineDataThread) {
-        send(lineDataThread, threadTable, false);
+    private void sendAndWait(
+            String lineData,
+            CharSequenceObjHashMap<SOUnboundedCountDownLatch> tableIndex,
+            int expectedReleaseCount
+    ) {
+        send(lineData, "weather", false);
+        tableIndex.get("weather").await(expectedReleaseCount);
     }
 
-    private void sendWait(String lineData, HashMap<String, AtomicInteger> tableIndex, Object monitor, int waitValue, String tableName) {
-        send(lineData, tableName, false);
-        wait(tableIndex, monitor, waitValue, tableName, minIdleMsBeforeWriterRelease * 2);
+    private void sendNoWait(String threadTable, String lineDataThread) {
+        send(lineDataThread, threadTable, false);
     }
 
     private void test(
@@ -649,17 +658,4 @@ public class LineTcpServerTest extends AbstractCairoTest {
         });
     }
 
-    private void wait(HashMap<String, AtomicInteger> tableIndex, Object monitor, int waitValue, String tableName, long maxWaitMs) {
-        try {
-            long waitStart = System.currentTimeMillis();
-            AtomicInteger counter = tableIndex.get(tableName);
-            while (waitValue > counter.get() && System.currentTimeMillis() - waitStart <= maxWaitMs) {
-                synchronized (monitor) {
-                    monitor.wait(maxWaitMs);
-                }
-            }
-        } catch (InterruptedException ex) {
-            ex.printStackTrace();
-        }
-    }
 }

@@ -77,5 +77,5 @@ public interface LineTcpReceiverConfiguration {
 
     boolean isEnabled();
 
-    boolean isIOAggressiveRecv();
+    int getAggressiveReadRetryCount();
 }
