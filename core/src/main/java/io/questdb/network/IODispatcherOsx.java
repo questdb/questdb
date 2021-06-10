@@ -41,7 +41,6 @@ public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C
         // bind socket
         this.kqueue = new Kqueue(capacity);
         registerListenerFd();
-        logSuccess(configuration);
     }
 
     private void enqueuePending(int watermark) {
@@ -153,8 +152,8 @@ public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C
 
     @Override
     protected boolean runSerially() {
-        processDisconnects();
         final long timestamp = clock.getTicks();
+        processDisconnects(timestamp);
         boolean useful = false;
         final int n = kqueue.poll();
         int watermark = pending.size();

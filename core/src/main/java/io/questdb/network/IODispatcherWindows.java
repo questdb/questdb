@@ -48,7 +48,6 @@ public class IODispatcherWindows<C extends IOContext> extends AbstractIODispatch
         readFdSet.setCount(1);
         writeFdSet.setCount(0);
         listenerRegistered = true;
-        logSuccess(configuration);
     }
 
     @Override
@@ -109,7 +108,8 @@ public class IODispatcherWindows<C extends IOContext> extends AbstractIODispatch
     @Override
     protected boolean runSerially() {
 
-        processDisconnects();
+        final long timestamp = clock.getTicks();
+        processDisconnects(timestamp);
 
         int count;
         if (readFdSet.getCount() > 0 || writeFdSet.getCount() > 0) {
@@ -122,7 +122,6 @@ public class IODispatcherWindows<C extends IOContext> extends AbstractIODispatch
             count = 0;
         }
 
-        final long timestamp = clock.getTicks();
         boolean useful = false;
         fds.clear();
 
@@ -184,6 +183,7 @@ public class IODispatcherWindows<C extends IOContext> extends AbstractIODispatch
         }
 
         if (listenerRegistered) {
+             assert serverFd >= 0;
              readFdSet.add(serverFd);
              readFdCount++;
         }
