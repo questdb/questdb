@@ -49,12 +49,11 @@ const ContextualMenu = ({ name }: Props) => {
 
   return (
     <ContextMenu id={name}>
-      <MenuItem data={{ foo: "bar" }}>Query</MenuItem>
-      <MenuItem data={{ foo: "bar" }} onClick={handleCopySchemaToClipboard}>
+      <MenuItem onClick={handleCopySchemaToClipboard}>
         Copy Schema To Clipboard
       </MenuItem>
       <MenuItem divider />
-      <MenuItem data={{ foo: "bar" }}>Close</MenuItem>
+      <MenuItem>Close</MenuItem>
     </ContextMenu>
   )
 }
