@@ -463,7 +463,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
     }
 
     private void sendConfirmation(HttpChunkedResponseSocket socket) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        socket.put('{').putQuoted("ddl").put(':').putQuoted("OK").put('}');
+        socket.putQuoted("DDL Success\n");
         socket.sendChunk(true);
     }
 

@@ -65,6 +65,11 @@ import java.util.concurrent.locks.LockSupport;
 import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 
 public class IODispatcherTest {
+    public static final String JSON_DDL_RESPONSE = "0d\r\n" +
+            "{\"ddl\":\"OK\"}\n\r\n" +
+            "00\r\n" +
+            "\r\n";
+
     private static final Log LOG = LogFactory.getLog(IODispatcherTest.class);
     private static final RescheduleContext EmptyRescheduleContext = (retry) -> {
     };
@@ -96,7 +101,7 @@ public class IODispatcherTest {
     @Rule
     public TemporaryFolder temp = new TemporaryFolder();
     private long configuredMaxQueryResponseRowLimit = Long.MAX_VALUE;
-    private static Metrics metrics = Metrics.enabled();
+    private static final Metrics metrics = Metrics.enabled();
 
     public static void createTestTable(CairoConfiguration configuration, int n) {
         try (TableModel model = new TableModel(configuration, "y", PartitionBy.NONE)) {
@@ -1839,10 +1844,7 @@ public class IODispatcherTest {
                             "Content-Type: application/json; charset=utf-8\r\n" +
                             "Keep-Alive: timeout=5, max=10000\r\n" +
                             "\r\n" +
-                            "0c\r\n" +
-                            "{\"ddl\":\"OK\"}\r\n" +
-                            "00\r\n" +
-                            "\r\n",
+                            JSON_DDL_RESPONSE,
                     1,
                     0,
                     false
@@ -1870,10 +1872,7 @@ public class IODispatcherTest {
                             "Content-Type: application/json; charset=utf-8\r\n" +
                             "Keep-Alive: timeout=5, max=10000\r\n" +
                             "\r\n" +
-                            "0c\r\n" +
-                            "{\"ddl\":\"OK\"}\r\n" +
-                            "00\r\n" +
-                            "\r\n",
+                            JSON_DDL_RESPONSE,
                     1,
                     0,
                     false
@@ -1938,10 +1937,7 @@ public class IODispatcherTest {
                             "Content-Type: application/json; charset=utf-8\r\n" +
                             "Keep-Alive: timeout=5, max=10000\r\n" +
                             "\r\n" +
-                            "0c\r\n" +
-                            "{\"ddl\":\"OK\"}\r\n" +
-                            "00\r\n" +
-                            "\r\n",
+                            JSON_DDL_RESPONSE,
                     1,
                     0,
                     false
@@ -1969,10 +1965,7 @@ public class IODispatcherTest {
                             "Content-Type: application/json; charset=utf-8\r\n" +
                             "Keep-Alive: timeout=5, max=10000\r\n" +
                             "\r\n" +
-                            "0c\r\n" +
-                            "{\"ddl\":\"OK\"}\r\n" +
-                            "00\r\n" +
-                            "\r\n",
+                            JSON_DDL_RESPONSE,
                     1,
                     0,
                     false
@@ -2031,10 +2024,7 @@ public class IODispatcherTest {
                             "Content-Type: application/json; charset=utf-8\r\n" +
                             "Keep-Alive: timeout=5, max=10000\r\n" +
                             "\r\n" +
-                            "0c\r\n" +
-                            "{\"ddl\":\"OK\"}\r\n" +
-                            "00\r\n" +
-                            "\r\n",
+                            JSON_DDL_RESPONSE,
                     1,
                     0,
                     false
@@ -2096,10 +2086,7 @@ public class IODispatcherTest {
                         "Content-Type: application/json; charset=utf-8\r\n" +
                         "Keep-Alive: timeout=5, max=10000\r\n" +
                         "\r\n" +
-                        "0c\r\n" +
-                        "{\"ddl\":\"OK\"}\r\n" +
-                        "00\r\n" +
-                        "\r\n",
+                        JSON_DDL_RESPONSE,
                 1
         );
     }
@@ -2248,10 +2235,7 @@ public class IODispatcherTest {
                         "Content-Type: application/json; charset=utf-8\r\n" +
                         "Keep-Alive: timeout=5, max=10000\r\n" +
                         "\r\n" +
-                        "0c\r\n" +
-                        "{\"ddl\":\"OK\"}\r\n" +
-                        "00\r\n" +
-                        "\r\n",
+                        JSON_DDL_RESPONSE,
                 1
         );
     }
@@ -2843,10 +2827,7 @@ public class IODispatcherTest {
                             "Content-Type: application/json; charset=utf-8\r\n" +
                             "Keep-Alive: timeout=5, max=10000\r\n" +
                             "\r\n" +
-                            "0c\r\n" +
-                            "{\"ddl\":\"OK\"}\r\n" +
-                            "00\r\n" +
-                            "\r\n",
+                            JSON_DDL_RESPONSE,
                     1,
                     0,
                     false
@@ -2901,10 +2882,7 @@ public class IODispatcherTest {
                             "Content-Type: application/json; charset=utf-8\r\n" +
                             "Keep-Alive: timeout=5, max=10000\r\n" +
                             "\r\n" +
-                            "0c\r\n" +
-                            "{\"ddl\":\"OK\"}\r\n" +
-                            "00\r\n" +
-                            "\r\n",
+                            JSON_DDL_RESPONSE,
                     1,
                     0,
                     false
@@ -2995,10 +2973,7 @@ public class IODispatcherTest {
                             "Content-Type: application/json; charset=utf-8\r\n" +
                             "Keep-Alive: timeout=5, max=10000\r\n" +
                             "\r\n" +
-                            "0c\r\n" +
-                            "{\"ddl\":\"OK\"}\r\n" +
-                            "00\r\n" +
-                            "\r\n",
+                            JSON_DDL_RESPONSE,
                     1,
                     0,
                     false
@@ -3026,10 +3001,7 @@ public class IODispatcherTest {
                             "Content-Type: application/json; charset=utf-8\r\n" +
                             "Keep-Alive: timeout=5, max=10000\r\n" +
                             "\r\n" +
-                            "0c\r\n" +
-                            "{\"ddl\":\"OK\"}\r\n" +
-                            "00\r\n" +
-                            "\r\n",
+                            JSON_DDL_RESPONSE,
                     1,
                     0,
                     false
@@ -3088,8 +3060,8 @@ public class IODispatcherTest {
                             "Content-Type: application/json; charset=utf-8\r\n" +
                             "Keep-Alive: timeout=5, max=10000\r\n" +
                             "\r\n" +
-                            "0c\r\n" +
-                            "{\"ddl\":\"OK\"}\r\n" +
+                            "0d\r\n" +
+                            "{\"ddl\":\"OK\"}\n\r\n" +
                             "00\r\n" +
                             "\r\n",
                     1,
