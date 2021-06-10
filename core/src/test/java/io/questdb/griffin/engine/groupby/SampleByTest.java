@@ -4532,8 +4532,8 @@ public class SampleByTest extends AbstractGriffinTest {
                         "1970-01-04T03:26:40.000000Z\ta\t99.02039650915859\t128.42101395467057\n",
                 "select k, s, first(lat) lat, first(lon) lon " +
                         "from x " +
-                        "where k > '1970-01-04' " + // and s = 'a' "
-                         "sample by 1h",
+                        "where k > '1970-01-04' and s = 'a' " +
+                        "sample by 1h",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -4541,6 +4541,31 @@ public class SampleByTest extends AbstractGriffinTest {
                         "   rnd_double(1)*180 lon," +
                         "   rnd_symbol('a','b',null) s," +
                         "   timestamp_sequence(172800000000, 1000000000) k" +
+                        "   from" +
+                        "   long_sequence(100)" +
+                        "), index(s capacity 10) timestamp(k) partition by DAY",
+                "k",
+                false);
+    }
+
+    @Test
+    public void testSimpleSampleBy2() throws Exception {
+        assertQuery("k\ts\tlat\tlon\n" +
+                        "1970-01-04T00:26:40.000000Z\ta\t70.00560222114518\t168.04971262491318\n" +
+                        "1970-01-04T01:26:40.000000Z\ta\t6.612327943200507\t151.3046788842135\n" +
+                        "1970-01-04T02:26:40.000000Z\ta\t117.11888283070247\tNaN\n" +
+                        "1970-01-04T03:26:40.000000Z\ta\t99.02039650915859\t128.42101395467057\n",
+                "select k, s, first(lat) lat, first(lon) lon " +
+                        "from x " +
+                        "where k > '1970-01-01' and s = 'b' " +
+                        "sample by 1h",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        "   -x lat," +
+                        "   x lon," +
+                        "   rnd_symbol('a','b',null) s," +
+                        "   timestamp_sequence(0, 1000000000) k" +
                         "   from" +
                         "   long_sequence(100)" +
                         "), index(s capacity 10) timestamp(k) partition by DAY",

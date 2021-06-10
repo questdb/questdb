@@ -25,10 +25,7 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
-import io.questdb.cairo.sql.DataFrameCursor;
-import io.questdb.cairo.sql.DataFrameCursorFactory;
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlExecutionContext;
 
 abstract class AbstractDataFrameRecordCursorFactory extends AbstractRecordCursorFactory {
@@ -51,4 +48,8 @@ abstract class AbstractDataFrameRecordCursorFactory extends AbstractRecordCursor
     }
 
     protected abstract RecordCursor getCursorInstance(DataFrameCursor dataFrameCursor, SqlExecutionContext executionContext);
+
+    public int getSampleByIndexKey() {
+        return SymbolTable.VALUE_NOT_FOUND;
+    }
 }

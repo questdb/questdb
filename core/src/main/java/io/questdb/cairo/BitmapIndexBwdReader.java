@@ -57,7 +57,7 @@ public class BitmapIndexBwdReader extends AbstractIndexReader {
     }
 
     @Override
-    public IndexFrameCursor getNextFrame(int key, long minRowId, long maxRowId) {
+    public IndexFrameCursor getFrameCursor(int key, long minRowId, long maxRowId) {
         if (key >= keyCount) {
             updateKeyCount();
         }
@@ -113,7 +113,7 @@ public class BitmapIndexBwdReader extends AbstractIndexReader {
         protected long minValue;
         protected long next;
         private long valueBlockOffset;
-        private IndexFrame indexFrame = new IndexFrame();
+        private final IndexFrame indexFrame = new IndexFrame();
         private final BitmapIndexUtils.ValueBlockSeeker SEEKER = this::seekValue;
 
         @Override

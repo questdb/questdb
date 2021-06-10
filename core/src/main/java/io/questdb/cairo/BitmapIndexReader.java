@@ -27,7 +27,6 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.vm.MappedReadOnlyMemory;
-import io.questdb.cairo.vm.ReadOnlyVirtualMemory;
 
 import java.io.Closeable;
 
@@ -55,10 +54,7 @@ public interface BitmapIndexReader extends Closeable {
 
     int getKeyCount();
 
-//    default IndexFrame getNextFrame(int key, long minValue, long size) {
-//        throw new UnsupportedOperationException();
-//    }
-    IndexFrameCursor getNextFrame(int key, long minValue, long maxValue);
+    IndexFrameCursor getFrameCursor(int key, long minValue, long maxValue);
 
     boolean isOpen();
 

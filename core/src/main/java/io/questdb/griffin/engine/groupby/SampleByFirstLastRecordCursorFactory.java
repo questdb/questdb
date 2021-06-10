@@ -42,6 +42,7 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
     private final long firstRowIdOutAddress;
     private final long lastRowIdOutAddress;
     private final int gropuBySymbolColIndex;
+    private final int groupBySymbolFilterKey;
 
     public SampleByFirstLastRecordCursorFactory(
             RecordCursorFactory base,
@@ -50,6 +51,7 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
             ObjList<GroupByFunction> groupByFunctions,
             ObjList<Function> recordFunctions,
             int timestampIndex,
+            SingleSymbolFilter symbolFilter,
             int columnCount) {
         this.base = base;
         this.timestampSampler = timestampSampler;
@@ -58,7 +60,8 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
         timestampOutAddress = Unsafe.malloc(BUFF_SIZE * Long.BYTES);
         firstRowIdOutAddress = Unsafe.malloc(BUFF_SIZE * Long.BYTES);
         lastRowIdOutAddress = Unsafe.malloc(BUFF_SIZE * Long.BYTES);
-        gropuBySymbolColIndex = 1;
+        gropuBySymbolColIndex = symbolFilter.getColumnIndex();
+        groupBySymbolFilterKey = symbolFilter.getSymbolFilterKey();
     }
 
     @Override
@@ -152,11 +155,8 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
             long timestampColumnAddress = currentFrame.getPageAddress(timestampIndex);
             long lastFrameRowId = firstRowId + pageRowSize;
 
-            // TODO: find key id from query
-            int key = 1;
-
             if (indexCursor == null) {
-                indexCursor = symbolIndexReader.getNextFrame(key, firstRowId, lastFrameRowId);
+                indexCursor = symbolIndexReader.getFrameCursor(groupBySymbolFilterKey, firstRowId, lastFrameRowId);
             }
 
             if (indexFrame == null || indexFrameIndex >= indexFrame.getSize()) {

@@ -55,7 +55,7 @@ public class BitmapIndexFwdNullReader implements BitmapIndexReader {
     }
 
     @Override
-    public IndexFrameCursor getNextFrame(int key, long minValue, long maxValue) {
+    public IndexFrameCursor getFrameCursor(int key, long minValue, long maxValue) {
         return NullIndexFrameCursor.INSTANCE;
     }
 

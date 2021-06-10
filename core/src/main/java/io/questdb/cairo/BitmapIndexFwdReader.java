@@ -81,7 +81,7 @@ public class BitmapIndexFwdReader extends AbstractIndexReader {
     }
 
     @Override
-    public IndexFrameCursor getNextFrame(int key, long minRowId, long maxRowId) {
+    public IndexFrameCursor getFrameCursor(int key, long minRowId, long maxRowId) {
         if (key >= keyCount) {
             updateKeyCount();
         }

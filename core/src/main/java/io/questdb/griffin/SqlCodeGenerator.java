@@ -1318,8 +1318,9 @@ public class SqlCodeGenerator implements Mutable {
                 );
 
 
-                boolean allGroupsFirstLast = allGroupsFirstLast(model);
-                if (fillCount == 0 && allGroupsFirstLast && factory.supportPageFrameCursor()) {
+                boolean allGroupsFirstLast = allGroupsFirstLastWithSingleSymbolFilter(model);
+                if (fillCount == 0 && allGroupsFirstLast) {
+                    SingleSymbolFilter symbolFilter = factory.convertToSampleByIndexDataFrameCursorFactory();
                     return new SampleByFirstLastRecordCursorFactory(
                             factory,
                             timestampSampler,
@@ -1327,6 +1328,7 @@ public class SqlCodeGenerator implements Mutable {
                             groupByFunctions,
                             recordFunctions,
                             timestampIndex,
+                            symbolFilter,
                             valueTypes.getColumnCount()
                     );
                 }
@@ -1459,7 +1461,7 @@ public class SqlCodeGenerator implements Mutable {
         }
     }
 
-    private static boolean allGroupsFirstLast(QueryModel model) {
+    private static boolean allGroupsFirstLastWithSingleSymbolFilter(QueryModel model) {
         final ObjList<QueryColumn> columns = model.getColumns();
         for (int i = 0, n = columns.size(); i < n; i++) {
             final QueryColumn column = columns.getQuick(i);
@@ -1467,11 +1469,12 @@ public class SqlCodeGenerator implements Mutable {
 
             if (node.type != ExpressionNode.LITERAL) {
                 CharSequence token = column.getAst().token;
-                if (!Chars.equalsIgnoreCase(token, "first") && !Chars.equalsIgnoreCase(token, "last") ) {
+                if (!Chars.equalsIgnoreCase(token, "first") && !Chars.equalsIgnoreCase(token, "last")) {
                     return false;
                 }
             }
         }
+
         return true;
     }
 
@@ -2479,7 +2482,19 @@ public class SqlCodeGenerator implements Mutable {
                                 }
                             } else {
                                 if (f == null) {
-                                    rcf = new SymbolIndexRowCursorFactory(keyColumnIndex, symbolKey, true, indexDirection, null);
+                                    // This special case factory can later be disassembled to framing and index
+                                    // cursors in Sample By processing
+                                    return new SingleSymbolFilterDataFrameRecordCursorFactory(
+                                            keyColumnIndex,
+                                            symbolKey,
+                                            true,
+                                            indexDirection,
+                                            myMeta,
+                                            dfcFactory,
+                                            orderByKeyColumn,
+                                            f,
+                                            columnIndexes,
+                                            columnSizes);
                                 } else {
                                     rcf = new SymbolIndexFilteredRowCursorFactory(keyColumnIndex, symbolKey, f, true, indexDirection, columnIndexes, null);
                                 }

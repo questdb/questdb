@@ -57,6 +57,7 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
             @Nullable IntList columnSizes
     ) {
         super(metadata, dataFrameCursorFactory);
+
         this.cursor = new DataFrameRecordCursor(rowCursorFactory, rowCursorFactory.isEntity(), filter, columnIndexes);
         this.followsOrderByAdvice = followsOrderByAdvice;
         this.filter = filter;
