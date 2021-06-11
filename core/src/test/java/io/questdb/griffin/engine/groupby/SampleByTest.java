@@ -4550,26 +4550,47 @@ public class SampleByTest extends AbstractGriffinTest {
 
     @Test
     public void testSimpleSampleBy2() throws Exception {
-        assertQuery("k\ts\tlat\tlon\n" +
-                        "1970-01-04T00:26:40.000000Z\ta\t70.00560222114518\t168.04971262491318\n" +
-                        "1970-01-04T01:26:40.000000Z\ta\t6.612327943200507\t151.3046788842135\n" +
-                        "1970-01-04T02:26:40.000000Z\ta\t117.11888283070247\tNaN\n" +
-                        "1970-01-04T03:26:40.000000Z\ta\t99.02039650915859\t128.42101395467057\n",
+        assertQuery("k\ts\tlat\tlon\n",
                 "select k, s, first(lat) lat, first(lon) lon " +
-                        "from x " +
-                        "where k > '1970-01-01' and s = 'b' " +
+                        "from xx " +
+                        "where k >= '1970-01-01' and s = 'b' " +
                         "sample by 1h",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        "   -x lat," +
-                        "   x lon," +
-                        "   rnd_symbol('a','b',null) s," +
-                        "   timestamp_sequence(0, 1000000000) k" +
-                        "   from" +
-                        "   long_sequence(100)" +
-                        "), index(s capacity 10) timestamp(k) partition by DAY",
+                "create table xx (lat double, lon double, s symbol, k timestamp)" +
+                        ", index(s capacity 10) timestamp(k) partition by DAY",
                 "k",
+                "insert into xx " +
+                        "select -x lat,\n" +
+                        "x lon,\n" +
+                        "(case when x % 2 = 0 then 'a' else 'b' end) s,\n" +
+                        "timestamp_sequence(0, 10 * 60 * 1000000L) k\n" +
+                        "from\n" +
+                        "long_sequence(150)\n",
+                "k\ts\tlat\tlon\n" +
+                        "1970-01-01T00:30:00.000000Z\tb\t-3.0\t3.0\n" +
+                        "1970-01-01T01:30:00.000000Z\tb\t-7.0\t7.0\n" +
+                        "1970-01-01T02:30:00.000000Z\tb\t-11.0\t11.0\n" +
+                        "1970-01-01T03:30:00.000000Z\tb\t-15.0\t15.0\n" +
+                        "1970-01-01T04:30:00.000000Z\tb\t-19.0\t19.0\n" +
+                        "1970-01-01T05:30:00.000000Z\tb\t-23.0\t23.0\n" +
+                        "1970-01-01T06:30:00.000000Z\tb\t-27.0\t27.0\n" +
+                        "1970-01-01T07:30:00.000000Z\tb\t-31.0\t31.0\n" +
+                        "1970-01-01T08:30:00.000000Z\tb\t-35.0\t35.0\n" +
+                        "1970-01-01T09:30:00.000000Z\tb\t-39.0\t39.0\n" +
+                        "1970-01-01T10:30:00.000000Z\tb\t-43.0\t43.0\n" +
+                        "1970-01-01T11:30:00.000000Z\tb\t-47.0\t47.0\n" +
+                        "1970-01-01T12:30:00.000000Z\tb\t-51.0\t51.0\n" +
+                        "1970-01-01T13:30:00.000000Z\tb\t-55.0\t55.0\n" +
+                        "1970-01-01T14:30:00.000000Z\tb\t-59.0\t59.0\n" +
+                        "1970-01-01T15:30:00.000000Z\tb\t-63.0\t63.0\n" +
+                        "1970-01-01T16:30:00.000000Z\tb\t-67.0\t67.0\n" +
+                        "1970-01-01T17:30:00.000000Z\tb\t-71.0\t71.0\n" +
+                        "1970-01-01T18:30:00.000000Z\tb\t-75.0\t75.0\n" +
+                        "1970-01-01T19:30:00.000000Z\tb\t-79.0\t79.0\n" +
+                        "1970-01-01T20:30:00.000000Z\tb\t-83.0\t83.0\n" +
+                        "1970-01-01T21:30:00.000000Z\tb\t-87.0\t87.0\n" +
+                        "1970-01-01T22:30:00.000000Z\tb\t-91.0\t91.0\n" +
+                        "1970-01-01T23:30:00.000000Z\tb\t-95.0\t95.0\n" +
+                        "1970-01-02T00:30:00.000000Z\tb\t-99.0\t99.0\n",
                 false);
     }
 }

@@ -41,8 +41,8 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
     private final long timestampOutAddress;
     private final long firstRowIdOutAddress;
     private final long lastRowIdOutAddress;
+    private final SingleSymbolFilter symbolFilter;
     private final int gropuBySymbolColIndex;
-    private final int groupBySymbolFilterKey;
 
     public SampleByFirstLastRecordCursorFactory(
             RecordCursorFactory base,
@@ -60,8 +60,8 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
         timestampOutAddress = Unsafe.malloc(BUFF_SIZE * Long.BYTES);
         firstRowIdOutAddress = Unsafe.malloc(BUFF_SIZE * Long.BYTES);
         lastRowIdOutAddress = Unsafe.malloc(BUFF_SIZE * Long.BYTES);
+        this.symbolFilter = symbolFilter;
         gropuBySymbolColIndex = symbolFilter.getColumnIndex();
-        groupBySymbolFilterKey = symbolFilter.getSymbolFilterKey();
     }
 
     @Override
@@ -101,6 +101,7 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
         private IndexFrame indexFrame;
         private long indexFrameIndex = -1;
         private BitmapIndexReader symbolIndexReader;
+        private boolean emptyResult;
 
         public SampleByFirstLastRecordCursor(PageFrameCursor pageFrameCursor) {
             this.pageFrameCursor = pageFrameCursor;
@@ -125,7 +126,7 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
         @Override
         public boolean hasNext() {
             if (currentRow >= rowsFound) {
-                if (pageRowSize <= firstRowId) {
+                if (pageRowSize <= firstRowId && !emptyResult) {
                     currentFrame = pageFrameCursor.next();
                     if (currentFrame != null) {
                         symbolIndexReader = currentFrame.getBitmapIndexReader(gropuBySymbolColIndex, BitmapIndexReader.DIR_FORWARD);
@@ -156,7 +157,14 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
             long lastFrameRowId = firstRowId + pageRowSize;
 
             if (indexCursor == null) {
-                indexCursor = symbolIndexReader.getFrameCursor(groupBySymbolFilterKey, firstRowId, lastFrameRowId);
+                int groupBySymbolKey = symbolFilter.getSymbolFilterKey();
+                if (groupBySymbolKey == SymbolTable.VALUE_NOT_FOUND) {
+                    rowsFound = 0;
+                    emptyResult = true;
+                    return;
+                }
+
+                indexCursor = symbolIndexReader.getFrameCursor(symbolFilter.getSymbolFilterKey(), firstRowId, lastFrameRowId);
             }
 
             if (indexFrame == null || indexFrameIndex >= indexFrame.getSize()) {
@@ -216,6 +224,7 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
             indexFrame = null;
             indexFrameIndex = -1;
             indexCursor = null;
+            emptyResult = false;
             pageFrameCursor.toTop();
         }
 

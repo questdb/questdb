@@ -1321,16 +1321,18 @@ public class SqlCodeGenerator implements Mutable {
                 boolean allGroupsFirstLast = allGroupsFirstLastWithSingleSymbolFilter(model);
                 if (fillCount == 0 && allGroupsFirstLast) {
                     SingleSymbolFilter symbolFilter = factory.convertToSampleByIndexDataFrameCursorFactory();
-                    return new SampleByFirstLastRecordCursorFactory(
-                            factory,
-                            timestampSampler,
-                            groupByMetadata,
-                            groupByFunctions,
-                            recordFunctions,
-                            timestampIndex,
-                            symbolFilter,
-                            valueTypes.getColumnCount()
-                    );
+                    if (symbolFilter != null) {
+                        return new SampleByFirstLastRecordCursorFactory(
+                                factory,
+                                timestampSampler,
+                                groupByMetadata,
+                                groupByFunctions,
+                                recordFunctions,
+                                timestampIndex,
+                                symbolFilter,
+                                valueTypes.getColumnCount()
+                        );
+                    }
                 }
 
                 if (fillCount == 1 && Chars.equalsLowerCaseAscii(sampleByFill.getQuick(0).token, "prev")) {
@@ -2482,22 +2484,25 @@ public class SqlCodeGenerator implements Mutable {
                                 }
                             } else {
                                 if (f == null) {
-                                    // This special case factory can later be disassembled to framing and index
-                                    // cursors in Sample By processing
-                                    return new SingleSymbolFilterDataFrameRecordCursorFactory(
-                                            keyColumnIndex,
-                                            symbolKey,
-                                            true,
-                                            indexDirection,
-                                            myMeta,
-                                            dfcFactory,
-                                            orderByKeyColumn,
-                                            f,
-                                            columnIndexes,
-                                            columnSizes);
+                                    rcf = new SymbolIndexRowCursorFactory(keyColumnIndex, symbolKey, true, indexDirection, null);
                                 } else {
                                     rcf = new SymbolIndexFilteredRowCursorFactory(keyColumnIndex, symbolKey, f, true, indexDirection, columnIndexes, null);
                                 }
+                            }
+
+                            if (f == null) {
+                                // This special case factory can later be disassembled to framing and index
+                                // cursors in Sample By processing
+                                return new DeferredSingleSymbolFilterDataFrameRecordCursorFactory(
+                                        keyColumnIndex,
+                                        symbol,
+                                        rcf,
+                                        myMeta,
+                                        dfcFactory,
+                                        orderByKeyColumn,
+                                        f,
+                                        columnIndexes,
+                                        columnSizes);
                             }
                             return new DataFrameRecordCursorFactory(myMeta, dfcFactory, rcf, orderByKeyColumn, f, false, columnIndexes, columnSizes);
                         }
