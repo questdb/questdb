@@ -31,7 +31,7 @@ public class DefaultIODispatcherConfiguration implements IODispatcherConfigurati
 
     @Override
     public int getActiveConnectionLimit() {
-        return 10;
+        return 20;
     }
 
     @Override

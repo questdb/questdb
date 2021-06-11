@@ -248,7 +248,8 @@ public class LineTcpServerTest extends AbstractCairoTest {
                         assertTable(expectedSB, tableName);
                     } catch (AssertionError e) {
                         // Wait one more writer release before re-trying to compare
-                        tableIndex.get(tableName).await(releasedCount + 1);
+                        tableIndex.get(tableName).await(releasedCount + 1,
+                                minIdleMsBeforeWriterRelease * 20L * 1000L );
                         assertTable(expectedSB, tableName);
                     }
                 }
