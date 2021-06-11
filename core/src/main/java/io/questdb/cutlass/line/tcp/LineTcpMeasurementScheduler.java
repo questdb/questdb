@@ -51,6 +51,8 @@ import java.io.Closeable;
 import java.util.Arrays;
 import java.util.concurrent.locks.ReadWriteLock;
 
+import static io.questdb.network.IODispatcher.DISCONNECT_REASON_UNKNOWN_OPERATION;
+
 class LineTcpMeasurementScheduler implements Closeable {
     private static final Log LOG = LogFactory.getLog(LineTcpMeasurementScheduler.class);
     private static final int REBALANCE_EVENT_ID = -1; // A rebalance event is used to rebalance load across different threads
@@ -1225,7 +1227,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                     case QUEUE_FULL:
                         return true;
                     case NEEDS_DISCONNECT:
-                        context.getDispatcher().disconnect(context);
+                        context.getDispatcher().disconnect(context, DISCONNECT_REASON_UNKNOWN_OPERATION);
                         return false;
                 }
             }

@@ -177,7 +177,7 @@ public class IODispatcherTest {
                                 (operation, context) -> {
                                     if (operation == IOOperation.WRITE) {
                                         Assert.assertEquals(1024, Net.send(context.getFd(), context.buffer, 1024));
-                                        context.dispatcher.disconnect(context);
+                                        context.dispatcher.disconnect(context, IODispatcher.DISCONNECT_REASON_TEST);
                                     }
                                 }
                         );
