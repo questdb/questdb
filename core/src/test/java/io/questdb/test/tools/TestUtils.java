@@ -33,6 +33,8 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogRecord;
+import io.questdb.network.Net;
+import io.questdb.network.NetworkFacade;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.MutableCharSink;
@@ -59,6 +61,23 @@ public final class TestUtils {
             if (a.byteAt(i) != b.byteAt(i)) return false;
         }
         return true;
+    }
+
+    public static void assertConnect(long fd, long ilpSockAddr) {
+        Assert.assertTrue(fd > -1);
+        Net.configureNoLinger(fd);
+        long rc = Net.connect(fd, ilpSockAddr);
+        if (rc != 0) {
+            Assert.fail("could not connect, errno=" + Os.errno());
+        }
+    }
+
+    public static void assertConnect(NetworkFacade nf, long fd, long ilpSockAddr) {
+        nf.configureNoLinger(fd);
+        long rc = nf.connect(fd, ilpSockAddr);
+        if (rc != 0) {
+            Assert.fail("could not connect, errno=" + nf.errno());
+        }
     }
 
     public static void assertContains(CharSequence _this, CharSequence that) {

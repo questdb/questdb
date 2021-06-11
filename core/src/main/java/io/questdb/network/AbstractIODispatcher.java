@@ -57,6 +57,7 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
     protected final LongMatrix<C> pending = new LongMatrix<>(4);
     private final int sndBufSize;
     private final int rcvBufSize;
+    private final boolean peerNoLinger;
 
     public AbstractIODispatcher(
             IODispatcherConfiguration configuration,
@@ -89,6 +90,7 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
 
         this.sndBufSize = configuration.getSndBufSize();
         this.rcvBufSize = configuration.getRcvBufSize();
+        this.peerNoLinger = configuration.getPeerNoLinger();
 
         if (nf.bindTcp(this.serverFd, configuration.getBindIPv4Address(), configuration.getBindPort())) {
             nf.listen(this.serverFd, configuration.getListenBacklog());
@@ -198,6 +200,10 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
                 LOG.error().$("could not configure no delay [fd=").$(fd).$(", errno=").$(nf.errno()).$(']').$();
                 nf.close(fd, LOG);
                 return;
+            }
+
+            if(peerNoLinger) {
+                nf.configureNoLinger(fd);
             }
 
             if (sndBufSize > 0) {

@@ -80,13 +80,10 @@ public class SendAndReceiveRequestBuilder {
             long sockAddr = nf.sockaddr("127.0.0.1", 9001);
             try {
                 Assert.assertTrue(fd > -1);
-                long ret = nf.connect(fd, sockAddr);
-                if (ret != 0) {
-                    Assert.fail("could not connect: " + nf.errno());
-                }
+                TestUtils.assertConnect(nf, fd, sockAddr);
                 Assert.assertEquals(0, nf.setTcpNoDelay(fd, true));
                 if (!expectDisconnect) {
-                    NetworkFacadeImpl.INSTANCE.configureNonBlocking(fd);
+                    nf.configureNonBlocking(fd);
                 }
 
                 executeWithSocket(request, response, fd);
@@ -103,11 +100,7 @@ public class SendAndReceiveRequestBuilder {
         nf.configureNoLinger(fd);
         long sockAddr = nf.sockaddr("127.0.0.1", 9001);
         try {
-            Assert.assertTrue(fd > -1);
-            long ret = nf.connect(fd, sockAddr);
-            if (ret != 0) {
-                Assert.fail("could not connect: " + nf.errno());
-            }
+            TestUtils.assertConnect(fd, sockAddr);
             Assert.assertEquals(0, nf.setTcpNoDelay(fd, true));
             if (!expectDisconnect) {
                 NetworkFacadeImpl.INSTANCE.configureNonBlocking(fd);
@@ -290,13 +283,10 @@ public class SendAndReceiveRequestBuilder {
         try {
             long sockAddr = nf.sockaddr("127.0.0.1", 9001);
             Assert.assertTrue(fd > -1);
-            long ret = nf.connect(fd, sockAddr);
-            if (ret != 0) {
-                Assert.fail("could not connect: " + nf.errno());
-            }
+            TestUtils.assertConnect(nf, fd, sockAddr);
             Assert.assertEquals(0, nf.setTcpNoDelay(fd, true));
             if (!expectDisconnect) {
-                NetworkFacadeImpl.INSTANCE.configureNonBlocking(fd);
+                nf.configureNonBlocking(fd);
             }
 
             try {

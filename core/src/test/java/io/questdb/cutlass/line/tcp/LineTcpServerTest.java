@@ -44,6 +44,7 @@ import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -249,7 +250,7 @@ public class LineTcpServerTest extends AbstractCairoTest {
                     } catch (AssertionError e) {
                         // Wait one more writer release before re-trying to compare
                         tableIndex.get(tableName).await(releasedCount + 1,
-                                minIdleMsBeforeWriterRelease * 20L * 1000L );
+                                minIdleMsBeforeWriterRelease * 20L * 1000L);
                         assertTable(expectedSB, tableName);
                     }
                 }
@@ -479,20 +480,23 @@ public class LineTcpServerTest extends AbstractCairoTest {
             int ipv4address = Net.parseIPv4("127.0.0.1");
             long sockaddr = Net.sockaddr(ipv4address, bindPort);
             long fd = Net.socketTcp(true);
-            if (Net.connect(fd, sockaddr) != 0) {
-                throw NetworkError.instance(Os.errno(), "could not connect to ").ip(ipv4address);
+            try {
+                TestUtils.assertConnect(fd, sockaddr);
+                byte[] lineDataBytes = lineData.getBytes(StandardCharsets.UTF_8);
+                long bufaddr = Unsafe.malloc(lineDataBytes.length);
+                try {
+                    for (int n = 0; n < lineDataBytes.length; n++) {
+                        Unsafe.getUnsafe().putByte(bufaddr + n, lineDataBytes[n]);
+                    }
+                    int rc = Net.send(fd, bufaddr, lineDataBytes.length);
+                    Assert.assertEquals(lineDataBytes.length, rc);
+                } finally {
+                    Unsafe.free(bufaddr, lineDataBytes.length);
+                }
+            } finally {
+                Net.close(fd);
+                Net.freeSockAddr(sockaddr);
             }
-            byte[] lineDataBytes = lineData.getBytes(StandardCharsets.UTF_8);
-            long bufaddr = Unsafe.malloc(lineDataBytes.length);
-            for (int n = 0; n < lineDataBytes.length; n++) {
-                Unsafe.getUnsafe().putByte(bufaddr + n, lineDataBytes[n]);
-            }
-            int rc = Net.send(fd, bufaddr, lineDataBytes.length);
-            Unsafe.free(bufaddr, lineDataBytes.length);
-            Net.close(fd);
-            Net.freeSockAddr(sockaddr);
-            Assert.assertEquals(lineDataBytes.length, rc);
-
             if (wait) {
                 releaseLatch.await();
             }
