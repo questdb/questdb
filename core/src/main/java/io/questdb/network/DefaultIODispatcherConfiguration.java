@@ -103,4 +103,9 @@ public class DefaultIODispatcherConfiguration implements IODispatcherConfigurati
     public int getRcvBufSize() {
         return -1; // use system default
     }
+
+    @Override
+    public long getQueuedConnectionTimeout() {
+        return 300_000;
+    }
 }

@@ -69,8 +69,7 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
     private final int rcvBufSize;
     private final AtomicBoolean listenRegistrationLock = new AtomicBoolean();
     private boolean listening;
-    // TODO
-    private final long queuedConnectionTimeoutMs = 1000;
+    private final long queuedConnectionTimeoutMs;
     private long closeListenFdEpochMs;
 
     public AbstractIODispatcher(
@@ -101,7 +100,7 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
         this.ioContextFactory = ioContextFactory;
         this.initialBias = configuration.getInitialBias();
         this.idleConnectionTimeout = configuration.getIdleConnectionTimeout() > 0 ? configuration.getIdleConnectionTimeout() : Long.MIN_VALUE;
-
+        this.queuedConnectionTimeoutMs = configuration.getQueuedConnectionTimeout() > 0 ? configuration.getQueuedConnectionTimeout() : 0;
         this.sndBufSize = configuration.getSndBufSize();
         this.rcvBufSize = configuration.getRcvBufSize();
 
