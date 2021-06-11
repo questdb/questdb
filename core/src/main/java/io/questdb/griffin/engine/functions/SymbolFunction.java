@@ -111,17 +111,17 @@ public abstract class SymbolFunction implements ScalarFunction, SymbolTable {
     }
 
     @Override
-    public final CharSequence getStr(Record rec) {
+    public CharSequence getStr(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public final void getStr(Record rec, CharSink sink) {
+    public void getStr(Record rec, CharSink sink) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public final CharSequence getStrB(Record rec) {
+    public CharSequence getStrB(Record rec) {
         throw new UnsupportedOperationException();
     }
 
