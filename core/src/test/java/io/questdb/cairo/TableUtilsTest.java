@@ -27,7 +27,6 @@ package io.questdb.cairo;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.str.Path;
-import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.ClassRule;
 import org.junit.Test;
@@ -45,11 +44,6 @@ public class TableUtilsTest {
         try (Path path = new Path()) {
             Assert.assertEquals(TABLE_RESERVED, TableUtils.exists(FF, path, temp.getRoot().getAbsolutePath(), ""));
         }
-    }
-
-    @Test
-    public void testUnknownTodo() {
-        TestUtils.assertEquals("unknown", TableUtils.getTodoText(7879797987L));
     }
 
     @Test
