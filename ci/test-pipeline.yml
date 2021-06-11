@@ -61,7 +61,7 @@ stages:
               jdk: "1.8"
         pool:
           vmImage: $(imageName)
-        timeoutInMinutes: 60
+        timeoutInMinutes: 40
         variables:
           SOURCE_CODE_CHANGED: $[ dependencies.CheckChanges.outputs['check_changes.SOURCE_CODE_CHANGED'] ]
         steps:
