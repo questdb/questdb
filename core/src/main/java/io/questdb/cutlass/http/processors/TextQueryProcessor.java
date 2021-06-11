@@ -137,7 +137,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                     internalError(context.getChunkedResponseSocket(), e, state);
                 }
             } else {
-                header(context.getChunkedResponseSocket(), state);
+                headerNoContentDisposition(context.getChunkedResponseSocket());
                 sendConfirmation(context.getChunkedResponseSocket());
                 readyForNextRequest(context);
             }
@@ -314,6 +314,12 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         socket.sendHeader();
     }
 
+    protected void headerNoContentDisposition(HttpChunkedResponseSocket socket) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        socket.status(200, "text/csv; charset=utf-8");
+        socket.headers().setKeepAlive(configuration.getKeepAliveHeader());
+        socket.sendHeader();
+    }
+
     private LogRecord info(TextQueryProcessorState state) {
         return LOG.info().$('[').$(state.getFd()).$("] ");
     }
@@ -463,7 +469,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
     }
 
     private void sendConfirmation(HttpChunkedResponseSocket socket) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        socket.put('{').putQuoted("ddl").put(':').putQuoted("OK").put('}');
+        socket.put("DDL Success\n");
         socket.sendChunk(true);
     }
 
