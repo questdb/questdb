@@ -3871,9 +3871,7 @@ public class IODispatcherTest {
 
     @Test
     public void testMaxConnections() throws Exception {
-
         LOG.info().$("started maxConnections").$();
-
         assertMemoryLeak(() -> {
             HttpServerConfiguration httpServerConfiguration = new DefaultHttpServerConfiguration();
 
@@ -3899,7 +3897,8 @@ public class IODispatcherTest {
             try (IODispatcher<HttpConnectionContext> dispatcher = IODispatchers.create(
                     configuration,
                     new IOContextFactory<HttpConnectionContext>() {
-                        @Override
+                        @SuppressWarnings("resource")
+						@Override
                         public HttpConnectionContext newInstance(long fd, IODispatcher<HttpConnectionContext> dispatcher1) {
                             openCount.incrementAndGet();
                             return new HttpConnectionContext(httpServerConfiguration.getHttpContextConfiguration()) {
@@ -3933,16 +3932,20 @@ public class IODispatcherTest {
                 SOCountDownLatch serverHaltLatch = new SOCountDownLatch(1);
 
                 new Thread(() -> {
-                    do {
-                        dispatcher.run(0);
-                        dispatcher.processIOQueue(
-                                (operation, context) -> context.handleClientOperation(operation, selector, EmptyRescheduleContext)
-                        );
-                    } while (serverRunning.get());
-                    serverHaltLatch.countDown();
+                	try {
+	                    do {
+	                        dispatcher.run(0);
+	                        dispatcher.processIOQueue(
+	                                (operation, context) -> context.handleClientOperation(operation, selector, EmptyRescheduleContext)
+	                        );
+	                    } while (serverRunning.get());
+                	} finally {
+                		serverHaltLatch.countDown();
+                	}
                 }).start();
 
                 LongList openFds = new LongList();
+                LongHashSet closedFds = new LongHashSet();
 
                 final long sockAddr = Net.sockaddr("127.0.0.1", 9001);
                 final long buf = Unsafe.malloc(4096);
@@ -3991,8 +3994,10 @@ public class IODispatcherTest {
                         for (int i = 0; i < N; i++) {
                             if (i == activeConnectionLimit) {
                                 for (int j = 0; j < activeConnectionLimit; j++) {
-                                    Net.close(openFds.getQuick(j));
-                                }
+                                	long fd = openFds.getQuick(j);
+                                    Net.close(fd);
+                                    closedFds.add(fd);
+                               }
                             }
 
                             long fd = openFds.getQuick(i);
@@ -4006,12 +4011,19 @@ public class IODispatcherTest {
                                 Assert.assertFalse(dispatcher.isListening());
                             } else {
                                 Net.close(fd);
+                                closedFds.add(fd);
                             }
                         }
                     } finally {
                         Unsafe.free(mem, request.length());
                     }
                 } finally {
+                    for (int i=0; i<openFds.size(); i++) {
+                    	long fd = openFds.getQuick(i);
+                    	if (! closedFds.contains(fd)) {
+                    		Net.close(fd);
+                    	}
+                    }
                     Net.freeSockAddr(sockAddr);
                     Unsafe.free(buf, 4096);
                     Assert.assertFalse(configuration.getActiveConnectionLimit() < dispatcher.getConnectionCount());
