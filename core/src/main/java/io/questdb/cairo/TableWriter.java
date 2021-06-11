@@ -2449,14 +2449,8 @@ public class TableWriter implements Closeable {
                 throw CairoException.instance(0).put("timestamps before 1970-01-01 are not allowed for O3");
             }
 
-            if (o3TimestampMin > o3TimestampMax) {
-                // Safe check of the sort. No known way to reproduce
-                o3InError = true;
-                throw CairoException.instance(0)
-                        .put("error in o3 timestamp sort results [o3TimestampMin=").put(o3TimestampMin)
-                        .put(", o3TimestampMax=").put(o3TimestampMax)
-                        .put("]");
-            }
+            // Safe check of the sort. No known way to reproduce
+            assert o3TimestampMin <= o3TimestampMax;
 
             if (lag > 0) {
                 long lagThresholdTimestamp = o3TimestampMax - lag;
