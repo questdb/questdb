@@ -125,17 +125,16 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
     @Override
     public void close() {
         processDisconnects(Long.MAX_VALUE);
-        if (serverFd > 0) {
-            nf.close(serverFd, LOG);
-            serverFd = -1;
-        }
-
         for (int i = 0, n = pending.size(); i < n; i++) {
             doDisconnect(pending.get(i));
         }
 
         interestSubSeq.consumeAll(interestQueue, this.disconnectContextRef);
         ioEventSubSeq.consumeAll(ioEventQueue, this.disconnectContextRef);
+        if (serverFd > 0) {
+            nf.close(serverFd, LOG);
+            serverFd = -1;
+        }
     }
 
     @Override
