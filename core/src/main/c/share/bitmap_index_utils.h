@@ -85,22 +85,21 @@ public:
 
     const key_entry_proxy& operator[](size_t index) const noexcept {
         auto retries_count = 10;
-        key_entry_proxy proxy = {};
-
+        proxy_.is_block_consistent = false;
         while(retries_count--) {
-            proxy.value_count = keys_ptr_[index].value_count;
+            proxy_.value_count = keys_ptr_[index].value_count;
             std::atomic_thread_fence(std::memory_order_acquire);
-            if (keys_ptr_[index].count_check == proxy.value_count) {
-                proxy.first_value_block_offset = keys_ptr_[index].first_value_block_offset;
-                proxy.last_value_block_offset = keys_ptr_[index].last_value_block_offset;
+            if (keys_ptr_[index].count_check == proxy_.value_count) {
+                proxy_.first_value_block_offset = keys_ptr_[index].first_value_block_offset;
+                proxy_.last_value_block_offset = keys_ptr_[index].last_value_block_offset;
                 std::atomic_thread_fence(std::memory_order_acquire);
-                if (keys_ptr_[index].value_count == proxy.value_count) {
-                    proxy.is_block_consistent = true;
+                if (keys_ptr_[index].value_count == proxy_.value_count) {
+                    proxy_.is_block_consistent = true;
                     break;
                 }
             }
         }
-        return proxy; // const ref is ok here
+        return proxy_;
     }
 
     [[nodiscard]] size_t memory_size() const noexcept { return memory_size_; };
@@ -112,6 +111,7 @@ public:
     };
 
 private:
+    mutable key_entry_proxy proxy_;
     const key_header *header_ptr_;
     const key_entry *keys_ptr_;
     size_t memory_size_;
