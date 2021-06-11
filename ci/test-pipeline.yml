@@ -96,6 +96,7 @@ stages:
               jdkVersionOption: $(jdk)
               codeCoverageToolOption: "$(CODE_COVERAGE_TOOL_OPTION)"
               codeCoverageClassFilter: "$(COVERAGE_DIFF)"
+            timeoutInMinutes: 40
             condition: |
               and(
                    and(
@@ -111,6 +112,7 @@ stages:
               mavenOptions: "-Xmx3072m"
               options: "--batch-mode --quiet -P build-web-console,use-built-in-nodejs -Dout=$(Build.SourcesDirectory)/ci/qlog.conf"
               jdkVersionOption: $(jdk)
+            timeoutInMinutes: 40
             condition: |
               and(
                 not(
