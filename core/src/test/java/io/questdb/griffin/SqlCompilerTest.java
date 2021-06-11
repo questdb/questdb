@@ -3126,6 +3126,64 @@ public class SqlCompilerTest extends AbstractGriffinTest {
 
     }
 
+    @Test
+    public void testSymbolToStringAutoCastWhere() throws Exception {
+        final String expected = "a\tb\tk\n" +
+                "IBM\tIBM\t1970-01-01T00:00:00.000000Z\n";
+        assertQuery(expected,
+                "select a, b, k from x where a=b",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_str('IBM', 'APPL', 'SPY', 'FB') a," +
+                        " rnd_symbol('IBM', 'APPL', 'SPY') b," +
+                        " timestamp_sequence(0, 10000) k" +
+                        " from" +
+                        " long_sequence(5)" +
+                        ") timestamp(k)",
+                "k",
+                true,
+                true,
+                false
+        );
+    }
+
+    @Test
+    public void testSymbolToStringAutoCastJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            final String xx = "create table xx as " +
+                    "(" +
+                    "select" +
+                    " rnd_str('IBM', 'APPL', 'SPY', 'FB') a," +
+                    " timestamp_sequence(0, 10000) k" +
+                    " from" +
+                    " long_sequence(5)" +
+                    ") timestamp(k)";
+
+            final String yy = "create table yy as " +
+                    "(" +
+                    "select" +
+                    " rnd_symbol('IBM', 'APPL', 'SPY') b," +
+                    " timestamp_sequence(0, 10000) k" +
+                    " from" +
+                    " long_sequence(5)" +
+                    ") timestamp(k)";
+
+            compiler.compile(xx, sqlExecutionContext);
+            compiler.compile(yy, sqlExecutionContext);
+
+            final String expected = "a\tb\tc\n" +
+                    "IBM\tIBM\tIBM_IBM\n" +
+                    "SPY\tSPY\tSPY_SPY\n" +
+                    "SPY\tSPY\tSPY_SPY\n" +
+                    "APPL\tAPPL\tAPPL_APPL\n" +
+                    "APPL\tAPPL\tAPPL_APPL\n" +
+                    "APPL\tAPPL\tAPPL_APPL\n" +
+                    "APPL\tAPPL\tAPPL_APPL\n";
+            assertQuery(expected, "select xx.a, yy.b, concat(xx.a, '_', yy.b) c from xx join yy on xx.a = yy.b", null, false, false);
+        });
+    }
+
     private void assertCast(String expectedData, String expectedMeta, String sql) throws SqlException {
         compiler.compile(sql, sqlExecutionContext);
         try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "y", TableUtils.ANY_TABLE_VERSION)) {
