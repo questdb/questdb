@@ -243,7 +243,7 @@ public class LineTcpServerTest extends AbstractCairoTest {
                 for (int i = 1; i < threadCount; i++) {
                     // Wait writer to be released and check.
                     String tableName = "weather" + i;
-                    int releasedCount = tableIndex.get(tableName).getCount();
+                    int releasedCount = -tableIndex.get(tableName).getCount();
                     try {
                         assertTable(expectedSB, tableName);
                     } catch (AssertionError e) {
