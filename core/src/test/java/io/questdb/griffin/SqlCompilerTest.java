@@ -3098,6 +3098,34 @@ public class SqlCompilerTest extends AbstractGriffinTest {
         });
     }
 
+    @Test
+    public void testSymbolToStringAutoCast() throws Exception {
+        final String expected = "cc\tk\n" +
+                "PEHN_\t1970-01-01T00:00:00.000000Z\n" +
+                "CPSW_ffyu\t1970-01-01T00:00:00.010000Z\n" +
+                "VTJW_gpgw\t1970-01-01T00:00:00.020000Z\n" +
+                "_\t1970-01-01T00:00:00.030000Z\n" +
+                "VTJW_ffyu\t1970-01-01T00:00:00.040000Z\n";
+
+        assertQuery(expected,
+                "select concat(a, '_', to_lowercase(b)) cc, k from x",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_symbol(5,4,4,1) a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(0, 10000) k" +
+                        " from" +
+                        " long_sequence(5)" +
+                        ") timestamp(k)",
+                "k",
+                true,
+                true,
+                true
+        );
+
+    }
+
     private void assertCast(String expectedData, String expectedMeta, String sql) throws SqlException {
         compiler.compile(sql, sqlExecutionContext);
         try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "y", TableUtils.ANY_TABLE_VERSION)) {
