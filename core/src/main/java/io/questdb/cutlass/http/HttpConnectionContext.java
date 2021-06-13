@@ -146,7 +146,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
     public void fail(HttpRequestProcessorSelector selector, HttpException e) {
         LOG.info().$("failed to retry query [fd=").$(fd).$(']').$();
         HttpRequestProcessor processor = getHttpRequestProcessor(selector);
-        failProcessor(processor, e);
+        failProcessor(processor, e, DISCONNECT_REASON_RETRY_FAILED);
     }
 
     @Override
@@ -273,7 +273,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
             pendingRetry = true;
             rescheduleContext.reschedule(this);
         } catch (RetryFailedOperationException e) {
-            failProcessor(processor, e);
+            failProcessor(processor, e, DISCONNECT_REASON_RETRY_FAILED);
         }
     }
 
@@ -438,7 +438,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
                         break;
                     } else {
                         // Header does not fit receive buffer
-                        failProcessor(processor, BufferOverflowException.INSTANCE);
+                        failProcessor(processor, BufferOverflowException.INSTANCE, DISCONNECT_REASON_MULTIPART_HEADER_TOO_BIG);
                         break;
                     }
                 }
@@ -454,7 +454,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
         }
     }
 
-    private void failProcessor(HttpRequestProcessor processor, HttpException e) {
+    private void failProcessor(HttpRequestProcessor processor, HttpException e, int reason) {
         pendingRetry = false;
         try {
             LOG.info()
@@ -462,9 +462,9 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
                     .$(", error=").$(e.getFlyweightMessage())
                     .I$();
             processor.failRequest(this, e);
-            dispatcher.disconnect(this, IODispatcher.DISCONNECT_REASON_RETRY_FAILED);
+            dispatcher.disconnect(this, reason);
         } catch (PeerDisconnectedException peerDisconnectedException) {
-            handlePeerDisconnect(IODispatcher.DISCONNECT_REASON_RETRY_FAILED);
+            handlePeerDisconnect(DISCONNECT_REASON_PEER_DISCONNECT_AT_SEND);
         } catch (PeerIsSlowToReadException peerIsSlowToReadException) {
             LOG.info().$("peer is slow to receive failed to retry response [fd=").$(fd).$(']').$();
             processor.parkRequest(this);
@@ -624,7 +624,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
             this.multipartParserState.saveFdBufferPosition(multipartContentParser.getResumePtr(), buf, bufRemaining);
             throw e;
         } catch (NotEnoughLinesException e) {
-            failProcessor(processor, e);
+            failProcessor(processor, e, DISCONNECT_REASON_KICKED_TXT_NOT_ENOUGH_LINES);
             parseResult = false;
         }
 
