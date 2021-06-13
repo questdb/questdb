@@ -161,6 +161,11 @@ public class IODispatcherTest {
                         public int getInitialBias() {
                             return IODispatcherConfiguration.BIAS_WRITE;
                         }
+
+                        @Override
+                        public boolean getPeerNoLinger() {
+                            return false;
+                        }
                     },
                     (fd, dispatcher1) -> {
                         connectLatch.countDown();
