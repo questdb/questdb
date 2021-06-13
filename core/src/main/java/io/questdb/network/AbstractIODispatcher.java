@@ -204,10 +204,8 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
                 return;
             }
 
-            if (nf.setTcpNoDelay(fd, true) < 0) {
-                LOG.error().$("could not configure no delay [fd=").$(fd).$(", errno=").$(nf.errno()).$(']').$();
-                nf.close(fd, LOG);
-                return;
+            if (nf.setTcpNoDelay(fd, false) < 0) {
+                LOG.error().$("could not turn off Nagle's algorithm [fd=").$(fd).$(", errno=").$(nf.errno()).$(']').$();
             }
 
             if (peerNoLinger) {

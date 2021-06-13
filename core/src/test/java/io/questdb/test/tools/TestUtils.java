@@ -63,13 +63,19 @@ public final class TestUtils {
         return true;
     }
 
-    public static void assertConnect(long fd, long ilpSockAddr) {
+    public static void assertConnect(long fd, long sockAddr, boolean noLinger) {
         Assert.assertTrue(fd > -1);
-        Net.configureNoLinger(fd);
-        long rc = Net.connect(fd, ilpSockAddr);
+        if (noLinger) {
+            Net.configureNoLinger(fd);
+        }
+        long rc = Net.connect(fd, sockAddr);
         if (rc != 0) {
             Assert.fail("could not connect, errno=" + Os.errno());
         }
+    }
+
+    public static void assertConnect(long fd, long sockAddr) {
+        assertConnect(fd, sockAddr, true);
     }
 
     public static void assertConnect(NetworkFacade nf, long fd, long ilpSockAddr) {

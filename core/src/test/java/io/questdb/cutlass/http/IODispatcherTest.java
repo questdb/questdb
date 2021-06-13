@@ -4526,7 +4526,15 @@ public class IODispatcherTest {
     public void testSCPHttp10() throws Exception {
         assertMemoryLeak(() -> {
             final String baseDir = temp.getRoot().getAbsolutePath();
-            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(NetworkFacadeImpl.INSTANCE, baseDir, 16 * 1024, false, false, false, "HTTP/1.0 ");
+            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(
+                    NetworkFacadeImpl.INSTANCE,
+                    baseDir,
+                    16 * 1024,
+                    false,
+                    false,
+                    false,
+                    "HTTP/1.0 "
+            );
             final WorkerPool workerPool = new WorkerPool(new WorkerPoolConfiguration() {
                 @Override
                 public int[] getWorkerAffinity() {
@@ -4566,8 +4574,6 @@ public class IODispatcherTest {
 
                         writeRandomFile(path, rnd, 122222212222L);
 
-//                        httpServer.getStartedLatch().await();
-
                         long sockAddr = Net.sockaddr("127.0.0.1", 9001);
                         try {
                             int netBufferLen = 4 * 1024;
@@ -4600,7 +4606,15 @@ public class IODispatcherTest {
                                     TestUtils.assertConnect(fd, sockAddr);
                                     try {
                                         sendRequest(request, fd, buffer);
-                                        assertDownloadResponse(fd, rnd, buffer, netBufferLen, diskBufferLen, expectedResponseHeader, 20971670);
+                                        assertDownloadResponse(
+                                                fd,
+                                                rnd,
+                                                buffer,
+                                                netBufferLen,
+                                                diskBufferLen,
+                                                expectedResponseHeader,
+                                                20971670
+                                        );
                                     } finally {
                                         Net.close(fd);
                                     }
@@ -5080,6 +5094,11 @@ public class IODispatcherTest {
                         public long getIdleConnectionTimeout() {
                             // 0.5s idle timeout
                             return 500;
+                        }
+
+                        @Override
+                        public boolean getPeerNoLinger() {
+                            return false;
                         }
                     },
                     new IOContextFactory<HttpConnectionContext>() {
