@@ -24,10 +24,11 @@
 
 package io.questdb;
 
-import io.questdb.cairo.AbstractCairoTest;
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.TableReader;
-import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.*;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Misc;
@@ -38,6 +39,38 @@ import org.junit.Test;
 
 public class TelemetryTest extends AbstractCairoTest {
     private final static FilesFacade FF = FilesFacadeImpl.INSTANCE;
+
+    @Test
+    public void testTelemetryCanDeleteTableWhenDisabled() throws Exception {
+
+        CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+            @Override
+            public TelemetryConfiguration getTelemetryConfiguration() {
+                return new DefaultTelemetryConfiguration() {
+                    @Override
+                    public boolean getEnabled() {
+                        return false;
+                    }
+                };
+            }
+        };
+
+        TestUtils.assertMemoryLeak(() -> {
+            try (
+                    CairoEngine engine = new CairoEngine(configuration);
+                    SqlCompiler compiler = new SqlCompiler(engine, messageBus, null);
+                    TelemetryJob ignored = new TelemetryJob(engine);
+                    SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
+            ) {
+                try {
+                    compiler.compile("drop table telemetry", sqlExecutionContext);
+                    Assert.fail();
+                } catch (SqlException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "table 'telemetry' does not exist");
+                }
+            }
+        });
+    }
 
     @Test
     public void testTelemetryCreatesTablesWhenEnabled() throws Exception {
@@ -73,17 +106,17 @@ public class TelemetryTest extends AbstractCairoTest {
 
                 final String expectedEvent = "100\n" +
                         "101\n";
-                assertColumn(expectedEvent, "telemetry", 1);
+                assertColumn(expectedEvent, 1);
 
                 final String expectedOrigin = "1\n" +
                         "1\n";
-                assertColumn(expectedOrigin, "telemetry", 2);
+                assertColumn(expectedOrigin, 2);
             }
         });
     }
 
-    protected void assertColumn(CharSequence expected, CharSequence tableName, int index) {
-        try (TableReader reader = new TableReader(configuration, tableName)) {
+    protected void assertColumn(CharSequence expected, int index) {
+        try (TableReader reader = new TableReader(configuration, "telemetry")) {
             sink.clear();
             printer.printFullColumn(reader.getCursor(), reader.getMetadata(), index, false, sink);
             TestUtils.assertEquals(expected, sink);
