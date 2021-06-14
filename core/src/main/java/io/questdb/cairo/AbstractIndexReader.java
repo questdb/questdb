@@ -48,6 +48,30 @@ public abstract class AbstractIndexReader implements BitmapIndexReader {
     protected long unIndexedNullCount;
     private int keyCountIncludingNulls;
 
+    public long getKeyBaseAddress() {
+        return ((SinglePageMappedReadOnlyPageMemory)keyMem).addressOf(0);
+    }
+
+    public long getKeyMemorySize() {
+       return keyMem.size();
+    }
+
+    public long getValueBaseAddress() {
+        return ((SinglePageMappedReadOnlyPageMemory)valueMem).addressOf(0);
+    }
+
+    public long getValueMemorySize() {
+        return valueMem.size();
+    }
+
+    public int getValueBlockCapacity() {
+        return blockValueCountMod;
+    }
+
+    public long getUnIndexedNullCount() {
+        return unIndexedNullCount;
+    }
+
     @Override
     public void close() {
         if (isOpen()) {
@@ -95,6 +119,7 @@ public abstract class AbstractIndexReader implements BitmapIndexReader {
             // read. Confirm start sequence hasn't changed after values read. If it has changed - retry the whole thing.
             int blockValueCountMod;
             int keyCount;
+            long valuesMemorySize;
             final long deadline = clock.getTicks() + spinLockTimeoutUs;
             while (true) {
                 long seq = this.keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE);
@@ -104,6 +129,7 @@ public abstract class AbstractIndexReader implements BitmapIndexReader {
 
                     blockValueCountMod = this.keyMem.getInt(BitmapIndexUtils.KEY_RESERVED_OFFSET_BLOCK_VALUE_COUNT) - 1;
                     keyCount = this.keyMem.getInt(BitmapIndexUtils.KEY_RESERVED_OFFSET_KEY_COUNT);
+                    valuesMemorySize = this.keyMem.getInt(BitmapIndexUtils.KEY_RESERVED_OFFSET_VALUE_MEM_SIZE);
 
                     Unsafe.getUnsafe().loadFence();
                     if (this.keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE) == seq) {
