@@ -79,6 +79,7 @@ JNIEXPORT jlong JNICALL Java_io_questdb_network_Net_sockaddr
 JNIEXPORT void JNICALL Java_io_questdb_network_Net_freeSockAddr
         (JNIEnv *e, jclass cl, jlong address) {
     if (address != 0) {
+        EBADF;
         free((void *) address);
     }
 }
