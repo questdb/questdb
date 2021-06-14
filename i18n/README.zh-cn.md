@@ -15,6 +15,8 @@
   </a>
 </p>
 
+简体中文 | [English](https://github.com/questdb/questdb)
+
 # QuestDB
 
 QuestDB 是一个高性能、开源的 SQL 数据库，适用于金融服务、物联网、机器学习
@@ -97,10 +99,6 @@ brew services start questdb
   能请求。
 - [产品路线图](https://github.com/questdb/questdb/projects/3)列出了我们目前正在
   进行的任务和功能。
-
-## 翻译
-
-- [翻译列表](./languages.md)
 
 ## 贡献
 
