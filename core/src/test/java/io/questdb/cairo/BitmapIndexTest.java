@@ -28,6 +28,7 @@ import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.vm.AppendOnlyVirtualMemory;
 import io.questdb.cairo.vm.PagedMappedReadWriteMemory;
 import io.questdb.cairo.vm.PagedSlidingReadOnlyMemory;
+import io.questdb.griffin.engine.table.LatestByArguments;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
@@ -827,6 +828,238 @@ public class BitmapIndexTest extends AbstractCairoTest {
                 mem.skip(BitmapIndexUtils.KEY_FILE_RESERVED - mem.getAppendOffset());
             }
             assertWriterConstructorFail("Key count");
+        });
+    }
+
+    @Test
+    public void testCppLatestByIndexReader() {
+        final int valueBlockCapacity = 256;
+        final long keyCount = 5;
+        create(configuration, path.trimTo(plen), "x", valueBlockCapacity);
+
+        try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration, path, "x")) {
+            for (int i = 0; i < keyCount; i++) {
+                for (int j = 0; j <= i; j++) {
+                    writer.add(i, j);
+                }
+            }
+        }
+
+        DirectLongList rows = new DirectLongList(keyCount);
+
+        rows.extend(keyCount);
+        rows.setPos(rows.getCapacity());
+        rows.zero(0);
+
+        try (BitmapIndexBwdReader reader = new BitmapIndexBwdReader(configuration, path.trimTo(plen), "x", 0)) {
+            long argsAddress = LatestByArguments.allocateMemory();
+            LatestByArguments.setRowsAddress(argsAddress, rows.getAddress());
+            LatestByArguments.setRowsCapacity(argsAddress, rows.getCapacity());
+
+            LatestByArguments.setKeyLo(argsAddress, 0);
+            LatestByArguments.setKeyHi(argsAddress, keyCount);
+            LatestByArguments.setRowsSize(argsAddress, rows.size());
+
+            BitmapIndexUtilsNative.latestScanBackward(
+                    reader.getKeyBaseAddress(),
+                    reader.getKeyMemorySize(),
+                    reader.getValueBaseAddress(),
+                    reader.getValueMemorySize(),
+                    argsAddress,
+                    reader.getUnIndexedNullCount(),
+                    Long.MAX_VALUE, 0,
+                    0, valueBlockCapacity - 1
+            );
+
+            long rowCount = LatestByArguments.getRowsSize(argsAddress);
+            Assert.assertEquals(keyCount, rowCount);
+            long keyLo = LatestByArguments.getKeyLo(argsAddress);
+            Assert.assertEquals(Long.MAX_VALUE, keyLo);
+            long keyHi = LatestByArguments.getKeyHi(argsAddress);
+            Assert.assertEquals(Long.MIN_VALUE, keyHi);
+
+            LatestByArguments.releaseMemory(argsAddress);
+
+            for (int i = 0; i < rows.getCapacity(); ++i) {
+                Assert.assertEquals(i, Rows.toLocalRowID(rows.get(i) - 1));
+            }
+        }
+        rows.close();
+    }
+
+    @Test
+    public void testCppLatestByIndexReaderIgnoreUpdates() {
+        final int valueBlockCapacity = 32;
+        final long keyCount = 1024;
+        create(configuration, path.trimTo(plen), "x", valueBlockCapacity);
+
+        try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration, path, "x")) {
+            for (int i = 0; i < keyCount; i++) {
+                for (int j = 0; j <= i; j++) {
+                    writer.add(i, j);
+                }
+            }
+        }
+
+        DirectLongList rows = new DirectLongList(keyCount);
+
+        rows.extend(keyCount);
+        rows.setPos(rows.getCapacity());
+        rows.zero(0);
+
+        //fixing memory mapping here
+        BitmapIndexBwdReader reader = new BitmapIndexBwdReader(configuration, path.trimTo(plen), "x", 0);
+
+        // we should ignore this update
+        try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration, path, "x")) {
+            for (int i = (int)keyCount; i < keyCount*2; i++) {
+                writer.add(i, 2L*i);
+            }
+        }
+        // and this one
+        try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration, path, "x")) {
+            for (int i = 0; i < keyCount; i++) {
+                writer.add((int)keyCount - 1, 10L*i);
+            }
+        }
+
+
+        long argsAddress = LatestByArguments.allocateMemory();
+        LatestByArguments.setRowsAddress(argsAddress, rows.getAddress());
+        LatestByArguments.setRowsCapacity(argsAddress, rows.getCapacity());
+
+        LatestByArguments.setKeyLo(argsAddress, 0);
+        LatestByArguments.setKeyHi(argsAddress, keyCount);
+        LatestByArguments.setRowsSize(argsAddress, rows.size());
+
+        BitmapIndexUtilsNative.latestScanBackward(
+                reader.getKeyBaseAddress(),
+                reader.getKeyMemorySize(),
+                reader.getValueBaseAddress(),
+                reader.getValueMemorySize(),
+                argsAddress,
+                reader.getUnIndexedNullCount(),
+                Long.MAX_VALUE, 0,
+                0, valueBlockCapacity - 1
+        );
+
+        long rowCount = LatestByArguments.getRowsSize(argsAddress);
+        Assert.assertEquals(keyCount, rowCount);
+        long keyLo = LatestByArguments.getKeyLo(argsAddress);
+        Assert.assertEquals(Long.MAX_VALUE, keyLo);
+        long keyHi = LatestByArguments.getKeyHi(argsAddress);
+        Assert.assertEquals(Long.MIN_VALUE, keyHi);
+
+        LatestByArguments.releaseMemory(argsAddress);
+
+        for (int i = 0; i < rows.getCapacity(); ++i) {
+            Assert.assertEquals(i, Rows.toLocalRowID(rows.get(i) - 1));
+        }
+        rows.close();
+        reader.close();
+    }
+
+    @Test
+    public void testCppLatestByIndexReaderIndexedWithTruncate() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final int timestampIncrement = 1000000 * 60 * 5;
+            final int M = 1000;
+            final int N = 100;
+            final int indexBlockCapacity = 32;
+            // separate two symbol columns with primitive. It will make problems apparent if index does not shift correctly
+            try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE).
+                    col("a", ColumnType.STRING).
+                    col("b", ColumnType.SYMBOL).indexed(true, indexBlockCapacity).
+                    col("i", ColumnType.INT).
+                    timestamp()
+            ) {
+                CairoTestUtils.create(model);
+            }
+
+            final Rnd rnd = new Rnd();
+            final String[] symbols = new String[N];
+
+            for (int i = 0; i < N; i++) {
+                symbols[i] = rnd.nextChars(8).toString();
+            }
+
+            // prepare the data
+            long timestamp = 0;
+            try (TableWriter writer = new TableWriter(configuration, "x")) {
+                for (int i = 0; i < M; i++) {
+                    TableWriter.Row row = writer.newRow(timestamp += timestampIncrement);
+                    row.putStr(0, rnd.nextChars(20));
+                    row.putSym(1, symbols[rnd.nextPositiveInt() % N]);
+                    row.putInt(2, rnd.nextInt());
+                    row.append();
+                }
+                writer.commit();
+                rnd.reset();
+
+                writer.addColumn(
+                        "c",
+                        ColumnType.SYMBOL,
+                        Numbers.ceilPow2(N),
+                        true,
+                        true,
+                        indexBlockCapacity,
+                        false
+                );
+                for (int i = 0; i < M; i++) {
+                    TableWriter.Row row = writer.newRow(timestamp += timestampIncrement);
+                    row.putStr(0, rnd.nextChars(20));
+                    row.putSym(1, symbols[rnd.nextPositiveInt() % N]);
+                    row.putInt(2, rnd.nextInt());
+                    row.putSym(4, symbols[rnd.nextPositiveInt() % N]);
+                    row.append();
+                }
+                writer.commit();
+                DirectLongList rows = new DirectLongList(N);
+
+                rows.setPos(rows.getCapacity());
+                rows.zero(0);
+
+
+                try (TableReader tableReader = new TableReader(configuration, "x")) {
+                    tableReader.openPartition(0);
+                    final int columnBase = tableReader.getColumnBase(0);
+                    final int columnIndex = tableReader.getMetadata().getColumnIndex("c");
+                    BitmapIndexReader reader = tableReader.getBitmapIndexReader(0,
+                            columnBase, columnIndex, BitmapIndexReader.DIR_BACKWARD);
+
+                    long columnTop = tableReader.getColumnTop(columnBase, columnIndex);
+
+                    long argsAddress = LatestByArguments.allocateMemory();
+
+                    LatestByArguments.setRowsAddress(argsAddress, rows.getAddress());
+                    LatestByArguments.setRowsCapacity(argsAddress, rows.getCapacity());
+
+                    LatestByArguments.setKeyLo(argsAddress, 0);
+                    LatestByArguments.setKeyHi(argsAddress, N);
+                    LatestByArguments.setRowsSize(argsAddress, rows.size());
+                    BitmapIndexUtilsNative.latestScanBackward(
+                            reader.getKeyBaseAddress(),
+                            reader.getKeyMemorySize(),
+                            reader.getValueBaseAddress(),
+                            reader.getValueMemorySize(),
+                            argsAddress,
+                            columnTop,
+                            Long.MAX_VALUE, 0,
+                            0, indexBlockCapacity - 1
+                    );
+
+                    long rowCount = LatestByArguments.getRowsSize(argsAddress);
+                    Assert.assertEquals(N, rowCount);
+                    long keyLo = LatestByArguments.getKeyLo(argsAddress);
+                    Assert.assertEquals(Long.MAX_VALUE, keyLo);
+                    long keyHi = LatestByArguments.getKeyHi(argsAddress);
+                    Assert.assertEquals(Long.MIN_VALUE, keyHi);
+
+                    LatestByArguments.releaseMemory(argsAddress);
+                    Assert.assertEquals(columnTop - 1, Rows.toLocalRowID(rows.get(0) - 1));
+                }
+                rows.close();
+            }
         });
     }
 

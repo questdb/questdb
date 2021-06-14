@@ -54,4 +54,11 @@ public interface BitmapIndexReader extends Closeable {
     int getKeyCount();
 
     boolean isOpen();
+
+    long getKeyBaseAddress();
+    long getKeyMemorySize();
+    long getValueBaseAddress();
+    long getValueMemorySize();
+    long getUnIndexedNullCount();
+    int getValueBlockCapacity();
 }

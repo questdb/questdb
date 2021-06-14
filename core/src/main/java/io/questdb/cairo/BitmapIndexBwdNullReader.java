@@ -47,6 +47,36 @@ public class BitmapIndexBwdNullReader implements BitmapIndexReader {
         return true;
     }
 
+    @Override
+    public long getKeyBaseAddress() {
+        return 0;
+    }
+
+    @Override
+    public long getKeyMemorySize() {
+        return 0;
+    }
+
+    @Override
+    public long getValueBaseAddress() {
+        return 0;
+    }
+
+    @Override
+    public long getValueMemorySize() {
+        return 0;
+    }
+
+    @Override
+    public long getUnIndexedNullCount() {
+        return 0;
+    }
+
+    @Override
+    public int getValueBlockCapacity() {
+        return 0;
+    }
+
     private NullCursor getCursor(boolean cachedInstance) {
         return cachedInstance ? cursor : new NullCursor();
     }
