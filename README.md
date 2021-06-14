@@ -7,14 +7,8 @@
   <a href="https://slack.questdb.io">
     <img src="https://slack.questdb.io/badge.svg" alt="QuestDB community Slack channel"/>
   </a>
-  <a href="https://github.com/questdb/questdb/blob/master/LICENSE.txt">
-    <img src="https://img.shields.io/github/license/questdb/questdb" alt="Apache 2.0 licence"/>
-  </a>
   <a href="#contribute">
     <img src="https://img.shields.io/github/all-contributors/questdb/questdb" alt="QuestDB open source contributors"/>
-  </a>
-  <a href="https://dev.azure.com/questdb/questdb">
-    <img src="https://dev.azure.com/questdb/questdb/_apis/build/status/Build%20and%20upload%20snapshot%20%28Linux%29?branchName=master" alt="Azure pipeline status"/>
   </a>
   <a href="https://search.maven.org/search?q=g:org.questdb">
     <img src="https://img.shields.io/maven-central/v/org.questdb/questdb" alt="QuestDB on Apache Maven"/>
