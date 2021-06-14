@@ -58,4 +58,15 @@ public class BitmapIndexFwdNullReaderTest {
         // has to be always 1
         Assert.assertEquals(1, reader.getKeyCount());
     }
+
+    @Test
+    public void testMemoryGetters() {
+        Assert.assertEquals(0, reader.getKeyBaseAddress());
+        Assert.assertEquals(0, reader.getKeyMemorySize());
+        Assert.assertEquals(0, reader.getValueBaseAddress());
+        Assert.assertEquals(0, reader.getValueMemorySize());
+        Assert.assertEquals(0, reader.getUnIndexedNullCount());
+        Assert.assertEquals(0, reader.getValueBlockCapacity());
+    }
+
 }

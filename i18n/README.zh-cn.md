@@ -15,6 +15,8 @@
   </a>
 </p>
 
+简体中文 | [English](https://github.com/questdb/questdb)
+
 # QuestDB
 
 QuestDB 是一个高性能、开源的 SQL 数据库，适用于金融服务、物联网、机器学习
@@ -98,10 +100,6 @@ brew services start questdb
 - [产品路线图](https://github.com/questdb/questdb/projects/3)列出了我们目前正在
   进行的任务和功能。
 
-## 翻译
-
-- [翻译列表](./languages.md)
-
 ## 贡献
 
 我们总是乐于接受对项目的贡献，无论是源代码、文档、错误报告、功能请求还是反馈。要
@@ -182,6 +180,7 @@ brew services start questdb
   </tr>
   <tr>
     <td align="center"><a href="https://github.com/snenkov"><img src="https://avatars.githubusercontent.com/u/13110986?v=4" width="100px;" alt=""/><br /><sub><b>snenkov</b></sub></a><br /><a href="#userTesting-snenkov" title="User Testing">📓</a> <a href="https://github.com/questdb/questdb/issues?q=author%3Asnenkov" title="Bug reports">🐛</a> <a href="#ideas-snenkov" title="Ideas, Planning, & Feedback">🤔</a></td>
+    <td align="center"><a href="https://www.linkedin.com/in/marregui"><img src="https://avatars.githubusercontent.com/u/255796?v=4" width="100px;" alt=""/><br /><sub><b>marregui</b></sub></a><br /><a href="https://github.com/questdb/questdb/commits?author=marregui" title="Code">💻</a> <a href="#ideas-marregui" title="Ideas, Planning, & Feedback">🤔</a></td>
   </tr>
 </table>
 

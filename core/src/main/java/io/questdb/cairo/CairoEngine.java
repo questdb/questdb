@@ -66,10 +66,16 @@ public class CairoEngine implements Closeable, WriterSource {
         this.writerPool = new WriterPool(configuration, messageBus);
         this.readerPool = new ReaderPool(configuration);
         this.writerMaintenanceJob = new WriterMaintenanceJob(configuration);
-        this.telemetryQueue = new RingQueue<>(TelemetryTask::new, configuration.getTelemetryConfiguration().getQueueCapacity());
-        this.telemetryPubSeq = new MPSequence(telemetryQueue.getCapacity());
-        this.telemetrySubSeq = new SCSequence();
-        telemetryPubSeq.then(telemetrySubSeq).then(telemetryPubSeq);
+        if (configuration.getTelemetryConfiguration().getEnabled()) {
+            this.telemetryQueue = new RingQueue<>(TelemetryTask::new, configuration.getTelemetryConfiguration().getQueueCapacity());
+            this.telemetryPubSeq = new MPSequence(telemetryQueue.getCapacity());
+            this.telemetrySubSeq = new SCSequence();
+            telemetryPubSeq.then(telemetrySubSeq).then(telemetryPubSeq);
+        } else {
+            this.telemetryQueue = null;
+            this.telemetryPubSeq = null;
+            this.telemetrySubSeq = null;
+        }
         this.tableIdMemSize = Files.PAGE_SIZE;
         openTableId();
         try {

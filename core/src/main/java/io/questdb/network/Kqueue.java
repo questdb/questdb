@@ -75,10 +75,6 @@ public final class Kqueue implements Closeable {
         return Unsafe.getUnsafe().getShort(readAddress + KqueueAccessor.FILTER_OFFSET);
     }
 
-    public int getFlags() {
-        return Unsafe.getUnsafe().getShort(readAddress + KqueueAccessor.FLAGS_OFFSET);
-    }
-
     public int listen(long sfd) {
         writeAddress = changeList;
         commonFd(sfd, 0);
