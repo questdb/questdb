@@ -44,6 +44,7 @@ import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -248,7 +249,8 @@ public class LineTcpServerTest extends AbstractCairoTest {
                         assertTable(expectedSB, tableName);
                     } catch (AssertionError e) {
                         // Wait one more writer release before re-trying to compare
-                        tableIndex.get(tableName).await(releasedCount + 1);
+                        tableIndex.get(tableName).await(releasedCount + 1,
+                                minIdleMsBeforeWriterRelease * 20L * 1000L);
                         assertTable(expectedSB, tableName);
                     }
                 }
@@ -280,7 +282,7 @@ public class LineTcpServerTest extends AbstractCairoTest {
         try {
             maxMeasurementSize = lineData.length();
             runInContext(() -> {
-                send(lineData, "tableCRASH");
+                send(lineData, "tableCRASH", true, false);
 
                 String expected = "tag_n_1\ttag_n_2\ttag_n_3\ttag_n_4\ttag_n_5\ttag_n_6\ttag_n_7\ttag_n_8\ttag_n_9\ttag_n_10\ttag_n_11\ttag_n_12\ttag_n_13\ttag_n_14\ttag_n_15\ttag_n_16\ttag_n_17\tvalue\ttimestamp\n" +
                         "1\t2\t3\t4\t5\t6\t7\t8\t9\t10\t11\t12\t13\t14\t15\t16\t17\t42.400000000000006\t2021-04-27T07:40:49.714000Z\n";
@@ -463,6 +465,10 @@ public class LineTcpServerTest extends AbstractCairoTest {
     }
 
     private void send(String lineData, String tableName, boolean wait) {
+        send(lineData, tableName, wait, true);
+    }
+
+    private void send(String lineData, String tableName, boolean wait, boolean noLinger) {
         SOCountDownLatch releaseLatch = new SOCountDownLatch(1);
         if (wait) {
             engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
@@ -478,20 +484,23 @@ public class LineTcpServerTest extends AbstractCairoTest {
             int ipv4address = Net.parseIPv4("127.0.0.1");
             long sockaddr = Net.sockaddr(ipv4address, bindPort);
             long fd = Net.socketTcp(true);
-            if (Net.connect(fd, sockaddr) != 0) {
-                throw NetworkError.instance(Os.errno(), "could not connect to ").ip(ipv4address);
+            try {
+                TestUtils.assertConnect(fd, sockaddr, noLinger);
+                byte[] lineDataBytes = lineData.getBytes(StandardCharsets.UTF_8);
+                long bufaddr = Unsafe.malloc(lineDataBytes.length);
+                try {
+                    for (int n = 0; n < lineDataBytes.length; n++) {
+                        Unsafe.getUnsafe().putByte(bufaddr + n, lineDataBytes[n]);
+                    }
+                    int rc = Net.send(fd, bufaddr, lineDataBytes.length);
+                    Assert.assertEquals(lineDataBytes.length, rc);
+                } finally {
+                    Unsafe.free(bufaddr, lineDataBytes.length);
+                }
+            } finally {
+                Net.close(fd);
+                Net.freeSockAddr(sockaddr);
             }
-            byte[] lineDataBytes = lineData.getBytes(StandardCharsets.UTF_8);
-            long bufaddr = Unsafe.malloc(lineDataBytes.length);
-            for (int n = 0; n < lineDataBytes.length; n++) {
-                Unsafe.getUnsafe().putByte(bufaddr + n, lineDataBytes[n]);
-            }
-            int rc = Net.send(fd, bufaddr, lineDataBytes.length);
-            Unsafe.free(bufaddr, lineDataBytes.length);
-            Net.close(fd);
-            Net.freeSockAddr(sockaddr);
-            Assert.assertEquals(lineDataBytes.length, rc);
-
             if (wait) {
                 releaseLatch.await();
             }

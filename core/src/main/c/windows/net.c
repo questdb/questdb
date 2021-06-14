@@ -180,6 +180,11 @@ JNIEXPORT void JNICALL Java_io_questdb_network_Net_listen
     listen((SOCKET) fd, backlog);
 }
 
+JNIEXPORT jint JNICALL Java_io_questdb_network_Net_shutdown
+        (JNIEnv *e, jclass cl, jlong fd, jint how) {
+    return shutdown((SOCKET) fd, how);
+}
+
 JNIEXPORT jlong JNICALL Java_io_questdb_network_Net_accept0
         (JNIEnv *e, jclass cl, jlong fd) {
     // cast to jlong makes variable signed, otherwise < 0 comparison does not work
