@@ -120,13 +120,13 @@ public class BitmapIndexFwdReader extends AbstractIndexReader {
         public IndexFrame getNext() {
             if (position < valueCount) {
                 long cellIndex = getValueCellIndex(position);
-                long address = valueMem.addressOf(valueBlockOffset + position);
+                long address = valueMem.addressOf(valueBlockOffset + cellIndex * Long.BYTES);
 
-                long pageSize = Math.min(valueCount, blockValueCountMod);
+                long pageSize = Math.min(valueCount - position, blockValueCountMod - cellIndex + 1) ;
                 position += pageSize;
-                if (cellIndex == blockValueCountMod && position < valueCount) {
-                    // we are at edge of block right now, next value will be in previous block
-                    jumpToPreviousValueBlock();
+                if (position < valueCount) {
+                    // we are at edge of block right now, next value will be in next block
+                    jumpToNextValueBlock();
                 }
 
                 return indexFrame.of(address, pageSize);
@@ -148,7 +148,7 @@ public class BitmapIndexFwdReader extends AbstractIndexReader {
 
                 if (cellIndex == blockValueCountMod && position < valueCount) {
                     // we are at edge of block right now, next value will be in previous block
-                    jumpToPreviousValueBlock();
+                    jumpToNextValueBlock();
                 }
 
                 this.next = result;
@@ -170,7 +170,7 @@ public class BitmapIndexFwdReader extends AbstractIndexReader {
             return absoluteValueIndex & blockValueCountMod;
         }
 
-        private void jumpToPreviousValueBlock() {
+        private void jumpToNextValueBlock() {
             // we don't need to grow valueMem because we going from farthest block back to start of file
             // to closes, e.g. valueBlockOffset is decreasing.
             valueBlockOffset = getNextBlock(valueBlockOffset);

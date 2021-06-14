@@ -95,13 +95,14 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
         private long currentRow;
         private long rowsFound;
         private IndexFrameCursor indexCursor;
-        private long firstRowId = -1;
+        private long frameFirstRowId = -1;
         private long firstTimestamp = -1;
         private long pageRowSize = -1;
         private IndexFrame indexFrame;
         private long indexFrameIndex = -1;
         private BitmapIndexReader symbolIndexReader;
         private boolean emptyResult;
+        private long frameNextRowId = -1;
 
         public SampleByFirstLastRecordCursor(PageFrameCursor pageFrameCursor) {
             this.pageFrameCursor = pageFrameCursor;
@@ -125,51 +126,60 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
 
         @Override
         public boolean hasNext() {
+            currentRow++;
             if (currentRow >= rowsFound) {
-                if (pageRowSize <= firstRowId && !emptyResult) {
-                    currentFrame = pageFrameCursor.next();
-                    if (currentFrame != null) {
-                        symbolIndexReader = currentFrame.getBitmapIndexReader(gropuBySymbolColIndex, BitmapIndexReader.DIR_FORWARD);
-                        pageRowSize = currentFrame.getPageSize(timestampIndex) / Long.BYTES;
-                        firstRowId = currentFrame.getFirstRowId();
-                        indexCursor = null;
+                do {
+                    if (pageRowSize <= (frameNextRowId - frameFirstRowId) && !emptyResult) {
+                        currentFrame = pageFrameCursor.next();
+                        if (currentFrame != null) {
+                            symbolIndexReader = currentFrame.getBitmapIndexReader(gropuBySymbolColIndex, BitmapIndexReader.DIR_FORWARD);
+                            pageRowSize = currentFrame.getPageSize(timestampIndex) / Long.BYTES;
+                            frameNextRowId = frameFirstRowId = currentFrame.getFirstRowId();
+                            indexCursor = null;
+                        }
                     }
-                }
 
-                if (currentFrame == null) {
-                    return false;
-                }
+                    if (currentFrame == null) {
+                        return false;
+                    }
 
-                findInFrame(currentFrame);
-                currentRow = -1;
+
+                    currentRow = 0;
+                } while (!findInFrame(currentFrame));
             }
 
             // No else, first if sets currentRow
-            if (++currentRow < rowsFound) {
+            if (currentRow < rowsFound) {
                 record.of(currentRow);
                 return true;
             }
             return false;
         }
 
-        private void findInFrame(PageFrame currentFrame) {
-            long timestampColumnAddress = currentFrame.getPageAddress(timestampIndex);
-            long lastFrameRowId = firstRowId + pageRowSize;
+        private boolean findInFrame(PageFrame currentFrame) {
+            long timestampColumnAddress = currentFrame.getPageAddress(timestampIndex) - frameFirstRowId * Long.BYTES;
+            long lastFrameRowId = frameFirstRowId + pageRowSize;
 
             if (indexCursor == null) {
                 int groupBySymbolKey = symbolFilter.getSymbolFilterKey();
                 if (groupBySymbolKey == SymbolTable.VALUE_NOT_FOUND) {
                     rowsFound = 0;
                     emptyResult = true;
-                    return;
+                    return true;
                 }
 
-                indexCursor = symbolIndexReader.getFrameCursor(symbolFilter.getSymbolFilterKey(), firstRowId, lastFrameRowId);
+                indexCursor = symbolIndexReader.getFrameCursor(groupBySymbolKey, frameFirstRowId, lastFrameRowId);
+                indexFrame = null;
             }
 
             if (indexFrame == null || indexFrameIndex >= indexFrame.getSize()) {
                 indexFrame = indexCursor.getNext();
                 indexFrameIndex = 0;
+                if (indexFrame.getSize() == 0) {
+                    // Go to next data frame
+                    frameNextRowId = frameFirstRowId + pageRowSize;
+                    return false;
+                }
             }
 
             if (firstTimestamp == -1 && indexFrame.getSize() > 0) {
@@ -179,7 +189,7 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
 
             rowsFound = Vect.findFirstLastInFrame(
                     firstTimestamp,
-                    firstRowId,
+                    frameFirstRowId,
                     pageRowSize,
                     timestampColumnAddress,
                     timestampSampler,
@@ -197,10 +207,15 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
                 // Read output timestamp and rowId to resume at the end of the output buffers
                 indexFrameIndex = Unsafe.getUnsafe().getLong(firstRowIdOutAddress + rowsFound * Long.BYTES);
                 long nextFirstRowId = Unsafe.getUnsafe().getLong(lastRowIdOutAddress + rowsFound * Long.BYTES);
-                assert nextFirstRowId > firstRowId;
-                firstRowId = nextFirstRowId;
-                firstTimestamp = Unsafe.getUnsafe().getLong(timestampColumnAddress + rowsFound * Long.BYTES);
+                assert nextFirstRowId > frameNextRowId;
+                frameNextRowId = nextFirstRowId;
+                firstTimestamp = Unsafe.getUnsafe().getLong(timestampOutAddress + rowsFound * Long.BYTES);
+                return true;
             }
+
+            // index frame done but nothing found
+            indexFrame = null;
+            return false;
         }
 
         @Override
@@ -218,7 +233,7 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
             currentFrame = null;
             currentRow = 0;
             rowsFound = 0;
-            firstRowId = -1;
+            frameNextRowId = frameFirstRowId = -1;
             firstTimestamp = -1;
             pageRowSize = -1;
             indexFrame = null;

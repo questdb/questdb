@@ -80,10 +80,7 @@ public class DeferredSingleSymbolFilterDataFrameRecordCursorFactory extends Data
 
             @Override
             public int getSymbolFilterKey() {
-                if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {
-                    return TableUtils.toIndexKey(symbolKey);
-                }
-                return SymbolTable.VALUE_NOT_FOUND;
+                return symbolKey;
             }
         };
     }
@@ -126,13 +123,11 @@ public class DeferredSingleSymbolFilterDataFrameRecordCursorFactory extends Data
         }
 
         DataFrameCursor dataFrameCursor = dataFrameCursorFactory.getCursor(executionContext);
-        if (pageFrameCursor != null) {
-            return pageFrameCursor.of(dataFrameCursor);
-        } else {
+        if (pageFrameCursor == null) {
             pageFrameCursor = new TableReaderPageFrameCursor(columnIndexes, columnSizes, getMetadata().getTimestampIndex());
         }
-        pageFrameCursor.of(dataFrameCursor);
 
+        pageFrameCursor.of(dataFrameCursor);
         if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
             SymbolMapReader symbolMapReader = pageFrameCursor.getSymbolMapReader(symbolColumnIndex);
             this.symbolKey = symbolMapReader.keyOf(symbolValue);

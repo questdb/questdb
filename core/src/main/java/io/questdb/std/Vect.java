@@ -58,7 +58,7 @@ public final class Vect {
 
     public static long findFirstLastInFrame(
             long sampleByStart,
-            long startRowId,
+            long rowIdPageOffset,
             long pageSize,
             long timestampColAddress,
             TimestampSampler timestampSampler,
@@ -70,7 +70,7 @@ public final class Vect {
             long lastRowIdOutAddress,
             long outRowIdSize
     ) {
-        if (startRowId < pageSize && indexFrameIndex < symbolIndexSize) {
+        if (0 < pageSize && indexFrameIndex < symbolIndexSize) {
             // Sample by window start, end
             long sampleByEnd = timestampSampler.nextTimestamp(sampleByStart);
             long outIndex = 0;
@@ -80,7 +80,7 @@ public final class Vect {
             long indexRowId = 0;
             for (; iIndex < symbolIndexSize; iIndex++) {
                 indexRowId = Unsafe.getUnsafe().getLong(symbolIndexAddress + iIndex * Long.BYTES);
-                long indexRowIdPageOffset = indexRowId - startRowId;
+                long indexRowIdPageOffset = indexRowId;
 
                 if (indexRowIdPageOffset < pageSize) {
                     long indexRowTimestamp = Unsafe.getUnsafe().getLong(timestampColAddress + indexRowIdPageOffset * Long.BYTES);
@@ -98,7 +98,7 @@ public final class Vect {
 
                     if (indexRowTimestamp >= sampleByStart && indexRowTimestamp < sampleByEnd) {
                         Unsafe.getUnsafe().putLong(timestampOutAddress + outIndex * Long.BYTES, sampleByStart);
-                        Unsafe.getUnsafe().putLong(firstRowIdOutAddress + outIndex * Long.BYTES, indexRowId);
+                        Unsafe.getUnsafe().putLong(firstRowIdOutAddress + outIndex * Long.BYTES, indexRowId - rowIdPageOffset);
                         outIndex++;
 
                         // Go to next sample by window.

@@ -135,6 +135,7 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
         private long partitionRemaining = 0L;
         private DataFrameCursor dataFrameCursor;
         private final int timestampIndex;
+        private long rowLo = -1;
 
         public TableReaderPageFrameCursor(IntList columnIndexes, IntList columnSizes, int timestampIndex) {
             this.columnIndexes = columnIndexes;
@@ -209,10 +210,12 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
                             }
                         }
                     }
+                    rowLo = dataFrame.getRowLo();
                     TableReaderPageFrameCursor.TableReaderPageFrame pageFrame = computeFrame(computePageMin(base));
                     return pageFrame;
                 }
             }
+            rowLo = 0;
             return null;
         }
 
@@ -316,7 +319,8 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
 
             @Override
             public long getFirstRowId() {
-                return 0;
+                assert rowLo >= 0;
+                return rowLo;
             }
 
             @Override
