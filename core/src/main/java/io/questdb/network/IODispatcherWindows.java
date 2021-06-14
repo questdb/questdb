@@ -150,7 +150,7 @@ public class IODispatcherWindows<C extends IOContext> extends AbstractIODispatch
 
                 // check if expired
                 if (ts < deadline) {
-                    doDisconnect(pending.get(i));
+                    doDisconnect(pending.get(i), DISCONNECT_SRC_IDLE);
                     pending.deleteRow(i);
                     n--;
                     useful = true;

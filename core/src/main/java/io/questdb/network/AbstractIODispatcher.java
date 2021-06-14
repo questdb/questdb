@@ -44,6 +44,10 @@ import io.questdb.std.datetime.millitime.MillisecondClock;
 public abstract class AbstractIODispatcher<C extends IOContext> extends SynchronizedJob implements IODispatcher<C>, EagerThreadSetup {
     protected static final int M_TIMESTAMP = 0;
     protected static final int M_FD = 1;
+    protected static final int DISCONNECT_SRC_QUEUE = 0;
+    protected static final int DISCONNECT_SRC_IDLE = 1;
+    protected static final int DISCONNECT_SRC_SHUTDOWN = 2;
+    private final static String[] DISCONNECT_SOURCES;
     protected final Log LOG;
     private final IODispatcherConfiguration configuration;
     protected final RingQueue<IOEvent<C>> interestQueue;
@@ -71,6 +75,7 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
     private boolean listening;
     private final long queuedConnectionTimeoutMs;
     private long closeListenFdEpochMs;
+    private final boolean peerNoLinger;
 
     public AbstractIODispatcher(
             IODispatcherConfiguration configuration,
@@ -103,6 +108,7 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
         this.queuedConnectionTimeoutMs = configuration.getQueuedConnectionTimeout() > 0 ? configuration.getQueuedConnectionTimeout() : 0;
         this.sndBufSize = configuration.getSndBufSize();
         this.rcvBufSize = configuration.getRcvBufSize();
+        this.peerNoLinger = configuration.getPeerNoLinger();
 
         createListenFd();
         listening = true;
@@ -126,7 +132,7 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
     public void close() {
         processDisconnects(Long.MAX_VALUE);
         for (int i = 0, n = pending.size(); i < n; i++) {
-            doDisconnect(pending.get(i));
+            doDisconnect(pending.get(i), DISCONNECT_SRC_SHUTDOWN);
         }
 
         interestSubSeq.consumeAll(interestQueue, this.disconnectContextRef);
@@ -172,7 +178,11 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
     }
 
     @Override
-    public void disconnect(C context) {
+    public void disconnect(C context, int reason) {
+        LOG.info()
+                .$("scheduling disconnect [fd=").$(context.getFd())
+                .$(", reason=").$(reason)
+                .I$();
         final long cursor = disconnectPubSeq.nextBully();
         assert cursor > -1;
         disconnectQueue.get(cursor).context = context;
@@ -212,6 +222,10 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
                 LOG.error().$("could not configure no delay [fd=").$(fd).$(", errno=").$(nf.errno()).$(']').$();
                 nf.close(fd, LOG);
                 break;
+            }
+
+            if (peerNoLinger) {
+                nf.configureNoLinger(fd);
             }
 
             if (sndBufSize > 0) {
@@ -257,10 +271,10 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
     }
 
     private void disconnectContext(IOEvent<C> event) {
-        doDisconnect(event.context);
+        doDisconnect(event.context, DISCONNECT_SRC_QUEUE);
     }
 
-    protected void doDisconnect(C context) {
+    protected void doDisconnect(C context, int src) {
         if (context == null || context.invalid()) {
             return;
         }
@@ -268,6 +282,7 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
         LOG.info()
                 .$("disconnected [ip=").$ip(nf.getPeerIP(fd))
                 .$(", fd=").$(fd)
+                .$(", src=").$(DISCONNECT_SOURCES[src])
                 .$(']').$();
         nf.close(fd, LOG);
         ioContextFactory.done(context);
@@ -324,5 +339,9 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
         } finally {
             listenRegistrationLock.set(false);
         }
+    }
+
+    static {
+        DISCONNECT_SOURCES = new String[]{"queue", "idle", "shutdown"};
     }
 }

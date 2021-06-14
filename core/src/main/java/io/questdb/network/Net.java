@@ -35,10 +35,13 @@ public final class Net {
     public static final long MMSGHDR_BUFFER_LENGTH_OFFSET;
 
     public static final int EWOULDBLOCK;
+    @SuppressWarnings("unused")
     public static final int ERETRY = 0;
+    @SuppressWarnings("unused")
     public static final int EPEERDISCONNECT = -1;
     @SuppressWarnings("unused")
     public static final int EOTHERDISCONNECT = -2;
+    public static final int SHUT_WR = 1;
 
     private Net() {
     }
@@ -186,6 +189,8 @@ public final class Net {
     public native static int setSndBuf(long fd, int size);
 
     public native static int setTcpNoDelay(long fd, boolean noDelay);
+
+    public native static int shutdown(long fd, int how);
 
     public static long sockaddr(CharSequence ipv4address, int port) {
         return sockaddr(parseIPv4(ipv4address), port);

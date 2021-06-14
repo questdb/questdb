@@ -151,8 +151,7 @@ public class LineTcpO3Test extends AbstractCairoTest {
 
                 sharedWorkerPool.assignCleaner(Path.CLEANER);
                 sharedWorkerPool.start(LOG);
-                long rc = Net.connect(clientFd, ilpSockAddr);
-                Assert.assertEquals(0, rc);
+                TestUtils.assertConnect(clientFd, ilpSockAddr);
                 readGzResource(ilpResourceName);
                 Net.send(clientFd, resourceAddress, resourceSize);
                 Unsafe.free(resourceAddress, resourceSize);

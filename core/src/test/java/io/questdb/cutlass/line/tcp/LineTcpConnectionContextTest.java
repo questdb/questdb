@@ -1298,7 +1298,7 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
             }
 
             @Override
-            public void disconnect(LineTcpConnectionContext context) {
+            public void disconnect(LineTcpConnectionContext context, int reason) {
                 disconnected = true;
             }
 
@@ -1420,7 +1420,7 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
                 context.getDispatcher().registerChannel(context, IOOperation.WRITE);
                 break;
             case NEEDS_DISCONNECT:
-                context.getDispatcher().disconnect(context);
+                context.getDispatcher().disconnect(context, IODispatcher.DISCONNECT_REASON_PROTOCOL_VIOLATION);
                 break;
             default:
                 break;

@@ -31,7 +31,7 @@ public class DefaultIODispatcherConfiguration implements IODispatcherConfigurati
 
     @Override
     public int getActiveConnectionLimit() {
-        return 10;
+        return 128;
     }
 
     @Override
@@ -51,12 +51,12 @@ public class DefaultIODispatcherConfiguration implements IODispatcherConfigurati
 
     @Override
     public int getEventCapacity() {
-        return 1024;
+        return 256;
     }
 
     @Override
     public int getIOQueueCapacity() {
-        return 1024;
+        return 256;
     }
 
     @Override
@@ -71,7 +71,7 @@ public class DefaultIODispatcherConfiguration implements IODispatcherConfigurati
 
     @Override
     public int getListenBacklog() {
-        return 50000;
+        return 128;
     }
 
     @Override
@@ -107,5 +107,10 @@ public class DefaultIODispatcherConfiguration implements IODispatcherConfigurati
     @Override
     public long getQueuedConnectionTimeout() {
         return 300_000;
+    }
+
+    @Override
+    public boolean getPeerNoLinger() {
+        return true;
     }
 }
