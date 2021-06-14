@@ -231,6 +231,78 @@ public class IODispatcherTest {
     }
 
     @Test
+    public void testCannotSetNonBlocking() throws Exception {
+        assertMemoryLeak(() -> {
+            final HttpContextConfiguration httpContextConfiguration = new DefaultHttpContextConfiguration();
+            final NetworkFacade nf = new NetworkFacadeImpl() {
+                long theFd;
+
+                @Override
+                public long accept(long serverFd) {
+                    long fd = super.accept(serverFd);
+                    theFd = fd;
+                    return fd;
+                }
+
+                @Override
+                public int configureNonBlocking(long fd) {
+                    if (fd == theFd) {
+                        return -1;
+                    }
+                    return super.configureNonBlocking(fd);
+                }
+            };
+
+
+            try (IODispatcher<HttpConnectionContext> dispatcher = IODispatchers.create(
+                    new DefaultIODispatcherConfiguration() {
+                        @Override
+                        public NetworkFacade getNetworkFacade() {
+                            return nf;
+                        }
+                    },
+                    (fd, dispatcher1) -> new HttpConnectionContext(httpContextConfiguration).of(fd, dispatcher1)
+            )) {
+
+                // spin up dispatcher thread
+                AtomicBoolean dispatcherRunning = new AtomicBoolean(true);
+                SOCountDownLatch dispatcherHaltLatch = new SOCountDownLatch(1);
+
+                new Thread(() -> {
+                    while (dispatcherRunning.get()) {
+                        dispatcher.run(0);
+                    }
+                    dispatcherHaltLatch.countDown();
+                }).start();
+
+                try {
+
+                    long socketAddr = Net.sockaddr(Net.parseIPv4("127.0.0.1"), 9001);
+                    long fd = Net.socketTcp(true);
+                    try {
+                        TestUtils.assertConnect(fd, socketAddr);
+
+                        int bufLen = 512;
+                        long mem = Unsafe.malloc(bufLen);
+                        try {
+                            Assert.assertEquals(-2, Net.recv(fd, mem, bufLen));
+                        } finally {
+                            Unsafe.free(mem, bufLen);
+                        }
+                    } finally {
+                        Net.close(fd);
+                        Net.freeSockAddr(socketAddr);
+                    }
+
+                } finally {
+                    dispatcherRunning.set(false);
+                    dispatcherHaltLatch.await();
+                }
+            }
+        });
+    }
+
+    @Test
     public void testConnectDisconnect() throws Exception {
 
         LOG.info().$("started testConnectDisconnect").$();
