@@ -68,7 +68,7 @@ public class SendAndReceiveRequestBuilder {
     private boolean expectDisconnect;
     private int requestCount = 1;
     private int compareLength = -1;
-    private final int maxWaitTimeoutMs = 5000;
+    private final int maxWaitTimeoutMs = 30000;
 
     public void execute(
             String request,
@@ -80,13 +80,10 @@ public class SendAndReceiveRequestBuilder {
             long sockAddr = nf.sockaddr("127.0.0.1", 9001);
             try {
                 Assert.assertTrue(fd > -1);
-                long ret = nf.connect(fd, sockAddr);
-                if (ret != 0) {
-                    Assert.fail("could not connect: " + nf.errno());
-                }
+                TestUtils.assertConnect(nf, fd, sockAddr);
                 Assert.assertEquals(0, nf.setTcpNoDelay(fd, true));
                 if (!expectDisconnect) {
-                    NetworkFacadeImpl.INSTANCE.configureNonBlocking(fd);
+                    nf.configureNonBlocking(fd);
                 }
 
                 executeWithSocket(request, response, fd);
@@ -103,11 +100,7 @@ public class SendAndReceiveRequestBuilder {
         nf.configureNoLinger(fd);
         long sockAddr = nf.sockaddr("127.0.0.1", 9001);
         try {
-            Assert.assertTrue(fd > -1);
-            long ret = nf.connect(fd, sockAddr);
-            if (ret != 0) {
-                Assert.fail("could not connect: " + nf.errno());
-            }
+            TestUtils.assertConnect(fd, sockAddr);
             Assert.assertEquals(0, nf.setTcpNoDelay(fd, true));
             if (!expectDisconnect) {
                 NetworkFacadeImpl.INSTANCE.configureNonBlocking(fd);
@@ -132,7 +125,14 @@ public class SendAndReceiveRequestBuilder {
         }
     }
 
-    public void executeExplicit(String request, long fd, CharSequence expectedResponse, final int len, long ptr, HttpClientStateListener listener) throws InterruptedException {
+    public void executeExplicit(
+            String request,
+            long fd,
+            CharSequence expectedResponse,
+            final int len,
+            long ptr,
+            HttpClientStateListener listener
+    ) throws InterruptedException {
         long timestamp = System.currentTimeMillis();
         int sent = 0;
         int reqLen = request.length();
@@ -180,6 +180,7 @@ public class SendAndReceiveRequestBuilder {
                 }
             }
         }
+
         byte[] receivedBytes = new byte[receivedByteList.size()];
         for (int i = 0; i < receivedByteList.size(); i++) {
             receivedBytes[i] = (byte) receivedByteList.getQuick(i);
@@ -200,9 +201,6 @@ public class SendAndReceiveRequestBuilder {
                 }
                 TestUtils.assertEquals(disconnected ? "Server disconnected" : null, expected, actual);
             }
-        } else {
-            System.out.println("actual");
-            System.out.println(actual);
         }
 
         if (disconnected && !expectDisconnect) {
@@ -290,13 +288,10 @@ public class SendAndReceiveRequestBuilder {
         try {
             long sockAddr = nf.sockaddr("127.0.0.1", 9001);
             Assert.assertTrue(fd > -1);
-            long ret = nf.connect(fd, sockAddr);
-            if (ret != 0) {
-                Assert.fail("could not connect: " + nf.errno());
-            }
+            TestUtils.assertConnect(nf, fd, sockAddr);
             Assert.assertEquals(0, nf.setTcpNoDelay(fd, true));
             if (!expectDisconnect) {
-                NetworkFacadeImpl.INSTANCE.configureNonBlocking(fd);
+                nf.configureNonBlocking(fd);
             }
 
             try {

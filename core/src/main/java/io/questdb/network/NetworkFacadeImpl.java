@@ -43,6 +43,11 @@ public class NetworkFacadeImpl implements NetworkFacade {
     }
 
     @Override
+    public int shutdown(long fd, int how) {
+        return Net.shutdown(fd, how);
+    }
+
+    @Override
     public long accept(long serverFd) {
         return Net.accept(serverFd);
     }

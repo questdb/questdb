@@ -747,18 +747,6 @@ public final class TableUtils {
         }
     }
 
-    static String getTodoText(long code) {
-        switch ((int) (code & 0xff)) {
-            case TODO_TRUNCATE:
-                return "truncate";
-            case TODO_RESTORE_META:
-                return "restore meta";
-            default:
-                // really impossible to happen, but we keep this line to comply with Murphy's law.
-                return "unknown";
-        }
-    }
-
     private static CairoException validationException(MappedReadOnlyMemory mem) {
         return CairoException.instance(0).put("Invalid metadata at fd=").put(mem.getFd()).put(". ");
     }

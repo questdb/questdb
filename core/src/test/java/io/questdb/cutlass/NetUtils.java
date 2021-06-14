@@ -29,6 +29,7 @@ import io.questdb.network.NetworkFacade;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.Unsafe;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 
 public class NetUtils {
@@ -39,7 +40,7 @@ public class NetUtils {
             int port) {
         long clientFd = nf.socketTcp(true);
         long sockAddress = nf.sockaddr(Net.parseIPv4(ipv4Address), port);
-        Assert.assertEquals(0, nf.connect(clientFd, sockAddress));
+        TestUtils.assertConnect(clientFd, sockAddress);
 
         final int N = 1024 * 1024;
         final long sendBuf = Unsafe.malloc(N);
