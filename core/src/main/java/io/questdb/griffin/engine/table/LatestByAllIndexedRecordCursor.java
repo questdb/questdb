@@ -26,18 +26,16 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.sql.DataFrame;
-import io.questdb.cairo.sql.RowCursor;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.DirectLongList;
-import io.questdb.std.IntHashSet;
-import io.questdb.std.IntList;
-import io.questdb.std.Rows;
+import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
 
 class LatestByAllIndexedRecordCursor extends AbstractRecordListCursor {
-
     private final int columnIndex;
-    private final IntHashSet found = new IntHashSet();
+
+    private long indexShift = 0;
+    private long aIndex;
+    private long aLimit;
 
     public LatestByAllIndexedRecordCursor(int columnIndex, DirectLongList rows, @NotNull IntList columnIndexes) {
         super(rows, columnIndexes);
@@ -45,53 +43,82 @@ class LatestByAllIndexedRecordCursor extends AbstractRecordListCursor {
     }
 
     @Override
+    public boolean hasNext() {
+        if (aIndex < aLimit) {
+            long row = rows.get(aIndex++) - 1; // we added 1 on cpp side
+            recordA.jumpTo(Rows.toPartitionIndex(row), Rows.toLocalRowID(row));
+            return true;
+        }
+        return false;
+    }
+
+    @Override
+    public void toTop() {
+        aIndex = indexShift;
+    }
+
+    @Override
+    public long size() {
+        return aLimit - indexShift;
+    }
+
+    @Override
     protected void buildTreeMap(SqlExecutionContext executionContext) {
-        found.clear();
-
         int keyCount = getSymbolTable(columnIndex).size() + 1;
-        int keyLo = 0;
-        int keyHi = keyCount;
 
-        int localLo = Integer.MAX_VALUE;
-        int localHi = Integer.MIN_VALUE;
+        long keyLo = 0;
+        long keyHi = keyCount;
+
+        rows.extend(keyCount);
+        rows.setPos(rows.getCapacity());
+        rows.zero(0);
+
+        long rowCount = 0;
+        long argsAddress = LatestByArguments.allocateMemory();
+        LatestByArguments.setRowsAddress(argsAddress, rows.getAddress());
+        LatestByArguments.setRowsCapacity(argsAddress, rows.getCapacity());
 
         DataFrame frame;
         // frame metadata is based on TableReader, which is "full" metadata
         // this cursor works with subset of columns, which warrants column index remap
         int frameColumnIndex = columnIndexes.getQuick(columnIndex);
-        while ((frame = this.dataFrameCursor.next()) != null && found.size() < keyCount) {
+        while ((frame = this.dataFrameCursor.next()) != null && rowCount < keyCount) {
             final BitmapIndexReader indexReader = frame.getBitmapIndexReader(frameColumnIndex, BitmapIndexReader.DIR_BACKWARD);
             final long rowLo = frame.getRowLo();
             final long rowHi = frame.getRowHi() - 1;
 
-            for (int i = keyLo; i < keyHi; i++) {
-                int index = found.keyIndex(i);
-                if (index > -1) {
-                    RowCursor cursor = indexReader.getCursor(false, i, rowLo, rowHi);
-                    if (cursor.hasNext()) {
-                        rows.add(Rows.toRowID(frame.getPartitionIndex(), cursor.next()));
-                        found.addAt(index, i);
-                    } else {
-                        // adjust range
-                        if (i < localLo) {
-                            localLo = i;
-                        }
+            LatestByArguments.setKeyLo(argsAddress, keyLo);
+            LatestByArguments.setKeyHi(argsAddress, keyHi);
+            LatestByArguments.setRowsSize(argsAddress, rows.size());
 
-                        if (i > localHi) {
-                            localHi = i;
-                        }
-                    }
-                }
-            }
+            BitmapIndexUtilsNative.latestScanBackward(
+                    indexReader.getKeyBaseAddress(),
+                    indexReader.getKeyMemorySize(),
+                    indexReader.getValueBaseAddress(),
+                    indexReader.getValueMemorySize(),
+                    argsAddress,
+                    indexReader.getUnIndexedNullCount(),
+                    rowHi, rowLo,
+                    frame.getPartitionIndex(), indexReader.getValueBlockCapacity()
+            );
 
-            // we have to sort rows because multiple symbols
-            // are liable to be looked up out of order
-            rows.sortAsUnsigned();
-
-            keyLo = localLo;
-            keyHi = localHi + 1;
-            localLo = Integer.MAX_VALUE;
-            localHi = Integer.MIN_VALUE;
+            rowCount += LatestByArguments.getRowsSize(argsAddress);
+            keyLo = LatestByArguments.getKeyLo(argsAddress);
+            keyHi = LatestByArguments.getKeyHi(argsAddress) + 1;
         }
+        LatestByArguments.releaseMemory(argsAddress);
+
+        // we have to sort rows because multiple symbols
+        // are liable to be looked up out of order
+        rows.setPos(rows.getCapacity());
+        rows.sortAsUnsigned();
+
+        //skip "holes"
+        while(rows.get(indexShift) <= 0) {
+            indexShift++;
+        }
+
+        aLimit = rows.size();
+        aIndex = indexShift;
     }
 }

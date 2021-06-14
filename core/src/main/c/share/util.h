@@ -40,6 +40,28 @@
 #define PREDICT_FALSE(x) (__builtin_expect(x, 0))
 #define PREDICT_TRUE(x) (__builtin_expect(false || (x), true))
 
+#define JAVA_STATIC JNIEnv *e, jclass cl
+
+#if __GNUC__
+// Fetch into all levels of the cache hierarchy.
+#define MM_PREFETCH_T0(address)  __builtin_prefetch((address), 0, 3)
+// Fetch into L2 and higher.
+#define MM_PREFETCH_T1(address)  __builtin_prefetch((address), 0, 2)
+// Fetch into L3 and higher or an implementation-specific choice (e.g., L2 if there is no L3).
+#define MM_PREFETCH_T2(address)  __builtin_prefetch((address), 0, 1)
+// Fetch data using the non-temporal access (NTA) hint.
+#define MM_PREFETCH_NTA(address)  __builtin_prefetch((address), 0, 0)
+#else
+// Fetch into all levels of the cache hierarchy.
+    #define MM_PREFETCH_T0(address) _mm_prefetch((address), _MM_HINT_T0)
+    // Fetch into L2 and higher.
+    #define MM_PREFETCH_T1(address) _mm_prefetch((address), _MM_HINT_T1)
+    // Fetch into L3 and higher or an implementation-specific choice (e.g., L2 if there is no L3).
+    #define MM_PREFETCH_T2(address) _mm_prefetch((address), _MM_HINT_T2)
+    // Fetch data using the non-temporal access (NTA) hint.
+    #define MM_PREFETCH_NTA(address) _mm_prefetch((address), _MM_HINT_NTA)
+#endif
+
 constexpr jdouble D_MAX = std::numeric_limits<jdouble>::infinity();
 constexpr jdouble D_MIN = -std::numeric_limits<jdouble>::infinity();
 constexpr jint I_MAX = std::numeric_limits<jint>::max();
@@ -117,26 +139,32 @@ inline int64_t binary_search(T *data, V value, int64_t low, int64_t high, int32_
     return -(low + 1) - 1;
 }
 
-#define JAVA_STATIC JNIEnv *e, jclass cl
+template<typename T>
+int64_t branch_free_search_lower(const T* array, const int64_t count, T x) {
+    const T *base = array;
+    int64_t n = count;
+    while (n > 1) {
+        int64_t half = n / 2;
+        MM_PREFETCH_T0(base + half / 2);
+        MM_PREFETCH_T0(base + half + half / 2);
+        base = (base[half] < x) ? base + half : base;
+        n -= half;
+    }
+    return (*base < x) + base - array;
+}
 
-#if __GNUC__
-    // Fetch into all levels of the cache hierarchy.
-    #define MM_PREFETCH_T0(address)  __builtin_prefetch((address), 0, 3)
-    // Fetch into L2 and higher.
-    #define MM_PREFETCH_T1(address)  __builtin_prefetch((address), 0, 2)
-    // Fetch into L3 and higher or an implementation-specific choice (e.g., L2 if there is no L3).
-    #define MM_PREFETCH_T2(address)  __builtin_prefetch((address), 0, 1)
-    // Fetch data using the non-temporal access (NTA) hint.
-    #define MM_PREFETCH_NTA(address)  __builtin_prefetch((address), 0, 0)
-#else
-    // Fetch into all levels of the cache hierarchy.
-    #define MM_PREFETCH_T0(address) _mm_prefetch((address), _MM_HINT_T0)
-    // Fetch into L2 and higher.
-    #define MM_PREFETCH_T1(address) _mm_prefetch((address), _MM_HINT_T1)
-    // Fetch into L3 and higher or an implementation-specific choice (e.g., L2 if there is no L3).
-    #define MM_PREFETCH_T2(address) _mm_prefetch((address), _MM_HINT_T2)
-    // Fetch data using the non-temporal access (NTA) hint.
-    #define MM_PREFETCH_NTA(address) _mm_prefetch((address), _MM_HINT_NTA)
-#endif
+template<typename T>
+int64_t branch_free_search_upper(const T* array, const int64_t count, T x) {
+    const T *base = array;
+    int64_t n = count;
+    while (n > 1) {
+        int64_t half = n / 2;
+        MM_PREFETCH_T0(base + half / 2);
+        MM_PREFETCH_T0(base + half + half / 2);
+        base = (base[half] <= x) ? base + half : base;
+        n -= half;
+    }
+    return (*base <= x) + base - array;
+}
 
 #endif //UTIL_H
