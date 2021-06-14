@@ -127,6 +127,7 @@ public class NetTest {
         long sockAddr = Net.sockaddr("127.0.0.1", port);
         long sockFd = -1;
         for(int i = 0; i < 2000; i++) {
+            Net.configureNoLinger(clientFd);
             sockFd = Net.connect(clientFd, sockAddr);
             if (sockFd >= 0) {
                 break;
@@ -181,7 +182,7 @@ public class NetTest {
         barrier.await();
         long clientFd = Net.socketTcp(true);
         long sockAddr = Net.sockaddr("127.0.0.1", port);
-        Assert.assertEquals(0, Net.connect(clientFd, sockAddr));
+        TestUtils.assertConnect(clientFd, sockAddr);
         Assert.assertEquals(0, Net.setSndBuf(clientFd, 256));
         // Linux kernel doubles the value we set, so we handle this case separately
         // http://man7.org/linux/man-pages/man7/socket.7.html
@@ -221,8 +222,7 @@ public class NetTest {
 
         long clientFd = Net.socketTcp(true);
         long sockAddr = Net.sockaddr("127.0.0.1", port);
-        Assert.assertEquals(0, Net.connect(clientFd, sockAddr));
-
+        TestUtils.assertConnect(clientFd, sockAddr);
         Assert.assertEquals(msgLen, Net.send(clientFd, charSink.address(), msgLen));
         Net.close(clientFd);
         Net.freeSockAddr(sockAddr);

@@ -82,6 +82,8 @@ public interface NetworkFacade {
 
     int setMulticastLoop(long fd, boolean loop);
 
+    int shutdown(long fd, int how);
+
     int parseIPv4(CharSequence ipv4Address);
 
     int setReusePort(long fd);
