@@ -15,6 +15,8 @@
   </a>
 </p>
 
+English | [简体中文](./i18n/README.zh-cn.md)
+
 # QuestDB
 
 QuestDB is a high-performance, open-source SQL database for applications in
@@ -108,11 +110,6 @@ The following table shows query execution time of a billion rows run on a
   bug reports and feature requests.
 - [The product roadmap](https://github.com/questdb/questdb/projects/3) lists the
   tasks and features we're currently working on.
-
-## Translations
-
-- [English](https://github.com/questdb/questdb)
-- [Simplified Chinese / 简体中文](./i18n/README.zh-cn.md)
 
 ## Contribute
 
