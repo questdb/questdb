@@ -97,7 +97,7 @@ public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C
     private void processIdleConnections(long deadline) {
         int count = 0;
         for (int i = 0, n = pending.size(); i < n && pending.get(i, M_TIMESTAMP) < deadline; i++, count++) {
-            doDisconnect(pending.get(i));
+            doDisconnect(pending.get(i), DISCONNECT_SRC_IDLE);
         }
         pending.zapTop(count);
     }

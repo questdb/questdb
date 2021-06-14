@@ -47,6 +47,9 @@ public interface HttpRequestProcessor {
     default void parkRequest(HttpConnectionContext context) {
     }
 
-    default void failRequest(HttpConnectionContext context, HttpException exception) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
+    // after this callback is invoked the server will disconnect the client
+    // if processor desires to write a goodbye letter to the client
+    // it must also send TCP FIN by invoking socket.shutdownWrite()
+    default void failRequest(HttpConnectionContext context, HttpException exception) throws PeerDisconnectedException, PeerIsSlowToReadException {
     }
 }

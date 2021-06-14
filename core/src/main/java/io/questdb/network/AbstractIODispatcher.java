@@ -35,6 +35,10 @@ import java.util.concurrent.atomic.AtomicInteger;
 public abstract class AbstractIODispatcher<C extends IOContext> extends SynchronizedJob implements IODispatcher<C>, EagerThreadSetup {
     protected static final int M_TIMESTAMP = 0;
     protected static final int M_FD = 1;
+    protected static final int DISCONNECT_SRC_QUEUE = 0;
+    protected static final int DISCONNECT_SRC_IDLE = 1;
+    protected static final int DISCONNECT_SRC_SHUTDOWN = 2;
+    private final static String[] DISCONNECT_SOURCES;
     protected final Log LOG;
     protected final RingQueue<IOEvent<C>> interestQueue;
     protected final MPSequence interestPubSeq;
@@ -57,6 +61,7 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
     protected final LongMatrix<C> pending = new LongMatrix<>(4);
     private final int sndBufSize;
     private final int rcvBufSize;
+    private final boolean peerNoLinger;
 
     public AbstractIODispatcher(
             IODispatcherConfiguration configuration,
@@ -89,6 +94,7 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
 
         this.sndBufSize = configuration.getSndBufSize();
         this.rcvBufSize = configuration.getRcvBufSize();
+        this.peerNoLinger = configuration.getPeerNoLinger();
 
         if (nf.bindTcp(this.serverFd, configuration.getBindIPv4Address(), configuration.getBindPort())) {
             nf.listen(this.serverFd, configuration.getListenBacklog());
@@ -107,7 +113,7 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
         nf.close(serverFd, LOG);
 
         for (int i = 0, n = pending.size(); i < n; i++) {
-            doDisconnect(pending.get(i));
+            doDisconnect(pending.get(i), DISCONNECT_SRC_SHUTDOWN);
         }
 
         interestSubSeq.consumeAll(interestQueue, this.disconnectContextRef);
@@ -149,7 +155,11 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
     }
 
     @Override
-    public void disconnect(C context) {
+    public void disconnect(C context, int reason) {
+        LOG.info()
+                .$("scheduling disconnect [fd=").$(context.getFd())
+                .$(", reason=").$(reason)
+                .I$();
         final long cursor = disconnectPubSeq.nextBully();
         assert cursor > -1;
         disconnectQueue.get(cursor).context = context;
@@ -194,10 +204,12 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
                 return;
             }
 
-            if (nf.setTcpNoDelay(fd, true) < 0) {
-                LOG.error().$("could not configure no delay [fd=").$(fd).$(", errno=").$(nf.errno()).$(']').$();
-                nf.close(fd, LOG);
-                return;
+            if (nf.setTcpNoDelay(fd, false) < 0) {
+                LOG.error().$("could not turn off Nagle's algorithm [fd=").$(fd).$(", errno=").$(nf.errno()).$(']').$();
+            }
+
+            if (peerNoLinger) {
+                nf.configureNoLinger(fd);
             }
 
             if (sndBufSize > 0) {
@@ -225,12 +237,11 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
         pendingAdded(r);
     }
 
-
     private void disconnectContext(IOEvent<C> event) {
-        doDisconnect(event.context);
+        doDisconnect(event.context, DISCONNECT_SRC_QUEUE);
     }
 
-    protected void doDisconnect(C context) {
+    protected void doDisconnect(C context, int src) {
         if (context == null || context.invalid()) {
             return;
         }
@@ -238,6 +249,7 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
         LOG.info()
                 .$("disconnected [ip=").$ip(nf.getPeerIP(fd))
                 .$(", fd=").$(fd)
+                .$(", src=").$(DISCONNECT_SOURCES[src])
                 .$(']').$();
         nf.close(fd, LOG);
         ioContextFactory.done(context);
@@ -264,5 +276,9 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
         evt.operation = operation;
         ioEventPubSeq.done(cursor);
         LOG.debug().$("fired [fd=").$(context.getFd()).$(", op=").$(evt.operation).$(", pos=").$(cursor).$(']').$();
+    }
+
+    static {
+        DISCONNECT_SOURCES = new String[]{"queue", "idle", "shutdown"};
     }
 }

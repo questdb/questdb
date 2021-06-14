@@ -335,10 +335,12 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     }
 
     @Override
-    public void failRequest(HttpConnectionContext context, HttpException e) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        JsonQueryProcessorState state = LV.get(context);
-        internalError(context.getChunkedResponseSocket(), e.getFlyweightMessage(), e, state);
-        readyForNextRequest(context);
+    public void failRequest(HttpConnectionContext context, HttpException e)
+            throws PeerDisconnectedException, PeerIsSlowToReadException {
+        final JsonQueryProcessorState state = LV.get(context);
+        final HttpChunkedResponseSocket socket = context.getChunkedResponseSocket();
+        internalError(socket, e.getFlyweightMessage(), e, state);
+        socket.shutdownWrite();
     }
 
     private void executeInsert(
