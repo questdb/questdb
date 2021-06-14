@@ -25,13 +25,13 @@
 
 # QuestDB
 
-QuestDB 是一个 [高性能](live demo)、开源的 SQL 数据库，适用于金融服务、物联网、
-机器学习、DevOps 和可观测性应用。它拥有支持 PostgreSQL 线协议的端点，使用
-InfluxDB 线协议的模式无关的高吞吐数据获取方式，以及用于查询、批量导入和导出的
-REST API。 QuestDB 实现了 ANSI SQL 与面向时间的语言功能的本地扩展。这些扩展使得
-使用关系和时间序列连接将多个来源的数据关联起来变得简单。QuestDB 通过面向列的存储
-模型、大规模并行化矢量执行、SIMD 指令和各种低延迟技术实现了高性能。整个代码库是
-用 Java 和 C++从头开始构建的，没有任何依赖性，并且 100%没有垃圾回收。
+QuestDB 是一个高性能、开源的 SQL 数据库，适用于金融服务、物联网、机器学习
+、DevOps 和可观测性应用。它拥有支持 PostgreSQL 线协议的端点，使用 InfluxDB 线协
+议的模式无关的高吞吐数据获取方式，以及用于查询、批量导入和导出的 REST API。
+QuestDB 实现了 ANSI SQL 与面向时间的语言功能的本地扩展。这些扩展使得使用关系和时
+间序列连接将多个来源的数据关联起来变得简单。QuestDB 通过面向列的存储模型、大规模
+并行化矢量执行、SIMD 指令和各种低延迟技术实现了高性能。整个代码库是用 Java 和
+C++从头开始构建的，没有任何依赖性，并且 100%没有垃圾回收。
 
 <div align="center">
   <a href="https://demo.questdb.io">
@@ -41,8 +41,9 @@ REST API。 QuestDB 实现了 ANSI SQL 与面向时间的语言功能的本地�
 
 ## 尝试 QuestDB
 
-我们提供了一个实时演示，其中包括最新的 QuestDB 版本和一个 16 亿行的数据集，其中
-有 10 年的纽约市出租车行程供查询。为了运行 QuestDB，可以使用 Docker 来快速启动。
+我们提供了一个[实时演示](https://demo.questdb.io/)，其中包括最新的 QuestDB 版本
+和一个 16 亿行的数据集，其中有 10 年的纽约市出租车行程供查询。为了运行 QuestDB，
+可以使用 Docker 来快速启动。
 
 ```bash
 docker run -p 9000:9000 -p 9009:9009 -p 8812:8812 questdb/questdb
