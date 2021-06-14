@@ -1188,6 +1188,23 @@ public class TimestampQueryTest extends AbstractGriffinTest {
                 false
         );
     }
+
+    @Test
+    public void testDesignatedTimestampOpSymbolColumns() throws Exception {
+        assertQuery(
+                "a\tdk\tk\n" +
+                        "1970-01-01T00:00:00.040000Z\t1970-01-01T00:00:00.030000Z\t1970-01-01T00:00:00.030000Z\n" +
+                        "1970-01-01T00:00:00.050000Z\t1970-01-01T00:00:00.040000Z\t1970-01-01T00:00:00.040000Z\n",
+                "select a, dk, k from x where dk < a",
+                "create table x as (select cast(concat('1970-01-01T00:00:00.0', (case when x > 3 then x else x - 1 end), '0000Z') as symbol) a, timestamp_sequence(0, 10000) dk, timestamp_sequence(0, 10000) k from long_sequence(5)) timestamp(k)",
+                "k",
+                null,
+                null,
+                true,
+                true,
+                false
+        );
+    }
     private void assertTimestampTtFailedQuery(String expectedError, String query) {
         assertTimestampTtFailedQuery0(expectedError, query);
         String dtsQuery = query.replace("nts", "dts");
