@@ -15,8 +15,6 @@
   </a>
 </p>
 
-简体中文 | [English](./README.md)
-
 # QuestDB
 
 QuestDB 是一个高性能、开源的 SQL 数据库，适用于金融服务、物联网、机器学习
@@ -29,7 +27,7 @@ C++从头开始构建的，没有任何依赖性，并且 100%没有垃圾回收
 
 <div align="center">
   <a href="https://demo.questdb.io">
-    <img alt="QuestDB Web Console showing multiple SQL statements and visualizing a query as a chart" src=".github/console.png" width="600" />
+    <img alt="QuestDB Web Console showing multiple SQL statements and visualizing a query as a chart" src="https://raw.githubusercontent.com/questdb/questdb/master/.github/console.png" width="600" />
   </a>
 </div>
 
@@ -72,7 +70,7 @@ brew services start questdb
 
 <div align="center">
   <a href="https://questdb.io/time-series-benchmark-suite/">
-    <img alt="A chart comparing the maximum throughput of QuestDB, ClickHouse, TimescaleDB and InfluxDB." src=".github/tsbs-results.png" width="700"/>
+    <img alt="A chart comparing the maximum throughput of QuestDB, ClickHouse, TimescaleDB and InfluxDB." src="https://raw.githubusercontent.com/questdb/questdb/master/.github/tsbs-results.png" width="700"/>
   </a>
 </div>
 
@@ -99,6 +97,10 @@ brew services start questdb
   能请求。
 - [产品路线图](https://github.com/questdb/questdb/projects/3)列出了我们目前正在
   进行的任务和功能。
+
+## 翻译
+
+- [翻译列表](./languages.md)
 
 ## 贡献
 

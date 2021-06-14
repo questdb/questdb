@@ -15,8 +15,6 @@
   </a>
 </p>
 
-English | [简体中文](./README-CN.md)
-
 # QuestDB
 
 QuestDB is a high-performance, open-source SQL database for applications in
@@ -35,7 +33,7 @@ is 100% free from garbage collection.
 
 <div align="center">
   <a href="https://demo.questdb.io">
-    <img alt="QuestDB Web Console showing multiple SQL statements and visualizing a query as a chart" src=".github/console.png" width="600" />
+    <img alt="QuestDB Web Console showing multiple SQL statements and visualizing a query as a chart" src="https://raw.githubusercontent.com/questdb/questdb/master/.github/console.png" width="600" />
   </a>
 </div>
 
@@ -83,7 +81,7 @@ sixteen cores:
 
 <div align="center">
   <a href="https://questdb.io/time-series-benchmark-suite/">
-    <img alt="A chart comparing the maximum throughput of QuestDB, ClickHouse, TimescaleDB and InfluxDB." src=".github/tsbs-results.png" width="700"/>
+    <img alt="A chart comparing the maximum throughput of QuestDB, ClickHouse, TimescaleDB and InfluxDB." src="https://raw.githubusercontent.com/questdb/questdb/master/.github/tsbs-results.png" width="700"/>
   </a>
 </div>
 
@@ -110,6 +108,11 @@ The following table shows query execution time of a billion rows run on a
   bug reports and feature requests.
 - [The product roadmap](https://github.com/questdb/questdb/projects/3) lists the
   tasks and features we're currently working on.
+
+## Translations
+
+- [English](https://github.com/questdb/questdb)
+- [Simplified Chinese / 简体中文](./i18n/README.zh-cn.md)
 
 ## Contribute
 
