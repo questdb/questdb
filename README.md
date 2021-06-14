@@ -21,6 +21,8 @@
   </a>
 </p>
 
+English | [简体中文](./README-CN.md)
+
 # QuestDB
 
 QuestDB is a high-performance, open-source SQL database for applications in
@@ -52,7 +54,7 @@ query.
 To run QuestDB, Docker can be used to get started quickly:
 
 ```bash
-docker run -p 9000:9000 -p 8812:8812 questdb/questdb
+docker run -p 9000:9000 -p 9009:9009 -p 8812:8812 questdb/questdb
 ```
 
 macOS users can use Homebrew:
@@ -86,7 +88,7 @@ case with up to fourteen workers on an AWS EC2 `m5.8xlarge` instance with
 sixteen cores:
 
 <div align="center">
-  <a href="https://questdb.io/blog/2021/05/10/questdb-release-6-0-tsbs-benchmark/">
+  <a href="https://questdb.io/time-series-benchmark-suite/">
     <img alt="A chart comparing the maximum throughput of QuestDB, ClickHouse, TimescaleDB and InfluxDB." src=".github/tsbs-results.png" width="700"/>
   </a>
 </div>
