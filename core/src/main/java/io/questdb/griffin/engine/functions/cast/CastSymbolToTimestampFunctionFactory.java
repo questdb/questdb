@@ -47,7 +47,7 @@ public class CastSymbolToTimestampFunctionFactory implements FunctionFactory {
         return new Func(args.getQuick(0));
     }
 
-    private static class Func extends AbstractUnaryTimestampFunction {
+    public static class Func extends AbstractUnaryTimestampFunction {
         public Func(Function arg) {
             super(arg);
         }
