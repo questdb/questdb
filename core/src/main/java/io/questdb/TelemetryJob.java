@@ -115,6 +115,40 @@ public class TelemetryJob extends SynchronizedJob implements Closeable {
         }
     }
 
+    @Override
+    public void close() {
+        if (enabled) {
+            runSerially();
+            newRow(Telemetry.SYSTEM_EVENT_DOWN);
+            writer.commit();
+            writer = Misc.free(writer);
+            configWriter = Misc.free(configWriter);
+        } else {
+            configWriter = Misc.free(configWriter);
+        }
+    }
+
+    public int getTableStatus(Path path, CharSequence tableName) {
+        return TableUtils.exists(
+                configuration.getFilesFacade(),
+                path,
+                configuration.getRoot(),
+                tableName,
+                0,
+                tableName.length()
+        );
+    }
+
+    @Override
+    public boolean runSerially() {
+        if (enabled) {
+            if (subSeq.consumeAll(queue, myConsumer)) {
+                writer.commit();
+            }
+        }
+        return false;
+    }
+
     private static TableWriter updateTelemetryConfig(
             SqlCompiler compiler,
             SqlExecutionContextImpl sqlExecutionContext,
@@ -165,38 +199,6 @@ public class TelemetryJob extends SynchronizedJob implements Closeable {
             }
         }
         return configWriter;
-    }
-
-    @Override
-    public void close() {
-        if (enabled) {
-            runSerially();
-            newRow(Telemetry.SYSTEM_EVENT_DOWN);
-            writer.commit();
-            Misc.free(writer);
-            Misc.free(configWriter);
-        }
-    }
-
-    public int getTableStatus(Path path, CharSequence tableName) {
-        return TableUtils.exists(
-                configuration.getFilesFacade(),
-                path,
-                configuration.getRoot(),
-                tableName,
-                0,
-                tableName.length()
-        );
-    }
-
-    @Override
-    public boolean runSerially() {
-        if (enabled) {
-            if (subSeq.consumeAll(queue, myConsumer)) {
-                writer.commit();
-            }
-        }
-        return false;
     }
 
     private void newRow(short event) {
