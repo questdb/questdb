@@ -219,9 +219,9 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
             }
 
             if (nf.setTcpNoDelay(fd, true) < 0) {
-                LOG.error().$("could not configure no delay [fd=").$(fd).$(", errno=").$(nf.errno()).$(']').$();
-                nf.close(fd, LOG);
-                break;
+                // Randomly on OS X, if a client connects and the peer TCP socket has SO_LINGER set to false, then setting the TCP_NODELAY
+                // option fails!
+                LOG.info().$("could not turn off Nagle's algorithm [fd=").$(fd).$(", errno=").$(nf.errno()).$(']').$();
             }
 
             if (peerNoLinger) {
