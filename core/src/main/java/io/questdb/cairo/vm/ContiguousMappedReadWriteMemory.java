@@ -231,15 +231,21 @@ public class ContiguousMappedReadWriteMemory extends AbstractContiguousMemory
         long previousSize = size;
         TableUtils.allocateDiskSpace(ff, fd, newSize);
         if (previousSize > 0) {
-            page = ff.mremap(fd, page, previousSize, newSize, 0, Files.MAP_RW);
+            long page = ff.mremap(fd, this.page, previousSize, newSize, 0, Files.MAP_RW);
+            if (page == FilesFacade.MAP_FAILED) {
+                long fd = this.fd;
+                close();
+                throw CairoException.instance(ff.errno()).put("Could not remap file [previousSize=").put(previousSize).put(", newSize=").put(newSize).put(", fd=").put(fd).put(']');
+            }
+            this.page = page;
         } else {
             assert page == -1;
             page = ff.mmap(fd, newSize, 0, Files.MAP_RW);
-        }
-        if (page == FilesFacade.MAP_FAILED) {
-            long fd = this.fd;
-            close();
-            throw CairoException.instance(ff.errno()).put("Could not remap file [previousSize=").put(previousSize).put(", newSize=").put(newSize).put(", fd=").put(fd).put(']');
+            if (page == FilesFacade.MAP_FAILED) {
+                long fd = this.fd;
+                close();
+                throw CairoException.instance(ff.errno()).put("Could not remap file [previousSize=").put(previousSize).put(", newSize=").put(newSize).put(", fd=").put(fd).put(']');
+            }
         }
         size = newSize;
         appendAddress = page + offset;

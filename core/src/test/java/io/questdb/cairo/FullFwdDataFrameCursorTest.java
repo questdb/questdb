@@ -1121,6 +1121,17 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                 }
 
                 @Override
+                public long mremap(long fd, long addr, long previousSize, long newSize, long offset, int mode) {
+                    if (fd == this.fd) {
+                        if (mapCount == 1) {
+                            return -1;
+                        }
+                        mapCount++;
+                    }
+                    return super.mremap(fd, addr, previousSize, newSize, offset, mode);
+                }
+
+                @Override
                 public long openRW(LPSZ name) {
                     // remember FD of the file we are targeting
                     if (Chars.endsWith(name, fileUnderAttack)) {
@@ -1449,6 +1460,18 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                         mapCount++;
                     }
                     return super.mmap(fd, len, offset, flags);
+                }
+
+                @Override
+                public long mremap(long fd, long addr, long previousSize, long newSize, long offset, int mode) {
+                    // mess with the target FD
+                    if (fd == this.fd) {
+                        if (mapCount == 1) {
+                            return -1;
+                        }
+                        mapCount++;
+                    }
+                    return super.mremap(fd, addr, previousSize, newSize, offset, mode);
                 }
 
                 @Override
