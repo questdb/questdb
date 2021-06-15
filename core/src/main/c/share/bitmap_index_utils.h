@@ -169,10 +169,7 @@ int64_t scan_blocks_backward(block<T>& current_block, int64_t value_count, T max
         // check block range by peeking at first and last value
         auto lo = current_block[0]; // first value in the block
         stored = (value_count - 1 & static_cast<int64_t>(current_block.capacity()) - 1) + 1;
-        if (lo > max_value) {
-            value_count -= stored;
-            continue;
-        }
+
         // can we skip this block ?
         if (lo > max_value) {
             value_count -= stored;
