@@ -27,7 +27,6 @@ package io.questdb.griffin.engine.functions.columns;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.SymbolFunction;
-import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.Nullable;
 
 public class SymbolColumn extends SymbolFunction implements ScalarFunction {
@@ -53,21 +52,6 @@ public class SymbolColumn extends SymbolFunction implements ScalarFunction {
     @Override
     public CharSequence getSymbolB(Record rec) {
         return rec.getSymB(columnIndex);
-    }
-
-    @Override
-    public CharSequence getStr(Record rec) {
-        return getSymbol(rec);
-    }
-
-    @Override
-    public CharSequence getStrB(Record rec) {
-        return getSymbolB(rec);
-    }
-
-    @Override
-    public void getStr(Record rec, CharSink sink) {
-        sink.put(getSymbol(rec));
     }
 
     @Override

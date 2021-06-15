@@ -112,7 +112,7 @@ public abstract class SymbolFunction implements ScalarFunction, SymbolTable {
 
     @Override
     public CharSequence getStr(Record rec) {
-        throw new UnsupportedOperationException();
+        return getSymbol(rec);
     }
 
     @Override
@@ -122,7 +122,7 @@ public abstract class SymbolFunction implements ScalarFunction, SymbolTable {
 
     @Override
     public CharSequence getStrB(Record rec) {
-        throw new UnsupportedOperationException();
+        return getSymbolB(rec);
     }
 
     @Override

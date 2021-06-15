@@ -29,7 +29,6 @@ import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.SqlKeywords;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.std.Chars;
-import io.questdb.std.str.CharSink;
 
 public class SymbolConstant extends SymbolFunction implements ConstantFunction {
     public static final SymbolConstant NULL = new SymbolConstant(null, VALUE_IS_NULL);
@@ -86,21 +85,6 @@ public class SymbolConstant extends SymbolFunction implements ConstantFunction {
     @Override
     public CharSequence getSymbolB(Record rec) {
         return value;
-    }
-
-    @Override
-    public CharSequence getStr(Record rec) {
-        return getSymbol(rec);
-    }
-
-    @Override
-    public CharSequence getStrB(Record rec) {
-        return getSymbolB(rec);
-    }
-
-    @Override
-    public void getStr(Record rec, CharSink sink) {
-        sink.put(getSymbol(rec));
     }
 
     @Override
