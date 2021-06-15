@@ -71,8 +71,7 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
     protected final LongMatrix<C> pending = new LongMatrix<>(4);
     private final int sndBufSize;
     private final int rcvBufSize;
-    private final AtomicBoolean listenRegistrationLock = new AtomicBoolean();
-    private boolean listening;
+    private volatile boolean listening;
     private final long queuedConnectionTimeoutMs;
     private long closeListenFdEpochMs;
     private final boolean peerNoLinger;
@@ -122,8 +121,7 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
             throw NetworkError.instance(nf.errno()).couldNotBindSocket(
                     configuration.getDispatcherLogName(),
                     configuration.getBindIPv4Address(),
-                    configuration.getBindPort()
-            );
+                    configuration.getBindPort());
         }
         LOG.advisory().$("listening on ").$ip(configuration.getBindIPv4Address()).$(':').$(configuration.getBindPort()).$(" [fd=").$(serverFd).$(']').$();
     }
@@ -242,19 +240,11 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
         }
 
         if (tlConCount >= activeConnectionLimit) {
-            // connectionCount may be less than tlConCount due to action in other threads, but not more
-            while (!listenRegistrationLock.compareAndSet(false, true)) {
-                LockSupport.parkNanos(1);
-            }
-            try {
-                if (connectionCount.get() >= activeConnectionLimit) {
-                    unregisterListenerFd();
-                    listening = false;
-                    closeListenFdEpochMs = timestamp + queuedConnectionTimeoutMs;
-                    LOG.info().$("max connection limit reached, unregistered listener [serverFd=").$(serverFd).I$();
-                }
-            } finally {
-                listenRegistrationLock.set(false);
+            if (connectionCount.get() >= activeConnectionLimit) {
+                unregisterListenerFd();
+                listening = false;
+                closeListenFdEpochMs = timestamp + queuedConnectionTimeoutMs;
+                LOG.info().$("max connection limit reached, unregistered listener [serverFd=").$(serverFd).I$();
             }
         }
     }
@@ -287,20 +277,13 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
         nf.close(fd, LOG);
         ioContextFactory.done(context);
         if (connectionCount.getAndDecrement() >= activeConnectionLimit) {
-            while (!listenRegistrationLock.compareAndSet(false, true)) {
-                LockSupport.parkNanos(1);
-            }
-            try {
-                if (connectionCount.get() < activeConnectionLimit) {
-                    if (serverFd < 0) {
-                        createListenFd();
-                    }
-                    registerListenerFd();
-                    listening = true;
-                    LOG.info().$("below maximum connection limit, registered listener [serverFd=").$(serverFd).I$();
+            if (connectionCount.get() < activeConnectionLimit) {
+                if (serverFd < 0) {
+                    createListenFd();
                 }
-            } finally {
-                listenRegistrationLock.set(false);
+                registerListenerFd();
+                listening = true;
+                LOG.info().$("below maximum connection limit, registered listener [serverFd=").$(serverFd).I$();
             }
         }
     }
@@ -331,17 +314,10 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
 
     @Override
     public boolean isListening() {
-        while (!listenRegistrationLock.compareAndSet(false, true)) {
-            LockSupport.parkNanos(1);
-        }
-        try {
-            return listening;
-        } finally {
-            listenRegistrationLock.set(false);
-        }
+        return listening;
     }
 
     static {
-        DISCONNECT_SOURCES = new String[]{"queue", "idle", "shutdown"};
+        DISCONNECT_SOURCES = new String[] { "queue", "idle", "shutdown" };
     }
 }
