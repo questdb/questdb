@@ -27,6 +27,7 @@
 
 #include <utility>
 #include <atomic>
+#include <algorithm>
 #include "util.h"
 
 inline static int64_t to_local_row_id(int64_t row_id) {
@@ -148,18 +149,19 @@ private:
 template<typename T>
 int64_t search_in_block(const T* memory, int64_t count, T value) {
     // when block is "small", we just scan it linearly
-    if (count < 64) {
-        // this will definitely exit because we had checked that at least the last value is greater than value
-        for (long i = 0; i < count; ++i) {
-            if (memory[i] > value) {
-                return i;
-            }
-        }
-        return count;
-    } else {
+//    if (count < 64) {
+//        // this will definitely exit because we had checked that at least the last value is greater than value
+//        for (long i = 0; i < count; ++i) {
+//            if (memory[i] > value) {
+//                return i;
+//            }
+//        }
+//        return count;
+//    } else {
         // use binary search on larger block
+//        return *std::upper_bound(memory, memory + count, value);
         return branch_free_search_upper(memory, count, value);
-    }
+//    }
 }
 
 template<typename T>
@@ -169,10 +171,6 @@ int64_t scan_blocks_backward(block<T>& current_block, int64_t value_count, T max
         // check block range by peeking at first and last value
         auto lo = current_block[0]; // first value in the block
         stored = (value_count - 1 & static_cast<int64_t>(current_block.capacity()) - 1) + 1;
-        if (lo > max_value) {
-            value_count -= stored;
-            continue;
-        }
         // can we skip this block ?
         if (lo > max_value) {
             value_count -= stored;

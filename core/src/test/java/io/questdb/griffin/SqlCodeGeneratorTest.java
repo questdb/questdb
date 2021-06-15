@@ -32,6 +32,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.engine.functions.test.TestMatchFunctionFactory;
 import io.questdb.griffin.engine.groupby.vect.GroupByJob;
+import io.questdb.griffin.engine.table.LatestByAllIndexedJob;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.Sequence;
 import io.questdb.std.Chars;
@@ -1983,6 +1984,72 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 true,
                 true
         );
+    }
+
+    @Test
+    public void testLatestByAllIndexedParallel() throws Exception {
+        Sequence seq = engine.getMessageBus().getLatestBySubSeq();
+        // consume sequence fully and do nothing
+        // this might be needed to make sure we don't consume things other tests publish here
+        while (true) {
+            long cursor = seq.next();
+            if (cursor == -1) {
+                break;
+            } else if (cursor > -1) {
+                seq.done(cursor);
+            }
+        }
+        final AtomicBoolean running = new AtomicBoolean(true);
+        final SOCountDownLatch haltLatch = new SOCountDownLatch(1);
+        final LatestByAllIndexedJob job = new LatestByAllIndexedJob(engine.getMessageBus());
+        new Thread(() -> {
+            while (running.get()) {
+                job.run(0);
+            }
+            haltLatch.countDown();
+        }).start();
+
+        try {
+            final String expected = "a\tb\tk\n" +
+                    "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
+                    "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
+                    "48.820511018586934\tVTJW\t1970-01-12T13:46:40.000000Z\n" +
+                    "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
+                    "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n";
+            assertQuery(expected,
+                    "select * from x latest by b",
+                    "create table x as " +
+                            "(" +
+                            "select" +
+                            " rnd_double(0)*100 a," +
+                            " rnd_symbol(5,4,4,1) b," +
+                            " timestamp_sequence(0, 100000000000) k" +
+                            " from" +
+                            " long_sequence(20)" +
+                            "), index(b) timestamp(k) partition by DAY",
+                    "k",
+                    "insert into x select * from (" +
+                            " select" +
+                            " rnd_double(0)*100," +
+                            " 'VTJW'," +
+                            " to_timestamp('2019', 'yyyy') t" +
+                            " from long_sequence(1)" +
+                            ") timestamp (t)",
+                    "a\tb\tk\n" +
+                            "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
+                            "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
+                            "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
+                            "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
+                            "56.594291398612405\tVTJW\t2019-01-01T00:00:00.000000Z\n",
+                    true,
+                    true,
+                    true
+            );
+
+        } finally {
+            running.set(false);
+            haltLatch.await();
+        }
     }
 
     @Test

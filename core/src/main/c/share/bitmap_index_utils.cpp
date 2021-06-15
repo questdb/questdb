@@ -57,6 +57,7 @@ void latest_scan_backward(uint64_t keys_memory_addr, size_t keys_memory_size, ui
         if (rows[k] > 0) continue;
 
         auto key = keys[k];
+
         int64_t value_count = key.value_count;
         bool update_range = true;
 
@@ -103,6 +104,7 @@ void latest_scan_backward(uint64_t keys_memory_addr, size_t keys_memory_size, ui
             if (k > local_key_end) local_key_end = k;
         }
     }
+
     out_args->key_lo = local_key_begin;
     out_args->key_hi = local_key_end;
     out_args->rows_size = row_count;
