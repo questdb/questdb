@@ -26,15 +26,18 @@ package io.questdb.griffin.engine.groupby;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.*;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.EmptyTableRecordCursor;
-import io.questdb.griffin.engine.functions.GroupByFunction;
+import io.questdb.griffin.model.ExpressionNode;
+import io.questdb.griffin.model.QueryColumn;
 import io.questdb.std.*;
 
 public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory {
     private final RecordCursorFactory base;
     private final TimestampSampler timestampSampler;
     private final GenericRecordMetadata groupByMetadata;
+    private final int[] recordFirstLastIndex;
     private final int timestampIndex;
     private static final long BUFF_SIZE = 4096;
     private final long timestampOutAddress;
@@ -47,11 +50,9 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
             RecordCursorFactory base,
             TimestampSampler timestampSampler,
             GenericRecordMetadata groupByMetadata,
-            ObjList<GroupByFunction> groupByFunctions,
-            ObjList<Function> recordFunctions,
+            ObjList<QueryColumn> columns,
             int timestampIndex,
-            SingleSymbolFilter symbolFilter,
-            int columnCount) {
+            SingleSymbolFilter symbolFilter) throws SqlException {
         this.base = base;
         this.timestampSampler = timestampSampler;
         this.groupByMetadata = groupByMetadata;
@@ -60,7 +61,24 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
         firstRowIdOutAddress = Unsafe.malloc(BUFF_SIZE * Long.BYTES);
         lastRowIdOutAddress = Unsafe.malloc(BUFF_SIZE * Long.BYTES);
         this.symbolFilter = symbolFilter;
+        this.recordFirstLastIndex = buildFirstLastIndex(columns, symbolFilter.getColumnIndex(), timestampIndex);
         gropuBySymbolColIndex = symbolFilter.getColumnIndex();
+    }
+
+    private int[] buildFirstLastIndex(ObjList<QueryColumn> columns, int symbolIndex, int timestampIndex) throws SqlException {
+        int[] colFirstLastIndex = new int[columns.size()];
+        for (int i = 0; i < colFirstLastIndex.length; i++) {
+            if (i != symbolIndex && i != timestampIndex) {
+                QueryColumn column = columns.getQuick(i);
+                ExpressionNode ast = column.getAst();
+                if (Chars.equalsIgnoreCase(ast.token, "last")) {
+                    colFirstLastIndex[i] = 1;
+                } else if (!Chars.equalsIgnoreCase(ast.token, "first")) {
+                    throw SqlException.$(ast.position, "expected first() or last() functions but got ").put(ast.token);
+                }
+            }
+        }
+        return colFirstLastIndex;
     }
 
     @Override
@@ -261,10 +279,11 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
         }
 
         private class SampleByFirstLastRecord implements Record {
-            private long frameRowId;
+            private final long[] firstLastRowId = new long[2];
 
             public SampleByFirstLastRecord of(long currentRow) {
-                frameRowId = Unsafe.getUnsafe().getLong(firstRowIdOutAddress + currentRow * Long.BYTES) - frameFirstRowId;
+                firstLastRowId[0] = Unsafe.getUnsafe().getLong(firstRowIdOutAddress + currentRow * Long.BYTES) - frameFirstRowId;
+                firstLastRowId[1] = Unsafe.getUnsafe().getLong(lastRowIdOutAddress + currentRow * Long.BYTES) - frameFirstRowId;
                 return this;
             }
 
@@ -277,28 +296,28 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
                     return Unsafe.getUnsafe().getLong(timestampOutAddress + currentRow * Long.BYTES);
                 }
 
-                return Unsafe.getUnsafe().getLong(currentFrame.getPageAddress(col) + frameRowId * Long.BYTES);
+                return Unsafe.getUnsafe().getLong(currentFrame.getPageAddress(col) + firstLastRowId[recordFirstLastIndex[col]] * Long.BYTES);
             }
 
             @Override
             public long getLong(int col) {
-                return Unsafe.getUnsafe().getLong(currentFrame.getPageAddress(col) + frameRowId * Long.BYTES);
+                return Unsafe.getUnsafe().getLong(currentFrame.getPageAddress(col) + firstLastRowId[recordFirstLastIndex[col]] * Long.BYTES);
             }
 
             @Override
             public double getDouble(int col) {
-                return Unsafe.getUnsafe().getDouble(currentFrame.getPageAddress(col) + frameRowId * Double.BYTES);
+                return Unsafe.getUnsafe().getDouble(currentFrame.getPageAddress(col) + firstLastRowId[recordFirstLastIndex[col]] * Double.BYTES);
             }
 
             @Override
             public CharSequence getSym(int col) {
-                int symbolId = Unsafe.getUnsafe().getInt(currentFrame.getPageAddress(col) + frameRowId * Integer.BYTES);
+                int symbolId = Unsafe.getUnsafe().getInt(currentFrame.getPageAddress(col) + firstLastRowId[recordFirstLastIndex[col]] * Integer.BYTES);
                 return symbolsReader.valueBOf(symbolId);
             }
 
             @Override
             public int getInt(int col) {
-                return Unsafe.getUnsafe().getInt(currentFrame.getPageAddress(col) + frameRowId * Integer.BYTES);
+                return Unsafe.getUnsafe().getInt(currentFrame.getPageAddress(col) + firstLastRowId[recordFirstLastIndex[col]] * Integer.BYTES);
             }
         }
     }

@@ -38,7 +38,6 @@ public class DeferredSingleSymbolFilterDataFrameRecordCursorFactory extends Data
     private final Function filter;
     private final IntList columnIndexes;
     private final IntList columnSizes;
-    private final int tableSymColIndex;
     private final CharSequence symbolValue;
     private int symbolKey;
     private boolean convertedToFrame;
@@ -64,7 +63,6 @@ public class DeferredSingleSymbolFilterDataFrameRecordCursorFactory extends Data
                 false,
                 columnIndexes,
                 columnSizes);
-        this.tableSymColIndex = tableSymColIndex;
         this.symbolValue = symbolValue;
         this.symbolKey = SymbolTable.VALUE_NOT_FOUND;
         this.filter = filter;

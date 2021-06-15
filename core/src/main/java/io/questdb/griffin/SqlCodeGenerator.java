@@ -1326,11 +1326,9 @@ public class SqlCodeGenerator implements Mutable {
                                 factory,
                                 timestampSampler,
                                 groupByMetadata,
-                                groupByFunctions,
-                                recordFunctions,
+                                model.getColumns(),
                                 timestampIndex,
-                                symbolFilter,
-                                valueTypes.getColumnCount()
+                                symbolFilter
                         );
                     }
                 }

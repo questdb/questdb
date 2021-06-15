@@ -4493,7 +4493,7 @@ public class SampleByTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testSimpleSampleBy() throws Exception {
+    public void testIndexSampleBy() throws Exception {
         assertQuery("k\ts\tlat\tlon\n" +
                         "1970-01-04T00:26:40.000000Z\ta\t70.00560222114518\t168.04971262491318\n" +
                         "1970-01-04T01:26:40.000000Z\ta\t6.612327943200507\t151.3046788842135\n" +
@@ -4501,7 +4501,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         "1970-01-04T03:26:40.000000Z\ta\t99.02039650915859\t128.42101395467057\n",
                 "select k, s, first(lat) lat, first(lon) lon " +
                         "from x " +
-                        "where k > '1970-01-04' and s = 'a' " +
+                        "where k > '1970-01-04' and s in ('a') " +
                         "sample by 1h",
                 "create table x as " +
                         "(" +
@@ -4518,7 +4518,7 @@ public class SampleByTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testSimpleSampleBy2() throws Exception {
+    public void testIndexSampleBy2() throws Exception {
         assertQuery("k\ts\tlat\tlon\n",
                 "select k, s, first(lat) lat, first(lon) lon " +
                         "from xx " +
@@ -4531,7 +4531,7 @@ public class SampleByTest extends AbstractGriffinTest {
                 false,
                 true);
 
-        assertQuery("k\ts\tlat\tlon\n" +
+        assertSampleByIndexQuery("k\ts\tlat\tlon\n" +
                         "1970-01-01T00:20:00.000000Z\tb\t-3.0\t3.0\n" +
                         "1970-01-01T01:20:00.000000Z\tb\t-9.0\t9.0\n" +
                         "1970-01-01T02:20:00.000000Z\tb\t-15.0\t15.0\n" +
@@ -4567,13 +4567,11 @@ public class SampleByTest extends AbstractGriffinTest {
                         "(case when x % 2 = 0 then 'a' else 'b' end) s,\n" +
                         "timestamp_sequence(0, 10 * 60 * 1000000L) k\n" +
                         "from\n" +
-                        "long_sequence(150)\n",
-                "k",
-                false);
+                        "long_sequence(150)\n");
     }
 
     @Test
-    public void testSimpleSampleBy3() throws Exception {
+    public void testIndexSampleBy3() throws Exception {
         assertQuery("k\ts\tlat\tlon\n",
                 "select k, s, first(lat) lat, first(lon) lon " +
                         "from xx " +
@@ -4586,7 +4584,7 @@ public class SampleByTest extends AbstractGriffinTest {
                 false,
                 true);
 
-        assertQuery("k\ts\tlat\tlon\n" +
+        assertSampleByIndexQuery("k\ts\tlat\tlon\n" +
                         "1970-01-01T21:10:00.000000Z\ta\t-128.0\t128.0\n" +
                         "1970-01-01T23:10:00.000000Z\ta\t-140.0\t140.0\n" +
                         "1970-01-02T01:10:00.000000Z\ta\t-152.0\t152.0\n" +
@@ -4602,13 +4600,11 @@ public class SampleByTest extends AbstractGriffinTest {
                         "(case when x % 2 = 0 then 'a' else 'b' end) s,\n" +
                         "timestamp_sequence(0, 10 * 60 * 1000000L) k\n" +
                         "from\n" +
-                        "long_sequence(180)\n",
-                "k",
-                false);
+                        "long_sequence(180)\n");
     }
 
     @Test
-    public void testSimpleSampleByIndexFrameExceedsDataFrame() throws Exception {
+    public void testIndexSampleByIndexFrameExceedsDataFrame() throws Exception {
         assertQuery("k\ts\tlat\tlon\n",
                 "select k, s, first(lat) lat, first(lon) lon " +
                         "from xx " +
@@ -4621,7 +4617,7 @@ public class SampleByTest extends AbstractGriffinTest {
                 false,
                 true);
 
-        assertQuery("k\ts\tlat\tlon\n" +
+        assertSampleByIndexQuery("k\ts\tlat\tlon\n" +
                         "1970-01-01T00:10:00.000000Z\ta\t-2.0\t2.0\n" +
                         "1970-01-01T04:10:00.000000Z\ta\t-32.0\t32.0\n" +
                         "1970-01-01T10:10:00.000000Z\ta\t-62.0\t62.0\n" +
@@ -4638,7 +4634,182 @@ public class SampleByTest extends AbstractGriffinTest {
                         "(case when x % 2 = 0 then 'a' else 'b' end) s,\n" +
                         "timestamp_sequence(0, 10 * 60 * 1000000L) k\n" +
                         "from\n" +
-                        "long_sequence(180)\n",
+                        "long_sequence(180)\n");
+    }
+
+    @Test
+    public void testIndexSampleByManyPartitions() throws Exception {
+        assertQuery("k\ts\tlat\tlon\n",
+                "select k, s, first(lat) lat, first(lon) lon " +
+                        "from xx " +
+                        "where k in '1970-02' and s in ('b')" +
+                        "sample by 2h",
+                "create table xx (lat double, lon double, s symbol, k timestamp)" +
+                        ", index(s capacity 10) timestamp(k) partition by DAY",
+                "k",
+                false,
+                false,
+                true);
+
+        assertSampleByIndexQuery("k\ts\tlat\tlon\n" +
+                        "1970-02-01T00:00:00.000000Z\tb\t-745.0\t745.0\n" +
+                        "1970-02-02T00:00:00.000000Z\tb\t-769.0\t769.0\n" +
+                        "1970-02-03T00:00:00.000000Z\tb\t-793.0\t793.0\n" +
+                        "1970-02-04T00:00:00.000000Z\tb\t-817.0\t817.0\n" +
+                        "1970-02-05T00:00:00.000000Z\tb\t-841.0\t841.0\n" +
+                        "1970-02-06T00:00:00.000000Z\tb\t-865.0\t865.0\n" +
+                        "1970-02-07T00:00:00.000000Z\tb\t-889.0\t889.0\n" +
+                        "1970-02-08T00:00:00.000000Z\tb\t-913.0\t913.0\n" +
+                        "1970-02-09T00:00:00.000000Z\tb\t-937.0\t937.0\n" +
+                        "1970-02-10T00:00:00.000000Z\tb\t-961.0\t961.0\n" +
+                        "1970-02-11T00:00:00.000000Z\tb\t-985.0\t985.0\n" +
+                        "1970-02-12T00:00:00.000000Z\tb\t-1009.0\t1009.0\n" +
+                        "1970-02-13T00:00:00.000000Z\tb\t-1033.0\t1033.0\n" +
+                        "1970-02-14T00:00:00.000000Z\tb\t-1057.0\t1057.0\n" +
+                        "1970-02-15T00:00:00.000000Z\tb\t-1081.0\t1081.0\n",
+                "select k, s, first(lat) lat, first(lon) lon " +
+                        "from xx " +
+                        "where k in '1970-02' and k < '1970-02-16' and s in ('b')" +
+                        "sample by 1d",
+                "insert into xx " +
+                        "select -x lat,\n" +
+                        "x lon,\n" +
+                        "(case when x % 2 = 0 then 'a' else 'b' end) s,\n" +
+                        "timestamp_sequence(0, 60 * 60 * 1000000L) k\n" + // 60 mins
+                        "from\n" +
+                        "long_sequence(365 * 24)\n");
+    }
+
+    @Test
+    public void testIndexSampleByVeryFewRowsPerInterval() throws Exception {
+        assertQuery("k\ts\tlat\tlon\n",
+                "select k, s, first(lat) lat, first(lon) lon " +
+                        "from xx " +
+                        "where k in '1970-02' and s in ('a')" +
+                        "sample by 2h",
+                "create table xx (lat long, lon long, s symbol, k timestamp)" +
+                        ", index(s capacity 10) timestamp(k) partition by DAY",
+                "k",
+                false,
+                false,
+                true);
+
+        assertSampleByIndexQuery("k\ts\tlat\tlon\n" +
+                        "1970-01-01T00:54:00.000000Z\ta\t-2\t2\n" +
+                        "1970-01-01T02:39:00.000000Z\ta\t-4\t4\n" +
+                        "1970-01-01T04:29:00.000000Z\ta\t-6\t6\n" +
+                        "1970-01-01T06:14:00.000000Z\ta\t-8\t8\n" +
+                        "1970-01-01T08:04:00.000000Z\ta\t-10\t10\n" +
+                        "1970-01-01T09:54:00.000000Z\ta\t-12\t12\n" +
+                        "1970-01-01T11:39:00.000000Z\ta\t-14\t14\n" +
+                        "1970-01-01T13:29:00.000000Z\ta\t-16\t16\n" +
+                        "1970-01-01T15:14:00.000000Z\ta\t-18\t18\n" +
+                        "1970-01-01T17:04:00.000000Z\ta\t-20\t20\n" +
+                        "1970-01-01T18:54:00.000000Z\ta\t-22\t22\n" +
+                        "1970-01-01T20:39:00.000000Z\ta\t-24\t24\n" +
+                        "1970-01-01T22:29:00.000000Z\ta\t-26\t26\n",
+                "select k, s, first(lat) lat, first(lon) lon " +
+                        "from xx " +
+                        "where k in '1970-01-01' and s in ('a')" +
+                        "sample by 5m",
+                "insert into xx " +
+                        "select -x lat,\n" +
+                        "x lon,\n" +
+                        "(case when x % 2 = 0 then 'a' else 'b' end) s,\n" +
+                        "timestamp_sequence(0, 54 * 60 * 1000000L) k\n" + // 54 mins
+                        "from\n" +
+                        "long_sequence(48)\n");
+    }
+
+    @Test
+    public void testIndexSampleByFirstAndLast() throws Exception {
+        assertQuery("k\ts\tlat\tlon\n",
+                "select k, s, first(lat) lat, last(lon) lon " +
+                        "from xx " +
+                        "where k in '1970-02' and s in ('b')" +
+                        "sample by 2h",
+                "create table xx (lat double, lon double, s symbol, k timestamp)" +
+                        ", index(s capacity 10) timestamp(k) partition by DAY",
+                "k",
+                false,
+                false,
+                true);
+
+        assertSampleByIndexQuery("k\ts\tlat\tlon\n" +
+                        "1970-02-01T00:00:00.000000Z\tb\t-745.0\t767.0\n" +
+                        "1970-02-02T00:00:00.000000Z\tb\t-769.0\t791.0\n" +
+                        "1970-02-03T00:00:00.000000Z\tb\t-793.0\t815.0\n" +
+                        "1970-02-04T00:00:00.000000Z\tb\t-817.0\t839.0\n" +
+                        "1970-02-05T00:00:00.000000Z\tb\t-841.0\t863.0\n" +
+                        "1970-02-06T00:00:00.000000Z\tb\t-865.0\t887.0\n" +
+                        "1970-02-07T00:00:00.000000Z\tb\t-889.0\t911.0\n" +
+                        "1970-02-08T00:00:00.000000Z\tb\t-913.0\t935.0\n" +
+                        "1970-02-09T00:00:00.000000Z\tb\t-937.0\t959.0\n" +
+                        "1970-02-10T00:00:00.000000Z\tb\t-961.0\t983.0\n" +
+                        "1970-02-11T00:00:00.000000Z\tb\t-985.0\t1007.0\n" +
+                        "1970-02-12T00:00:00.000000Z\tb\t-1009.0\t1031.0\n" +
+                        "1970-02-13T00:00:00.000000Z\tb\t-1033.0\t1055.0\n" +
+                        "1970-02-14T00:00:00.000000Z\tb\t-1057.0\t1079.0\n" +
+                        "1970-02-15T00:00:00.000000Z\tb\t-1081.0\t1103.0\n",
+                "select k, s, first(lat) lat, last(lon) lon " +
+                        "from xx " +
+                        "where k in '1970-02' and k < '1970-02-16' and s in ('b')" +
+                        "sample by 1d",
+                "insert into xx " +
+                        "select -x lat,\n" +
+                        "x lon,\n" +
+                        "(case when x % 2 = 0 then 'a' else 'b' end) s,\n" +
+                        "timestamp_sequence(0, 60 * 60 * 1000000L) k\n" + // 60 mins
+                        "from\n" +
+                        "long_sequence(365 * 24)\n");
+    }
+
+    @Test
+    public void testIndexSampleByLastAndFirstOnDifferentIndexPages() throws Exception {
+        assertQuery("k\ts\tlat\tlon\n",
+                "select k, s, first(lat) lat, last(lon) lon " +
+                        "from xx " +
+                        "where k in '1970-01-01T00:00:00.000000Z;30m;5h;10' and s in ('a')" +
+                        "sample by 2h",
+                "create table xx (lat double, lon double, s symbol, k timestamp)" +
+                        ", index(s capacity 10) timestamp(k) partition by DAY",
+                "k",
+                false,
+                false,
+                true);
+
+        assertSampleByIndexQuery("k\ts\tlat\tlon\n" +
+                        "1970-01-01T21:10:00.000000Z\ta\t-128.0\t138.0\n" +
+                        "1970-01-01T23:10:00.000000Z\ta\t-140.0\t150.0\n" +
+                        "1970-01-02T01:10:00.000000Z\ta\t-152.0\t162.0\n" +
+                        "1970-01-02T03:10:00.000000Z\ta\t-164.0\t174.0\n" +
+                        "1970-01-02T05:10:00.000000Z\ta\t-176.0\t180.0\n",
+                "select k, s, first(lat) lat, last(lon) lon " +
+                        "from xx " +
+                        "where k > '1970-01-01T21:00' and s in ('a')" +
+                        "sample by 2h",
+                "insert into xx " +
+                        "select -x lat,\n" +
+                        "x lon,\n" +
+                        "(case when x % 2 = 0 then 'a' else 'b' end) s,\n" +
+                        "timestamp_sequence(0, 10 * 60 * 1000000L) k\n" +
+                        "from\n" +
+                        "long_sequence(180)\n");
+    }
+
+
+    private void assertSampleByIndexQuery(String expected, String query, String insert) throws Exception {
+        String forceNoIndexQuery = query.replace("in ('b')", "in ('b', 'none')")
+                .replace("in ('a')", "in ('a', 'none')");
+        assertQuery(expected,
+                forceNoIndexQuery,
+                insert,
+                "k",
+                false);
+
+        assertQuery(expected,
+                query,
+                null,
                 "k",
                 false);
     }

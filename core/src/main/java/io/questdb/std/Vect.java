@@ -85,6 +85,9 @@ public final class Vect {
 
                     if (indexRowTimestamp < sampleByStart) {
                         // Fast path, skip index rowid when it fails before current window
+                        if (outIndex > 0) {
+                            Unsafe.getUnsafe().putLong(lastRowIdOutAddress + (outIndex - 1) * Long.BYTES, indexRowId);
+                        }
                         continue;
                     }
 
@@ -97,6 +100,7 @@ public final class Vect {
                     if (indexRowTimestamp >= sampleByStart && indexRowTimestamp < sampleByEnd) {
                         Unsafe.getUnsafe().putLong(timestampOutAddress + outIndex * Long.BYTES, sampleByStart);
                         Unsafe.getUnsafe().putLong(firstRowIdOutAddress + outIndex * Long.BYTES, indexRowId);
+                        Unsafe.getUnsafe().putLong(lastRowIdOutAddress + outIndex * Long.BYTES, indexRowId);
                         outIndex++;
 
                         // Go to next sample by window.
