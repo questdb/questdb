@@ -24,11 +24,44 @@
 
 package io.questdb.cutlass.http;
 
+import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
+
+import java.io.InputStream;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.locks.LockSupport;
+
+import org.jetbrains.annotations.NotNull;
+import org.junit.Assert;
+import org.junit.Before;
+import org.junit.Rule;
+import org.junit.Test;
+import org.junit.rules.TemporaryFolder;
+
 import io.questdb.Metrics;
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoTestUtils;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.DefaultCairoConfiguration;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.RecordCursorPrinter;
+import io.questdb.cairo.TableModel;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TestRecord;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cutlass.NetUtils;
-import io.questdb.cutlass.http.processors.*;
+import io.questdb.cutlass.http.processors.HealthCheckProcessor;
+import io.questdb.cutlass.http.processors.JsonQueryProcessor;
+import io.questdb.cutlass.http.processors.QueryCache;
+import io.questdb.cutlass.http.processors.StaticContentProcessor;
+import io.questdb.cutlass.http.processors.TextImportProcessor;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -37,9 +70,35 @@ import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.engine.functions.test.TestLatchedCounterFunctionFactory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.mp.*;
-import io.questdb.network.*;
-import io.questdb.std.*;
+import io.questdb.mp.MPSequence;
+import io.questdb.mp.RingQueue;
+import io.questdb.mp.SCSequence;
+import io.questdb.mp.SOCountDownLatch;
+import io.questdb.mp.WorkerPool;
+import io.questdb.mp.WorkerPoolConfiguration;
+import io.questdb.network.DefaultIODispatcherConfiguration;
+import io.questdb.network.IOContext;
+import io.questdb.network.IOContextFactory;
+import io.questdb.network.IODispatcher;
+import io.questdb.network.IODispatcherConfiguration;
+import io.questdb.network.IODispatchers;
+import io.questdb.network.IOOperation;
+import io.questdb.network.IORequestProcessor;
+import io.questdb.network.Net;
+import io.questdb.network.NetworkFacade;
+import io.questdb.network.NetworkFacadeImpl;
+import io.questdb.network.PeerDisconnectedException;
+import io.questdb.network.PeerIsSlowToReadException;
+import io.questdb.std.Chars;
+import io.questdb.std.Files;
+import io.questdb.std.LongHashSet;
+import io.questdb.std.LongList;
+import io.questdb.std.ObjList;
+import io.questdb.std.Os;
+import io.questdb.std.Rnd;
+import io.questdb.std.StationaryMillisClock;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Zip;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.AbstractCharSequence;
@@ -47,22 +106,6 @@ import io.questdb.std.str.ByteSequence;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
-import org.jetbrains.annotations.NotNull;
-import org.junit.Assert;
-import org.junit.Before;
-import org.junit.Rule;
-import org.junit.Test;
-import org.junit.rules.TemporaryFolder;
-
-import java.io.InputStream;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.CyclicBarrier;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicLong;
-import java.util.concurrent.locks.LockSupport;
-
-import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 
 public class IODispatcherTest {
     public static final String JSON_DDL_RESPONSE = "0d\r\n" +
@@ -3921,13 +3964,13 @@ public class IODispatcherTest {
 
     @Test
     public void testMaxConnections() throws Exception {
-
         LOG.info().$("started maxConnections").$();
-
         assertMemoryLeak(() -> {
             HttpServerConfiguration httpServerConfiguration = new DefaultHttpServerConfiguration();
 
-            int N = 15;
+            final int listenBackLog = 10;
+            final int activeConnectionLimit = 5;
+            final int nExcessConnections = 20;
 
             AtomicInteger openCount = new AtomicInteger(0);
             AtomicInteger closeCount = new AtomicInteger(0);
@@ -3935,14 +3978,25 @@ public class IODispatcherTest {
             final IODispatcherConfiguration configuration = new DefaultIODispatcherConfiguration() {
                 @Override
                 public int getActiveConnectionLimit() {
-                    return N;
+                    return activeConnectionLimit;
+                }
+
+                @Override
+                public int getListenBacklog() {
+                    return listenBackLog;
+                }
+
+                @Override
+                public long getQueuedConnectionTimeout() {
+                    return 300_000;
                 }
             };
 
             try (IODispatcher<HttpConnectionContext> dispatcher = IODispatchers.create(
                     configuration,
                     new IOContextFactory<HttpConnectionContext>() {
-                        @Override
+                        @SuppressWarnings("resource")
+						@Override
                         public HttpConnectionContext newInstance(long fd, IODispatcher<HttpConnectionContext> dispatcher1) {
                             openCount.incrementAndGet();
                             return new HttpConnectionContext(httpServerConfiguration.getHttpContextConfiguration()) {
@@ -3976,19 +4030,24 @@ public class IODispatcherTest {
                 SOCountDownLatch serverHaltLatch = new SOCountDownLatch(1);
 
                 new Thread(() -> {
-                    do {
-                        dispatcher.run(0);
-                        dispatcher.processIOQueue(
-                                (operation, context) -> context.handleClientOperation(operation, selector, EmptyRescheduleContext)
-                        );
-                    } while (serverRunning.get());
-                    serverHaltLatch.countDown();
+                	try {
+	                    do {
+	                        dispatcher.run(0);
+	                        dispatcher.processIOQueue(
+	                                (operation, context) -> context.handleClientOperation(operation, selector, EmptyRescheduleContext)
+	                        );
+	                    } while (serverRunning.get());
+                	} finally {
+                		serverHaltLatch.countDown();
+                	}
                 }).start();
 
                 LongList openFds = new LongList();
+                LongHashSet closedFds = new LongHashSet();
 
                 final long sockAddr = Net.sockaddr("127.0.0.1", 9001);
                 final long buf = Unsafe.malloc(4096);
+                final int N = activeConnectionLimit + listenBackLog;
                 try {
                     for (int i = 0; i < N; i++) {
                         long fd = Net.socketTcp(true);
@@ -3997,7 +4056,12 @@ public class IODispatcherTest {
                     }
 
                     // let dispatcher catchup
-                    while (dispatcher.getConnectionCount() < N) {
+                    long startNanos = System.nanoTime();
+                    while (dispatcher.isListening()) {
+                        long endNanos = System.nanoTime();
+                        if (TimeUnit.NANOSECONDS.toSeconds(endNanos - startNanos) > 30) {
+                            Assert.fail("Timed out waiting for despatcher to stop listening");
+                        }
                         LockSupport.parkNanos(1);
                     }
 
@@ -4011,35 +4075,52 @@ public class IODispatcherTest {
                             "Accept-Language: en-US,en;q=0.8\r\n" +
                             "Cookie: textwrapon=false; textautoformat=false; wysiwyg=textarea\r\n" +
                             "\r\n";
-
                     long mem = TestUtils.toMemory(request);
+
+                    // Active connection limit is reached and backlog is full, check we get connection closed
+                    for (int i = 0; i < nExcessConnections; i++) {
+                        long fd = Net.socketTcp(true);
+                        if (fd > 0) {
+                            int nSent = Net.send(fd, mem, request.length());
+                            Assert.assertTrue(nSent < 0);
+                            Net.close(fd);
+                        }
+                    }
+
                     try {
                         for (int i = 0; i < N; i++) {
+                            if (i == activeConnectionLimit) {
+                                for (int j = 0; j < activeConnectionLimit; j++) {
+                                	long fd = openFds.getQuick(j);
+                                    Net.close(fd);
+                                    closedFds.add(fd);
+                               }
+                            }
+
                             long fd = openFds.getQuick(i);
                             Assert.assertEquals(request.length(), Net.send(fd, mem, request.length()));
                             // ensure we have response from server
                             Assert.assertTrue(0 < Net.recv(fd, buf, 64));
-                        }
 
-                        long fd = Net.socketTcp(true);
-                        try {
-                            TestUtils.assertConnect(fd, sockAddr);
-
-                            Assert.assertEquals(request.length(), Net.send(fd, mem, request.length()));
-                            // ensure we got disconnected
-                            Assert.assertTrue(0 > Net.recv(fd, buf, 64));
-
-                        } finally {
-                            Net.close(fd);
+                            if (i < activeConnectionLimit) {
+                                // dont close any connections until the first connections have been processed and check that the dispatcher
+                                // is not listening
+                                Assert.assertFalse(dispatcher.isListening());
+                            } else {
+                                Net.close(fd);
+                                closedFds.add(fd);
+                            }
                         }
                     } finally {
-                        // close all fds we built up so far
-                        for (int i = 0; i < N; i++) {
-                            Net.close(openFds.getQuick(i));
-                        }
                         Unsafe.free(mem, request.length());
                     }
                 } finally {
+                    for (int i=0; i<openFds.size(); i++) {
+                    	long fd = openFds.getQuick(i);
+                    	if (! closedFds.contains(fd)) {
+                    		Net.close(fd);
+                    	}
+                    }
                     Net.freeSockAddr(sockAddr);
                     Unsafe.free(buf, 4096);
                     Assert.assertFalse(configuration.getActiveConnectionLimit() < dispatcher.getConnectionCount());
@@ -4050,6 +4131,201 @@ public class IODispatcherTest {
         });
     }
 
+    @Test
+    public void testQueuedConnectionTimeout() throws Exception {
+        LOG.info().$("started testQueuedConnectionTimeout").$();
+        assertMemoryLeak(() -> {
+            final int listenBackLog = 10;
+            final int activeConnectionLimit = 5;
+            final long queuedConnectionTimeoutInMs = 250;
+
+            final IODispatcherConfiguration configuration = new DefaultIODispatcherConfiguration() {
+                @Override
+                public int getActiveConnectionLimit() {
+                    return activeConnectionLimit;
+                }
+
+                @Override
+                public int getListenBacklog() {
+                    return listenBackLog;
+                }
+
+                @Override
+                public long getQueuedConnectionTimeout() {
+                    return queuedConnectionTimeoutInMs;
+                }
+            };
+
+            final AtomicInteger nConnected = new AtomicInteger();
+            final LongHashSet serverConnectedFds = new LongHashSet();
+            final LongHashSet clientActiveFds = new LongHashSet();
+            IOContextFactory<IOContext> contextFactory = new IOContextFactory<IOContext>() {
+                @Override
+                public IOContext newInstance(long fd, IODispatcher<IOContext> dispatcher) {
+                    LOG.info().$(fd).$(" connected").$();
+                    serverConnectedFds.add(fd);
+                    nConnected.incrementAndGet();
+                    return new IOContext() {
+                        @Override
+                        public boolean invalid() {
+                            return !serverConnectedFds.contains(fd);
+                        }
+
+                        @Override
+                        public long getFd() {
+                            return fd;
+                        }
+
+                        @Override
+                        public IODispatcher<?> getDispatcher() {
+                            return dispatcher;
+                        }
+
+                        @Override
+                        public void close() {
+                            LOG.info().$(fd).$(" disconnected").$();
+                            serverConnectedFds.remove(fd);
+                        }
+                    };
+                }
+            };
+            final String request = "\n";
+            long mem = TestUtils.toMemory(request);
+
+            final long sockAddr = Net.sockaddr("127.0.0.1", 9001);
+            Thread serverThread = null;
+            final CountDownLatch serverLatch = new CountDownLatch(1);
+            try (IODispatcher<IOContext> dispatcher = IODispatchers.create(configuration, contextFactory)) {
+                serverThread = new Thread("test-io-dispatcher") {
+                    @Override
+                    public void run() {
+                        long smem = Unsafe.malloc(1);
+                        try {
+                            IORequestProcessor<IOContext> requestProcessor = new IORequestProcessor<IOContext>() {
+                                @Override
+                                public void onRequest(int operation, IOContext context) {
+                                    long fd = context.getFd();
+                                    int rc;
+                                    switch(operation) {
+                                        case IOOperation.READ:
+                                            rc = Net.recv(fd, smem, 1);
+                                            if (rc == 1) {
+                                                dispatcher.registerChannel(context, IOOperation.WRITE);
+                                            } else {
+                                                dispatcher.disconnect(context, IODispatcher.DISCONNECT_REASON_TEST);
+                                            }
+                                            break;
+                                        case IOOperation.WRITE:
+                                            rc = Net.send(fd, smem, 1);
+                                            if (rc == 1) {
+                                                dispatcher.registerChannel(context, IOOperation.READ);
+                                            } else {
+                                                dispatcher.disconnect(context, IODispatcher.DISCONNECT_REASON_TEST);
+                                            }
+                                            break;
+                                        default:
+                                            dispatcher.disconnect(context, IODispatcher.DISCONNECT_REASON_TEST);
+                                    }
+                                }
+                            };
+                            do {
+                                dispatcher.run(0);
+                                dispatcher.processIOQueue(requestProcessor);
+                                Thread.yield();
+                            } while (!isInterrupted());
+                        } finally {
+                            Unsafe.free(smem, 1);
+                            serverLatch.countDown();
+                        }
+                    }
+                };
+                serverThread.setDaemon(true);
+                serverThread.start();
+
+                // Connect exactly the right amount of clients to fill the active connection and connection backlog, after the
+                // queuedConnectionTimeoutInMs the connections in the backlog should get refused
+                int nClientConnects = 0;
+                int nClientConnectRefused = 0;
+                for (int i = 0; i < listenBackLog + activeConnectionLimit; i++) {
+                    long fd = Net.socketTcp(true);
+                    Assert.assertTrue(fd > -1);
+                    clientActiveFds.add(fd);
+                    if (Net.connect(fd, sockAddr) != 0) {
+                        nClientConnectRefused++;
+                        continue;
+                    }
+                    int rc = Net.send(fd, mem, request.length());
+                    if (rc < 0) {
+                        nClientConnectRefused++;
+                        continue;
+                    }
+                    rc = Net.recv(fd, mem, request.length());
+                    if (rc < 0) {
+                        nClientConnectRefused++;
+                    } else {
+                        nClientConnects++;
+                    }
+                }
+                Assert.assertEquals(activeConnectionLimit, nClientConnects);
+                Assert.assertEquals(listenBackLog, nClientConnectRefused);
+                Assert.assertFalse(dispatcher.isListening());
+
+                // Close all connections and wait for server to resume listening
+                while (clientActiveFds.size() > 0) {
+                    long fd = clientActiveFds.get(0);
+                    clientActiveFds.remove(fd);
+                    Net.close(fd);
+                }
+                long timeoutMs = System.currentTimeMillis() + TimeUnit.MINUTES.toMillis(1);
+                while (!dispatcher.isListening()) {
+                    if (System.currentTimeMillis() > timeoutMs) {
+                        Assert.fail("Timeout waiting for server to start listening again");
+                    }
+                }
+
+                // Try connections again to make sure server is listening
+                nClientConnects = 0;
+                nClientConnectRefused = 0;
+                for (int i = 0; i < listenBackLog + activeConnectionLimit; i++) {
+                    long fd = Net.socketTcp(true);
+                    Assert.assertTrue(fd > -1);
+                    clientActiveFds.add(fd);
+                    if (Net.connect(fd, sockAddr) != 0) {
+                        nClientConnectRefused++;
+                        continue;
+                    }
+                    int rc = Net.send(fd, mem, request.length());
+                    if (rc < 0) {
+                        nClientConnectRefused++;
+                        continue;
+                    }
+                    rc = Net.recv(fd, mem, request.length());
+                    if (rc < 0) {
+                        nClientConnectRefused++;
+                    } else {
+                        nClientConnects++;
+                    }
+                }
+                Assert.assertEquals(activeConnectionLimit, nClientConnects);
+                Assert.assertEquals(listenBackLog, nClientConnectRefused);
+                Assert.assertFalse(dispatcher.isListening());
+
+                // Close all remaining client connections
+                for (int n = 0; n < clientActiveFds.size(); n++) {
+                    long fd = clientActiveFds.get(n);
+                    Net.close(fd);
+                }
+                serverThread.interrupt();
+                if (!serverLatch.await(1, TimeUnit.MINUTES)) {
+                    Assert.fail("Timeout waiting for server to end");
+                }
+            } finally {
+                Net.freeSockAddr(sockAddr);
+                Unsafe.free(mem, request.length());
+            }
+        });
+    }
+    
     @Test
     public void testMissingContentDisposition() throws Exception {
         testImport(

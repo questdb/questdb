@@ -83,6 +83,14 @@ public final class Kqueue implements Closeable {
         return register(1);
     }
 
+    public int removeListen(long sfd) {
+        writeAddress = changeList;
+        commonFd(sfd, 0);
+        Unsafe.getUnsafe().putShort(writeAddress + KqueueAccessor.FILTER_OFFSET, KqueueAccessor.EVFILT_READ);
+        Unsafe.getUnsafe().putShort(writeAddress + KqueueAccessor.FLAGS_OFFSET, KqueueAccessor.EV_DELETE);
+        return register(1);
+    }
+
     public int poll() {
         return kqf.kevent(kq, 0, 0, eventList, capacity);
     }

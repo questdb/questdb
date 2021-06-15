@@ -710,6 +710,11 @@ public class LineTcpAuthConnectionContextTest extends AbstractCairoTest {
             public boolean run(int workerId) {
                 return false;
             }
+
+            @Override
+            public boolean isListening() {
+                return true;
+            }
         };
         Assert.assertNull(context.getDispatcher());
         context.of(FD, dispatcher);
