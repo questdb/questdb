@@ -2730,13 +2730,18 @@ public class SqlCodeGenerator implements Mutable {
         // compare types and populate keyTypes
         keyTypes.clear();
         for (int k = 0, m = listColumnFilterA.getColumnCount(); k < m; k++) {
-            int columnType = masterMetadata.getColumnType(listColumnFilterB.getColumnIndexFactored(k));
-            if (columnType != slaveMetadata.getColumnType(listColumnFilterA.getColumnIndexFactored(k))) {
+            int columnTypeA = slaveMetadata.getColumnType(listColumnFilterA.getColumnIndexFactored(k));
+            int columnTypeB = masterMetadata.getColumnType(listColumnFilterB.getColumnIndexFactored(k));
+            if (columnTypeB != columnTypeA && !(isSymbolOrString(columnTypeB) && isSymbolOrString(columnTypeA))) {
                 // index in column filter and join context is the same
                 throw SqlException.$(jc.aNodes.getQuick(k).position, "join column type mismatch");
             }
-            keyTypes.add(columnType == ColumnType.SYMBOL ? ColumnType.STRING : columnType);
+            keyTypes.add(columnTypeB == ColumnType.SYMBOL ? ColumnType.STRING : columnTypeB);
         }
+    }
+
+    private boolean isSymbolOrString(int columnType) {
+        return (columnType == ColumnType.SYMBOL) || (columnType == ColumnType.STRING);
     }
 
     void setFullFatJoins(boolean fullFatJoins) {

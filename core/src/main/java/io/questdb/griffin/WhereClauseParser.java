@@ -289,7 +289,7 @@ final class WhereClauseParser implements Mutable {
             Function function,
             int functionPosition
     ) throws SqlException {
-        if (function.getType() != ColumnType.STRING) {
+        if (function.getType() != ColumnType.STRING && function.getType() != ColumnType.SYMBOL) {
             return function.getTimestamp(null);
         }
         CharSequence str = function.getStr(null);
@@ -423,7 +423,8 @@ final class WhereClauseParser implements Mutable {
     private static boolean canCastToTimestamp(int type) {
         return type == ColumnType.TIMESTAMP
                 || type == ColumnType.DATE
-                || type == ColumnType.STRING;
+                || type == ColumnType.STRING
+                || type == ColumnType.SYMBOL;
     }
 
     private static long parseTokenAsTimestamp(ExpressionNode lo) throws SqlException {

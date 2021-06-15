@@ -747,6 +747,33 @@ public class TimestampQueryTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testTimestampSymbolConversion() throws Exception {
+        assertMemoryLeak(() -> {
+            try (TableModel m = new TableModel(configuration, "tt", PartitionBy.DAY)) {
+                m.timestamp("dts")
+                        .col("ts", ColumnType.TIMESTAMP);
+                createPopulateTable(m, 31, "2021-03-14", 31);
+                String expected = "dts\tts\n" +
+                        "2021-04-02T23:59:59.354820Z\t2021-04-02T23:59:59.354820Z\n";
+
+                assertQuery(
+                        expected,
+                        "tt where dts > cast('2021-04-02T13:45:49.207Z' as symbol) and dts < cast('2021-04-03 13:45:49.207' as symbol)",
+                        "dts",
+                        true,
+                        true);
+
+                assertQuery(
+                        expected,
+                        "tt where ts > cast('2021-04-02T13:45:49.207Z' as symbol) and ts < cast('2021-04-03 13:45:49.207' as symbol)",
+                        "dts",
+                        true,
+                        false);
+            }
+        });
+    }
+
+    @Test
     public void testTimestampInDay1orDay2() throws Exception {
         assertQuery(
                 "min\tmax\n\t\n",
@@ -783,11 +810,45 @@ public class TimestampQueryTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testTimestampSymbolComparison() throws Exception {
+        assertQuery(
+                "min\tmax\n\t\n",
+                "select min(nts), max(nts) from tt where nts = cast('2020-01-01' as symbol)",
+                "create table tt (dts timestamp, nts timestamp) timestamp(dts)",
+                null,
+                "insert into tt " +
+                        "select timestamp_sequence(1577836800000000L, 60*60*1000000L), timestamp_sequence(1577836800000000L, 60*60*1000000L) " +
+                        "from long_sequence(48L)",
+                "min\tmax\n" +
+                        "2020-01-01T00:00:00.000000Z\t2020-01-01T00:00:00.000000Z\n",
+                false,
+                false,
+                true
+        );
+    }
+
+    @Test
     public void testTimestampStringDateAdd() throws Exception {
         assertQuery(
                 "dateadd\n" +
                         "2020-01-02T00:00:00.000000Z\n",
                 "select dateadd('d', 1, '2020-01-01')",
+                null,
+                null,
+                null,
+                null,
+                true,
+                false,
+                true
+        );
+    }
+
+    @Test
+    public void testTimestampSymbolDateAdd() throws Exception {
+        assertQuery(
+                "dateadd\n" +
+                        "2020-01-02T00:00:00.000000Z\n",
+                "select dateadd('d', 1, cast('2020-01-01' as symbol))",
                 null,
                 null,
                 null,
@@ -1053,6 +1114,23 @@ public class TimestampQueryTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testTimestampSymbolComparisonInvalidValue() throws Exception {
+        assertMemoryLeak(() -> {
+            // create table
+            String createStmt = "create table tt (dts timestamp, nts timestamp) timestamp(dts)";
+            compiler.compile(createStmt, sqlExecutionContext);
+
+            // insert same values to dts (designated) as nts (non-designated) timestamp
+            compiler.compile("insert into tt " +
+                    "select timestamp_sequence(1577836800000000L, 60*60*1000000L), timestamp_sequence(1577836800000000L, 60*60*1000000L) " +
+                    "from long_sequence(48L)", sqlExecutionContext);
+
+            assertTimestampTtFailedQuery("Invalid date", "select min(nts), max(nts) from tt where nts > cast('invalid' as symbol)");
+            assertTimestampTtFailedQuery("cannot compare TIMESTAMP with type DOUBLE", "select min(nts), max(nts) from tt in (cast('2020-01-01' as symbol), NaN)");
+        });
+    }
+
+    @Test
     public void testTimestampStringComparisonBetweenInvalidValue() throws Exception {
         assertMemoryLeak(() -> {
             // create table
@@ -1073,6 +1151,60 @@ public class TimestampQueryTest extends AbstractGriffinTest {
         });
     }
 
+    @Test
+    public void testTimestampSymbolComparisonBetweenInvalidValue() throws Exception {
+        assertMemoryLeak(() -> {
+            // create table
+            String createStmt = "create table tt (dts timestamp, nts timestamp) timestamp(dts)";
+            compiler.compile(createStmt, sqlExecutionContext);
+
+            // insert same values to dts (designated) as nts (non-designated) timestamp
+            compiler.compile("insert into tt " +
+                    "select timestamp_sequence(1577836800000000L, 60*60*1000000L), timestamp_sequence(1577836800000000L, 60*60*1000000L) " +
+                    "from long_sequence(48L)", sqlExecutionContext);
+
+            assertTimestampTtFailedQuery("Invalid date", "select min(nts), max(nts) from tt where nts between cast('invalid' as symbol) and cast('2020-01-01' as symbol)");
+            assertTimestampTtFailedQuery("Invalid date", "select min(nts), max(nts) from tt where nts between cast('2020-01-01' as symbol) and cast('invalid' as symbol)");
+            assertTimestampTtFailedQuery("Invalid date", "select min(nts), max(nts) from tt where nts between cast('2020-01-01' as symbol) and cast('invalid' as symbol) || cast('dd' as symbol)");
+            assertTimestampTtFailedQuery("Invalid column: invalidCol", "select min(nts), max(nts) from tt where invalidCol not between cast('2020-01-01' as symbol) and cast('2020-01-02' as symbol)");
+            assertTimestampTtFailedQuery("Invalid date", "select min(nts), max(nts) from tt where nts in (cast('2020-01-01' as symbol), cast('invalid' as symbol))");
+            assertTimestampTtFailedQuery("cannot compare TIMESTAMP with type CURSOR", "select min(nts), max(nts) from tt where nts in (select nts from tt)");
+        });
+    }
+
+    @Test
+    public void testTimestampOpSymbolColumns() throws Exception {
+        assertQuery(
+                "a\tk\n" +
+                        "1970-01-01T00:00:00.040000Z\t1970-01-01T00:00:00.030000Z\n" +
+                        "1970-01-01T00:00:00.050000Z\t1970-01-01T00:00:00.040000Z\n",
+                "select a, k from x where k < a",
+                "create table x as (select cast(concat('1970-01-01T00:00:00.0', (case when x > 3 then x else x - 1 end), '0000Z') as symbol) a, timestamp_sequence(0, 10000) k from long_sequence(5)) timestamp(k)",
+                "k",
+                null,
+                null,
+                true,
+                true,
+                false
+        );
+    }
+
+    @Test
+    public void testDesignatedTimestampOpSymbolColumns() throws Exception {
+        assertQuery(
+                "a\tdk\tk\n" +
+                        "1970-01-01T00:00:00.040000Z\t1970-01-01T00:00:00.030000Z\t1970-01-01T00:00:00.030000Z\n" +
+                        "1970-01-01T00:00:00.050000Z\t1970-01-01T00:00:00.040000Z\t1970-01-01T00:00:00.040000Z\n",
+                "select a, dk, k from x where dk < a",
+                "create table x as (select cast(concat('1970-01-01T00:00:00.0', (case when x > 3 then x else x - 1 end), '0000Z') as symbol) a, timestamp_sequence(0, 10000) dk, timestamp_sequence(0, 10000) k from long_sequence(5)) timestamp(k)",
+                "k",
+                null,
+                null,
+                true,
+                true,
+                false
+        );
+    }
     private void assertTimestampTtFailedQuery(String expectedError, String query) {
         assertTimestampTtFailedQuery0(expectedError, query);
         String dtsQuery = query.replace("nts", "dts");

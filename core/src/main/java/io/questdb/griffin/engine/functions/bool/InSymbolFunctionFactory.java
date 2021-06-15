@@ -59,6 +59,7 @@ public class InSymbolFunctionFactory implements FunctionFactory {
             Function func = args.getQuick(i);
             switch (func.getType()) {
                 case ColumnType.STRING:
+                case ColumnType.SYMBOL:
                     CharSequence value = func.getStr(null);
                     if (value == null) {
                         set.add(null);
