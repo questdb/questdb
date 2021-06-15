@@ -32,6 +32,8 @@ public interface PageFrame {
 
     long getFirstRowId();
 
+    int getPartitionIndex();
+
     // todo: implement for TablePageFrameCursor
     default long getFirstTimestamp() {
         throw new UnsupportedOperationException();

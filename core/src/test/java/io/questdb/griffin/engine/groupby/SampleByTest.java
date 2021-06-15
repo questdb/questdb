@@ -4522,19 +4522,16 @@ public class SampleByTest extends AbstractGriffinTest {
         assertQuery("k\ts\tlat\tlon\n",
                 "select k, s, first(lat) lat, first(lon) lon " +
                         "from xx " +
-                        "where k > '1970-01-01' and s in ('b')" +
-                        "sample by 1h",
+                        "where k in '1970-01-01T00:00:00.000000Z;30m;5h;10' and s in ('a')" +
+                        "sample by 2h",
                 "create table xx (lat double, lon double, s symbol, k timestamp)" +
-                        ", index(s capacity 10) timestamp(k) partition by DAY",
+                        ", index(s capacity 256) timestamp(k) partition by DAY",
                 "k",
-                "insert into xx " +
-                        "select -x lat,\n" +
-                        "x lon,\n" +
-                        "(case when x % 2 = 0 then 'a' else 'b' end) s,\n" +
-                        "timestamp_sequence(0, 10 * 60 * 1000000L) k\n" +
-                        "from\n" +
-                        "long_sequence(150)\n",
-                "k\ts\tlat\tlon\n" +
+                false,
+                false,
+                true);
+
+        assertQuery("k\ts\tlat\tlon\n" +
                         "1970-01-01T00:20:00.000000Z\tb\t-3.0\t3.0\n" +
                         "1970-01-01T01:20:00.000000Z\tb\t-9.0\t9.0\n" +
                         "1970-01-01T02:20:00.000000Z\tb\t-15.0\t15.0\n" +
@@ -4560,6 +4557,18 @@ public class SampleByTest extends AbstractGriffinTest {
                         "1970-01-01T22:20:00.000000Z\tb\t-135.0\t135.0\n" +
                         "1970-01-01T23:20:00.000000Z\tb\t-141.0\t141.0\n" +
                         "1970-01-02T00:20:00.000000Z\tb\t-147.0\t147.0\n",
+                "select k, s, first(lat) lat, first(lon) lon " +
+                        "from xx " +
+                        "where k > '1970-01-01' and s in ('b')" +
+                        "sample by 1h",
+                "insert into xx " +
+                        "select -x lat,\n" +
+                        "x lon,\n" +
+                        "(case when x % 2 = 0 then 'a' else 'b' end) s,\n" +
+                        "timestamp_sequence(0, 10 * 60 * 1000000L) k\n" +
+                        "from\n" +
+                        "long_sequence(150)\n",
+                "k",
                 false);
     }
 
@@ -4568,11 +4577,25 @@ public class SampleByTest extends AbstractGriffinTest {
         assertQuery("k\ts\tlat\tlon\n",
                 "select k, s, first(lat) lat, first(lon) lon " +
                         "from xx " +
-                        "where k > '1970-01-01T21:00' and s in ('a')" +
+                        "where k in '1970-01-01T00:00:00.000000Z;30m;5h;10' and s in ('a')" +
                         "sample by 2h",
                 "create table xx (lat double, lon double, s symbol, k timestamp)" +
-                        ", index(s capacity 10) timestamp(k) partition by DAY",
+                        ", index(s capacity 256) timestamp(k) partition by DAY",
                 "k",
+                false,
+                false,
+                true);
+
+        assertQuery("k\ts\tlat\tlon\n" +
+                        "1970-01-01T21:10:00.000000Z\ta\t-128.0\t128.0\n" +
+                        "1970-01-01T23:10:00.000000Z\ta\t-140.0\t140.0\n" +
+                        "1970-01-02T01:10:00.000000Z\ta\t-152.0\t152.0\n" +
+                        "1970-01-02T03:10:00.000000Z\ta\t-164.0\t164.0\n" +
+                        "1970-01-02T05:10:00.000000Z\ta\t-176.0\t176.0\n",
+                "select k, s, first(lat) lat, first(lon) lon " +
+                        "from xx " +
+                        "where k > '1970-01-01T21:00' and s in ('a')" +
+                        "sample by 2h",
                 "insert into xx " +
                         "select -x lat,\n" +
                         "x lon,\n" +
@@ -4580,12 +4603,43 @@ public class SampleByTest extends AbstractGriffinTest {
                         "timestamp_sequence(0, 10 * 60 * 1000000L) k\n" +
                         "from\n" +
                         "long_sequence(180)\n",
-                "k\ts\tlat\tlon\n" +
-                        "1970-01-01T21:10:00.000000Z\ta\t-128.0\t128.0\n" +
-                        "1970-01-01T23:10:00.000000Z\ta\t-140.0\t140.0\n" +
-                        "1970-01-02T01:10:00.000000Z\ta\t-152.0\t152.0\n" +
-                        "1970-01-02T03:10:00.000000Z\ta\t-164.0\t164.0\n" +
-                        "1970-01-02T05:10:00.000000Z\ta\t-176.0\t176.0\n",
+                "k",
+                false);
+    }
+
+    @Test
+    public void testSimpleSampleByIndexFrameExceedsDataFrame() throws Exception {
+        assertQuery("k\ts\tlat\tlon\n",
+                "select k, s, first(lat) lat, first(lon) lon " +
+                        "from xx " +
+                        "where k in '1970-01-01T00:00:00.000000Z;30m;5h;10' and s in ('a')" +
+                        "sample by 2h",
+                "create table xx (lat double, lon double, s symbol, k timestamp)" +
+                        ", index(s capacity 256) timestamp(k) partition by DAY",
+                "k",
+                false,
+                false,
+                true);
+
+        assertQuery("k\ts\tlat\tlon\n" +
+                        "1970-01-01T00:10:00.000000Z\ta\t-2.0\t2.0\n" +
+                        "1970-01-01T04:10:00.000000Z\ta\t-32.0\t32.0\n" +
+                        "1970-01-01T10:10:00.000000Z\ta\t-62.0\t62.0\n" +
+                        "1970-01-01T14:10:00.000000Z\ta\t-92.0\t92.0\n" +
+                        "1970-01-01T20:10:00.000000Z\ta\t-122.0\t122.0\n" +
+                        "1970-01-02T00:10:00.000000Z\ta\t-152.0\t152.0\n",
+                "select k, s, first(lat) lat, first(lon) lon " +
+                        "from xx " +
+                        "where k in '1970-01-01T00:00:00.000000Z;30m;5h;10' and s in ('a')" +
+                        "sample by 2h",
+                "insert into xx " +
+                        "select -x lat,\n" +
+                        "x lon,\n" +
+                        "(case when x % 2 = 0 then 'a' else 'b' end) s,\n" +
+                        "timestamp_sequence(0, 10 * 60 * 1000000L) k\n" +
+                        "from\n" +
+                        "long_sequence(180)\n",
+                "k",
                 false);
     }
 }

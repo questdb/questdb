@@ -324,6 +324,11 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
             }
 
             @Override
+            public int getPartitionIndex() {
+                return partitionIndex;
+            }
+
+            @Override
             public long getFirstTimestamp() {
                 if (timestampIndex != -1) {
                     return Unsafe.getUnsafe().getLong(columnPageAddress.getQuick(timestampIndex));

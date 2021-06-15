@@ -58,8 +58,8 @@ public final class Vect {
 
     public static long findFirstLastInFrame(
             long sampleByStart,
-            long rowIdPageOffset,
-            long pageSize,
+            long rowIdLo,
+            long rowIdHi,
             long timestampColAddress,
             TimestampSampler timestampSampler,
             long symbolIndexAddress,
@@ -70,7 +70,7 @@ public final class Vect {
             long lastRowIdOutAddress,
             long outRowIdSize
     ) {
-        if (0 < pageSize && indexFrameIndex < symbolIndexSize) {
+        if (indexFrameIndex < symbolIndexSize) {
             // Sample by window start, end
             long sampleByEnd = timestampSampler.nextTimestamp(sampleByStart);
             long outIndex = 0;
@@ -80,10 +80,8 @@ public final class Vect {
             long indexRowId = 0;
             for (; iIndex < symbolIndexSize; iIndex++) {
                 indexRowId = Unsafe.getUnsafe().getLong(symbolIndexAddress + iIndex * Long.BYTES);
-                long indexRowIdPageOffset = indexRowId;
-
-                if (indexRowIdPageOffset < pageSize) {
-                    long indexRowTimestamp = Unsafe.getUnsafe().getLong(timestampColAddress + indexRowIdPageOffset * Long.BYTES);
+                if (indexRowId >= rowIdLo && indexRowId < rowIdHi) {
+                    long indexRowTimestamp = Unsafe.getUnsafe().getLong(timestampColAddress + indexRowId * Long.BYTES);
 
                     if (indexRowTimestamp < sampleByStart) {
                         // Fast path, skip index rowid when it fails before current window
@@ -98,7 +96,7 @@ public final class Vect {
 
                     if (indexRowTimestamp >= sampleByStart && indexRowTimestamp < sampleByEnd) {
                         Unsafe.getUnsafe().putLong(timestampOutAddress + outIndex * Long.BYTES, sampleByStart);
-                        Unsafe.getUnsafe().putLong(firstRowIdOutAddress + outIndex * Long.BYTES, indexRowId - rowIdPageOffset);
+                        Unsafe.getUnsafe().putLong(firstRowIdOutAddress + outIndex * Long.BYTES, indexRowId);
                         outIndex++;
 
                         // Go to next sample by window.
@@ -109,14 +107,15 @@ public final class Vect {
                             break;
                         }
                     }
-                } else {
+                } else if (indexRowId >= rowIdHi) {
+                    // Index row id is beyond data page
                     break;
                 }
             }
 
             Unsafe.getUnsafe().putLong(timestampOutAddress + outIndex * Long.BYTES, sampleByStart);
             Unsafe.getUnsafe().putLong(firstRowIdOutAddress + outIndex * Long.BYTES, iIndex);
-            Unsafe.getUnsafe().putLong(lastRowIdOutAddress + outIndex * Long.BYTES, indexRowId);
+            Unsafe.getUnsafe().putLong(lastRowIdOutAddress + outIndex * Long.BYTES, indexRowId + 1);
             return outIndex;
         }
         return 0;
