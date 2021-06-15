@@ -648,7 +648,8 @@ public class SqlCompiler implements Closeable {
                 || (from == ColumnType.SYMBOL && to == ColumnType.STRING)
                 || (from == ColumnType.CHAR && to == ColumnType.SYMBOL)
                 || (from == ColumnType.CHAR && to == ColumnType.STRING)
-                || (from == ColumnType.STRING && to == ColumnType.TIMESTAMP);
+                || (from == ColumnType.STRING && to == ColumnType.TIMESTAMP)
+                || (from == ColumnType.SYMBOL && to == ColumnType.TIMESTAMP);
     }
 
     @Override

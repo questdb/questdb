@@ -4015,6 +4015,20 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testSymbolStrB() throws Exception {
+        assertQuery("a\nC\nC\nB\nA\nA\n",
+                "select cast(a as string) a from x order by 1 desc",
+                "create table x as (select rnd_symbol('A','B','C') a, timestamp_sequence(0, 10000) k from long_sequence(5)) timestamp(k)",
+                null,
+                null,
+                null,
+                true,
+                false,
+                true
+        );
+    }
+
+    @Test
     public void testOrderByFullTimestampLead() throws Exception {
         assertQuery("b\tsum\tk\n" +
                         "\t19.202208853547866\t1970-01-03T00:00:00.000000Z\n" +

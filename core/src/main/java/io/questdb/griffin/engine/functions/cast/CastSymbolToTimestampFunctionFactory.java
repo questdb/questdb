@@ -30,11 +30,11 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.AbstractUnaryTimestampFunction;
+import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 
 public class CastSymbolToTimestampFunctionFactory implements FunctionFactory {
     @Override
@@ -47,7 +47,7 @@ public class CastSymbolToTimestampFunctionFactory implements FunctionFactory {
         return new Func(args.getQuick(0));
     }
 
-    private static class Func extends AbstractUnaryTimestampFunction {
+    public static class Func extends AbstractUnaryTimestampFunction {
         public Func(Function arg) {
             super(arg);
         }
@@ -56,7 +56,7 @@ public class CastSymbolToTimestampFunctionFactory implements FunctionFactory {
         public long getTimestamp(Record rec) {
             final CharSequence value = arg.getSymbol(rec);
             try {
-                return value == null ? Numbers.LONG_NaN : TimestampFormatUtils.parseUTCTimestamp(value);
+                return value == null ? Numbers.LONG_NaN : IntervalUtils.parseFloorPartialDate(value);
             } catch (NumericException e) {
                 return Numbers.LONG_NaN;
             }

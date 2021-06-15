@@ -118,12 +118,12 @@ public class SymbolFunctionTest {
         function.getShort(null);
     }
 
-    @Test(expected = UnsupportedOperationException.class)
+    @Test
     public void testGetStr() {
         Assert.assertEquals("XYZ", function.getStr(null));
     }
 
-    @Test(expected = UnsupportedOperationException.class)
+    @Test
     public void testGetStrB() {
         Assert.assertEquals("XYZ", function.getStrB(null));
     }

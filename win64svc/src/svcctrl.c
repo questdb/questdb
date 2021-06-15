@@ -15,7 +15,7 @@ int svcInstall(CONFIG *config) {
             SC_MANAGER_ALL_ACCESS);  // full access rights
 
     if (NULL == hSCM) {
-        long err = GetLastError();
+        DWORD err = GetLastError();
         if (err != ERROR_ACCESS_DENIED) {
             eprintf("OpenSCManager failed (%lu)\n", err);
             return E_SERVICE_MANAGER;
@@ -25,14 +25,18 @@ int svcInstall(CONFIG *config) {
 
     // put together service name
     char szPath[MAX_PATH];
-    strcpy(szPath, config->exeName);
+    strcpy(szPath, "\"");
+    strcat(szPath, config->exeName);
+    strcat(szPath, "\"");
     strcat(szPath, " service -d ");
     strcat(szPath, config->dir);
     if (config->forceCopy) {
         strcat(szPath, " -f");
     }
     strcat(szPath, " -j ");
+    strcat(szPath, "\"");
     strcat(szPath, config->javaExec);
+    strcat(szPath, "\"");
 
     // Create the service
 
@@ -52,7 +56,7 @@ int svcInstall(CONFIG *config) {
             NULL);                         // no password
 
     if (hService == NULL) {
-        long err = GetLastError();
+        DWORD err = GetLastError();
         if (err == ERROR_SERVICE_EXISTS) {
             eprintf("Service already exists: %s\n", config->serviceName);
         } else {
@@ -86,7 +90,7 @@ int svcRemove(CONFIG *config) {
             SC_MANAGER_ALL_ACCESS);  // full access rights
 
     if (NULL == hSCM) {
-        long err = GetLastError();
+        DWORD err = GetLastError();
         if (err != ERROR_ACCESS_DENIED) {
             eprintf("OpenSCManager failed (%lu)\n", err);
             return E_SERVICE_MANAGER;
@@ -102,7 +106,7 @@ int svcRemove(CONFIG *config) {
             DELETE);                  // need delete access
 
     if (hService == NULL) {
-        long err = GetLastError();
+        DWORD err = GetLastError();
         if (err == ERROR_SERVICE_DOES_NOT_EXIST) {
             eprintf("Service does not exist: %s", config->serviceName);
         } else {
@@ -142,7 +146,7 @@ int svcStatus(CONFIG *config) {
             SC_MANAGER_ALL_ACCESS);  // full access rights
 
     if (NULL == hSCM) {
-        long err = GetLastError();
+        DWORD err = GetLastError();
         if (err != ERROR_ACCESS_DENIED) {
             eprintf("OpenSCManager failed (%lu)\n", err);
             return E_SERVICE_MANAGER;
@@ -155,7 +159,7 @@ int svcStatus(CONFIG *config) {
     hService = OpenService(hSCM, config->serviceName, SERVICE_INTERROGATE);
 
     if (hService == NULL) {
-        long err = GetLastError();
+        DWORD err = GetLastError();
         if (err == ERROR_SERVICE_DOES_NOT_EXIST) {
             eprintf("Service does not exist: %s", config->serviceName);
         } else {
@@ -168,7 +172,7 @@ int svcStatus(CONFIG *config) {
     SERVICE_STATUS service_status;
     if (!ControlService(hService, SERVICE_CONTROL_INTERROGATE, &service_status)) {
 
-        long err = GetLastError();
+        DWORD err = GetLastError();
 
         if (err == ERROR_SERVICE_NOT_ACTIVE) {
             eprintf("Service %s is INACTIVE", config->serviceName);
@@ -235,7 +239,7 @@ int svcStop(CONFIG *config) {
             SC_MANAGER_ALL_ACCESS);  // full access rights
 
     if (NULL == hSCM) {
-        long err = GetLastError();
+        DWORD err = GetLastError();
         if (err != ERROR_ACCESS_DENIED) {
             eprintf("OpenSCManager failed (%lu)\n", err);
             return E_SERVICE_MANAGER;
@@ -312,7 +316,7 @@ int svcStart(CONFIG *config) {
             SC_MANAGER_ALL_ACCESS);  // full access rights
 
     if (NULL == hSCM) {
-        long err = GetLastError();
+        DWORD err = GetLastError();
         if (err != ERROR_ACCESS_DENIED) {
             eprintf("OpenSCManager failed (%lu)\n", err);
             return E_SERVICE_MANAGER;
