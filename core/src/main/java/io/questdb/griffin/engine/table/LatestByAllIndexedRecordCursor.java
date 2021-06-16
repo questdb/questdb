@@ -75,9 +75,9 @@ class LatestByAllIndexedRecordCursor extends AbstractRecordListCursor {
 
         final RingQueue<LatestByTask> queue = bus.getLatestByQueue();
         final Sequence pubSeq = bus.getLatestByPubSeq();
-        final int BATCH_SIZE = 200;
-        final int workerCount = executionContext.getWorkerCount();
+        final Sequence subSeq = bus.getLatestBySubSeq();
 
+        final int workerCount = executionContext.getWorkerCount();
         int keyCount = getSymbolTable(columnIndex).size() + 1;
 
         long keyLo = 0;
@@ -96,11 +96,10 @@ class LatestByAllIndexedRecordCursor extends AbstractRecordListCursor {
         while ((frame = this.dataFrameCursor.next()) != null && rowCount < keyCount) {
             doneLatch.reset();
             final BitmapIndexReader indexReader = frame.getBitmapIndexReader(frameColumnIndex, BitmapIndexReader.DIR_BACKWARD);
-            final long currKeyCount = keyHi - keyLo;
+            final long frameKeyCount = keyHi - keyLo;
 
-            final long taskCount = currKeyCount <= BATCH_SIZE ? 0 : workerCount;
-            final long batchSize = currKeyCount <= BATCH_SIZE ? currKeyCount : currKeyCount / taskCount; // taskCount != 0
-            final long remaining = currKeyCount <= BATCH_SIZE ? currKeyCount : currKeyCount % workerCount;
+            final long chunkSize = (frameKeyCount + workerCount - 1) / workerCount;
+            final long taskCount = (frameKeyCount + chunkSize - 1) / chunkSize;
 
             final long rowLo = frame.getRowLo();
             final long rowHi = frame.getRowHi() - 1;
@@ -116,8 +115,9 @@ class LatestByAllIndexedRecordCursor extends AbstractRecordListCursor {
             int queuedCount = 0;
             arguments.clear();
             for (long i = 0; i < taskCount; ++i) {
-                final long klo = keyLo + i*batchSize;
-                final long khi = klo + batchSize;
+                final long klo = i*chunkSize;
+                final long khi = Long.min(klo + chunkSize, frameKeyCount);
+
                 final long argsAddress = LatestByArguments.allocateMemory();
                 LatestByArguments.setRowsAddress(argsAddress, rows.getAddress());
                 LatestByArguments.setRowsCapacity(argsAddress, rows.getCapacity());
@@ -139,25 +139,16 @@ class LatestByAllIndexedRecordCursor extends AbstractRecordListCursor {
                 }
             }
 
-            doneLatch.await(queuedCount);
-
-            if (remaining > 0) {
-
-                final long klo = keyLo + taskCount*batchSize;
-                final long khi = klo + batchSize;
-
-                final long argsAddress = LatestByArguments.allocateMemory();
-                LatestByArguments.setRowsAddress(argsAddress, rows.getAddress());
-                LatestByArguments.setRowsCapacity(argsAddress, rows.getCapacity());
-                LatestByArguments.setKeyLo(argsAddress, klo);
-                LatestByArguments.setKeyHi(argsAddress, khi);
-                LatestByArguments.setRowsSize(argsAddress, rows.size());
-
-                arguments.add(argsAddress);
-                BitmapIndexUtilsNative.latestScanBackward(keyBaseAddress, keysMemorySize, valueBaseAddress,
-                        valuesMemorySize, argsAddress,
-                        unIndexedNullCount, rowHi, rowLo, partitionIndex, valueBlockCapacity);
+            // process our own queue
+            // this should fix deadlock with 1 worker configuration
+            long seq = subSeq.next();
+            while(seq > -1) {
+                queue.get(seq).run();
+                subSeq.done(seq);
+                seq = subSeq.next();
             }
+
+            doneLatch.await(queuedCount);
 
             for(int i = 0; i < arguments.size(); i++) {
                 final long addr = arguments.get(i);
