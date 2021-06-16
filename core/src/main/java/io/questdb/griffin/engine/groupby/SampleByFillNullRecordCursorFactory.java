@@ -43,11 +43,12 @@ public class SampleByFillNullRecordCursorFactory implements RecordCursorFactory 
 
     protected final RecordCursorFactory base;
     protected final Map map;
-    private final DelegatingRecordCursor cursor;
+    private final AbstractNoRecordSampleByCursor cursor;
     private final ObjList<Function> recordFunctions;
     private final ObjList<GroupByFunction> groupByFunctions;
     private final RecordSink mapSink;
     private final RecordMetadata metadata;
+    private final boolean alignToCalendar;
 
     public SampleByFillNullRecordCursorFactory(
             CairoConfiguration configuration,
@@ -61,11 +62,13 @@ public class SampleByFillNullRecordCursorFactory implements RecordCursorFactory 
             ObjList<GroupByFunction> groupByFunctions,
             ObjList<Function> recordFunctions,
             @Transient @NotNull IntList recordFunctionPositions,
-            int timestampIndex
+            int timestampIndex,
+            boolean alignToCalendar
     ) throws SqlException {
 
         this.recordFunctions = recordFunctions;
         this.groupByFunctions = groupByFunctions;
+        this.alignToCalendar = alignToCalendar;
 
         // sink will be storing record columns to map key
         this.mapSink = RecordSinkFactory.getInstance(asm, base.getMetadata(), listColumnFilter, false);
@@ -196,7 +199,7 @@ public class SampleByFillNullRecordCursorFactory implements RecordCursorFactory 
 
     @NotNull
     private RecordCursor initFunctionsAndCursor(SqlExecutionContext executionContext, RecordCursor baseCursor) {
-        cursor.of(baseCursor, executionContext);
+        cursor.of(baseCursor, executionContext, alignToCalendar);
         // init all record function for this cursor, in case functions require metadata and/or symbol tables
         Function.init(recordFunctions, baseCursor, executionContext);
         return cursor;

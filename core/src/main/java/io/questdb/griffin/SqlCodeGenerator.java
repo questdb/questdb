@@ -1241,9 +1241,14 @@ public class SqlCodeGenerator implements Mutable {
     }
 
     @NotNull
-    private RecordCursorFactory generateSampleBy(QueryModel model, SqlExecutionContext executionContext, ExpressionNode sampleByNode) throws SqlException {
+    private RecordCursorFactory generateSampleBy(
+            QueryModel model,
+            SqlExecutionContext executionContext,
+            ExpressionNode sampleByNode
+    ) throws SqlException {
         executionContext.pushTimestampRequiredFlag(true);
         try {
+            final boolean alignToCalendar = false;
             final RecordCursorFactory factory = generateSubQuery(model, executionContext);
 
             // we require timestamp
@@ -1323,7 +1328,8 @@ public class SqlCodeGenerator implements Mutable {
                                 groupByFunctions,
                                 recordFunctions,
                                 timestampIndex,
-                                valueTypes.getColumnCount()
+                                valueTypes.getColumnCount(),
+                                alignToCalendar
                         );
                     }
 
@@ -1338,7 +1344,8 @@ public class SqlCodeGenerator implements Mutable {
                             groupByMetadata,
                             groupByFunctions,
                             recordFunctions,
-                            timestampIndex
+                            timestampIndex,
+                            alignToCalendar
                     );
                 }
 
@@ -1353,7 +1360,8 @@ public class SqlCodeGenerator implements Mutable {
                                 groupByFunctions,
                                 recordFunctions,
                                 valueTypes.getColumnCount(),
-                                timestampIndex
+                                timestampIndex,
+                                alignToCalendar
                         );
                     }
 
@@ -1368,7 +1376,8 @@ public class SqlCodeGenerator implements Mutable {
                             asm,
                             keyTypes,
                             valueTypes,
-                            timestampIndex
+                            timestampIndex,
+                            alignToCalendar
                     );
                 }
 
@@ -1382,7 +1391,8 @@ public class SqlCodeGenerator implements Mutable {
                                 recordFunctions,
                                 recordFunctionPositions,
                                 valueTypes.getColumnCount(),
-                                timestampIndex
+                                timestampIndex,
+                                alignToCalendar
                         );
                     }
 
@@ -1398,7 +1408,8 @@ public class SqlCodeGenerator implements Mutable {
                             groupByFunctions,
                             recordFunctions,
                             recordFunctionPositions,
-                            timestampIndex
+                            timestampIndex,
+                            alignToCalendar
                     );
                 }
 
@@ -1414,7 +1425,8 @@ public class SqlCodeGenerator implements Mutable {
                             recordFunctions,
                             recordFunctionPositions,
                             valueTypes.getColumnCount(),
-                            timestampIndex
+                            timestampIndex,
+                            alignToCalendar
                     );
                 }
 
@@ -1431,7 +1443,8 @@ public class SqlCodeGenerator implements Mutable {
                         groupByFunctions,
                         recordFunctions,
                         recordFunctionPositions,
-                        timestampIndex
+                        timestampIndex,
+                        alignToCalendar
                 );
             } catch (SqlException | CairoException e) {
                 factory.close();

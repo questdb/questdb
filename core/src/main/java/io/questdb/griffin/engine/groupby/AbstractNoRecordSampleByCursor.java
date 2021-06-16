@@ -31,7 +31,7 @@ import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.std.ObjList;
 
-public abstract class AbstractNoRecordSampleByCursor implements DelegatingRecordCursor, NoRandomAccessRecordCursor {
+public abstract class AbstractNoRecordSampleByCursor implements NoRandomAccessRecordCursor {
     protected final TimestampSampler timestampSampler;
     protected final int timestampIndex;
     protected final ObjList<GroupByFunction> groupByFunctions;
@@ -78,17 +78,17 @@ public abstract class AbstractNoRecordSampleByCursor implements DelegatingRecord
     }
 
     protected long getBaseRecordTimestamp() {
-        return timestampSampler.round(baseRecord.getTimestamp(timestampIndex) - baselineOffset);
+        return timestampSampler.round(baseRecord.getTimestamp(timestampIndex) + baselineOffset);
     }
 
-    @Override
-    public void of(RecordCursor base, SqlExecutionContext executionContext) {
+    public void of(RecordCursor base, SqlExecutionContext executionContext, boolean alignToCalendar) {
         // factory guarantees that base cursor is not empty
         this.base = base;
         this.baseRecord = base.getRecord();
         final long timestamp = baseRecord.getTimestamp(timestampIndex);
         this.nextTimestamp = timestampSampler.round(timestamp);
-        this.baselineOffset = timestamp - nextTimestamp;
+//        this.baselineOffset = 1080000000L; //alignToCalendar ? 0 : timestamp - nextTimestamp;
+        this.baselineOffset = alignToCalendar ? 0 : timestamp - nextTimestamp;
         this.lastTimestamp = this.nextTimestamp;
         interruptor = executionContext.getSqlExecutionInterruptor();
     }
