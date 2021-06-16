@@ -33,7 +33,6 @@ import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
-import org.junit.Ignore;
 import org.junit.Test;
 
 import java.text.SimpleDateFormat;
@@ -1258,10 +1257,10 @@ public class TimestampQueryTest extends AbstractGriffinTest {
     }
 
     @Test
-    @Ignore // https://github.com/questdb/questdb/issues/911
     public void testTimestampMin() throws Exception {
         assertQuery(
-                "nts\tmin\n",
+                "nts\tmin\n" +
+                        "nts\t\n",
                 "select 'nts', min(nts) from tt where nts > '2020-01-01T00:00:00.000000Z'",
                 "create table tt (dts timestamp, nts timestamp) timestamp(dts)",
                 null,
@@ -1269,8 +1268,8 @@ public class TimestampQueryTest extends AbstractGriffinTest {
                         "select timestamp_sequence(1577836800000000L, 10L), timestamp_sequence(1577836800000000L, 10L) " +
                         "from long_sequence(2L)",
                 "nts\tmin\n" +
-                        "nts\t2020-01-01T00:00:00.000010Z",
-                true,
+                        "nts\t2020-01-01T00:00:00.000010Z\n",
+                false,
                 false,
                 true
         );
