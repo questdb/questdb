@@ -688,37 +688,42 @@ public class SqlCodeGenerator implements Mutable {
                 int index = ordered.getQuick(i);
                 QueryModel slaveModel = joinModels.getQuick(index);
 
-                // compile
-                RecordCursorFactory slave = generateQuery(slaveModel, executionContext, index > 0);
+                boolean pop = false;
+                if (master != null) {
+                    executionContext.pushTimestampRequiredFlag(joinsRequiringTimestamp[slaveModel.getJoinType()]);
+                    pop = true;
+                }
 
-                // check if this is the root of joins
-                if (master == null) {
-                    // This is an opportunistic check of order by clause
-                    // to determine if we can get away ordering main record source only
-                    // Ordering main record source could benefit from rowid access thus
-                    // making it faster compared to ordering of join record source that
-                    // doesn't allow rowid access.
-                    master = slave;
-                    masterAlias = slaveModel.getName();
-                } else {
-                    // not the root, join to "master"
-                    final int joinType = slaveModel.getJoinType();
-                    final RecordMetadata masterMetadata = master.getMetadata();
-                    final RecordMetadata slaveMetadata = slave.getMetadata();
+                try {
+                    // compile
+                    RecordCursorFactory slave = generateQuery(slaveModel, executionContext, index > 0);
 
-                    switch (joinType) {
-                        case QueryModel.JOIN_CROSS:
-                            master = new CrossJoinRecordCursorFactory(
-                                    createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata),
-                                    master,
-                                    slave,
-                                    masterMetadata.getColumnCount()
-                            );
-                            masterAlias = null;
-                            break;
-                        case QueryModel.JOIN_ASOF:
-                            executionContext.pushTimestampRequiredFlag(true);
-                            try {
+                    // check if this is the root of joins
+                    if (master == null) {
+                        // This is an opportunistic check of order by clause
+                        // to determine if we can get away ordering main record source only
+                        // Ordering main record source could benefit from rowid access thus
+                        // making it faster compared to ordering of join record source that
+                        // doesn't allow rowid access.
+                        master = slave;
+                        masterAlias = slaveModel.getName();
+                    } else {
+                        // not the root, join to "master"
+                        final int joinType = slaveModel.getJoinType();
+                        final RecordMetadata masterMetadata = master.getMetadata();
+                        final RecordMetadata slaveMetadata = slave.getMetadata();
+
+                        switch (joinType) {
+                            case QueryModel.JOIN_CROSS:
+                                master = new CrossJoinRecordCursorFactory(
+                                        createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata),
+                                        master,
+                                        slave,
+                                        masterMetadata.getColumnCount()
+                                );
+                                masterAlias = null;
+                                break;
+                            case QueryModel.JOIN_ASOF:
                                 validateBothTimestamps(slaveModel, masterMetadata, slaveMetadata);
                                 processJoinContext(index == 1, slaveModel.getContext(), masterMetadata, slaveMetadata);
                                 if (slave.recordCursorSupportsRandomAccess() && !fullFatJoins) {
@@ -762,13 +767,8 @@ public class SqlCodeGenerator implements Mutable {
                                     );
                                 }
                                 masterAlias = null;
-                            } finally {
-                                executionContext.popTimestampRequiredFlag();
-                            }
-                            break;
-                        case QueryModel.JOIN_LT:
-                            executionContext.pushTimestampRequiredFlag(true);
-                            try {
+                                break;
+                            case QueryModel.JOIN_LT:
                                 validateBothTimestamps(slaveModel, masterMetadata, slaveMetadata);
                                 processJoinContext(index == 1, slaveModel.getContext(), masterMetadata, slaveMetadata);
                                 if (slave.recordCursorSupportsRandomAccess() && !fullFatJoins) {
@@ -812,13 +812,8 @@ public class SqlCodeGenerator implements Mutable {
                                     );
                                 }
                                 masterAlias = null;
-                            } finally {
-                                executionContext.popTimestampRequiredFlag();
-                            }
-                            break;
-                        case QueryModel.JOIN_SPLICE:
-                            executionContext.pushTimestampRequiredFlag(true);
-                            try {
+                                break;
+                            case QueryModel.JOIN_SPLICE:
                                 validateBothTimestamps(slaveModel, masterMetadata, slaveMetadata);
                                 processJoinContext(index == 1, slaveModel.getContext(), masterMetadata, slaveMetadata);
                                 if (slave.recordCursorSupportsRandomAccess() && master.recordCursorSupportsRandomAccess() && !fullFatJoins) {
@@ -844,20 +839,22 @@ public class SqlCodeGenerator implements Mutable {
                                 } else {
                                     assert false;
                                 }
-                            } finally {
-                                executionContext.popTimestampRequiredFlag();
-                            }
-                            break;
-                        default:
-                            processJoinContext(index == 1, slaveModel.getContext(), masterMetadata, slaveMetadata);
-                            master = createHashJoin(
-                                    createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata),
-                                    master,
-                                    slave,
-                                    joinType
-                            );
-                            masterAlias = null;
-                            break;
+                                break;
+                            default:
+                                processJoinContext(index == 1, slaveModel.getContext(), masterMetadata, slaveMetadata);
+                                master = createHashJoin(
+                                        createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata),
+                                        master,
+                                        slave,
+                                        joinType
+                                );
+                                masterAlias = null;
+                                break;
+                        }
+                    }
+                } finally {
+                    if (pop) {
+                        executionContext.popTimestampRequiredFlag();
                     }
                 }
 
@@ -2678,6 +2675,10 @@ public class SqlCodeGenerator implements Mutable {
         return ast.type == FUNCTION && ast.paramCount == 1 && Chars.equals(ast.token, name) && ast.rhs.type == LITERAL;
     }
 
+    private boolean isSymbolOrString(int columnType) {
+        return (columnType == ColumnType.SYMBOL) || (columnType == ColumnType.STRING);
+    }
+
     private void lookupColumnIndexes(
             ListColumnFilter filter,
             ObjList<ExpressionNode> columnNames,
@@ -2738,10 +2739,6 @@ public class SqlCodeGenerator implements Mutable {
             }
             keyTypes.add(columnTypeB == ColumnType.SYMBOL ? ColumnType.STRING : columnTypeB);
         }
-    }
-
-    private boolean isSymbolOrString(int columnType) {
-        return (columnType == ColumnType.SYMBOL) || (columnType == ColumnType.STRING);
     }
 
     void setFullFatJoins(boolean fullFatJoins) {
