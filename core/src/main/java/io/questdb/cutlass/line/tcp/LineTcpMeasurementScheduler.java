@@ -154,11 +154,15 @@ class LineTcpMeasurementScheduler implements Closeable {
                 ObjList<CharSequence> tableNames = tableUpdateDetailsByTableName.keys();
                 for (int n = 0, sz = tableNames.size(); n < sz; n++) {
                     TableUpdateDetails updateDetails = tableUpdateDetailsByTableName.get(tableNames.get(n));
-                    if (!updateDetails.assignedToJob) {
-                        updateDetails.closeNoLock();
-                    }
+                    updateDetails.closeLocals();
                 }
                 tableUpdateDetailsByTableName.clear();
+
+                tableNames = idleTableUpdateDetailsByTableName.keys();
+                for (int n = 0, sz = tableNames.size(); n < sz; n++) {
+                    TableUpdateDetails updateDetails = idleTableUpdateDetailsByTableName.get(tableNames.get(n));
+                    updateDetails.closeLocals();
+                }
                 idleTableUpdateDetailsByTableName.clear();
             } finally {
                 tableUpdateDetailsLock.writeLock().unlock();
@@ -800,15 +804,19 @@ class LineTcpMeasurementScheduler implements Closeable {
 
         private void closeNoLock() {
             if (writerThreadId != Integer.MIN_VALUE) {
-                LOG.info().$("closing table [tableName=").$(tableName).$(']').$();
+                LOG.info().$("closing table writer [tableName=").$(tableName).$(']').$();
                 if (null != writer) {
                     writer.commit();
                     writer = Misc.free(writer);
                 }
-                for (int n = 0; n < localDetailsArray.length; n++) {
-                    localDetailsArray[n] = Misc.free(localDetailsArray[n]);
-                }
                 writerThreadId = Integer.MIN_VALUE;
+            }
+        }
+
+        private void closeLocals() {
+            for (int n = 0; n < localDetailsArray.length; n++) {
+                LOG.info().$("closing table parsers [tableName=").$(tableName).$(']').$();
+                localDetailsArray[n] = Misc.free(localDetailsArray[n]);
             }
         }
 
