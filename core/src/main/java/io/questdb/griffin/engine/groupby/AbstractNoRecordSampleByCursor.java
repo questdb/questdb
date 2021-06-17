@@ -29,6 +29,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionInterruptor;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public abstract class AbstractNoRecordSampleByCursor implements NoRandomAccessRecordCursor {
@@ -77,20 +78,19 @@ public abstract class AbstractNoRecordSampleByCursor implements NoRandomAccessRe
         return -1;
     }
 
-    protected long getBaseRecordTimestamp() {
-        return timestampSampler.round(baseRecord.getTimestamp(timestampIndex) + baselineOffset);
-    }
-
-    public void of(RecordCursor base, SqlExecutionContext executionContext, boolean alignToCalendar) {
+    public void of(RecordCursor base, SqlExecutionContext executionContext, long alignmentOffset) {
         // factory guarantees that base cursor is not empty
         this.base = base;
         this.baseRecord = base.getRecord();
         final long timestamp = baseRecord.getTimestamp(timestampIndex);
         this.nextTimestamp = timestampSampler.round(timestamp);
-//        this.baselineOffset = 1080000000L; //alignToCalendar ? 0 : timestamp - nextTimestamp;
-        this.baselineOffset = alignToCalendar ? 0 : timestamp - nextTimestamp;
-        this.lastTimestamp = this.nextTimestamp;
+        this.baselineOffset = alignmentOffset == Numbers.LONG_NaN ? timestamp - nextTimestamp : alignmentOffset;
+        this.lastTimestamp = this.nextTimestamp = timestampSampler.round(timestamp - baselineOffset);
         interruptor = executionContext.getSqlExecutionInterruptor();
+    }
+
+    protected long getBaseRecordTimestamp() {
+        return timestampSampler.round(baseRecord.getTimestamp(timestampIndex) - baselineOffset);
     }
 
     protected class TimestampFunc extends TimestampFunction implements Function {

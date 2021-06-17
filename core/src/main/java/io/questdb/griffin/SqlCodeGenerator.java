@@ -1248,7 +1248,7 @@ public class SqlCodeGenerator implements Mutable {
     ) throws SqlException {
         executionContext.pushTimestampRequiredFlag(true);
         try {
-            final boolean alignToCalendar = false;
+            final long alignmentOffset = Numbers.LONG_NaN;
             final RecordCursorFactory factory = generateSubQuery(model, executionContext);
 
             // we require timestamp
@@ -1329,7 +1329,7 @@ public class SqlCodeGenerator implements Mutable {
                                 recordFunctions,
                                 timestampIndex,
                                 valueTypes.getColumnCount(),
-                                alignToCalendar
+                                alignmentOffset
                         );
                     }
 
@@ -1345,7 +1345,7 @@ public class SqlCodeGenerator implements Mutable {
                             groupByFunctions,
                             recordFunctions,
                             timestampIndex,
-                            alignToCalendar
+                            alignmentOffset
                     );
                 }
 
@@ -1361,7 +1361,7 @@ public class SqlCodeGenerator implements Mutable {
                                 recordFunctions,
                                 valueTypes.getColumnCount(),
                                 timestampIndex,
-                                alignToCalendar
+                                alignmentOffset
                         );
                     }
 
@@ -1377,7 +1377,7 @@ public class SqlCodeGenerator implements Mutable {
                             keyTypes,
                             valueTypes,
                             timestampIndex,
-                            alignToCalendar
+                            alignmentOffset
                     );
                 }
 
@@ -1392,7 +1392,7 @@ public class SqlCodeGenerator implements Mutable {
                                 recordFunctionPositions,
                                 valueTypes.getColumnCount(),
                                 timestampIndex,
-                                alignToCalendar
+                                alignmentOffset
                         );
                     }
 
@@ -1409,7 +1409,7 @@ public class SqlCodeGenerator implements Mutable {
                             recordFunctions,
                             recordFunctionPositions,
                             timestampIndex,
-                            alignToCalendar
+                            alignmentOffset
                     );
                 }
 
@@ -1426,7 +1426,7 @@ public class SqlCodeGenerator implements Mutable {
                             recordFunctionPositions,
                             valueTypes.getColumnCount(),
                             timestampIndex,
-                            alignToCalendar
+                            alignmentOffset
                     );
                 }
 
@@ -1444,7 +1444,7 @@ public class SqlCodeGenerator implements Mutable {
                         recordFunctions,
                         recordFunctionPositions,
                         timestampIndex,
-                        alignToCalendar
+                        alignmentOffset
                 );
             } catch (SqlException | CairoException e) {
                 factory.close();

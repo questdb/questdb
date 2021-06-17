@@ -40,7 +40,7 @@ public class SampleByFillPrevNotKeyedRecordCursorFactory implements RecordCursor
     private final SampleByFillPrevNotKeyedRecordCursor cursor;
     private final ObjList<Function> recordFunctions;
     private final RecordMetadata metadata;
-    private final boolean alignToCalendar;
+    private final long alignmentOffset;
 
     public SampleByFillPrevNotKeyedRecordCursorFactory(
             RecordCursorFactory base,
@@ -50,11 +50,11 @@ public class SampleByFillPrevNotKeyedRecordCursorFactory implements RecordCursor
             ObjList<Function> recordFunctions,
             int timestampIndex,
             int groupByValueCount,
-            boolean alignToCalendar
+            long alignmentOffset
     ) {
         try {
             this.base = base;
-            this.alignToCalendar = alignToCalendar;
+            this.alignmentOffset = alignmentOffset;
             this.metadata = groupByMetadata;
             this.recordFunctions = recordFunctions;
             final SimpleMapValue simpleMapValue = new SimpleMapValue(groupByValueCount);
@@ -99,7 +99,7 @@ public class SampleByFillPrevNotKeyedRecordCursorFactory implements RecordCursor
 
     @NotNull
     protected RecordCursor initFunctionsAndCursor(SqlExecutionContext executionContext, RecordCursor baseCursor) {
-        cursor.of(baseCursor, executionContext, alignToCalendar);
+        cursor.of(baseCursor, executionContext, alignmentOffset);
         // init all record function for this cursor, in case functions require metadata and/or symbol tables
         Function.init(recordFunctions, baseCursor, executionContext);
         return cursor;

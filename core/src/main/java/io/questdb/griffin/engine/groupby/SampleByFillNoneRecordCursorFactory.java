@@ -46,7 +46,7 @@ public class SampleByFillNoneRecordCursorFactory implements RecordCursorFactory 
     private final SampleByFillNoneRecordCursor cursor;
     private final ObjList<Function> recordFunctions;
     private final RecordMetadata metadata;
-    private final boolean alignToCalendar;
+    private final long alignmentOffset;
 
     public SampleByFillNoneRecordCursorFactory(
             CairoConfiguration configuration,
@@ -60,10 +60,10 @@ public class SampleByFillNoneRecordCursorFactory implements RecordCursorFactory 
             @Transient @NotNull ArrayColumnTypes keyTypes,
             @Transient @NotNull ArrayColumnTypes valueTypes,
             int timestampIndex,
-            boolean alignToCalendar
+            long alignmentOffset
     ) {
         this.recordFunctions = recordFunctions;
-        this.alignToCalendar = alignToCalendar;
+        this.alignmentOffset = alignmentOffset;
         // sink will be storing record columns to map key
         final RecordSink mapSink = RecordSinkFactory.getInstance(asm, base.getMetadata(), listColumnFilter, false);
         // this is the map itself, which we must not forget to free when factory closes
@@ -122,7 +122,7 @@ public class SampleByFillNoneRecordCursorFactory implements RecordCursorFactory 
     @NotNull
     private RecordCursor initFunctionsAndCursor(SqlExecutionContext executionContext, RecordCursor baseCursor) {
         try {
-            cursor.of(baseCursor, executionContext, alignToCalendar);
+            cursor.of(baseCursor, executionContext, alignmentOffset);
             // init all record function for this cursor, in case functions require metadata and/or symbol tables
             Function.init(recordFunctions, baseCursor, executionContext);
             return cursor;

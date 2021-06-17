@@ -45,7 +45,7 @@ public class SampleByFillValueNotKeyedRecordCursorFactory implements RecordCurso
     private final SampleByFillValueNotKeyedRecordCursor cursor;
     private final ObjList<Function> recordFunctions;
     private final RecordMetadata metadata;
-    private final boolean alignToCalendar;
+    private final long alignmentOffset;
 
     public SampleByFillValueNotKeyedRecordCursorFactory(
             RecordCursorFactory base,
@@ -57,11 +57,11 @@ public class SampleByFillValueNotKeyedRecordCursorFactory implements RecordCurso
             @Transient IntList recordFunctionPositions,
             int valueCount,
             int timestampIndex,
-            boolean alignToCalendar
+            long alignmentOffset
     ) throws SqlException {
         try {
             this.base = base;
-            this.alignToCalendar = alignToCalendar;
+            this.alignmentOffset = alignmentOffset;
             this.metadata = groupByMetadata;
             this.recordFunctions = recordFunctions;
             final ObjList<Function> placeholderFunctions = SampleByFillValueRecordCursorFactory.createPlaceholderFunctions(
@@ -114,7 +114,7 @@ public class SampleByFillValueNotKeyedRecordCursorFactory implements RecordCurso
 
     @NotNull
     protected RecordCursor initFunctionsAndCursor(SqlExecutionContext executionContext, RecordCursor baseCursor) {
-        cursor.of(baseCursor, executionContext, alignToCalendar);
+        cursor.of(baseCursor, executionContext, alignmentOffset);
         // init all record function for this cursor, in case functions require metadata and/or symbol tables
         Function.init(recordFunctions, baseCursor, executionContext);
         return cursor;
