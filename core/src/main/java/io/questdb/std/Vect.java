@@ -57,6 +57,7 @@ public final class Vect {
     public static native void copyFromTimestampIndex(long pIndex, long indexLo, long indexHi, long pTs);
 
     public static long findFirstLastInFrame(
+            long outIndex,
             long sampleByStart,
             long rowIdLo,
             long rowIdHi,
@@ -73,7 +74,6 @@ public final class Vect {
         if (indexFrameIndex < symbolIndexSize) {
             // Sample by window start, end
             long sampleByEnd = timestampSampler.nextTimestamp(sampleByStart);
-            long outIndex = 0;
             long maxOutRows = outRowIdSize - 1;
 
             long iIndex = indexFrameIndex;
@@ -101,9 +101,9 @@ public final class Vect {
                         Unsafe.getUnsafe().putLong(timestampOutAddress + outIndex * Long.BYTES, sampleByStart);
                         Unsafe.getUnsafe().putLong(firstRowIdOutAddress + outIndex * Long.BYTES, indexRowId);
                         Unsafe.getUnsafe().putLong(lastRowIdOutAddress + outIndex * Long.BYTES, indexRowId);
-                        outIndex++;
 
                         // Go to next sample by window.
+                        outIndex++;
                         sampleByStart = sampleByEnd;
                         sampleByEnd = timestampSampler.nextTimestamp(sampleByStart);
 
