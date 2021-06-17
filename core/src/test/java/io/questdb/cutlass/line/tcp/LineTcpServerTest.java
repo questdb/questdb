@@ -232,7 +232,7 @@ public class LineTcpServerTest extends AbstractCairoTest {
                 String expected = header + lines[0] + lines[1] + lines[2];
                 assertTable(expected, "weather");
 
-                // Concatenate iterations + 2 of identical insert results
+                // Concatenate iterations + 1 of identical insert results
                 // to assert against weather 1-8 tables
                 StringBuilder expectedSB = new StringBuilder(header);
                 for (int l = 0; l < lines.length; l++) {
@@ -244,14 +244,18 @@ public class LineTcpServerTest extends AbstractCairoTest {
                 for (int i = 1; i < threadCount; i++) {
                     // Wait writer to be released and check.
                     String tableName = "weather" + i;
-                    int releasedCount = -tableIndex.get(tableName).getCount();
                     try {
-                        assertTable(expectedSB, tableName);
-                    } catch (AssertionError e) {
-                        // Wait one more writer release before re-trying to compare
-                        tableIndex.get(tableName).await(releasedCount + 1,
-                                minIdleMsBeforeWriterRelease * 20L * 1000L);
-                        assertTable(expectedSB, tableName);
+                        try {
+                            assertTable(expectedSB, tableName);
+                        } catch (AssertionError e) {
+                            int releasedCount = -tableIndex.get(tableName).getCount();
+                            // Wait one more writer release before re-trying to compare
+                            wait(tableIndex.get(tableName), releasedCount + 1, 20, minIdleMsBeforeWriterRelease);
+                            assertTable(expectedSB, tableName);
+                        }
+                    } catch (Throwable err) {
+                        LOG.error().$("Error '").$(err.getMessage()).$("' comparing table: ").$(tableName).$();
+                        throw err;
                     }
                 }
             } finally {
@@ -260,6 +264,17 @@ public class LineTcpServerTest extends AbstractCairoTest {
                 });
             }
         });
+    }
+
+    private void wait(SOUnboundedCountDownLatch latch, int value, long msTimeout, long iterations) {
+        while (-latch.getCount() < value && iterations-- > 0) {
+            try {
+                Thread.sleep(msTimeout);
+            } catch (InterruptedException e) {
+                e.printStackTrace();
+                return;
+            }
+        }
     }
 
     @Test
@@ -454,10 +469,16 @@ public class LineTcpServerTest extends AbstractCairoTest {
                 sharedWorkerPool.start(LOG);
                 try {
                     r.run();
+                } catch (Throwable err) {
+                    LOG.error().$("Stopping ILP worker pool because of an error").$();
+                    throw err;
                 } finally {
                     sharedWorkerPool.halt();
                     Path.clearThreadLocals();
                 }
+            } catch (Throwable err) {
+                LOG.error().$("Stopping ILP server because of an error").$();
+                throw err;
             } finally {
                 Misc.free(path);
             }
