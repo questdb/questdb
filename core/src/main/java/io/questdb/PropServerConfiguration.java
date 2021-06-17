@@ -418,7 +418,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.multipartIdleSpinCount = getLong(properties, env, "http.multipart.idle.spin.count", 10_000);
                 this.recvBufferSize = getIntSize(properties, env, "http.receive.buffer.size", 1024 * 1024);
                 this.requestHeaderBufferSize = getIntSize(properties, env, "http.request.header.buffer.size", 32 * 2014);
-                this.httpWorkerCount = getInt(properties, env, "http.worker.count", cpuAvailable > 16 ? 2 : 0);
+                this.httpWorkerCount = getInt(properties, env, "http.worker.count", 0);
                 cpuUsed += this.httpWorkerCount;
                 this.httpWorkerAffinity = getAffinity(properties, env, "http.worker.affinity", httpWorkerCount);
                 this.httpWorkerHaltOnError = getBoolean(properties, env, "http.worker.haltOnError", false);
@@ -532,7 +532,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                 if (this.pgDefaultLocale == null) {
                     throw new ServerConfigurationException("pg.date.locale", dateLocale);
                 }
-                this.pgWorkerCount = getInt(properties, env, "pg.worker.count", cpuAvailable > 16 ? 2 : 0);
+                this.pgWorkerCount = getInt(properties, env, "pg.worker.count", 0);
                 cpuUsed += this.pgWorkerCount;
                 this.pgWorkerAffinity = getAffinity(properties, env, "pg.worker.affinity", pgWorkerCount);
                 this.pgHaltOnError = getBoolean(properties, env, "pg.halt.on.error", false);
