@@ -49,7 +49,7 @@ public class MinLongGroupByFunctionFactoryTest extends AbstractGriffinTest {
 
         compiler.compile("create table tab (f long)", sqlExecutionContext);
 
-        try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "tab")) {
+        try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "tab", "testing")) {
             for (int i = 100; i > 10; i--) {
                 TableWriter.Row r = w.newRow();
                 r.append();
@@ -73,7 +73,7 @@ public class MinLongGroupByFunctionFactoryTest extends AbstractGriffinTest {
         compiler.compile("create table tab (f long)", sqlExecutionContext);
 
         final Rnd rnd = new Rnd();
-        try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "tab")) {
+        try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "tab", "testing")) {
             TableWriter.Row r = w.newRow();
             r.append();
             for (int i = 100; i > 10; i--) {
@@ -100,7 +100,7 @@ public class MinLongGroupByFunctionFactoryTest extends AbstractGriffinTest {
         compiler.compile("create table tab (f long)", sqlExecutionContext);
 
         final Rnd rnd = new Rnd();
-        try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "tab")) {
+        try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "tab", "testing")) {
             for (int i = 100; i > 10; i--) {
                 TableWriter.Row r = w.newRow();
                 r.putLong(0, rnd.nextLong());
@@ -123,7 +123,7 @@ public class MinLongGroupByFunctionFactoryTest extends AbstractGriffinTest {
 
         compiler.compile("create table tab (f long)", sqlExecutionContext);
 
-        try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "tab")) {
+        try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "tab", "testing")) {
             for (int i = 100; i > 10; i--) {
                 TableWriter.Row r = w.newRow();
                 if (i % 4 == 0) {

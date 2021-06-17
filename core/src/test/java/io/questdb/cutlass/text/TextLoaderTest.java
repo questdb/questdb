@@ -466,7 +466,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
             );
 
             configureLoaderDefaults(textLoader, (byte) -1, Atomicity.SKIP_ROW, true);
-            try (TableWriter ignore = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "test")) {
+            try (TableWriter ignore = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "test", "testing")) {
                 try {
                     playText0(textLoader, csv, 1024, ENTITY_MANIPULATOR);
                     Assert.fail();
@@ -2829,7 +2829,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
         assertTable(expected);
         textLoader.clear();
 
-        try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "test")) {
+        try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "test", "testing")) {
             writer.truncate();
         }
 

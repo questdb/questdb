@@ -195,7 +195,7 @@ public class TruncateTest extends AbstractGriffinTest {
 
             new Thread(() -> {
                 // lock table and wait until main thread uses it
-                try (TableWriter ignore = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "y")) {
+                try (TableWriter ignore = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "y", "testing")) {
                     useBarrier.await();
                     releaseBarrier.await();
                 } catch (Exception e) {

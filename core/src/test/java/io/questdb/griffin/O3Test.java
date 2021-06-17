@@ -931,7 +931,7 @@ public class O3Test extends AbstractO3Test {
     private static void testPartitionedOOONullSetters0(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext)
             throws SqlException, NumericException {
         compiler.compile("create table x (a int, b int, c int, ts timestamp) timestamp(ts) partition by DAY", sqlExecutionContext);
-        try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x")) {
+        try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "testing")) {
             TableWriter.Row r;
 
             r = w.newRow(TimestampFormatUtils.parseUTCTimestamp("2013-02-10T00:10:00.000000Z"));
@@ -1135,7 +1135,7 @@ public class O3Test extends AbstractO3Test {
 
         // insert some records in order
         final Rnd rnd = new Rnd();
-        try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x")) {
+        try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "testing")) {
             long t = 0;
             for (int i = 0; i < 1000; i++) {
                 TableWriter.Row r = w.newRow(t++);
@@ -1728,7 +1728,7 @@ public class O3Test extends AbstractO3Test {
         long expectedMaxTimestamp = Long.MIN_VALUE;
         int step = 100;
         int rowCount = 10;
-        try (TableWriter w = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "x")) {
+        try (TableWriter w = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "x", "testing")) {
             for (int i = 0; i < 20; i++) {
                 for (int j = 0; j < rowCount; j++) {
                     long t = ts + (rowCount - j) * step;
@@ -5342,7 +5342,7 @@ public class O3Test extends AbstractO3Test {
         );
 
         final Rnd rnd = new Rnd();
-        try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x")) {
+        try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "testing")) {
             long ts = 1000000 * 1000L;
             long step = 1000000;
             TxnScoreboard txnScoreboard = w.getTxnScoreboard();

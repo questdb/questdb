@@ -428,7 +428,7 @@ public class InsertTest extends AbstractGriffinTest {
 
             assertReader(expected1, "trades");
 
-            try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "trades")) {
+            try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "trades", "testing")) {
                 w.truncate();
             }
 

@@ -29,5 +29,5 @@ import io.questdb.cairo.TableWriter;
 
 @FunctionalInterface
 public interface WriterSource {
-    TableWriter getWriter(CairoSecurityContext context, CharSequence name);
+    TableWriter getWriter(CairoSecurityContext context, CharSequence name, CharSequence lockReason);
 }
