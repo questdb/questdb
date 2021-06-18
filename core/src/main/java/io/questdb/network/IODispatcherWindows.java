@@ -34,6 +34,7 @@ public class IODispatcherWindows<C extends IOContext> extends AbstractIODispatch
     private final FDSet writeFdSet;
     private final LongIntHashMap fds = new LongIntHashMap();
     private final SelectFacade sf;
+    private boolean listenerRegistered;
 
     public IODispatcherWindows(
             IODispatcherConfiguration configuration,
@@ -43,14 +44,10 @@ public class IODispatcherWindows<C extends IOContext> extends AbstractIODispatch
         this.readFdSet = new FDSet(configuration.getEventCapacity());
         this.writeFdSet = new FDSet(configuration.getEventCapacity());
         this.sf = configuration.getSelectFacade();
-        final int r = pending.addRow();
-        pending.set(r, M_TIMESTAMP, clock.getTicks());
-        pending.set(r, M_FD, serverFd);
-        pending.set(r, M_OPERATION, IOOperation.READ);
         readFdSet.add(serverFd);
         readFdSet.setCount(1);
         writeFdSet.setCount(0);
-        logSuccess(configuration);
+        listenerRegistered = true;
     }
 
     @Override
@@ -111,15 +108,20 @@ public class IODispatcherWindows<C extends IOContext> extends AbstractIODispatch
     @Override
     protected boolean runSerially() {
 
-        processDisconnects();
+        final long timestamp = clock.getTicks();
+        processDisconnects(timestamp);
 
-        int count = sf.select(readFdSet.address, writeFdSet.address, 0);
-        if (count < 0) {
-            LOG.error().$("Error in select(): ").$(nf.errno()).$();
-            return false;
+        int count;
+        if (readFdSet.getCount() > 0 || writeFdSet.getCount() > 0) {
+            count = sf.select(readFdSet.address, writeFdSet.address, 0);
+            if (count < 0) {
+                LOG.error().$("Error in select(): ").$(nf.errno()).$();
+                return false;
+            }
+        } else {
+            count = 0;
         }
 
-        final long timestamp = clock.getTicks();
         boolean useful = false;
         fds.clear();
 
@@ -142,11 +144,12 @@ public class IODispatcherWindows<C extends IOContext> extends AbstractIODispatch
             final long ts = pending.get(i, M_TIMESTAMP);
             final long fd = pending.get(i, M_FD);
             final int _new_op = fds.get(fd);
-
+            assert fd != serverFd;
+            
             if (_new_op == -1) {
 
                 // check if expired
-                if (ts < deadline && fd != serverFd) {
+                if (ts < deadline) {
                     doDisconnect(pending.get(i), DISCONNECT_SRC_IDLE);
                     pending.deleteRow(i);
                     n--;
@@ -179,6 +182,12 @@ public class IODispatcherWindows<C extends IOContext> extends AbstractIODispatch
             }
         }
 
+        if (listenerRegistered) {
+             assert serverFd >= 0;
+             readFdSet.add(serverFd);
+             readFdCount++;
+        }
+        
         readFdSet.setCount(readFdCount);
         writeFdSet.setCount(writeFdCount);
         return useful;
@@ -242,6 +251,16 @@ public class IODispatcherWindows<C extends IOContext> extends AbstractIODispatch
             _wptr = _addr + (_wptr - address);
             address = _addr;
         }
+    }
+
+    @Override
+    protected void registerListenerFd() {
+        listenerRegistered = true;
+    }
+
+    @Override
+    protected void unregisterListenerFd() {
+        listenerRegistered = false;
     }
 }
 

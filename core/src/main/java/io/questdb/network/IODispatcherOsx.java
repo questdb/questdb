@@ -40,10 +40,7 @@ public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C
 
         // bind socket
         this.kqueue = new Kqueue(capacity);
-        if (this.kqueue.listen(serverFd) != 0) {
-            throw NetworkError.instance(nf.errno(), "could not kqueue.listen()");
-        }
-        logSuccess(configuration);
+        registerListenerFd();
     }
 
     private void enqueuePending(int watermark) {
@@ -155,8 +152,8 @@ public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C
 
     @Override
     protected boolean runSerially() {
-        processDisconnects();
         final long timestamp = clock.getTicks();
+        processDisconnects(timestamp);
         boolean useful = false;
         final int n = kqueue.poll();
         int watermark = pending.size();
@@ -216,5 +213,19 @@ public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C
             }
         }
         return -1;
+    }
+
+    @Override
+    protected void registerListenerFd() {
+        if (this.kqueue.listen(serverFd) != 0) {
+            throw NetworkError.instance(nf.errno(), "could not kqueue.listen()");
+        }
+    }
+
+    @Override
+    protected void unregisterListenerFd() {
+        if (this.kqueue.removeListen(serverFd) != 0) {
+            throw NetworkError.instance(nf.errno(), "could not kqueue.removeListen()");
+        }
     }
 }

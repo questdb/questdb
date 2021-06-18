@@ -53,6 +53,7 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
                 case ColumnType.LONG:
                 case ColumnType.INT:
                 case ColumnType.STRING:
+                case ColumnType.SYMBOL:
                     break;
                 default:
                     throw SqlException.position(0).put("cannot compare TIMESTAMP with type ").put(ColumnType.nameOf(func.getType()));
@@ -90,6 +91,7 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
                     val = func.getTimestamp(null);
                     break;
                 case ColumnType.STRING:
+                case ColumnType.SYMBOL:
                     CharSequence tsValue = func.getStr(null);
                     val = (tsValue != null) ? tryParseTimestamp(tsValue, argPositions.getQuick(i)) : Numbers.LONG_NaN;
                     break;

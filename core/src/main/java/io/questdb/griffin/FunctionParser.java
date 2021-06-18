@@ -27,10 +27,12 @@ package io.questdb.griffin;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.*;
+import io.questdb.griffin.engine.functions.AbstractUnaryTimestampFunction;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.griffin.engine.functions.bind.IndexedParameterLinkFunction;
 import io.questdb.griffin.engine.functions.bind.NamedParameterLinkFunction;
 import io.questdb.griffin.engine.functions.cast.CastStrToTimestampFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastSymbolToTimestampFunctionFactory;
 import io.questdb.griffin.engine.functions.columns.*;
 import io.questdb.griffin.engine.functions.constants.*;
 import io.questdb.griffin.model.ExpressionNode;
@@ -583,6 +585,9 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
                     overloadPossible |= argType == ColumnType.STRING &&
                             sigArgType == ColumnType.TIMESTAMP && !factory.isGroupBy();
 
+                    // Implicit cast from SYMBOL to TIMESTAMP
+                    overloadPossible |= argType == ColumnType.SYMBOL &&
+                            sigArgType == ColumnType.TIMESTAMP && !factory.isGroupBy();
 
                     overloadPossible |= undefined;
 
@@ -678,13 +683,19 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
         for (int k = 0; k < candidateSigArgCount; k++) {
             final Function arg = args.getQuick(k);
             final int sigArgType = FunctionFactoryDescriptor.toType(candidateDescriptor.getArgTypeMask(k));
-            if (arg.getType() == ColumnType.STRING && sigArgType == ColumnType.TIMESTAMP) {
+            if ((arg.getType() == ColumnType.STRING  || arg.getType() == ColumnType.SYMBOL) && sigArgType == ColumnType.TIMESTAMP) {
                 int position = argPositions.getQuick(k);
                 if (arg.isConstant()) {
                     long timestamp = convertToTimestamp(arg.getStr(null), position);
                     args.set(k, TimestampConstant.newInstance(timestamp));
                 } else {
-                    args.set(k, new CastStrToTimestampFunctionFactory.Func(position, arg));
+                    AbstractUnaryTimestampFunction castFn;
+                    if (arg.getType() == ColumnType.STRING) {
+                        castFn = new CastStrToTimestampFunctionFactory.Func(position, arg);
+                    } else {
+                        castFn = new CastSymbolToTimestampFunctionFactory.Func(arg);
+                    }
+                    args.set(k, castFn);
                 }
             }
         }

@@ -226,6 +226,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int httpEventCapacity;
     private int httpIOQueueCapacity;
     private long httpIdleConnectionTimeout;
+    private long httpQueuedConnectionTimeout;
     private int httpInterestQueueCapacity;
     private int httpListenBacklog;
     private int httpSndBufSize;
@@ -263,6 +264,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int pgNetEventCapacity;
     private int pgNetIOQueueCapacity;
     private long pgNetIdleConnectionTimeout;
+    private long pgNetQueuedConnectionTimeout;
     private int pgNetInterestQueueCapacity;
     private int pgNetListenBacklog;
     private int pgNetRcvBufSize;
@@ -298,6 +300,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int lineTcpNetEventCapacity;
     private int lineTcpNetIOQueueCapacity;
     private long lineTcpNetIdleConnectionTimeout;
+    private long lineTcpNetQueuedConnectionTimeout;
     private int lineTcpNetInterestQueueCapacity;
     private int lineTcpNetListenBacklog;
     private int lineTcpNetRcvBufSize;
@@ -333,6 +336,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int httpMinEventCapacity;
     private int httpMinIOQueueCapacity;
     private long httpMinIdleConnectionTimeout;
+    private long httpMinQueuedConnectionTimeout;
     private int httpMinInterestQueueCapacity;
     private int httpMinListenBacklog;
     private int httpMinRcvBufSize;
@@ -399,6 +403,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.httpMinEventCapacity = getInt(properties, env, "http.min.net.event.capacity", 16);
                 this.httpMinIOQueueCapacity = getInt(properties, env, "http.min.net.io.queue.capacity", 16);
                 this.httpMinIdleConnectionTimeout = getLong(properties, env, "http.min.net.idle.connection.timeout", 5 * 60 * 1000L);
+                this.httpMinQueuedConnectionTimeout = getLong(properties, env, "http.min.net.queued.connection.timeout", 5 * 1000L);
                 this.httpMinInterestQueueCapacity = getInt(properties, env, "http.min.net.interest.queue.capacity", 16);
                 this.httpMinListenBacklog = getInt(properties, env, "http.min.net.listen.backlog", 64);
                 this.httpMinSndBufSize = getIntSize(properties, env, "http.min.net.snd.buf.size", 1024);
@@ -413,7 +418,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.multipartIdleSpinCount = getLong(properties, env, "http.multipart.idle.spin.count", 10_000);
                 this.recvBufferSize = getIntSize(properties, env, "http.receive.buffer.size", 1024 * 1024);
                 this.requestHeaderBufferSize = getIntSize(properties, env, "http.request.header.buffer.size", 32 * 2014);
-                this.httpWorkerCount = getInt(properties, env, "http.worker.count", cpuAvailable > 16 ? 2 : 0);
+                this.httpWorkerCount = getInt(properties, env, "http.worker.count", 0);
                 cpuUsed += this.httpWorkerCount;
                 this.httpWorkerAffinity = getAffinity(properties, env, "http.worker.affinity", httpWorkerCount);
                 this.httpWorkerHaltOnError = getBoolean(properties, env, "http.worker.haltOnError", false);
@@ -451,6 +456,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.httpEventCapacity = getInt(properties, env, "http.net.event.capacity", 1024);
                 this.httpIOQueueCapacity = getInt(properties, env, "http.net.io.queue.capacity", 1024);
                 this.httpIdleConnectionTimeout = getLong(properties, env, "http.net.idle.connection.timeout", 5 * 60 * 1000L);
+                this.httpQueuedConnectionTimeout = getLong(properties, env, "http.net.queued.connection.timeout", 5 * 1000L);
                 this.httpInterestQueueCapacity = getInt(properties, env, "http.net.interest.queue.capacity", 1024);
                 this.httpListenBacklog = getInt(properties, env, "http.net.listen.backlog", 256);
                 this.httpSndBufSize = getIntSize(properties, env, "http.net.snd.buf.size", 2 * 1024 * 1024);
@@ -504,6 +510,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.pgNetEventCapacity = getInt(properties, env, "pg.net.event.capacity", 1024);
                 this.pgNetIOQueueCapacity = getInt(properties, env, "pg.net.io.queue.capacity", 1024);
                 this.pgNetIdleConnectionTimeout = getLong(properties, env, "pg.net.idle.timeout", 300_000);
+                this.pgNetQueuedConnectionTimeout = getLong(properties, env, "pg.net.idle.timeout", 5_000);
                 this.pgNetInterestQueueCapacity = getInt(properties, env, "pg.net.interest.queue.capacity", 1024);
                 this.pgNetListenBacklog = getInt(properties, env, "pg.net.listen.backlog", 50_000);
                 this.pgNetRcvBufSize = getIntSize(properties, env, "pg.net.recv.buf.size", -1);
@@ -525,7 +532,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                 if (this.pgDefaultLocale == null) {
                     throw new ServerConfigurationException("pg.date.locale", dateLocale);
                 }
-                this.pgWorkerCount = getInt(properties, env, "pg.worker.count", cpuAvailable > 16 ? 2 : 0);
+                this.pgWorkerCount = getInt(properties, env, "pg.worker.count", 0);
                 cpuUsed += this.pgWorkerCount;
                 this.pgWorkerAffinity = getAffinity(properties, env, "pg.worker.affinity", pgWorkerCount);
                 this.pgHaltOnError = getBoolean(properties, env, "pg.halt.on.error", false);
@@ -683,6 +690,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.lineTcpNetEventCapacity = getInt(properties, env, "line.tcp.net.event.capacity", 1024);
                 this.lineTcpNetIOQueueCapacity = getInt(properties, env, "line.tcp.net.io.queue.capacity", 256);
                 this.lineTcpNetIdleConnectionTimeout = getLong(properties, env, "line.tcp.net.idle.timeout", 0);
+                this.lineTcpNetQueuedConnectionTimeout = getLong(properties, env, "line.tcp.net.queued.timeout", 5_000);
                 this.lineTcpNetInterestQueueCapacity = getInt(properties, env, "line.tcp.net.interest.queue.capacity", 1024);
                 this.lineTcpNetListenBacklog = getInt(properties, env, "line.tcp.net.listen.backlog", 50_000);
                 this.lineTcpNetRcvBufSize = getIntSize(properties, env, "line.tcp.net.recv.buf.size", -1);
@@ -1084,6 +1092,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         public int getSndBufSize() {
             return httpSndBufSize;
         }
+
+        @Override
+        public long getQueuedConnectionTimeout() {
+            return httpQueuedConnectionTimeout;
+        }
     }
 
     private class PropHttpMinIODispatcherConfiguration implements IODispatcherConfiguration {
@@ -1165,6 +1178,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getSndBufSize() {
             return httpMinSndBufSize;
+        }
+
+        @Override
+        public long getQueuedConnectionTimeout() {
+            return httpMinQueuedConnectionTimeout;
         }
     }
 
@@ -2050,6 +2068,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         public int getSndBufSize() {
             return -1;
         }
+
+        @Override
+        public long getQueuedConnectionTimeout() {
+            return lineTcpNetQueuedConnectionTimeout;
+        }
     }
 
     private class PropLineTcpWriterWorkerPoolConfiguration implements WorkerPoolAwareConfiguration {
@@ -2405,6 +2428,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getSndBufSize() {
             return pgNetSndBufSize;
+        }
+
+        @Override
+        public long getQueuedConnectionTimeout() {
+            return pgNetQueuedConnectionTimeout;
         }
     }
 

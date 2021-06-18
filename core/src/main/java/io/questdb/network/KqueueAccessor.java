@@ -35,6 +35,7 @@ public class KqueueAccessor {
     static final short FLAGS_OFFSET;
     static final short DATA_OFFSET;
     static final short EV_ADD;
+    static final short EV_DELETE;
 
     static {
         EVFILT_READ = getEvfiltRead();
@@ -46,6 +47,7 @@ public class KqueueAccessor {
         DATA_OFFSET = getDataOffset();
         EV_ADD = getEvAdd();
         EV_ONESHOT = getEvOneshot();
+        EV_DELETE = getEvDelete();
     }
 
     static native int kevent(int kq, long changeList, int nChanges, long eventList, int nEvents);
@@ -69,5 +71,7 @@ public class KqueueAccessor {
     static native short getFlagsOffset();
 
     static native short getDataOffset();
+
+    static native short getEvDelete();
 
 }

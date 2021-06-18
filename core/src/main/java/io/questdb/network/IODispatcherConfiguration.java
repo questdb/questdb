@@ -67,4 +67,6 @@ public interface IODispatcherConfiguration {
     SelectFacade getSelectFacade();
 
     int getSndBufSize();
+
+    long getQueuedConnectionTimeout();
 }
