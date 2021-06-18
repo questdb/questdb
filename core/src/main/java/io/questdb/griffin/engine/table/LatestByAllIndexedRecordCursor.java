@@ -38,9 +38,10 @@ import org.jetbrains.annotations.NotNull;
 class LatestByAllIndexedRecordCursor extends AbstractRecordListCursor {
     private final int columnIndex;
 
-    private long indexShift = 0;
-    private long aIndex;
-    private long aLimit;
+    protected long indexShift = 0;
+    protected long aIndex;
+    protected long aLimit;
+
     private final SOUnboundedCountDownLatch doneLatch = new SOUnboundedCountDownLatch();
 
     public LatestByAllIndexedRecordCursor(int columnIndex, DirectLongList rows, @NotNull IntList columnIndexes) {
@@ -87,7 +88,7 @@ class LatestByAllIndexedRecordCursor extends AbstractRecordListCursor {
         rows.setPos(rows.getCapacity());
         rows.zero(0);
 
-        final DirectLongList arguments = new DirectLongList(workerCount);
+        final long argumentsAddress = LatestByArguments.allocateMemoryArray(workerCount);
         long rowCount = 0;
         DataFrame frame;
         // frame metadata is based on TableReader, which is "full" metadata
@@ -113,19 +114,17 @@ class LatestByAllIndexedRecordCursor extends AbstractRecordListCursor {
             final int partitionIndex = frame.getPartitionIndex();
 
             int queuedCount = 0;
-            arguments.clear();
             for (long i = 0; i < taskCount; ++i) {
                 final long klo = i*chunkSize;
                 final long khi = Long.min(klo + chunkSize, frameKeyCount);
 
-                final long argsAddress = LatestByArguments.allocateMemory();
+                final long argsAddress = argumentsAddress + i * LatestByArguments.MEMORY_SIZE;
                 LatestByArguments.setRowsAddress(argsAddress, rows.getAddress());
                 LatestByArguments.setRowsCapacity(argsAddress, rows.getCapacity());
                 LatestByArguments.setKeyLo(argsAddress, klo);
                 LatestByArguments.setKeyHi(argsAddress, khi);
                 LatestByArguments.setRowsSize(argsAddress, rows.size());
 
-                arguments.add(argsAddress);
                 final long seq = pubSeq.next();
                 if (seq < 0) {
                     BitmapIndexUtilsNative.latestScanBackward(keyBaseAddress, keysMemorySize, valueBaseAddress,
@@ -141,25 +140,28 @@ class LatestByAllIndexedRecordCursor extends AbstractRecordListCursor {
 
             // process our own queue
             // this should fix deadlock with 1 worker configuration
-            long seq = subSeq.next();
-            while(seq > -1) {
-                queue.get(seq).run();
-                subSeq.done(seq);
-                seq = subSeq.next();
+            while(doneLatch.getCount() > -queuedCount) {
+                long seq = subSeq.next();
+                if(seq > -1) {
+                    queue.get(seq).run();
+                    subSeq.done(seq);
+                }
             }
 
             doneLatch.await(queuedCount);
 
-            for(int i = 0; i < arguments.size(); i++) {
-                final long addr = arguments.get(i);
+            for(int i = 0; i < taskCount; i++) {
+                final long addr = argumentsAddress + i * LatestByArguments.MEMORY_SIZE;
                 rowCount += LatestByArguments.getRowsSize(addr);
                 keyLo = Long.min(keyLo, LatestByArguments.getKeyLo(addr));
                 keyHi = Long.max(keyHi, LatestByArguments.getKeyHi(addr) + 1);
-                LatestByArguments.releaseMemory(addr);
             }
         }
-        arguments.close();
+        LatestByArguments.releaseMemoryArray(argumentsAddress, workerCount);
+        postProcessRows();
+    }
 
+    protected void postProcessRows() {
         // we have to sort rows because multiple symbols
         // are liable to be looked up out of order
         rows.setPos(rows.getCapacity());
