@@ -2133,6 +2133,82 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testLatestByAllIndexedFilterParallel() throws Exception {
+        Sequence seq = engine.getMessageBus().getLatestBySubSeq();
+        // consume sequence fully and do nothing
+        // this might be needed to make sure we don't consume things other tests publish here
+        while (true) {
+            long cursor = seq.next();
+            if (cursor == -1) {
+                break;
+            } else if (cursor > -1) {
+                seq.done(cursor);
+            }
+        }
+        final AtomicBoolean running = new AtomicBoolean(true);
+        final SOCountDownLatch haltLatch = new SOCountDownLatch(2);
+        final LatestByAllIndexedJob job = new LatestByAllIndexedJob(engine.getMessageBus());
+
+        new Thread(() -> {
+            while (running.get()) {
+                job.run(0);
+            }
+            haltLatch.countDown();
+        }).start();
+
+        new Thread(() -> {
+            while (running.get()) {
+                job.run(1);
+            }
+            haltLatch.countDown();
+        }).start();
+
+        final String expected = "a\tk\tb\n" +
+                "78.83065830055033\t1970-01-04T11:20:00.000000Z\tVTJW\n" +
+                "51.85631921367574\t1970-01-19T12:26:40.000000Z\tCPSW\n" +
+                "50.25890936351257\t1970-01-20T16:13:20.000000Z\tRXGZ\n" +
+                "72.604681060764\t1970-01-22T23:46:40.000000Z\t\n";
+        try {
+            assertQuery(expected,
+                    "select a,k,b from x latest by b where a > 40",
+                    "create table x as " +
+                            "(" +
+                            "select" +
+                            " timestamp_sequence(0, 100000000000) k," +
+                            " rnd_double(0)*100 a1," +
+                            " rnd_double(0)*100 a2," +
+                            " rnd_double(0)*100 a3," +
+                            " rnd_double(0)*100 a," +
+                            " rnd_symbol(5,4,4,1) b" +
+                            " from long_sequence(20)" +
+                            "), index(b) timestamp(k) partition by DAY",
+                    "k",
+                    "insert into x select * from (" +
+                            " select" +
+                            " to_timestamp('2019', 'yyyy') t," +
+                            " rnd_double(0)*100," +
+                            " rnd_double(0)*100," +
+                            " rnd_double(0)*100," +
+                            " 46.578761277152225," +
+                            " 'VTJW'" +
+                            " from long_sequence(1)" +
+                            ") timestamp (t)",
+                    "a\tk\tb\n" +
+                            "51.85631921367574\t1970-01-19T12:26:40.000000Z\tCPSW\n" +
+                            "50.25890936351257\t1970-01-20T16:13:20.000000Z\tRXGZ\n" +
+                            "72.604681060764\t1970-01-22T23:46:40.000000Z\t\n" +
+                            "46.578761277152225\t2019-01-01T00:00:00.000000Z\tVTJW\n",
+                    true,
+                    true,
+                    true
+            );
+        } finally {
+            running.set(false);
+            haltLatch.await();
+        }
+    }
+
+    @Test
     public void testLatestByAllIndexedFilterBySymbol() throws Exception {
         final String expected = "a\tb\tc\tk\n" +
                 "67.52509547112409\tCPSW\tSXUX\t1970-01-21T20:00:00.000000Z\n";
