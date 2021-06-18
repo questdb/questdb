@@ -114,7 +114,7 @@ public class WriterPool extends AbstractPool {
             Entry other = entries.putIfAbsent(tableName, e);
             if (other == null) {
                 // race won
-                return createWriter(tableName, e, thread);
+                return createWriter(tableName, e, thread, lockReason);
             } else {
                 e = other;
             }
@@ -126,7 +126,7 @@ public class WriterPool extends AbstractPool {
             // in an extreme race condition it is possible that e.writer will be null
             // in this case behaviour should be identical to entry missing entirely
             if (e.writer == null) {
-                return createWriter(tableName, e, thread);
+                return createWriter(tableName, e, thread, lockReason);
             }
             return checkClosedAndGetWriter(tableName, e, lockReason);
         } else {
@@ -389,11 +389,12 @@ public class WriterPool extends AbstractPool {
         return count;
     }
 
-    private TableWriter createWriter(CharSequence name, Entry e, long thread) {
+    private TableWriter createWriter(CharSequence name, Entry e, long thread, CharSequence lockReason) {
         try {
             checkClosed();
             LOG.info().$("open [table=`").utf8(name).$("`, thread=").$(thread).$(']').$();
             e.writer = new TableWriter(configuration, name, messageBus, true, e, root);
+            e.ownershipReason = lockReason;
             return logAndReturn(e, PoolListener.EV_CREATE);
         } catch (CairoException ex) {
             LOG.error()

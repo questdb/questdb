@@ -375,7 +375,7 @@ public class CairoEngine implements Closeable, WriterSource {
                 unlock(securityContext, tableName, null, false);
             }
         }
-        throw CairoException.instance(configuration.getFilesFacade().errno()).put("Could not lock '").put(tableName).put('\'');
+        throw CairoException.instance(configuration.getFilesFacade().errno()).put("Could not lock '").put(tableName).put("' [reason='").put(lockedReason).put("']");
     }
 
     public int removeDirectory(@Transient Path path, CharSequence dir) {
@@ -400,7 +400,7 @@ public class CairoEngine implements Closeable, WriterSource {
                 unlock(securityContext, tableName, null, false);
             }
         } else {
-            LOG.error().$("cannot lock and rename [from='").$(tableName).$("', to='").$(newName).$("']").$();
+            LOG.error().$("cannot lock and rename [from='").$(tableName).$("', to='").$(newName).$("', reason='").$(lockedReason).$("']").$();
             throw EntryUnavailableException.instance(lockedReason);
         }
     }
