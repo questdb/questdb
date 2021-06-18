@@ -54,6 +54,20 @@ public class DirectLongList implements Mutable, Closeable {
         pos += Long.BYTES;
     }
 
+    public DirectLongList setSize(long size) {
+        long thisSize = pos - start;
+        long newSize = size * Long.BYTES;
+        if (newSize > thisSize) {
+            extend(newSize - thisSize);
+            this.pos = start + newSize;
+        }
+        return this;
+    }
+
+    public long getAddress() {
+        return address;
+    }
+
     public final void add(DirectLongList that) {
         long thatCapacity = that.limit - that.pos;
         if (limit - pos < thatCapacity) {

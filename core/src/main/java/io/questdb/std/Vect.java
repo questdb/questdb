@@ -67,14 +67,15 @@ public final class Vect {
             long symbolIndexSize,
             long indexFrameIndex,
             long timestampOutAddress,
+            long lastTimestampOutAddress,
             long firstRowIdOutAddress,
             long lastRowIdOutAddress,
-            long outRowIdSize
+            long outBuffersSize
     ) {
         if (indexFrameIndex < symbolIndexSize) {
             // Sample by window start, end
             long sampleByEnd = timestampSampler.nextTimestamp(sampleByStart);
-            long maxOutRows = outRowIdSize - 1;
+            long maxOutRows = outBuffersSize - 1;
 
             long iIndex = indexFrameIndex;
             long indexRowId = 0;
@@ -87,6 +88,7 @@ public final class Vect {
                         // Fast path, skip index rowid when it fails before current window
                         if (outIndex > 0) {
                             Unsafe.getUnsafe().putLong(lastRowIdOutAddress + (outIndex - 1) * Long.BYTES, indexRowId);
+                            Unsafe.getUnsafe().putLong(lastTimestampOutAddress + (outIndex - 1) * Long.BYTES, indexRowTimestamp);
                         }
                         continue;
                     }
@@ -101,6 +103,7 @@ public final class Vect {
                         Unsafe.getUnsafe().putLong(timestampOutAddress + outIndex * Long.BYTES, sampleByStart);
                         Unsafe.getUnsafe().putLong(firstRowIdOutAddress + outIndex * Long.BYTES, indexRowId);
                         Unsafe.getUnsafe().putLong(lastRowIdOutAddress + outIndex * Long.BYTES, indexRowId);
+                        Unsafe.getUnsafe().putLong(lastTimestampOutAddress + outIndex * Long.BYTES, indexRowTimestamp);
 
                         // Go to next sample by window.
                         outIndex++;
