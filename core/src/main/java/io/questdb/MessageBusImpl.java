@@ -120,7 +120,7 @@ public class MessageBusImpl implements MessageBus {
         this.o3PurgeSubSeq = new MCSequence(this.o3PurgeQueue.getCapacity());
         this.o3PurgePubSeq.then(this.o3PurgeSubSeq).then(this.o3PurgePubSeq);
 
-        this.latestByQueue = new RingQueue<>(LatestByTask::new, 32); //FIXME: add configuration
+        this.latestByQueue = new RingQueue<>(LatestByTask::new, configuration.getLatestByQueueCapacity());
         this.latestByPubSeq = new MPSequence(latestByQueue.getCapacity());
         this.latestBySubSeq = new MCSequence(latestByQueue.getCapacity());
         latestByPubSeq.then(latestBySubSeq).then(latestByPubSeq);
