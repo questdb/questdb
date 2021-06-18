@@ -41,7 +41,6 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
     private final int timestampIndex;
     private static final long BUFF_SIZE = 4096;
     private final DirectLongList startTimestampOutAddress;
-    private final DirectLongList lastTimestampOutAddress;
     private final DirectLongList firstRowIdOutAddress;
     private final DirectLongList lastRowIdOutAddress;
     private final SingleSymbolFilter symbolFilter;
@@ -62,7 +61,6 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
         this.startTimestampOutAddress = new DirectLongList(BUFF_SIZE).setSize(BUFF_SIZE);
         this.firstRowIdOutAddress = new DirectLongList(BUFF_SIZE).setSize(BUFF_SIZE);
         this.lastRowIdOutAddress = new DirectLongList(BUFF_SIZE).setSize(BUFF_SIZE);
-        this.lastTimestampOutAddress = new DirectLongList(BUFF_SIZE).setSize(BUFF_SIZE);
         this.symbolFilter = symbolFilter;
         this.recordFirstLastIndex = buildFirstLastIndex(columns, symbolFilter.getColumnIndex(), timestampIndex);
         gropuBySymbolColIndex = symbolFilter.getColumnIndex();
@@ -89,7 +87,6 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
     public void close() {
         base.close();
         Misc.free(startTimestampOutAddress);
-        Misc.free(lastTimestampOutAddress);
         Misc.free(firstRowIdOutAddress);
         Misc.free(lastRowIdOutAddress);
         Misc.free(crossFrameRow);
@@ -117,6 +114,21 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
     }
 
     private class SampleByFirstLastRecordCursor implements RecordCursor {
+        private final static int STATE_START = 0;
+        private final static int STATE_FETCH_NEXT_DATA_FRAME = 1;
+        private final static int STATE_FETCH_NEXT_INDEX_FRAME = 3;
+        private final static int STATE_OUT_BUFFER_FULL = 4;
+        private final static int STATE_SEARCH = 5;
+        private final static int STATE_RETURN_LAST_ROW = 6;
+        private final static int STATE_DONE = 7;
+        private final static int STATE_FETCH_NEXT_DATA_FRAME_KEEP_INDEX = 8;
+        private final static int NONE = 0;
+        private final static int CROSS_ROW_STATE_SAVED = 1;
+        private final static int CROSS_ROW_STATE_REFS_UPDATED = 2;
+
+        private int state;
+        private int crossRowState;
+
         private final int groupBySymbolKey;
         private PageFrameCursor pageFrameCursor;
         private final SymbolMapReader symbolsReader;
@@ -124,14 +136,12 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
         private final SampleByFirstLastRecord record = new SampleByFirstLastRecord();
         private long currentRow;
         private long rowsFound;
-        private long outStartIndex;
         private IndexFrameCursor indexCursor;
         private long frameFirstRowId = -1;
         private long firstTimestamp = -1;
         private long pageRowSize = -1;
         private IndexFrame indexFrame;
         private long indexFrameIndex = -1;
-        private BitmapIndexReader symbolIndexReader;
         private long frameNextRowId = -1;
         private int partitionIndex = Numbers.INT_NaN;
         private final long[] firstLastRowId = new long[2];
@@ -164,145 +174,161 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
                 return true;
             }
 
-            do {
-                if (rowsFound > outStartIndex) {
-                    saveFirstLastValuesToBuffer(rowsFound - 1);
-                }
-
-                if (pageRowSize <= (frameNextRowId - frameFirstRowId)) {
-                    currentFrame = pageFrameCursor.next();
-                    if (currentFrame != null) {
-                        // Switch to new data frame
-                        pageRowSize = currentFrame.getPageSize(timestampIndex) / Long.BYTES;
-                        frameNextRowId = frameFirstRowId = currentFrame.getFirstRowId();
-
-                        if (partitionIndex != currentFrame.getPartitionIndex()) {
-                            // Switch index to next partition
-                            symbolIndexReader = currentFrame.getBitmapIndexReader(gropuBySymbolColIndex, BitmapIndexReader.DIR_FORWARD);
-                            indexCursor = null;
-                            partitionIndex = currentFrame.getPartitionIndex();
-                        }
-                    }
-                }
-
-                if (currentFrame == null) {
-                    // return cross border final row if exists
-                    if (rowsFound > 0) {
-                        record.of(0);
-                        currentRow = 0;
-                        rowsFound = 0;
-                        pageRowSize = Long.MAX_VALUE;
-                        return true;
-                    } else {
-                        return false;
-                    }
-                }
-
-                currentRow = 0;
-            } while (!findInFrame(currentFrame));
-
-            if (currentRow < rowsFound - 1) {
-                record.of(currentRow);
-                return true;
-            }
-
-            // bottom row of the result set
-            // save values and don't return unless it's last row ever
-
-            return false;
+            return hasNext0();
         }
 
-        private boolean findInFrame(PageFrame currentFrame) {
-            long timestampColumnAddress = currentFrame.getPageAddress(timestampIndex) - frameFirstRowId * Long.BYTES;
-            long lastFrameRowId = frameFirstRowId + pageRowSize;
+        private boolean hasNext0() {
+            checkCrossRowBeforeNextAction();
+            rowsFound = 0;
+            while (true) {
+                switch (state) {
+                    case STATE_START:
+                        crossRowState = NONE;
+                        firstTimestamp = -1;
+                        state = STATE_FETCH_NEXT_DATA_FRAME;
+                        partitionIndex = -1;
+                        break;
 
-            if (indexCursor == null) {
-                indexCursor = symbolIndexReader.getFrameCursor(groupBySymbolKey, frameFirstRowId, lastFrameRowId);
-                indexFrame = null;
-            }
+                    case STATE_FETCH_NEXT_DATA_FRAME_KEEP_INDEX:
+                    case STATE_FETCH_NEXT_DATA_FRAME:
+                        currentFrame = pageFrameCursor.next();
+                        if (currentFrame != null) {
+                            // Switch to new data frame
+                            pageRowSize = currentFrame.getPageSize(timestampIndex) / Long.BYTES;
+                            frameNextRowId = frameFirstRowId = currentFrame.getFirstRowId();
 
-            if (indexFrame == null || indexFrameIndex >= indexFrame.getSize()) {
-                indexFrame = indexCursor.getNext();
-                indexFrameIndex = 0;
-                if (indexFrame.getSize() == 0) {
-                    // Go to next data frame
-                    frameNextRowId = frameFirstRowId + pageRowSize;
-                    return false;
+                            state = state == STATE_FETCH_NEXT_DATA_FRAME_KEEP_INDEX ? STATE_SEARCH : STATE_FETCH_NEXT_INDEX_FRAME;
+                            if (partitionIndex != currentFrame.getPartitionIndex()) {
+                                // Switch index to next partition
+                                BitmapIndexReader symbolIndexReader = currentFrame.getBitmapIndexReader(gropuBySymbolColIndex, BitmapIndexReader.DIR_FORWARD);
+                                partitionIndex = currentFrame.getPartitionIndex();
+                                indexCursor = symbolIndexReader.getFrameCursor(groupBySymbolKey, frameFirstRowId, frameFirstRowId + pageRowSize);
+                                state = STATE_FETCH_NEXT_INDEX_FRAME;
+                            }
+                        } else {
+                            state = STATE_RETURN_LAST_ROW;
+                        }
+                        break;
+
+                    case STATE_FETCH_NEXT_INDEX_FRAME:
+                        indexFrame = indexCursor.getNext();
+                        indexFrameIndex = 0;
+
+                        if (indexFrame.getSize() == 0) {
+                            // No rows in index for this dataframe left, go to next data frame
+                            frameNextRowId = frameFirstRowId + pageRowSize;
+                            state = STATE_FETCH_NEXT_DATA_FRAME;
+                        } else {
+                            if (firstTimestamp == -1) {
+                                long rowId = Unsafe.getUnsafe().getLong(indexFrame.getAddress());
+                                long offsetTimestampColumnAddress = currentFrame.getPageAddress(timestampIndex) - frameFirstRowId * Long.BYTES;
+                                firstTimestamp = Unsafe.getUnsafe().getLong(offsetTimestampColumnAddress + rowId * Long.BYTES);
+                            }
+                            state = STATE_SEARCH;
+                        }
+                        break;
+
+                    case STATE_OUT_BUFFER_FULL:
+                    case STATE_SEARCH:
+                        long outStartIndex = crossRowState == NONE ? 0 : 1;
+                        long offsetTimestampColumnAddress = currentFrame.getPageAddress(timestampIndex) - frameFirstRowId * Long.BYTES;
+
+                        rowsFound = Vect.findFirstLastInFrame(
+                                outStartIndex,
+                                firstTimestamp,
+                                frameNextRowId,
+                                pageRowSize + frameFirstRowId,
+                                offsetTimestampColumnAddress,
+                                timestampSampler,
+                                indexFrame.getAddress(),
+                                indexFrame.getSize(),
+                                indexFrameIndex,
+                                startTimestampOutAddress.getAddress(),
+                                firstRowIdOutAddress.getAddress(),
+                                lastRowIdOutAddress.getAddress(),
+                                BUFF_SIZE);
+
+                        boolean firstRowLastUpdated = rowsFound < 0;
+                        rowsFound = Math.abs(rowsFound);
+                        checkCrossRowAfterSearch(firstRowLastUpdated);
+
+                        if (rowsFound > outStartIndex) {
+                            assert rowsFound < BUFF_SIZE - 1;
+
+                            // Read output timestamp and rowId to resume at the end of the output buffers
+                            indexFrameIndex = firstRowIdOutAddress.get(rowsFound);
+                            frameNextRowId = lastRowIdOutAddress.get(rowsFound);
+                            firstTimestamp = startTimestampOutAddress.get(rowsFound);
+
+                            // decide what to do next
+                            if (rowsFound == BUFF_SIZE - 1) {
+                                state = STATE_OUT_BUFFER_FULL;
+                            } else if (indexFrameIndex >= indexFrame.getSize()) {
+                                state = STATE_FETCH_NEXT_INDEX_FRAME;
+                            } else {
+                                state = STATE_FETCH_NEXT_DATA_FRAME_KEEP_INDEX;
+                            }
+
+                            if (rowsFound > 1) {
+                                record.of(currentRow = 0);
+                                return true;
+                            }
+                        } else {
+                            // Noting found, continue search
+                            state = STATE_FETCH_NEXT_INDEX_FRAME;
+                        }
+                        break;
+
+                    case STATE_RETURN_LAST_ROW:
+                        state = STATE_DONE;
+                        if (crossRowState != NONE) {
+                            record.of(currentRow = 0);
+                        }
+                        return true;
+
+                    case STATE_DONE:
+                        return false;
+
+                    default:
+                        throw new UnsupportedOperationException("Invalid state " + state);
                 }
             }
+        }
 
-            if (firstTimestamp == -1 && indexFrame.getSize() > 0) {
-                long rowId = Unsafe.getUnsafe().getLong(indexFrame.getAddress());
-                firstTimestamp = Unsafe.getUnsafe().getLong(timestampColumnAddress + rowId * Long.BYTES);
+        private void checkCrossRowAfterSearch(boolean firstRowLastUpdated) {
+            if (crossRowState != NONE) {
+                if (firstRowLastUpdated) {
+                    saveLastValuesToBuffer();
+                    crossRowState = CROSS_ROW_STATE_SAVED;
+                }
+            } else if (rowsFound > 0) {
+                saveFirstLastValuesToCrossFrameRowBuffer();
+                crossRowState = CROSS_ROW_STATE_SAVED;
             }
+        }
 
-            outStartIndex = Math.min(rowsFound - outStartIndex, 1);
-            if (outStartIndex > 0 && rowsFound > 1) {
+        private void checkCrossRowBeforeNextAction() {
+            if (crossRowState != NONE && rowsFound > 1) {
                 // Copy last set of first(), last() rowids from bottom of the previous output to the top
                 long lastFoundIndex = rowsFound - 1;
                 firstRowIdOutAddress.set(0, firstRowIdOutAddress.get(lastFoundIndex));
                 lastRowIdOutAddress.set(0, lastRowIdOutAddress.get(lastFoundIndex));
                 startTimestampOutAddress.set(0, startTimestampOutAddress.get(lastFoundIndex));
+                crossRowState = CROSS_ROW_STATE_REFS_UPDATED;
             }
 
-            long lastRowUpdateCheck = lastTimestampOutAddress.get(0);
-            rowsFound = Vect.findFirstLastInFrame(
-                    outStartIndex,
-                    firstTimestamp,
-                    frameFirstRowId,
-                    pageRowSize + frameFirstRowId,
-                    timestampColumnAddress,
-                    timestampSampler,
-                    indexFrame.getAddress(),
-                    indexFrame.getSize(),
-                    indexFrameIndex,
-                    startTimestampOutAddress.getAddress(),
-                    lastTimestampOutAddress.getAddress(),
-                    firstRowIdOutAddress.getAddress(),
-                    lastRowIdOutAddress.getAddress(),
-                    BUFF_SIZE);
-
-            // When first() and last() rowids are on different index or data pages
-            // we need to do more passes before knowing that last() rowid is really last
-            // and next data frame / index frame will not change it
-            // Hide last returned row from the cursor output
-            // and copy it back to index 0 for next frame result set setting outIndex to 1
-            // so that Vect code continues setting last() to the top output row
-            if (outStartIndex > 0) {
-                if (lastRowUpdateCheck != lastTimestampOutAddress.get(0)) {
-                    saveLastValuesToBuffer(0);
-                }
-            } else if (rowsFound > 0) {
-                saveFirstLastValuesToBuffer(0);
+            if (crossRowState == CROSS_ROW_STATE_REFS_UPDATED) {
+                saveFirstLastValuesToCrossFrameRowBuffer();
+                crossRowState = CROSS_ROW_STATE_SAVED;
             }
-
-            if (rowsFound > outStartIndex) {
-                assert rowsFound < BUFF_SIZE;
-
-                // Read output timestamp and rowId to resume at the end of the output buffers
-                indexFrameIndex = firstRowIdOutAddress.get(rowsFound);
-                if (indexFrameIndex >= indexFrame.getSize() - 1) {
-                    indexFrame = null;
-                }
-                long nextFirstRowId = lastRowIdOutAddress.get(rowsFound);
-                assert nextFirstRowId > frameNextRowId;
-                frameNextRowId = nextFirstRowId;
-                firstTimestamp = startTimestampOutAddress.get(rowsFound);
-
-                return rowsFound > 1;
-            }
-
-            // index frame done but nothing found
-            indexFrame = null;
-            return false;
         }
 
-        private void saveFirstLastValuesToBuffer(long outRow) {
-            firstLastRowId[0] = firstRowIdOutAddress.get(outRow) - frameFirstRowId;
-            firstLastRowId[1] = lastRowIdOutAddress.get(outRow) - frameFirstRowId;
+        private void saveFirstLastValuesToCrossFrameRowBuffer() {
+            firstLastRowId[0] = firstRowIdOutAddress.get(0) - frameFirstRowId;
+            firstLastRowId[1] = lastRowIdOutAddress.get(0) - frameFirstRowId;
             for (int i = 0; i < recordFirstLastIndex.length; i++) {
                 if (i == timestampIndex) {
-                    crossFrameRow.set(i, startTimestampOutAddress.get(outRow));
+                    crossFrameRow.set(i, startTimestampOutAddress.get(0));
                 } else {
                     saveFixedColToBufferWithLongAlignment(i, crossFrameRow, groupByMetadata.getColumnType(i), currentFrame.getPageAddress(i), firstLastRowId[recordFirstLastIndex[i]]);
                 }
@@ -310,8 +336,8 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
         }
 
 
-        private void saveLastValuesToBuffer(long outRow) {
-            long lastRowId = lastRowIdOutAddress.get(outRow) - frameFirstRowId;
+        private void saveLastValuesToBuffer() {
+            long lastRowId = lastRowIdOutAddress.get(0) - frameFirstRowId;
             for (int i = 0; i < recordFirstLastIndex.length; i++) {
                 if (recordFirstLastIndex[i] == 1) {
                     // last() values only
@@ -362,7 +388,8 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
             indexFrame = null;
             indexFrameIndex = -1;
             indexCursor = null;
-            outStartIndex = 0;
+            state = STATE_START;
+            crossRowState = NONE;
             pageFrameCursor.toTop();
         }
 
@@ -384,7 +411,7 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
             @Override
             public long getTimestamp(int col) {
                 if (currentRow == 0) {
-                    return Unsafe.getUnsafe().getLong(crossFrameRow.getAddress() + col * Long.BYTES);
+                    return Unsafe.getUnsafe().getLong(crossFrameRow.getAddress() + (long) col * Long.BYTES);
                 }
 
                 if (col == timestampIndex) {
@@ -400,7 +427,7 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
             @Override
             public long getLong(int col) {
                 if (currentRow == 0) {
-                    return Unsafe.getUnsafe().getLong(crossFrameRow.getAddress() + col * Long.BYTES);
+                    return Unsafe.getUnsafe().getLong(crossFrameRow.getAddress() + (long) col * Long.BYTES);
                 }
 
                 return Unsafe.getUnsafe().getLong(currentFrame.getPageAddress(col) + firstLastRowId[recordFirstLastIndex[col]] * Long.BYTES);
@@ -409,7 +436,7 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
             @Override
             public double getDouble(int col) {
                 if (currentRow == 0) {
-                    return Unsafe.getUnsafe().getDouble(crossFrameRow.getAddress() + col * Long.BYTES);
+                    return Unsafe.getUnsafe().getDouble(crossFrameRow.getAddress() + (long) col * Long.BYTES);
                 }
 
                 return Unsafe.getUnsafe().getDouble(currentFrame.getPageAddress(col) + firstLastRowId[recordFirstLastIndex[col]] * Double.BYTES);
@@ -419,7 +446,7 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
             public CharSequence getSym(int col) {
                 int symbolId;
                 if (currentRow == 0) {
-                    symbolId = Unsafe.getUnsafe().getInt(crossFrameRow.getAddress() + col * Long.BYTES);
+                    symbolId = Unsafe.getUnsafe().getInt(crossFrameRow.getAddress() + (long) col * Long.BYTES);
                 } else {
                     symbolId = Unsafe.getUnsafe().getInt(currentFrame.getPageAddress(col) + firstLastRowId[recordFirstLastIndex[col]] * Integer.BYTES);
                 }
@@ -429,7 +456,7 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
             @Override
             public int getInt(int col) {
                 if (currentRow == 0) {
-                    return Unsafe.getUnsafe().getInt(crossFrameRow.getAddress() + col * Long.BYTES);
+                    return Unsafe.getUnsafe().getInt(crossFrameRow.getAddress() + (long) col * Long.BYTES);
                 }
                 return Unsafe.getUnsafe().getInt(currentFrame.getPageAddress(col) + firstLastRowId[recordFirstLastIndex[col]] * Integer.BYTES);
             }

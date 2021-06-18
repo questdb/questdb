@@ -67,7 +67,6 @@ public final class Vect {
             long symbolIndexSize,
             long indexFrameIndex,
             long timestampOutAddress,
-            long lastTimestampOutAddress,
             long firstRowIdOutAddress,
             long lastRowIdOutAddress,
             long outBuffersSize
@@ -79,6 +78,7 @@ public final class Vect {
 
             long iIndex = indexFrameIndex;
             long indexRowId = 0;
+            boolean firstRowUpdated = false;
             for (; iIndex < symbolIndexSize; iIndex++) {
                 indexRowId = Unsafe.getUnsafe().getLong(symbolIndexAddress + iIndex * Long.BYTES);
                 if (indexRowId >= rowIdLo && indexRowId < rowIdHi) {
@@ -88,7 +88,9 @@ public final class Vect {
                         // Fast path, skip index rowid when it fails before current window
                         if (outIndex > 0) {
                             Unsafe.getUnsafe().putLong(lastRowIdOutAddress + (outIndex - 1) * Long.BYTES, indexRowId);
-                            Unsafe.getUnsafe().putLong(lastTimestampOutAddress + (outIndex - 1) * Long.BYTES, indexRowTimestamp);
+                            if (outIndex == 1) {
+                                firstRowUpdated = true;
+                            }
                         }
                         continue;
                     }
@@ -103,7 +105,6 @@ public final class Vect {
                         Unsafe.getUnsafe().putLong(timestampOutAddress + outIndex * Long.BYTES, sampleByStart);
                         Unsafe.getUnsafe().putLong(firstRowIdOutAddress + outIndex * Long.BYTES, indexRowId);
                         Unsafe.getUnsafe().putLong(lastRowIdOutAddress + outIndex * Long.BYTES, indexRowId);
-                        Unsafe.getUnsafe().putLong(lastTimestampOutAddress + outIndex * Long.BYTES, indexRowTimestamp);
 
                         // Go to next sample by window.
                         outIndex++;
@@ -123,9 +124,9 @@ public final class Vect {
             Unsafe.getUnsafe().putLong(timestampOutAddress + outIndex * Long.BYTES, sampleByStart);
             Unsafe.getUnsafe().putLong(firstRowIdOutAddress + outIndex * Long.BYTES, iIndex);
             Unsafe.getUnsafe().putLong(lastRowIdOutAddress + outIndex * Long.BYTES, indexRowId + 1);
-            return outIndex;
+            return firstRowUpdated ? -outIndex : outIndex;
         }
-        return 0;
+        return outIndex;
     }
 
     public static native void flattenIndex(long pIndex, long count);
