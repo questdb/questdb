@@ -24,13 +24,17 @@
 
 package io.questdb.griffin.engine.groupby;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionInterruptor;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
+import io.questdb.std.datetime.microtime.TimestampFormatUtils;
+import io.questdb.std.datetime.microtime.Timestamps;
 
 public abstract class AbstractNoRecordSampleByCursor implements NoRandomAccessRecordCursor {
     protected final TimestampSampler timestampSampler;
@@ -78,8 +82,28 @@ public abstract class AbstractNoRecordSampleByCursor implements NoRandomAccessRe
         return -1;
     }
 
-    public void of(RecordCursor base, SqlExecutionContext executionContext, long alignmentOffset) {
+    public void of(RecordCursor base, SqlExecutionContext executionContext, Function timezoneNameFunc, Function offsetFunc) {
         // factory guarantees that base cursor is not empty
+        long alignmentOffset = Numbers.LONG_NaN;
+        final CharSequence tz = timezoneNameFunc.getStr(null);
+        if (tz != null) {
+            try {
+                alignmentOffset = Timestamps.toTimezone(0, TimestampFormatUtils.enLocale, tz);
+            } catch (NumericException e) {
+                throw CairoException.instance(0);
+            }
+        }
+
+        long offset = offsetFunc.getLong(null);
+
+        if (offset != Numbers.LONG_NaN) {
+            if (alignmentOffset == Numbers.LONG_NaN) {
+                alignmentOffset = offset;
+            } else {
+                alignmentOffset += offset;
+            }
+        }
+
         this.base = base;
         this.baseRecord = base.getRecord();
         final long timestamp = baseRecord.getTimestamp(timestampIndex);

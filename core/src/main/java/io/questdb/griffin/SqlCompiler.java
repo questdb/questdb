@@ -2055,6 +2055,7 @@ public class SqlCompiler implements Closeable {
                 if (tok != null && SqlKeywords.isZoneKeyword(tok)) {
                     return compiledQuery.of(new ShowTimeZoneFactory());
                 }
+                // todo: what if or rather what else?!
             }
         }
 

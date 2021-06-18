@@ -203,8 +203,22 @@ public final class SqlParser {
         }
     }
 
+    private void expectObservation(GenericLexer lexer) throws SqlException {
+        if (isFirstKeyword(tok(lexer, "observation"))) {
+            return;
+        }
+        throw SqlException.$((lexer.getPosition()), "'observation' expected");
+    }
+
     private CharSequence expectTableNameOrSubQuery(GenericLexer lexer) throws SqlException {
         return tok(lexer, "table name or sub-query");
+    }
+
+    private void expectTo(GenericLexer lexer) throws SqlException {
+        if (isToKeyword(tok(lexer, "to"))) {
+            return;
+        }
+        throw SqlException.$((lexer.getPosition()), "'to' expected");
     }
 
     private void expectTok(GenericLexer lexer, CharSequence tok, CharSequence expected) throws SqlException {
@@ -233,6 +247,20 @@ public final class SqlParser {
         if (tok == null || !Chars.equals(tok, expected)) {
             throw SqlException.position(pos).put('\'').put(expected).put("' expected");
         }
+    }
+
+    private void expectZone(GenericLexer lexer) throws SqlException {
+        if (isZoneKeyword(tok(lexer, "zone"))) {
+            return;
+        }
+        throw SqlException.$((lexer.getPosition()), "'zone' expected");
+    }
+
+    private void expectOffset(GenericLexer lexer) throws SqlException {
+        if (isOffsetKeyword(tok(lexer, "offset"))) {
+            return;
+        }
+        throw SqlException.$((lexer.getPosition()), "'offset' expected");
     }
 
     ExpressionNode expr(GenericLexer lexer, QueryModel model) throws SqlException {
@@ -850,7 +878,51 @@ public final class SqlParser {
                     }
                     expectTok(tok, lexer.lastTokenPosition(), ',');
                 } while (true);
+
                 tok = optTok(lexer);
+            }
+
+            if (tok != null && isAlignKeyword(tok)) {
+                expectTo(lexer);
+
+                tok = tok(lexer, "'calendar' or 'first observation'");
+
+                if (isCalendarKeyword(tok)) {
+                    tok = optTok(lexer);
+
+                    if (tok != null) {
+                        if (isTimeKeyword(tok)) {
+                            expectZone(lexer);
+                            model.setSampleByTimezoneName(expectExpr(lexer));
+                            tok = optTok(lexer);
+
+                            if (tok != null) {
+                                if (isWithKeyword(tok)) {
+                                    expectOffset(lexer);
+                                    model.setSampleByOffset(expectExpr(lexer));
+                                    tok = optTok(lexer);
+                                } else {
+                                    throw SqlException.$(lexer.lastTokenPosition(), "'with offset'");
+                                }
+                            } else {
+                                model.setSampleByOffset(nextLiteral("0", lexer.lastTokenPosition()));
+                            }
+                        } else if (isWithKeyword(tok)) {
+
+                        } else {
+                            throw SqlException.$(lexer.lastTokenPosition(), "'time zone' or 'with offset'");
+                        }
+                    } else {
+                        model.setSampleByTimezoneName(null);
+                        model.setSampleByOffset(nextLiteral("0", lexer.lastTokenPosition()));
+                    }
+                } else if (isFirstKeyword(tok)) {
+                    expectObservation(lexer);
+                    model.setSampleByTimezoneName(null);
+                    model.setSampleByOffset(null);
+                } else {
+                    throw SqlException.$(lexer.lastTokenPosition(), "'calendar' or 'first observation'");
+                }
             }
         }
 

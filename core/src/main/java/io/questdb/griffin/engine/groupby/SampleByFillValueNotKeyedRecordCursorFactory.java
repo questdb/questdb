@@ -24,7 +24,6 @@
 
 package io.questdb.griffin.engine.groupby;
 
-import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -40,12 +39,8 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 
-public class SampleByFillValueNotKeyedRecordCursorFactory implements RecordCursorFactory {
-    protected final RecordCursorFactory base;
+public class SampleByFillValueNotKeyedRecordCursorFactory extends AbstractSampleByRecordCursorFactory {
     private final SampleByFillValueNotKeyedRecordCursor cursor;
-    private final ObjList<Function> recordFunctions;
-    private final RecordMetadata metadata;
-    private final long alignmentOffset;
 
     public SampleByFillValueNotKeyedRecordCursorFactory(
             RecordCursorFactory base,
@@ -57,13 +52,11 @@ public class SampleByFillValueNotKeyedRecordCursorFactory implements RecordCurso
             @Transient IntList recordFunctionPositions,
             int valueCount,
             int timestampIndex,
-            long alignmentOffset
+            Function timezoneNameFunc,
+            Function offsetFunc
     ) throws SqlException {
+        super(base, groupByMetadata, recordFunctions, timezoneNameFunc, offsetFunc);
         try {
-            this.base = base;
-            this.alignmentOffset = alignmentOffset;
-            this.metadata = groupByMetadata;
-            this.recordFunctions = recordFunctions;
             final ObjList<Function> placeholderFunctions = SampleByFillValueRecordCursorFactory.createPlaceholderFunctions(
                     recordFunctions,
                     recordFunctionPositions,
@@ -80,16 +73,10 @@ public class SampleByFillValueNotKeyedRecordCursorFactory implements RecordCurso
                     simpleMapValue
             );
 
-        } catch (SqlException | CairoException e) {
+        } catch (Throwable e) {
             Misc.freeObjList(recordFunctions);
             throw e;
         }
-    }
-
-    @Override
-    public void close() {
-        Misc.freeObjList(recordFunctions);
-        Misc.free(base);
     }
 
     @Override
@@ -103,20 +90,7 @@ public class SampleByFillValueNotKeyedRecordCursorFactory implements RecordCurso
     }
 
     @Override
-    public RecordMetadata getMetadata() {
-        return metadata;
-    }
-
-    @Override
-    public boolean recordCursorSupportsRandomAccess() {
-        return false;
-    }
-
-    @NotNull
-    protected RecordCursor initFunctionsAndCursor(SqlExecutionContext executionContext, RecordCursor baseCursor) {
-        cursor.of(baseCursor, executionContext, alignmentOffset);
-        // init all record function for this cursor, in case functions require metadata and/or symbol tables
-        Function.init(recordFunctions, baseCursor, executionContext);
+    protected AbstractNoRecordSampleByCursor getRawCursor() {
         return cursor;
     }
 }

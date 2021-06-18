@@ -35,12 +35,8 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 
-public class SampleByFillNoneNotKeyedRecordCursorFactory implements RecordCursorFactory {
-    protected final RecordCursorFactory base;
+public class SampleByFillNoneNotKeyedRecordCursorFactory extends AbstractSampleByRecordCursorFactory {
     private final SampleByFillNoneNotKeyedRecordCursor cursor;
-    private final RecordMetadata metadata;
-    private final ObjList<Function> recordFunctions;
-    private final long alignmentOffset;
 
     public SampleByFillNoneNotKeyedRecordCursorFactory(
             RecordCursorFactory base,
@@ -50,15 +46,12 @@ public class SampleByFillNoneNotKeyedRecordCursorFactory implements RecordCursor
             ObjList<Function> recordFunctions,
             int valueCount,
             int timestampIndex,
-            long alignmentOffset
+            Function timezoneNameFunc,
+            Function offsetFunc
     ) {
+        super(base, groupByMetadata, recordFunctions, timezoneNameFunc, offsetFunc);
         final SimpleMapValue simpleMapValue = new SimpleMapValue(valueCount);
-        this.recordFunctions = recordFunctions;
-        this.alignmentOffset = alignmentOffset;
-
         try {
-            this.base = base;
-            this.metadata = groupByMetadata;
             this.cursor = new SampleByFillNoneNotKeyedRecordCursor(
                     simpleMapValue,
                     groupByFunctions,
@@ -73,12 +66,6 @@ public class SampleByFillNoneNotKeyedRecordCursorFactory implements RecordCursor
     }
 
     @Override
-    public void close() {
-        Misc.freeObjList(recordFunctions);
-        Misc.free(base);
-    }
-
-    @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) {
         final RecordCursor baseCursor = base.getCursor(executionContext);
         if (baseCursor.hasNext()) {
@@ -89,20 +76,7 @@ public class SampleByFillNoneNotKeyedRecordCursorFactory implements RecordCursor
     }
 
     @Override
-    public RecordMetadata getMetadata() {
-        return metadata;
-    }
-
-    @Override
-    public boolean recordCursorSupportsRandomAccess() {
-        return false;
-    }
-
-    @NotNull
-    protected RecordCursor initFunctionsAndCursor(SqlExecutionContext executionContext, RecordCursor baseCursor) {
-        cursor.of(baseCursor, executionContext, alignmentOffset);
-        // init all record function for this cursor, in case functions require metadata and/or symbol tables
-        Function.init(recordFunctions, baseCursor, executionContext);
+    protected AbstractNoRecordSampleByCursor getRawCursor() {
         return cursor;
     }
 }

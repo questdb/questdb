@@ -36,6 +36,7 @@ import io.questdb.griffin.engine.analytic.CachedAnalyticRecordCursorFactory;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.constants.LongConstant;
+import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.griffin.engine.groupby.*;
 import io.questdb.griffin.engine.groupby.vect.GroupByRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.vect.*;
@@ -1248,7 +1249,9 @@ public class SqlCodeGenerator implements Mutable {
     ) throws SqlException {
         executionContext.pushTimestampRequiredFlag(true);
         try {
-            final long alignmentOffset = Numbers.LONG_NaN;
+            final Function timezoneNameFunc = StrConstant.NULL;
+            final Function offsetFunc = LongConstant.NULL;
+
             final RecordCursorFactory factory = generateSubQuery(model, executionContext);
 
             // we require timestamp
@@ -1329,7 +1332,8 @@ public class SqlCodeGenerator implements Mutable {
                                 recordFunctions,
                                 timestampIndex,
                                 valueTypes.getColumnCount(),
-                                alignmentOffset
+                                timezoneNameFunc,
+                                offsetFunc
                         );
                     }
 
@@ -1345,7 +1349,8 @@ public class SqlCodeGenerator implements Mutable {
                             groupByFunctions,
                             recordFunctions,
                             timestampIndex,
-                            alignmentOffset
+                            timezoneNameFunc,
+                            offsetFunc
                     );
                 }
 
@@ -1361,7 +1366,8 @@ public class SqlCodeGenerator implements Mutable {
                                 recordFunctions,
                                 valueTypes.getColumnCount(),
                                 timestampIndex,
-                                alignmentOffset
+                                timezoneNameFunc,
+                                offsetFunc
                         );
                     }
 
@@ -1377,7 +1383,8 @@ public class SqlCodeGenerator implements Mutable {
                             keyTypes,
                             valueTypes,
                             timestampIndex,
-                            alignmentOffset
+                            timezoneNameFunc,
+                            offsetFunc
                     );
                 }
 
@@ -1392,7 +1399,8 @@ public class SqlCodeGenerator implements Mutable {
                                 recordFunctionPositions,
                                 valueTypes.getColumnCount(),
                                 timestampIndex,
-                                alignmentOffset
+                                timezoneNameFunc,
+                                offsetFunc
                         );
                     }
 
@@ -1409,7 +1417,8 @@ public class SqlCodeGenerator implements Mutable {
                             recordFunctions,
                             recordFunctionPositions,
                             timestampIndex,
-                            alignmentOffset
+                            timezoneNameFunc,
+                            offsetFunc
                     );
                 }
 
@@ -1426,7 +1435,8 @@ public class SqlCodeGenerator implements Mutable {
                             recordFunctionPositions,
                             valueTypes.getColumnCount(),
                             timestampIndex,
-                            alignmentOffset
+                            timezoneNameFunc,
+                            offsetFunc
                     );
                 }
 
@@ -1444,9 +1454,10 @@ public class SqlCodeGenerator implements Mutable {
                         recordFunctions,
                         recordFunctionPositions,
                         timestampIndex,
-                        alignmentOffset
+                        timezoneNameFunc,
+                        offsetFunc
                 );
-            } catch (SqlException | CairoException e) {
+            } catch (Throwable e) {
                 factory.close();
                 throw e;
             }

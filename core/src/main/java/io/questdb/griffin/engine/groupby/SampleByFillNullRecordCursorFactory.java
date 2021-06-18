@@ -39,16 +39,12 @@ import io.questdb.griffin.engine.functions.constants.*;
 import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
 
-public class SampleByFillNullRecordCursorFactory implements RecordCursorFactory {
+public class SampleByFillNullRecordCursorFactory extends AbstractSampleByRecordCursorFactory {
 
-    protected final RecordCursorFactory base;
     protected final Map map;
     private final AbstractNoRecordSampleByCursor cursor;
-    private final ObjList<Function> recordFunctions;
     private final ObjList<GroupByFunction> groupByFunctions;
     private final RecordSink mapSink;
-    private final RecordMetadata metadata;
-    private final long alignmentOffset;
 
     public SampleByFillNullRecordCursorFactory(
             CairoConfiguration configuration,
@@ -63,20 +59,17 @@ public class SampleByFillNullRecordCursorFactory implements RecordCursorFactory 
             ObjList<Function> recordFunctions,
             @Transient @NotNull IntList recordFunctionPositions,
             int timestampIndex,
-            long alignmentOffset
+            Function timezoneNameFunc,
+            Function offsetFunc
     ) throws SqlException {
 
-        this.recordFunctions = recordFunctions;
+        super(base, groupByMetadata, recordFunctions, timezoneNameFunc, offsetFunc);
         this.groupByFunctions = groupByFunctions;
-        this.alignmentOffset = alignmentOffset;
-
         // sink will be storing record columns to map key
         this.mapSink = RecordSinkFactory.getInstance(asm, base.getMetadata(), listColumnFilter, false);
         // this is the map itself, which we must not forget to free when factory closes
         this.map = MapFactory.createMap(configuration, keyTypes, valueTypes);
         try {
-            this.base = base;
-            this.metadata = groupByMetadata;
             this.cursor = new SampleByFillValueRecordCursor(
                     map,
                     mapSink,
@@ -86,7 +79,7 @@ public class SampleByFillNullRecordCursorFactory implements RecordCursorFactory 
                     timestampIndex,
                     timestampSampler
             );
-        } catch (SqlException | CairoException e) {
+        } catch (Throwable e) {
             Misc.freeObjList(recordFunctions);
             Misc.free(map);
             throw e;
@@ -133,9 +126,13 @@ public class SampleByFillNullRecordCursorFactory implements RecordCursorFactory 
 
     @Override
     public void close() {
-        Misc.freeObjList(recordFunctions);
+        super.close();
         Misc.free(map);
-        Misc.free(base);
+    }
+
+    @Override
+    public AbstractNoRecordSampleByCursor getRawCursor() {
+        return cursor;
     }
 
     @Override
@@ -185,23 +182,5 @@ public class SampleByFillNullRecordCursorFactory implements RecordCursorFactory 
             baseCursor.close();
             throw ex;
         }
-    }
-
-    @Override
-    public RecordMetadata getMetadata() {
-        return metadata;
-    }
-
-    @Override
-    public boolean recordCursorSupportsRandomAccess() {
-        return false;
-    }
-
-    @NotNull
-    private RecordCursor initFunctionsAndCursor(SqlExecutionContext executionContext, RecordCursor baseCursor) {
-        cursor.of(baseCursor, executionContext, alignmentOffset);
-        // init all record function for this cursor, in case functions require metadata and/or symbol tables
-        Function.init(recordFunctions, baseCursor, executionContext);
-        return cursor;
     }
 }
