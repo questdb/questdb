@@ -37,7 +37,8 @@ public class LatestByAllIndexedJob extends AbstractQueueConsumerJob<LatestByTask
     @Override
     protected boolean doRun(int workerId, long cursor) {
         final LatestByTask task = queue.get(cursor);
+        final boolean result = task.run();
         subSeq.done(cursor);
-        return task.run();
+        return result;
     }
 }
