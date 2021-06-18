@@ -26,7 +26,9 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.*;
+import io.questdb.std.DirectLongList;
+import io.questdb.std.IntList;
+import io.questdb.std.Rows;
 import org.jetbrains.annotations.NotNull;
 
 class LatestByAllIndexedFilteredRecordCursor extends LatestByAllIndexedRecordCursor {
@@ -57,8 +59,10 @@ class LatestByAllIndexedFilteredRecordCursor extends LatestByAllIndexedRecordCur
 
     @Override
     protected void postProcessRows() {
-        rows.setPos(rows.getCapacity());
-        for (long r = 0; r < rows.getCapacity(); ++r) {
+        final long rowsCapacity = rows.getCapacity();
+        rows.setPos(rowsCapacity);
+
+        for (long r = 0; r < rowsCapacity; ++r) {
             long row = rows.get(r) - 1;
             if (row >= 0) {
                 int partitionIndex = Rows.toPartitionIndex(row);

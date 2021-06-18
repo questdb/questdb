@@ -32,7 +32,7 @@ public class LatestByTask {
     private long keysMemorySize;
     private long valueBaseAddress;
     private long valuesMemorySize;
-    public long argsAddress;
+    private long argsAddress;
     private long unIndexedNullCount;
     private long rowHi;
     private long rowLo;
@@ -40,20 +40,30 @@ public class LatestByTask {
     private int valueBlockCapacity;
     private CountDownLatchSPI doneLatch;
 
-    public void of(long keyBaseAddress, long keysMemorySize, long valueBaseAddress, long valuesMemorySize, long argsAddress,
-                   long unIndexedNullCount, long rowHi, long rowLo, int partitionIndex, int valueBlockCapacity,
-                   CountDownLatchSPI doneLatch) {
-       this.keyBaseAddress = keyBaseAddress;
-       this.keysMemorySize = keysMemorySize;
-       this.valueBaseAddress = valueBaseAddress;
-       this.valuesMemorySize = valuesMemorySize;
-       this.argsAddress = argsAddress;
-       this.unIndexedNullCount = unIndexedNullCount;
-       this.rowHi = rowHi;
-       this.rowLo = rowLo;
-       this.partitionIndex = partitionIndex;
-       this.valueBlockCapacity = valueBlockCapacity;
-       this.doneLatch = doneLatch;
+    public void of(
+            long keyBaseAddress,
+            long keysMemorySize,
+            long valueBaseAddress,
+            long valuesMemorySize,
+            long argsAddress,
+            long unIndexedNullCount,
+            long rowHi,
+            long rowLo,
+            int partitionIndex,
+            int valueBlockCapacity,
+            CountDownLatchSPI doneLatch
+    ) {
+        this.keyBaseAddress = keyBaseAddress;
+        this.keysMemorySize = keysMemorySize;
+        this.valueBaseAddress = valueBaseAddress;
+        this.valuesMemorySize = valuesMemorySize;
+        this.argsAddress = argsAddress;
+        this.unIndexedNullCount = unIndexedNullCount;
+        this.rowHi = rowHi;
+        this.rowLo = rowLo;
+        this.partitionIndex = partitionIndex;
+        this.valueBlockCapacity = valueBlockCapacity;
+        this.doneLatch = doneLatch;
     }
 
     public boolean run() {
@@ -64,8 +74,11 @@ public class LatestByTask {
                 valuesMemorySize,
                 argsAddress,
                 unIndexedNullCount,
-                rowHi, rowLo,
-                partitionIndex, valueBlockCapacity);
+                rowHi,
+                rowLo,
+                partitionIndex,
+                valueBlockCapacity
+        );
         doneLatch.countDown();
         return true;
     }

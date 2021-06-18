@@ -31,18 +31,19 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SOUnboundedCountDownLatch;
 import io.questdb.mp.Sequence;
-import io.questdb.std.*;
+import io.questdb.std.BitmapIndexUtilsNative;
+import io.questdb.std.DirectLongList;
+import io.questdb.std.IntList;
+import io.questdb.std.Rows;
 import io.questdb.tasks.LatestByTask;
 import org.jetbrains.annotations.NotNull;
 
 class LatestByAllIndexedRecordCursor extends AbstractRecordListCursor {
     private final int columnIndex;
-
+    private final SOUnboundedCountDownLatch doneLatch = new SOUnboundedCountDownLatch();
     protected long indexShift = 0;
     protected long aIndex;
     protected long aLimit;
-
-    private final SOUnboundedCountDownLatch doneLatch = new SOUnboundedCountDownLatch();
 
     public LatestByAllIndexedRecordCursor(int columnIndex, DirectLongList rows, @NotNull IntList columnIndexes) {
         super(rows, columnIndexes);
@@ -109,13 +110,13 @@ class LatestByAllIndexedRecordCursor extends AbstractRecordListCursor {
             final long keysMemorySize = indexReader.getKeyMemorySize();
             final long valueBaseAddress = indexReader.getValueBaseAddress();
             final long valuesMemorySize = indexReader.getValueMemorySize();
-            final int valueBlockCapacity  = indexReader.getValueBlockCapacity();
+            final int valueBlockCapacity = indexReader.getValueBlockCapacity();
             final long unIndexedNullCount = indexReader.getUnIndexedNullCount();
             final int partitionIndex = frame.getPartitionIndex();
 
             int queuedCount = 0;
             for (long i = 0; i < taskCount; ++i) {
-                final long klo = i*chunkSize;
+                final long klo = i * chunkSize;
                 final long khi = Long.min(klo + chunkSize, frameKeyCount);
 
                 final long argsAddress = argumentsAddress + i * LatestByArguments.MEMORY_SIZE;
@@ -127,12 +128,32 @@ class LatestByAllIndexedRecordCursor extends AbstractRecordListCursor {
 
                 final long seq = pubSeq.next();
                 if (seq < 0) {
-                    BitmapIndexUtilsNative.latestScanBackward(keyBaseAddress, keysMemorySize, valueBaseAddress,
-                            valuesMemorySize, argsAddress,
-                            unIndexedNullCount, rowHi, rowLo, partitionIndex, valueBlockCapacity);
+                    BitmapIndexUtilsNative.latestScanBackward(
+                            keyBaseAddress,
+                            keysMemorySize,
+                            valueBaseAddress,
+                            valuesMemorySize,
+                            argsAddress,
+                            unIndexedNullCount,
+                            rowHi,
+                            rowLo,
+                            partitionIndex,
+                            valueBlockCapacity
+                    );
                 } else {
-                    queue.get(seq).of(keyBaseAddress, keysMemorySize, valueBaseAddress, valuesMemorySize, argsAddress,
-                            unIndexedNullCount, rowHi, rowLo, partitionIndex, valueBlockCapacity, doneLatch);
+                    queue.get(seq).of(
+                            keyBaseAddress,
+                            keysMemorySize,
+                            valueBaseAddress,
+                            valuesMemorySize,
+                            argsAddress,
+                            unIndexedNullCount,
+                            rowHi,
+                            rowLo,
+                            partitionIndex,
+                            valueBlockCapacity,
+                            doneLatch
+                    );
                     pubSeq.done(seq);
                     queuedCount++;
                 }
@@ -140,9 +161,9 @@ class LatestByAllIndexedRecordCursor extends AbstractRecordListCursor {
 
             // process our own queue
             // this should fix deadlock with 1 worker configuration
-            while(doneLatch.getCount() > -queuedCount) {
+            while (doneLatch.getCount() > -queuedCount) {
                 long seq = subSeq.next();
-                if(seq > -1) {
+                if (seq > -1) {
                     queue.get(seq).run();
                     subSeq.done(seq);
                 }
@@ -150,7 +171,7 @@ class LatestByAllIndexedRecordCursor extends AbstractRecordListCursor {
 
             doneLatch.await(queuedCount);
 
-            for(int i = 0; i < taskCount; i++) {
+            for (int i = 0; i < taskCount; i++) {
                 final long addr = argumentsAddress + i * LatestByArguments.MEMORY_SIZE;
                 rowCount += LatestByArguments.getRowsSize(addr);
                 keyLo = Long.min(keyLo, LatestByArguments.getKeyLo(addr));
@@ -168,7 +189,7 @@ class LatestByAllIndexedRecordCursor extends AbstractRecordListCursor {
         rows.sortAsUnsigned();
 
         //skip "holes"
-        while(rows.get(indexShift) <= 0) {
+        while (rows.get(indexShift) <= 0) {
             indexShift++;
         }
 
