@@ -137,9 +137,9 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
         private long currentRow;
         private long rowsFound;
         private IndexFrameCursor indexCursor;
-        private long frameFirstRowId = -1;
+        private long dataFrameLo = -1;
+        private long dataFrameHi = -1;
         private long firstTimestamp = -1;
-        private long pageRowSize = -1;
         private IndexFrame indexFrame;
         private long indexFrameIndex = -1;
         private long frameNextRowId = -1;
@@ -178,120 +178,143 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
         }
 
         private boolean hasNext0() {
-            checkCrossRowBeforeNextAction();
+            checkCrossRowAferFoundBufferIterated();
             rowsFound = 0;
-            while (true) {
-                switch (state) {
-                    case STATE_START:
-                        crossRowState = NONE;
-                        firstTimestamp = -1;
-                        state = STATE_FETCH_NEXT_DATA_FRAME;
-                        partitionIndex = -1;
-                        break;
 
-                    case STATE_FETCH_NEXT_DATA_FRAME_KEEP_INDEX:
-                    case STATE_FETCH_NEXT_DATA_FRAME:
-                        currentFrame = pageFrameCursor.next();
-                        if (currentFrame != null) {
-                            // Switch to new data frame
-                            pageRowSize = currentFrame.getPageSize(timestampIndex) / Long.BYTES;
-                            frameNextRowId = frameFirstRowId = currentFrame.getFirstRowId();
-
-                            state = state == STATE_FETCH_NEXT_DATA_FRAME_KEEP_INDEX ? STATE_SEARCH : STATE_FETCH_NEXT_INDEX_FRAME;
-                            if (partitionIndex != currentFrame.getPartitionIndex()) {
-                                // Switch index to next partition
-                                BitmapIndexReader symbolIndexReader = currentFrame.getBitmapIndexReader(gropuBySymbolColIndex, BitmapIndexReader.DIR_FORWARD);
-                                partitionIndex = currentFrame.getPartitionIndex();
-                                indexCursor = symbolIndexReader.getFrameCursor(groupBySymbolKey, frameFirstRowId, frameFirstRowId + pageRowSize);
-                                state = STATE_FETCH_NEXT_INDEX_FRAME;
-                            }
-                        } else {
-                            state = STATE_RETURN_LAST_ROW;
-                        }
-                        break;
-
-                    case STATE_FETCH_NEXT_INDEX_FRAME:
-                        indexFrame = indexCursor.getNext();
-                        indexFrameIndex = 0;
-
-                        if (indexFrame.getSize() == 0) {
-                            // No rows in index for this dataframe left, go to next data frame
-                            frameNextRowId = frameFirstRowId + pageRowSize;
-                            state = STATE_FETCH_NEXT_DATA_FRAME;
-                        } else {
-                            if (firstTimestamp == -1) {
-                                long rowId = Unsafe.getUnsafe().getLong(indexFrame.getAddress());
-                                long offsetTimestampColumnAddress = currentFrame.getPageAddress(timestampIndex) - frameFirstRowId * Long.BYTES;
-                                firstTimestamp = Unsafe.getUnsafe().getLong(offsetTimestampColumnAddress + rowId * Long.BYTES);
-                            }
-                            state = STATE_SEARCH;
-                        }
-                        break;
-
-                    case STATE_OUT_BUFFER_FULL:
-                    case STATE_SEARCH:
-                        long outStartIndex = crossRowState == NONE ? 0 : 1;
-                        long offsetTimestampColumnAddress = currentFrame.getPageAddress(timestampIndex) - frameFirstRowId * Long.BYTES;
-
-                        rowsFound = Vect.findFirstLastInFrame(
-                                outStartIndex,
-                                firstTimestamp,
-                                frameNextRowId,
-                                pageRowSize + frameFirstRowId,
-                                offsetTimestampColumnAddress,
-                                timestampSampler,
-                                indexFrame.getAddress(),
-                                indexFrame.getSize(),
-                                indexFrameIndex,
-                                startTimestampOutAddress.getAddress(),
-                                firstRowIdOutAddress.getAddress(),
-                                lastRowIdOutAddress.getAddress(),
-                                BUFF_SIZE);
-
-                        boolean firstRowLastUpdated = rowsFound < 0;
-                        rowsFound = Math.abs(rowsFound);
-                        checkCrossRowAfterSearch(firstRowLastUpdated);
-
-                        if (rowsFound > outStartIndex) {
-                            assert rowsFound < BUFF_SIZE - 1;
-
-                            // Read output timestamp and rowId to resume at the end of the output buffers
-                            indexFrameIndex = firstRowIdOutAddress.get(rowsFound);
-                            frameNextRowId = lastRowIdOutAddress.get(rowsFound);
-                            firstTimestamp = startTimestampOutAddress.get(rowsFound);
-
-                            // decide what to do next
-                            if (rowsFound == BUFF_SIZE - 1) {
-                                state = STATE_OUT_BUFFER_FULL;
-                            } else if (indexFrameIndex >= indexFrame.getSize()) {
-                                state = STATE_FETCH_NEXT_INDEX_FRAME;
-                            } else {
-                                state = STATE_FETCH_NEXT_DATA_FRAME_KEEP_INDEX;
-                            }
-
-                            if (rowsFound > 1) {
-                                record.of(currentRow = 0);
-                                return true;
-                            }
-                        } else {
-                            // Noting found, continue search
-                            state = STATE_FETCH_NEXT_INDEX_FRAME;
-                        }
-                        break;
-
-                    case STATE_RETURN_LAST_ROW:
-                        state = STATE_DONE;
-                        if (crossRowState != NONE) {
-                            record.of(currentRow = 0);
-                        }
-                        return true;
-
-                    case STATE_DONE:
-                        return false;
-
-                    default:
-                        throw new UnsupportedOperationException("Invalid state " + state);
+            while (state != STATE_DONE) {
+                state = getNextState(state);
+                if (state < 0) {
+                    state = -state;
+                    return true;
                 }
+            }
+            return false;
+        }
+
+        // This method evaluates RecordCursor state
+        // by using state machine.
+        // Possible important states are:
+        // - START
+        // - FETCH_NEXT_DATA_FRAME
+        // - FETCH_NEXT_INDEX_FRAME
+        // - SEARCH
+        // - DONE
+        // State machine can switch states non-linear until DONE reached.
+        private int getNextState(final int state) {
+            // This method should not change this.state field
+            // but instead produce next state given incoming state parameter.
+            // This way the method is enforced to change state and less the coller to loop forever.
+            switch (state) {
+                case STATE_START:
+                    crossRowState = NONE;
+                    firstTimestamp = -1;
+                    partitionIndex = -1;
+                    return STATE_FETCH_NEXT_DATA_FRAME;
+
+                case STATE_FETCH_NEXT_DATA_FRAME:
+                case STATE_FETCH_NEXT_DATA_FRAME_KEEP_INDEX:
+                    currentFrame = pageFrameCursor.next();
+                    if (currentFrame != null) {
+                        // Switch to new data frame
+                        frameNextRowId = dataFrameLo = currentFrame.getFirstRowId();
+                        dataFrameHi = dataFrameLo + currentFrame.getPageSize(timestampIndex) / Long.BYTES;
+
+                        if (partitionIndex != currentFrame.getPartitionIndex()) {
+                            // Switch index to next partition
+                            BitmapIndexReader symbolIndexReader = currentFrame.getBitmapIndexReader(gropuBySymbolColIndex, BitmapIndexReader.DIR_FORWARD);
+                            partitionIndex = currentFrame.getPartitionIndex();
+                            indexCursor = symbolIndexReader.getFrameCursor(groupBySymbolKey, dataFrameLo, dataFrameHi);
+                            return STATE_FETCH_NEXT_INDEX_FRAME;
+                        }
+                        return state == STATE_FETCH_NEXT_DATA_FRAME_KEEP_INDEX ? STATE_SEARCH : STATE_FETCH_NEXT_INDEX_FRAME;
+                    } else {
+                        return STATE_RETURN_LAST_ROW;
+                    }
+
+                case STATE_FETCH_NEXT_INDEX_FRAME:
+                    indexFrame = indexCursor.getNext();
+                    indexFrameIndex = 0;
+
+                    if (indexFrame.getSize() == 0) {
+                        // No rows in index for this dataframe left, go to next data frame
+                        frameNextRowId = dataFrameHi;
+                        return STATE_FETCH_NEXT_DATA_FRAME;
+                    } else {
+                        if (firstTimestamp == -1) {
+                            long rowId = Unsafe.getUnsafe().getLong(indexFrame.getAddress());
+                            long offsetTimestampColumnAddress = currentFrame.getPageAddress(timestampIndex) - dataFrameLo * Long.BYTES;
+                            firstTimestamp = Unsafe.getUnsafe().getLong(offsetTimestampColumnAddress + rowId * Long.BYTES);
+                        }
+                        return STATE_SEARCH;
+                    }
+
+                case STATE_OUT_BUFFER_FULL:
+                case STATE_SEARCH:
+                    long outStartIndex = crossRowState == NONE ? 0 : 1;
+                    long offsetTimestampColumnAddress = currentFrame.getPageAddress(timestampIndex) - dataFrameLo * Long.BYTES;
+
+                    rowsFound = Vect.findFirstLastInFrame(
+                            outStartIndex,
+                            firstTimestamp,
+                            frameNextRowId,
+                            dataFrameHi,
+                            offsetTimestampColumnAddress,
+                            timestampSampler,
+                            indexFrame.getAddress(),
+                            indexFrame.getSize(),
+                            indexFrameIndex,
+                            startTimestampOutAddress.getAddress(),
+                            firstRowIdOutAddress.getAddress(),
+                            lastRowIdOutAddress.getAddress(),
+                            BUFF_SIZE);
+
+                    boolean firstRowLastUpdated = rowsFound < 0;
+                    rowsFound = Math.abs(rowsFound);
+                    checkCrossRowAfterSearch(firstRowLastUpdated);
+
+                    if (rowsFound > outStartIndex) {
+                        assert rowsFound < BUFF_SIZE - 1;
+
+                        // Read output timestamp and rowId to resume at the end of the output buffers
+                        indexFrameIndex = firstRowIdOutAddress.get(rowsFound);
+                        frameNextRowId = lastRowIdOutAddress.get(rowsFound);
+                        firstTimestamp = startTimestampOutAddress.get(rowsFound);
+
+                        // decide what to do next
+                        int newState;
+                        if (rowsFound == BUFF_SIZE - 1) {
+                            newState = STATE_OUT_BUFFER_FULL;
+                        } else if (indexFrameIndex >= indexFrame.getSize()) {
+                            newState = STATE_FETCH_NEXT_INDEX_FRAME;
+                        } else {
+                            newState = STATE_FETCH_NEXT_DATA_FRAME_KEEP_INDEX;
+                        }
+
+                        if (rowsFound > 1) {
+                            // return negative to returns rows back to sinal that there are rows to iterate
+                            record.of(currentRow = 0);
+                            return -newState;
+                        }
+                        // No rows to iterate
+                        return newState;
+                    } else {
+                        // Noting found, continue search
+                        return STATE_FETCH_NEXT_INDEX_FRAME;
+                    }
+
+                case STATE_RETURN_LAST_ROW:
+                    if (crossRowState != NONE) {
+                        record.of(currentRow = 0);
+                        // Signal there is a row by returning negative value
+                        return -STATE_DONE;
+                    }
+                    return STATE_DONE;
+
+                case STATE_DONE:
+                    return STATE_DONE;
+
+                default:
+                    throw new UnsupportedOperationException("Invalid state " + state);
             }
         }
 
@@ -307,7 +330,7 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
             }
         }
 
-        private void checkCrossRowBeforeNextAction() {
+        private void checkCrossRowAferFoundBufferIterated() {
             if (crossRowState != NONE && rowsFound > 1) {
                 // Copy last set of first(), last() rowids from bottom of the previous output to the top
                 long lastFoundIndex = rowsFound - 1;
@@ -324,8 +347,8 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
         }
 
         private void saveFirstLastValuesToCrossFrameRowBuffer() {
-            firstLastRowId[0] = firstRowIdOutAddress.get(0) - frameFirstRowId;
-            firstLastRowId[1] = lastRowIdOutAddress.get(0) - frameFirstRowId;
+            firstLastRowId[0] = firstRowIdOutAddress.get(0) - dataFrameLo;
+            firstLastRowId[1] = lastRowIdOutAddress.get(0) - dataFrameLo;
             for (int i = 0; i < recordFirstLastIndex.length; i++) {
                 if (i == timestampIndex) {
                     crossFrameRow.set(i, startTimestampOutAddress.get(0));
@@ -335,9 +358,8 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
             }
         }
 
-
         private void saveLastValuesToBuffer() {
-            long lastRowId = lastRowIdOutAddress.get(0) - frameFirstRowId;
+            long lastRowId = lastRowIdOutAddress.get(0) - dataFrameLo;
             for (int i = 0; i < recordFirstLastIndex.length; i++) {
                 if (recordFirstLastIndex[i] == 1) {
                     // last() values only
@@ -379,15 +401,8 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
 
         @Override
         public void toTop() {
-            currentFrame = null;
-            currentRow = 0;
-            rowsFound = 0;
-            frameNextRowId = frameFirstRowId = -1;
-            firstTimestamp = -1;
-            pageRowSize = -1;
-            indexFrame = null;
-            indexFrameIndex = -1;
-            indexCursor = null;
+            currentRow = rowsFound = 0;
+            frameNextRowId = dataFrameLo = dataFrameHi = -1;
             state = STATE_START;
             crossRowState = NONE;
             pageFrameCursor.toTop();
@@ -403,8 +418,8 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
 
             public SampleByFirstLastRecord of(long currentRow) {
                 this.currentRow = currentRow;
-                firstLastRowId[0] = firstRowIdOutAddress.get(currentRow) - frameFirstRowId;
-                firstLastRowId[1] = lastRowIdOutAddress.get(currentRow) - frameFirstRowId;
+                firstLastRowId[0] = firstRowIdOutAddress.get(currentRow) - dataFrameLo;
+                firstLastRowId[1] = lastRowIdOutAddress.get(currentRow) - dataFrameLo;
                 return this;
             }
 
