@@ -170,7 +170,6 @@ public class WriterPool extends AbstractPool {
      * @return true if lock was successful, false otherwise
      */
     public CharSequence lock(CharSequence tableName, CharSequence lockReason) {
-        assert null != lockReason;
         checkClosed();
 
         long thread = Thread.currentThread().getId();
@@ -225,7 +224,9 @@ public class WriterPool extends AbstractPool {
     }
 
     private TableWriter checkClosedAndGetWriter(CharSequence tableName, Entry e, CharSequence lockReason) {
-        assert null != lockReason;
+        if (null == lockReason) {
+            throw new NullPointerException();
+        }
         if (isClosed()) {
             // pool closed but we somehow managed to lock writer
             // make sure that interceptor cleared to allow calling thread close writer normally
@@ -410,6 +411,9 @@ public class WriterPool extends AbstractPool {
     }
 
     private boolean lockAndNotify(long thread, Entry e, CharSequence tableName, CharSequence lockReason) {
+        if (null == lockReason) {
+            throw new NullPointerException();
+        }
         TableUtils.lockName(path.of(root).concat(tableName));
         e.lockFd = TableUtils.lock(ff, path);
         if (e.lockFd == -1L) {
