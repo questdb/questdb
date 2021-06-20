@@ -44,13 +44,6 @@ public class SOUnboundedCountDownLatch implements CountDownLatchSPI {
         }
     }
 
-    public boolean await(int count, long timeoutNanos) {
-        while (this.count > -count && timeoutNanos-- > 0) {
-            LockSupport.parkNanos(1);
-        }
-        return this.count <= -count;
-    }
-
     @Override
     public void countDown() {
         do {
