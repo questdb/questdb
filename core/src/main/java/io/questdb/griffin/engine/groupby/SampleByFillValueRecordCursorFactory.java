@@ -56,7 +56,9 @@ public class SampleByFillValueRecordCursorFactory extends AbstractSampleByFillRe
             @Transient IntList recordFunctionPositions,
             int timestampIndex,
             Function timezoneNameFunc,
-            Function offsetFunc
+            int timezoneNameFuncPos,
+            Function offsetFunc,
+            int offsetFuncPos
     ) throws SqlException {
         super(
                 configuration,
@@ -69,7 +71,9 @@ public class SampleByFillValueRecordCursorFactory extends AbstractSampleByFillRe
                 groupByFunctions,
                 recordFunctions,
                 timezoneNameFunc,
-                offsetFunc
+                timezoneNameFuncPos,
+                offsetFunc,
+                offsetFuncPos
         );
         try {
             final ObjList<Function> placeholderFunctions = createPlaceholderFunctions(

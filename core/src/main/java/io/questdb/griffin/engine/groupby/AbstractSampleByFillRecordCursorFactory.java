@@ -30,6 +30,7 @@ import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.*;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionInterruptor;
 import io.questdb.griffin.engine.EmptyTableNoSizeRecordCursor;
@@ -55,9 +56,11 @@ public abstract class AbstractSampleByFillRecordCursorFactory
             ObjList<GroupByFunction> groupByFunctions,
             ObjList<Function> recordFunctions,
             Function timezoneNameFunc,
-            Function offsetFunc
+            int timezoneNameFuncPos,
+            Function offsetFunc,
+            int offsetFuncPos
     ) {
-        super(base, groupByMetadata, recordFunctions, timezoneNameFunc, offsetFunc);
+        super(base, groupByMetadata, recordFunctions, timezoneNameFunc, timezoneNameFuncPos, offsetFunc, offsetFuncPos);
         this.groupByFunctions = groupByFunctions;
         // sink will be storing record columns to map key
         this.mapSink = RecordSinkFactory.getInstance(asm, base.getMetadata(), listColumnFilter, false);
@@ -66,7 +69,7 @@ public abstract class AbstractSampleByFillRecordCursorFactory
     }
 
     @Override
-    public RecordCursor getCursor(SqlExecutionContext executionContext) {
+    public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         final RecordCursor baseCursor = base.getCursor(executionContext);
         final SqlExecutionInterruptor interruptor = executionContext.getSqlExecutionInterruptor();
         try {

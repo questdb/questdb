@@ -91,7 +91,7 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             valueArg.init(symbolTableSource, executionContext);
             cursorArg.init(symbolTableSource, executionContext);
             symbolKeys.clear();
@@ -134,7 +134,7 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             valueArg.init(symbolTableSource, executionContext);
             cursorArg.init(symbolTableSource, executionContext);
 
@@ -170,7 +170,6 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
             }
             this.valueSet = valueSet;
         }
-
 
         @Override
         public Function getLeft() {

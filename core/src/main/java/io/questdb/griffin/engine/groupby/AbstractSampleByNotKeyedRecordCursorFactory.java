@@ -28,6 +28,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.EmptyTableNoSizeRecordCursor;
 import io.questdb.std.Misc;
@@ -39,13 +40,15 @@ public abstract class AbstractSampleByNotKeyedRecordCursorFactory extends Abstra
             RecordMetadata metadata,
             ObjList<Function> recordFunctions,
             Function timezoneNameFunc,
-            Function offsetFunc
+            int timezoneNameFuncPos,
+            Function offsetFunc,
+            int offsetFuncPos
     ) {
-        super(base, metadata, recordFunctions, timezoneNameFunc, offsetFunc);
+        super(base, metadata, recordFunctions, timezoneNameFunc, timezoneNameFuncPos, offsetFunc, offsetFuncPos);
     }
 
     @Override
-    public RecordCursor getCursor(SqlExecutionContext executionContext) {
+    public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         final RecordCursor baseCursor = base.getCursor(executionContext);
         if (baseCursor.hasNext()) {
             return initFunctionsAndCursor(executionContext, baseCursor);

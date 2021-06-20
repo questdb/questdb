@@ -1249,27 +1249,35 @@ public class SqlCodeGenerator implements Mutable {
     ) throws SqlException {
         executionContext.pushTimestampRequiredFlag(true);
         try {
+            final ExpressionNode timezoneName = model.getSampleByTimezoneName();
             final Function timezoneNameFunc;
+            final int timezoneNameFuncPos;
+            final ExpressionNode offset = model.getSampleByOffset();
             final Function offsetFunc;
+            final int offsetFuncPos;
 
-            if (model.getSampleByTimezoneName() != null) {
+            if (timezoneName != null) {
                 timezoneNameFunc = functionParser.parseFunction(
-                        model.getSampleByTimezoneName(),
+                        timezoneName,
                         EmptyRecordMetadata.INSTANCE,
                         executionContext
                 );
+                timezoneNameFuncPos = timezoneName.position;
             } else {
                 timezoneNameFunc = StrConstant.NULL;
+                timezoneNameFuncPos = 0;
             }
 
-            if (model.getSampleByOffset() != null) {
+            if (offset != null) {
                 offsetFunc = functionParser.parseFunction(
-                        model.getSampleByOffset(),
+                        offset,
                         EmptyRecordMetadata.INSTANCE,
                         executionContext
                 );
+                offsetFuncPos = offset.position;
             } else {
                 offsetFunc = StrConstant.NULL;
+                offsetFuncPos = 0;
             }
 
             final RecordCursorFactory factory = generateSubQuery(model, executionContext);
@@ -1353,7 +1361,9 @@ public class SqlCodeGenerator implements Mutable {
                                 timestampIndex,
                                 valueTypes.getColumnCount(),
                                 timezoneNameFunc,
-                                offsetFunc
+                                timezoneNameFuncPos,
+                                offsetFunc,
+                                offsetFuncPos
                         );
                     }
 
@@ -1370,7 +1380,9 @@ public class SqlCodeGenerator implements Mutable {
                             recordFunctions,
                             timestampIndex,
                             timezoneNameFunc,
-                            offsetFunc
+                            timezoneNameFuncPos,
+                            offsetFunc,
+                            offsetFuncPos
                     );
                 }
 
@@ -1387,7 +1399,9 @@ public class SqlCodeGenerator implements Mutable {
                                 valueTypes.getColumnCount(),
                                 timestampIndex,
                                 timezoneNameFunc,
-                                offsetFunc
+                                timezoneNameFuncPos,
+                                offsetFunc,
+                                offsetFuncPos
                         );
                     }
 
@@ -1404,7 +1418,9 @@ public class SqlCodeGenerator implements Mutable {
                             valueTypes,
                             timestampIndex,
                             timezoneNameFunc,
-                            offsetFunc
+                            timezoneNameFuncPos,
+                            offsetFunc,
+                            offsetFuncPos
                     );
                 }
 
@@ -1420,7 +1436,9 @@ public class SqlCodeGenerator implements Mutable {
                                 valueTypes.getColumnCount(),
                                 timestampIndex,
                                 timezoneNameFunc,
-                                offsetFunc
+                                timezoneNameFuncPos,
+                                offsetFunc,
+                                offsetFuncPos
                         );
                     }
 
@@ -1438,7 +1456,9 @@ public class SqlCodeGenerator implements Mutable {
                             recordFunctionPositions,
                             timestampIndex,
                             timezoneNameFunc,
-                            offsetFunc
+                            timezoneNameFuncPos,
+                            offsetFunc,
+                            offsetFuncPos
                     );
                 }
 
@@ -1456,7 +1476,9 @@ public class SqlCodeGenerator implements Mutable {
                             valueTypes.getColumnCount(),
                             timestampIndex,
                             timezoneNameFunc,
-                            offsetFunc
+                            timezoneNameFuncPos,
+                            offsetFunc,
+                            offsetFuncPos
                     );
                 }
 
@@ -1475,7 +1497,9 @@ public class SqlCodeGenerator implements Mutable {
                         recordFunctionPositions,
                         timestampIndex,
                         timezoneNameFunc,
-                        offsetFunc
+                        timezoneNameFuncPos,
+                        offsetFunc,
+                        offsetFuncPos
                 );
             } catch (Throwable e) {
                 factory.close();

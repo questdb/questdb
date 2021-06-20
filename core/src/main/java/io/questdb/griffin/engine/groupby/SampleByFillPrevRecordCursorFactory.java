@@ -53,7 +53,9 @@ public class SampleByFillPrevRecordCursorFactory extends AbstractSampleByFillRec
             ObjList<Function> recordFunctions,
             int timestampIndex,
             Function timezoneNameFunc,
-            Function offsetFunc
+            int timezoneNameFuncPos,
+            Function offsetFunc,
+            int offsetFuncPos
     ) {
         super(
                 configuration,
@@ -66,7 +68,9 @@ public class SampleByFillPrevRecordCursorFactory extends AbstractSampleByFillRec
                 groupByFunctions,
                 recordFunctions,
                 timezoneNameFunc,
-                offsetFunc
+                timezoneNameFuncPos,
+                offsetFunc,
+                offsetFuncPos
         );
         try {
             this.cursor = new SampleByFillPrevRecordCursor(

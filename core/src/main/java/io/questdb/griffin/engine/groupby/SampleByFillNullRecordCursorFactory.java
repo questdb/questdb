@@ -54,7 +54,9 @@ public class SampleByFillNullRecordCursorFactory extends AbstractSampleByFillRec
             @Transient @NotNull IntList recordFunctionPositions,
             int timestampIndex,
             Function timezoneNameFunc,
-            Function offsetFunc
+            int timezoneNameFuncPos,
+            Function offsetFunc,
+            int offsetFuncPos
     ) throws SqlException {
 
         super(
@@ -68,7 +70,9 @@ public class SampleByFillNullRecordCursorFactory extends AbstractSampleByFillRec
                 groupByFunctions,
                 recordFunctions,
                 timezoneNameFunc,
-                offsetFunc
+                timezoneNameFuncPos,
+                offsetFunc,
+                offsetFuncPos
         );
         try {
             this.cursor = new SampleByFillValueRecordCursor(

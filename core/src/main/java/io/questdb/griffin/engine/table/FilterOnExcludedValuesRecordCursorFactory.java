@@ -28,6 +28,7 @@ import io.questdb.cairo.SymbolMapReaderImpl;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.OrderByMnemonic;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
@@ -115,7 +116,8 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractDataFrame
     }
 
     @Override
-    protected RecordCursor getCursorInstance(DataFrameCursor dataFrameCursor, SqlExecutionContext executionContext) {
+    protected RecordCursor getCursorInstance(DataFrameCursor dataFrameCursor, SqlExecutionContext executionContext)
+            throws SqlException {
         try (TableReader reader = dataFrameCursor.getTableReader()) {
             if (reader.getSymbolMapReader(columnIndex).size() > maxSymbolNotEqualsCount) {
                 throw ReaderOutOfDateException.INSTANCE;

@@ -1081,7 +1081,8 @@ public class SqlCompiler implements Closeable {
         } while (true);
     }
 
-    private void alterTableDropOrAttachPartition(TableWriter writer, int action, SqlExecutionContext executionContext) throws SqlException {
+    private void alterTableDropOrAttachPartition(TableWriter writer, int action, SqlExecutionContext executionContext)
+            throws SqlException {
         final int pos = lexer.lastTokenPosition();
         final CharSequence tok = expectToken(lexer, "'list' or 'where'");
         if (SqlKeywords.isListKeyword(tok)) {

@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.sql;
 
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Sinkable;
 import io.questdb.std.str.CharSink;
@@ -71,7 +72,7 @@ public interface RecordCursorFactory extends Closeable, Sinkable {
      * @param executionContext name of a SQL execution context
      * @return instance of cursor
      */
-    RecordCursor getCursor(SqlExecutionContext executionContext);
+    RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException;
 
     /**
      * Metadata of the SQL result. It includes column names, indexes and types.
@@ -80,7 +81,7 @@ public interface RecordCursorFactory extends Closeable, Sinkable {
      */
     RecordMetadata getMetadata();
 
-    default PageFrameCursor getPageFrameCursor(SqlExecutionContext executionContext) {
+    default PageFrameCursor getPageFrameCursor(SqlExecutionContext executionContext) throws SqlException {
         return null;
     }
 

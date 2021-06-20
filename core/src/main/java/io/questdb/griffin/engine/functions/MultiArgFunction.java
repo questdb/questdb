@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions;
 
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.SymbolTableSource;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.std.Misc;
@@ -33,18 +34,14 @@ import io.questdb.std.ObjList;
 
 public interface MultiArgFunction extends Function {
 
-    static void init(ObjList<? extends Function> args, SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
-        Function.init(args, symbolTableSource, executionContext);
-    }
-
     @Override
     default void close() {
         Misc.freeObjList(getArgs());
     }
 
     @Override
-    default void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
-        init(getArgs(), symbolTableSource, executionContext);
+    default void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+        Function.init(getArgs(), symbolTableSource, executionContext);
     }
 
     @Override

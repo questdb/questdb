@@ -86,6 +86,8 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                     }
                 }
             }
+        } catch (SqlException e) {
+            e.printStackTrace();
         }
     }
 
@@ -266,6 +268,8 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             }
             Assert.assertTrue((expectSize && rowsCount != -1) || (!expectSize && rowsCount == -1));
             Assert.assertTrue(rowsCount == -1 || expectedRow == rowsCount);
+        } catch (SqlException e) {
+            e.printStackTrace();
         }
     }
 
@@ -410,10 +414,14 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                 } catch (UnsupportedOperationException ignore) {
                 }
             }
+        } catch (SqlException e) {
+            e.printStackTrace();
         }
 
         try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
             testSymbolAPI(factory.getMetadata(), cursor);
+        } catch (SqlException e) {
+            e.printStackTrace();
         }
     }
 
@@ -499,7 +507,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
         }
     }
 
-    protected static void assertTimestampColumnValues(RecordCursorFactory factory, SqlExecutionContext sqlExecutionContext) {
+    protected static void assertTimestampColumnValues(RecordCursorFactory factory, SqlExecutionContext sqlExecutionContext) throws SqlException {
         int index = factory.getMetadata().getTimestampIndex();
         long timestamp = Long.MIN_VALUE;
         try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
@@ -708,11 +716,11 @@ public class AbstractGriffinTest extends AbstractCairoTest {
         assertQueryNoVerify(expected, query, ddl, expectedTimestamp, ddl2, expected2, supportsRandomAccess, checkSameStr, expectSize, sizeCanBeVariable);
     }
 
-    protected static void assertTimestamp(CharSequence expectedTimestamp, RecordCursorFactory factory) {
+    protected static void assertTimestamp(CharSequence expectedTimestamp, RecordCursorFactory factory) throws SqlException {
         assertTimestamp(expectedTimestamp, factory, sqlExecutionContext);
     }
 
-    protected static void assertTimestamp(CharSequence expectedTimestamp, RecordCursorFactory factory, SqlExecutionContext sqlExecutionContext) {
+    protected static void assertTimestamp(CharSequence expectedTimestamp, RecordCursorFactory factory, SqlExecutionContext sqlExecutionContext) throws SqlException {
         if (expectedTimestamp == null) {
             Assert.assertEquals(-1, factory.getMetadata().getTimestampIndex());
         } else {
@@ -731,7 +739,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             SqlExecutionContext sqlExecutionContext,
             boolean checkSameStr,
             boolean expectSize
-    ) {
+    ) throws SqlException {
         assertFactoryCursor(expected, expectedTimestamp, factory, supportsRandomAccess, sqlExecutionContext, checkSameStr, expectSize, false);
     }
 
@@ -744,7 +752,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             boolean checkSameStr,
             boolean expectSize,
             boolean sizeCanBeVariable
-    ) {
+    ) throws SqlException {
         assertTimestamp(expectedTimestamp, factory, sqlExecutionContext);
         assertCursor(expected, factory, supportsRandomAccess, checkSameStr, expectSize, sizeCanBeVariable, sqlExecutionContext);
         // make sure we get the same outcome when we get factory to create new cursor

@@ -36,7 +36,11 @@ import java.io.Closeable;
 
 public interface Function extends Closeable {
 
-    static void init(ObjList<? extends Function> args, SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
+    static void init(
+            ObjList<? extends Function> args,
+            SymbolTableSource symbolTableSource,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
         for (int i = 0, n = args.size(); i < n; i++) {
             args.getQuick(i).init(symbolTableSource, executionContext);
         }
@@ -119,7 +123,7 @@ public interface Function extends Closeable {
         return getType() == ColumnType.UNDEFINED;
     }
 
-    default void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
+    default void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
     }
 
     default void assignType(int type, BindVariableService bindVariableService) throws SqlException {

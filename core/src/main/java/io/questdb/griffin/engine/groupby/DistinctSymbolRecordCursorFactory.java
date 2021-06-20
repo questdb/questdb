@@ -29,6 +29,7 @@ import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.*;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
 
@@ -60,7 +61,7 @@ public class DistinctSymbolRecordCursorFactory implements RecordCursorFactory {
     }
 
     @Override
-    public RecordCursor getCursor(SqlExecutionContext executionContext) {
+    public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         TableReader reader = engine.getReader(executionContext.getCairoSecurityContext(), tableName, tableVersion);
         cursor.of(reader, columnIndex);
         return cursor;

@@ -28,6 +28,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -38,19 +39,26 @@ public abstract class AbstractSampleByRecordCursorFactory implements RecordCurso
     protected final RecordMetadata metadata;
     protected final ObjList<Function> recordFunctions;
     protected final Function timezoneNameFunc;
+    protected final int timezoneNameFuncPos;
     protected final Function offsetFunc;
+    protected final int offsetFuncPos;
 
     public AbstractSampleByRecordCursorFactory(
             RecordCursorFactory base,
             RecordMetadata metadata,
             ObjList<Function> recordFunctions,
             Function timezoneNameFunc,
-            Function offsetFunc) {
+            int timezoneNameFuncPos,
+            Function offsetFunc,
+            int offsetFuncPos
+    ) {
         this.base = base;
         this.metadata = metadata;
         this.recordFunctions = recordFunctions;
         this.timezoneNameFunc = timezoneNameFunc;
+        this.timezoneNameFuncPos = timezoneNameFuncPos;
         this.offsetFunc = offsetFunc;
+        this.offsetFuncPos = offsetFuncPos;
     }
 
     @Override
@@ -66,12 +74,20 @@ public abstract class AbstractSampleByRecordCursorFactory implements RecordCurso
         return metadata;
     }
 
+    @Override
+    public boolean recordCursorSupportsRandomAccess() {
+        return false;
+    }
+
     protected abstract AbstractNoRecordSampleByCursor getRawCursor();
 
-    protected RecordCursor initFunctionsAndCursor(SqlExecutionContext executionContext, RecordCursor baseCursor) {
+    protected RecordCursor initFunctionsAndCursor(
+            SqlExecutionContext executionContext,
+            RecordCursor baseCursor
+    ) throws SqlException {
         try {
             AbstractNoRecordSampleByCursor cursor = getRawCursor();
-            cursor.of(baseCursor, executionContext, timezoneNameFunc, offsetFunc);
+            cursor.of(baseCursor, executionContext, timezoneNameFunc, timezoneNameFuncPos, offsetFunc, offsetFuncPos);
             // init all record function for this cursor, in case functions require metadata and/or symbol tables
             Function.init(recordFunctions, baseCursor, executionContext);
             return cursor;
@@ -79,10 +95,5 @@ public abstract class AbstractSampleByRecordCursorFactory implements RecordCurso
             baseCursor.close();
             throw ex;
         }
-    }
-
-    @Override
-    public boolean recordCursorSupportsRandomAccess() {
-        return false;
     }
 }

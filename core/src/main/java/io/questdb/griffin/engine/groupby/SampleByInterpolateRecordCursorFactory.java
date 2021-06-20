@@ -202,7 +202,7 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
     }
 
     @Override
-    public RecordCursor getCursor(SqlExecutionContext executionContext) {
+    public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         recordKeyMap.clear();
         dataMap.clear();
         final RecordCursor baseCursor = base.getCursor(executionContext);
@@ -481,7 +481,7 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
             SqlExecutionContext executionContext,
             RecordCursor mapCursor,
             RecordCursor baseCursor
-    ) {
+    ) throws SqlException {
         cursor.of(baseCursor, mapCursor);
         // init all record function for this cursor, in case functions require metadata and/or symbol tables
         Function.init(recordFunctions, baseCursor, executionContext);

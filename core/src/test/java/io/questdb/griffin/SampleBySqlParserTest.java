@@ -49,6 +49,24 @@ public class SampleBySqlParserTest  extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testCalendarTimeZoneAsOffset() throws SqlException {
+        assertQuery(
+                "select-group-by b, sum(a) sum, k1, k1 k from (select-choose [b, a, k k1] b, a, k k1, timestamp from (select [b, a, k] from x y timestamp (timestamp)) y) y sample by 3h align to calendar time zone '+01:00' with offset '00:00'",
+                "select b, sum(a), k k1, k from x y sample by 3h align to calendar time zone '+01:00'",
+                model()
+        );
+    }
+
+    @Test
+    public void testCalendarTimeZoneAsOffsetNegative() throws SqlException {
+        assertQuery(
+                "select-group-by b, sum(a) sum, k1, k1 k from (select-choose [b, a, k k1] b, a, k k1, timestamp from (select [b, a, k] from x y timestamp (timestamp)) y) y sample by 3h align to calendar time zone '-04:00' with offset '00:00'",
+                "select b, sum(a), k k1, k from x y sample by 3h align to calendar time zone '-04:00'",
+                model()
+        );
+    }
+
+    @Test
     public void testFillFollowedByAlign() throws SqlException {
         assertQuery(
                 "select-group-by b, sum(a) sum, k1, k1 k from (select-choose [b, a, k k1] b, a, k k1, timestamp from (select [b, a, k] from x y timestamp (timestamp)) y) y sample by 3h fill(none) align to calendar time zone ? with offset ?",

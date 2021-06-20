@@ -44,9 +44,11 @@ public class SampleByFillPrevNotKeyedRecordCursorFactory extends AbstractSampleB
             int timestampIndex,
             int groupByValueCount,
             Function timezoneNameFunc,
-            Function offsetFunc
+            int timezoneNameFuncPos,
+            Function offsetFunc,
+            int offsetFuncPos
     ) {
-        super(base, groupByMetadata, recordFunctions, timezoneNameFunc, offsetFunc);
+        super(base, groupByMetadata, recordFunctions, timezoneNameFunc, timezoneNameFuncPos, offsetFunc, offsetFuncPos);
         try {
             final SimpleMapValue simpleMapValue = new SimpleMapValue(groupByValueCount);
             this.cursor = new SampleByFillPrevNotKeyedRecordCursor(

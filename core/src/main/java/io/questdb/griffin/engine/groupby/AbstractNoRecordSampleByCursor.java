@@ -24,8 +24,8 @@
 
 package io.questdb.griffin.engine.groupby;
 
-import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.*;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionInterruptor;
 import io.questdb.griffin.engine.functions.GroupByFunction;
@@ -85,7 +85,14 @@ public abstract class AbstractNoRecordSampleByCursor implements NoRandomAccessRe
         return -1;
     }
 
-    public void of(RecordCursor base, SqlExecutionContext executionContext, Function timezoneNameFunc, Function offsetFunc) {
+    public void of(
+            RecordCursor base,
+            SqlExecutionContext executionContext,
+            Function timezoneNameFunc,
+            int timezoneNameFuncPos,
+            Function offsetFunc,
+            int offsetFuncPos
+    ) throws SqlException {
         // factory guarantees that base cursor is not empty
         timezoneNameFunc.init(base, executionContext);
         offsetFunc.init(base, executionContext);
@@ -97,20 +104,18 @@ public abstract class AbstractNoRecordSampleByCursor implements NoRandomAccessRe
                 alignmentOffset = Timestamps.toTimezone(0, TimestampFormatUtils.enLocale, tz);
             } catch (NumericException e) {
                 Misc.free(base);
-                // todo: perhaps introduce exception on getCursor()
-                throw CairoException.instance(0);
+                throw SqlException.$(timezoneNameFuncPos, "invalid timezone: ").put(tz);
             }
         }
 
         CharSequence offset = offsetFunc.getStr(null);
 
         if (offset != null) {
-
             final long val = Timestamps.parseOffset(offset);
             if (val == Numbers.LONG_NaN) {
                 // bad value for offset
                 Misc.free(base);
-                throw CairoException.instance(0);
+                throw SqlException.$(offsetFuncPos, "invalid offset: ").put(offset);
             }
             if (alignmentOffset == Numbers.LONG_NaN) {
                 alignmentOffset = Numbers.decodeLowInt(val) * Timestamps.MINUTE_MICROS;

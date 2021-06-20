@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.table;
 import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.sql.DataFrame;
 import io.questdb.cairo.sql.Function;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
@@ -77,7 +78,7 @@ class LatestByAllIndexedFilteredRecordCursor extends AbstractRecordListCursor {
     }
 
     @Override
-    protected void buildTreeMap(SqlExecutionContext executionContext) {
+    protected void buildTreeMap(SqlExecutionContext executionContext) throws SqlException {
         filter.init(this, executionContext);
 
         final int keyCount = getSymbolTable(columnIndex).size() + 1;
