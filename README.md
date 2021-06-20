@@ -76,14 +76,13 @@ You can interact with QuestDB using the following interfaces:
 
 ## How QuestDB compares to other open source TSDBs
 
-Here are ingestion results of the
-[Time Series Benchmark Suite](https://github.com/timescale/tsbs) `cpu-only` use
-case with up to fourteen workers on an AWS EC2 `m5.8xlarge` instance with
-sixteen cores:
+Here are high-cardinality
+[Time Series Benchmark Suite](https://questdb.io/blog/2021/06/16/high-cardinality-time-series-data-performance/)
+results using the `cpu-only` use case with 6 workers on an AMD Ryzen 3970X:
 
 <div align="center">
-  <a href="https://questdb.io/time-series-benchmark-suite/">
-    <img alt="A chart comparing the maximum throughput of QuestDB, ClickHouse, TimescaleDB and InfluxDB." src="https://raw.githubusercontent.com/questdb/questdb/master/.github/tsbs-results.png" width="700"/>
+  <a href="https://questdb.io/blog/2021/06/16/high-cardinality-time-series-data-performance/">
+    <img alt="A chart comparing the maximum throughput of QuestDB, ClickHouse, TimescaleDB and InfluxDB." src=".github/tsbs-results.png"/>
   </a>
 </div>
 
