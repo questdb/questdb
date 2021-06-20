@@ -25,12 +25,9 @@
 package io.questdb.griffin.engine.groupby;
 
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.EmptyTableNoSizeRecordCursor;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
@@ -38,7 +35,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 
-public class SampleByFillNullNotKeyedRecordCursorFactory extends AbstractSampleByRecordCursorFactory {
+public class SampleByFillNullNotKeyedRecordCursorFactory extends AbstractSampleByNotKeyedRecordCursorFactory {
 
     private final SampleByFillValueNotKeyedRecordCursor cursor;
 
@@ -69,16 +66,6 @@ public class SampleByFillNullNotKeyedRecordCursorFactory extends AbstractSampleB
             Misc.freeObjList(recordFunctions);
             throw e;
         }
-    }
-
-    @Override
-    public RecordCursor getCursor(SqlExecutionContext executionContext) {
-        final RecordCursor baseCursor = base.getCursor(executionContext);
-        if (baseCursor.hasNext()) {
-            return initFunctionsAndCursor(executionContext, baseCursor);
-        }
-        Misc.free(baseCursor);
-        return EmptyTableNoSizeRecordCursor.INSTANCE;
     }
 
     protected AbstractNoRecordSampleByCursor getRawCursor() {

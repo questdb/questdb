@@ -171,7 +171,7 @@ public class AbstractSqlParserTest extends AbstractGriffinTest {
         }
     }
 
-    protected TableModel modelOf(String tableName) {
+    protected static TableModel modelOf(String tableName) {
         return new TableModel(configuration, tableName, PartitionBy.NONE);
     }
 

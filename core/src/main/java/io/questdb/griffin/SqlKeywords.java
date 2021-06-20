@@ -525,7 +525,7 @@ public class SqlKeywords {
     }
 
     public static boolean isObservationKeyword(CharSequence tok) {
-        if (tok.length() != 5) {
+        if (tok.length() != 11) {
             return false;
         }
 

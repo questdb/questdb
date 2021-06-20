@@ -148,10 +148,10 @@ public final class SqlParser {
     }
 
     private void expectBy(GenericLexer lexer) throws SqlException {
-        if (isByKeyword(tok(lexer, "by"))) {
+        if (isByKeyword(tok(lexer, "'by'"))) {
             return;
         }
-        throw SqlException.$((lexer.getPosition()), "'by' expected");
+        throw SqlException.$((lexer.lastTokenPosition()), "'by' expected");
     }
 
     private ExpressionNode expectExpr(GenericLexer lexer) throws SqlException {
@@ -204,10 +204,17 @@ public final class SqlParser {
     }
 
     private void expectObservation(GenericLexer lexer) throws SqlException {
-        if (isFirstKeyword(tok(lexer, "observation"))) {
+        if (isObservationKeyword(tok(lexer, "'observation'"))) {
             return;
         }
-        throw SqlException.$((lexer.getPosition()), "'observation' expected");
+        throw SqlException.$((lexer.lastTokenPosition()), "'observation' expected");
+    }
+
+    private void expectOffset(GenericLexer lexer) throws SqlException {
+        if (isOffsetKeyword(tok(lexer, "'offset'"))) {
+            return;
+        }
+        throw SqlException.$((lexer.lastTokenPosition()), "'offset' expected");
     }
 
     private CharSequence expectTableNameOrSubQuery(GenericLexer lexer) throws SqlException {
@@ -215,10 +222,10 @@ public final class SqlParser {
     }
 
     private void expectTo(GenericLexer lexer) throws SqlException {
-        if (isToKeyword(tok(lexer, "to"))) {
+        if (isToKeyword(tok(lexer, "'to'"))) {
             return;
         }
-        throw SqlException.$((lexer.getPosition()), "'to' expected");
+        throw SqlException.$((lexer.lastTokenPosition()), "'to' expected");
     }
 
     private void expectTok(GenericLexer lexer, CharSequence tok, CharSequence expected) throws SqlException {
@@ -250,17 +257,10 @@ public final class SqlParser {
     }
 
     private void expectZone(GenericLexer lexer) throws SqlException {
-        if (isZoneKeyword(tok(lexer, "zone"))) {
+        if (isZoneKeyword(tok(lexer, "'zone'"))) {
             return;
         }
-        throw SqlException.$((lexer.getPosition()), "'zone' expected");
-    }
-
-    private void expectOffset(GenericLexer lexer) throws SqlException {
-        if (isOffsetKeyword(tok(lexer, "offset"))) {
-            return;
-        }
-        throw SqlException.$((lexer.getPosition()), "'offset' expected");
+        throw SqlException.$((lexer.lastTokenPosition()), "'zone' expected");
     }
 
     ExpressionNode expr(GenericLexer lexer, QueryModel model) throws SqlException {
@@ -301,6 +301,10 @@ public final class SqlParser {
         // this can never be null in its current contexts
         // every time this function is called is after lexer.unparse(), which ensures non-null token.
         return expressionNodePool.next().of(ExpressionNode.LITERAL, GenericLexer.unquote(name), 0, position);
+    }
+
+    private ExpressionNode nextConstant(CharSequence value) {
+        return expressionNodePool.next().of(ExpressionNode.CONSTANT, value, 0, 0);
     }
 
     private ExpressionNode nextLiteral(CharSequence token, int position) {
@@ -788,7 +792,7 @@ public final class SqlParser {
                 nestedModel.setModelPosition(modelPosition);
                 ExpressionNode func = expressionNodePool.next().of(ExpressionNode.FUNCTION, "long_sequence", 0, lexer.lastTokenPosition());
                 func.paramCount = 1;
-                func.rhs = expressionNodePool.next().of(ExpressionNode.CONSTANT, "1", 0, 0);
+                func.rhs = nextConstant("1");
                 nestedModel.setTableName(func);
                 model.setSelectModelType(QueryModel.SELECT_MODEL_VIRTUAL);
                 model.setNestedModel(nestedModel);
@@ -898,30 +902,29 @@ public final class SqlParser {
 
                             if (tok != null) {
                                 if (isWithKeyword(tok)) {
-                                    expectOffset(lexer);
-                                    model.setSampleByOffset(expectExpr(lexer));
-                                    tok = optTok(lexer);
+                                    tok = parseWithOffset(lexer, model);
                                 } else {
-                                    throw SqlException.$(lexer.lastTokenPosition(), "'with offset'");
+                                    throw SqlException.$(lexer.lastTokenPosition(), "'with offset' expected");
                                 }
                             } else {
-                                model.setSampleByOffset(nextLiteral("0", lexer.lastTokenPosition()));
+                                model.setSampleByOffset(nextConstant("'00:00'"));
                             }
                         } else if (isWithKeyword(tok)) {
-
+                            tok = parseWithOffset(lexer, model);
                         } else {
-                            throw SqlException.$(lexer.lastTokenPosition(), "'time zone' or 'with offset'");
+                            throw SqlException.$(lexer.lastTokenPosition(), "'time zone' or 'with offset' expected");
                         }
                     } else {
                         model.setSampleByTimezoneName(null);
-                        model.setSampleByOffset(nextLiteral("0", lexer.lastTokenPosition()));
+                        model.setSampleByOffset(nextConstant("'00:00'"));
                     }
                 } else if (isFirstKeyword(tok)) {
                     expectObservation(lexer);
                     model.setSampleByTimezoneName(null);
                     model.setSampleByOffset(null);
+                    tok = optTok(lexer);
                 } else {
-                    throw SqlException.$(lexer.lastTokenPosition(), "'calendar' or 'first observation'");
+                    throw SqlException.$(lexer.lastTokenPosition(), "'calendar' or 'first observation' expected");
                 }
             }
         }
@@ -1417,6 +1420,14 @@ public final class SqlParser {
                 break;
             }
         } while (true);
+    }
+
+    private CharSequence parseWithOffset(GenericLexer lexer, QueryModel model) throws SqlException {
+        CharSequence tok;
+        expectOffset(lexer);
+        model.setSampleByOffset(expectExpr(lexer));
+        tok = optTok(lexer);
+        return tok;
     }
 
     private ExpressionNode rewriteCase(ExpressionNode parent) throws SqlException {

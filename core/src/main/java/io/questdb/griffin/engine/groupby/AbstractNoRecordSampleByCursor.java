@@ -30,6 +30,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionInterruptor;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
+import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
@@ -47,6 +48,7 @@ public abstract class AbstractNoRecordSampleByCursor implements NoRandomAccessRe
     protected RecordCursor base;
     protected SqlExecutionInterruptor interruptor;
     protected long baselineOffset;
+    private long topTimestamp;
 
     public AbstractNoRecordSampleByCursor(
             ObjList<Function> recordFunctions,
@@ -74,6 +76,7 @@ public abstract class AbstractNoRecordSampleByCursor implements NoRandomAccessRe
     @Override
     public void toTop() {
         GroupByUtils.toTop(recordFunctions);
+        this.lastTimestamp = this.nextTimestamp = this.topTimestamp;
         this.base.toTop();
     }
 
@@ -84,23 +87,35 @@ public abstract class AbstractNoRecordSampleByCursor implements NoRandomAccessRe
 
     public void of(RecordCursor base, SqlExecutionContext executionContext, Function timezoneNameFunc, Function offsetFunc) {
         // factory guarantees that base cursor is not empty
+        timezoneNameFunc.init(base, executionContext);
+        offsetFunc.init(base, executionContext);
+
         long alignmentOffset = Numbers.LONG_NaN;
         final CharSequence tz = timezoneNameFunc.getStr(null);
         if (tz != null) {
             try {
                 alignmentOffset = Timestamps.toTimezone(0, TimestampFormatUtils.enLocale, tz);
             } catch (NumericException e) {
+                Misc.free(base);
+                // todo: perhaps introduce exception on getCursor()
                 throw CairoException.instance(0);
             }
         }
 
-        long offset = offsetFunc.getLong(null);
+        CharSequence offset = offsetFunc.getStr(null);
 
-        if (offset != Numbers.LONG_NaN) {
+        if (offset != null) {
+
+            final long val = Timestamps.parseOffset(offset);
+            if (val == Numbers.LONG_NaN) {
+                // bad value for offset
+                Misc.free(base);
+                throw CairoException.instance(0);
+            }
             if (alignmentOffset == Numbers.LONG_NaN) {
-                alignmentOffset = offset;
+                alignmentOffset = Numbers.decodeLowInt(val) * Timestamps.MINUTE_MICROS;
             } else {
-                alignmentOffset += offset;
+                alignmentOffset += Numbers.decodeLowInt(val) * Timestamps.MINUTE_MICROS;
             }
         }
 
@@ -109,7 +124,7 @@ public abstract class AbstractNoRecordSampleByCursor implements NoRandomAccessRe
         final long timestamp = baseRecord.getTimestamp(timestampIndex);
         this.nextTimestamp = timestampSampler.round(timestamp);
         this.baselineOffset = alignmentOffset == Numbers.LONG_NaN ? timestamp - nextTimestamp : alignmentOffset;
-        this.lastTimestamp = this.nextTimestamp = timestampSampler.round(timestamp - baselineOffset);
+        this.topTimestamp = this.lastTimestamp = this.nextTimestamp = timestampSampler.round(timestamp - baselineOffset);
         interruptor = executionContext.getSqlExecutionInterruptor();
     }
 

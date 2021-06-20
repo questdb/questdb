@@ -112,8 +112,6 @@ public class SampleByFillValueNotKeyedRecordCursor extends AbstractSplitVirtualR
         super.toTop();
         if (base.hasNext()) {
             baseRecord = base.getRecord();
-            this.nextTimestamp = timestampSampler.round(baseRecord.getTimestamp(timestampIndex));
-            this.lastTimestamp = this.nextTimestamp;
         }
     }
 }

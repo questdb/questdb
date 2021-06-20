@@ -639,48 +639,6 @@ public class SampleByTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testSampleByCustom() throws Exception {
-        assertQuery(
-                "k\tcount\n" +
-                        "1970-01-03T00:00:00.000000Z\t5\n" +
-                        "1970-01-03T00:30:00.000000Z\t5\n" +
-                        "1970-01-03T01:00:00.000000Z\t5\n" +
-                        "1970-01-03T01:30:00.000000Z\t5\n" +
-                        "1970-01-03T02:00:00.000000Z\t5\n" +
-                        "1970-01-03T02:30:00.000000Z\t5\n" +
-                        "1970-01-03T03:00:00.000000Z\t5\n" +
-                        "1970-01-03T03:30:00.000000Z\t5\n" +
-                        "1970-01-03T04:00:00.000000Z\t5\n" +
-                        "1970-01-03T04:30:00.000000Z\t5\n" +
-                        "1970-01-03T05:00:00.000000Z\t5\n" +
-                        "1970-01-03T05:30:00.000000Z\t5\n" +
-                        "1970-01-03T06:00:00.000000Z\t5\n" +
-                        "1970-01-03T06:30:00.000000Z\t5\n" +
-                        "1970-01-03T07:00:00.000000Z\t5\n" +
-                        "1970-01-03T07:30:00.000000Z\t5\n" +
-                        "1970-01-03T08:00:00.000000Z\t5\n" +
-                        "1970-01-03T08:30:00.000000Z\t5\n" +
-                        "1970-01-03T09:00:00.000000Z\t5\n" +
-                        "1970-01-03T09:30:00.000000Z\t5\n",
-
-                "select k, count() from x sample by 30m",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(172800000000, 360000000) k" +
-                        " from" +
-                        " long_sequence(100)" +
-                        ") timestamp(k) partition by NONE",
-                "k",
-                false,
-                true,
-                false
-        );
-    }
-
-    @Test
     public void testSampleByMillisFillNoneNotKeyedEmpty() throws Exception {
         assertQuery("sum\tk\n",
                 "select sum(a), k from x sample by 100T fill(none)",
@@ -734,6 +692,235 @@ public class SampleByTest extends AbstractGriffinTest {
                         "62.5966045857722\t1970-01-04T05:00:02.800000Z\n" +
                         "94.55893004802432\t1970-01-04T05:00:02.900000Z\n",
                 false);
+    }
+
+    @Test
+    public void testSampleByNoFillNotKeyedAlignToCalendarTimezone() throws Exception {
+        assertQuery(
+                "k\tcount\n" +
+                        "1970-01-02T23:30:00.000000Z\t12\n" +
+                        "1970-01-03T01:00:00.000000Z\t18\n" +
+                        "1970-01-03T02:30:00.000000Z\t18\n" +
+                        "1970-01-03T04:00:00.000000Z\t18\n" +
+                        "1970-01-03T05:30:00.000000Z\t18\n" +
+                        "1970-01-03T07:00:00.000000Z\t16\n",
+
+                "select k, count() from x sample by 90m align to calendar time zone 'Europe/Berlin'",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(172800000000, 300000000) k" +
+                        " from" +
+                        " long_sequence(100)" +
+                        ") timestamp(k) partition by NONE",
+                "k",
+                false,
+                true,
+                false
+        );
+    }
+
+    @Test
+    public void testSampleByNoFillNotKeyedAlignToCalendarTimezoneOffset() throws Exception {
+        assertQuery(
+                "k\tcount\n" +
+                        "1970-01-02T22:42:00.000000Z\t3\n" +
+                        "1970-01-03T00:12:00.000000Z\t18\n" +
+                        "1970-01-03T01:42:00.000000Z\t18\n" +
+                        "1970-01-03T03:12:00.000000Z\t18\n" +
+                        "1970-01-03T04:42:00.000000Z\t18\n" +
+                        "1970-01-03T06:12:00.000000Z\t18\n" +
+                        "1970-01-03T07:42:00.000000Z\t7\n",
+
+                "select k, count() from x sample by 90m align to calendar time zone 'PST' with offset '00:42'",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(172800000000, 300000000) k" +
+                        " from" +
+                        " long_sequence(100)" +
+                        ") timestamp(k) partition by NONE",
+                "k",
+                false,
+                true,
+                false
+        );
+    }
+
+    @Test
+    public void testSampleByNoFillAlignToCalendarTimezoneOffset() throws Exception {
+        assertQuery(
+                "k\tb\tcount\n" +
+                        "1970-01-02T22:42:00.000000Z\t\t1\n" +
+                        "1970-01-02T22:42:00.000000Z\tVTJW\t1\n" +
+                        "1970-01-02T22:42:00.000000Z\tRXGZ\t1\n" +
+                        "1970-01-03T00:12:00.000000Z\tPEHN\t4\n" +
+                        "1970-01-03T00:12:00.000000Z\t\t10\n" +
+                        "1970-01-03T00:12:00.000000Z\tHYRX\t2\n" +
+                        "1970-01-03T00:12:00.000000Z\tVTJW\t1\n" +
+                        "1970-01-03T00:12:00.000000Z\tRXGZ\t1\n" +
+                        "1970-01-03T01:42:00.000000Z\t\t6\n" +
+                        "1970-01-03T01:42:00.000000Z\tPEHN\t1\n" +
+                        "1970-01-03T01:42:00.000000Z\tVTJW\t5\n" +
+                        "1970-01-03T01:42:00.000000Z\tCPSW\t3\n" +
+                        "1970-01-03T01:42:00.000000Z\tHYRX\t2\n" +
+                        "1970-01-03T01:42:00.000000Z\tRXGZ\t1\n" +
+                        "1970-01-03T03:12:00.000000Z\t\t10\n" +
+                        "1970-01-03T03:12:00.000000Z\tHYRX\t3\n" +
+                        "1970-01-03T03:12:00.000000Z\tCPSW\t4\n" +
+                        "1970-01-03T03:12:00.000000Z\tPEHN\t1\n" +
+                        "1970-01-03T04:42:00.000000Z\tRXGZ\t2\n" +
+                        "1970-01-03T04:42:00.000000Z\t\t10\n" +
+                        "1970-01-03T04:42:00.000000Z\tVTJW\t3\n" +
+                        "1970-01-03T04:42:00.000000Z\tHYRX\t2\n" +
+                        "1970-01-03T04:42:00.000000Z\tPEHN\t1\n" +
+                        "1970-01-03T06:12:00.000000Z\t\t11\n" +
+                        "1970-01-03T06:12:00.000000Z\tRXGZ\t4\n" +
+                        "1970-01-03T06:12:00.000000Z\tPEHN\t1\n" +
+                        "1970-01-03T06:12:00.000000Z\tHYRX\t1\n" +
+                        "1970-01-03T06:12:00.000000Z\tVTJW\t1\n" +
+                        "1970-01-03T07:42:00.000000Z\tVTJW\t3\n" +
+                        "1970-01-03T07:42:00.000000Z\tRXGZ\t2\n" +
+                        "1970-01-03T07:42:00.000000Z\t\t2\n",
+
+                "select k, b, count() from x sample by 90m align to calendar time zone 'PST' with offset '00:42'",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(172800000000, 300000000) k" +
+                        " from" +
+                        " long_sequence(100)" +
+                        ") timestamp(k) partition by NONE",
+                "k",
+                false,
+                true,
+                false
+        );
+    }
+
+    @Test
+    public void testSampleByNoFillNotKeyedAlignToCalendarTimezoneVariable() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile(
+                    "create table x as " +
+                            "(" +
+                            "select" +
+                            " rnd_double(0)*100 a," +
+                            " rnd_symbol(5,4,4,1) b," +
+                            " timestamp_sequence(172800000000, 300000000) k" +
+                            " from" +
+                            " long_sequence(100)" +
+                            ") timestamp(k) partition by NONE",
+                    sqlExecutionContext
+            );
+
+            RecordCursorFactory factory = compiler.compile(
+                    "select k, count() from x sample by 90m align to calendar time zone $1 with offset $2",
+                    sqlExecutionContext
+            ).getRecordCursorFactory();
+
+            String expectedMoscow = "k\tcount\n" +
+                    "1970-01-02T22:45:00.000000Z\t3\n" +
+                    "1970-01-03T00:15:00.000000Z\t18\n" +
+                    "1970-01-03T01:45:00.000000Z\t18\n" +
+                    "1970-01-03T03:15:00.000000Z\t18\n" +
+                    "1970-01-03T04:45:00.000000Z\t18\n" +
+                    "1970-01-03T06:15:00.000000Z\t18\n" +
+                    "1970-01-03T07:45:00.000000Z\t7\n";
+
+            String expectedPrague = "k\tcount\n" +
+                    "1970-01-02T23:40:00.000000Z\t14\n" +
+                    "1970-01-03T01:10:00.000000Z\t18\n" +
+                    "1970-01-03T02:40:00.000000Z\t18\n" +
+                    "1970-01-03T04:10:00.000000Z\t18\n" +
+                    "1970-01-03T05:40:00.000000Z\t18\n" +
+                    "1970-01-03T07:10:00.000000Z\t14\n";
+
+            sqlExecutionContext.getBindVariableService().setStr(0, "Europe/Moscow");
+            sqlExecutionContext.getBindVariableService().setStr(1, "00:15");
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                assertCursor(
+                        expectedMoscow,
+                        cursor,
+                        factory.getMetadata(),
+                        true
+                );
+            }
+
+            sqlExecutionContext.getBindVariableService().setStr(0, "Europe/Prague");
+            sqlExecutionContext.getBindVariableService().setStr(1, "00:10");
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                assertCursor(
+                        expectedPrague,
+                        cursor,
+                        factory.getMetadata(),
+                        true
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testSampleByNoFillNotKeyedAlignToCalendarUTC() throws Exception {
+        assertQuery(
+                "k\tcount\n" +
+                        "1970-01-03T00:00:00.000000Z\t18\n" +
+                        "1970-01-03T01:30:00.000000Z\t18\n" +
+                        "1970-01-03T03:00:00.000000Z\t18\n" +
+                        "1970-01-03T04:30:00.000000Z\t18\n" +
+                        "1970-01-03T06:00:00.000000Z\t18\n" +
+                        "1970-01-03T07:30:00.000000Z\t10\n",
+
+                "select k, count() from x sample by 90m align to calendar",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(172800000000, 300000000) k" +
+                        " from" +
+                        " long_sequence(100)" +
+                        ") timestamp(k) partition by NONE",
+                "k",
+                false,
+                true,
+                false
+        );
+    }
+
+    @Test
+    public void testSampleByNoFillNotKeyedAlignToCalendarUTCOffset() throws Exception {
+        assertQuery(
+                "k\tcount\n" +
+                        "1970-01-02T23:12:00.000000Z\t9\n" +
+                        "1970-01-03T00:42:00.000000Z\t18\n" +
+                        "1970-01-03T02:12:00.000000Z\t18\n" +
+                        "1970-01-03T03:42:00.000000Z\t18\n" +
+                        "1970-01-03T05:12:00.000000Z\t18\n" +
+                        "1970-01-03T06:42:00.000000Z\t18\n" +
+                        "1970-01-03T08:12:00.000000Z\t1\n",
+
+                "select k, count() from x sample by 90m align to calendar with offset '00:42'",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(172800000000, 300000000) k" +
+                        " from" +
+                        " long_sequence(100)" +
+                        ") timestamp(k) partition by NONE",
+                "k",
+                false,
+                true,
+                false
+        );
     }
 
     @Test

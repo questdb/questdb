@@ -139,9 +139,6 @@ class SampleByFillValueRecordCursor extends AbstractSplitVirtualRecordSampleByCu
         super.toTop();
         if (base.hasNext()) {
             baseRecord = base.getRecord();
-            this.nextTimestamp = timestampSampler.round(baseRecord.getTimestamp(timestampIndex));
-            this.lastTimestamp = this.nextTimestamp;
-
             int n = groupByFunctions.size();
             RecordCursor mapCursor = map.getCursor();
             MapRecord mapRecord = map.getRecord();

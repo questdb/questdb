@@ -25,33 +25,32 @@
 package io.questdb.griffin.engine.groupby;
 
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.VirtualRecord;
-import io.questdb.cairo.sql.VirtualRecordNoRowid;
-import io.questdb.griffin.engine.functions.GroupByFunction;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.EmptyTableNoSizeRecordCursor;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
-public abstract class AbstractVirtualRecordSampleByCursor extends AbstractNoRecordSampleByCursor {
-    protected final VirtualRecord record;
-
-    public AbstractVirtualRecordSampleByCursor(
+public abstract class AbstractSampleByNotKeyedRecordCursorFactory extends AbstractSampleByRecordCursorFactory{
+    public AbstractSampleByNotKeyedRecordCursorFactory(
+            RecordCursorFactory base,
+            RecordMetadata metadata,
             ObjList<Function> recordFunctions,
-            int timestampIndex, // index of timestamp column in base cursor
-            TimestampSampler timestampSampler,
-            ObjList<GroupByFunction> groupByFunctions
+            Function timezoneNameFunc,
+            Function offsetFunc
     ) {
-        super(recordFunctions, timestampIndex, timestampSampler, groupByFunctions);
-        this.record = new VirtualRecordNoRowid(recordFunctions);
-        for (int i = 0, n = recordFunctions.size(); i < n; i++) {
-            Function f = recordFunctions.getQuick(i);
-            if (f == null) {
-                recordFunctions.setQuick(i, new TimestampFunc());
-            }
-        }
+        super(base, metadata, recordFunctions, timezoneNameFunc, offsetFunc);
     }
 
     @Override
-    public Record getRecord() {
-        return record;
+    public RecordCursor getCursor(SqlExecutionContext executionContext) {
+        final RecordCursor baseCursor = base.getCursor(executionContext);
+        if (baseCursor.hasNext()) {
+            return initFunctionsAndCursor(executionContext, baseCursor);
+        }
+        Misc.free(baseCursor);
+        return EmptyTableNoSizeRecordCursor.INSTANCE;
     }
 }

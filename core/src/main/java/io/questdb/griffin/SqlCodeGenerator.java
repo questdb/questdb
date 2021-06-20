@@ -1249,8 +1249,28 @@ public class SqlCodeGenerator implements Mutable {
     ) throws SqlException {
         executionContext.pushTimestampRequiredFlag(true);
         try {
-            final Function timezoneNameFunc = StrConstant.NULL;
-            final Function offsetFunc = LongConstant.NULL;
+            final Function timezoneNameFunc;
+            final Function offsetFunc;
+
+            if (model.getSampleByTimezoneName() != null) {
+                timezoneNameFunc = functionParser.parseFunction(
+                        model.getSampleByTimezoneName(),
+                        EmptyRecordMetadata.INSTANCE,
+                        executionContext
+                );
+            } else {
+                timezoneNameFunc = StrConstant.NULL;
+            }
+
+            if (model.getSampleByOffset() != null) {
+                offsetFunc = functionParser.parseFunction(
+                        model.getSampleByOffset(),
+                        EmptyRecordMetadata.INSTANCE,
+                        executionContext
+                );
+            } else {
+                offsetFunc = StrConstant.NULL;
+            }
 
             final RecordCursorFactory factory = generateSubQuery(model, executionContext);
 

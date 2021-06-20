@@ -83,8 +83,6 @@ class SampleByFillNoneNotKeyedRecordCursor extends AbstractVirtualRecordSampleBy
         super.toTop();
         if (base.hasNext()) {
             baseRecord = base.getRecord();
-            this.nextTimestamp = timestampSampler.round(baseRecord.getTimestamp(timestampIndex));
-            this.lastTimestamp = this.nextTimestamp;
         }
     }
 }

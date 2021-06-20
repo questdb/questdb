@@ -3607,7 +3607,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "select * from tab latest",
                 24,
-                "by expected"
+                "'by' expected"
         );
     }
 
