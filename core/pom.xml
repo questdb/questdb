@@ -373,19 +373,23 @@
 
         <profile>
             <id>build-binaries</id>
-            <properties>
-                <profile.build.binaries>true</profile.build.binaries>
-            </properties>
             <build>
                 <plugins>
                     <plugin>
                         <groupId>org.codehaus.mojo</groupId>
                         <artifactId>exec-maven-plugin</artifactId>
-                        <version>1.6.0</version>
                         <configuration>
                             <longModulepath>false</longModulepath>
                         </configuration>
                         <executions>
+                            <execution>
+                                <id>npm-install</id>
+                                <phase>generate-sources</phase>
+                            </execution>
+                            <execution>
+                                <id>npm-run-build</id>
+                                <phase>generate-sources</phase>
+                            </execution>
                             <execution>
                                 <id>jlink</id>
                                 <goals>
@@ -444,20 +448,6 @@
                                     </descriptors>
                                     <finalName>questdb</finalName>
                                 </configuration>
-                            </execution>
-                        </executions>
-                    </plugin>
-                    <plugin>
-                        <groupId>org.codehaus.mojo</groupId>
-                        <artifactId>exec-maven-plugin</artifactId>
-                        <executions>
-                            <execution>
-                                <id>npm-install</id>
-                                <phase>generate-sources</phase>
-                            </execution>
-                            <execution>
-                                <id>npm-run-build</id>
-                                <phase>generate-sources</phase>
                             </execution>
                         </executions>
                     </plugin>
