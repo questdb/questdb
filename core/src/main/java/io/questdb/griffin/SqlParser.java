@@ -1061,12 +1061,7 @@ public final class SqlParser {
             expectTok(lexer, '(');
 
             do {
-                ExpressionNode expr = expectExpr(lexer);
-                if (Chars.equals(expr.token, ')')) {
-                    throw err(lexer, "missing column value");
-                }
-
-                model.addColumnValue(expr);
+                model.addColumnValue(expectExpr(lexer));
             } while (Chars.equals((tok = tok(lexer, "','")), ','));
 
             expectTok(tok, lexer.lastTokenPosition(), ')');

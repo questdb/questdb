@@ -613,6 +613,15 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testCreateTableMissing() throws Exception {
+        assertSyntaxError(
+                "create",
+                6,
+                "'table' expected"
+        );
+    }
+
+    @Test
     public void testCreateAsSelectMissingTimestamp() throws Exception {
         assertSyntaxError(
                 "create table tst as (select * from (select rnd_int() a, rnd_double() b, timestamp_sequence(0, 100000000000l) t from long_sequence(100000))) partition by DAY",
@@ -2646,6 +2655,42 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 modelOf("y")
                         .col("c", ColumnType.INT)
                         .col("d", ColumnType.STRING)
+        );
+    }
+
+    @Test
+    public void testInsertIntoMissing() throws Exception {
+        assertSyntaxError(
+                "insert onto",
+                7,
+                "'into' expected"
+        );
+    }
+
+    @Test
+    public void testInsertMissingColumn() throws Exception {
+        assertSyntaxError(
+                "insert into x(a,)",
+                16,
+                "missing column name"
+        );
+    }
+
+    @Test
+    public void testInsertDanglingValue() throws Exception {
+        assertSyntaxError(
+                "insert into x(a,b) values(1,)",
+                28,
+                "Expression expected"
+        );
+    }
+
+    @Test
+    public void testInsertMisSpeltValues() throws Exception {
+        assertSyntaxError(
+                "insert into x(a,b) valuos(1,9)",
+                19,
+                "'select' or 'values' expected"
         );
     }
 

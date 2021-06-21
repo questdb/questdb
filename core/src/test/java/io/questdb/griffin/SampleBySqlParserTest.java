@@ -49,6 +49,36 @@ public class SampleBySqlParserTest  extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testSampleByMissing() throws Exception {
+        assertSyntaxError(
+                "select b, sum(a), k k1, k from x y sample on 3h",
+                42,
+                "'by' expected",
+                model()
+        );
+    }
+
+    @Test
+    public void testSampleByAlignOn() throws Exception {
+        assertSyntaxError(
+                "select b, sum(a), k k1, k from x y sample by 3h align on calendar",
+                54,
+                "'to' expected",
+                model()
+        );
+    }
+
+    @Test
+    public void testSampleByToLastObservation() throws Exception {
+        assertSyntaxError(
+                "select b, sum(a), k k1, k from x y sample by 3h align to last observation",
+                57,
+                "'calendar' or 'first observation' expected",
+                model()
+        );
+    }
+
+    @Test
     public void testCalendarTimeZoneAsOffset() throws SqlException {
         assertQuery(
                 "select-group-by b, sum(a) sum, k1, k1 k from (select-choose [b, a, k k1] b, a, k k1, timestamp from (select [b, a, k] from x y timestamp (timestamp)) y) y sample by 3h align to calendar time zone '+01:00' with offset '00:00'",
