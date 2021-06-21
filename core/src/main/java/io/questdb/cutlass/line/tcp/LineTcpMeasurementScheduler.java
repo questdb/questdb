@@ -831,7 +831,7 @@ class LineTcpMeasurementScheduler implements Closeable {
             if (null != writer) {
                 return writer;
             }
-            return writer = engine.getWriter(securityContext, tableName);
+            return writer = engine.getWriter(securityContext, tableName, "ilpTcp");
         }
 
         void handleRowAppended() {

@@ -220,7 +220,7 @@ public class LineTcpServerTest extends AbstractCairoTest {
                 }
 
                 sendAndWait(lineData, tableIndex, 2);
-                try (TableWriter w = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "weather")) {
+                try (TableWriter w = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "weather", "testing")) {
                     w.truncate();
                 }
                 sendAndWait(lineData, tableIndex, 4);
@@ -369,7 +369,7 @@ public class LineTcpServerTest extends AbstractCairoTest {
                     "weather,location=us-eastcoast temperature=81 1465839830101400200\n";
             send(lineData, "weather");
 
-            try (TableWriter w = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "weather")) {
+            try (TableWriter w = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "weather", "testing")) {
                 w.truncate();
             }
 

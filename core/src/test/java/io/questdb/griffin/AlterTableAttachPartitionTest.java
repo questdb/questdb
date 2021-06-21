@@ -332,7 +332,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                 copyPartitionToBackup(src.getName(), "2020-01-09", dst.getName());
 
                 // Add 1 row without commit
-                try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "dst")) {
+                try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "dst", "testing")) {
                     long insertTs = TimestampFormatUtils.parseTimestamp("2020-01-10T23:59:59.999z");
                     TableWriter.Row row = writer.newRow(insertTs);
                     row.putLong(0, 1L);
@@ -603,7 +603,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             }
 
             // Check table is writable after partition attach
-            try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "dst")) {
+            try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "dst", "testing")) {
 
                 TableWriter.Row row = writer.newRow(timestamp);
                 row.putLong(0, 1L);

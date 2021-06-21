@@ -253,7 +253,7 @@ public class LinuxLineProtoReceiverTest extends AbstractCairoTest {
                     }
 
                     // warm writer up
-                    try (TableWriter w = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "tab")) {
+                    try (TableWriter w = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "tab", "testing")) {
                         w.warmUp();
                     }
 

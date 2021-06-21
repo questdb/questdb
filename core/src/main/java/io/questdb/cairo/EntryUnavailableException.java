@@ -24,10 +24,15 @@
 
 package io.questdb.cairo;
 
+import io.questdb.std.ThreadLocal;
+
 public class EntryUnavailableException extends CairoException {
-    public static final EntryUnavailableException INSTANCE;
-    static {
-        INSTANCE = new EntryUnavailableException();
-        INSTANCE.put("table busy");
+    private static final ThreadLocal<EntryUnavailableException> tlException = new ThreadLocal<>(EntryUnavailableException::new);
+
+    public static EntryUnavailableException instance(CharSequence reason) {
+        EntryUnavailableException ex = tlException.get();
+        ex.message.clear();
+        ex.put("table busy [reason=").put(reason).put("]");
+        return ex;
     }
 }

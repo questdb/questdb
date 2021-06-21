@@ -321,7 +321,7 @@ public class AlterTableCommitLagTest extends AbstractGriffinTest {
                     // test open table writer
                     engine.releaseInactive();
                     engine.releaseAllWriters();
-                    engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x1").close();
+                    engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x1", "testing").close();
 
                     TestUtils.assertSql(
                             compiler,
@@ -379,7 +379,7 @@ public class AlterTableCommitLagTest extends AbstractGriffinTest {
                     // test open table writer
                     engine.releaseInactive();
                     engine.releaseAllWriters();
-                    engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x1").close();
+                    engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x1", "testing").close();
 
                     TestUtils.assertSql(
                             compiler,
