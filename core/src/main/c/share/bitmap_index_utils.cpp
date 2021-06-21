@@ -108,6 +108,91 @@ void latest_scan_backward(uint64_t keys_memory_addr, size_t keys_memory_size, ui
     out_args->rows_size = row_count;
 }
 
+template<char16_t sampleByPeriodType>
+inline int64_t sampleByNextTimestamp(int64_t timestamp, int64_t sampleByPeriodLen) {
+    if constexpr(sampleByPeriodType == u'u') {
+        return timestamp + sampleByPeriodLen;
+    }
+
+    if constexpr(sampleByPeriodType == u'M') {
+        return timestamp + sampleByPeriodLen;
+    }
+}
+
+template<char16_t sampleByPeriodType>
+inline int64_t findFirstLastInFrame0(
+        int64_t outIndex
+        , int64_t sampleByStart
+        , int64_t rowIdLo
+        , int64_t rowIdHi
+        , int64_t* timestampColAddress
+        , int64_t sampleByPeriodLen
+        , int64_t* symbolIndexAddress
+        , int64_t symbolIndexSize
+        , int64_t indexFrameIndex
+        , int64_t* timestampOutAddress
+        , int64_t* firstRowIdOutAddress
+        , int64_t* lastRowIdOutAddress
+        , int64_t outBuffersSize) {
+
+    if (indexFrameIndex < symbolIndexSize) {
+        // Sample by window start, end
+        int64_t sampleByEnd = sampleByNextTimestamp<sampleByPeriodType>(sampleByStart, sampleByPeriodLen);
+        int64_t maxOutRows = outBuffersSize - 1;
+
+        int64_t iIndex = indexFrameIndex;
+        int64_t indexRowId = 0;
+        bool firstRowUpdated = false;
+        for (; iIndex < symbolIndexSize; iIndex++) {
+            indexRowId = symbolIndexAddress[iIndex];
+            if (indexRowId >= rowIdLo && indexRowId < rowIdHi) {
+                int64_t indexRowTimestamp = timestampColAddress[indexRowId];
+
+                if (indexRowTimestamp < sampleByStart) {
+                    // Fast path, skip index rowid when it fails before current window
+                    if (outIndex > 0) {
+                        lastRowIdOutAddress[outIndex - 1] = indexRowId;
+                        if (outIndex == 1) {
+                            firstRowUpdated = true;
+                        }
+                    }
+                    continue;
+                }
+
+                while (indexRowTimestamp >= sampleByEnd) {
+                    // Go to next sample by window.
+                    sampleByStart = sampleByEnd;
+                    int64_t sampleByEnd = sampleByNextTimestamp<sampleByPeriodType>(sampleByStart, sampleByPeriodLen);
+                }
+
+                if (indexRowTimestamp >= sampleByStart && indexRowTimestamp < sampleByEnd) {
+                    timestampOutAddress[outIndex] = sampleByStart;
+                    firstRowIdOutAddress[outIndex] = indexRowId;
+                    lastRowIdOutAddress[outIndex] = indexRowId;
+
+                    // Go to next sample by window.
+                    outIndex++;
+                    sampleByStart = sampleByEnd;
+                    int64_t sampleByEnd = sampleByNextTimestamp<sampleByPeriodType>(sampleByStart, sampleByPeriodLen);
+
+                    if (outIndex > maxOutRows) {
+                        break;
+                    }
+                }
+            } else if (indexRowId >= rowIdHi) {
+                // Index row id is beyond data page
+                break;
+            }
+        }
+
+        timestampOutAddress[outIndex] = sampleByStart;
+        firstRowIdOutAddress[outIndex] = iIndex;
+        lastRowIdOutAddress[outIndex] = indexRowId + 1;
+
+        return firstRowUpdated ? -outIndex : outIndex;
+    }
+    return outIndex;
+}
 
 extern "C" {
 
@@ -125,6 +210,65 @@ Java_io_questdb_std_BitmapIndexUtilsNative_latestScanBackward0(JNIEnv *env, jcla
                                                 , jint blockValueCountMod) {
     latest_scan_backward(keysMemory, keysMemorySize, valuesMemory, valuesMemorySize, argsMemory, unIndexedNullCount,
                          maxValue, minValue, partitionIndex, blockValueCountMod);
+}
+
+JNIEXPORT jlong JNICALL
+Java_io_questdb_std_BitmapIndexUtilsNative_findFirstLastInFrame(JNIEnv *env, jclass cl
+        , jlong outIndex
+        , jlong sampleByStart
+        , jlong rowIdLo
+        , jlong rowIdHi
+        , jlong timestampColAddress
+        , jchar sampleByPeriodType
+        , jlong sampleByPeriodLen
+        , jlong symbolIndexAddress
+        , jlong symbolIndexSize
+        , jlong indexFrameIndex
+        , jint timestampOutAddress
+        , jint firstRowIdOutAddress
+        , jint lastRowIdOutAddress
+        , jint outBuffersSize) {
+    switch (sampleByPeriodType) {
+        case u'u':
+            return findFirstLastInFrame0<u'u'>(
+                    outIndex
+                    , sampleByStart
+                    , rowIdLo
+                    , rowIdHi
+                    , reinterpret_cast<int64_t *>(timestampColAddress)
+                    , sampleByPeriodLen
+                    , reinterpret_cast<int64_t *>(symbolIndexAddress)
+                    , symbolIndexSize
+                    , indexFrameIndex
+                    , reinterpret_cast<int64_t *>(timestampOutAddress)
+                    , reinterpret_cast<int64_t *>(firstRowIdOutAddress)
+                    , reinterpret_cast<int64_t *>(lastRowIdOutAddress)
+                    , outBuffersSize
+            );
+
+        case u'M':
+        case u'Y':
+            return findFirstLastInFrame0<u'M'>(
+                    outIndex
+                    , sampleByStart
+                    , rowIdLo
+                    , rowIdHi
+                    , reinterpret_cast<int64_t *>(timestampColAddress)
+                    , sampleByPeriodLen * (sampleByPeriodType == u'Y' ? 12 : 1)
+                    , reinterpret_cast<int64_t *>(symbolIndexAddress)
+                    , symbolIndexSize
+                    , indexFrameIndex
+                    , reinterpret_cast<int64_t *>(timestampOutAddress)
+                    , reinterpret_cast<int64_t *>(firstRowIdOutAddress)
+                    , reinterpret_cast<int64_t *>(lastRowIdOutAddress)
+                    , outBuffersSize
+            );
+
+        default:
+            // Not supported, return that noting found
+            return outIndex;
+    }
+
 }
 
 } // extern "C"
