@@ -32,7 +32,7 @@ public final class LatestByArguments {
     private static final long ROWS_ADDRESS_OFFSET = 2*8;
     private static final long ROWS_CAPACITY_OFFSET = 3*8;
     private static final long ROWS_SIZE_OFFSET = 4*8;
-    private static final long MEMORY_SIZE = 5*8;
+    public static final long MEMORY_SIZE = 5*8;
 
     public static long allocateMemory() {
         return Unsafe.calloc(MEMORY_SIZE);
@@ -40,6 +40,14 @@ public final class LatestByArguments {
 
     public static void releaseMemory(long address) {
         Unsafe.free(address, MEMORY_SIZE);
+    }
+
+    public static long allocateMemoryArray(int elements) {
+        return Unsafe.calloc(MEMORY_SIZE * elements);
+    }
+
+    public static void releaseMemoryArray(long address, int elements) {
+        Unsafe.free(address, MEMORY_SIZE * elements);
     }
 
     public static long getKeyLo(long address) {

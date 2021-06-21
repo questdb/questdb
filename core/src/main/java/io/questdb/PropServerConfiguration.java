@@ -341,6 +341,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int httpMinListenBacklog;
     private int httpMinRcvBufSize;
     private int httpMinSndBufSize;
+    private final int latestByQueueCapacity;
 
     public PropServerConfiguration(
             String root,
@@ -658,7 +659,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlAnalyticTreeKeyPageSize = Numbers.ceilPow2(getIntSize(properties, env, "cairo.sql.analytic.tree.page.size", 512 * 1024));
             this.sqlAnalyticTreeKeyMaxPages = Numbers.ceilPow2(getInt(properties, env, "cairo.sql.analytic.tree.max.pages", Integer.MAX_VALUE));
             this.sqlTxnScoreboardEntryCount = Numbers.ceilPow2(getInt(properties, env, "cairo.o3.txn.scoreboard.entry.count", 16384));
-
+            this.latestByQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.latestby.queue.capacity", 32));
             this.telemetryEnabled = getBoolean(properties, env, "telemetry.enabled", true);
             this.telemetryQueueCapacity = getInt(properties, env, "telemetry.queue.capacity", 512);
 
@@ -1907,6 +1908,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isO3QuickSortEnabled() {
             return o3QuickSortEnabled;
+        }
+
+        @Override
+        public int getLatestByQueueCapacity() {
+            return latestByQueueCapacity;
         }
     }
 

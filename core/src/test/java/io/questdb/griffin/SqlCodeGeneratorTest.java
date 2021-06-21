@@ -32,6 +32,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.engine.functions.test.TestMatchFunctionFactory;
 import io.questdb.griffin.engine.groupby.vect.GroupByJob;
+import io.questdb.griffin.engine.table.LatestByAllIndexedJob;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.Sequence;
 import io.questdb.std.Chars;

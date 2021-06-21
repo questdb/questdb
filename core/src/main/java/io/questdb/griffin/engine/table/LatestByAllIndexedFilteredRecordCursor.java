@@ -24,20 +24,15 @@
 
 package io.questdb.griffin.engine.table;
 
-import io.questdb.cairo.BitmapIndexReader;
-import io.questdb.cairo.sql.DataFrame;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.*;
+import io.questdb.std.DirectLongList;
+import io.questdb.std.IntList;
+import io.questdb.std.Rows;
 import org.jetbrains.annotations.NotNull;
 
-class LatestByAllIndexedFilteredRecordCursor extends AbstractRecordListCursor {
-
-    private final int columnIndex;
-    private final Function filter;
-    private long indexShift = 0;
-    private long aIndex;
-    private long aLimit;
+class LatestByAllIndexedFilteredRecordCursor extends LatestByAllIndexedRecordCursor {
+    protected final Function filter;
 
     public LatestByAllIndexedFilteredRecordCursor(
             int columnIndex,
@@ -45,29 +40,8 @@ class LatestByAllIndexedFilteredRecordCursor extends AbstractRecordListCursor {
             @NotNull Function filter,
             @NotNull IntList columnIndexes
     ) {
-        super(rows, columnIndexes);
-        this.columnIndex = columnIndex;
+        super(columnIndex, rows, columnIndexes);
         this.filter = filter;
-    }
-
-    @Override
-    public boolean hasNext() {
-        if (aIndex < aLimit) {
-            long row = rows.get(aIndex++) - 1; // we added 1 on cpp side
-            recordA.jumpTo(Rows.toPartitionIndex(row), Rows.toLocalRowID(row));
-            return true;
-        }
-        return false;
-    }
-
-    @Override
-    public void toTop() {
-        aIndex = indexShift;
-    }
-
-    @Override
-    public long size() {
-        return aLimit - indexShift;
     }
 
     @Override
@@ -79,51 +53,16 @@ class LatestByAllIndexedFilteredRecordCursor extends AbstractRecordListCursor {
     @Override
     protected void buildTreeMap(SqlExecutionContext executionContext) {
         filter.init(this, executionContext);
+        super.buildTreeMap(executionContext);
+        postProcessRows();
+    }
 
-        final int keyCount = getSymbolTable(columnIndex).size() + 1;
+    @Override
+    protected void postProcessRows() {
+        final long rowsCapacity = rows.getCapacity();
+        rows.setPos(rowsCapacity);
 
-        long keyLo = 0;
-        long keyHi = keyCount;
-
-        rows.extend(keyCount);
-        rows.setPos(rows.getCapacity());
-        rows.zero(0);
-
-        long rowCount = 0;
-        long argsAddress = LatestByArguments.allocateMemory();
-        LatestByArguments.setRowsAddress(argsAddress, rows.getAddress());
-        LatestByArguments.setRowsCapacity(argsAddress, rows.getCapacity());
-
-        DataFrame frame;
-        int frameColumnIndex = columnIndexes.getQuick(columnIndex);
-        while ((frame = this.dataFrameCursor.next()) != null && rowCount < keyCount) {
-            final BitmapIndexReader indexReader = frame.getBitmapIndexReader(frameColumnIndex, BitmapIndexReader.DIR_BACKWARD);
-            final long rowLo = frame.getRowLo();
-            final long rowHi = frame.getRowHi() - 1;
-            final int partitionIndex = frame.getPartitionIndex();
-
-            LatestByArguments.setKeyLo(argsAddress, keyLo);
-            LatestByArguments.setKeyHi(argsAddress, keyHi);
-            LatestByArguments.setRowsSize(argsAddress, rows.size());
-
-            BitmapIndexUtilsNative.latestScanBackward(
-                    indexReader.getKeyBaseAddress(),
-                    indexReader.getKeyMemorySize(),
-                    indexReader.getValueBaseAddress(),
-                    indexReader.getValueMemorySize(),
-                    argsAddress,
-                    indexReader.getUnIndexedNullCount(),
-                    rowHi, rowLo,
-                    partitionIndex, indexReader.getValueBlockCapacity()
-            );
-            rowCount += LatestByArguments.getRowsSize(argsAddress);
-            keyLo = LatestByArguments.getKeyLo(argsAddress);
-            keyHi = LatestByArguments.getKeyHi(argsAddress) + 1;
-        }
-        LatestByArguments.releaseMemory(argsAddress);
-
-        rows.setPos(rows.getCapacity());
-        for(long r = 0; r < rows.getCapacity(); ++r) {
+        for (long r = 0; r < rowsCapacity; ++r) {
             long row = rows.get(r) - 1;
             if (row >= 0) {
                 int partitionIndex = Rows.toPartitionIndex(row);
@@ -134,8 +73,9 @@ class LatestByAllIndexedFilteredRecordCursor extends AbstractRecordListCursor {
                 }
             }
         }
+
         rows.sortAsUnsigned();
-        while(rows.get(indexShift) <= 0) {
+        while (rows.get(indexShift) <= 0) {
             indexShift++;
         }
         aLimit = rows.size();
