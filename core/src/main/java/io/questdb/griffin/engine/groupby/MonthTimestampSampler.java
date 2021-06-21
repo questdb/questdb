@@ -53,4 +53,14 @@ class MonthTimestampSampler implements TimestampSampler {
         return Timestamps.yearMicros(y, l) +
                 Timestamps.monthOfYearMicros(n, l);
     }
+
+    @Override
+    public char getUnit() {
+        return SAMPLER_UNIT_MONTH;
+    }
+
+    @Override
+    public long getStep() {
+        return bucket;
+    }
 }

@@ -50,4 +50,14 @@ class MicroTimestampSampler implements TimestampSampler {
     public long getBucketSize() {
         return this.bucket;
     }
+
+    @Override
+    public char getUnit() {
+        return SAMPLER_UNIT_MICRO;
+    }
+
+    @Override
+    public long getStep() {
+        return bucket;
+    }
 }
