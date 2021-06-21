@@ -104,19 +104,8 @@ public class BitmapIndexBwdReader extends AbstractIndexReader {
 
         @Override
         public IndexFrame getNext() {
-            if (valueCount > 0) {
-                long cellIndex = getValueCellIndex(valueCount);
-                long address = valueMem.addressOf(valueBlockOffset);
-
-                valueCount -= cellIndex;
-                if (valueCount > 0) {
-                    jumpToPreviousValueBlock();
-                }
-
-                return indexFrame.of(address, cellIndex);
-            }
-
-            return IndexFrame.NULL_INSTANCE;
+            // See BitmapIndexFwdReader if needs implementing
+            throw new UnsupportedOperationException();
         }
 
         @Override

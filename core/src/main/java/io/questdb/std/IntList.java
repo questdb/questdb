@@ -287,7 +287,7 @@ public class IntList implements Mutable {
         return true;
     }
 
-    public int scanSearch(int v, int low, int high) {
+    private int scanSearch(int v, int low, int high) {
         for (int i = low; i < high; i++) {
             int f = buffer[i];
             if (f == v) {
