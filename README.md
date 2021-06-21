@@ -101,14 +101,16 @@ The following table shows query execution time of a billion rows run on a
   how to run and configure QuestDB with technical references.
 - [Our Slack workspace](https://slack.questdb.io) is a great place for technical
   discussions and to meet other users. :wave:
+- [GitHub discussions](https://github.com/questdb/questdb/discussions) is where
+  our users share ideas for features, ask questions, and show what they've built.
+- [GitHub issues](https://github.com/questdb/questdb/issues) are for bug reports
+  and feature requests.
+- [The project milestones](https://github.com/questdb/questdb/milestones) lists
+  the tasks and features we're working on for upcoming releases.
 - [Tutorials](https://questdb.io/tutorial/) written by our community members
   show what's possible with QuestDB.
 - [QuestDB on Stack Overflow](https://stackoverflow.com/questions/tagged/questdb)
   has common troubleshooting solutions.
-- [GitHub issues](https://github.com/questdb/questdb/issues) are used to track
-  bug reports and feature requests.
-- [The product roadmap](https://github.com/questdb/questdb/projects/3) lists the
-  tasks and features we're currently working on.
 
 ## Contribute
 
