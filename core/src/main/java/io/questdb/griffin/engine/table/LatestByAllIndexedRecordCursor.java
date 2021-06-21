@@ -24,18 +24,26 @@
 
 package io.questdb.griffin.engine.table;
 
+import io.questdb.MessageBus;
 import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.sql.DataFrame;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.*;
+import io.questdb.mp.RingQueue;
+import io.questdb.mp.SOUnboundedCountDownLatch;
+import io.questdb.mp.Sequence;
+import io.questdb.std.BitmapIndexUtilsNative;
+import io.questdb.std.DirectLongList;
+import io.questdb.std.IntList;
+import io.questdb.std.Rows;
+import io.questdb.tasks.LatestByTask;
 import org.jetbrains.annotations.NotNull;
 
 class LatestByAllIndexedRecordCursor extends AbstractRecordListCursor {
     private final int columnIndex;
-
-    private long indexShift = 0;
-    private long aIndex;
-    private long aLimit;
+    private final SOUnboundedCountDownLatch doneLatch = new SOUnboundedCountDownLatch();
+    protected long indexShift = 0;
+    protected long aIndex;
+    protected long aLimit;
 
     public LatestByAllIndexedRecordCursor(int columnIndex, DirectLongList rows, @NotNull IntList columnIndexes) {
         super(rows, columnIndexes);
@@ -64,6 +72,14 @@ class LatestByAllIndexedRecordCursor extends AbstractRecordListCursor {
 
     @Override
     protected void buildTreeMap(SqlExecutionContext executionContext) {
+        final MessageBus bus = executionContext.getMessageBus();
+        assert bus != null;
+
+        final RingQueue<LatestByTask> queue = bus.getLatestByQueue();
+        final Sequence pubSeq = bus.getLatestByPubSeq();
+        final Sequence subSeq = bus.getLatestBySubSeq();
+
+        final int workerCount = executionContext.getWorkerCount();
         int keyCount = getSymbolTable(columnIndex).size() + 1;
 
         long keyLo = 0;
@@ -73,48 +89,107 @@ class LatestByAllIndexedRecordCursor extends AbstractRecordListCursor {
         rows.setPos(rows.getCapacity());
         rows.zero(0);
 
+        final long argumentsAddress = LatestByArguments.allocateMemoryArray(workerCount);
         long rowCount = 0;
-        long argsAddress = LatestByArguments.allocateMemory();
-        LatestByArguments.setRowsAddress(argsAddress, rows.getAddress());
-        LatestByArguments.setRowsCapacity(argsAddress, rows.getCapacity());
-
         DataFrame frame;
         // frame metadata is based on TableReader, which is "full" metadata
         // this cursor works with subset of columns, which warrants column index remap
         int frameColumnIndex = columnIndexes.getQuick(columnIndex);
         while ((frame = this.dataFrameCursor.next()) != null && rowCount < keyCount) {
+            doneLatch.reset();
             final BitmapIndexReader indexReader = frame.getBitmapIndexReader(frameColumnIndex, BitmapIndexReader.DIR_BACKWARD);
+            final long frameKeyCount = keyHi - keyLo;
+
+            final long chunkSize = (frameKeyCount + workerCount - 1) / workerCount;
+            final long taskCount = (frameKeyCount + chunkSize - 1) / chunkSize;
+
             final long rowLo = frame.getRowLo();
             final long rowHi = frame.getRowHi() - 1;
 
-            LatestByArguments.setKeyLo(argsAddress, keyLo);
-            LatestByArguments.setKeyHi(argsAddress, keyHi);
-            LatestByArguments.setRowsSize(argsAddress, rows.size());
+            final long keyBaseAddress = indexReader.getKeyBaseAddress();
+            final long keysMemorySize = indexReader.getKeyMemorySize();
+            final long valueBaseAddress = indexReader.getValueBaseAddress();
+            final long valuesMemorySize = indexReader.getValueMemorySize();
+            final int valueBlockCapacity = indexReader.getValueBlockCapacity();
+            final long unIndexedNullCount = indexReader.getUnIndexedNullCount();
+            final int partitionIndex = frame.getPartitionIndex();
 
-            BitmapIndexUtilsNative.latestScanBackward(
-                    indexReader.getKeyBaseAddress(),
-                    indexReader.getKeyMemorySize(),
-                    indexReader.getValueBaseAddress(),
-                    indexReader.getValueMemorySize(),
-                    argsAddress,
-                    indexReader.getUnIndexedNullCount(),
-                    rowHi, rowLo,
-                    frame.getPartitionIndex(), indexReader.getValueBlockCapacity()
-            );
+            int queuedCount = 0;
+            for (long i = 0; i < taskCount; ++i) {
+                final long klo = i * chunkSize;
+                final long khi = Long.min(klo + chunkSize, frameKeyCount);
 
-            rowCount += LatestByArguments.getRowsSize(argsAddress);
-            keyLo = LatestByArguments.getKeyLo(argsAddress);
-            keyHi = LatestByArguments.getKeyHi(argsAddress) + 1;
+                final long argsAddress = argumentsAddress + i * LatestByArguments.MEMORY_SIZE;
+                LatestByArguments.setRowsAddress(argsAddress, rows.getAddress());
+                LatestByArguments.setRowsCapacity(argsAddress, rows.getCapacity());
+                LatestByArguments.setKeyLo(argsAddress, klo);
+                LatestByArguments.setKeyHi(argsAddress, khi);
+                LatestByArguments.setRowsSize(argsAddress, rows.size());
+
+                final long seq = pubSeq.next();
+                if (seq < 0) {
+                    BitmapIndexUtilsNative.latestScanBackward(
+                            keyBaseAddress,
+                            keysMemorySize,
+                            valueBaseAddress,
+                            valuesMemorySize,
+                            argsAddress,
+                            unIndexedNullCount,
+                            rowHi,
+                            rowLo,
+                            partitionIndex,
+                            valueBlockCapacity
+                    );
+                } else {
+                    queue.get(seq).of(
+                            keyBaseAddress,
+                            keysMemorySize,
+                            valueBaseAddress,
+                            valuesMemorySize,
+                            argsAddress,
+                            unIndexedNullCount,
+                            rowHi,
+                            rowLo,
+                            partitionIndex,
+                            valueBlockCapacity,
+                            doneLatch
+                    );
+                    pubSeq.done(seq);
+                    queuedCount++;
+                }
+            }
+
+            // process our own queue
+            // this should fix deadlock with 1 worker configuration
+            while (doneLatch.getCount() > -queuedCount) {
+                long seq = subSeq.next();
+                if (seq > -1) {
+                    queue.get(seq).run();
+                    subSeq.done(seq);
+                }
+            }
+
+            doneLatch.await(queuedCount);
+
+            for (int i = 0; i < taskCount; i++) {
+                final long addr = argumentsAddress + i * LatestByArguments.MEMORY_SIZE;
+                rowCount += LatestByArguments.getRowsSize(addr);
+                keyLo = Long.min(keyLo, LatestByArguments.getKeyLo(addr));
+                keyHi = Long.max(keyHi, LatestByArguments.getKeyHi(addr) + 1);
+            }
         }
-        LatestByArguments.releaseMemory(argsAddress);
+        LatestByArguments.releaseMemoryArray(argumentsAddress, workerCount);
+        postProcessRows();
+    }
 
+    protected void postProcessRows() {
         // we have to sort rows because multiple symbols
         // are liable to be looked up out of order
         rows.setPos(rows.getCapacity());
         rows.sortAsUnsigned();
 
         //skip "holes"
-        while(rows.get(indexShift) <= 0) {
+        while (rows.get(indexShift) <= 0) {
             indexShift++;
         }
 

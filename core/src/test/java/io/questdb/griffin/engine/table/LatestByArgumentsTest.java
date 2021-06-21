@@ -48,4 +48,30 @@ public class LatestByArgumentsTest {
             LatestByArguments.releaseMemory(address);
         });
     }
+
+    @Test
+    public void testLatestByArgumentsArray() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final int elements = 128;
+            long baseAddress = LatestByArguments.allocateMemoryArray(elements);
+            for(int i = 0; i < elements; ++i) {
+                final long address = baseAddress + i * LatestByArguments.MEMORY_SIZE;
+                LatestByArguments.setKeyLo(address, 1);
+                LatestByArguments.setKeyHi(address, 2);
+                LatestByArguments.setRowsAddress(address, 3);
+                LatestByArguments.setRowsCapacity(address, 4);
+                LatestByArguments.setRowsSize(address, 5);
+            }
+
+            for(int i = 0; i < elements; ++i) {
+                final long address = baseAddress + i * LatestByArguments.MEMORY_SIZE;
+                assertEquals(5, LatestByArguments.getRowsSize(address));
+                assertEquals(4, LatestByArguments.getRowsCapacity(address));
+                assertEquals(3, LatestByArguments.getRowsAddress(address));
+                assertEquals(2, LatestByArguments.getKeyHi(address));
+                assertEquals(1, LatestByArguments.getKeyLo(address));
+            }
+            LatestByArguments.releaseMemoryArray(baseAddress, elements);
+        });
+    }
 }

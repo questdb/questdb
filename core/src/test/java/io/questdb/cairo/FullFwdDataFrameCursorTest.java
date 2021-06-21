@@ -2570,5 +2570,20 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
         public Sequence getVectorAggregateSubSeq() {
             return null;
         }
+
+        @Override
+        public Sequence getLatestByPubSeq() {
+            return null;
+        }
+
+        @Override
+        public RingQueue<LatestByTask> getLatestByQueue() {
+            return null;
+        }
+
+        @Override
+        public Sequence getLatestBySubSeq() {
+            return null;
+        }
     }
 }
