@@ -119,26 +119,27 @@ inline int64_t sampleByNextTimestamp(int64_t timestamp, int64_t sampleByPeriodLe
     }
 }
 
-template<char16_t sampleByPeriodType>
 inline int64_t findFirstLastInFrame0(
         int64_t outIndex
         , int64_t sampleByStart
         , int64_t rowIdLo
         , int64_t rowIdHi
         , int64_t* timestampColAddress
-        , int64_t sampleByPeriodLen
+        , int64_t* sampleByPeriodsAddress
         , int64_t* symbolIndexAddress
         , int64_t symbolIndexSize
         , int64_t indexFrameIndex
         , int64_t* timestampOutAddress
         , int64_t* firstRowIdOutAddress
         , int64_t* lastRowIdOutAddress
-        , int64_t outBuffersSize) {
+        , int32_t sampleByPeriodsLen
+        ) {
 
     if (indexFrameIndex < symbolIndexSize) {
         // Sample by window start, end
-        int64_t sampleByEnd = sampleByNextTimestamp<sampleByPeriodType>(sampleByStart, sampleByPeriodLen);
-        int64_t maxOutRows = outBuffersSize - 1;
+        int32_t tsNextPeriodIndex = 0;
+        int64_t sampleByStart = sampleByPeriodsAddress[tsNextPeriodIndex++];
+        int64_t sampleByEnd = sampleByPeriodsAddress[tsNextPeriodIndex++];
 
         int64_t iIndex = indexFrameIndex;
         int64_t indexRowId = 0;
@@ -159,10 +160,15 @@ inline int64_t findFirstLastInFrame0(
                     continue;
                 }
 
-                while (indexRowTimestamp >= sampleByEnd) {
+                while (indexRowTimestamp >= sampleByEnd && tsNextPeriodIndex < sampleByPeriodsLen) {
                     // Go to next sample by window.
                     sampleByStart = sampleByEnd;
-                    int64_t sampleByEnd = sampleByNextTimestamp<sampleByPeriodType>(sampleByStart, sampleByPeriodLen);
+                    sampleByEnd = sampleByPeriodsAddress[tsNextPeriodIndex++];
+                }
+
+                // Check no overflow
+                if (indexRowTimestamp >= sampleByEnd && tsNextPeriodIndex == sampleByPeriodsLen) {
+                    break;
                 }
 
                 if (indexRowTimestamp >= sampleByStart && indexRowTimestamp < sampleByEnd) {
@@ -175,9 +181,6 @@ inline int64_t findFirstLastInFrame0(
                     sampleByStart = sampleByEnd;
                     int64_t sampleByEnd = sampleByNextTimestamp<sampleByPeriodType>(sampleByStart, sampleByPeriodLen);
 
-                    if (outIndex > maxOutRows) {
-                        break;
-                    }
                 }
             } else if (indexRowId >= rowIdHi) {
                 // Index row id is beyond data page
@@ -219,8 +222,7 @@ Java_io_questdb_std_BitmapIndexUtilsNative_findFirstLastInFrame(JNIEnv *env, jcl
         , jlong rowIdLo
         , jlong rowIdHi
         , jlong timestampColAddress
-        , jchar sampleByPeriodType
-        , jlong sampleByPeriodLen
+        , jchar sampleByPeriodsAddress
         , jlong symbolIndexAddress
         , jlong symbolIndexSize
         , jlong indexFrameIndex
@@ -228,47 +230,21 @@ Java_io_questdb_std_BitmapIndexUtilsNative_findFirstLastInFrame(JNIEnv *env, jcl
         , jint firstRowIdOutAddress
         , jint lastRowIdOutAddress
         , jint outBuffersSize) {
-    switch (sampleByPeriodType) {
-        case u'u':
-            return findFirstLastInFrame0<u'u'>(
-                    outIndex
-                    , sampleByStart
-                    , rowIdLo
-                    , rowIdHi
-                    , reinterpret_cast<int64_t *>(timestampColAddress)
-                    , sampleByPeriodLen
-                    , reinterpret_cast<int64_t *>(symbolIndexAddress)
-                    , symbolIndexSize
-                    , indexFrameIndex
-                    , reinterpret_cast<int64_t *>(timestampOutAddress)
-                    , reinterpret_cast<int64_t *>(firstRowIdOutAddress)
-                    , reinterpret_cast<int64_t *>(lastRowIdOutAddress)
-                    , outBuffersSize
-            );
-
-        case u'M':
-        case u'Y':
-            return findFirstLastInFrame0<u'M'>(
-                    outIndex
-                    , sampleByStart
-                    , rowIdLo
-                    , rowIdHi
-                    , reinterpret_cast<int64_t *>(timestampColAddress)
-                    , sampleByPeriodLen * (sampleByPeriodType == u'Y' ? 12 : 1)
-                    , reinterpret_cast<int64_t *>(symbolIndexAddress)
-                    , symbolIndexSize
-                    , indexFrameIndex
-                    , reinterpret_cast<int64_t *>(timestampOutAddress)
-                    , reinterpret_cast<int64_t *>(firstRowIdOutAddress)
-                    , reinterpret_cast<int64_t *>(lastRowIdOutAddress)
-                    , outBuffersSize
-            );
-
-        default:
-            // Not supported, return that noting found
-            return outIndex;
-    }
-
+    return findFirstLastInFrame0<u'u'>(
+            outIndex
+            , sampleByStart
+            , rowIdLo
+            , rowIdHi
+            , reinterpret_cast<int64_t *>(timestampColAddress)
+            , sampleByPeriodsAddress
+            , reinterpret_cast<int64_t *>(symbolIndexAddress)
+            , symbolIndexSize
+            , indexFrameIndex
+            , reinterpret_cast<int64_t *>(timestampOutAddress)
+            , reinterpret_cast<int64_t *>(firstRowIdOutAddress)
+            , reinterpret_cast<int64_t *>(lastRowIdOutAddress)
+            , outBuffersSize
+    );
 }
 
 } // extern "C"
