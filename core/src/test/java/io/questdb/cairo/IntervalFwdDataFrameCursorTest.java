@@ -438,7 +438,7 @@ public class IntervalFwdDataFrameCursorTest extends AbstractCairoTest {
                 }
             }
 
-            try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "x")) {
+            try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "x", "testing")) {
                 writer.removeColumn("a");
             }
 

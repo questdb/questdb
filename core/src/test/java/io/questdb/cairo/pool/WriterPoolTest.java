@@ -66,7 +66,7 @@ public class WriterPoolTest extends AbstractCairoTest {
             new Thread(() -> {
                 try {
                     for (int i = 0; i < 1000; i++) {
-                        try (TableWriter ignored = pool.get("z")) {
+                        try (TableWriter ignored = pool.get("z", "testing")) {
                             writerCount.incrementAndGet();
                         } catch (EntryUnavailableException ignored) {
                         }
@@ -121,7 +121,7 @@ public class WriterPoolTest extends AbstractCairoTest {
             sink.clear();
             sink.put("x");
 
-            TableWriter writer1 = pool.get(sink);
+            TableWriter writer1 = pool.get(sink, "testing");
             Assert.assertNotNull(writer1);
             writer1.close();
 
@@ -129,7 +129,7 @@ public class WriterPoolTest extends AbstractCairoTest {
             sink.clear();
             sink.put("y");
 
-            try (TableWriter writer2 = pool.get("x")) {
+            try (TableWriter writer2 = pool.get("x", "testing")) {
                 Assert.assertSame(writer1, writer2);
             }
         });
@@ -165,20 +165,20 @@ public class WriterPoolTest extends AbstractCairoTest {
         assertWithPool(pool -> {
 
             // fail first time
-            Assert.assertFalse(pool.lock("z"));
+            Assert.assertEquals(WriterPool.UNLOCKING, pool.lock("z", "testing"));
 
             Assert.assertTrue(ff.wasCalled());
 
-            TableWriter writer = pool.get("z");
+            TableWriter writer = pool.get("z", "testing");
             Assert.assertNotNull(writer);
             writer.close();
 
 
-            Assert.assertTrue(pool.lock("z"));
+            Assert.assertNull(pool.lock("z", "testing"));
 
             // check that we can't get writer from pool
             try {
-                pool.get("z");
+                pool.get("z", "testing");
                 Assert.fail();
             } catch (CairoException ignore) {
             }
@@ -199,7 +199,7 @@ public class WriterPoolTest extends AbstractCairoTest {
             writer.close();
 
             // check if we can create writer via pool
-            writer = pool.get("z");
+            writer = pool.get("z", "testing");
             Assert.assertNotNull(writer);
             writer.close();
         }, configuration);
@@ -222,7 +222,7 @@ public class WriterPoolTest extends AbstractCairoTest {
             pool.setPoolListener(x);
             pool.close();
             try {
-                pool.lock("x");
+                pool.lock("x", "testing");
                 Assert.fail();
             } catch (PoolClosedException ignored) {
             }
@@ -235,7 +235,7 @@ public class WriterPoolTest extends AbstractCairoTest {
         assertWithPool(pool -> {
             TableWriter x;
 
-            x = pool.get("z");
+            x = pool.get("z", "testing");
             try {
                 Assert.assertEquals(0, pool.countFreeWriters());
                 Assert.assertNotNull(x);
@@ -247,7 +247,7 @@ public class WriterPoolTest extends AbstractCairoTest {
 
             Assert.assertFalse(x.isOpen());
             try {
-                pool.get("z");
+                pool.get("z", "testing");
                 Assert.fail();
             } catch (PoolClosedException ignored) {
             }
@@ -268,7 +268,7 @@ public class WriterPoolTest extends AbstractCairoTest {
                 CountDownLatch stopLatch = new CountDownLatch(2);
 
                 // make sure writer exists in pool
-                try (TableWriter writer = pool.get("xyz")) {
+                try (TableWriter writer = pool.get("xyz", "testing")) {
                     Assert.assertNotNull(writer);
                 }
 
@@ -288,7 +288,7 @@ public class WriterPoolTest extends AbstractCairoTest {
                 new Thread(() -> {
                     try {
                         barrier.await();
-                        try (TableWriter writer = pool.get("xyz")) {
+                        try (TableWriter writer = pool.get("xyz", "testing")) {
                             Assert.assertNotNull(writer);
                         } catch (PoolClosedException | EntryUnavailableException ignore) {
                             // this can also happen when this thread is delayed enough for pool close to complete
@@ -310,17 +310,17 @@ public class WriterPoolTest extends AbstractCairoTest {
     @Test
     public void testLockNonExisting() throws Exception {
         assertWithPool(pool -> {
-            Assert.assertTrue(pool.lock("z"));
+            Assert.assertNull(pool.lock("z", "testing"));
 
             try {
-                pool.get("z");
+                pool.get("z", "testing");
                 Assert.fail();
             } catch (EntryLockedException ignored) {
             }
 
             pool.unlock("z");
 
-            try (TableWriter wx = pool.get("z")) {
+            try (TableWriter wx = pool.get("z", "testing")) {
                 Assert.assertNotNull(wx);
             }
         });
@@ -337,21 +337,21 @@ public class WriterPoolTest extends AbstractCairoTest {
         }
 
         assertWithPool(pool -> {
-            TableWriter wy = pool.get("y");
+            TableWriter wy = pool.get("y", "testing");
 
             try {
                 Assert.assertNotNull(wy);
                 Assert.assertTrue(wy.isOpen());
 
                 // check that lock is successful
-                Assert.assertTrue(pool.lock("x"));
+                Assert.assertNull(pool.lock("x", "testing"));
 
                 // check that writer x is closed and writer y is open (lock must not spill out to other writers)
                 Assert.assertTrue(wy.isOpen());
 
                 // check that when name is locked writers are not created
                 try {
-                    pool.get("x");
+                    pool.get("x", "testing");
                     Assert.fail();
                 } catch (EntryLockedException ignored) {
 
@@ -362,7 +362,7 @@ public class WriterPoolTest extends AbstractCairoTest {
 
                 // have new thread try to allocated this writer
                 new Thread(() -> {
-                    try (TableWriter ignored = pool.get("x")) {
+                    try (TableWriter ignored = pool.get("x", "testing")) {
                         result.set(false);
                     } catch (EntryUnavailableException ignored) {
                         result.set(true);
@@ -378,7 +378,7 @@ public class WriterPoolTest extends AbstractCairoTest {
 
                 pool.unlock("x");
 
-                try (TableWriter wx = pool.get("x")) {
+                try (TableWriter wx = pool.get("x", "testing")) {
                     Assert.assertNotNull(wx);
                     Assert.assertTrue(wx.isOpen());
 
@@ -402,9 +402,9 @@ public class WriterPoolTest extends AbstractCairoTest {
     @Test
     public void testNewLock() throws Exception {
         assertWithPool(pool -> {
-            Assert.assertTrue(pool.lock("z"));
+            Assert.assertNull(pool.lock("z", "testing"));
             try {
-                pool.get("z");
+                pool.get("z", "testing");
                 Assert.fail();
             } catch (EntryLockedException ignored) {
             }
@@ -419,7 +419,7 @@ public class WriterPoolTest extends AbstractCairoTest {
             TableWriter x;
             TableWriter y;
 
-            x = pool.get("z");
+            x = pool.get("z", "testing");
             try {
                 Assert.assertEquals(0, pool.countFreeWriters());
                 Assert.assertNotNull(x);
@@ -430,7 +430,7 @@ public class WriterPoolTest extends AbstractCairoTest {
 
             Assert.assertEquals(1, pool.countFreeWriters());
 
-            y = pool.get("z");
+            y = pool.get("z", "testing");
             try {
                 Assert.assertNotNull(y);
                 Assert.assertTrue(y.isOpen());
@@ -451,7 +451,7 @@ public class WriterPoolTest extends AbstractCairoTest {
                 CairoTestUtils.create(model);
             }
 
-            Assert.assertTrue(pool.lock("x"));
+            Assert.assertNull(pool.lock("x", "testing"));
 
             TableWriter writer = new TableWriter(configuration, "x", messageBus, false, DefaultLifecycleManager.INSTANCE);
             for (int i = 0; i < 100; i++) {
@@ -464,11 +464,11 @@ public class WriterPoolTest extends AbstractCairoTest {
             pool.unlock("x", writer, false);
 
             // make sure our writer stays in pool and close() doesn't destroy it
-            Assert.assertSame(writer, pool.get("x"));
+            Assert.assertSame(writer, pool.get("x", "testing"));
             writer.close();
 
             // this isn't a mistake, need to check that writer is still alive after close
-            Assert.assertSame(writer, pool.get("x"));
+            Assert.assertSame(writer, pool.get("x", "testing"));
             writer.close();
         });
     }
@@ -476,7 +476,7 @@ public class WriterPoolTest extends AbstractCairoTest {
     @Test
     public void testToStringOnWriter() throws Exception {
         assertWithPool(pool -> {
-            try (TableWriter w = pool.get("z")) {
+            try (TableWriter w = pool.get("z", "testing")) {
                 Assert.assertEquals("TableWriter{name=z}", w.toString());
             }
         });
@@ -496,7 +496,7 @@ public class WriterPoolTest extends AbstractCairoTest {
                     new Thread(() -> {
                         try {
                             barrier.await();
-                            try (TableWriter w = pool.get("z")) {
+                            try (TableWriter w = pool.get("z", "testing")) {
                                 writerCount.incrementAndGet();
                                 populate(w);
                             } catch (EntryUnavailableException ignored) {
@@ -539,17 +539,17 @@ public class WriterPoolTest extends AbstractCairoTest {
                         try {
                             barrier.await();
                             //------------- thread 1
-                            try (TableWriter w = pool.get("z")) {
+                            try (TableWriter w = pool.get("z", "testing")) {
                                 writerCount.incrementAndGet();
                                 populate(w);
 
-                                Assert.assertSame(w, pool.get("z"));
+                                Assert.assertSame(w, pool.get("z", "testing"));
 
                             } catch (EntryUnavailableException ignored) {
                             }
 
                             // lock frees up writer, make sure on next iteration threads have something to compete for
-                            if (pool.lock("z")) {
+                            if (null == pool.lock("z", "testing")) {
                                 pool.unlock("z");
                             }
                         } catch (Exception e) {
@@ -589,7 +589,7 @@ public class WriterPoolTest extends AbstractCairoTest {
                     new Thread(() -> {
                         try {
                             barrier.await();
-                            if (pool.lock("z")) {
+                            if (null == pool.lock("z", "testing")) {
                                 LockSupport.parkNanos(1);
                                 pool.unlock("z");
                             } else {
@@ -622,7 +622,7 @@ public class WriterPoolTest extends AbstractCairoTest {
     public void testUnlockInAnotherThread() throws Exception {
         assertWithPool(pool -> {
 
-            Assert.assertTrue(pool.lock("x"));
+            Assert.assertNull(pool.lock("x", "testing"));
             AtomicInteger errors = new AtomicInteger();
 
             CountDownLatch latch = new CountDownLatch(1);
@@ -646,7 +646,7 @@ public class WriterPoolTest extends AbstractCairoTest {
             Assert.assertEquals(0, errors.get());
 
             try {
-                pool.get("x");
+                pool.get("x", "testing");
                 Assert.fail();
             } catch (EntryLockedException ignore) {
             }
@@ -675,7 +675,7 @@ public class WriterPoolTest extends AbstractCairoTest {
     @Test
     public void testUnlockWriterWhenPoolIsClosed() throws Exception {
         assertWithPool(pool -> {
-            Assert.assertTrue(pool.lock("z"));
+            Assert.assertNull(pool.lock("z", "testing"));
 
             pool.close();
 
@@ -698,7 +698,7 @@ public class WriterPoolTest extends AbstractCairoTest {
             }
             X x = new X();
             pool.setPoolListener(x);
-            TableWriter w = pool.get("z");
+            TableWriter w = pool.get("z", "testing");
             Assert.assertNotNull(w);
             Assert.assertEquals(1, pool.getBusyCount());
             w.close();
@@ -740,7 +740,7 @@ public class WriterPoolTest extends AbstractCairoTest {
 
         assertWithPool(pool -> {
             try {
-                pool.get("z");
+                pool.get("z", "testing");
                 Assert.fail();
             } catch (CairoException ignore) {
             }
@@ -752,7 +752,7 @@ public class WriterPoolTest extends AbstractCairoTest {
             Assert.assertEquals(0, pool.size());
 
             // try again
-            TableWriter w = pool.get("z");
+            TableWriter w = pool.get("z", "testing");
             Assert.assertEquals(1, pool.getBusyCount());
             w.close();
         }, configuration);

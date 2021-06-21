@@ -414,7 +414,7 @@ public class PGJobContextTest extends AbstractGriffinTest {
             ) {
 
                 connection.prepareStatement("create table xyz(a int)").execute();
-                try (TableWriter ignored1 = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "xyz")) {
+                try (TableWriter ignored1 = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "xyz", "testing")) {
                     connection.prepareStatement("drop table xyz").execute();
                     Assert.fail();
                 } catch (SQLException e) {
@@ -2785,7 +2785,7 @@ nodejs code:
                 // we need to let server process disconnect and release writer
                 Thread.sleep(2000);
 
-                try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "xyz")) {
+                try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "xyz", "testing")) {
                     w.commit();
                 }
 

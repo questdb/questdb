@@ -195,7 +195,7 @@ public class TruncateTest extends AbstractGriffinTest {
 
             new Thread(() -> {
                 // lock table and wait until main thread uses it
-                try (TableWriter ignore = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "y")) {
+                try (TableWriter ignore = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "y", "testing")) {
                     useBarrier.await();
                     releaseBarrier.await();
                 } catch (Exception e) {
@@ -212,7 +212,7 @@ public class TruncateTest extends AbstractGriffinTest {
                 Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(17, e.getPosition());
-                TestUtils.assertContains(e.getFlyweightMessage(), "table 'y' is busy");
+                TestUtils.assertContains(e.getFlyweightMessage(), "table 'y' could not be truncated: [0]: table busy");
             }
 
             releaseBarrier.await();

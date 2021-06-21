@@ -90,6 +90,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     private static final int COMMIT_TRANSACTION = 2;
     private static final int ERROR_TRANSACTION = 3;
     private static final int ROLLING_BACK_TRANSACTION = 4;
+    private static final String WRITER_LOCK_REASON = "pgConnection";
     private final long recvBuffer;
     private final long sendBuffer;
     private final int recvBufferSize;
@@ -313,12 +314,12 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     }
 
     @Override
-    public TableWriter getWriter(CairoSecurityContext context, CharSequence name) {
+    public TableWriter getWriter(CairoSecurityContext context, CharSequence name, CharSequence lockReason) {
         final int index = pendingWriters.keyIndex(name);
         if (index < 0) {
             return pendingWriters.valueAt(index);
         }
-        return engine.getWriter(context, name);
+        return engine.getWriter(context, name, lockReason);
     }
 
     public void handleClientOperation(
@@ -1981,7 +1982,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
             responseAsciiSink.put(MESSAGE_TYPE_COPY_IN_RESPONSE);
             long addr = responseAsciiSink.skip();
             responseAsciiSink.put((byte) 0); // TEXT (1=BINARY, which we do not support yet)
-            try (TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), textLoader.getTableName())) {
+            try (TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), textLoader.getTableName(), WRITER_LOCK_REASON)) {
                 RecordMetadata metadata = writer.getMetadata();
                 responseAsciiSink.putNetworkShort((short) metadata.getColumnCount());
                 for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
@@ -2131,6 +2132,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
 
     public static class Portal implements Mutable {
         public CharSequence statementName = null;
+        @Override
         public void clear() {
             statementName = null;
         }
@@ -2142,6 +2144,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         public final IntList selectColumnTypes = new IntList();
         public CharSequence queryText = null;
 
+        @Override
         public void clear() {
             queryText = null;
             bindVariableTypes.clear();

@@ -82,7 +82,7 @@ public class FullFwdDataFrameCursorFactoryTest extends AbstractCairoTest {
             Assert.assertEquals(0, engine.getBusyReaderCount());
             Assert.assertEquals(M, count);
 
-            try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "x")) {
+            try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "x", "testing")) {
                 writer.removeColumn("b");
             }
 
