@@ -212,7 +212,7 @@ public class TruncateTest extends AbstractGriffinTest {
                 Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(17, e.getPosition());
-                TestUtils.assertContains(e.getFlyweightMessage(), "table 'y' is busy");
+                TestUtils.assertContains(e.getFlyweightMessage(), "table 'y' could not be truncated: [0]: table busy");
             }
 
             releaseBarrier.await();
