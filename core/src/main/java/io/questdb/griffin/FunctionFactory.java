@@ -77,6 +77,10 @@ public interface FunctionFactory {
         return false;
     }
 
+    default boolean isCast() {
+        return false;
+    }
+
     /**
      * @return true if the {@link Function} produced by the factory is guaranteed to be constant for a query such that its result does not depend on any {@link Record} in the result set (i.e. now())
      */

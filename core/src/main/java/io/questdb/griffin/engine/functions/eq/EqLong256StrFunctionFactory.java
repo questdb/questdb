@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.eq;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
@@ -51,20 +52,29 @@ public class EqLong256StrFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        final CharSequence hexLong256 = args.getQuick(1).getStr(null);
+        final Function arg = args.getQuick(1);
+        if (arg.getType() == ColumnType.NULL) {
+            return new Func(arg);
+        }
         try {
-            return DECODER.get().newInstance(args.getQuick(0), hexLong256);
+            return DECODER.get().newInstance(args.getQuick(0), arg.getStr(null));
         } catch (NumericException e) {
             throw SqlException.position(argPositions.getQuick(1)).put("invalid hex value for long256");
         }
     }
 
     private static class Func extends NegatableBooleanFunction implements UnaryFunction {
+        private static final Long256 NULL = Long256Impl.NULL_LONG256;
+
         private final Function arg;
         private final long long0;
         private final long long1;
         private final long long2;
         private final long long3;
+
+        public Func(Function arg) {
+            this(arg, NULL.getLong0(), NULL.getLong1(), NULL.getLong2(), NULL.getLong3());
+        }
 
         public Func(Function arg, long long0, long long1, long long2, long long3) {
             this.arg = arg;
@@ -107,6 +117,5 @@ public class EqLong256StrFunctionFactory implements FunctionFactory {
             decode(hexLong256, 2, hexLong256.length(), this);
             return new Func(arg, long0, long1, long2, long3);
         }
-
     }
 }
