@@ -169,6 +169,11 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
 
         @Override
         public boolean hasNext() {
+            // This loop never returns last found sample by row.
+            // The reason is that last row last() value can be changed on next data frame pass.
+            // That's why the last row values are buffered
+            // (not only rowid stored but all the values needed) in crossFrameRow.
+            // Buffering values are unavoidable since rowids of last() and first() are from different data frames
             if (++currentRow < rowsFound - 1) {
                 record.of(currentRow);
                 return true;
@@ -178,6 +183,7 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
         }
 
         private boolean hasNext0() {
+            // Check if values from the last found sample by row have to be saved in crossFrameRow
             checkCrossRowAferFoundBufferIterated();
             rowsFound = 0;
 
@@ -198,6 +204,7 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
         // - FETCH_NEXT_DATA_FRAME
         // - FETCH_NEXT_INDEX_FRAME
         // - SEARCH
+        // - RETURN_LAST_ROW
         // - DONE
         // State machine can switch states non-linear until DONE reached.
         private int getNextState(final int state) {
@@ -209,7 +216,7 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
                     crossRowState = NONE;
                     firstTimestamp = -1;
                     partitionIndex = -1;
-                    return STATE_FETCH_NEXT_DATA_FRAME;
+                    // Fall trough to STATE_FETCH_NEXT_DATA_FRAME;
 
                 case STATE_FETCH_NEXT_DATA_FRAME:
                 case STATE_FETCH_NEXT_DATA_FRAME_KEEP_INDEX:
@@ -224,9 +231,13 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
                             BitmapIndexReader symbolIndexReader = currentFrame.getBitmapIndexReader(gropuBySymbolColIndex, BitmapIndexReader.DIR_FORWARD);
                             partitionIndex = currentFrame.getPartitionIndex();
                             indexCursor = symbolIndexReader.getFrameCursor(groupBySymbolKey, dataFrameLo, dataFrameHi);
-                            return STATE_FETCH_NEXT_INDEX_FRAME;
+                            // Fall through to STATE_FETCH_NEXT_INDEX_FRAME;
                         }
-                        return state == STATE_FETCH_NEXT_DATA_FRAME_KEEP_INDEX ? STATE_SEARCH : STATE_FETCH_NEXT_INDEX_FRAME;
+                        if (state == STATE_FETCH_NEXT_DATA_FRAME_KEEP_INDEX) {
+                            // Jump to search
+                            return STATE_SEARCH;
+                        }
+                        // Fall through to STATE_FETCH_NEXT_INDEX_FRAME;
                     } else {
                         return STATE_RETURN_LAST_ROW;
                     }
@@ -238,6 +249,7 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
                     if (indexFrame.getSize() == 0) {
                         // No rows in index for this dataframe left, go to next data frame
                         frameNextRowId = dataFrameHi;
+                        // Jump back to fetch next data frame
                         return STATE_FETCH_NEXT_DATA_FRAME;
                     } else {
                         if (firstTimestamp == -1) {
@@ -245,7 +257,7 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
                             long offsetTimestampColumnAddress = currentFrame.getPageAddress(timestampIndex) - dataFrameLo * Long.BYTES;
                             firstTimestamp = Unsafe.getUnsafe().getLong(offsetTimestampColumnAddress + rowId * Long.BYTES);
                         }
-                        return STATE_SEARCH;
+                        // Fall to STATE_SEARCH;
                     }
 
                 case STATE_OUT_BUFFER_FULL:
@@ -268,14 +280,17 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
                             lastRowIdOutAddress.getAddress(),
                             BUFF_SIZE);
 
-                    boolean firstRowLastUpdated = rowsFound < 0;
+                    boolean firstRowLastRowIdUpdated = rowsFound < 0;
                     rowsFound = Math.abs(rowsFound);
-                    checkCrossRowAfterSearch(firstRowLastUpdated);
+
+                    // If first row last() RowId is updated
+                    // re-copy last values to crossFrameRow
+                    checkCrossRowAfterSearch(firstRowLastRowIdUpdated);
 
                     if (rowsFound > outStartIndex) {
                         assert rowsFound < BUFF_SIZE - 1;
 
-                        // Read output timestamp and rowId to resume at the end of the output buffers
+                        // Read output timestamp and RowId to resume at the end of the output buffers
                         indexFrameIndex = firstRowIdOutAddress.get(rowsFound);
                         frameNextRowId = lastRowIdOutAddress.get(rowsFound);
                         firstTimestamp = startTimestampOutAddress.get(rowsFound);
@@ -283,19 +298,22 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
                         // decide what to do next
                         int newState;
                         if (rowsFound == BUFF_SIZE - 1) {
+                            // Return values and next pass start from STATE_OUT_BUFFER_FULL
                             newState = STATE_OUT_BUFFER_FULL;
                         } else if (indexFrameIndex >= indexFrame.getSize()) {
+                            // Index frame exosted. Next time start from fetching new index frame
                             newState = STATE_FETCH_NEXT_INDEX_FRAME;
                         } else {
+                            // Data frame exosted. Next time start from fetching new data frame
                             newState = STATE_FETCH_NEXT_DATA_FRAME_KEEP_INDEX;
                         }
 
                         if (rowsFound > 1) {
-                            // return negative to returns rows back to sinal that there are rows to iterate
+                            // return negative to returns rows back to signal that there are rows to iterate
                             record.of(currentRow = 0);
                             return -newState;
                         }
-                        // No rows to iterate
+                        // No rows to iterate, return where to continue from (fetching next data or index frame)
                         return newState;
                     } else {
                         // Noting found, continue search
@@ -308,7 +326,7 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
                         // Signal there is a row by returning negative value
                         return -STATE_DONE;
                     }
-                    return STATE_DONE;
+                    // Fall through to STATE_DONE;
 
                 case STATE_DONE:
                     return STATE_DONE;
@@ -332,7 +350,7 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
 
         private void checkCrossRowAferFoundBufferIterated() {
             if (crossRowState != NONE && rowsFound > 1) {
-                // Copy last set of first(), last() rowids from bottom of the previous output to the top
+                // Copy last set of first(), last() RowIds from bottom of the previous output to the top
                 long lastFoundIndex = rowsFound - 1;
                 firstRowIdOutAddress.set(0, firstRowIdOutAddress.get(lastFoundIndex));
                 lastRowIdOutAddress.set(0, lastRowIdOutAddress.get(lastFoundIndex));
