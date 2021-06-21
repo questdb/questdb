@@ -36,12 +36,12 @@ public class TestListener extends RunListener {
 
     @Override
     public void testStarted(Description description) {
-        LOG.info().$(">>>> ").$(description.getClassName()).$(description.getMethodName()).$();
+        LOG.info().$(">>>> ").$(description.getClassName()).$('.').$(description.getMethodName()).$();
     }
 
     @Override
     public void testFinished(Description description) {
-        LOG.info().$("<<<< ").$(description.getClassName()).$(description.getMethodName()).$();
+        LOG.info().$("<<<< ").$(description.getClassName()).$('.').$(description.getMethodName()).$();
     }
 
     @Override
@@ -55,7 +55,7 @@ public class TestListener extends RunListener {
         Description description = failure.getDescription();
         LOG.error()
                 .$("***** Test Failed *****")
-                .$(description.getClassName())
+                .$(description.getClassName()).$('.')
                 .$(description.getMethodName())
                 .$(" : ")
                 .$(failure.getException()).$();

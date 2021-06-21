@@ -1,6 +1,7 @@
 {
   "files": [
-    "README.md"
+    "README.md",
+    "i18n/README.zh-cn.md"
   ],
   "imageSize": 100,
   "commit": false,
@@ -425,6 +426,16 @@
       "contributions": [
         "userTesting",
         "bug",
+        "ideas"
+      ]
+    },
+    {
+      "login": "marregui",
+      "name": "marregui",
+      "avatar_url": "https://avatars.githubusercontent.com/u/255796?v=4",
+      "profile": "https://www.linkedin.com/in/marregui",
+      "contributions": [
+        "code",
         "ideas"
       ]
     }

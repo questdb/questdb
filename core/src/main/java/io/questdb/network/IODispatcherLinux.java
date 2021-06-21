@@ -35,8 +35,7 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
     ) {
         super(configuration, ioContextFactory);
         this.epoll = new Epoll(configuration.getEpollFacade(), configuration.getEventCapacity());
-        this.epoll.listen(serverFd);
-        logSuccess(configuration);
+        registerListenerFd();
     }
 
     private void enqueuePending(int watermark) {
@@ -69,7 +68,7 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
     private void processIdleConnections(long deadline) {
         int count = 0;
         for (int i = 0, n = pending.size(); i < n && pending.get(i, M_TIMESTAMP) < deadline; i++, count++) {
-            doDisconnect(pending.get(i));
+            doDisconnect(pending.get(i), DISCONNECT_SRC_IDLE);
         }
         pending.zapTop(count);
     }
@@ -116,8 +115,8 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
         //  introduce a loop count after which we always exit
         boolean useful = false;
 
-        processDisconnects();
         final long timestamp = clock.getTicks();
+        processDisconnects(timestamp);
         final int n = epoll.poll();
         int watermark = pending.size();
         int offset = 0;
@@ -165,5 +164,15 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
         }
 
         return processRegistrations(timestamp) || useful;
+    }
+
+    @Override
+    protected void registerListenerFd() {
+        this.epoll.listen(serverFd);
+    }
+
+    @Override
+    protected void unregisterListenerFd() {
+        this.epoll.removeListen(serverFd);
     }
 }

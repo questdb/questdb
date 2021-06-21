@@ -66,12 +66,12 @@ public class CastSymbolToStrFunctionFactory implements FunctionFactory {
 
         @Override
         public CharSequence getStr(Record rec) {
-            return arg.getSymbol(rec);
+            return arg.getStr(rec);
         }
 
         @Override
         public CharSequence getStrB(Record rec) {
-            return arg.getSymbolB(rec);
+            return arg.getStrB(rec);
         }
 
         @Override

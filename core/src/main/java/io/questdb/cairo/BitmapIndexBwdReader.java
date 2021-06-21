@@ -24,7 +24,6 @@
 
 package io.questdb.cairo;
 
-import io.questdb.NullIndexFrameCursor;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
@@ -58,21 +57,8 @@ public class BitmapIndexBwdReader extends AbstractIndexReader {
 
     @Override
     public IndexFrameCursor getFrameCursor(int key, long minRowId, long maxRowId) {
-        if (key >= keyCount) {
-            updateKeyCount();
-        }
-
-        if (key == 0 && unIndexedNullCount > 0) {
-            return NullIndexFrameCursor.INSTANCE;
-        }
-
-        if (key < keyCount) {
-            final Cursor cursor = getCursor(false);
-            cursor.of(key, minRowId, maxRowId, keyCount);
-            return cursor;
-        }
-
-        return NullIndexFrameCursor.INSTANCE;
+        // See BitmapIndexFwdReader if needs implementing
+        throw new UnsupportedOperationException();
     }
 
     @Override

@@ -82,6 +82,15 @@ public final class Epoll implements Closeable {
         }
     }
 
+    public void removeListen(long sfd) {
+        Unsafe.getUnsafe().putInt(events + EpollAccessor.EVENTS_OFFSET, EpollAccessor.EPOLLIN | EpollAccessor.EPOLLET);
+        Unsafe.getUnsafe().putLong(events + EpollAccessor.DATA_OFFSET, 0);
+
+        if (epf.epollCtl(epollFd, EpollAccessor.EPOLL_CTL_DEL, sfd, events) != 0) {
+            throw NetworkError.instance(epf.errno(), "epoll_ctl");
+        }
+    }
+
     public int poll() {
         return epf.epollWait(epollFd, events, capacity, 0);
     }

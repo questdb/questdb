@@ -67,11 +67,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.NetworkError;
-import io.questdb.std.CharSequenceObjHashMap;
-import io.questdb.std.Misc;
-import io.questdb.std.ObjList;
-import io.questdb.std.Os;
-import io.questdb.std.Vect;
+import io.questdb.std.*;
 import io.questdb.std.datetime.millitime.Dates;
 import io.questdb.std.str.Path;
 import sun.misc.Signal;
@@ -239,7 +235,7 @@ public class ServerMain {
                 System.err.println(new Date() + " QuestDB is down");
             }));
         } catch (NetworkError e) {
-            log.error().$(e.getMessage()).$();
+            log.error().$((Sinkable) e).$();
             LockSupport.parkNanos(10000000L);
             System.exit(55);
         }

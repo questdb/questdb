@@ -24,11 +24,44 @@
 
 package io.questdb.cutlass.http;
 
+import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
+
+import java.io.InputStream;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.locks.LockSupport;
+
+import org.jetbrains.annotations.NotNull;
+import org.junit.Assert;
+import org.junit.Before;
+import org.junit.Rule;
+import org.junit.Test;
+import org.junit.rules.TemporaryFolder;
+
 import io.questdb.Metrics;
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoTestUtils;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.DefaultCairoConfiguration;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.RecordCursorPrinter;
+import io.questdb.cairo.TableModel;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TestRecord;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cutlass.NetUtils;
-import io.questdb.cutlass.http.processors.*;
+import io.questdb.cutlass.http.processors.HealthCheckProcessor;
+import io.questdb.cutlass.http.processors.JsonQueryProcessor;
+import io.questdb.cutlass.http.processors.QueryCache;
+import io.questdb.cutlass.http.processors.StaticContentProcessor;
+import io.questdb.cutlass.http.processors.TextImportProcessor;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -37,9 +70,35 @@ import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.engine.functions.test.TestLatchedCounterFunctionFactory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.mp.*;
-import io.questdb.network.*;
-import io.questdb.std.*;
+import io.questdb.mp.MPSequence;
+import io.questdb.mp.RingQueue;
+import io.questdb.mp.SCSequence;
+import io.questdb.mp.SOCountDownLatch;
+import io.questdb.mp.WorkerPool;
+import io.questdb.mp.WorkerPoolConfiguration;
+import io.questdb.network.DefaultIODispatcherConfiguration;
+import io.questdb.network.IOContext;
+import io.questdb.network.IOContextFactory;
+import io.questdb.network.IODispatcher;
+import io.questdb.network.IODispatcherConfiguration;
+import io.questdb.network.IODispatchers;
+import io.questdb.network.IOOperation;
+import io.questdb.network.IORequestProcessor;
+import io.questdb.network.Net;
+import io.questdb.network.NetworkFacade;
+import io.questdb.network.NetworkFacadeImpl;
+import io.questdb.network.PeerDisconnectedException;
+import io.questdb.network.PeerIsSlowToReadException;
+import io.questdb.std.Chars;
+import io.questdb.std.Files;
+import io.questdb.std.LongHashSet;
+import io.questdb.std.LongList;
+import io.questdb.std.ObjList;
+import io.questdb.std.Os;
+import io.questdb.std.Rnd;
+import io.questdb.std.StationaryMillisClock;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Zip;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.AbstractCharSequence;
@@ -47,28 +106,18 @@ import io.questdb.std.str.ByteSequence;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
-import org.jetbrains.annotations.NotNull;
-import org.junit.Assert;
-import org.junit.Before;
-import org.junit.Rule;
-import org.junit.Test;
-import org.junit.rules.TemporaryFolder;
-
-import java.io.InputStream;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.CyclicBarrier;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicLong;
-import java.util.concurrent.locks.LockSupport;
-
-import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 
 public class IODispatcherTest {
+    public static final String JSON_DDL_RESPONSE = "0d\r\n" +
+            "{\"ddl\":\"OK\"}\n\r\n" +
+            "00\r\n" +
+            "\r\n";
+
     private static final Log LOG = LogFactory.getLog(IODispatcherTest.class);
     private static final RescheduleContext EmptyRescheduleContext = (retry) -> {
     };
     private static final RecordCursorPrinter printer = new RecordCursorPrinter();
+    private static final Metrics metrics = Metrics.enabled();
     private final String ValidImportResponse = "HTTP/1.1 200 OK\r\n" +
             "Server: questDB/1.0\r\n" +
             "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
@@ -96,7 +145,6 @@ public class IODispatcherTest {
     @Rule
     public TemporaryFolder temp = new TemporaryFolder();
     private long configuredMaxQueryResponseRowLimit = Long.MAX_VALUE;
-    private static Metrics metrics = Metrics.enabled();
 
     public static void createTestTable(CairoConfiguration configuration, int n) {
         try (TableModel model = new TableModel(configuration, "y", PartitionBy.NONE)) {
@@ -156,6 +204,11 @@ public class IODispatcherTest {
                         public int getInitialBias() {
                             return IODispatcherConfiguration.BIAS_WRITE;
                         }
+
+                        @Override
+                        public boolean getPeerNoLinger() {
+                            return false;
+                        }
                     },
                     (fd, dispatcher1) -> {
                         connectLatch.countDown();
@@ -172,7 +225,7 @@ public class IODispatcherTest {
                                 (operation, context) -> {
                                     if (operation == IOOperation.WRITE) {
                                         Assert.assertEquals(1024, Net.send(context.getFd(), context.buffer, 1024));
-                                        context.dispatcher.disconnect(context);
+                                        context.dispatcher.disconnect(context, IODispatcher.DISCONNECT_REASON_TEST);
                                     }
                                 }
                         );
@@ -185,28 +238,28 @@ public class IODispatcherTest {
                 try {
                     long sockAddr = Net.sockaddr("127.0.0.1", 9001);
                     try {
-                        Assert.assertTrue(fd > -1);
-                        Assert.assertEquals(0, Net.connect(fd, sockAddr));
-
-                        connectLatch.await();
-
-                        long buffer = Unsafe.malloc(2048);
                         try {
-                            Assert.assertEquals(1024, Net.recv(fd, buffer, 1024));
+                            TestUtils.assertConnect(fd, sockAddr);
+
+                            connectLatch.await();
+
+                            long buffer = Unsafe.malloc(2048);
+                            try {
+                                Assert.assertEquals(1024, Net.recv(fd, buffer, 1024));
+                            } finally {
+                                Unsafe.free(buffer, 2048);
+                            }
+
+
+                            Assert.assertEquals(0, Net.close(fd));
+                            LOG.info().$("closed [fd=").$(fd).$(']').$();
+                            fd = -1;
+
+                            contextClosedLatch.await();
                         } finally {
-                            Unsafe.free(buffer, 2048);
+                            serverRunning.set(false);
+                            serverHaltLatch.await();
                         }
-
-
-                        Assert.assertEquals(0, Net.close(fd));
-                        LOG.info().$("closed [fd=").$(fd).$(']').$();
-                        fd = -1;
-
-                        contextClosedLatch.await();
-
-                        serverRunning.set(false);
-                        serverHaltLatch.await();
-
                         Assert.assertEquals(0, dispatcher.getConnectionCount());
                     } finally {
                         Net.freeSockAddr(sockAddr);
@@ -215,6 +268,78 @@ public class IODispatcherTest {
                     if (fd != -1) {
                         Net.close(fd);
                     }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testCannotSetNonBlocking() throws Exception {
+        assertMemoryLeak(() -> {
+            final HttpContextConfiguration httpContextConfiguration = new DefaultHttpContextConfiguration();
+            final NetworkFacade nf = new NetworkFacadeImpl() {
+                long theFd;
+
+                @Override
+                public long accept(long serverFd) {
+                    long fd = super.accept(serverFd);
+                    theFd = fd;
+                    return fd;
+                }
+
+                @Override
+                public int configureNonBlocking(long fd) {
+                    if (fd == theFd) {
+                        return -1;
+                    }
+                    return super.configureNonBlocking(fd);
+                }
+            };
+
+
+            try (IODispatcher<HttpConnectionContext> dispatcher = IODispatchers.create(
+                    new DefaultIODispatcherConfiguration() {
+                        @Override
+                        public NetworkFacade getNetworkFacade() {
+                            return nf;
+                        }
+                    },
+                    (fd, dispatcher1) -> new HttpConnectionContext(httpContextConfiguration).of(fd, dispatcher1)
+            )) {
+
+                // spin up dispatcher thread
+                AtomicBoolean dispatcherRunning = new AtomicBoolean(true);
+                SOCountDownLatch dispatcherHaltLatch = new SOCountDownLatch(1);
+
+                new Thread(() -> {
+                    while (dispatcherRunning.get()) {
+                        dispatcher.run(0);
+                    }
+                    dispatcherHaltLatch.countDown();
+                }).start();
+
+                try {
+
+                    long socketAddr = Net.sockaddr(Net.parseIPv4("127.0.0.1"), 9001);
+                    long fd = Net.socketTcp(true);
+                    try {
+                        TestUtils.assertConnect(fd, socketAddr);
+
+                        int bufLen = 512;
+                        long mem = Unsafe.malloc(bufLen);
+                        try {
+                            Assert.assertEquals(-2, Net.recv(fd, mem, bufLen));
+                        } finally {
+                            Unsafe.free(mem, bufLen);
+                        }
+                    } finally {
+                        Net.close(fd);
+                        Net.freeSockAddr(socketAddr);
+                    }
+
+                } finally {
+                    dispatcherRunning.set(false);
+                    dispatcherHaltLatch.await();
                 }
             }
         });
@@ -290,20 +415,21 @@ public class IODispatcherTest {
                 try {
                     long sockAddr = Net.sockaddr("127.0.0.1", 9001);
                     try {
-                        Assert.assertTrue(fd > -1);
-                        Assert.assertEquals(0, Net.connect(fd, sockAddr));
+                        try {
+                            TestUtils.assertConnect(fd, sockAddr);
 
-                        connectLatch.await();
+                            connectLatch.await();
 
-                        Assert.assertEquals(0, Net.close(fd));
-                        LOG.info().$("closed [fd=").$(fd).$(']').$();
-                        fd = -1;
+                            Assert.assertEquals(0, Net.close(fd));
+                            LOG.info().$("closed [fd=").$(fd).$(']').$();
+                            fd = -1;
 
-                        contextClosedLatch.await();
+                            contextClosedLatch.await();
 
-                        serverRunning.set(false);
-                        serverHaltLatch.await();
-
+                        } finally {
+                            serverRunning.set(false);
+                            serverHaltLatch.await();
+                        }
                         Assert.assertEquals(0, dispatcher.getConnectionCount());
                     } finally {
                         Net.freeSockAddr(sockAddr);
@@ -1839,10 +1965,7 @@ public class IODispatcherTest {
                             "Content-Type: application/json; charset=utf-8\r\n" +
                             "Keep-Alive: timeout=5, max=10000\r\n" +
                             "\r\n" +
-                            "0c\r\n" +
-                            "{\"ddl\":\"OK\"}\r\n" +
-                            "00\r\n" +
-                            "\r\n",
+                            JSON_DDL_RESPONSE,
                     1,
                     0,
                     false
@@ -1870,10 +1993,7 @@ public class IODispatcherTest {
                             "Content-Type: application/json; charset=utf-8\r\n" +
                             "Keep-Alive: timeout=5, max=10000\r\n" +
                             "\r\n" +
-                            "0c\r\n" +
-                            "{\"ddl\":\"OK\"}\r\n" +
-                            "00\r\n" +
-                            "\r\n",
+                            JSON_DDL_RESPONSE,
                     1,
                     0,
                     false
@@ -1938,10 +2058,7 @@ public class IODispatcherTest {
                             "Content-Type: application/json; charset=utf-8\r\n" +
                             "Keep-Alive: timeout=5, max=10000\r\n" +
                             "\r\n" +
-                            "0c\r\n" +
-                            "{\"ddl\":\"OK\"}\r\n" +
-                            "00\r\n" +
-                            "\r\n",
+                            JSON_DDL_RESPONSE,
                     1,
                     0,
                     false
@@ -1969,10 +2086,7 @@ public class IODispatcherTest {
                             "Content-Type: application/json; charset=utf-8\r\n" +
                             "Keep-Alive: timeout=5, max=10000\r\n" +
                             "\r\n" +
-                            "0c\r\n" +
-                            "{\"ddl\":\"OK\"}\r\n" +
-                            "00\r\n" +
-                            "\r\n",
+                            JSON_DDL_RESPONSE,
                     1,
                     0,
                     false
@@ -2031,10 +2145,7 @@ public class IODispatcherTest {
                             "Content-Type: application/json; charset=utf-8\r\n" +
                             "Keep-Alive: timeout=5, max=10000\r\n" +
                             "\r\n" +
-                            "0c\r\n" +
-                            "{\"ddl\":\"OK\"}\r\n" +
-                            "00\r\n" +
-                            "\r\n",
+                            JSON_DDL_RESPONSE,
                     1,
                     0,
                     false
@@ -2096,10 +2207,7 @@ public class IODispatcherTest {
                         "Content-Type: application/json; charset=utf-8\r\n" +
                         "Keep-Alive: timeout=5, max=10000\r\n" +
                         "\r\n" +
-                        "0c\r\n" +
-                        "{\"ddl\":\"OK\"}\r\n" +
-                        "00\r\n" +
-                        "\r\n",
+                        JSON_DDL_RESPONSE,
                 1
         );
     }
@@ -2183,8 +2291,7 @@ public class IODispatcherTest {
                     try {
                         long sockAddr = NetworkFacadeImpl.INSTANCE.sockaddr("127.0.0.1", 9001);
                         try {
-                            Assert.assertTrue(fd > -1);
-                            Assert.assertEquals(0, NetworkFacadeImpl.INSTANCE.connect(fd, sockAddr));
+                            TestUtils.assertConnect(fd, sockAddr);
                             Assert.assertEquals(0, NetworkFacadeImpl.INSTANCE.setTcpNoDelay(fd, true));
 
                             final int len = request.length() * 2;
@@ -2248,10 +2355,7 @@ public class IODispatcherTest {
                         "Content-Type: application/json; charset=utf-8\r\n" +
                         "Keep-Alive: timeout=5, max=10000\r\n" +
                         "\r\n" +
-                        "0c\r\n" +
-                        "{\"ddl\":\"OK\"}\r\n" +
-                        "00\r\n" +
-                        "\r\n",
+                        JSON_DDL_RESPONSE,
                 1
         );
     }
@@ -2843,10 +2947,7 @@ public class IODispatcherTest {
                             "Content-Type: application/json; charset=utf-8\r\n" +
                             "Keep-Alive: timeout=5, max=10000\r\n" +
                             "\r\n" +
-                            "0c\r\n" +
-                            "{\"ddl\":\"OK\"}\r\n" +
-                            "00\r\n" +
-                            "\r\n",
+                            JSON_DDL_RESPONSE,
                     1,
                     0,
                     false
@@ -2901,10 +3002,7 @@ public class IODispatcherTest {
                             "Content-Type: application/json; charset=utf-8\r\n" +
                             "Keep-Alive: timeout=5, max=10000\r\n" +
                             "\r\n" +
-                            "0c\r\n" +
-                            "{\"ddl\":\"OK\"}\r\n" +
-                            "00\r\n" +
-                            "\r\n",
+                            JSON_DDL_RESPONSE,
                     1,
                     0,
                     false
@@ -2995,10 +3093,7 @@ public class IODispatcherTest {
                             "Content-Type: application/json; charset=utf-8\r\n" +
                             "Keep-Alive: timeout=5, max=10000\r\n" +
                             "\r\n" +
-                            "0c\r\n" +
-                            "{\"ddl\":\"OK\"}\r\n" +
-                            "00\r\n" +
-                            "\r\n",
+                            JSON_DDL_RESPONSE,
                     1,
                     0,
                     false
@@ -3026,10 +3121,7 @@ public class IODispatcherTest {
                             "Content-Type: application/json; charset=utf-8\r\n" +
                             "Keep-Alive: timeout=5, max=10000\r\n" +
                             "\r\n" +
-                            "0c\r\n" +
-                            "{\"ddl\":\"OK\"}\r\n" +
-                            "00\r\n" +
-                            "\r\n",
+                            JSON_DDL_RESPONSE,
                     1,
                     0,
                     false
@@ -3088,8 +3180,8 @@ public class IODispatcherTest {
                             "Content-Type: application/json; charset=utf-8\r\n" +
                             "Keep-Alive: timeout=5, max=10000\r\n" +
                             "\r\n" +
-                            "0c\r\n" +
-                            "{\"ddl\":\"OK\"}\r\n" +
+                            "0d\r\n" +
+                            "{\"ddl\":\"OK\"}\n\r\n" +
                             "00\r\n" +
                             "\r\n",
                     1,
@@ -3441,8 +3533,10 @@ public class IODispatcherTest {
                             false,
                             true
                     );
-                }, false,
-                true);
+                },
+                false,
+                true
+        );
     }
 
     @Test
@@ -3562,7 +3656,8 @@ public class IODispatcherTest {
             });
             try (
                     CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir));
-                    HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, false)) {
+                    HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, false)
+            ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
                     public HttpRequestProcessor newInstance() {
@@ -3745,8 +3840,7 @@ public class IODispatcherTest {
                     try {
                         long sockAddr = nf.sockaddr("127.0.0.1", 9001);
                         try {
-                            Assert.assertTrue(fd > -1);
-                            Assert.assertEquals(0, nf.connect(fd, sockAddr));
+                            TestUtils.assertConnect(fd, sockAddr);
                             Assert.assertEquals(0, nf.setTcpNoDelay(fd, true));
                             refClientFd.set(fd);
                             nf.configureNonBlocking(fd);
@@ -3870,13 +3964,13 @@ public class IODispatcherTest {
 
     @Test
     public void testMaxConnections() throws Exception {
-
         LOG.info().$("started maxConnections").$();
-
         assertMemoryLeak(() -> {
             HttpServerConfiguration httpServerConfiguration = new DefaultHttpServerConfiguration();
 
-            int N = 15;
+            final int listenBackLog = 10;
+            final int activeConnectionLimit = 5;
+            final int nExcessConnections = 20;
 
             AtomicInteger openCount = new AtomicInteger(0);
             AtomicInteger closeCount = new AtomicInteger(0);
@@ -3884,14 +3978,25 @@ public class IODispatcherTest {
             final IODispatcherConfiguration configuration = new DefaultIODispatcherConfiguration() {
                 @Override
                 public int getActiveConnectionLimit() {
-                    return N;
+                    return activeConnectionLimit;
+                }
+
+                @Override
+                public int getListenBacklog() {
+                    return listenBackLog;
+                }
+
+                @Override
+                public long getQueuedConnectionTimeout() {
+                    return 300_000;
                 }
             };
 
             try (IODispatcher<HttpConnectionContext> dispatcher = IODispatchers.create(
                     configuration,
                     new IOContextFactory<HttpConnectionContext>() {
-                        @Override
+                        @SuppressWarnings("resource")
+						@Override
                         public HttpConnectionContext newInstance(long fd, IODispatcher<HttpConnectionContext> dispatcher1) {
                             openCount.incrementAndGet();
                             return new HttpConnectionContext(httpServerConfiguration.getHttpContextConfiguration()) {
@@ -3925,29 +4030,38 @@ public class IODispatcherTest {
                 SOCountDownLatch serverHaltLatch = new SOCountDownLatch(1);
 
                 new Thread(() -> {
-                    do {
-                        dispatcher.run(0);
-                        dispatcher.processIOQueue(
-                                (operation, context) -> context.handleClientOperation(operation, selector, EmptyRescheduleContext)
-                        );
-                    } while (serverRunning.get());
-                    serverHaltLatch.countDown();
+                	try {
+	                    do {
+	                        dispatcher.run(0);
+	                        dispatcher.processIOQueue(
+	                                (operation, context) -> context.handleClientOperation(operation, selector, EmptyRescheduleContext)
+	                        );
+	                    } while (serverRunning.get());
+                	} finally {
+                		serverHaltLatch.countDown();
+                	}
                 }).start();
 
                 LongList openFds = new LongList();
+                LongHashSet closedFds = new LongHashSet();
 
                 final long sockAddr = Net.sockaddr("127.0.0.1", 9001);
                 final long buf = Unsafe.malloc(4096);
+                final int N = activeConnectionLimit + listenBackLog;
                 try {
                     for (int i = 0; i < N; i++) {
                         long fd = Net.socketTcp(true);
-                        Assert.assertTrue(fd > -1);
-                        Assert.assertEquals(0, Net.connect(fd, sockAddr));
+                        TestUtils.assertConnect(fd, sockAddr);
                         openFds.add(fd);
                     }
 
                     // let dispatcher catchup
-                    while (dispatcher.getConnectionCount() < N) {
+                    long startNanos = System.nanoTime();
+                    while (dispatcher.isListening()) {
+                        long endNanos = System.nanoTime();
+                        if (TimeUnit.NANOSECONDS.toSeconds(endNanos - startNanos) > 30) {
+                            Assert.fail("Timed out waiting for despatcher to stop listening");
+                        }
                         LockSupport.parkNanos(1);
                     }
 
@@ -3961,35 +4075,52 @@ public class IODispatcherTest {
                             "Accept-Language: en-US,en;q=0.8\r\n" +
                             "Cookie: textwrapon=false; textautoformat=false; wysiwyg=textarea\r\n" +
                             "\r\n";
-
                     long mem = TestUtils.toMemory(request);
+
+                    // Active connection limit is reached and backlog is full, check we get connection closed
+                    for (int i = 0; i < nExcessConnections; i++) {
+                        long fd = Net.socketTcp(true);
+                        if (fd > 0) {
+                            int nSent = Net.send(fd, mem, request.length());
+                            Assert.assertTrue(nSent < 0);
+                            Net.close(fd);
+                        }
+                    }
+
                     try {
                         for (int i = 0; i < N; i++) {
+                            if (i == activeConnectionLimit) {
+                                for (int j = 0; j < activeConnectionLimit; j++) {
+                                	long fd = openFds.getQuick(j);
+                                    Net.close(fd);
+                                    closedFds.add(fd);
+                               }
+                            }
+
                             long fd = openFds.getQuick(i);
                             Assert.assertEquals(request.length(), Net.send(fd, mem, request.length()));
                             // ensure we have response from server
                             Assert.assertTrue(0 < Net.recv(fd, buf, 64));
-                        }
 
-                        long fd = Net.socketTcp(true);
-                        try {
-                            Net.connect(fd, sockAddr);
-
-                            Assert.assertEquals(request.length(), Net.send(fd, mem, request.length()));
-                            // ensure we got disconnected
-                            Assert.assertTrue(0 > Net.recv(fd, buf, 64));
-
-                        } finally {
-                            Net.close(fd);
+                            if (i < activeConnectionLimit) {
+                                // dont close any connections until the first connections have been processed and check that the dispatcher
+                                // is not listening
+                                Assert.assertFalse(dispatcher.isListening());
+                            } else {
+                                Net.close(fd);
+                                closedFds.add(fd);
+                            }
                         }
                     } finally {
-                        // close all fds we built up so far
-                        for (int i = 0; i < N; i++) {
-                            Net.close(openFds.getQuick(i));
-                        }
                         Unsafe.free(mem, request.length());
                     }
                 } finally {
+                    for (int i=0; i<openFds.size(); i++) {
+                    	long fd = openFds.getQuick(i);
+                    	if (! closedFds.contains(fd)) {
+                    		Net.close(fd);
+                    	}
+                    }
                     Net.freeSockAddr(sockAddr);
                     Unsafe.free(buf, 4096);
                     Assert.assertFalse(configuration.getActiveConnectionLimit() < dispatcher.getConnectionCount());
@@ -4000,6 +4131,201 @@ public class IODispatcherTest {
         });
     }
 
+    @Test
+    public void testQueuedConnectionTimeout() throws Exception {
+        LOG.info().$("started testQueuedConnectionTimeout").$();
+        assertMemoryLeak(() -> {
+            final int listenBackLog = 10;
+            final int activeConnectionLimit = 5;
+            final long queuedConnectionTimeoutInMs = 250;
+
+            final IODispatcherConfiguration configuration = new DefaultIODispatcherConfiguration() {
+                @Override
+                public int getActiveConnectionLimit() {
+                    return activeConnectionLimit;
+                }
+
+                @Override
+                public int getListenBacklog() {
+                    return listenBackLog;
+                }
+
+                @Override
+                public long getQueuedConnectionTimeout() {
+                    return queuedConnectionTimeoutInMs;
+                }
+            };
+
+            final AtomicInteger nConnected = new AtomicInteger();
+            final LongHashSet serverConnectedFds = new LongHashSet();
+            final LongHashSet clientActiveFds = new LongHashSet();
+            IOContextFactory<IOContext> contextFactory = new IOContextFactory<IOContext>() {
+                @Override
+                public IOContext newInstance(long fd, IODispatcher<IOContext> dispatcher) {
+                    LOG.info().$(fd).$(" connected").$();
+                    serverConnectedFds.add(fd);
+                    nConnected.incrementAndGet();
+                    return new IOContext() {
+                        @Override
+                        public boolean invalid() {
+                            return !serverConnectedFds.contains(fd);
+                        }
+
+                        @Override
+                        public long getFd() {
+                            return fd;
+                        }
+
+                        @Override
+                        public IODispatcher<?> getDispatcher() {
+                            return dispatcher;
+                        }
+
+                        @Override
+                        public void close() {
+                            LOG.info().$(fd).$(" disconnected").$();
+                            serverConnectedFds.remove(fd);
+                        }
+                    };
+                }
+            };
+            final String request = "\n";
+            long mem = TestUtils.toMemory(request);
+
+            final long sockAddr = Net.sockaddr("127.0.0.1", 9001);
+            Thread serverThread = null;
+            final CountDownLatch serverLatch = new CountDownLatch(1);
+            try (IODispatcher<IOContext> dispatcher = IODispatchers.create(configuration, contextFactory)) {
+                serverThread = new Thread("test-io-dispatcher") {
+                    @Override
+                    public void run() {
+                        long smem = Unsafe.malloc(1);
+                        try {
+                            IORequestProcessor<IOContext> requestProcessor = new IORequestProcessor<IOContext>() {
+                                @Override
+                                public void onRequest(int operation, IOContext context) {
+                                    long fd = context.getFd();
+                                    int rc;
+                                    switch(operation) {
+                                        case IOOperation.READ:
+                                            rc = Net.recv(fd, smem, 1);
+                                            if (rc == 1) {
+                                                dispatcher.registerChannel(context, IOOperation.WRITE);
+                                            } else {
+                                                dispatcher.disconnect(context, IODispatcher.DISCONNECT_REASON_TEST);
+                                            }
+                                            break;
+                                        case IOOperation.WRITE:
+                                            rc = Net.send(fd, smem, 1);
+                                            if (rc == 1) {
+                                                dispatcher.registerChannel(context, IOOperation.READ);
+                                            } else {
+                                                dispatcher.disconnect(context, IODispatcher.DISCONNECT_REASON_TEST);
+                                            }
+                                            break;
+                                        default:
+                                            dispatcher.disconnect(context, IODispatcher.DISCONNECT_REASON_TEST);
+                                    }
+                                }
+                            };
+                            do {
+                                dispatcher.run(0);
+                                dispatcher.processIOQueue(requestProcessor);
+                                Thread.yield();
+                            } while (!isInterrupted());
+                        } finally {
+                            Unsafe.free(smem, 1);
+                            serverLatch.countDown();
+                        }
+                    }
+                };
+                serverThread.setDaemon(true);
+                serverThread.start();
+
+                // Connect exactly the right amount of clients to fill the active connection and connection backlog, after the
+                // queuedConnectionTimeoutInMs the connections in the backlog should get refused
+                int nClientConnects = 0;
+                int nClientConnectRefused = 0;
+                for (int i = 0; i < listenBackLog + activeConnectionLimit; i++) {
+                    long fd = Net.socketTcp(true);
+                    Assert.assertTrue(fd > -1);
+                    clientActiveFds.add(fd);
+                    if (Net.connect(fd, sockAddr) != 0) {
+                        nClientConnectRefused++;
+                        continue;
+                    }
+                    int rc = Net.send(fd, mem, request.length());
+                    if (rc < 0) {
+                        nClientConnectRefused++;
+                        continue;
+                    }
+                    rc = Net.recv(fd, mem, request.length());
+                    if (rc < 0) {
+                        nClientConnectRefused++;
+                    } else {
+                        nClientConnects++;
+                    }
+                }
+                Assert.assertEquals(activeConnectionLimit, nClientConnects);
+                Assert.assertEquals(listenBackLog, nClientConnectRefused);
+                Assert.assertFalse(dispatcher.isListening());
+
+                // Close all connections and wait for server to resume listening
+                while (clientActiveFds.size() > 0) {
+                    long fd = clientActiveFds.get(0);
+                    clientActiveFds.remove(fd);
+                    Net.close(fd);
+                }
+                long timeoutMs = System.currentTimeMillis() + TimeUnit.MINUTES.toMillis(1);
+                while (!dispatcher.isListening()) {
+                    if (System.currentTimeMillis() > timeoutMs) {
+                        Assert.fail("Timeout waiting for server to start listening again");
+                    }
+                }
+
+                // Try connections again to make sure server is listening
+                nClientConnects = 0;
+                nClientConnectRefused = 0;
+                for (int i = 0; i < listenBackLog + activeConnectionLimit; i++) {
+                    long fd = Net.socketTcp(true);
+                    Assert.assertTrue(fd > -1);
+                    clientActiveFds.add(fd);
+                    if (Net.connect(fd, sockAddr) != 0) {
+                        nClientConnectRefused++;
+                        continue;
+                    }
+                    int rc = Net.send(fd, mem, request.length());
+                    if (rc < 0) {
+                        nClientConnectRefused++;
+                        continue;
+                    }
+                    rc = Net.recv(fd, mem, request.length());
+                    if (rc < 0) {
+                        nClientConnectRefused++;
+                    } else {
+                        nClientConnects++;
+                    }
+                }
+                Assert.assertEquals(activeConnectionLimit, nClientConnects);
+                Assert.assertEquals(listenBackLog, nClientConnectRefused);
+                Assert.assertFalse(dispatcher.isListening());
+
+                // Close all remaining client connections
+                for (int n = 0; n < clientActiveFds.size(); n++) {
+                    long fd = clientActiveFds.get(n);
+                    Net.close(fd);
+                }
+                serverThread.interrupt();
+                if (!serverLatch.await(1, TimeUnit.MINUTES)) {
+                    Assert.fail("Timeout waiting for server to end");
+                }
+            } finally {
+                Net.freeSockAddr(sockAddr);
+                Unsafe.free(mem, request.length());
+            }
+        });
+    }
+    
     @Test
     public void testMissingContentDisposition() throws Exception {
         testImport(
@@ -4108,8 +4434,7 @@ public class IODispatcherTest {
             try {
                 long sockAddr = NetworkFacadeImpl.INSTANCE.sockaddr("127.0.0.1", 9001);
                 try {
-                    Assert.assertTrue(fd > -1);
-                    Assert.assertEquals(0, NetworkFacadeImpl.INSTANCE.connect(fd, sockAddr));
+                    TestUtils.assertConnect(fd, sockAddr);
                     Assert.assertEquals(0, NetworkFacadeImpl.INSTANCE.setTcpNoDelay(fd, true));
 
                     final String request = "GET HTTP/1.1\r\n" +
@@ -4300,8 +4625,7 @@ public class IODispatcherTest {
 
                                 for (int j = 0; j < 10; j++) {
                                     long fd = Net.socketTcp(true);
-                                    Assert.assertTrue(fd > -1);
-                                    Assert.assertEquals(0, Net.connect(fd, sockAddr));
+                                    TestUtils.assertConnect(fd, sockAddr);
                                     try {
                                         sendRequest(request, fd, buffer);
                                         assertDownloadResponse(fd, rnd, buffer, netBufferLen, diskBufferLen, expectedResponseHeader, 20971670);
@@ -4331,8 +4655,7 @@ public class IODispatcherTest {
 
                                 for (int i = 0; i < 3; i++) {
                                     long fd = Net.socketTcp(true);
-                                    Assert.assertTrue(fd > -1);
-                                    Assert.assertEquals(0, Net.connect(fd, sockAddr));
+                                    TestUtils.assertConnect(fd, sockAddr);
                                     try {
                                         sendRequest(request2, fd, buffer);
                                         assertDownloadResponse(fd, rnd, buffer, netBufferLen, 0, expectedResponseHeader2, 126);
@@ -4344,8 +4667,7 @@ public class IODispatcherTest {
                                 // couple more full downloads after 304
                                 for (int j = 0; j < 2; j++) {
                                     long fd = Net.socketTcp(true);
-                                    Assert.assertTrue(fd > -1);
-                                    Assert.assertEquals(0, Net.connect(fd, sockAddr));
+                                    TestUtils.assertConnect(fd, sockAddr);
                                     try {
                                         sendRequest(request, fd, buffer);
                                         assertDownloadResponse(fd, rnd, buffer, netBufferLen, diskBufferLen, expectedResponseHeader, 20971670);
@@ -4445,8 +4767,7 @@ public class IODispatcherTest {
                         try {
                             long sockAddr = Net.sockaddr("127.0.0.1", 9001);
                             try {
-                                Assert.assertTrue(fd > -1);
-                                Assert.assertEquals(0, Net.connect(fd, sockAddr));
+                                TestUtils.assertConnect(fd, sockAddr);
 
                                 int netBufferLen = 4 * 1024;
                                 long buffer = Unsafe.calloc(netBufferLen);
@@ -4558,7 +4879,15 @@ public class IODispatcherTest {
     public void testSCPHttp10() throws Exception {
         assertMemoryLeak(() -> {
             final String baseDir = temp.getRoot().getAbsolutePath();
-            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(NetworkFacadeImpl.INSTANCE, baseDir, 16 * 1024, false, false, false, "HTTP/1.0 ");
+            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(
+                    NetworkFacadeImpl.INSTANCE,
+                    baseDir,
+                    16 * 1024,
+                    false,
+                    false,
+                    false,
+                    "HTTP/1.0 "
+            );
             final WorkerPool workerPool = new WorkerPool(new WorkerPoolConfiguration() {
                 @Override
                 public int[] getWorkerAffinity() {
@@ -4598,8 +4927,6 @@ public class IODispatcherTest {
 
                         writeRandomFile(path, rnd, 122222212222L);
 
-//                        httpServer.getStartedLatch().await();
-
                         long sockAddr = Net.sockaddr("127.0.0.1", 9001);
                         try {
                             int netBufferLen = 4 * 1024;
@@ -4629,11 +4956,18 @@ public class IODispatcherTest {
 
                                 for (int j = 0; j < 1; j++) {
                                     long fd = Net.socketTcp(true);
-                                    Assert.assertTrue(fd > -1);
-                                    Assert.assertEquals(0, Net.connect(fd, sockAddr));
+                                    TestUtils.assertConnect(fd, sockAddr);
                                     try {
                                         sendRequest(request, fd, buffer);
-                                        assertDownloadResponse(fd, rnd, buffer, netBufferLen, diskBufferLen, expectedResponseHeader, 20971670);
+                                        assertDownloadResponse(
+                                                fd,
+                                                rnd,
+                                                buffer,
+                                                netBufferLen,
+                                                diskBufferLen,
+                                                expectedResponseHeader,
+                                                20971670
+                                        );
                                     } finally {
                                         Net.close(fd);
                                     }
@@ -4661,8 +4995,7 @@ public class IODispatcherTest {
 
                                 for (int i = 0; i < 3; i++) {
                                     long fd = Net.socketTcp(true);
-                                    Assert.assertTrue(fd > -1);
-                                    Assert.assertEquals(0, Net.connect(fd, sockAddr));
+                                    TestUtils.assertConnect(fd, sockAddr);
                                     try {
                                         sendRequest(request2, fd, buffer);
                                         assertDownloadResponse(fd, rnd, buffer, netBufferLen, 0, expectedResponseHeader2, 126);
@@ -4674,8 +5007,7 @@ public class IODispatcherTest {
                                 // couple more full downloads after 304
                                 for (int j = 0; j < 2; j++) {
                                     long fd = Net.socketTcp(true);
-                                    Assert.assertTrue(fd > -1);
-                                    Assert.assertEquals(0, Net.connect(fd, sockAddr));
+                                    TestUtils.assertConnect(fd, sockAddr);
                                     try {
                                         sendRequest(request, fd, buffer);
                                         assertDownloadResponse(fd, rnd, buffer, netBufferLen, diskBufferLen, expectedResponseHeader, 20971670);
@@ -4712,8 +5044,7 @@ public class IODispatcherTest {
 
                                 for (int i = 0; i < 4; i++) {
                                     long fd = Net.socketTcp(true);
-                                    Assert.assertTrue(fd > -1);
-                                    Assert.assertEquals(0, Net.connect(fd, sockAddr));
+                                    TestUtils.assertConnect(fd, sockAddr);
                                     try {
                                         sendRequest(request3, fd, buffer);
                                         assertDownloadResponse(fd, rnd, buffer, netBufferLen, 0, expectedResponseHeader3, expectedResponseHeader3.length());
@@ -4726,8 +5057,7 @@ public class IODispatcherTest {
 
                                 for (int i = 0; i < 3; i++) {
                                     long fd = Net.socketTcp(true);
-                                    Assert.assertTrue(fd > -1);
-                                    Assert.assertEquals(0, Net.connect(fd, sockAddr));
+                                    TestUtils.assertConnect(fd, sockAddr);
                                     try {
                                         sendRequest(request2, fd, buffer);
                                         assertDownloadResponse(fd, rnd, buffer, netBufferLen, 0, expectedResponseHeader2, 126);
@@ -4861,8 +5191,7 @@ public class IODispatcherTest {
                 try {
                     long sockAddr = Net.sockaddr("127.0.0.1", 9001);
                     try {
-                        Assert.assertTrue(fd > -1);
-                        Assert.assertEquals(0, Net.connect(fd, sockAddr));
+                        TestUtils.assertConnect(fd, sockAddr);
 
                         connectLatch.await();
 
@@ -5035,8 +5364,7 @@ public class IODispatcherTest {
                 try {
                     long sockAddr = Net.sockaddr("127.0.0.1", 9001);
                     try {
-                        Assert.assertTrue(fd > -1);
-                        Assert.assertEquals(0, Net.connect(fd, sockAddr));
+                        TestUtils.assertConnect(fd, sockAddr);
 
                         connectLatch.await();
 
@@ -5120,6 +5448,11 @@ public class IODispatcherTest {
                             // 0.5s idle timeout
                             return 500;
                         }
+
+                        @Override
+                        public boolean getPeerNoLinger() {
+                            return false;
+                        }
                     },
                     new IOContextFactory<HttpConnectionContext>() {
                         @Override
@@ -5191,8 +5524,7 @@ public class IODispatcherTest {
                 try {
                     long sockAddr = Net.sockaddr("127.0.0.1", 9001);
                     try {
-                        Assert.assertTrue(fd > -1);
-                        Assert.assertEquals(0, Net.connect(fd, sockAddr));
+                        TestUtils.assertConnect(fd, sockAddr);
                         Net.setTcpNoDelay(fd, true);
 
                         connectLatch.await();
@@ -5232,6 +5564,37 @@ public class IODispatcherTest {
                 Assert.assertEquals(1, closeCount.get());
             }
         });
+    }
+
+    @Test
+    public void testTextQueryCreateTable() throws Exception {
+        testJsonQuery(
+                20,
+                "GET /exp?query=%0A%0A%0Acreate+table+balances_x+(%0A%09cust_id+int%2C+%0A%09balance_ccy+symbol%2C+%0A%09balance+double%2C+%0A%09status+byte%2C+%0A%09timestamp+timestamp%0A)&limit=0%2C1000&count=true HTTP/1.1\r\n" +
+                        "Host: localhost:9000\r\n" +
+                        "Connection: keep-alive\r\n" +
+                        "Accept: */*\r\n" +
+                        "X-Requested-With: XMLHttpRequest\r\n" +
+                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.87 Safari/537.36\r\n" +
+                        "Sec-Fetch-Site: same-origin\r\n" +
+                        "Sec-Fetch-Mode: cors\r\n" +
+                        "Referer: http://localhost:9000/index.html\r\n" +
+                        "Accept-Encoding: gzip, deflate, br\r\n" +
+                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                        "\r\n",
+                "HTTP/1.1 200 OK\r\n" +
+                        "Server: questDB/1.0\r\n" +
+                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                        "Transfer-Encoding: chunked\r\n" +
+                        "Content-Type: text/csv; charset=utf-8\r\n" +
+                        "Keep-Alive: timeout=5, max=10000\r\n" +
+                        "\r\n" +
+                        "0c\r\n" +
+                        "DDL Success\n\r\n" +
+                        "00\r\n" +
+                        "\r\n",
+                1
+        );
     }
 
     @Test
@@ -5308,7 +5671,7 @@ public class IODispatcherTest {
     }
 
     @Test
-    // this test is ignore for the time being because it is unstable on OSX and I
+    // this test is ignored for the time being because it is unstable on OSX and I
     // have not figured out the reason yet. I would like to see if this test
     // runs any different on Linux, just to narrow the problem down to either
     // dispatcher or Http parser.
@@ -5339,7 +5702,7 @@ public class IODispatcherTest {
                 "cookie:textwrapon=false; textautoformat=false; wysiwyg=textarea\r\n" +
                 "\r\n";
 
-        final int N = 1000;
+        final int N = 100;
         final int serverThreadCount = 2;
         final int senderCount = 2;
 
@@ -5362,136 +5725,142 @@ public class IODispatcherTest {
                 SCSequence subSeq = new SCSequence();
                 pubSeq.then(subSeq).then(pubSeq);
 
-                AtomicBoolean serverRunning = new AtomicBoolean(true);
+                final AtomicBoolean serverRunning = new AtomicBoolean(true);
+                final SOCountDownLatch serverHaltLatch = new SOCountDownLatch(serverThreadCount);
 
-                SOCountDownLatch serverHaltLatch = new SOCountDownLatch(serverThreadCount);
-                for (int j = 0; j < serverThreadCount; j++) {
-                    new Thread(() -> {
-                        final StringSink sink = new StringSink();
-                        final long responseBuf = Unsafe.malloc(32);
-                        Unsafe.getUnsafe().putByte(responseBuf, (byte) 'A');
+                try {
+                    for (int j = 0; j < serverThreadCount; j++) {
+                        new Thread(() -> {
+                            final StringSink sink = new StringSink();
+                            final long responseBuf = Unsafe.malloc(32);
+                            Unsafe.getUnsafe().putByte(responseBuf, (byte) 'A');
 
-                        final HttpRequestProcessor processor = new HttpRequestProcessor() {
-                            @Override
-                            public void onHeadersReady(HttpConnectionContext context) {
-                                HttpRequestHeader headers = context.getRequestHeader();
-                                sink.clear();
-                                sink.put(headers.getMethodLine());
-                                sink.put("\r\n");
-                                ObjList<CharSequence> headerNames = headers.getHeaderNames();
-                                for (int i = 0, n = headerNames.size(); i < n; i++) {
-                                    sink.put(headerNames.getQuick(i)).put(':');
-                                    sink.put(headers.getHeader(headerNames.getQuick(i)));
+                            final HttpRequestProcessor processor = new HttpRequestProcessor() {
+                                @Override
+                                public void onHeadersReady(HttpConnectionContext context) {
+                                    HttpRequestHeader headers = context.getRequestHeader();
+                                    sink.clear();
+                                    sink.put(headers.getMethodLine());
                                     sink.put("\r\n");
-                                }
-                                sink.put("\r\n");
-
-                                boolean result;
-                                try {
-                                    TestUtils.assertEquals(expected, sink);
-                                    result = true;
-                                } catch (Exception e) {
-                                    result = false;
-                                }
-
-                                while (true) {
-                                    long cursor = pubSeq.next();
-                                    if (cursor < 0) {
-                                        continue;
+                                    ObjList<CharSequence> headerNames = headers.getHeaderNames();
+                                    for (int i = 0, n = headerNames.size(); i < n; i++) {
+                                        sink.put(headerNames.getQuick(i)).put(':');
+                                        sink.put(headers.getHeader(headerNames.getQuick(i)));
+                                        sink.put("\r\n");
                                     }
-                                    queue.get(cursor).valid = result;
-                                    pubSeq.done(cursor);
-                                    break;
-                                }
+                                    sink.put("\r\n");
 
-                                requestsReceived.incrementAndGet();
-
-                                nf.send(context.getFd(), responseBuf, 1);
-                            }
-                        };
-
-                        HttpRequestProcessorSelector selector = new HttpRequestProcessorSelector() {
-
-                            @Override
-                            public HttpRequestProcessor select(CharSequence url) {
-                                return null;
-                            }
-
-                            @Override
-                            public HttpRequestProcessor getDefaultProcessor() {
-                                return processor;
-                            }
-
-                            @Override
-                            public void close() {
-                            }
-                        };
-
-                        while (serverRunning.get()) {
-                            dispatcher.run(0);
-                            dispatcher.processIOQueue(
-                                    (operation, context) -> context.handleClientOperation(operation, selector, EmptyRescheduleContext)
-                            );
-                        }
-
-                        Unsafe.free(responseBuf, 32);
-                        serverHaltLatch.countDown();
-                    }).start();
-                }
-
-                AtomicInteger completedCount = new AtomicInteger();
-                for (int j = 0; j < senderCount; j++) {
-                    int k = j;
-                    new Thread(() -> {
-                        long sockAddr = Net.sockaddr("127.0.0.1", 9001);
-                        try {
-                            for (int i = 0; i < N && !finished.get(); i++) {
-                                long fd = Net.socketTcp(true);
-                                try {
-                                    Assert.assertTrue(fd > -1);
-                                    Assert.assertEquals(0, Net.connect(fd, sockAddr));
-
-                                    int len = request.length();
-                                    long buffer = TestUtils.toMemory(request);
+                                    boolean result;
                                     try {
-                                        Assert.assertEquals(len, Net.send(fd, buffer, len));
-                                        Assert.assertEquals("fd=" + fd + ", i=" + i, 1, Net.recv(fd, buffer, 1));
-                                        LOG.info().$("i=").$(i).$(", j=").$(k).$();
-                                        Assert.assertEquals('A', Unsafe.getUnsafe().getByte(buffer));
-                                    } finally {
-                                        Unsafe.free(buffer, len);
+                                        TestUtils.assertEquals(expected, sink);
+                                        result = true;
+                                    } catch (Exception e) {
+                                        result = false;
                                     }
-                                } finally {
-                                    Net.close(fd);
+
+                                    while (true) {
+                                        long cursor = pubSeq.next();
+                                        if (cursor < 0) {
+                                            continue;
+                                        }
+                                        queue.get(cursor).valid = result;
+                                        pubSeq.done(cursor);
+                                        break;
+                                    }
+
+                                    requestsReceived.incrementAndGet();
+
+                                    nf.send(context.getFd(), responseBuf, 1);
                                 }
+                            };
+
+                            HttpRequestProcessorSelector selector = new HttpRequestProcessorSelector() {
+
+                                @Override
+                                public HttpRequestProcessor select(CharSequence url) {
+                                    return null;
+                                }
+
+                                @Override
+                                public HttpRequestProcessor getDefaultProcessor() {
+                                    return processor;
+                                }
+
+                                @Override
+                                public void close() {
+                                }
+                            };
+
+                            while (serverRunning.get()) {
+                                dispatcher.run(0);
+                                dispatcher.processIOQueue(
+                                        (operation, context) -> context.handleClientOperation(operation, selector, EmptyRescheduleContext)
+                                );
                             }
-                        } finally {
-                            completedCount.incrementAndGet();
-                            Net.freeSockAddr(sockAddr);
-                            senderHalt.countDown();
-                        }
-                    }).start();
-                }
 
-                int receiveCount = 0;
-                while (receiveCount < N * senderCount) {
-                    long cursor = subSeq.next();
-                    if (cursor < 0) {
-                        if (cursor == -1 && completedCount.get() == senderCount) {
-                            Assert.fail("Not all requests successful, test failed, see previous failures");
-                            break;
-                        }
-                        Thread.yield();
-                        continue;
+                            Unsafe.free(responseBuf, 32);
+                            serverHaltLatch.countDown();
+                        }).start();
                     }
-                    boolean valid = queue.get(cursor).valid;
-                    subSeq.done(cursor);
-                    Assert.assertTrue(valid);
-                    receiveCount++;
-                }
 
-                serverRunning.set(false);
-                serverHaltLatch.await();
+                    AtomicInteger completedCount = new AtomicInteger();
+                    for (int j = 0; j < senderCount; j++) {
+                        int k = j;
+                        new Thread(() -> {
+                            long sockAddr = Net.sockaddr("127.0.0.1", 9001);
+                            try {
+                                for (int i = 0; i < N && !finished.get(); i++) {
+                                    long fd = Net.socketTcp(true);
+                                    try {
+                                        TestUtils.assertConnect(fd, sockAddr);
+                                        int len = request.length();
+                                        long buffer = TestUtils.toMemory(request);
+                                        try {
+                                            Assert.assertEquals(len, Net.send(fd, buffer, len));
+                                            Assert.assertEquals("fd=" + fd + ", i=" + i, 1, Net.recv(fd, buffer, 1));
+                                            LOG.info().$("i=").$(i).$(", j=").$(k).$();
+                                            Assert.assertEquals('A', Unsafe.getUnsafe().getByte(buffer));
+                                        } finally {
+                                            Unsafe.free(buffer, len);
+                                        }
+                                    } finally {
+                                        Net.close(fd);
+                                    }
+                                }
+                            } finally {
+                                completedCount.incrementAndGet();
+                                Net.freeSockAddr(sockAddr);
+                                senderHalt.countDown();
+                            }
+                        }).start();
+                    }
+
+                    int receiveCount = 0;
+                    while (receiveCount < N * senderCount) {
+                        long cursor = subSeq.next();
+                        if (cursor < 0) {
+                            if (cursor == -1 && completedCount.get() == senderCount) {
+                                Assert.fail("Not all requests successful, test failed, see previous failures");
+                                break;
+                            }
+                            Thread.yield();
+                            continue;
+                        }
+                        boolean valid = queue.get(cursor).valid;
+                        subSeq.done(cursor);
+                        Assert.assertTrue(valid);
+                        receiveCount++;
+                    }
+                } catch (Throwable e) {
+                    e.printStackTrace();
+                    throw e;
+                } finally {
+                    serverRunning.set(false);
+                    serverHaltLatch.await();
+                }
+            } catch (Throwable e) {
+                e.printStackTrace();
+                throw e;
             } finally {
                 finished.set(true);
                 senderHalt.await();

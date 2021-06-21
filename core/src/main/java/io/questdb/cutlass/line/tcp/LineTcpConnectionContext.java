@@ -212,7 +212,7 @@ class LineTcpConnectionContext implements IOContext, Mutable {
         return this;
     }
 
-    protected final boolean read() {
+    protected boolean read() {
         int bufferRemaining = (int) (recvBufEnd - recvBufPos);
         final int orig = bufferRemaining;
         if (bufferRemaining > 0 && !peerDisconnected) {

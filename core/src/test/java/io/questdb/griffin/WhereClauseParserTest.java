@@ -849,7 +849,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
 
     @Test
     public void testIntervalSourceHour() throws Exception {
-        runWhereCompareToModelTest("timestamp in '1970-01-01;30m;5h;10'", "[{lo=2015-02-23T10:00:55.000000Z, hi=2015-02-23T10:10:55.000000Z}," +
+        runWhereCompareToModelTest("timestamp in '1970-01-01.000000Z;30m;5h;10'", "[{lo=2015-02-23T10:00:55.000000Z, hi=2015-02-23T10:10:55.000000Z}," +
                 "{lo=2015-02-23T13:00:55.000000Z, hi=2015-02-23T13:10:55.000000Z}," +
                 "{lo=2015-02-23T16:00:55.000000Z, hi=2015-02-23T16:10:55.000000Z}," +
                 "{lo=2015-02-23T19:00:55.000000Z, hi=2015-02-23T19:10:55.000000Z}," +

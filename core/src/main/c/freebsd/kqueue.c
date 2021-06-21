@@ -72,6 +72,10 @@ JNIEXPORT jshort JNICALL Java_io_questdb_network_KqueueAccessor_getEvOneshot
     return EV_ONESHOT;
 }
 
+JNIEXPORT jshort JNICALL Java_io_questdb_network_KqueueAccessor_getEvDelete
+        (JNIEnv *e, jclass cl) {
+    return EV_DELETE;
+}
 
 JNIEXPORT jint JNICALL Java_io_questdb_network_KqueueAccessor_kqueue
         (JNIEnv *e, jclass cl) {
