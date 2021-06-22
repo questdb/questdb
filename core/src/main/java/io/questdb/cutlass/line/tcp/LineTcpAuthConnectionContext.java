@@ -192,7 +192,7 @@ class LineTcpAuthConnectionContext extends LineTcpConnectionContext {
             authState = AuthState.COMPLETE;
             compactBuffer(recvBufStart + lineEnd + 1);
             // we must reset start of measurement address
-            recvBufStartOfMeasurement = recvBufStart;
+            resetParser();
             LOG.info().$('[').$(fd).$("] authentication success").$();
         }
     }

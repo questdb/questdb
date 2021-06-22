@@ -236,7 +236,7 @@ class LineTcpConnectionContext implements IOContext, Mutable {
         return !peerDisconnected;
     }
 
-    private void resetParser() {
+    protected void resetParser() {
         protoParser.of(recvBufStart);
         goodMeasurement = true;
         recvBufStartOfMeasurement = recvBufStart;
