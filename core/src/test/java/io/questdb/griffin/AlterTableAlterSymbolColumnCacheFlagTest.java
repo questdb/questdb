@@ -102,7 +102,7 @@ public class AlterTableAlterSymbolColumnCacheFlagTest extends AbstractGriffinTes
                 printer.print(reader.getCursor(), reader.getMetadata(), true, sink);
                 Assert.assertEquals(expectedChronological, sink.toString());
 
-                try (TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x")) {
+                try (TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "testing")) {
                     writer.changeCacheFlag(1, false);
                 }
                 //reload reader
@@ -176,7 +176,7 @@ public class AlterTableAlterSymbolColumnCacheFlagTest extends AbstractGriffinTes
                 printer.print(reader.getCursor(), reader.getMetadata(), true, sink);
                 Assert.assertEquals(expectedChronological, sink.toString());
 
-                try (TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x")) {
+                try (TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "testing")) {
                     writer.changeCacheFlag(1, true);
                 }
                 //reload reader

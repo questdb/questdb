@@ -48,7 +48,7 @@ public class MinFloatGroupByFunctionFactoryTest extends AbstractGriffinTest {
 
         compiler.compile("create table tab (f float)", sqlExecutionContext);
 
-        try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "tab")) {
+        try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "tab", "testing")) {
             for (int i = 100; i > 10; i--) {
                 TableWriter.Row r = w.newRow();
                 r.append();
@@ -72,7 +72,7 @@ public class MinFloatGroupByFunctionFactoryTest extends AbstractGriffinTest {
         compiler.compile("create table tab (f float)", sqlExecutionContext);
 
         final Rnd rnd = new Rnd();
-        try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "tab")) {
+        try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "tab", "testing")) {
             TableWriter.Row r = w.newRow();
             r.append();
             for (int i = 100; i > 10; i--) {
@@ -99,7 +99,7 @@ public class MinFloatGroupByFunctionFactoryTest extends AbstractGriffinTest {
         compiler.compile("create table tab (f float)", sqlExecutionContext);
 
         final Rnd rnd = new Rnd();
-        try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "tab")) {
+        try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "tab", "testing")) {
             for (int i = 100; i > 10; i--) {
                 TableWriter.Row r = w.newRow();
                 r.putFloat(0, rnd.nextFloat());

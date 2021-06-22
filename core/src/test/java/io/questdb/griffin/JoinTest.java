@@ -59,8 +59,8 @@ public class JoinTest extends AbstractGriffinTest {
             );
 
             try (
-                    TableWriter orders = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "orders");
-                    TableWriter quotes = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "quotes")
+                    TableWriter orders = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "orders", "testing");
+                    TableWriter quotes = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "quotes", "testing")
             ) {
                 TableWriter.Row rOrders;
                 TableWriter.Row rQuotes;
@@ -2989,8 +2989,8 @@ public class JoinTest extends AbstractGriffinTest {
                     "create table quotes (sym SYMBOL, bid DOUBLE, ask DOUBLE, timestamp TIMESTAMP) timestamp(timestamp)", sqlExecutionContext);
 
             try (
-                    TableWriter orders = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "orders");
-                    TableWriter quotes = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "quotes")
+                    TableWriter orders = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "orders", "testing");
+                    TableWriter quotes = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "quotes", "testing")
             ) {
                 TableWriter.Row rOrders;
                 TableWriter.Row rQuotes;

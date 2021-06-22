@@ -47,7 +47,8 @@ import java.io.Closeable;
 
 public class TelemetryJob extends SynchronizedJob implements Closeable {
     private static final Log LOG = LogFactory.getLog(TelemetryJob.class);
-
+    private static final String WRITER_LOCK_REASON = "telemetryJob";
+    
     private final static CharSequence tableName = "telemetry";
     private final static CharSequence configTableName = "telemetry_config";
     private final MicrosecondClock clock;
@@ -80,7 +81,7 @@ public class TelemetryJob extends SynchronizedJob implements Closeable {
 
             if (enabled) {
                 try {
-                    this.writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName);
+                    this.writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, WRITER_LOCK_REASON);
                 } catch (CairoException ex) {
                     LOG.error()
                             .$("could not open [table=`").utf8(tableName)
@@ -154,7 +155,7 @@ public class TelemetryJob extends SynchronizedJob implements Closeable {
             SqlExecutionContextImpl sqlExecutionContext,
             boolean enabled
     ) throws SqlException {
-        final TableWriter configWriter = compiler.getEngine().getWriter(AllowAllCairoSecurityContext.INSTANCE, configTableName);
+        final TableWriter configWriter = compiler.getEngine().getWriter(AllowAllCairoSecurityContext.INSTANCE, configTableName, WRITER_LOCK_REASON);
         final CompiledQuery cc = compiler.compile(configTableName + " LIMIT -1", sqlExecutionContext);
         try (final RecordCursor cursor = cc.getRecordCursorFactory().getCursor(sqlExecutionContext)) {
             if (cursor.hasNext()) {

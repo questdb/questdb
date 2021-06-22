@@ -721,8 +721,9 @@ public class SqlCompiler implements Closeable {
         CharSequence tok = GenericLexer.unquote(expectToken(lexer, "table name"));
         tableExistsOrFail(tableNamePosition, tok, executionContext);
         try {
-            if (!engine.lockWriter(tok)) {
-                throw SqlException.$(tableNamePosition, "could not lock, busy [table=`").put(tok).put("`]");
+            CharSequence lockedReason = engine.lockWriter(tok, "alterSystem");
+            if (null != lockedReason) {
+                throw SqlException.$(tableNamePosition, "could not lock, busy [table=`").put(tok).put(", lockedReason=").put(lockedReason).put("`]");
             }
         } catch (CairoException e) {
             throw SqlException.position(tableNamePosition)
@@ -756,7 +757,7 @@ public class SqlCompiler implements Closeable {
             tableExistsOrFail(tableNamePosition, tok, executionContext);
 
             CharSequence tableName = GenericLexer.immutableOf(tok);
-            try (TableWriter writer = engine.getWriter(executionContext.getCairoSecurityContext(), tableName)) {
+            try (TableWriter writer = engine.getWriter(executionContext.getCairoSecurityContext(), tableName, "alterTable")) {
 
                 tok = expectToken(lexer, "'add', 'alter' or 'drop'");
 
@@ -1553,7 +1554,8 @@ public class SqlCompiler implements Closeable {
         final CreateTableModel createTableModel = (CreateTableModel) model;
         final ExpressionNode name = createTableModel.getName();
 
-        if (engine.lock(executionContext.getCairoSecurityContext(), name.token)) {
+        CharSequence lockedReason = engine.lock(executionContext.getCairoSecurityContext(), name.token, "createTable");
+        if (null == lockedReason) {
             TableWriter writer = null;
             boolean newTable = false;
             try {
@@ -1581,7 +1583,7 @@ public class SqlCompiler implements Closeable {
                 engine.unlock(executionContext.getCairoSecurityContext(), name.token, writer, newTable);
             }
         } else {
-            throw SqlException.$(name.position, "cannot acquire table lock");
+            throw SqlException.$(name.position, "cannot acquire table lock [lockedReason=").put(lockedReason).put(']');
         }
 
         return compiledQuery.ofCreateTable();
@@ -1787,7 +1789,7 @@ public class SqlCompiler implements Closeable {
         final ExpressionNode name = model.getTableName();
         tableExistsOrFail(name.position, name.token, executionContext);
 
-        try (TableWriter writer = engine.getWriter(executionContext.getCairoSecurityContext(), name.token);
+        try (TableWriter writer = engine.getWriter(executionContext.getCairoSecurityContext(), name.token, "insertAsSelect");
              RecordCursorFactory factory = generate(model.getQueryModel(), executionContext)) {
 
             final RecordMetadata cursorMetadata = factory.getMetadata();
@@ -2184,10 +2186,10 @@ public class SqlCompiler implements Closeable {
                     tableExistsOrFail(lexer.lastTokenPosition(), tok, executionContext);
 
                     try {
-                        tableWriters.add(engine.getWriter(executionContext.getCairoSecurityContext(), tok));
+                        tableWriters.add(engine.getWriter(executionContext.getCairoSecurityContext(), tok, "truncateTables"));
                     } catch (CairoException e) {
                         LOG.info().$("table busy [table=").$(tok).$(", e=").$((Sinkable) e).$(']').$();
-                        throw SqlException.$(lexer.lastTokenPosition(), "table '").put(tok).put("' is busy");
+                        throw SqlException.$(lexer.lastTokenPosition(), "table '").put(tok).put("' could not be truncated: ").put(e);
                     }
                     tok = SqlUtil.fetchNext(lexer);
                     if (tok == null || Chars.equals(tok, ';')) {

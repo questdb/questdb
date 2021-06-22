@@ -60,6 +60,7 @@ import io.questdb.std.str.Path;
 
 public class CairoLineProtoParser implements LineProtoParser, Closeable {
     private final static Log LOG = LogFactory.getLog(CairoLineProtoParser.class);
+    private static final String WRITER_LOCK_REASON = "ilpUdp";
     private static final LineEndParser NOOP_LINE_END = cache -> {
     };
     private static final FieldValueParser NOOP_FIELD_VALUE = (value, cache) -> {
@@ -188,7 +189,7 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
     }
 
     private void appendFirstRowAndCacheWriter(CharSequenceCache cache) {
-        TableWriter writer = engine.getWriter(cairoSecurityContext, cache.get(tableName));
+        TableWriter writer = engine.getWriter(cairoSecurityContext, cache.get(tableName), WRITER_LOCK_REASON);
         this.writer = writer;
         this.metadata = writer.getMetadata();
         this.columnCount = metadata.getColumnCount();
@@ -240,7 +241,7 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
 
     private void cacheWriter(CacheEntry entry, CachedCharSequence tableName) {
         try {
-            entry.writer = engine.getWriter(cairoSecurityContext, tableName);
+            entry.writer = engine.getWriter(cairoSecurityContext, tableName, WRITER_LOCK_REASON);
             this.tableName = tableName.getCacheAddress();
             createState(entry);
             LOG.info().$("cached writer [name=").$(tableName).$(']').$();

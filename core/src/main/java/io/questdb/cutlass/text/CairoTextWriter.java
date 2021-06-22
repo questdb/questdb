@@ -39,6 +39,7 @@ import java.io.Closeable;
 
 public class CairoTextWriter implements Closeable, Mutable {
     private static final Log LOG = LogFactory.getLog(CairoTextWriter.class);
+    private static final String WRITER_LOCK_REASON = "textWriter";
     private final CairoConfiguration configuration;
     private final CairoEngine engine;
     private final LongList columnErrorCounts = new LongList();
@@ -232,7 +233,7 @@ public class CairoTextWriter implements Closeable, Mutable {
             ObjList<TypeAdapter> detectedTypes
     ) {
 
-        TableWriter writer = engine.getWriter(cairoSecurityContext, tableName);
+        TableWriter writer = engine.getWriter(cairoSecurityContext, tableName, WRITER_LOCK_REASON);
         RecordMetadata metadata = writer.getMetadata();
 
         // now, compare column count.
@@ -297,13 +298,13 @@ public class CairoTextWriter implements Closeable, Mutable {
         switch (engine.getStatus(cairoSecurityContext, path, tableName)) {
             case TableUtils.TABLE_DOES_NOT_EXIST:
                 createTable(names, detectedTypes, cairoSecurityContext);
-                writer = engine.getWriter(cairoSecurityContext, tableName);
+                writer = engine.getWriter(cairoSecurityContext, tableName, WRITER_LOCK_REASON);
                 break;
             case TableUtils.TABLE_EXISTS:
                 if (overwrite) {
                     engine.remove(cairoSecurityContext, path, tableName);
                     createTable(names, detectedTypes, cairoSecurityContext);
-                    writer = engine.getWriter(cairoSecurityContext, tableName);
+                    writer = engine.getWriter(cairoSecurityContext, tableName, WRITER_LOCK_REASON);
                 } else {
                     writer = openWriterAndOverrideImportTypes(cairoSecurityContext, detectedTypes);
                     designatedTimestampColumnName = writer.getDesignatedTimestampColumnName();

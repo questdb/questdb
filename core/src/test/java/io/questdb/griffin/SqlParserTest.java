@@ -5660,7 +5660,8 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testTableNameLocked() throws Exception {
         assertMemoryLeak(() -> {
-            engine.lock(AllowAllCairoSecurityContext.INSTANCE, "tab");
+            CharSequence lockedReason = engine.lock(AllowAllCairoSecurityContext.INSTANCE, "tab", "testing");
+            Assert.assertNull(lockedReason);
             try {
                 TableModel[] tableModels = new TableModel[]{modelOf("tab").col("x", ColumnType.INT)};
                 try {

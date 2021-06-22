@@ -76,14 +76,13 @@ You can interact with QuestDB using the following interfaces:
 
 ## How QuestDB compares to other open source TSDBs
 
-Here are ingestion results of the
-[Time Series Benchmark Suite](https://github.com/timescale/tsbs) `cpu-only` use
-case with up to fourteen workers on an AWS EC2 `m5.8xlarge` instance with
-sixteen cores:
+Here are high-cardinality
+[Time Series Benchmark Suite](https://questdb.io/blog/2021/06/16/high-cardinality-time-series-data-performance/)
+results using the `cpu-only` use case with 6 workers on an AMD Ryzen 3970X:
 
 <div align="center">
-  <a href="https://questdb.io/time-series-benchmark-suite/">
-    <img alt="A chart comparing the maximum throughput of QuestDB, ClickHouse, TimescaleDB and InfluxDB." src="https://raw.githubusercontent.com/questdb/questdb/master/.github/tsbs-results.png" width="700"/>
+  <a href="https://questdb.io/blog/2021/06/16/high-cardinality-time-series-data-performance/">
+    <img alt="A chart comparing the maximum throughput of QuestDB, ClickHouse, TimescaleDB and InfluxDB." src=".github/tsbs-results.png"/>
   </a>
 </div>
 
@@ -94,7 +93,7 @@ The following table shows query execution time of a billion rows run on a
 | --------------------------------------------------------- | ---------- |
 | `SELECT sum(double) FROM 1bn`                             | 0.061 secs |
 | `SELECT tag, sum(double) FROM 1bn`                        | 0.179 secs |
-| `SELECT tag, sum(double) FROM 1bn WHERE timestamp='2019'` | 0.05 secs  |
+| `SELECT tag, sum(double) FROM 1bn WHERE timestamp in '2019'` | 0.05 secs  |
 
 ## Documentation & resources
 
@@ -102,14 +101,16 @@ The following table shows query execution time of a billion rows run on a
   how to run and configure QuestDB with technical references.
 - [Our Slack workspace](https://slack.questdb.io) is a great place for technical
   discussions and to meet other users. :wave:
+- [GitHub discussions](https://github.com/questdb/questdb/discussions) is where
+  our users share ideas for features, ask questions, and show what they've built.
+- [GitHub issues](https://github.com/questdb/questdb/issues) are for bug reports
+  and feature requests.
+- [The project milestones](https://github.com/questdb/questdb/milestones) lists
+  the tasks and features we're working on for upcoming releases.
 - [Tutorials](https://questdb.io/tutorial/) written by our community members
   show what's possible with QuestDB.
 - [QuestDB on Stack Overflow](https://stackoverflow.com/questions/tagged/questdb)
   has common troubleshooting solutions.
-- [GitHub issues](https://github.com/questdb/questdb/issues) are used to track
-  bug reports and feature requests.
-- [The product roadmap](https://github.com/questdb/questdb/projects/3) lists the
-  tasks and features we're currently working on.
 
 ## Contribute
 
