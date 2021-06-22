@@ -106,15 +106,25 @@ class LineTcpConnectionContext implements IOContext, Mutable {
         return false;
     }
 
-    protected final boolean compactBuffer(long recvBufNewStart) {
-        assert recvBufNewStart <= recvBufPos;
-        if (recvBufNewStart > recvBufStart) {
-            final long len = recvBufPos - recvBufNewStart;
+    /**
+     * Moves incompletely received measurement to start of the receive buffer. Also updates the state of the
+     * context and protocol parser such that all pointers that point to the incomplete measurement will remain
+     * valid. This allows protocol parser to resume execution from the point of where measurement ended abruptly
+     *
+     * @param recvBufStartOfMeasurement the address in receive buffer where incomplete measurement starts. Everything from
+     *                                  this address to end of the receive buffer will be copied to the start of the
+     *                                  receive buffer
+     * @return true if there was an incomplete measurement in the first place
+     */
+    protected final boolean compactBuffer(long recvBufStartOfMeasurement) {
+        assert recvBufStartOfMeasurement <= recvBufPos;
+        if (recvBufStartOfMeasurement > recvBufStart) {
+            final long len = recvBufPos - recvBufStartOfMeasurement;
             if (len > 0) {
-                Vect.memcpy(recvBufNewStart, recvBufStart, len);
-                long shl = recvBufNewStart - recvBufStart;
+                Vect.memcpy(recvBufStartOfMeasurement, recvBufStart, len);
+                long shl = recvBufStartOfMeasurement - recvBufStart;
                 protoParser.shl(shl);
-                recvBufStartOfMeasurement -= shl;
+                this.recvBufStartOfMeasurement -= shl;
             } else {
                 resetParser();
             }
