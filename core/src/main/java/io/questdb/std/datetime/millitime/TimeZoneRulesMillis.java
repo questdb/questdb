@@ -113,20 +113,20 @@ public class TimeZoneRulesMillis implements TimeZoneRules {
     }
 
     @Override
-    public long getOffset(long millis, int year, boolean leap) {
+    public long getOffset(long utc, int year, boolean leap) {
         if (standardOffset != Long.MIN_VALUE) {
             return standardOffset;
         }
 
-        if (ruleCount > 0 && millis > cutoffTransition) {
-            return fromRules(millis, year, leap);
+        if (ruleCount > 0 && utc > cutoffTransition) {
+            return fromRules(utc, year, leap);
         }
 
-        if (millis > cutoffTransition) {
+        if (utc > cutoffTransition) {
             return lastWall;
         }
 
-        return fromHistory(millis);
+        return fromHistory(utc);
     }
 
     @Override

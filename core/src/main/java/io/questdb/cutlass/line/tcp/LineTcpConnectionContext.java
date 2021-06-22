@@ -45,17 +45,17 @@ class LineTcpConnectionContext implements IOContext, Mutable {
     private final LineTcpMeasurementScheduler scheduler;
     private final MillisecondClock milliClock;
     private final DirectByteCharSequence byteCharSequence = new DirectByteCharSequence();
+    private final NewLineProtoParser protoParser = new NewLineProtoParser();
+    private final FloatingDirectCharSink charSink = new FloatingDirectCharSink();
     protected long fd;
     protected IODispatcher<LineTcpConnectionContext> dispatcher;
     protected long recvBufStart;
     protected long recvBufEnd;
     protected long recvBufPos;
     protected boolean peerDisconnected;
-    private long lastQueueFullLogMillis = 0;
-    private final NewLineProtoParser protoParser = new NewLineProtoParser();
-    private boolean goodMeasurement;
     protected long recvBufStartOfMeasurement;
-    private final FloatingDirectCharSink charSink = new FloatingDirectCharSink();
+    private long lastQueueFullLogMillis = 0;
+    private boolean goodMeasurement;
 
     LineTcpConnectionContext(LineTcpReceiverConfiguration configuration, LineTcpMeasurementScheduler scheduler) {
         nf = configuration.getNetworkFacade();
@@ -71,12 +71,6 @@ class LineTcpConnectionContext implements IOContext, Mutable {
         recvBufPos = recvBufStart;
         peerDisconnected = false;
         resetParser();
-    }
-
-    private void resetParser() {
-        protoParser.of(recvBufStart);
-        goodMeasurement = true;
-        recvBufStartOfMeasurement = recvBufStart;
     }
 
     @Override
@@ -112,12 +106,28 @@ class LineTcpConnectionContext implements IOContext, Mutable {
         return false;
     }
 
-    protected final boolean compactBuffer(long recvBufNewStart) {
-        assert recvBufNewStart <= recvBufPos;
-        if (recvBufNewStart > recvBufStart) {
-            final int len = (int) (recvBufPos - recvBufNewStart);
+    /**
+     * Moves incompletely received measurement to start of the receive buffer. Also updates the state of the
+     * context and protocol parser such that all pointers that point to the incomplete measurement will remain
+     * valid. This allows protocol parser to resume execution from the point of where measurement ended abruptly
+     *
+     * @param recvBufStartOfMeasurement the address in receive buffer where incomplete measurement starts. Everything from
+     *                                  this address to end of the receive buffer will be copied to the start of the
+     *                                  receive buffer
+     * @return true if there was an incomplete measurement in the first place
+     */
+    protected final boolean compactBuffer(long recvBufStartOfMeasurement) {
+        assert recvBufStartOfMeasurement <= recvBufPos;
+        if (recvBufStartOfMeasurement > recvBufStart) {
+            final long len = recvBufPos - recvBufStartOfMeasurement;
             if (len > 0) {
-                Vect.memcpy(recvBufNewStart, recvBufStart, len);
+                Vect.memcpy(recvBufStartOfMeasurement, recvBufStart, len);
+                final long shl = recvBufStartOfMeasurement - recvBufStart;
+                protoParser.shl(shl);
+                this.recvBufStartOfMeasurement -= shl;
+            } else {
+                assert len == 0;
+                resetParser();
             }
             recvBufPos = recvBufStart + len;
             return true;
@@ -144,6 +154,13 @@ class LineTcpConnectionContext implements IOContext, Mutable {
     IOContextResult handleIO(NetworkIOJob netIoJob) {
         read();
         return parseMeasurements(netIoJob);
+    }
+
+    LineTcpConnectionContext of(long clientFd, IODispatcher<LineTcpConnectionContext> dispatcher) {
+        this.fd = clientFd;
+        this.dispatcher = dispatcher;
+        clear();
+        return this;
     }
 
     protected final IOContextResult parseMeasurements(NetworkIOJob netIoJob) {
@@ -182,13 +199,11 @@ class LineTcpConnectionContext implements IOContext, Mutable {
                     }
 
                     case BUFFER_UNDERFLOW: {
-                        if (recvBufPos == recvBufEnd) {
-                            if (!compactBuffer(recvBufStartOfMeasurement)) {
-                                doHandleDisconnectEvent();
-                                return IOContextResult.NEEDS_DISCONNECT;
-                            }
-                            resetParser();
+                        if (recvBufPos == recvBufEnd && !compactBuffer(recvBufStartOfMeasurement)) {
+                            doHandleDisconnectEvent();
+                            return IOContextResult.NEEDS_DISCONNECT;
                         }
+
                         if (!read()) {
                             if (peerDisconnected) {
                                 return IOContextResult.NEEDS_DISCONNECT;
@@ -205,13 +220,6 @@ class LineTcpConnectionContext implements IOContext, Mutable {
         }
     }
 
-    LineTcpConnectionContext of(long clientFd, IODispatcher<LineTcpConnectionContext> dispatcher) {
-        this.fd = clientFd;
-        this.dispatcher = dispatcher;
-        clear();
-        return this;
-    }
-
     protected boolean read() {
         int bufferRemaining = (int) (recvBufEnd - recvBufPos);
         final int orig = bufferRemaining;
@@ -226,6 +234,12 @@ class LineTcpConnectionContext implements IOContext, Mutable {
             return bufferRemaining < orig;
         }
         return !peerDisconnected;
+    }
+
+    protected void resetParser() {
+        protoParser.of(recvBufStart);
+        goodMeasurement = true;
+        recvBufStartOfMeasurement = recvBufStart;
     }
 
     enum IOContextResult {
