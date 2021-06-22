@@ -25,7 +25,7 @@
 package io.questdb.std.datetime;
 
 public interface TimeZoneRules {
-    long getOffset(long utcOffet, int year, boolean leap);
+    long getOffset(long utc, int year, boolean leap);
 
     long getOffset(long utcOffset);
 }

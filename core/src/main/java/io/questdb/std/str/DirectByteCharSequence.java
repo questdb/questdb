@@ -64,7 +64,7 @@ public class DirectByteCharSequence extends AbstractCharSequence implements Muta
         return (char) byteAt(index);
     }
 
-    public void lshift(long delta) {
+    public void shl(long delta) {
         this.lo -= delta;
         this.hi -= delta;
     }
