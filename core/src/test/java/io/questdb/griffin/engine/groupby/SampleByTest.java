@@ -4797,6 +4797,50 @@ public class SampleByTest extends AbstractGriffinTest {
                         "long_sequence(180)\n");
     }
 
+    @Test
+    public void testIndexSampleByBufferExceeded() throws Exception {
+        sampleByIndexSearchPageSize = 10;
+
+        assertQuery("k\ts\tlat\tlon\n",
+                "select k, s, first(lat) lat, last(lon) lon " +
+                        "from xx " +
+                        "where s in ('a')" +
+                        "sample by 60s",
+                "create table xx (lat double, lon double, s symbol, k timestamp)" +
+                        ", index(s capacity 4096) timestamp(k) partition by DAY",
+                "k",
+                false,
+                false,
+                true);
+
+        assertSampleByIndexQuery("k\ts\tlat\tlon\n" +
+                        "1970-01-01T00:01:00.000000Z\ta\t-2.0\t2.0\n" +
+                        "1970-01-01T00:03:00.000000Z\ta\t-4.0\t4.0\n" +
+                        "1970-01-01T00:05:00.000000Z\ta\t-6.0\t6.0\n" +
+                        "1970-01-01T00:07:00.000000Z\ta\t-8.0\t8.0\n" +
+                        "1970-01-01T00:09:00.000000Z\ta\t-10.0\t10.0\n" +
+                        "1970-01-01T00:11:00.000000Z\ta\t-12.0\t12.0\n" +
+                        "1970-01-01T00:13:00.000000Z\ta\t-14.0\t14.0\n" +
+                        "1970-01-01T00:15:00.000000Z\ta\t-16.0\t16.0\n" +
+                        "1970-01-01T00:17:00.000000Z\ta\t-18.0\t18.0\n" +
+                        "1970-01-01T00:19:00.000000Z\ta\t-20.0\t20.0\n" +
+                        "1970-01-01T00:21:00.000000Z\ta\t-22.0\t22.0\n" +
+                        "1970-01-01T00:23:00.000000Z\ta\t-24.0\t24.0\n" +
+                        "1970-01-01T00:25:00.000000Z\ta\t-26.0\t26.0\n" +
+                        "1970-01-01T00:27:00.000000Z\ta\t-28.0\t28.0\n" +
+                        "1970-01-01T00:29:00.000000Z\ta\t-30.0\t30.0\n",
+                "select k, s, first(lat) lat, last(lon) lon " +
+                        "from xx " +
+                        "where s in ('a')" +
+                        "sample by 2m",
+                "insert into xx " +
+                        "select -x lat,\n" +
+                        "x lon,\n" +
+                        "(case when x % 2 = 0 then 'a' else 'b' end) s,\n" +
+                        "timestamp_sequence(0, 60 * 1000L * 1000L) k\n" +
+                        "from\n" +
+                        "long_sequence(30)\n");
+    }
 
     private void assertSampleByIndexQuery(String expected, String query, String insert) throws Exception {
         String forceNoIndexQuery = query.replace("in ('b')", "in ('b', 'none')")

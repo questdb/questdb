@@ -50,22 +50,25 @@ public class BitmapIndexUtilsNative {
             long symbolIndexSize,
             long symbolIndexPosition,
             long windowBoundaries,
+            int windowCount,
             long timestampOutAddress,
             long firstRowIdOutAddress,
             long lastRowIdOutAddress,
-            int windowCount) {
+            int outSize) {
         return findFirstLastInFrame0(
                 outIndex,
                 rowIdLo,
                 rowIdHi,
                 timestampColAddress,
-                symbolIndexAddress + symbolIndexPosition * Long.BYTES,
-                symbolIndexSize - symbolIndexPosition,
+                symbolIndexAddress,
+                symbolIndexSize,
+                symbolIndexPosition,
                 windowBoundaries,
+                windowCount,
                 timestampOutAddress,
                 firstRowIdOutAddress,
                 lastRowIdOutAddress,
-                windowCount
+                outSize
         );
     }
 
@@ -81,9 +84,11 @@ public class BitmapIndexUtilsNative {
             long timestampColAddress,
             long symbolIndexAddress,
             long symbolIndexSize,
+            long symbolIndexPosition,
             long windowBoundaries,
+            int windowCount,
             long timestampOutAddress,
             long firstRowIdOutAddress,
             long lastRowIdOutAddress,
-            int windowCount);
+            int outSize);
 }

@@ -653,6 +653,7 @@ public class SqlCodeGenerator implements Mutable {
         model.setWhereClause(null);
         final Function f = compileFilter(filter, factory.getMetadata(), executionContext);
         if (f.isConstant()) {
+            //noinspection TryFinallyCanBeTryWithResources
             try {
                 if (f.getBool(null)) {
                     return factory;
@@ -1325,7 +1326,8 @@ public class SqlCodeGenerator implements Mutable {
                                 groupByMetadata,
                                 model.getColumns(),
                                 timestampIndex,
-                                symbolFilter
+                                symbolFilter,
+                                configuration.getSampleByIndexSearchPageSize()
                         );
                     }
                 }

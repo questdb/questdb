@@ -341,6 +341,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int httpMinListenBacklog;
     private int httpMinRcvBufSize;
     private int httpMinSndBufSize;
+    private int sampleByIndexSearchPageSize;
 
     public PropServerConfiguration(
             String root,
@@ -750,6 +751,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.metricsEnabled = getBoolean(properties, env, "metrics.enabled", false);
 
             this.buildInformation = buildInformation;
+            this.sampleByIndexSearchPageSize = getIntSize(properties, env,"cairo.sql.sampleby.page.size", 2048);
         }
     }
 
@@ -1437,6 +1439,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getO3PurgeQueueCapacity() {
             return o3PurgeQueueCapacity;
+        }
+
+        @Override
+        public int getSampleByIndexSearchPageSize() {
+            return sampleByIndexSearchPageSize;
         }
 
         @Override

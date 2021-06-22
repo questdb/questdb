@@ -110,25 +110,26 @@ void latest_scan_backward(uint64_t keys_memory_addr, size_t keys_memory_size, ui
 
 int32_t findFirstLastInFrame0(
         int32_t outIndex
-        , int64_t rowIdLo
-        , int64_t rowIdHi
+        , const int64_t rowIdLo
+        , const int64_t rowIdHi
         , int64_t* timestampColumn
         , int64_t* sampleWindows
+        , const int32_t sampleWindowCount
         , int64_t* symbolIndex
         , int64_t symbolIndexSize
+        , const int64_t symbolIndexPosition
         , int64_t* timestampOut
         , int64_t* firstRowIdOut
         , int64_t* lastRowIdOut
-        , int32_t sampleWindowCount
+        , const int32_t outSize
         ) {
-    int32_t indexFrameIndex = 0;
-    if (indexFrameIndex < symbolIndexSize) {
+    if (symbolIndexPosition < symbolIndexSize) {
         // Sample by window start, end
         int32_t tsNextPeriodIndex = 0;
         int64_t sampleByStart = sampleWindows[tsNextPeriodIndex++];
         int64_t sampleByEnd = tsNextPeriodIndex < sampleWindowCount ? sampleWindows[tsNextPeriodIndex++] : INT64_MAX;
 
-        int64_t iIndex = indexFrameIndex;
+        int64_t iIndex = symbolIndexPosition;
         int64_t indexRowId = 0;
         bool firstRowUpdated = false;
         for (; iIndex < symbolIndexSize; iIndex++) {
@@ -147,18 +148,20 @@ int32_t findFirstLastInFrame0(
                     continue;
                 }
 
+                if (outIndex == outSize - 1) {
+                    // Last output line is reserved to return current positions
+                    break;
+                }
+
                 while (indexRowTimestamp >= sampleByEnd && tsNextPeriodIndex < sampleWindowCount) {
                     // Go to next sample by window.
                     sampleByStart = sampleByEnd;
                     sampleByEnd = tsNextPeriodIndex < sampleWindowCount ? sampleWindows[tsNextPeriodIndex++] : INT64_MAX;
                 }
 
-                // Check
-                if (indexRowTimestamp >= sampleByEnd && tsNextPeriodIndex == sampleWindowCount) {
-                    break;
-                }
-
                 if (indexRowTimestamp >= sampleByStart && indexRowTimestamp < sampleByEnd) {
+
+
                     timestampOut[outIndex] = sampleByStart;
                     firstRowIdOut[outIndex] = indexRowId;
                     lastRowIdOut[outIndex] = indexRowId;
@@ -176,7 +179,7 @@ int32_t findFirstLastInFrame0(
 
         timestampOut[outIndex] = sampleByStart;
         firstRowIdOut[outIndex] = iIndex;
-        lastRowIdOut[outIndex] = indexRowId + 1;
+        lastRowIdOut[outIndex] = indexRowId;
 
         return firstRowUpdated ? -outIndex : outIndex;
     }
@@ -209,23 +212,27 @@ Java_io_questdb_std_BitmapIndexUtilsNative_findFirstLastInFrame0(JNIEnv *env, jc
         , jlong timestampColAddress
         , jlong symbolIndexAddress
         , jlong symbolIndexSize
+        , jlong symbolIndexPosition
         , jlong windowBoundariesAddress
+        , jint windowCount
         , jlong timestampOutAddress
         , jlong firstRowIdOutAddress
         , jlong lastRowIdOutAddress
-        , jint windowCount) {
+        , jint outSize) {
     return findFirstLastInFrame0(
             outIndex
             , rowIdLo
             , rowIdHi
             , reinterpret_cast<int64_t *>(timestampColAddress)
             , reinterpret_cast<int64_t *>(windowBoundariesAddress)
+            , windowCount
             , reinterpret_cast<int64_t *>(symbolIndexAddress)
             , symbolIndexSize
+            , symbolIndexPosition
             , reinterpret_cast<int64_t *>(timestampOutAddress)
             , reinterpret_cast<int64_t *>(firstRowIdOutAddress)
             , reinterpret_cast<int64_t *>(lastRowIdOutAddress)
-            , windowCount
+            , outSize
     );
 }
 

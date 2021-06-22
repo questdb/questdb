@@ -39,7 +39,7 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
     private final GenericRecordMetadata groupByMetadata;
     private final int[] recordFirstLastIndex;
     private final int timestampIndex;
-    private static final int BUFF_SIZE = 4096;
+    private final int pageSize;
     private DirectLongList startTimestampOutAddress;
     private DirectLongList firstRowIdOutAddress;
     private DirectLongList lastRowIdOutAddress;
@@ -54,15 +54,18 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
             GenericRecordMetadata groupByMetadata,
             ObjList<QueryColumn> columns,
             int timestampIndex,
-            SingleSymbolFilter symbolFilter) throws SqlException {
+            SingleSymbolFilter symbolFilter,
+            int pageSize) throws SqlException {
         this.base = base;
+        assert pageSize > 2;
+        this.pageSize = pageSize;
         this.timestampSampler = timestampSampler;
         this.groupByMetadata = groupByMetadata;
         this.timestampIndex = timestampIndex;
-        this.startTimestampOutAddress = new DirectLongList(BUFF_SIZE).setSize(BUFF_SIZE);
-        this.firstRowIdOutAddress = new DirectLongList(BUFF_SIZE).setSize(BUFF_SIZE);
-        this.lastRowIdOutAddress = new DirectLongList(BUFF_SIZE).setSize(BUFF_SIZE);
-        this.sampleWindowAddress = new DirectLongList(BUFF_SIZE).setSize(BUFF_SIZE);
+        this.startTimestampOutAddress = new DirectLongList(pageSize).setSize(pageSize);
+        this.firstRowIdOutAddress = new DirectLongList(pageSize).setSize(pageSize);
+        this.lastRowIdOutAddress = new DirectLongList(pageSize).setSize(pageSize);
+        this.sampleWindowAddress = new DirectLongList(pageSize).setSize(pageSize);
         this.symbolFilter = symbolFilter;
         this.recordFirstLastIndex = buildFirstLastIndex(columns, symbolFilter.getColumnIndex(), timestampIndex);
         gropuBySymbolColIndex = symbolFilter.getColumnIndex();
@@ -282,10 +285,11 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
                             indexFrame.getSize(),
                             indexFramePosition,
                             sampleWindowAddress.getAddress(),
+                            sampleWindowCount,
                             startTimestampOutAddress.getAddress(),
                             firstRowIdOutAddress.getAddress(),
                             lastRowIdOutAddress.getAddress(),
-                            sampleWindowCount);
+                            pageSize);
 
                     boolean firstRowLastRowIdUpdated = rowsFound < 0;
                     rowsFound = Math.abs(rowsFound);
@@ -295,7 +299,7 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
                     checkCrossRowAfterSearch(firstRowLastRowIdUpdated);
 
                     if (rowsFound > outPosition) {
-                        assert rowsFound < BUFF_SIZE - 1;
+                        assert rowsFound < pageSize;
 
                         // Read output timestamp and RowId to resume at the end of the output buffers
                         indexFramePosition = firstRowIdOutAddress.get(rowsFound);
@@ -304,14 +308,14 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
 
                         // decide what to do next
                         int newState;
-                        if (rowsFound == BUFF_SIZE - 1) {
+                        if (rowsFound == pageSize - 1) {
                             // Return values and next pass start from STATE_OUT_BUFFER_FULL
                             newState = STATE_OUT_BUFFER_FULL;
                         } else if (indexFramePosition >= indexFrame.getSize()) {
-                            // Index frame exosted. Next time start from fetching new index frame
+                            // Index frame exhausted. Next time start from fetching new index frame
                             newState = STATE_FETCH_NEXT_INDEX_FRAME;
                         } else {
-                            // Data frame exosted. Next time start from fetching new data frame
+                            // Data frame exhausted. Next time start from fetching new data frame
                             newState = STATE_FETCH_NEXT_DATA_FRAME_KEEP_INDEX;
                         }
 
@@ -349,7 +353,7 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
             do {
                 nextTs = timestampSampler.nextTimestamp(nextTs);
                 sampleWindowAddress.set(index++, nextTs);
-            } while (nextTs <= lastInDataTimestamp && index < BUFF_SIZE);
+            } while (nextTs <= lastInDataTimestamp && index < pageSize);
             return index;
         }
 
