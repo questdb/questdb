@@ -113,20 +113,20 @@ public class TimeZoneRulesMicros implements TimeZoneRules {
     }
 
     @Override
-    public long getOffset(long utcOffet, int year, boolean leap) {
+    public long getOffset(long utc, int year, boolean leap) {
         if (standardOffset != Long.MIN_VALUE) {
             return standardOffset;
         }
 
-        if (ruleCount > 0 && utcOffet > cutoffTransition) {
-            return fromRules(utcOffet, year, leap);
+        if (ruleCount > 0 && utc > cutoffTransition) {
+            return fromRules(utc, year, leap);
         }
 
-        if (utcOffet > cutoffTransition) {
+        if (utc > cutoffTransition) {
             return lastWall;
         }
 
-        return fromHistory(utcOffet);
+        return fromHistory(utc);
     }
 
     @Override
@@ -163,7 +163,7 @@ public class TimeZoneRulesMicros implements TimeZoneRules {
         }
     }
 
-    private long fromRules(long micros, int year, boolean leap) {
+    private long fromRules(long utcMicros, int year, boolean leap) {
 
         int offset = 0;
 
@@ -207,17 +207,17 @@ public class TimeZoneRulesMicros implements TimeZoneRules {
             long delta = offsetAfter - offset;
 
             if (delta > 0) {
-                if (micros < date) {
+                if (utcMicros < date) {
                     return offset * Timestamps.SECOND_MICROS;
                 }
 
-                if (micros < date + delta) {
+                if (utcMicros < date + delta) {
                     return (offsetAfter + delta) * Timestamps.SECOND_MICROS;
                 } else {
                     offset = offsetAfter;
                 }
             } else {
-                if (micros < date) {
+                if (utcMicros < date) {
                     return offset * Timestamps.SECOND_MICROS;
                 } else {
                     offset = offsetAfter;

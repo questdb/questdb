@@ -334,13 +334,13 @@ public class LineTcpAuthConnectionContextTest extends AbstractCairoTest {
             boolean authSequenceCompleted = authenticate(AUTH_KEY_ID1, AUTH_PRIVATE_KEY1, true, false, true, false, null);
             Assert.assertTrue(authSequenceCompleted);
             Assert.assertFalse(disconnected);
-            recvBuffer = "weather,location=us-midwest temperature=82 1465839830100400200\n";
+            recvBuffer = "weather,location=us\\ midwest temperature=82 1465839830100400200\n";
             handleContextIO();
             Assert.assertFalse(disconnected);
             waitForIOCompletion();
             closeContext();
             String expected = "location\ttemperature\ttimestamp\n" +
-                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n";
+                    "us midwest\t82.0\t2016-06-13T17:43:50.100400Z\n";
             assertTable(expected);
         });
     }
@@ -351,13 +351,13 @@ public class LineTcpAuthConnectionContextTest extends AbstractCairoTest {
             boolean authSequenceCompleted = authenticate(AUTH_KEY_ID1, AUTH_PRIVATE_KEY1, false, true, true, false, null);
             Assert.assertTrue(authSequenceCompleted);
             Assert.assertFalse(disconnected);
-            recvBuffer = "weather,location=us-midwest temperature=82 1465839830100400200\n";
+            recvBuffer = "weather,location=us\\ midwest temperature=82 1465839830100400200\n";
             handleContextIO();
             Assert.assertFalse(disconnected);
             waitForIOCompletion();
             closeContext();
             String expected = "location\ttemperature\ttimestamp\n" +
-                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n";
+                    "us midwest\t82.0\t2016-06-13T17:43:50.100400Z\n";
             assertTable(expected);
         });
     }
@@ -368,13 +368,13 @@ public class LineTcpAuthConnectionContextTest extends AbstractCairoTest {
             boolean authSequenceCompleted = authenticate(AUTH_KEY_ID1, AUTH_PRIVATE_KEY1, true, true, true, false, null);
             Assert.assertTrue(authSequenceCompleted);
             Assert.assertFalse(disconnected);
-            recvBuffer = "weather,location=us-midwest temperature=82 1465839830100400200\n";
+            recvBuffer = "weather,location=us\\ midwest temperature=82 1465839830100400200\n";
             handleContextIO();
             Assert.assertFalse(disconnected);
             waitForIOCompletion();
             closeContext();
             String expected = "location\ttemperature\ttimestamp\n" +
-                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n";
+                    "us midwest\t82.0\t2016-06-13T17:43:50.100400Z\n";
             assertTable(expected);
         });
     }
@@ -394,13 +394,13 @@ public class LineTcpAuthConnectionContextTest extends AbstractCairoTest {
             }
 
             Assert.assertFalse(disconnected);
-            recvBuffer = "weather,location=us-midwest temperature=82 1465839830100400200\n";
+            recvBuffer = "weather,location=us\\ midwest temperature=82 1465839830100400200\n";
             handleContextIO();
             Assert.assertFalse(disconnected);
             waitForIOCompletion();
             closeContext();
             String expected = "location\ttemperature\ttimestamp\n" +
-                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n";
+                    "us midwest\t82.0\t2016-06-13T17:43:50.100400Z\n";
             assertTable(expected);
         });
     }

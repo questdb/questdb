@@ -209,34 +209,10 @@ public class LineProtoSender extends AbstractCharSink implements Closeable {
 
     public LineProtoSender tag(CharSequence tag, CharSequence value) {
         if (hasMetric) {
-            put(',').putNameEscaped(tag).put('=').encodeUtf8(value);
+            put(',').encodeUtf8(tag).put('=').encodeUtf8(value);
             return this;
         }
         throw CairoException.instance(0).put("metric expected");
-    }
-    
-    public LineProtoSender tagEscaped(CharSequence tag, CharSequence value) {
-        if (hasMetric) {
-            put(',').putUtf8Escaped(tag).put('=').putUtf8Escaped(value);
-            return this;
-        }
-        throw CairoException.instance(0).put("metric expected");
-    }
-
-    private LineProtoSender putUtf8Escaped(CharSequence cs) {
-        for (int i = 0, n = cs.length(); i < n; i++) {
-            char c = cs.charAt(i);
-            switch (c) {
-                case ' ':
-                case ',':
-                case '=':
-                    put('\\');
-                default:
-                    putUtf8(c);
-                    break;
-            }
-        }
-        return this;
     }
 
     private CharSink field(CharSequence name) {
@@ -248,25 +224,22 @@ public class LineProtoSender extends AbstractCharSink implements Closeable {
                 put(',');
             }
 
-            return putNameEscaped(name).put('=');
+            return encodeUtf8(name).put('=');
         }
         throw CairoException.instance(0).put("metric expected");
     }
 
-    private LineProtoSender putNameEscaped(CharSequence name) {
-        for (int i = 0, n = name.length(); i < n; i++) {
-            char c = name.charAt(i);
-            switch (c) {
-                case ' ':
-                case ',':
-                case '=':
-                    put('\\');
-                default:
-                    put(c);
-                    break;
-            }
+    @Override
+    protected void putUtf8Special(char c) {
+        switch (c) {
+            case ' ':
+            case ',':
+            case '=':
+                put('\\');
+            default:
+                put(c);
+                break;
         }
-        return this;
     }
 
     private void send() {
