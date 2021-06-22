@@ -112,75 +112,68 @@ int32_t findFirstLastInFrame0(
         int32_t outIndex
         , const int64_t rowIdLo
         , const int64_t rowIdHi
-        , int64_t* timestampColumn
-        , int64_t* sampleWindows
+        , const int64_t* timestampColumn
+        , const int64_t* sampleWindows
         , const int32_t sampleWindowCount
-        , int64_t* symbolIndex
-        , int64_t symbolIndexSize
+        , const int64_t* symbolIndex
+        , const int64_t symbolIndexSize
         , const int64_t symbolIndexPosition
         , int64_t* timestampOut
         , int64_t* firstRowIdOut
         , int64_t* lastRowIdOut
         , const int32_t outSize
         ) {
+
     if (symbolIndexPosition < symbolIndexSize) {
         // Sample by window start, end
         int32_t tsNextPeriodIndex = 0;
-        int64_t sampleByStart = sampleWindows[tsNextPeriodIndex++];
-        int64_t sampleByEnd = tsNextPeriodIndex < sampleWindowCount ? sampleWindows[tsNextPeriodIndex++] : INT64_MAX;
-
-        int64_t iIndex = symbolIndexPosition;
-        int64_t indexRowId = 0;
         bool firstRowUpdated = false;
-        for (; iIndex < symbolIndexSize; iIndex++) {
-            indexRowId = symbolIndex[iIndex];
-            if (indexRowId >= rowIdLo && indexRowId < rowIdHi) {
-                int64_t indexRowTimestamp = timestampColumn[indexRowId];
+        int64_t iIndex = symbolIndexPosition;
+        int64_t sampleByStart = sampleWindows[tsNextPeriodIndex++];
 
-                if (indexRowTimestamp < sampleByStart) {
-                    // Fast path, skip index rowid when it fails before current window
-                    if (outIndex > 0) {
-                        lastRowIdOut[outIndex - 1] = indexRowId;
-                        if (outIndex == 1) {
-                            firstRowUpdated = true;
-                        }
-                    }
-                    continue;
+        const int64_t* timestampColumnLo = timestampColumn + rowIdLo;
+        const int64_t* timestampColumnHi = timestampColumn + rowIdHi - rowIdLo;
+        const int64_t* symbolLo = symbolIndex + symbolIndexPosition;
+        const int64_t* symbolHi = symbolIndex + symbolIndexSize;
+
+        while (symbolLo < symbolHi
+                    && tsNextPeriodIndex < sampleWindowCount
+                    && timestampColumnLo < timestampColumnHi
+                    && outIndex < outSize - 1) {
+            if (sampleByStart < *timestampColumnLo) {
+                sampleByStart = sampleWindows[tsNextPeriodIndex++];
+                continue;
+            }
+
+            // Find rowId before the next sample by start boundary in Timestamp column
+            timestampColumnLo += branch_free_search_lower(timestampColumnLo, timestampColumnHi - timestampColumnLo, sampleByStart);
+            const int64_t nextTsRowId = timestampColumnLo - timestampColumn + rowIdLo;
+            symbolLo += branch_free_search_lower(symbolLo, symbolHi - symbolLo, nextTsRowId);
+
+            if (*timestampColumnLo < sampleByStart || timestampColumn[*symbolLo] < sampleByStart) {
+                // Update lastRowIdOut
+                if (outIndex > 0) {
+                    lastRowIdOut[outIndex - 1] = *symbolLo;
+                    firstRowUpdated |= outIndex == 1;
                 }
 
-                if (outIndex == outSize - 1) {
-                    // Last output line is reserved to return current positions
+                if (*timestampColumnLo < sampleByStart) {
+                    // end of timestamp buffer reached but still didn't caught up with next sampleByStart
                     break;
                 }
-
-                while (indexRowTimestamp >= sampleByEnd && tsNextPeriodIndex < sampleWindowCount) {
-                    // Go to next sample by window.
-                    sampleByStart = sampleByEnd;
-                    sampleByEnd = tsNextPeriodIndex < sampleWindowCount ? sampleWindows[tsNextPeriodIndex++] : INT64_MAX;
-                }
-
-                if (indexRowTimestamp >= sampleByStart && indexRowTimestamp < sampleByEnd) {
-
-
-                    timestampOut[outIndex] = sampleByStart;
-                    firstRowIdOut[outIndex] = indexRowId;
-                    lastRowIdOut[outIndex] = indexRowId;
-
-                    // Go to next sample by window.
-                    outIndex++;
-                    sampleByStart = sampleByEnd;
-                    sampleByEnd = tsNextPeriodIndex < sampleWindowCount ? sampleWindows[tsNextPeriodIndex++] : INT64_MAX;
-                }
-            } else if (indexRowId >= rowIdHi) {
-                // Index row id is beyond data page
-                break;
             }
+
+            // timestampColumn[*symbolLo] >= sampleByStart
+            // Found first row id
+            lastRowIdOut[outIndex] = firstRowIdOut[outIndex] = *symbolLo;
+            timestampOut[outIndex] = sampleByStart;
+            sampleByStart = sampleWindows[tsNextPeriodIndex++];
+            outIndex++;
         }
 
         timestampOut[outIndex] = sampleByStart;
-        firstRowIdOut[outIndex] = iIndex;
-        lastRowIdOut[outIndex] = indexRowId;
-
+        firstRowIdOut[outIndex] = symbolLo - symbolIndex;
+        lastRowIdOut[outIndex] = timestampColumnLo - timestampColumn + rowIdLo;
         return firstRowUpdated ? -outIndex : outIndex;
     }
     return outIndex;

@@ -45,7 +45,7 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
     private DirectLongList lastRowIdOutAddress;
     private DirectLongList sampleWindowAddress;
     private final SingleSymbolFilter symbolFilter;
-    private final int gropuBySymbolColIndex;
+    private final int groupBySymbolColIndex;
     private DirectLongList crossFrameRow;
 
     public SampleByFirstLastRecordCursorFactory(
@@ -68,7 +68,7 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
         this.sampleWindowAddress = new DirectLongList(pageSize).setSize(pageSize);
         this.symbolFilter = symbolFilter;
         this.recordFirstLastIndex = buildFirstLastIndex(columns, symbolFilter.getColumnIndex(), timestampIndex);
-        gropuBySymbolColIndex = symbolFilter.getColumnIndex();
+        groupBySymbolColIndex = symbolFilter.getColumnIndex();
         crossFrameRow = new DirectLongList(recordFirstLastIndex.length).setSize(recordFirstLastIndex.length);
     }
 
@@ -153,7 +153,7 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
 
         public SampleByFirstLastRecordCursor(PageFrameCursor pageFrameCursor, int groupBySymbolKey) {
             this.pageFrameCursor = pageFrameCursor;
-            this.symbolsReader = pageFrameCursor.getSymbolMapReader(gropuBySymbolColIndex);
+            this.symbolsReader = pageFrameCursor.getSymbolMapReader(groupBySymbolColIndex);
             this.groupBySymbolKey = groupBySymbolKey;
         }
 
@@ -233,7 +233,7 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
 
                         if (partitionIndex != currentFrame.getPartitionIndex()) {
                             // Switch index to next partition
-                            BitmapIndexReader symbolIndexReader = currentFrame.getBitmapIndexReader(gropuBySymbolColIndex, BitmapIndexReader.DIR_FORWARD);
+                            BitmapIndexReader symbolIndexReader = currentFrame.getBitmapIndexReader(groupBySymbolColIndex, BitmapIndexReader.DIR_FORWARD);
                             partitionIndex = currentFrame.getPartitionIndex();
                             indexCursor = symbolIndexReader.getFrameCursor(groupBySymbolKey, dataFrameLo, dataFrameHi);
                             // Fall through to STATE_FETCH_NEXT_INDEX_FRAME;
