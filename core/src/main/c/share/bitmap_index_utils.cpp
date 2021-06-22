@@ -108,51 +108,38 @@ void latest_scan_backward(uint64_t keys_memory_addr, size_t keys_memory_size, ui
     out_args->rows_size = row_count;
 }
 
-template<char16_t sampleByPeriodType>
-inline int64_t sampleByNextTimestamp(int64_t timestamp, int64_t sampleByPeriodLen) {
-    if constexpr(sampleByPeriodType == u'u') {
-        return timestamp + sampleByPeriodLen;
-    }
-
-    if constexpr(sampleByPeriodType == u'M') {
-        return timestamp + sampleByPeriodLen;
-    }
-}
-
-inline int64_t findFirstLastInFrame0(
-        int64_t outIndex
-        , int64_t sampleByStart
+int32_t findFirstLastInFrame0(
+        int32_t outIndex
         , int64_t rowIdLo
         , int64_t rowIdHi
-        , int64_t* timestampColAddress
-        , int64_t* sampleByPeriodsAddress
-        , int64_t* symbolIndexAddress
+        , int64_t* timestampColumn
+        , int64_t* sampleWindows
+        , int64_t* symbolIndex
         , int64_t symbolIndexSize
-        , int64_t indexFrameIndex
-        , int64_t* timestampOutAddress
-        , int64_t* firstRowIdOutAddress
-        , int64_t* lastRowIdOutAddress
-        , int32_t sampleByPeriodsLen
+        , int64_t* timestampOut
+        , int64_t* firstRowIdOut
+        , int64_t* lastRowIdOut
+        , int32_t sampleWindowCount
         ) {
-
+    int32_t indexFrameIndex = 0;
     if (indexFrameIndex < symbolIndexSize) {
         // Sample by window start, end
         int32_t tsNextPeriodIndex = 0;
-        int64_t sampleByStart = sampleByPeriodsAddress[tsNextPeriodIndex++];
-        int64_t sampleByEnd = sampleByPeriodsAddress[tsNextPeriodIndex++];
+        int64_t sampleByStart = sampleWindows[tsNextPeriodIndex++];
+        int64_t sampleByEnd = tsNextPeriodIndex < sampleWindowCount ? sampleWindows[tsNextPeriodIndex++] : INT64_MAX;
 
         int64_t iIndex = indexFrameIndex;
         int64_t indexRowId = 0;
         bool firstRowUpdated = false;
         for (; iIndex < symbolIndexSize; iIndex++) {
-            indexRowId = symbolIndexAddress[iIndex];
+            indexRowId = symbolIndex[iIndex];
             if (indexRowId >= rowIdLo && indexRowId < rowIdHi) {
-                int64_t indexRowTimestamp = timestampColAddress[indexRowId];
+                int64_t indexRowTimestamp = timestampColumn[indexRowId];
 
                 if (indexRowTimestamp < sampleByStart) {
                     // Fast path, skip index rowid when it fails before current window
                     if (outIndex > 0) {
-                        lastRowIdOutAddress[outIndex - 1] = indexRowId;
+                        lastRowIdOut[outIndex - 1] = indexRowId;
                         if (outIndex == 1) {
                             firstRowUpdated = true;
                         }
@@ -160,27 +147,26 @@ inline int64_t findFirstLastInFrame0(
                     continue;
                 }
 
-                while (indexRowTimestamp >= sampleByEnd && tsNextPeriodIndex < sampleByPeriodsLen) {
+                while (indexRowTimestamp >= sampleByEnd && tsNextPeriodIndex < sampleWindowCount) {
                     // Go to next sample by window.
                     sampleByStart = sampleByEnd;
-                    sampleByEnd = sampleByPeriodsAddress[tsNextPeriodIndex++];
+                    sampleByEnd = tsNextPeriodIndex < sampleWindowCount ? sampleWindows[tsNextPeriodIndex++] : INT64_MAX;
                 }
 
-                // Check no overflow
-                if (indexRowTimestamp >= sampleByEnd && tsNextPeriodIndex == sampleByPeriodsLen) {
+                // Check
+                if (indexRowTimestamp >= sampleByEnd && tsNextPeriodIndex == sampleWindowCount) {
                     break;
                 }
 
                 if (indexRowTimestamp >= sampleByStart && indexRowTimestamp < sampleByEnd) {
-                    timestampOutAddress[outIndex] = sampleByStart;
-                    firstRowIdOutAddress[outIndex] = indexRowId;
-                    lastRowIdOutAddress[outIndex] = indexRowId;
+                    timestampOut[outIndex] = sampleByStart;
+                    firstRowIdOut[outIndex] = indexRowId;
+                    lastRowIdOut[outIndex] = indexRowId;
 
                     // Go to next sample by window.
                     outIndex++;
                     sampleByStart = sampleByEnd;
-                    int64_t sampleByEnd = sampleByNextTimestamp<sampleByPeriodType>(sampleByStart, sampleByPeriodLen);
-
+                    sampleByEnd = tsNextPeriodIndex < sampleWindowCount ? sampleWindows[tsNextPeriodIndex++] : INT64_MAX;
                 }
             } else if (indexRowId >= rowIdHi) {
                 // Index row id is beyond data page
@@ -188,9 +174,9 @@ inline int64_t findFirstLastInFrame0(
             }
         }
 
-        timestampOutAddress[outIndex] = sampleByStart;
-        firstRowIdOutAddress[outIndex] = iIndex;
-        lastRowIdOutAddress[outIndex] = indexRowId + 1;
+        timestampOut[outIndex] = sampleByStart;
+        firstRowIdOut[outIndex] = iIndex;
+        lastRowIdOut[outIndex] = indexRowId + 1;
 
         return firstRowUpdated ? -outIndex : outIndex;
     }
@@ -215,35 +201,31 @@ Java_io_questdb_std_BitmapIndexUtilsNative_latestScanBackward0(JNIEnv *env, jcla
                          maxValue, minValue, partitionIndex, blockValueCountMod);
 }
 
-JNIEXPORT jlong JNICALL
-Java_io_questdb_std_BitmapIndexUtilsNative_findFirstLastInFrame(JNIEnv *env, jclass cl
-        , jlong outIndex
-        , jlong sampleByStart
+JNIEXPORT jint JNICALL
+Java_io_questdb_std_BitmapIndexUtilsNative_findFirstLastInFrame0(JNIEnv *env, jclass cl
+        , jint outIndex
         , jlong rowIdLo
         , jlong rowIdHi
         , jlong timestampColAddress
-        , jchar sampleByPeriodsAddress
         , jlong symbolIndexAddress
         , jlong symbolIndexSize
-        , jlong indexFrameIndex
-        , jint timestampOutAddress
-        , jint firstRowIdOutAddress
-        , jint lastRowIdOutAddress
-        , jint outBuffersSize) {
-    return findFirstLastInFrame0<u'u'>(
+        , jlong windowBoundariesAddress
+        , jlong timestampOutAddress
+        , jlong firstRowIdOutAddress
+        , jlong lastRowIdOutAddress
+        , jint windowCount) {
+    return findFirstLastInFrame0(
             outIndex
-            , sampleByStart
             , rowIdLo
             , rowIdHi
             , reinterpret_cast<int64_t *>(timestampColAddress)
-            , sampleByPeriodsAddress
+            , reinterpret_cast<int64_t *>(windowBoundariesAddress)
             , reinterpret_cast<int64_t *>(symbolIndexAddress)
             , symbolIndexSize
-            , indexFrameIndex
             , reinterpret_cast<int64_t *>(timestampOutAddress)
             , reinterpret_cast<int64_t *>(firstRowIdOutAddress)
             , reinterpret_cast<int64_t *>(lastRowIdOutAddress)
-            , outBuffersSize
+            , windowCount
     );
 }
 

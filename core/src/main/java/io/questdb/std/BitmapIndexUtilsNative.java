@@ -41,8 +41,49 @@ public class BitmapIndexUtilsNative {
                 maxValue, minValue, partitionIndex, blockValueCountMod);
     }
 
+    public static int findFirstLastInFrame(
+            int outIndex,
+            long rowIdLo,
+            long rowIdHi,
+            long timestampColAddress,
+            long symbolIndexAddress,
+            long symbolIndexSize,
+            long symbolIndexPosition,
+            long windowBoundaries,
+            long timestampOutAddress,
+            long firstRowIdOutAddress,
+            long lastRowIdOutAddress,
+            int windowCount) {
+        return findFirstLastInFrame0(
+                outIndex,
+                rowIdLo,
+                rowIdHi,
+                timestampColAddress,
+                symbolIndexAddress + symbolIndexPosition * Long.BYTES,
+                symbolIndexSize - symbolIndexPosition,
+                windowBoundaries,
+                timestampOutAddress,
+                firstRowIdOutAddress,
+                lastRowIdOutAddress,
+                windowCount
+        );
+    }
+
     private static native void latestScanBackward0(long keysMemory, long keysMemorySize, long valuesMemory,
                                                  long valuesMemorySize, long argsMemory, long unIndexedNullCount,
                                                  long maxValue, long minValue,
                                                  int partitionIndex, int blockValueCountMod);
+
+    private static native int findFirstLastInFrame0(
+            int outIndex,
+            long rowIdLo,
+            long rowIdHi,
+            long timestampColAddress,
+            long symbolIndexAddress,
+            long symbolIndexSize,
+            long windowBoundaries,
+            long timestampOutAddress,
+            long firstRowIdOutAddress,
+            long lastRowIdOutAddress,
+            int windowCount);
 }
