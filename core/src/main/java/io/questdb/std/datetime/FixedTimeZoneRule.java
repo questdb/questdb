@@ -32,7 +32,7 @@ public class FixedTimeZoneRule implements TimeZoneRules {
     }
 
     @Override
-    public long getOffset(long millis, int year, boolean leap) {
+    public long getOffset(long utc, int year, boolean leap) {
         return offset;
     }
 

@@ -273,7 +273,7 @@ public abstract class AbstractCharSink implements CharSink {
         }
     }
 
-    private int putUtf8Internal(CharSequence cs, int hi, int i, char c) {
+    protected int putUtf8Internal(CharSequence cs, int hi, int i, char c) {
         if (c < 2048) {
             put((char) (192 | c >> 6)).put((char) (128 | c & 63));
         } else if (Character.isSurrogate(c)) {
