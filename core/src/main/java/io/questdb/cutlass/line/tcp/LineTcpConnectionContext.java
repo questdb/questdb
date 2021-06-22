@@ -122,10 +122,11 @@ class LineTcpConnectionContext implements IOContext, Mutable {
             final long len = recvBufPos - recvBufStartOfMeasurement;
             if (len > 0) {
                 Vect.memcpy(recvBufStartOfMeasurement, recvBufStart, len);
-                long shl = recvBufStartOfMeasurement - recvBufStart;
+                final long shl = recvBufStartOfMeasurement - recvBufStart;
                 protoParser.shl(shl);
                 this.recvBufStartOfMeasurement -= shl;
             } else {
+                assert len == 0;
                 resetParser();
             }
             recvBufPos = recvBufStart + len;
