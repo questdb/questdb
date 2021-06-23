@@ -103,8 +103,7 @@ The following table shows query execution time of a billion rows run on a
   discussions and to meet other users. :wave:
 - [GitHub discussions](https://github.com/questdb/questdb/discussions) is where
   our users share ideas for features, ask questions, and show what they've built.
-- [GitHub issues](https://github.com/questdb/questdb/issues) are for bug reports
-  and feature requests.
+- [GitHub issues](https://github.com/questdb/questdb/issues) are for bug reports.
 - [The project milestones](https://github.com/questdb/questdb/milestones) lists
   the tasks and features we're working on for upcoming releases.
 - [Tutorials](https://questdb.io/tutorial/) written by our community members
