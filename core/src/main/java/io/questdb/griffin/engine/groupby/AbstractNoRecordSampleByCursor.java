@@ -97,11 +97,15 @@ public abstract class AbstractNoRecordSampleByCursor implements NoRandomAccessRe
         timezoneNameFunc.init(base, executionContext);
         offsetFunc.init(base, executionContext);
 
+        this.base = base;
+        this.baseRecord = base.getRecord();
+        final long timestamp = baseRecord.getTimestamp(timestampIndex);
+
         long alignmentOffset = Numbers.LONG_NaN;
         final CharSequence tz = timezoneNameFunc.getStr(null);
         if (tz != null) {
             try {
-                alignmentOffset = Timestamps.toTimezone(0, TimestampFormatUtils.enLocale, tz);
+                alignmentOffset = Timestamps.toTimezone(timestamp, TimestampFormatUtils.enLocale, tz);
             } catch (NumericException e) {
                 Misc.free(base);
                 throw SqlException.$(timezoneNameFuncPos, "invalid timezone: ").put(tz);
@@ -124,9 +128,6 @@ public abstract class AbstractNoRecordSampleByCursor implements NoRandomAccessRe
             }
         }
 
-        this.base = base;
-        this.baseRecord = base.getRecord();
-        final long timestamp = baseRecord.getTimestamp(timestampIndex);
         this.nextTimestamp = timestampSampler.round(timestamp);
         this.baselineOffset = alignmentOffset == Numbers.LONG_NaN ? timestamp - nextTimestamp : alignmentOffset;
         this.topTimestamp = this.lastTimestamp = this.nextTimestamp = timestampSampler.round(timestamp - baselineOffset);
