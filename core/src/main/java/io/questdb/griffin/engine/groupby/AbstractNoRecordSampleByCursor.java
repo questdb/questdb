@@ -112,7 +112,7 @@ public abstract class AbstractNoRecordSampleByCursor implements NoRandomAccessRe
             }
         }
 
-        CharSequence offset = offsetFunc.getStr(null);
+        final CharSequence offset = offsetFunc.getStr(null);
 
         if (offset != null) {
             final long val = Timestamps.parseOffset(offset);

@@ -646,7 +646,6 @@ final public class Timestamps {
             return utc + locale.getZoneRules(
                     Numbers.decodeLowInt(locale.matchZone(timezone, lo, hi)), RESOLUTION_MICROS
             ).getOffset(utc);
-
         }
         offset = Numbers.decodeLowInt(l) * MINUTE_MICROS;
         return utc + offset;

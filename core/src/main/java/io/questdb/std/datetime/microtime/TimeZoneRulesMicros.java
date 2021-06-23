@@ -50,8 +50,10 @@ public class TimeZoneRulesMicros implements TimeZoneRules {
     private final long lastWall;
     private final int historyOverlapCheckCutoff;
     private final long standardOffset;
+    private final String name;
 
     public TimeZoneRulesMicros(ZoneRules rules) {
+        name = rules.toString();
         final long[] savingsInstantTransition = (long[]) Unsafe.getUnsafe().getObject(rules, SAVING_INSTANT_TRANSITION);
 
         if (savingsInstantTransition.length == 0) {
@@ -59,18 +61,19 @@ public class TimeZoneRulesMicros implements TimeZoneRules {
             standardOffset = standardOffsets[0].getTotalSeconds() * Timestamps.SECOND_MICROS;
         } else {
             standardOffset = Long.MIN_VALUE;
+            for (int i = 0, n = savingsInstantTransition.length; i < n; i++) {
+                historicTransitions.add(savingsInstantTransition[i]*1000000);
+            }
         }
 
-        LocalDateTime[] savingsLocalTransitions = (LocalDateTime[]) Unsafe.getUnsafe().getObject(rules, SAVINGS_LOCAL_TRANSITION);
-        for (int i = 0, n = savingsLocalTransitions.length; i < n; i++) {
-            LocalDateTime dt = savingsLocalTransitions[i];
-
-            historicTransitions.add(Timestamps.toMicros(dt.getYear(), dt.getMonthValue(), dt.getDayOfMonth(), dt.getHour(), dt.getMinute()) +
-                    dt.getSecond() * Timestamps.SECOND_MICROS + dt.getNano() / 1000);
-        }
+//        LocalDateTime[] savingsLocalTransitions = (LocalDateTime[]) Unsafe.getUnsafe().getObject(rules, SAVINGS_LOCAL_TRANSITION);
+//        for (int i = 0, n = savingsLocalTransitions.length; i < n; i++) {
+//            LocalDateTime dt = savingsLocalTransitions[i];
+//            historicTransitions.add(Timestamps.toMicros(dt.getYear(), dt.getMonthValue(), dt.getDayOfMonth(), dt.getHour(), dt.getMinute()) +
+//                    dt.getSecond() * Timestamps.SECOND_MICROS + dt.getNano() / 1000);
+//        }
         cutoffTransition = historicTransitions.getLast();
         historyOverlapCheckCutoff = historicTransitions.size() - 1;
-
 
         ZoneOffsetTransitionRule[] lastRules = (ZoneOffsetTransitionRule[]) Unsafe.getUnsafe().getObject(rules, LAST_RULES);
         this.rules = new ObjList<>(lastRules.length);
@@ -143,24 +146,24 @@ public class TimeZoneRulesMicros implements TimeZoneRules {
 
         if (index < 0) {
             index = -index - 2;
-        } else if (index < historyOverlapCheckCutoff && historicTransitions.getQuick(index) == historicTransitions.getQuick(index + 1)) {
-            index++;
+//        } else if (index < historyOverlapCheckCutoff && historicTransitions.getQuick(index) == historicTransitions.getQuick(index + 1)) {
+//            index++;
         }
 
-        if ((index & 1) == 0) {
-            int offsetBefore = wallOffsets[index / 2];
-            int offsetAfter = wallOffsets[index / 2 + 1];
+//        if ((index & 1) == 0) {
+//            int offsetBefore = wallOffsets[index / 2];
+//            int offsetAfter = wallOffsets[index / 2 + 1];
 
-            int delta = offsetAfter - offsetBefore;
-            if (delta > 0) {
-                // engage 0 transition logic
-                return (delta + offsetAfter) * Timestamps.SECOND_MICROS;
-            } else {
-                return offsetBefore * Timestamps.SECOND_MICROS;
-            }
-        } else {
-            return wallOffsets[index / 2 + 1] * Timestamps.SECOND_MICROS;
-        }
+//            int delta = offsetAfter - offsetBefore;
+//            if (delta > 0) {
+//                // engage 0 transition logic
+//                return offsetAfter * Timestamps.SECOND_MICROS;
+//            } else {
+//                return offsetBefore * Timestamps.SECOND_MICROS;
+//            }
+//        } else {
+            return wallOffsets[index + 1] * Timestamps.SECOND_MICROS;
+//        }
     }
 
     private long fromRules(long micros, int year, boolean leap) {
