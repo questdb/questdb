@@ -237,8 +237,7 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
                             partitionIndex = currentFrame.getPartitionIndex();
                             indexCursor = symbolIndexReader.getFrameCursor(groupBySymbolKey, dataFrameLo, dataFrameHi);
                             // Fall through to STATE_FETCH_NEXT_INDEX_FRAME;
-                        }
-                        if (state == STATE_FETCH_NEXT_DATA_FRAME_KEEP_INDEX) {
+                        } else if (state == STATE_FETCH_NEXT_DATA_FRAME_KEEP_INDEX) {
                             // Jump to search
                             return STATE_SEARCH;
                         }
@@ -267,6 +266,7 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
 
                 case STATE_OUT_BUFFER_FULL:
                 case STATE_SEARCH:
+
 
                     int outPosition = crossRowState == NONE ? 0 : 1;
                     long offsetTimestampColumnAddress = currentFrame.getPageAddress(timestampIndex) - dataFrameLo * Long.BYTES;
@@ -301,7 +301,7 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
                     if (rowsFound > outPosition) {
                         assert rowsFound < pageSize;
 
-                        // Read output timestamp and RowId to resume at the end of the output buffers
+                        // Read positions to resume from the point last search finished
                         indexFramePosition = firstRowIdOutAddress.get(rowsFound);
                         frameNextRowId = lastRowIdOutAddress.get(rowsFound);
                         sampleWindowAddress.set(0, startTimestampOutAddress.get(rowsFound));
