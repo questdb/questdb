@@ -82,7 +82,6 @@ public class TimeZoneRulesMicrosTest {
         long micros = Timestamps.toMicros(1900, 1, 1, 0, 0);
         long deadline = Timestamps.toMicros(2115, 12, 31, 0, 0);
 
-        int z = 0;
         while (micros < deadline) {
             final int y = Timestamps.getYear(micros);
             final boolean leap = Timestamps.isLeapYear(y);
@@ -91,22 +90,12 @@ public class TimeZoneRulesMicrosTest {
 
             for (int i = 0, n = zones.size(); i < n; i++) {
                 ZoneId zone = zones.get(i);
-                if (zone.getId().equals("America/Godthab")) {
-                    if (z > 35880) {
-                        System.out.println("ok");
-                    }
-                    z++;
-               }
                 TimeZoneRulesMicros rules = zoneRules.get(i);
 
                 ZonedDateTime zdt = dt.atZone(zone);
 
                 long expected = zdt.getOffset().getTotalSeconds();
                 // find out how much algo added to datetime itself
-//                long changed = Timestamps.toMicros(zdt.getYear(), zdt.getMonthValue(), zdt.getDayOfMonth(), zdt.getHour(), zdt.getMinute()) + zdt.getSecond() * Timestamps.SECOND_MICROS;
-//                // add any extra time
-//                expected += (changed - micros) / Timestamps.SECOND_MICROS;
-
                 long offset = rules.getOffset(micros, y, leap);
 
                 try {
