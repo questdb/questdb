@@ -114,58 +114,95 @@ int32_t findFirstLastInFrame0(
         , const int64_t rowIdLo
         , const int64_t rowIdHi
         , const int64_t* tsBase
-        , const int64_t* sampleWindows
-        , const int32_t sampleWindowCount
-        , const int64_t* symbolIndex
-        , const int64_t symbolIndexSize
-        , const int64_t symbolIndexPosition
+        , const int64_t* samplePeriods
+        , const int32_t samplePeriodCount
+        , const int64_t* indexBase
+        , const int64_t indexCount
+        , const int64_t indexPosition
         , int64_t* timestampOut
         , int64_t* firstRowIdOut
         , int64_t* lastRowIdOut
         , const int32_t outSize
         ) {
-
-    if (symbolIndexPosition < symbolIndexSize) {
-        // Sample by window start, end
-        int32_t winIndex = 0;
+    // This method searches Timestamp column (tsBase, rowLo, rowHi)
+    // for the first and last values in the sample windows set in samplePeriods
+    // using index (indexBase, indexCount, indexPosition)
+    // Index is symbol index, ascending Row Ids of the Timestamp column in tsBase
+    // when period are set like this
+    // 0         1         2         3         4         5         6         7         8         9         10
+    // 012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890
+    // ------------- | -------------------- | ---------------------- | ---------------------- | ------------------ |
+    // a  b  c  a  b b  c a c b  a                                  ba     c a                   a           a
+    //
+    // periodStarts are : 14, 37, 62, 87, 108
+    // and indexes of 'a' are: 0, 9, 19, 26, 62, 70, 90, 102
+    // the search should find
+    // first: 19, 62, 90
+    // last:  26, 70, 102
+    if (indexPosition < indexCount) {
+        // SampleBy period index
+        int32_t periodIndex = 0;
+        int64_t sampleStart;
         bool firstRowUpdated = false;
-        int64_t sampleByStart;
 
-        const int64_t* symbolLo = symbolIndex + symbolIndexPosition;
-        const int64_t* symbolHi = symbolIndex + symbolIndexSize;
-        const int64_t* tsLo = tsBase + std::max(rowIdLo, *symbolLo);
+        const int64_t* indexLo = indexBase + indexPosition;
+        const int64_t* indexHi = indexBase + indexCount;
+        const int64_t* tsLo = tsBase + std::max(rowIdLo, *indexLo);
         const int64_t* tsHi = tsBase + rowIdHi;
 
-        while (symbolLo < symbolHi
-               && winIndex < sampleWindowCount
+        while (indexLo < indexHi
+               && periodIndex < samplePeriodCount
                && tsLo < tsHi
                && outIndex < outSize - 1) {
 
-            winIndex += branch_free_search_lower(sampleWindows + winIndex, sampleWindowCount - winIndex, *tsLo);
-            sampleByStart = sampleWindows[winIndex];
-            if (sampleByStart < *tsLo) {
-                // first timestamp is beyond last period
-                break;
-            }
-            symbolLo += branch_free_linked_search_lower(symbolLo, tsBase, symbolHi - symbolLo, sampleByStart);
+            sampleStart = samplePeriods[periodIndex];
+            indexLo += branch_free_linked_search_lower(indexLo, tsBase, indexHi - indexLo, sampleStart);
 
-            // Point next timestamp col position to next value in symbol column
-            tsLo = tsBase + *symbolLo + ((symbolLo + 1) < symbolHi);
-            if (tsBase[*symbolLo] < sampleByStart) {
+            // Set last value as previous value to the found one
+            if (outIndex > 0 && indexLo - indexBase > 0) {
+                lastRowIdOut[outIndex - 1] = *(indexLo - 1);
+                firstRowUpdated |= outIndex == 1;
+            }
+
+            if (indexLo == indexHi) {
                 break;
             }
-            lastRowIdOut[outIndex] = firstRowIdOut[outIndex] = *symbolLo;
-            timestampOut[outIndex] = sampleByStart;
+
+            int64_t indexTs = tsBase[*indexLo];
+            int64_t sampleEnd = (periodIndex + 1) < samplePeriodCount ? samplePeriods[periodIndex + 1] : INT64_MAX;
+            if (indexTs >= sampleEnd) {
+                // indexTs is beyond sampling period
+                // branch_free_search_lower returns insert position of the value
+                // We need the index of the first value less or equal to indexTs
+                // This is the same as searching of (indexTs + 1) and getting previous index
+                periodIndex += branch_free_search_lower(samplePeriods + periodIndex,
+                                                        samplePeriodCount - periodIndex,
+                                                     indexTs + 1) - 1;
+                continue;
+            }
+
+            // Point next timestamp column position to found Index value
+            tsLo = tsBase + *indexLo;
+            if (tsLo >= tsHi || *tsLo < sampleStart) {
+                // If index value is beyond data frame limits
+                // or no symbol exists higher than the searched sampleStart
+                // abort the search and return results
+                break;
+            }
+            lastRowIdOut[outIndex] = firstRowIdOut[outIndex] = *indexLo;
+            timestampOut[outIndex] = sampleStart;
             outIndex++;
+            periodIndex++;
         }
 
         // Save additional values in out buffers Java expects to find
         // Next timestamp to start from
-        timestampOut[outIndex] = sampleByStart;
-        // Next symbolIndexPosition
-        firstRowIdOut[outIndex] = symbolLo - symbolIndex;
+        sampleStart = samplePeriods[std::min(periodIndex, samplePeriodCount - 1)];
+        timestampOut[outIndex] = sampleStart;
+        // Next indexPosition
+        firstRowIdOut[outIndex] = indexLo - indexBase;
         // Next rowIdLo
-        lastRowIdOut[outIndex] = tsLo - tsBase + rowIdLo;
+        lastRowIdOut[outIndex] = tsLo - tsBase;
         return firstRowUpdated ? -outIndex : outIndex;
     }
     return outIndex;

@@ -127,7 +127,7 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
         private final static int STATE_SEARCH = 5;
         private final static int STATE_RETURN_LAST_ROW = 6;
         private final static int STATE_DONE = 7;
-        private final static int STATE_FETCH_NEXT_DATA_FRAME_KEEP_INDEX = 8;
+//        private final static int STATE_FETCH_NEXT_DATA_FRAME_KEEP_INDEX = 8;
         private final static int NONE = 0;
         private final static int CROSS_ROW_STATE_SAVED = 1;
         private final static int CROSS_ROW_STATE_REFS_UPDATED = 2;
@@ -224,23 +224,27 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
                     // Fall trough to STATE_FETCH_NEXT_DATA_FRAME;
 
                 case STATE_FETCH_NEXT_DATA_FRAME:
-                case STATE_FETCH_NEXT_DATA_FRAME_KEEP_INDEX:
+//                case STATE_FETCH_NEXT_DATA_FRAME_KEEP_INDEX:
                     currentFrame = pageFrameCursor.next();
                     if (currentFrame != null) {
                         // Switch to new data frame
                         frameNextRowId = dataFrameLo = currentFrame.getFirstRowId();
                         dataFrameHi = dataFrameLo + currentFrame.getPageSize(timestampIndex) / Long.BYTES;
 
-                        if (partitionIndex != currentFrame.getPartitionIndex()) {
-                            // Switch index to next partition
-                            BitmapIndexReader symbolIndexReader = currentFrame.getBitmapIndexReader(groupBySymbolColIndex, BitmapIndexReader.DIR_FORWARD);
-                            partitionIndex = currentFrame.getPartitionIndex();
-                            indexCursor = symbolIndexReader.getFrameCursor(groupBySymbolKey, dataFrameLo, dataFrameHi);
-                            // Fall through to STATE_FETCH_NEXT_INDEX_FRAME;
-                        } else if (state == STATE_FETCH_NEXT_DATA_FRAME_KEEP_INDEX) {
-                            // Jump to search
-                            return STATE_SEARCH;
-                        }
+                        BitmapIndexReader symbolIndexReader = currentFrame.getBitmapIndexReader(groupBySymbolColIndex, BitmapIndexReader.DIR_FORWARD);
+                        partitionIndex = currentFrame.getPartitionIndex();
+                        indexCursor = symbolIndexReader.getFrameCursor(groupBySymbolKey, dataFrameLo, dataFrameHi);
+
+//                        if (partitionIndex != currentFrame.getPartitionIndex()) {
+//                            // Switch index to next partition
+//                            BitmapIndexReader symbolIndexReader = currentFrame.getBitmapIndexReader(groupBySymbolColIndex, BitmapIndexReader.DIR_FORWARD);
+//                            partitionIndex = currentFrame.getPartitionIndex();
+//                            indexCursor = symbolIndexReader.getFrameCursor(groupBySymbolKey, dataFrameLo, dataFrameHi);
+//                            // Fall through to STATE_FETCH_NEXT_INDEX_FRAME;
+//                        } else if (state == STATE_FETCH_NEXT_DATA_FRAME_KEEP_INDEX) {
+//                            // Jump to search
+//                            return STATE_SEARCH;
+//                        }
                         // Fall through to STATE_FETCH_NEXT_INDEX_FRAME;
                     } else {
                         return STATE_RETURN_LAST_ROW;
@@ -266,8 +270,6 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
 
                 case STATE_OUT_BUFFER_FULL:
                 case STATE_SEARCH:
-
-
                     int outPosition = crossRowState == NONE ? 0 : 1;
                     long offsetTimestampColumnAddress = currentFrame.getPageAddress(timestampIndex) - dataFrameLo * Long.BYTES;
                     long lastIndexRowId = Unsafe.getUnsafe().getLong(
@@ -316,7 +318,7 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
                             newState = STATE_FETCH_NEXT_INDEX_FRAME;
                         } else {
                             // Data frame exhausted. Next time start from fetching new data frame
-                            newState = STATE_FETCH_NEXT_DATA_FRAME_KEEP_INDEX;
+                            newState = STATE_FETCH_NEXT_DATA_FRAME;
                         }
 
                         if (rowsFound > 1) {
