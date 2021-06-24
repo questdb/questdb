@@ -75,13 +75,12 @@ export const getRemoteConfig: Epic<StoreAction, TelemetryAction, StoreShape> = (
     withLatestFrom(state$),
     switchMap(([_, state]) => {
       const config = selectors.telemetry.getConfig(state)
-
       if (config?.enabled) {
         return fromFetch<Partial<TelemetryRemoteConfigShape>>(
           `${API}/config`,
           {
             method: "POST",
-            body: JSON.stringify({ id: config.id }),
+            body: JSON.stringify(config),
           },
           false,
         )
@@ -163,6 +162,9 @@ export const startTelemetry: Epic<StoreAction, TelemetryAction, StoreShape> = (
               columns: result.columns,
               dataset: result.dataset,
               id: config.id,
+              version: config.version,
+              os: config.os,
+              package: config.package,
             }),
           },
           false,
