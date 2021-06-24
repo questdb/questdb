@@ -1316,8 +1316,9 @@ public class SqlCodeGenerator implements Mutable {
                 );
 
 
-                boolean allGroupsFirstLast = allGroupsFirstLastWithSingleSymbolFilter(model);
-                if (fillCount == 0 && allGroupsFirstLast) {
+                boolean isFillNone = fillCount == 0 || fillCount == 1 && Chars.equalsLowerCaseAscii(sampleByFill.getQuick(0).token, "none");
+                boolean allGroupsFirstLast = isFillNone && allGroupsFirstLastWithSingleSymbolFilter(model);
+                if (allGroupsFirstLast) {
                     SingleSymbolFilter symbolFilter = factory.convertToSampleByIndexDataFrameCursorFactory();
                     if (symbolFilter != null) {
                         return new SampleByFirstLastRecordCursorFactory(
@@ -1325,6 +1326,7 @@ public class SqlCodeGenerator implements Mutable {
                                 timestampSampler,
                                 groupByMetadata,
                                 model.getColumns(),
+                                metadata,
                                 timestampIndex,
                                 symbolFilter,
                                 configuration.getSampleByIndexSearchPageSize()
@@ -1360,7 +1362,7 @@ public class SqlCodeGenerator implements Mutable {
                     );
                 }
 
-                if (fillCount == 0 || fillCount == 1 && Chars.equalsLowerCaseAscii(sampleByFill.getQuick(0).token, "none")) {
+                if (isFillNone) {
 
                     if (keyTypes.getColumnCount() == 0) {
                         // this sample by is not keyed

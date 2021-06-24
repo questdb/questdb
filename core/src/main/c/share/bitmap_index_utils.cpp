@@ -127,18 +127,24 @@ int32_t findFirstLastInFrame0(
     // This method searches Timestamp column (tsBase, rowLo, rowHi)
     // for the first and last values in the sample windows set in samplePeriods
     // using index (indexBase, indexCount, indexPosition)
-    // Index is symbol index, ascending Row Ids of the Timestamp column in tsBase
-    // when period are set like this
+    // Index is symbol index, ascending Row Ids of the Timestamp column
+    // Example:
+    // when data is
     // 0         1         2         3         4         5         6         7         8         9         10
     // 012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890
     // ------------- | -------------------- | ---------------------- | ---------------------- | ------------------ |
     // a  b  c  a  b b  c a c b  a                                  ba     c a                   a           a
     //
-    // periodStarts are : 14, 37, 62, 87, 108
-    // and indexes of 'a' are: 0, 9, 19, 26, 62, 70, 90, 102
+    // periodStarts are noted as | at: 14, 37, 62, 87, 108
+    // and indexes of 'a' are        : 0, 9, 19, 26, 62, 70, 90, 102
     // the search should find
-    // first: 19, 62, 90
-    // last:  26, 70, 102
+    // firstRowIdOut                 : 19, 62, 90
+    // lastRowIdOut                  : 26, 70, 102
+    // timestampOut                  : 14, 62, 87
+    // Last value of output buffers reserved for positions to resume the search
+    // firstRowIdOut:   7 ( index position             )
+    // lastRowIdOut:  108 ( timestamp column position  )
+    // timestampOut:  108 ( last processed period end  )
     if (indexPosition < indexCount) {
         // SampleBy period index
         int32_t periodIndex = 0;
@@ -171,7 +177,7 @@ int32_t findFirstLastInFrame0(
             int64_t indexTs = tsBase[*indexLo];
             int64_t sampleEnd = (periodIndex + 1) < samplePeriodCount ? samplePeriods[periodIndex + 1] : INT64_MAX;
             if (indexTs >= sampleEnd) {
-                // indexTs is beyond sampling period
+                // indexTs is beyond sampling period. Find the sampling period the indexTs is in.
                 // branch_free_search_lower returns insert position of the value
                 // We need the index of the first value less or equal to indexTs
                 // This is the same as searching of (indexTs + 1) and getting previous index

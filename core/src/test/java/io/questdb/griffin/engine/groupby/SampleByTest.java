@@ -4722,6 +4722,31 @@ public class SampleByTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testIndexSampleByIndexWithIrregularEmptyPeriods() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table xx (s symbol, k timestamp)" +
+                    ", index(s capacity 256) timestamp(k) partition by DAY", sqlExecutionContext);
+        });
+
+        assertSampleByIndexQuery("k\ts\tlat\tlon\n" +
+                        "1970-01-01T20:50:00.000000Z\ta\t1970-01-01T20:50:00.000000Z\t1970-01-01T21:30:00.000000Z\n" +
+                        "1970-01-01T21:50:00.000000Z\ta\t1970-01-01T21:50:00.000000Z\t1970-01-01T21:50:00.000000Z\n" +
+                        "1970-01-01T23:50:00.000000Z\ta\t1970-01-02T00:30:00.000000Z\t1970-01-02T00:30:00.000000Z\n" +
+                        "1970-01-02T00:50:00.000000Z\ta\t1970-01-02T00:50:00.000000Z\t1970-01-02T01:10:00.000000Z\n" +
+                        "1970-01-02T03:50:00.000000Z\ta\t1970-01-02T03:50:00.000000Z\t1970-01-02T03:50:00.000000Z\n",
+                "select k, s, first(k) lat, last(k) lon " +
+                        "from xx " +
+                        "where k between '1970-01-01T20:00' and '1970-01-02T04:00' and s in ('a')" +
+                        "sample by 1h",
+                "insert into xx " +
+                        "select " +
+                        "(case when (x / 7) % 3 = 0 and x % 2 = 0 then 'a' else 'b' end) s,\n" +
+                        "timestamp_sequence(0, 10 * 60 * 1000000L) k\n" +
+                        "from\n" +
+                        "long_sequence(360)\n");
+    }
+
+    @Test
     public void testIndexSampleByFirstAndLast() throws Exception {
         assertQuery("k\ts\tlat\tlon\n",
                 "select k, s, first(lat) lat, last(lon) lon " +
