@@ -235,6 +235,8 @@ public class LineProtoSender extends AbstractCharSink implements Closeable {
             case ' ':
             case ',':
             case '=':
+            case '"':
+            case '\\':
                 put('\\');
             default:
                 put(c);

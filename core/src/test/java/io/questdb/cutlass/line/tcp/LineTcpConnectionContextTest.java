@@ -1149,6 +1149,32 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testQuotes() throws Exception {
+        runInContext(() -> {
+            recvBuffer = "tbl,t1=tv1,t2=tv2 f1=\"fv1\",f2=\"Zen Internet Ltd\" 1465839830100400200\n" +
+                    "tbl,t1=tv1,t2=tv2 f1=\"Zen Internet Ltd\" 1465839830100400200\n" +
+                    "tbl,t1=tv1,t2=tv2 f1=\"Zen=Internet,Ltd\" 1465839830100400200\n" +
+                    "tbl,t1=t\\\"v1,t2=t\"v2 f2=\"1\" 1465839830100400200\n" +
+                    "tbl,t1=\"tv1\",t2=tv2 f2=\"1\" 1465839830100400200\n" +
+                    "tbl,t1=tv1,t2=tv2 f1=\"Zen Internet Ltd\",f2=\"fv2\" 1465839830100400200\n";
+            do {
+                handleContextIO();
+                Assert.assertFalse(disconnected);
+            } while (recvBuffer.length() > 0);
+            waitForIOCompletion();
+            closeContext();
+            String expected = "t1\tt2\tf1\tf2\ttimestamp\n" +
+                    "tv1\ttv2\tfv1\tZen Internet Ltd\t2016-06-13T17:43:50.100400Z\n" +
+                    "tv1\ttv2\tZen Internet Ltd\t\t2016-06-13T17:43:50.100400Z\n" +
+                    "tv1\ttv2\tZen=Internet,Ltd\t\t2016-06-13T17:43:50.100400Z\n" +
+                    "t\"v1\tt\"v2\t\t1\t2016-06-13T17:43:50.100400Z\n" +
+                    "\"tv1\"\ttv2\t\t1\t2016-06-13T17:43:50.100400Z\n" +
+                    "tv1\ttv2\tZen Internet Ltd\tfv2\t2016-06-13T17:43:50.100400Z\n";
+            assertTable(expected, "tbl");
+        });
+    }
+
     private void addTable() {
         try (
                 @SuppressWarnings("resource")

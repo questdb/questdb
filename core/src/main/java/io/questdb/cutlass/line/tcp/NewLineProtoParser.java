@@ -51,6 +51,8 @@ public class NewLineProtoParser implements Closeable {
     private long entityLo;
     private boolean tagsComplete;
     private int nEscapedChars;
+    private boolean fieldValueStartingWithQuote;
+    private byte previousByte;
     private int nEntities;
     private ProtoEntity currentEntity;
     private ErrorCode errorCode;
@@ -105,6 +107,7 @@ public class NewLineProtoParser implements Closeable {
         while (bufAt < bufHi) {
             byte b = Unsafe.getUnsafe().getByte(bufAt);
             boolean endOfLine = false;
+            boolean appendByte = false;
             switch (b) {
                 case (byte) '\n':
                 case (byte) '\r':
@@ -113,7 +116,12 @@ public class NewLineProtoParser implements Closeable {
                 case (byte) '=':
                 case (byte) ',':
                 case (byte) ' ':
-                    if (!entityHandler.completeEntity(b)) {
+                    if (fieldValueStartingWithQuote && previousByte != (byte) '"') {
+                        appendByte = true;
+                        break;
+                    }
+                    fieldValueStartingWithQuote = false;
+                    if (!entityHandler.completeEntity(b, bufHi)) {
                         if (errorCode == ErrorCode.EMPTY_LINE) {
                             // An empty line
                             bufAt++;
@@ -144,11 +152,16 @@ public class NewLineProtoParser implements Closeable {
                     b = Unsafe.getUnsafe().getByte(bufAt);
 
                 default:
-                    if (nEscapedChars > 0) {
+                    appendByte = true;
+                    break;
+            }
+
+            if (appendByte) {
+                if (nEscapedChars > 0) {
                         Unsafe.getUnsafe().putByte(bufAt - nEscapedChars, b);
                     }
                     bufAt++;
-                    break;
+                    previousByte = b;
             }
         }
         return ParseResult.BUFFER_UNDERFLOW;
@@ -179,6 +192,7 @@ public class NewLineProtoParser implements Closeable {
     public void startNextMeasurement() {
         bufAt++;
         nEscapedChars = 0;
+        fieldValueStartingWithQuote = false;
         entityLo = bufAt;
         errorCode = null;
         tagsComplete = false;
@@ -188,12 +202,12 @@ public class NewLineProtoParser implements Closeable {
         timestamp = NULL_TIMESTAMP;
     }
 
-    private boolean expectEndOfLine(byte endOfEntityByte) {
+    private boolean expectEndOfLine(byte endOfEntityByte, long bufHi) {
         assert endOfEntityByte == '\n';
         return true;
     }
 
-    private boolean expectEntityName(byte endOfEntityByte) {
+    private boolean expectEntityName(byte endOfEntityByte, long bufHi) {
         if (endOfEntityByte == (byte) '=') {
             if (entityCache.size() <= nEntities) {
                 currentEntity = new ProtoEntity();
@@ -206,6 +220,13 @@ public class NewLineProtoParser implements Closeable {
             nEntities++;
             currentEntity.setName();
             entityHandler = entityValueHandler;
+
+            if (tagsComplete) {
+                if (bufAt < bufHi) {
+                    byte b = Unsafe.getUnsafe().getByte(bufAt + 1);
+                    fieldValueStartingWithQuote = b == (byte) '"';
+                }
+            }
             return true;
         }
 
@@ -233,7 +254,7 @@ public class NewLineProtoParser implements Closeable {
         return false;
     }
 
-    private boolean expectEntityValue(byte endOfEntityByte) {
+    private boolean expectEntityValue(byte endOfEntityByte, long bufHi) {
         boolean endOfSet = endOfEntityByte == (byte) ' ';
         if (endOfSet || endOfEntityByte == (byte) ',' || endOfEntityByte == (byte) '\n') {
             if (currentEntity.setValue()) {
@@ -258,7 +279,7 @@ public class NewLineProtoParser implements Closeable {
         return false;
     }
 
-    private boolean expectTableName(byte endOfEntityByte) {
+    private boolean expectTableName(byte endOfEntityByte, long bufHi) {
         tagsComplete = endOfEntityByte == (byte) ' ';
         if (endOfEntityByte == (byte) ',' || tagsComplete) {
             measurementName.of(entityLo, bufAt);
@@ -274,7 +295,7 @@ public class NewLineProtoParser implements Closeable {
         return false;
     }
 
-    private boolean expectTimestamp(byte endOfEntityByte) {
+    private boolean expectTimestamp(byte endOfEntityByte, long bufHi) {
         try {
             if (endOfEntityByte == (byte) '\n') {
                 timestamp = Numbers.parseLong(charSeq.of(entityLo, bufAt - nEscapedChars));
@@ -298,7 +319,7 @@ public class NewLineProtoParser implements Closeable {
     }
 
     private interface EntityHandler {
-        boolean completeEntity(byte endOfEntityByte);
+        boolean completeEntity(byte endOfEntityByte, long bufHi);
     }
 
     public class ProtoEntity {
