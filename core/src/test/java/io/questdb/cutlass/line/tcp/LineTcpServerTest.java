@@ -220,7 +220,7 @@ public class LineTcpServerTest extends AbstractCairoTest {
                 }
 
                 sendAndWait(lineData, tableIndex, 2);
-                try (TableWriter w = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "weather")) {
+                try (TableWriter w = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "weather", "testing")) {
                     w.truncate();
                 }
                 sendAndWait(lineData, tableIndex, 4);
@@ -250,7 +250,7 @@ public class LineTcpServerTest extends AbstractCairoTest {
                         } catch (AssertionError e) {
                             int releasedCount = -tableIndex.get(tableName).getCount();
                             // Wait one more writer release before re-trying to compare
-                            wait(tableIndex.get(tableName), releasedCount + 1, 20, minIdleMsBeforeWriterRelease);
+                            wait(tableIndex.get(tableName), releasedCount + 1, minIdleMsBeforeWriterRelease);
                             assertTable(expectedSB, tableName);
                         }
                     } catch (Throwable err) {
@@ -266,10 +266,10 @@ public class LineTcpServerTest extends AbstractCairoTest {
         });
     }
 
-    private void wait(SOUnboundedCountDownLatch latch, int value, long msTimeout, long iterations) {
+    private void wait(SOUnboundedCountDownLatch latch, int value, long iterations) {
         while (-latch.getCount() < value && iterations-- > 0) {
             try {
-                Thread.sleep(msTimeout);
+                Thread.sleep(20);
             } catch (InterruptedException e) {
                 e.printStackTrace();
                 return;
@@ -369,7 +369,7 @@ public class LineTcpServerTest extends AbstractCairoTest {
                     "weather,location=us-eastcoast temperature=81 1465839830101400200\n";
             send(lineData, "weather");
 
-            try (TableWriter w = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "weather")) {
+            try (TableWriter w = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "weather", "testing")) {
                 w.truncate();
             }
 
@@ -559,7 +559,7 @@ public class LineTcpServerTest extends AbstractCairoTest {
         this.authKeyId = authKeyId;
         this.msgBufferSize = msgBufferSize;
         assertMemoryLeak(() -> {
-            final String[] locations = {"london", "paris", "rome"};
+            final String[] locations = {"x london", "paris", "rome"};
 
             final CharSequenceHashSet tables = new CharSequenceHashSet();
             tables.add("weather1");

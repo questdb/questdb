@@ -553,7 +553,7 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
         LOG.info().$(nThreads).$(" worker threads started").$();
 
         try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, sourceTableName);
-             TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), destTableName)) {
+                TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), destTableName, "testing")) {
             final int columnCount = writer.getMetadata().getColumnCount();
 
             for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
@@ -566,7 +566,7 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
         }
 
         try (TableReplicationRecordCursorFactory factory = createReplicatingRecordCursorFactory(sourceTableName, maxRowsPerFrame);
-             TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), destTableName)) {
+                TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), destTableName, "testing")) {
             final int columnCount = factory.getMetadata().getColumnCount();
             int nFrames = 0;
             int timestampColumnIndex = factory.getMetadata().getTimestampIndex();

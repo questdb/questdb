@@ -99,4 +99,10 @@ public interface MessageBus extends Closeable {
     RingQueue<VectorAggregateTask> getVectorAggregateQueue();
 
     Sequence getVectorAggregateSubSeq();
+
+    Sequence getLatestByPubSeq();
+
+    RingQueue<LatestByTask> getLatestByQueue();
+
+    Sequence getLatestBySubSeq();
 }

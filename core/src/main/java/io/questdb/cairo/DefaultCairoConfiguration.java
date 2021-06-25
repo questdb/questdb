@@ -550,4 +550,9 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     public boolean isO3QuickSortEnabled() {
         return false;
     }
+
+    @Override
+    public int getLatestByQueueCapacity() {
+        return 32;
+    }
 }

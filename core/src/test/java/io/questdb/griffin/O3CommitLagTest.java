@@ -302,8 +302,8 @@ public class O3CommitLagTest extends AbstractO3Test {
             String[] varCol = new String[]{"abc", "aldfjkasdlfkj", "as", "2021-04-27T12:00:00"};
 
             // Add 2 batches
-            try (TableWriter o3 = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "o3");
-                 TableWriter ordered = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "ordered")) {
+            try (TableWriter o3 = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "o3", "testing");
+                    TableWriter ordered = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "ordered", "testing")) {
                 for (int i = 0; i < iterations; i++) {
                     long backwards = iterations - i - 1;
                     final Rnd rnd = new Rnd();
@@ -430,7 +430,7 @@ public class O3CommitLagTest extends AbstractO3Test {
         }
 
         int nCommitsWithLag = 0;
-        try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "y")) {
+        try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "y", "testing")) {
             int nHeadBatch = 1;
             int nRowsAppended = 0;
             while (nHeadBatch < batchRowEnd.size()) {
@@ -501,7 +501,7 @@ public class O3CommitLagTest extends AbstractO3Test {
         TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
         TestUtils.assertEquals(sink, sink2);
 
-        try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "y")) {
+        try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "y", "testing")) {
             sql = "select * from x where i>150 and i<200 order by f";
             insertUncommitted(compiler, sqlExecutionContext, sql, writer);
             long commitLag = maxTimestamp - TimestampFormatUtils.parseTimestamp("1970-01-06T23:59:59.000Z");
@@ -560,7 +560,7 @@ public class O3CommitLagTest extends AbstractO3Test {
         TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
         TestUtils.assertEquals(sink, sink2);
 
-        try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "y")) {
+        try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "y", "testing")) {
             sql = "select * from x where i>150 and i<200 order by f";
             insertUncommitted(compiler, sqlExecutionContext, sql, writer);
             long commitLag = maxTimestamp - TimestampFormatUtils.parseTimestamp("1970-01-07T00:00:00.000Z");
@@ -619,7 +619,7 @@ public class O3CommitLagTest extends AbstractO3Test {
         TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
         TestUtils.assertEquals(sink, sink2);
 
-        try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "y")) {
+        try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "y", "testing")) {
             sql = "select * from x where i>150 and i<200 order by f";
             insertUncommitted(compiler, sqlExecutionContext, sql, writer);
             long commitLag = maxTimestamp - TimestampFormatUtils.parseTimestamp("1970-01-07T00:00:00.000Z");
@@ -682,7 +682,7 @@ public class O3CommitLagTest extends AbstractO3Test {
         TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
         TestUtils.assertEquals(sink, sink2);
 
-        try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "y")) {
+        try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "y", "testing")) {
             sql = "select * from x where i>150 and i<200 order by f";
             insertUncommitted(compiler, sqlExecutionContext, sql, writer);
             long commitLag = maxTimestamp - TimestampFormatUtils.parseTimestamp("1970-01-06T23:59:59.000Z");
@@ -745,7 +745,7 @@ public class O3CommitLagTest extends AbstractO3Test {
         TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
         TestUtils.assertEquals(sink, sink2);
 
-        try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "y")) {
+        try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "y", "testing")) {
             sql = "select * from x where i>150 and i<200 order by f";
             insertUncommitted(compiler, sqlExecutionContext, sql, writer);
             long commitLag = (maxTimestamp - minTimestamp) / 2;
@@ -804,7 +804,7 @@ public class O3CommitLagTest extends AbstractO3Test {
         TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
         TestUtils.assertEquals(sink, sink2);
 
-        try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "y")) {
+        try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "y", "testing")) {
             sql = "select * from x where i>150 and i<200 order by f";
             insertUncommitted(compiler, sqlExecutionContext, sql, writer);
             long commitLag = (maxTimestamp - minTimestamp) / 2;
@@ -866,7 +866,7 @@ public class O3CommitLagTest extends AbstractO3Test {
         TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
         TestUtils.assertEquals(sink, sink2);
 
-        try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "y")) {
+        try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "y", "testing")) {
             sql = "select * from x where i>250 and i<300";
             insertUncommitted(compiler, sqlExecutionContext, sql, writer);
             sql = "select * from x where i>=300 order by f";
@@ -917,7 +917,7 @@ public class O3CommitLagTest extends AbstractO3Test {
         TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
         TestUtils.assertEquals(sink, sink2);
 
-        try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "y")) {
+        try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "y", "testing")) {
             sql = "select * from x where i>250 or (i>50 and i<100) order by f";
             insertUncommitted(compiler, sqlExecutionContext, sql, writer);
             long commitLag = (maxTimestamp - minTimestamp) / 2;
@@ -966,7 +966,7 @@ public class O3CommitLagTest extends AbstractO3Test {
         TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
         TestUtils.assertEquals(sink, sink2);
 
-        try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "y")) {
+        try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "y", "testing")) {
             sql = "select * from x where i>490 order by f";
             insertUncommitted(compiler, sqlExecutionContext, sql, writer);
             long commitLag = (maxTimestamp - minTimestamp) / 2;
@@ -1015,7 +1015,7 @@ public class O3CommitLagTest extends AbstractO3Test {
         TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
         TestUtils.assertEquals(sink, sink2);
 
-        try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "y")) {
+        try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "y", "testing")) {
             sql = "select * from x where i>250 order by f";
             insertUncommitted(compiler, sqlExecutionContext, sql, writer);
             long commitLag = (maxTimestamp - minTimestamp) / 2;
@@ -1072,7 +1072,7 @@ public class O3CommitLagTest extends AbstractO3Test {
         TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
         TestUtils.assertEquals(sink, sink2);
 
-        try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "y")) {
+        try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "y", "testing")) {
             sql = "select * from x where i>250 order by f";
             insertUncommitted(compiler, sqlExecutionContext, sql, writer);
             long commitLag = (maxTimestamp - minTimestamp) * 3 / 4;
@@ -1121,7 +1121,7 @@ public class O3CommitLagTest extends AbstractO3Test {
         TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
         TestUtils.assertEquals(sink, sink2);
 
-        try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "y")) {
+        try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "y", "testing")) {
             sql = "select * from x where i>250 order by f";
             insertUncommitted(compiler, sqlExecutionContext, sql, writer);
             long commitLag = (maxTimestamp - minTimestamp) * 3 / 4;
@@ -1172,7 +1172,7 @@ public class O3CommitLagTest extends AbstractO3Test {
         TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
         TestUtils.assertEquals(sink, sink2);
 
-        try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "y")) {
+        try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "y", "testing")) {
             sql = "select * from x where i>150 and i<=495 order by f";
             insertUncommitted(compiler, sqlExecutionContext, sql, writer);
             writer.commit();
@@ -1222,7 +1222,7 @@ public class O3CommitLagTest extends AbstractO3Test {
         TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
         TestUtils.assertEquals(sink, sink2);
 
-        try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "y")) {
+        try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "y", "testing")) {
             sql = "select * from x where i>150 and i<=184 order by f";
             insertUncommitted(compiler, sqlExecutionContext, sql, writer);
             writer.commit();
@@ -1271,7 +1271,7 @@ public class O3CommitLagTest extends AbstractO3Test {
         TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
         TestUtils.assertEquals(sink, sink2);
 
-        try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "y")) {
+        try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "y", "testing")) {
             sql = "select * from x where i>250 and i<=375 order by f";
             insertUncommitted(compiler, sqlExecutionContext, sql, writer);
             writer.commit();

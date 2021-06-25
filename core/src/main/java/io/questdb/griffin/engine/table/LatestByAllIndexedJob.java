@@ -22,18 +22,23 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.pool.ex;
+package io.questdb.griffin.engine.table;
 
-import io.questdb.cairo.CairoException;
-import io.questdb.std.ThreadLocal;
+import io.questdb.MessageBus;
+import io.questdb.mp.AbstractQueueConsumerJob;
+import io.questdb.tasks.LatestByTask;
 
-public class EntryLockedException extends CairoException {
-    private static final ThreadLocal<EntryLockedException> tlException = new ThreadLocal<>(EntryLockedException::new);
+public class LatestByAllIndexedJob extends AbstractQueueConsumerJob<LatestByTask> {
 
-    public static EntryLockedException instance(CharSequence reason) {
-        EntryLockedException ex = tlException.get();
-        ex.message.clear();
-        ex.put("table busy [reason=").put(reason).put("]");
-        return ex;
+    public LatestByAllIndexedJob(MessageBus messageBus) {
+        super(messageBus.getLatestByQueue(), messageBus.getLatestBySubSeq());
+    }
+
+    @Override
+    protected boolean doRun(int workerId, long cursor) {
+        final LatestByTask task = queue.get(cursor);
+        final boolean result = task.run();
+        subSeq.done(cursor);
+        return result;
     }
 }

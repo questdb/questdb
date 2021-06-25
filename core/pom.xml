@@ -201,6 +201,46 @@
                     </properties>
                 </configuration>
             </plugin>
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>exec-maven-plugin</artifactId>
+                <version>1.6.0</version>
+                <configuration>
+                    <longModulepath>false</longModulepath>
+                </configuration>
+                <executions>
+                    <execution>
+                        <id>npm-install</id>
+                        <goals>
+                            <goal>exec</goal>
+                        </goals>
+                        <configuration>
+                            <executable>${nodejs.npm.cmd}</executable>
+                            <arguments>
+                                <argument>install</argument>
+                                <argument>--no-fund</argument>
+                                <argument>--scripts-prepend-node-path=auto</argument>
+                            </arguments>
+                            <workingDirectory>../ui</workingDirectory>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>npm-run-build</id>
+                        <goals>
+                            <goal>exec</goal>
+                        </goals>
+                        <configuration>
+                            <executable>${nodejs.npm.cmd}</executable>
+                            <arguments>
+                                <argument>run</argument>
+                                <argument>build</argument>
+                                <argument>--scripts-prepend-node-path=auto</argument>
+                            </arguments>
+                            <workingDirectory>../ui</workingDirectory>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
         </plugins>
     </build>
 
@@ -316,42 +356,14 @@
                     <plugin>
                         <groupId>org.codehaus.mojo</groupId>
                         <artifactId>exec-maven-plugin</artifactId>
-                        <version>1.6.0</version>
-                        <configuration>
-                            <longModulepath>false</longModulepath>
-                        </configuration>
                         <executions>
                             <execution>
                                 <id>npm-install</id>
-                                <goals>
-                                    <goal>exec</goal>
-                                </goals>
                                 <phase>generate-sources</phase>
-                                <configuration>
-                                    <executable>${nodejs.npm.cmd}</executable>
-                                    <arguments>
-                                        <argument>install</argument>
-                                        <argument>--no-fund</argument>
-                                        <argument>--scripts-prepend-node-path=auto</argument>
-                                    </arguments>
-                                    <workingDirectory>../ui</workingDirectory>
-                                </configuration>
                             </execution>
                             <execution>
                                 <id>npm-run-build</id>
-                                <goals>
-                                    <goal>exec</goal>
-                                </goals>
                                 <phase>generate-sources</phase>
-                                <configuration>
-                                    <executable>${nodejs.npm.cmd}</executable>
-                                    <arguments>
-                                        <argument>run</argument>
-                                        <argument>build</argument>
-                                        <argument>--scripts-prepend-node-path=auto</argument>
-                                    </arguments>
-                                    <workingDirectory>../ui</workingDirectory>
-                                </configuration>
                             </execution>
                         </executions>
                     </plugin>
@@ -366,11 +378,18 @@
                     <plugin>
                         <groupId>org.codehaus.mojo</groupId>
                         <artifactId>exec-maven-plugin</artifactId>
-                        <version>1.6.0</version>
                         <configuration>
                             <longModulepath>false</longModulepath>
                         </configuration>
                         <executions>
+                            <execution>
+                                <id>npm-install</id>
+                                <phase>generate-sources</phase>
+                            </execution>
+                            <execution>
+                                <id>npm-run-build</id>
+                                <phase>generate-sources</phase>
+                            </execution>
                             <execution>
                                 <id>jlink</id>
                                 <goals>

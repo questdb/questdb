@@ -83,7 +83,7 @@ public class InsertStatementImpl implements InsertStatement {
     public InsertMethod createMethod(SqlExecutionContext executionContext, WriterSource writerSource) {
         initContext(executionContext);
         if (insertMethod.writer == null) {
-            final TableWriter writer = writerSource.getWriter(executionContext.getCairoSecurityContext(), tableName);
+            final TableWriter writer = writerSource.getWriter(executionContext.getCairoSecurityContext(), tableName, "insert");
             if (writer.getStructureVersion() != getStructureVersion()) {
                 writer.close();
                 throw WriterOutOfDateException.INSTANCE;

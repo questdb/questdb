@@ -123,7 +123,7 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
         if (rollEvery != null) {
             switch (rollEvery.toUpperCase()) {
                 case "DAY":
-                    rollDeadlineFunction = this::getNextDayDealine;
+                    rollDeadlineFunction = this::getNextDayDeadline;
                     break;
                 case "MONTH":
                     rollDeadlineFunction = this::getNextMonthDeadline;
@@ -219,8 +219,8 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
     }
 
     private void copyToBuffer(LogRecordSink sink) {
-        if ((sink.getLevel() & this.level) != 0) {
-            int l = sink.length();
+        final int l = sink.length();
+        if ((sink.getLevel() & this.level) != 0 && l > 0) {
 
             if (_wptr + l >= lim) {
                 flush();
@@ -254,7 +254,7 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
         return Long.MAX_VALUE;
     }
 
-    private long getNextDayDealine() {
+    private long getNextDayDeadline() {
         return Timestamps.addDays(Timestamps.floorDD(clock.getTicks()), 1);
     }
 

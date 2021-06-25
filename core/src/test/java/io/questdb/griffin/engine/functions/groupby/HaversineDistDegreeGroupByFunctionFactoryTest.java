@@ -53,7 +53,7 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractGriff
 
         compiler.compile("create table tab (lat double, lon double, k timestamp)", sqlExecutionContext);
 
-        try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "tab")) {
+        try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "tab", "testing")) {
             double latDegree = -5;
             double lonDegree = -6;
             long ts = 0;
@@ -84,7 +84,7 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractGriff
 
         compiler.compile("create table tab (lat double, lon double, k timestamp)", sqlExecutionContext);
 
-        try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "tab")) {
+        try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "tab", "testing")) {
             double latDegree = -5;
             double lonDegree = -6;
             long ts = 0;
@@ -117,7 +117,7 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractGriff
         compiler.compile("create table tab1 (lat double, lon double, k timestamp)", sqlExecutionContext);
         compiler.compile("create table tab2 (lat double, lon double, k timestamp)", sqlExecutionContext);
 
-        try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "tab1")) {
+        try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "tab1", "testing")) {
             double lonDegree = 0;
             long ts = 0;
             for (int i = 0; i < 10; i++) {
@@ -132,7 +132,7 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractGriff
             w.commit();
         }
 
-        try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "tab2")) {
+        try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "tab2", "testing")) {
             double lonDegree = -180;
             long ts = 0;
             for (int i = 0; i < 10; i++) {
@@ -175,7 +175,7 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractGriff
 
         compiler.compile("create table tab (lat double, lon double, k timestamp)", sqlExecutionContext);
 
-        try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "tab")) {
+        try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "tab", "testing")) {
             double latDegree = 1;
             double lonDegree = 2;
             long ts = 0;
@@ -207,7 +207,7 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractGriff
 
         compiler.compile("create table tab (s symbol, lat double, lon double, k timestamp) timestamp(k) partition by NONE", sqlExecutionContext);
 
-        try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "tab")) {
+        try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "tab", "testing")) {
             double latDegree = -5;
             double lonDegree = -6;
             long ts = 0;
@@ -258,7 +258,7 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractGriff
 
         compiler.compile("create table tab (s symbol, lat double, lon double, p double,  k timestamp) timestamp(k) partition by NONE", sqlExecutionContext);
 
-        try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "tab")) {
+        try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "tab", "testing")) {
             long MICROS_IN_MIN = 60_000_000L;
             //row 1
             TableWriter.Row r = w.newRow(30 * MICROS_IN_MIN);
@@ -1150,7 +1150,7 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractGriff
 
         compiler.compile("create table tab (lat double, lon double, k timestamp)", sqlExecutionContext);
 
-        try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "tab")) {
+        try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "tab", "testing")) {
             for (int i = 0; i < 2; i++) {
                 TableWriter.Row r = w.newRow();
                 r.append();
@@ -1173,7 +1173,7 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractGriff
 
         compiler.compile("create table tab (lat double, lon double, k timestamp)", sqlExecutionContext);
 
-        try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "tab")) {
+        try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "tab", "testing")) {
             double lonDegree = -180;
             long ts = 0;
             for (int i = 0; i < 360; i++) {
@@ -1202,7 +1202,7 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractGriff
 
         compiler.compile("create table tab (lat double, lon double, k timestamp)", sqlExecutionContext);
 
-        try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "tab")) {
+        try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "tab", "testing")) {
             double latDegree = -1;
             double lonDegree = -2;
             long ts = 0;
@@ -1232,7 +1232,7 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractGriff
 
         compiler.compile("create table tab (lat double, lon double, k timestamp)", sqlExecutionContext);
 
-        try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "tab")) {
+        try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "tab", "testing")) {
             TableWriter.Row r;
             double latDegree = 1;
             double lonDegree = 2;
@@ -1267,7 +1267,7 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractGriff
 
         compiler.compile("create table tab (lat double, lon double, k timestamp)", sqlExecutionContext);
 
-        try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "tab")) {
+        try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "tab", "testing")) {
             TableWriter.Row r = w.newRow();
             r.append();
             double latDegree = 1;
@@ -1301,7 +1301,7 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractGriff
 
         compiler.compile("create table tab (lat double, lon double, k timestamp)", sqlExecutionContext);
 
-        try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "tab")) {
+        try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "tab", "testing")) {
             TableWriter.Row r = w.newRow();
             r.putDouble(0, 1);
             r.putDouble(1, 2);
@@ -1332,7 +1332,7 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractGriff
 
         compiler.compile("create table tab (lat double, lon double, k timestamp)", sqlExecutionContext);
 
-        try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "tab")) {
+        try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "tab", "testing")) {
             TableWriter.Row r = w.newRow();
             r.putDouble(0, 1);
             r.putDouble(1, 2);
@@ -1367,7 +1367,7 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractGriff
 
         compiler.compile("create table tab (lat double, lon double, k timestamp)", sqlExecutionContext);
 
-        try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "tab")) {
+        try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "tab", "testing")) {
             double latDegree = 1;
             double lonDegree = 2;
             long ts = 0;

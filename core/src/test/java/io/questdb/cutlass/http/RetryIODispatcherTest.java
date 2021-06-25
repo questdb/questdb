@@ -826,7 +826,7 @@ public class RetryIODispatcherTest {
         TableWriter writer = null;
         for (int i = 0; i < 10; i++) {
             try {
-                writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName);
+                writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "testing");
                 break;
             } catch (EntryUnavailableException e) {
                 Thread.sleep(10);

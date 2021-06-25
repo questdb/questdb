@@ -244,4 +244,6 @@ public interface CairoConfiguration {
     long getCommitLag();
 
     boolean isO3QuickSortEnabled();
+
+    int getLatestByQueueCapacity();
 }
