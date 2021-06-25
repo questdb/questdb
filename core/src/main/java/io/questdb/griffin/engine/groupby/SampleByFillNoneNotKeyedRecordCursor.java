@@ -50,6 +50,7 @@ class SampleByFillNoneNotKeyedRecordCursor extends AbstractVirtualRecordSampleBy
         }
 
         this.lastTimestamp = this.nextTimestamp;
+        final long next = timestampSampler.nextTimestamp(this.localEpoch);
 
         // looks like we need to populate key map
         // at the start of this loop 'lastTimestamp' will be set to timestamp
@@ -58,15 +59,16 @@ class SampleByFillNoneNotKeyedRecordCursor extends AbstractVirtualRecordSampleBy
         GroupByUtils.updateNew(groupByFunctions, n, simpleMapValue, baseRecord);
 
         while (base.hasNext()) {
-            final long timestamp = getBaseRecordTimestamp();
-            if (lastTimestamp == timestamp) {
+            final long timestamp = baseRecord.getTimestamp(timestampIndex) + baselineOffset;
+            if (timestamp < next) {
                 GroupByUtils.updateExisting(groupByFunctions, n, simpleMapValue, baseRecord);
             } else {
                 // timestamp changed, make sure we keep the value of 'lastTimestamp'
                 // unchanged. Timestamp columns uses this variable
                 // When map is exhausted we would assign 'nextTimestamp' to 'lastTimestamp'
                 // and build another map
-                this.nextTimestamp = timestamp;
+                // todo: if we want to "fill" with null localEpoch could be "next"
+                this.localEpoch = timestampSampler.round(timestamp);
                 GroupByUtils.toTop(groupByFunctions);
                 return true;
             }

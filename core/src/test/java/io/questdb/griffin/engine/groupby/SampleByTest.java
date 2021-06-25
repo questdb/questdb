@@ -695,23 +695,73 @@ public class SampleByTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testSampleByNoFillNotKeyedAlignToCalendarTimezone() throws Exception {
-        assertQuery(
-                "k\tcount\n" +
-                        "1970-01-02T23:30:00.000000Z\t12\n" +
-                        "1970-01-03T01:00:00.000000Z\t18\n" +
-                        "1970-01-03T02:30:00.000000Z\t18\n" +
-                        "1970-01-03T04:00:00.000000Z\t18\n" +
-                        "1970-01-03T05:30:00.000000Z\t18\n" +
-                        "1970-01-03T07:00:00.000000Z\t16\n",
+    public void testSampleByNoFillNotKeyedAlignToCalendarMisalignedTimezone() throws Exception {
 
-                "select k, count() from x sample by 90m align to calendar time zone 'Europe/Berlin'",
+        // IRAN timezone is +4:30, which doesn't align well with 1hr sample
+
+        assertQuery(
+                "k\tc\n" +
+                        "2021-03-28T00:30:00.000000Z\t3\n" +
+                        "2021-03-28T01:30:00.000000Z\t10\n" +
+                        "2021-03-28T02:30:00.000000Z\t10\n" +
+                        "2021-03-28T03:30:00.000000Z\t10\n" +
+                        "2021-03-28T04:30:00.000000Z\t10\n" +
+                        "2021-03-28T05:30:00.000000Z\t10\n" +
+                        "2021-03-28T06:30:00.000000Z\t10\n" +
+                        "2021-03-28T07:30:00.000000Z\t10\n" +
+                        "2021-03-28T08:30:00.000000Z\t10\n" +
+                        "2021-03-28T09:30:00.000000Z\t10\n" +
+                        "2021-03-28T09:30:00.000000Z\t7\n",
+
+                // todo: the following doesn't work: select to_timezone(k, 'Iran'), count() from x sample by 1h align to calendar time zone 'Iran'
+                // todo: the following doesn't work: select count() from x sample by 1h align to calendar time zone 'Iran'"
+                "select k, count() c from x sample by 1h align to calendar time zone 'Iran'",
+//                "x",
                 "create table x as " +
                         "(" +
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(172800000000, 300000000) k" +
+                        " timestamp_sequence(cast('2021-03-28T00:15:00.000000Z' as timestamp), 6*60000000) k" +
+                        " from" +
+                        " long_sequence(100)" +
+                        ") timestamp(k) partition by NONE",
+                "k",
+                false,
+                true,
+                false
+        );
+    }
+
+    @Test
+    public void testSampleByNoFillNotKeyedAlignToCalendarTimezone() throws Exception {
+
+        // IRAN timezone is +4:30, which doesn't align well with 1hr sample
+
+        assertQuery(
+                "k\tc\n" +
+                        "2021-03-28T00:30:00.000000Z\t3\n" +
+                        "2021-03-28T01:30:00.000000Z\t10\n" +
+                        "2021-03-28T02:30:00.000000Z\t10\n" +
+                        "2021-03-28T03:30:00.000000Z\t10\n" +
+                        "2021-03-28T04:30:00.000000Z\t10\n" +
+                        "2021-03-28T05:30:00.000000Z\t10\n" +
+                        "2021-03-28T06:30:00.000000Z\t10\n" +
+                        "2021-03-28T07:30:00.000000Z\t10\n" +
+                        "2021-03-28T08:30:00.000000Z\t10\n" +
+                        "2021-03-28T09:30:00.000000Z\t10\n" +
+                        "2021-03-28T09:30:00.000000Z\t7\n",
+
+                // todo: the following doesn't work: select to_timezone(k, 'Iran'), count() from x sample by 1h align to calendar time zone 'Iran'
+                // todo: the following doesn't work: select count() from x sample by 1h align to calendar time zone 'Iran'"
+                "select k, count() c from x sample by 1h align to calendar time zone 'Europe/Berlin'",
+//                "x",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(cast('2021-03-28T00:15:00.000000Z' as timestamp), 6*60000000) k" +
                         " from" +
                         " long_sequence(100)" +
                         ") timestamp(k) partition by NONE",

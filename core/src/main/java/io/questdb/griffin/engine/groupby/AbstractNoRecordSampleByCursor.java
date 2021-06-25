@@ -48,7 +48,8 @@ public abstract class AbstractNoRecordSampleByCursor implements NoRandomAccessRe
     protected RecordCursor base;
     protected SqlExecutionInterruptor interruptor;
     protected long baselineOffset;
-    private long topTimestamp;
+    private long topLocalEpoch;
+    protected long localEpoch;
 
     public AbstractNoRecordSampleByCursor(
             ObjList<Function> recordFunctions,
@@ -76,8 +77,8 @@ public abstract class AbstractNoRecordSampleByCursor implements NoRandomAccessRe
     @Override
     public void toTop() {
         GroupByUtils.toTop(recordFunctions);
-        this.lastTimestamp = this.nextTimestamp = this.topTimestamp;
         this.base.toTop();
+        this.localEpoch = topLocalEpoch;
     }
 
     @Override
@@ -105,7 +106,7 @@ public abstract class AbstractNoRecordSampleByCursor implements NoRandomAccessRe
         final CharSequence tz = timezoneNameFunc.getStr(null);
         if (tz != null) {
             try {
-                alignmentOffset = Timestamps.toTimezone(timestamp, TimestampFormatUtils.enLocale, tz);
+                alignmentOffset = Timestamps.toTimezone(timestamp, TimestampFormatUtils.enLocale, tz) - timestamp;
             } catch (NumericException e) {
                 Misc.free(base);
                 throw SqlException.$(timezoneNameFuncPos, "invalid timezone: ").put(tz);
@@ -130,7 +131,8 @@ public abstract class AbstractNoRecordSampleByCursor implements NoRandomAccessRe
 
         this.nextTimestamp = timestampSampler.round(timestamp);
         this.baselineOffset = alignmentOffset == Numbers.LONG_NaN ? timestamp - nextTimestamp : alignmentOffset;
-        this.topTimestamp = this.lastTimestamp = this.nextTimestamp = timestampSampler.round(timestamp - baselineOffset);
+        this.topLocalEpoch = this.localEpoch = timestampSampler.round(timestamp + baselineOffset);
+        this.lastTimestamp = this.nextTimestamp = timestampSampler.round(timestamp - baselineOffset);
         interruptor = executionContext.getSqlExecutionInterruptor();
     }
 
@@ -142,7 +144,7 @@ public abstract class AbstractNoRecordSampleByCursor implements NoRandomAccessRe
 
         @Override
         public long getTimestamp(Record rec) {
-            return lastTimestamp + baselineOffset;
+            return localEpoch - baselineOffset;
         }
     }
 }
