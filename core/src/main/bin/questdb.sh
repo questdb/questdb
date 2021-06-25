@@ -70,8 +70,10 @@ function export_java {
 
     # check if this is our runtime
     if [ -f "$BASE/java" ]; then
+        export QDB_PACKAGE=withjre
         export JAVA="$BASE/java"
     else
+      export QDB_PACKAGE=withoutjre
       if [ "$JAVA_HOME" = "" -a -e /usr/libexec/java_home ]; then
           JAVA_HOME=$(/usr/libexec/java_home -v 11)
       fi
