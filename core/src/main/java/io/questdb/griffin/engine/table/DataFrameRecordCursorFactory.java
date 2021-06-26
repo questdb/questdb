@@ -155,6 +155,8 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
             if (partitionIndex > -1) {
                 final long m = computePageMin(reader.getColumnBase(partitionIndex));
                 if (m < Long.MAX_VALUE) {
+                    // Offset next frame lowest RowId with the count of rows returned in previous frame.
+                    rowLo += pageSizes.get(timestampIndex) >> columnSizes.get(timestampIndex);
                     return computeFrame(m);
                 }
             }

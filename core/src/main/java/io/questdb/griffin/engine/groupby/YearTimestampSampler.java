@@ -50,14 +50,4 @@ class YearTimestampSampler implements TimestampSampler {
         y = y - y % bucket;
         return Timestamps.yearMicros(y, Timestamps.isLeapYear(y));
     }
-
-    @Override
-    public char getUnit() {
-        return SAMPLER_UNIT_YEAR;
-    }
-
-    @Override
-    public long getStep() {
-        return bucket;
-    }
 }

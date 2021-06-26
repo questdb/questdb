@@ -4732,7 +4732,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         "1970-01-01T20:50:00.000000Z\ta\t1970-01-01T20:50:00.000000Z\t1970-01-01T21:30:00.000000Z\n" +
                         "1970-01-01T21:50:00.000000Z\ta\t1970-01-01T21:50:00.000000Z\t1970-01-01T21:50:00.000000Z\n" +
                         "1970-01-01T23:50:00.000000Z\ta\t1970-01-02T00:30:00.000000Z\t1970-01-02T00:30:00.000000Z\n" +
-                        "1970-01-02T00:50:00.000000Z\ta\t1970-01-02T00:50:00.000000Z\t1970-01-02T01:10:00.000000Z\n" +
+                        "1970-01-02T00:50:00.000000Z\ta\t1970-01-02T00:50:00.00000MicroTimestampSampler0Z\t1970-01-02T01:10:00.000000Z\n" +
                         "1970-01-02T03:50:00.000000Z\ta\t1970-01-02T03:50:00.000000Z\t1970-01-02T03:50:00.000000Z\n",
                 "select k, s, first(k) lat, last(k) lon " +
                         "from xx " +
@@ -4886,6 +4886,67 @@ public class SampleByTest extends AbstractGriffinTest {
                         "timestamp_sequence(0, 60 * 1000L * 1000L) k\n" +
                         "from\n" +
                         "long_sequence(30)\n");
+    }
+
+    @Test
+    public void testIndexSampleWithColumnTops() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table xx (s symbol, k timestamp)" +
+                    ", index(s capacity 256) timestamp(k) partition by DAY", sqlExecutionContext);
+
+            compiler.compile(
+                    "insert into xx " +
+                            "select " +
+                            "(case when x % 2 = 0 then 'a' else 'b' end) s,\n" +
+                            "timestamp_sequence(0, 1 * 60 * 1000000L) k\n" +
+                            "from\n" +
+                            "long_sequence(100)\n", sqlExecutionContext);
+
+            compiler.compile("alter table xx add i1 int", sqlExecutionContext);
+            compiler.compile("alter table xx add c1 char", sqlExecutionContext);
+
+            compiler.compile(
+                    "insert into xx " +
+                            "select " +
+                            "(case when x % 2 = 0 then 'a' else 'b' end) s,\n" +
+                            "timestamp_sequence(100 * 60 * 1000000L, 1 * 60 * 1000000L) k,\n" +
+                            "cast(x + 100 as int) i1, \n" +
+                            "rnd_char() c1 \n" +
+                            "from\n" +
+                            "long_sequence(100)", sqlExecutionContext);
+
+            compiler.compile("alter table xx add f1 float", sqlExecutionContext);
+            compiler.compile("alter table xx add d1 double", sqlExecutionContext);
+            compiler.compile("alter table xx add s1 symbol", sqlExecutionContext);
+        });
+
+        assertSampleByIndexQuery("fi1\tli1\tfc1\tlc1\tff1\tlf1\tfd1\tld1\tfs1\tls1\tfk\tlk\tk\ts\n" +
+                        "NaN\tNaN\t\t\tNaN\tNaN\tNaN\tNaN\t\t\t1970-01-01T00:00:00.000000Z\t1970-01-01T00:28:00.000000Z\t1970-01-01T00:00:00.000000Z\tb\n" +
+                        "NaN\tNaN\t\t\tNaN\tNaN\tNaN\tNaN\t\t\t1970-01-01T00:30:00.000000Z\t1970-01-01T00:58:00.000000Z\t1970-01-01T00:30:00.000000Z\tb\n" +
+                        "NaN\tNaN\t\t\tNaN\tNaN\tNaN\tNaN\t\t\t1970-01-01T01:00:00.000000Z\t1970-01-01T01:28:00.000000Z\t1970-01-01T01:00:00.000000Z\tb\n" +
+                        "NaN\t119\t\tG\tNaN\tNaN\tNaN\tNaN\t\t\t1970-01-01T01:30:00.000000Z\t1970-01-01T01:58:00.000000Z\t1970-01-01T01:30:00.000000Z\tb\n" +
+                        "121\t149\tS\tL\tNaN\tNaN\tNaN\tNaN\t\t\t1970-01-01T02:00:00.000000Z\t1970-01-01T02:28:00.000000Z\t1970-01-01T02:00:00.000000Z\tb\n" +
+                        "151\t179\tD\tR\tNaN\tNaN\tNaN\tNaN\t\t\t1970-01-01T02:30:00.000000Z\t1970-01-01T02:58:00.000000Z\t1970-01-01T02:30:00.000000Z\tb\n" +
+                        "181\t209\tZ\tV\tNaN\t204.5000\tNaN\t222.5\t\tc3\t1970-01-01T03:00:00.000000Z\t1970-01-01T03:28:00.000000Z\t1970-01-01T03:00:00.000000Z\tb\n" +
+                        "211\t239\tD\tT\t205.5000\t219.5000\t227.5\t297.5\t\t\t1970-01-01T03:30:00.000000Z\t1970-01-01T03:58:00.000000Z\t1970-01-01T03:30:00.000000Z\tb\n" +
+                        "241\t269\tS\tL\t220.5000\t234.5000\t302.5\t372.5\tc3\tc3\t1970-01-01T04:00:00.000000Z\t1970-01-01T04:28:00.000000Z\t1970-01-01T04:00:00.000000Z\tb\n" +
+                        "271\t299\tO\tN\t235.5000\t249.5000\t377.5\t447.5\ta1\tc3\t1970-01-01T04:30:00.000000Z\t1970-01-01T04:58:00.000000Z\t1970-01-01T04:30:00.000000Z\tb\n",
+                "select first(i1) fi1, last(i1) li1, first(c1) fc1, " +
+                        "last(c1) lc1, first(f1) ff1, last(f1) lf1, first(d1) fd1, last(d1) ld1, first(s1) fs1, last(s1) ls1, first(k) fk, last(k) lk, k, s\n" +
+                        "from xx " +
+                        "where s in ('b')" +
+                        "sample by 30m",
+                "insert into xx " +
+                        "select " +
+                        "(case when x % 2 = 0 then 'a' else 'b' end) s,\n" +
+                        "timestamp_sequence(200 * 60 * 1000000L, 1 * 60 * 1000000L) k,\n" +
+                        "cast(x + 200 as int) i1, \n" +
+                        "rnd_char() c1, \n" +
+                        "cast(x * 0.5 + 200 as float) f1, \n" +
+                        "x*2.5 + 200 d1,\n" +
+                        "rnd_symbol(null, 'a1', 'b2', 'c3') s1 \n" +
+                        "from\n" +
+                        "long_sequence(100)");
     }
 
     private void assertSampleByIndexQuery(String expected, String query, String insert) throws Exception {

@@ -92,10 +92,6 @@ public class DeferredSingleSymbolFilterDataFrameRecordCursorFactory extends Data
         return symbolFilter;
     }
 
-    public int getSampleByIndexKey() {
-        return SymbolTable.VALUE_NOT_FOUND;
-    }
-
     @Override
     public boolean supportPageFrameCursor() {
         return this.convertedToFrame;

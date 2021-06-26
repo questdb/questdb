@@ -167,7 +167,8 @@ int32_t findFirstLastInFrame0(
                && outIndex < outSize - 1) {
 
             sampleStart = samplePeriods[periodIndex];
-            indexLo += branch_free_linked_search_lower(indexLo, tsBase, indexHi - indexLo, std::min(maxTs + 1, sampleStart));
+            indexLo += branch_free_linked_search_lower(indexLo, tsBase, indexHi - indexLo,
+                                                       std::min(maxTs + 1, sampleStart));
 
             // Set last value as previous value to the found one
             if (outIndex > 0
@@ -184,7 +185,8 @@ int32_t findFirstLastInFrame0(
             }
 
             int64_t indexTs = tsBase[*indexLo];
-            int64_t sampleEnd = (periodIndex + 1) < samplePeriodCount ? samplePeriods[periodIndex + 1] : INT64_MAX;
+            int64_t sampleEnd = (periodIndex + 1) < samplePeriodCount ? samplePeriods[periodIndex + 1] :
+                    std::numeric_limits<int64_t>::max();
             if (indexTs >= sampleEnd) {
                 // indexTs is beyond sampling period. Find the sampling period the indexTs is in.
                 // branch_free_search_lower returns insert position of the value

@@ -26,10 +26,6 @@ package io.questdb.griffin.engine.groupby;
 
 public interface TimestampSampler {
 
-    char SAMPLER_UNIT_MICRO = 'u';
-    char SAMPLER_UNIT_MONTH = 'M';
-    char SAMPLER_UNIT_YEAR = 'Y';
-
     long nextTimestamp(long timestamp);
 
     long previousTimestamp(long timestamp);
@@ -39,8 +35,4 @@ public interface TimestampSampler {
     default long getBucketSize() {
         throw new UnsupportedOperationException();
     }
-
-    char getUnit();
-
-    long getStep();
 }
