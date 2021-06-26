@@ -72,7 +72,7 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
         this.symbolFilter = symbolFilter;
         this.queryToFrameColumnMapping = new int[columns.size()];
         this.recordFirstLastIndex = new int[columns.size()];
-        buildFirstLastIndex(recordFirstLastIndex, queryToFrameColumnMapping, metadata, columns, timestampIndex, symbolFilter.getColumnIndex());
+        buildFirstLastIndex(recordFirstLastIndex, queryToFrameColumnMapping, metadata, columns, timestampIndex);
         groupBySymbolColIndex = symbolFilter.getColumnIndex();
         crossFrameRow = new DirectLongList(recordFirstLastIndex.length).setSize(recordFirstLastIndex.length);
     }
@@ -113,7 +113,6 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
             int[] queryToFrameColumnMapping,
             RecordMetadata metadata,
             ObjList<QueryColumn> columns,
-            int symbolIndex,
             int timestampIndex
     ) throws SqlException {
         for (int i = 0; i < recordFirstLastIndex.length; i++) {
@@ -163,7 +162,6 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
 
         private final int groupBySymbolKey;
         private PageFrameCursor pageFrameCursor;
-        private final SymbolMapReader symbolsReader;
         private PageFrame currentFrame;
         private final SampleByFirstLastRecord record = new SampleByFirstLastRecord();
         private long currentRow;
@@ -181,7 +179,6 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
 
         public SampleByFirstLastRecordCursor(PageFrameCursor pageFrameCursor, int groupBySymbolKey) {
             this.pageFrameCursor = pageFrameCursor;
-            this.symbolsReader = pageFrameCursor.getSymbolMapReader(groupBySymbolColIndex);
             this.groupBySymbolKey = groupBySymbolKey;
         }
 
@@ -197,7 +194,7 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
 
         @Override
         public SymbolTable getSymbolTable(int columnIndex) {
-            return pageFrameCursor.getSymbolMapReader(columnIndex);
+            return pageFrameCursor.getSymbolMapReader(queryToFrameColumnMapping[columnIndex]);
         }
 
         @Override
@@ -243,7 +240,7 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
         private int getNextState(final int state) {
             // This method should not change this.state field
             // but instead produce next state given incoming state parameter.
-            // This way the method is enforced to change state and less the coller to loop forever.
+            // This way the method is enforced to change state and less the caller to loop forever.
             switch (state) {
                 case STATE_START:
                     prevSamplePeriodOffset = samplePeriodIndexOffset = 0;
@@ -418,8 +415,7 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
                     long tsIndex = startTimestampOutAddress.get(0) - prevSamplePeriodOffset;
                     crossFrameRow.set(i, samplePeriodAddress.get(tsIndex));
                 } else {
-                    int firstLastIndex = SampleByFirstLastRecordCursorFactory.this.recordFirstLastIndex[i];
-                    long rowId = firstLastRowId[firstLastIndex];
+                    long rowId = firstLastRowId[recordFirstLastIndex[i]];
                     saveRowIdValueToCrossRow(rowId, i);
                 }
             }
@@ -561,7 +557,7 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
                         symbolId = SymbolTable.VALUE_IS_NULL;
                     }
                 }
-                return symbolsReader.valueBOf(symbolId);
+                return pageFrameCursor.getSymbolMapReader(queryToFrameColumnMapping[col]).valueBOf(symbolId);
             }
 
             @Override
