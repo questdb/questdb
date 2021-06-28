@@ -5043,6 +5043,38 @@ public class SampleByTest extends AbstractGriffinTest {
         });
     }
 
+
+    @Test
+    public void testIndexSampleByIndexNoTimestampColSelected() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table xx (lat double, lon double, s symbol, k timestamp)" +
+                    ", index(s capacity 256) timestamp(k) partition by DAY", sqlExecutionContext);
+        });
+
+        assertQuery("s\tlat\tlon\n" +
+                        "a\t-2.0\t2.0\n" +
+                        "a\t-32.0\t32.0\n" +
+                        "a\t-62.0\t62.0\n" +
+                        "a\t-92.0\t92.0\n" +
+                        "a\t-122.0\t122.0\n" +
+                        "a\t-152.0\t152.0\n",
+                "select s, first(lat) lat, first(lon) lon " +
+                        "from xx " +
+                        "where k in '1970-01-01T00:00:00.000000Z;30m;5h;10' and s in ('a')" +
+                        "sample by 2h",
+                "insert into xx " +
+                        "select -x lat,\n" +
+                        "x lon,\n" +
+                        "(case when x % 2 = 0 then 'a' else 'b' end) s,\n" +
+                        "timestamp_sequence(0, 10 * 60 * 1000000L) k\n" +
+                        "from\n" +
+                        "long_sequence(180)\n",
+                null,
+                false,
+                false,
+                false);
+    }
+
     private void assertSampleByIndexQuery(String expected, String query, String insert) throws Exception {
         String forceNoIndexQuery = query.replace("in ('b')", "in ('b', 'none')")
                 .replace("in ('a')", "in ('a', 'none')");

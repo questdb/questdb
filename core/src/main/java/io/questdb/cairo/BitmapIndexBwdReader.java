@@ -56,12 +56,6 @@ public class BitmapIndexBwdReader extends AbstractIndexReader {
     }
 
     @Override
-    public IndexFrameCursor getFrameCursor(int key, long minRowId, long maxRowId) {
-        // See BitmapIndexFwdReader if needs implementing
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
     public RowCursor getCursor(boolean cachedInstance, int key, long minValue, long maxValue) {
 
         assert minValue <= maxValue;

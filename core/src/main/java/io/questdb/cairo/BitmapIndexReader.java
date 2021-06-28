@@ -53,14 +53,21 @@ public interface BitmapIndexReader extends Closeable {
 
     int getKeyCount();
 
-    IndexFrameCursor getFrameCursor(int key, long minValue, long maxValue);
+    default IndexFrameCursor getFrameCursor(int key, long minValue, long maxValue) {
+        throw new UnsupportedOperationException();
+    }
 
     boolean isOpen();
 
     long getKeyBaseAddress();
+
     long getKeyMemorySize();
+
     long getValueBaseAddress();
+
     long getValueMemorySize();
+
     long getUnIndexedNullCount();
+
     int getValueBlockCapacity();
 }

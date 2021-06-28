@@ -48,7 +48,7 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
     private DirectLongList lastRowIdOutAddress;
     private DirectLongList samplePeriodAddress;
     private DirectLongList crossFrameRow;
-    private int groupByTimestampIndex;
+    private int groupByTimestampIndex = -1;
 
     public SampleByFirstLastRecordCursorFactory(
             RecordCursorFactory base,
