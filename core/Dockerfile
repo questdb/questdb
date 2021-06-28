@@ -52,4 +52,4 @@ EXPOSE 9009/tcp
 #
 # then one can create 'log.conf' in the 'conf' dir and override logger fully
 #
-CMD ["/app/bin/java", "-Dout=conf/log.conf", "-m", "io.questdb/io.questdb.ServerMain", "-d", "/root/.questdb", "-f"]
+CMD ["/usr/bin/env", "QDB_PACKAGE=docker", "/app/bin/java", "-Dout=conf/log.conf", "-m", "io.questdb/io.questdb.ServerMain", "-d", "/root/.questdb", "-f"]

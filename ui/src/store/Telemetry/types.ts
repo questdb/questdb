@@ -25,6 +25,9 @@
 export type TelemetryConfigShape = Readonly<{
   enabled: string
   id: string
+  version: string
+  os: string
+  package: string
 }>
 
 export type TelemetryRemoteConfigShape = Readonly<{

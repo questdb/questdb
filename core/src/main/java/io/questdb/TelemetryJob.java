@@ -50,7 +50,9 @@ public class TelemetryJob extends SynchronizedJob implements Closeable {
     private static final String WRITER_LOCK_REASON = "telemetryJob";
     
     private final static CharSequence tableName = "telemetry";
-    private final static CharSequence configTableName = "telemetry_config";
+    final static CharSequence configTableName = "telemetry_config";
+    static final String QDB_PACKAGE = "QDB_PACKAGE";
+    static final String OS_NAME = "os.name";
     private final MicrosecondClock clock;
     private final CairoConfiguration configuration;
     private final RingQueue<TelemetryTask> queue;
@@ -77,8 +79,13 @@ public class TelemetryJob extends SynchronizedJob implements Closeable {
             if (enabled) {
                 compiler.compile("CREATE TABLE IF NOT EXISTS " + tableName + " (created timestamp, event short, origin short) timestamp(created)", sqlExecutionContext);
             }
-            compiler.compile("CREATE TABLE IF NOT EXISTS " + configTableName + " (id long256, enabled boolean)", sqlExecutionContext);
-
+            compiler.compile(
+                    "CREATE TABLE IF NOT EXISTS " + configTableName + " (id long256, enabled boolean, version symbol, os symbol, package symbol)",
+                    sqlExecutionContext);
+            tryAddColumn(compiler, sqlExecutionContext, configTableName, "version symbol");
+            tryAddColumn(compiler, sqlExecutionContext, configTableName, "os symbol");
+            tryAddColumn(compiler, sqlExecutionContext, configTableName, "package symbol");
+            
             if (enabled) {
                 try {
                     this.writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, WRITER_LOCK_REASON);
@@ -116,6 +123,16 @@ public class TelemetryJob extends SynchronizedJob implements Closeable {
         }
     }
 
+    private void tryAddColumn(SqlCompiler compiler, SqlExecutionContext executionContext, CharSequence tableName, CharSequence columnDetails) {
+        try {
+            compiler.compile(
+                    "ALTER TABLE " + configTableName + " ADD COLUMN " + columnDetails + ")",
+                    executionContext);
+        } catch (SqlException ex) {
+            // Ignore
+        }
+    }
+
     @Override
     public void close() {
         if (enabled) {
@@ -129,17 +146,6 @@ public class TelemetryJob extends SynchronizedJob implements Closeable {
         }
     }
 
-    public int getTableStatus(Path path, CharSequence tableName) {
-        return TableUtils.exists(
-                configuration.getFilesFacade(),
-                path,
-                configuration.getRoot(),
-                tableName,
-                0,
-                tableName.length()
-        );
-    }
-
     @Override
     public boolean runSerially() {
         if (enabled) {
@@ -150,7 +156,7 @@ public class TelemetryJob extends SynchronizedJob implements Closeable {
         return false;
     }
 
-    private static TableWriter updateTelemetryConfig(
+    private TableWriter updateTelemetryConfig(
             SqlCompiler compiler,
             SqlExecutionContextImpl sqlExecutionContext,
             boolean enabled
@@ -161,22 +167,18 @@ public class TelemetryJob extends SynchronizedJob implements Closeable {
             if (cursor.hasNext()) {
                 final Record record = cursor.getRecord();
                 final boolean _enabled = record.getBool(1);
+                Long256 l256 = record.getLong256A(0);
+                final CharSequence lastVersion = record.getSym(2);
 
                 // if the configuration changed to enable or disable telemetry
                 // we need to update the table to reflect that
-                if (enabled != _enabled) {
-                    final TableWriter.Row row = configWriter.newRow();
-                    final Long256 l256 = record.getLong256A(0);
-                    row.putLong256(0, l256);
-                    row.putBool(1, enabled);
-                    row.append();
-                    configWriter.commit();
+                if (enabled != _enabled || !configuration.getBuildInformation().getQuestDbVersion().equals(lastVersion)) {
+                    appendConfigRow(compiler, configWriter, l256, enabled);
                     LOG.info()
                             .$("instance config changes [id=").$256(l256.getLong0(), l256.getLong1(), 0, 0)
                             .$(", enabled=").$(enabled)
                             .$(']').$();
                 } else {
-                    final Long256 l256 = record.getLong256A(0);
                     LOG.error()
                             .$("instance [id=").$256(l256.getLong0(), l256.getLong1(), 0, 0)
                             .$(", enabled=").$(enabled)
@@ -184,22 +186,36 @@ public class TelemetryJob extends SynchronizedJob implements Closeable {
                 }
             } else {
                 // if there are no record for telemetry id we need to create one using clocks
-                final MicrosecondClock clock = compiler.getEngine().getConfiguration().getMicrosecondClock();
-                final NanosecondClock nanosecondClock = compiler.getEngine().getConfiguration().getNanosecondClock();
-                final TableWriter.Row row = configWriter.newRow();
-                final long a = nanosecondClock.getTicks();
-                final long b = clock.getTicks();
-                row.putLong256(0, a, b, 0, 0);
-                row.putBool(1, enabled);
-                row.append();
-                configWriter.commit();
-                LOG.info()
-                        .$("new instance [id=").$256(a, b, 0, 0)
-                        .$(", enabled=").$(enabled)
-                        .$(']').$();
+                appendConfigRow(compiler, configWriter, null, enabled);
             }
         }
         return configWriter;
+    }
+
+    private void appendConfigRow(SqlCompiler compiler, TableWriter configWriter, Long256 id, boolean enabled) {
+        TableWriter.Row row = configWriter.newRow();
+        if (null == id) {
+            final MicrosecondClock clock = compiler.getEngine().getConfiguration().getMicrosecondClock();
+            final NanosecondClock nanosecondClock = compiler.getEngine().getConfiguration().getNanosecondClock();
+            final long a = nanosecondClock.getTicks();
+            final long b = clock.getTicks();
+            row.putLong256(0, a, b, 0, 0);
+            LOG.info()
+                    .$("new instance [id=").$256(a, b, 0, 0)
+                    .$(", enabled=").$(enabled)
+                    .$(']').$();
+        } else {
+            row.putLong256(0, id);
+        }
+        row.putBool(1, enabled);
+        row.putSym(2, configuration.getBuildInformation().getQuestDbVersion());
+        row.putSym(3, System.getProperty(OS_NAME));
+        String packageStr = System.getenv().get(QDB_PACKAGE);
+        if (null != packageStr) {
+            row.putSym(4, packageStr);
+        }
+        row.append();
+        configWriter.commit();
     }
 
     private void newRow(short event) {
