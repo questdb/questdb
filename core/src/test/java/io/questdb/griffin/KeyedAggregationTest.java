@@ -939,9 +939,9 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
         String[] aggregateFunctions = {"first", "last"};
         TypeVal[] aggregateColTypes = {
                 new TypeVal(ColumnType.SYMBOL, ":SYMBOL"),
-                new TypeVal(ColumnType.BYTE, "NaN:INT"),
+                new TypeVal(ColumnType.BYTE, "0:BYTE"),
                 new TypeVal(ColumnType.CHAR, ":CHAR"),
-                new TypeVal(ColumnType.SHORT, "NaN:INT"),
+                new TypeVal(ColumnType.SHORT, "0:SHORT"),
                 new TypeVal(ColumnType.INT, "NaN:INT"),
                 new TypeVal(ColumnType.LONG, "NaN:LONG"),
                 new TypeVal(ColumnType.DATE, ":DATE"),

@@ -495,6 +495,11 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
             private Record currentRecord;
 
             @Override
+            public byte getByte(int col) {
+                return currentRecord.getByte(col);
+            }
+
+            @Override
             public char getChar(int col) {
                 return currentRecord.getChar(col);
             }
@@ -525,6 +530,11 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
             }
 
             @Override
+            public short getShort(int col) {
+                return currentRecord.getShort(col);
+            }
+
+            @Override
             public long getTimestamp(int col) {
                 return currentRecord.getTimestamp(col);
             }
@@ -538,6 +548,11 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
             }
 
             private class SampleByCrossRecord implements Record {
+                @Override
+                public byte getByte(int col) {
+                    return Unsafe.getUnsafe().getByte(crossFrameRow.getAddress() + (long) col * Long.BYTES);
+                }
+
                 @Override
                 public char getChar(int col) {
                     return Unsafe.getUnsafe().getChar(crossFrameRow.getAddress() + (long) col * Long.BYTES);
@@ -573,10 +588,25 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
                 public long getTimestamp(int col) {
                     return Unsafe.getUnsafe().getLong(crossFrameRow.getAddress() + (long) col * Long.BYTES);
                 }
+
+                @Override
+                public short getShort(int col) {
+                    return Unsafe.getUnsafe().getShort(crossFrameRow.getAddress() + (long) col * Long.BYTES);
+                }
             }
 
             private class SampleByDataRecord implements Record {
                 private long currentRow;
+
+                @Override
+                public byte getByte(int col) {
+                    long pageAddress = currentFrame.getPageAddress(queryToFrameColumnMapping[col]);
+                    if (pageAddress > 0) {
+                        return Unsafe.getUnsafe().getByte(pageAddress + firstLastRowId[recordFirstLastIndex[col]]);
+                    } else {
+                        return 0;
+                    }
+                }
 
                 @Override
                 public char getChar(int col) {
@@ -638,6 +668,16 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
                         symbolId = SymbolTable.VALUE_IS_NULL;
                     }
                     return pageFrameCursor.getSymbolMapReader(queryToFrameColumnMapping[col]).valueBOf(symbolId);
+                }
+
+                @Override
+                public short getShort(int col) {
+                    long pageAddress = currentFrame.getPageAddress(queryToFrameColumnMapping[col]);
+                    if (pageAddress > 0) {
+                        return Unsafe.getUnsafe().getShort(pageAddress + firstLastRowId[recordFirstLastIndex[col]] * Short.BYTES);
+                    } else {
+                        return 0;
+                    }
                 }
 
                 @Override
