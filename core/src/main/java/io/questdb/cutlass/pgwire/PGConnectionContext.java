@@ -758,6 +758,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
             }
         }
         responseAsciiSink.putLen(offset);
+        rowCount += 1;
     }
 
     private void appendShortColumn(Record record, int columnIndex) {
@@ -2031,7 +2032,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
             try {
                 try {
                     appendRecord(record, columnCount);
-                    if(rowCount++ > maxRows) break;
+                    if(rowCount >= maxRows) break;
                 } catch (NoSpaceLeftInResponseBufferException e) {
                     responseAsciiSink.resetToBookmark();
                     sendAndReset();
