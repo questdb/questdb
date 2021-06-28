@@ -34,6 +34,7 @@ import io.questdb.griffin.model.QueryColumn;
 import io.questdb.std.*;
 
 public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory {
+    private static final int FILTER_KEY_IS_NULL = 0;
     private final RecordCursorFactory base;
     private final TimestampSampler timestampSampler;
     private final GenericRecordMetadata groupByMetadata;
@@ -317,44 +318,68 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
                     indexFramePosition = 0;
 
                     if (indexFrame.getSize() == 0) {
-                        // No rows in index for this dataframe left, go to next data frame
-                        frameNextRowId = dataFrameHi;
-                        // Jump back to fetch next data frame
-                        return STATE_FETCH_NEXT_DATA_FRAME;
-                    } else {
-                        if (samplePeriodStart == Numbers.LONG_NaN) {
-                            long rowId = Unsafe.getUnsafe().getLong(indexFrame.getAddress());
-                            long offsetTimestampColumnAddress = currentFrame.getPageAddress(timestampIndex) - dataFrameLo * Long.BYTES;
-                            samplePeriodStart = Unsafe.getUnsafe().getLong(offsetTimestampColumnAddress + rowId * Long.BYTES);
+                        if (indexFrame.getAddress() != 0 || groupBySymbolKey != FILTER_KEY_IS_NULL) {
+                            // No rows in index for this dataframe left, go to next data frame
+                            frameNextRowId = dataFrameHi;
+                            // Jump back to fetch next data frame
+                            return STATE_FETCH_NEXT_DATA_FRAME;
                         }
-                        // Fall to STATE_SEARCH;
+                        // Special case - searching with `where symbol = null` on the partition where this column has not been added
+                        // Effectively all rows in data frame are the match to the symbol filter
+                        // Fall through, search code will figure that this is special case
                     }
+
+                    if (samplePeriodStart == Numbers.LONG_NaN) {
+                        long rowId = indexFrame.getAddress() > 0 ? Unsafe.getUnsafe().getLong(indexFrame.getAddress()) : dataFrameLo;
+                        long offsetTimestampColumnAddress = currentFrame.getPageAddress(timestampIndex) - dataFrameLo * Long.BYTES;
+                        samplePeriodStart = Unsafe.getUnsafe().getLong(offsetTimestampColumnAddress + rowId * Long.BYTES);
+                    }
+                    // Fall to STATE_SEARCH;
 
                 case STATE_OUT_BUFFER_FULL:
                 case STATE_SEARCH:
                     int outPosition = crossRowState == NONE ? 0 : 1;
                     long offsetTimestampColumnAddress = currentFrame.getPageAddress(timestampIndex) - dataFrameLo * Long.BYTES;
-                    long lastIndexRowId = Unsafe.getUnsafe().getLong(
-                            indexFrame.getAddress() + (indexFrame.getSize() - 1) * Long.BYTES);
-                    long lastInDataRowId = Math.min(lastIndexRowId, dataFrameHi);
+                    long lastIndexRowId = indexFrame.getAddress() > 0
+                            ? Unsafe.getUnsafe().getLong(indexFrame.getAddress() + (indexFrame.getSize() - 1) * Long.BYTES)
+                            : Long.MAX_VALUE;
+                    long lastInDataRowId = Math.min(lastIndexRowId, dataFrameHi - 1);
                     long lastInDataTimestamp = Unsafe.getUnsafe().getLong(offsetTimestampColumnAddress + lastInDataRowId * Long.BYTES);
                     int samplePeriodCount = fillSamplePeriodsUntil(lastInDataTimestamp);
 
-                    rowsFound = BitmapIndexUtilsNative.findFirstLastInFrame(
-                            outPosition,
-                            frameNextRowId,
-                            dataFrameHi,
-                            offsetTimestampColumnAddress,
-                            indexFrame.getAddress(),
-                            indexFrame.getSize(),
-                            indexFramePosition,
-                            samplePeriodAddress.getAddress(),
-                            samplePeriodCount,
-                            samplePeriodIndexOffset,
-                            startTimestampOutAddress.getAddress(),
-                            firstRowIdOutAddress.getAddress(),
-                            lastRowIdOutAddress.getAddress(),
-                            pageSize);
+                    if (indexFrame.getAddress() > 0) {
+                        rowsFound = BitmapIndexUtilsNative.findFirstLastInFrame(
+                                outPosition,
+                                frameNextRowId,
+                                dataFrameHi,
+                                offsetTimestampColumnAddress,
+                                indexFrame.getAddress(),
+                                indexFrame.getSize(),
+                                indexFramePosition,
+                                samplePeriodAddress.getAddress(),
+                                samplePeriodCount,
+                                samplePeriodIndexOffset,
+                                startTimestampOutAddress.getAddress(),
+                                firstRowIdOutAddress.getAddress(),
+                                lastRowIdOutAddress.getAddress(),
+                                pageSize);
+                    } else {
+                        // Special case, search on partition where indexed column is not added (or partially added)
+                        // with filter `where symbol = null`
+                        // It means all rows in the data frame should be treated as in index
+                        rowsFound = BitmapIndexUtilsNative.findFirstLastInFrameNoFilter(
+                                outPosition,
+                                frameNextRowId,
+                                dataFrameHi,
+                                offsetTimestampColumnAddress,
+                                samplePeriodAddress.getAddress(),
+                                samplePeriodCount,
+                                samplePeriodIndexOffset,
+                                startTimestampOutAddress.getAddress(),
+                                firstRowIdOutAddress.getAddress(),
+                                lastRowIdOutAddress.getAddress(),
+                                pageSize);
+                    }
 
                     boolean firstRowLastRowIdUpdated = rowsFound < 0;
                     rowsFound = Math.abs(rowsFound);
@@ -395,7 +420,7 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
                         return newState;
                     } else {
                         // Noting found, continue search
-                        return STATE_FETCH_NEXT_INDEX_FRAME;
+                        return indexFrame.getAddress() > 0 ? STATE_FETCH_NEXT_INDEX_FRAME : STATE_FETCH_NEXT_DATA_FRAME;
                     }
 
                 case STATE_RETURN_LAST_ROW:

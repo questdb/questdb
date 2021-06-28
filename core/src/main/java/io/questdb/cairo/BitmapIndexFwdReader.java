@@ -86,10 +86,6 @@ public class BitmapIndexFwdReader extends AbstractIndexReader {
             updateKeyCount();
         }
 
-        if (key == 0 && unIndexedNullCount > 0) {
-            return NullIndexFrameCursor.INSTANCE;
-        }
-
         if (key < keyCount) {
             final Cursor cursor = getCursor(false);
             cursor.of(key, minRowId, maxRowId, keyCount);

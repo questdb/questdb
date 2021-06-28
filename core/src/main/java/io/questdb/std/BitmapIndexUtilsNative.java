@@ -25,22 +25,6 @@
 package io.questdb.std;
 
 public class BitmapIndexUtilsNative {
-    public static void latestScanBackward(long keysMemory, long keysMemorySize, long valuesMemory,
-                                                   long valuesMemorySize, long argsMemory, long unIndexedNullCount,
-                                                   long maxValue, long minValue,
-                                                   int partitionIndex, int blockValueCountMod) {
-        assert keysMemory > 0;
-        assert keysMemorySize > 0;
-        assert valuesMemory > 0;
-        assert valuesMemorySize > 0;
-        assert argsMemory > 0;
-        assert partitionIndex >= 0;
-        assert blockValueCountMod + 1 == Numbers.ceilPow2(blockValueCountMod + 1);
-
-        latestScanBackward0(keysMemory, keysMemorySize, valuesMemory, valuesMemorySize, argsMemory, unIndexedNullCount,
-                maxValue, minValue, partitionIndex, blockValueCountMod);
-    }
-
     public static int findFirstLastInFrame(
             int outIndex,
             long rowIdLo,
@@ -56,6 +40,7 @@ public class BitmapIndexUtilsNative {
             long firstRowIdOutAddress,
             long lastRowIdOutAddress,
             int outSize) {
+
         return findFirstLastInFrame0(
                 outIndex,
                 rowIdLo,
@@ -74,10 +59,53 @@ public class BitmapIndexUtilsNative {
         );
     }
 
+    public static int findFirstLastInFrameNoFilter(
+            int outIndex,
+            long rowIdLo,
+            long rowIdHi,
+            long timestampColAddress,
+            long samplePeriodsAddress,
+            int samplePeriodsCount,
+            long samplePeriodIndexOffset,
+            long timestampOutAddress,
+            long firstRowIdOutAddress,
+            long lastRowIdOutAddress,
+            int outSize) {
+        return findFirstLastInFrameNoFilter0(
+                outIndex,
+                rowIdLo,
+                rowIdHi,
+                timestampColAddress,
+                samplePeriodsAddress,
+                samplePeriodsCount,
+                samplePeriodIndexOffset,
+                timestampOutAddress,
+                firstRowIdOutAddress,
+                lastRowIdOutAddress,
+                outSize
+        );
+    }
+
+    public static void latestScanBackward(long keysMemory, long keysMemorySize, long valuesMemory,
+                                          long valuesMemorySize, long argsMemory, long unIndexedNullCount,
+                                          long maxValue, long minValue,
+                                          int partitionIndex, int blockValueCountMod) {
+        assert keysMemory > 0;
+        assert keysMemorySize > 0;
+        assert valuesMemory > 0;
+        assert valuesMemorySize > 0;
+        assert argsMemory > 0;
+        assert partitionIndex >= 0;
+        assert blockValueCountMod + 1 == Numbers.ceilPow2(blockValueCountMod + 1);
+
+        latestScanBackward0(keysMemory, keysMemorySize, valuesMemory, valuesMemorySize, argsMemory, unIndexedNullCount,
+                maxValue, minValue, partitionIndex, blockValueCountMod);
+    }
+
     private static native void latestScanBackward0(long keysMemory, long keysMemorySize, long valuesMemory,
-                                                 long valuesMemorySize, long argsMemory, long unIndexedNullCount,
-                                                 long maxValue, long minValue,
-                                                 int partitionIndex, int blockValueCountMod);
+                                                   long valuesMemorySize, long argsMemory, long unIndexedNullCount,
+                                                   long maxValue, long minValue,
+                                                   int partitionIndex, int blockValueCountMod);
 
     private static native int findFirstLastInFrame0(
             int outIndex,
@@ -87,6 +115,19 @@ public class BitmapIndexUtilsNative {
             long symbolIndexAddress,
             long symbolIndexCount,
             long symbolIndexPosition,
+            long samplePeriodsAddress,
+            int samplePeriodCount,
+            long samplePeriodIndexOffset,
+            long timestampOutAddress,
+            long firstRowIdOutAddress,
+            long lastRowIdOutAddress,
+            int outSize);
+
+    private static native int findFirstLastInFrameNoFilter0(
+            int outIndex,
+            long rowIdLo,
+            long rowIdHi,
+            long timestampColAddress,
             long samplePeriodsAddress,
             int samplePeriodCount,
             long samplePeriodIndexOffset,
