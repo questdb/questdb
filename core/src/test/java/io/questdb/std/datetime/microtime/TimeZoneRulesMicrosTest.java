@@ -60,9 +60,6 @@ public class TimeZoneRulesMicrosTest {
         long ts2tz = ts2 + offset1 + (offset2 - offset1);
 
         System.out.println("ts1tz=" + Timestamps.toString(ts1tz) + ", ts2tz=" + Timestamps.toString(ts2tz));
-
-        ZonedDateTime zdt = java.time.Instant.ofEpochMilli(ts2/1000).atZone(ZoneId.of(tz));
-        System.out.println(zdt);
     }
 
     @Test
@@ -86,7 +83,7 @@ public class TimeZoneRulesMicrosTest {
             final int y = Timestamps.getYear(micros);
             final boolean leap = Timestamps.isLeapYear(y);
 
-            Instant dt = Instant.ofEpochMilli(micros/1000);
+            Instant dt = Instant.ofEpochMilli(micros / 1000);
 
             for (int i = 0, n = zones.size(); i < n; i++) {
                 ZoneId zone = zones.get(i);

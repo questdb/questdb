@@ -701,7 +701,8 @@ public class SampleByTest extends AbstractGriffinTest {
 
         assertQuery(
                 "k\tc\n" +
-                        "2021-03-28T00:30:00.000000Z\t3\n" +
+                        "2021-03-27T23:30:00.000000Z\t3\n" +
+                        "2021-03-28T00:30:00.000000Z\t10\n" +
                         "2021-03-28T01:30:00.000000Z\t10\n" +
                         "2021-03-28T02:30:00.000000Z\t10\n" +
                         "2021-03-28T03:30:00.000000Z\t10\n" +
@@ -710,7 +711,6 @@ public class SampleByTest extends AbstractGriffinTest {
                         "2021-03-28T06:30:00.000000Z\t10\n" +
                         "2021-03-28T07:30:00.000000Z\t10\n" +
                         "2021-03-28T08:30:00.000000Z\t10\n" +
-                        "2021-03-28T09:30:00.000000Z\t10\n" +
                         "2021-03-28T09:30:00.000000Z\t7\n",
 
                 // todo: the following doesn't work: select to_timezone(k, 'Iran'), count() from x sample by 1h align to calendar time zone 'Iran'
@@ -735,33 +735,106 @@ public class SampleByTest extends AbstractGriffinTest {
 
     @Test
     public void testSampleByNoFillNotKeyedAlignToCalendarTimezone() throws Exception {
-
-        // IRAN timezone is +4:30, which doesn't align well with 1hr sample
-
+        // We are going over spring time change. Because time is "expanding" we dont have
+        // to do anything special. Our UTC timestamps will show "gap" and data doesn't
+        // have to change
         assertQuery(
                 "k\tc\n" +
-                        "2021-03-28T00:30:00.000000Z\t3\n" +
-                        "2021-03-28T01:30:00.000000Z\t10\n" +
-                        "2021-03-28T02:30:00.000000Z\t10\n" +
-                        "2021-03-28T03:30:00.000000Z\t10\n" +
-                        "2021-03-28T04:30:00.000000Z\t10\n" +
-                        "2021-03-28T05:30:00.000000Z\t10\n" +
-                        "2021-03-28T06:30:00.000000Z\t10\n" +
-                        "2021-03-28T07:30:00.000000Z\t10\n" +
-                        "2021-03-28T08:30:00.000000Z\t10\n" +
-                        "2021-03-28T09:30:00.000000Z\t10\n" +
-                        "2021-03-28T09:30:00.000000Z\t7\n",
-
-                // todo: the following doesn't work: select to_timezone(k, 'Iran'), count() from x sample by 1h align to calendar time zone 'Iran'
-                // todo: the following doesn't work: select count() from x sample by 1h align to calendar time zone 'Iran'"
+                        "2021-03-28T00:00:00.000000Z\t8\n" +
+                        "2021-03-28T01:00:00.000000Z\t10\n" +
+                        "2021-03-28T02:00:00.000000Z\t10\n" +
+                        "2021-03-28T03:00:00.000000Z\t10\n" +
+                        "2021-03-28T04:00:00.000000Z\t10\n" +
+                        "2021-03-28T05:00:00.000000Z\t10\n" +
+                        "2021-03-28T06:00:00.000000Z\t10\n" +
+                        "2021-03-28T07:00:00.000000Z\t10\n" +
+                        "2021-03-28T08:00:00.000000Z\t10\n" +
+                        "2021-03-28T09:00:00.000000Z\t10\n" +
+                        "2021-03-28T10:00:00.000000Z\t2\n",
                 "select k, count() c from x sample by 1h align to calendar time zone 'Europe/Berlin'",
-//                "x",
                 "create table x as " +
                         "(" +
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
                         " timestamp_sequence(cast('2021-03-28T00:15:00.000000Z' as timestamp), 6*60000000) k" +
+                        " from" +
+                        " long_sequence(100)" +
+                        ") timestamp(k) partition by NONE",
+                "k",
+                false,
+                true,
+                false
+        );
+    }
+
+    @Test
+    public void testSampleByNoFillNotKeyedAlignToCalendarTimezoneOct() throws Exception {
+        // We are going over spring time change. Because time is "expanding" we dont have
+        // to do anything special. Our UTC timestamps will show "gap" and data doesn't
+        // have to change
+        assertQuery(
+                "k\tc\n" +
+                        "2021-10-31T00:00:00.000000Z\t8\n" +
+                        "2021-10-31T01:00:00.000000Z\t20\n" +
+                        "2021-10-31T03:00:00.000000Z\t10\n" +
+                        "2021-10-31T04:00:00.000000Z\t10\n" +
+                        "2021-10-31T05:00:00.000000Z\t10\n" +
+                        "2021-10-31T06:00:00.000000Z\t10\n" +
+                        "2021-10-31T07:00:00.000000Z\t10\n" +
+                        "2021-10-31T08:00:00.000000Z\t10\n" +
+                        "2021-10-31T09:00:00.000000Z\t10\n" +
+                        "2021-10-31T10:00:00.000000Z\t2\n",
+                "select k, count() c from x sample by 1h align to calendar time zone 'Europe/Berlin'",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(cast('2021-10-31T00:15:00.000000Z' as timestamp), 6*60000000) k" +
+                        " from" +
+                        " long_sequence(100)" +
+                        ") timestamp(k) partition by NONE",
+                "k",
+                false,
+                true,
+                false
+        );
+    }
+
+    @Test
+    public void testSampleByNoFillNotKeyedAlignToCalendarTimezoneOctMin() throws Exception {
+        // We are going over spring time change. Because time is "expanding" we dont have
+        // to do anything special. Our UTC timestamps will show "gap" and data doesn't
+        // have to change
+        assertQuery(
+                "k\tc\n" +
+                        "2021-10-31T00:00:00.000000Z\t3\n" +
+                        "2021-10-31T00:30:00.000000Z\t5\n" +
+                        "2021-10-31T01:00:00.000000Z\t15\n" +
+                        "2021-10-31T02:30:00.000000Z\t5\n" +
+                        "2021-10-31T03:00:00.000000Z\t5\n" +
+                        "2021-10-31T03:30:00.000000Z\t5\n" +
+                        "2021-10-31T04:00:00.000000Z\t5\n" +
+                        "2021-10-31T04:30:00.000000Z\t5\n" +
+                        "2021-10-31T05:00:00.000000Z\t5\n" +
+                        "2021-10-31T05:30:00.000000Z\t5\n" +
+                        "2021-10-31T06:00:00.000000Z\t5\n" +
+                        "2021-10-31T06:30:00.000000Z\t5\n" +
+                        "2021-10-31T07:00:00.000000Z\t5\n" +
+                        "2021-10-31T07:30:00.000000Z\t5\n" +
+                        "2021-10-31T08:00:00.000000Z\t5\n" +
+                        "2021-10-31T08:30:00.000000Z\t5\n" +
+                        "2021-10-31T09:00:00.000000Z\t5\n" +
+                        "2021-10-31T09:30:00.000000Z\t5\n" +
+                        "2021-10-31T10:00:00.000000Z\t2\n",
+                "select k, count() c from x sample by 30m align to calendar time zone 'Europe/Berlin'",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(cast('2021-10-31T00:15:00.000000Z' as timestamp), 6*60000000) k" +
                         " from" +
                         " long_sequence(100)" +
                         ") timestamp(k) partition by NONE",

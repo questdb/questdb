@@ -61,17 +61,17 @@ public class SampleByFillValueNotKeyedRecordCursor extends AbstractSplitVirtualR
         // for timestamp gaps
 
         // what is the next timestamp we are expecting?
-        final long nextTimestamp = timestampSampler.nextTimestamp(lastTimestamp);
+        final long nextTimestamp = timestampSampler.nextTimestamp(sampleLocalEpoch);
 
         // is data timestamp ahead of next expected timestamp?
         if (this.nextTimestamp > nextTimestamp) {
-            this.lastTimestamp = nextTimestamp;
+            this.sampleLocalEpoch = nextTimestamp;
             record.setActiveB();
             return true;
         }
 
         // this is new timestamp value
-        this.lastTimestamp = timestampSampler.round(baseRecord.getTimestamp(timestampIndex));
+        this.sampleLocalEpoch = timestampSampler.round(baseRecord.getTimestamp(timestampIndex));
 
         // switch to non-placeholder record
         record.setActiveA();
@@ -85,7 +85,7 @@ public class SampleByFillValueNotKeyedRecordCursor extends AbstractSplitVirtualR
 
         while (base.hasNext()) {
             final long timestamp = getBaseRecordTimestamp();
-            if (lastTimestamp == timestamp) {
+            if (sampleLocalEpoch == timestamp) {
                 for (int i = 0; i < n; i++) {
                     interruptor.checkInterrupted();
                     groupByFunctions.getQuick(i).computeNext(simpleMapValue, baseRecord);

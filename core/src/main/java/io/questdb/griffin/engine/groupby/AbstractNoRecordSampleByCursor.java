@@ -34,8 +34,13 @@ import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
+import io.questdb.std.datetime.TimeZoneRules;
+import io.questdb.std.datetime.microtime.TimeZoneRulesMicros;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
+
+import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_MICROS;
+import static io.questdb.std.datetime.microtime.Timestamps.MINUTE_MICROS;
 
 public abstract class AbstractNoRecordSampleByCursor implements NoRandomAccessRecordCursor {
     protected final TimestampSampler timestampSampler;
@@ -43,11 +48,12 @@ public abstract class AbstractNoRecordSampleByCursor implements NoRandomAccessRe
     protected final ObjList<GroupByFunction> groupByFunctions;
     private final ObjList<Function> recordFunctions;
     protected Record baseRecord;
-    protected long lastTimestamp;
+    protected long sampleLocalEpoch;
     protected long nextTimestamp;
     protected RecordCursor base;
     protected SqlExecutionInterruptor interruptor;
     protected long baselineOffset;
+    protected long topBaselineOffset;
     private long topLocalEpoch;
     protected long localEpoch;
 
@@ -79,12 +85,15 @@ public abstract class AbstractNoRecordSampleByCursor implements NoRandomAccessRe
         GroupByUtils.toTop(recordFunctions);
         this.base.toTop();
         this.localEpoch = topLocalEpoch;
+        this.baselineOffset = topBaselineOffset;
     }
 
     @Override
     public long size() {
         return -1;
     }
+
+    protected TimeZoneRules rules;
 
     public void of(
             RecordCursor base,
@@ -98,6 +107,7 @@ public abstract class AbstractNoRecordSampleByCursor implements NoRandomAccessRe
         timezoneNameFunc.init(base, executionContext);
         offsetFunc.init(base, executionContext);
 
+        this.rules = null;
         this.base = base;
         this.baseRecord = base.getRecord();
         final long timestamp = baseRecord.getTimestamp(timestampIndex);
@@ -106,7 +116,23 @@ public abstract class AbstractNoRecordSampleByCursor implements NoRandomAccessRe
         final CharSequence tz = timezoneNameFunc.getStr(null);
         if (tz != null) {
             try {
-                alignmentOffset = Timestamps.toTimezone(timestamp, TimestampFormatUtils.enLocale, tz) - timestamp;
+                long opt = Timestamps.parseOffset(tz);
+                if (opt == Long.MIN_VALUE) {
+                    // this is timezone name
+                    TimeZoneRules rules = TimestampFormatUtils.enLocale.getZoneRules(
+                            Numbers.decodeLowInt(TimestampFormatUtils.enLocale.matchZone(tz, 0, tz.length())),
+                            RESOLUTION_MICROS
+                    );
+
+                    // fixed rules means the timezone does not have historical or daylight time changes
+                    alignmentOffset = rules.getOffset(timestamp);
+                    if (rules instanceof TimeZoneRulesMicros && timestampSampler.getBucketSize() <= Timestamps.HOUR_MICROS) {
+                        this.rules = rules;
+                    }
+                } else {
+                    // here timezone is in numeric offset format
+                    alignmentOffset = Numbers.decodeLowInt(opt) * MINUTE_MICROS;
+                }
             } catch (NumericException e) {
                 Misc.free(base);
                 throw SqlException.$(timezoneNameFuncPos, "invalid timezone: ").put(tz);
@@ -123,16 +149,16 @@ public abstract class AbstractNoRecordSampleByCursor implements NoRandomAccessRe
                 throw SqlException.$(offsetFuncPos, "invalid offset: ").put(offset);
             }
             if (alignmentOffset == Numbers.LONG_NaN) {
-                alignmentOffset = Numbers.decodeLowInt(val) * Timestamps.MINUTE_MICROS;
+                alignmentOffset = Numbers.decodeLowInt(val) * MINUTE_MICROS;
             } else {
-                alignmentOffset += Numbers.decodeLowInt(val) * Timestamps.MINUTE_MICROS;
+                alignmentOffset += Numbers.decodeLowInt(val) * MINUTE_MICROS;
             }
         }
 
         this.nextTimestamp = timestampSampler.round(timestamp);
-        this.baselineOffset = alignmentOffset == Numbers.LONG_NaN ? timestamp - nextTimestamp : alignmentOffset;
+        this.topBaselineOffset = this.baselineOffset = alignmentOffset == Numbers.LONG_NaN ? timestamp - nextTimestamp : alignmentOffset;
         this.topLocalEpoch = this.localEpoch = timestampSampler.round(timestamp + baselineOffset);
-        this.lastTimestamp = this.nextTimestamp = timestampSampler.round(timestamp - baselineOffset);
+        this.nextTimestamp = timestampSampler.round(timestamp - baselineOffset);
         interruptor = executionContext.getSqlExecutionInterruptor();
     }
 
@@ -144,7 +170,7 @@ public abstract class AbstractNoRecordSampleByCursor implements NoRandomAccessRe
 
         @Override
         public long getTimestamp(Record rec) {
-            return localEpoch - baselineOffset;
+            return sampleLocalEpoch - baselineOffset;
         }
     }
 }

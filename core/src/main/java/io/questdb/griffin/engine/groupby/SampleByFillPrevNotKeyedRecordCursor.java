@@ -54,16 +54,16 @@ public class SampleByFillPrevNotKeyedRecordCursor extends AbstractVirtualRecordS
         // for timestamp gaps
 
         // what is the next timestamp we are expecting?
-        final long nextTimestamp = timestampSampler.nextTimestamp(lastTimestamp);
+        final long nextTimestamp = timestampSampler.nextTimestamp(sampleLocalEpoch);
 
         // is data timestamp ahead of next expected timestamp?
         if (this.nextTimestamp > nextTimestamp) {
-            this.lastTimestamp = nextTimestamp;
+            this.sampleLocalEpoch = nextTimestamp;
             // reset iterator on map and stream contents
             return true;
         }
 
-        this.lastTimestamp = getBaseRecordTimestamp();
+        this.sampleLocalEpoch = getBaseRecordTimestamp();
 
         final int n = groupByFunctions.size();
         for (int i = 0; i < n; i++) {
@@ -73,7 +73,7 @@ public class SampleByFillPrevNotKeyedRecordCursor extends AbstractVirtualRecordS
         while (base.hasNext()) {
             interruptor.checkInterrupted();
             long timestamp = getBaseRecordTimestamp();
-            if (lastTimestamp == timestamp) {
+            if (sampleLocalEpoch == timestamp) {
                 for (int i = 0; i < n; i++) {
                     groupByFunctions.getQuick(i).computeNext(simpleMapValue, baseRecord);
                 }

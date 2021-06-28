@@ -67,7 +67,7 @@ class SampleByFillNoneRecordCursor extends AbstractVirtualRecordSampleByCursor {
     }
 
     private boolean computeNextBatch() {
-        this.lastTimestamp = this.nextTimestamp;
+        this.sampleLocalEpoch = this.nextTimestamp;
         this.map.clear();
 
         // looks like we need to populate key map
@@ -76,7 +76,7 @@ class SampleByFillNoneRecordCursor extends AbstractVirtualRecordSampleByCursor {
         int n = groupByFunctions.size();
         do {
             final long timestamp = getBaseRecordTimestamp();
-            if (lastTimestamp == timestamp) {
+            if (sampleLocalEpoch == timestamp) {
                 final MapKey key = map.withKey();
                 keyMapSink.copy(baseRecord, key);
                 GroupByUtils.updateFunctions(groupByFunctions, n, key.createValue(), baseRecord);

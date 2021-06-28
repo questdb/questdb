@@ -73,16 +73,16 @@ class SampleByFillPrevRecordCursor extends AbstractVirtualRecordSampleByCursor {
         // for timestamp gaps
 
         // what is the next timestamp we are expecting?
-        long nextTimestamp = timestampSampler.nextTimestamp(lastTimestamp);
+        long nextTimestamp = timestampSampler.nextTimestamp(sampleLocalEpoch);
 
         // is data timestamp ahead of next expected timestamp?
         if (this.nextTimestamp > nextTimestamp) {
-            this.lastTimestamp = nextTimestamp;
+            this.sampleLocalEpoch = nextTimestamp;
             // reset iterator on map and stream contents
             return map.getCursor().hasNext();
         }
 
-        this.lastTimestamp = this.nextTimestamp;
+        this.sampleLocalEpoch = this.nextTimestamp;
 
         // looks like we need to populate key map
 
@@ -90,7 +90,7 @@ class SampleByFillPrevRecordCursor extends AbstractVirtualRecordSampleByCursor {
         while (true) {
             interruptor.checkInterrupted();
             final long timestamp = getBaseRecordTimestamp();
-            if (lastTimestamp == timestamp) {
+            if (sampleLocalEpoch == timestamp) {
                 final MapKey key = map.withKey();
                 keyMapSink.copy(baseRecord, key);
                 final MapValue value = key.findValue();

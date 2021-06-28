@@ -49,8 +49,8 @@ class SampleByFillNoneNotKeyedRecordCursor extends AbstractVirtualRecordSampleBy
             return false;
         }
 
-        this.lastTimestamp = this.nextTimestamp;
-        final long next = timestampSampler.nextTimestamp(this.localEpoch);
+        this.sampleLocalEpoch = this.localEpoch;
+        long next = timestampSampler.nextTimestamp(this.localEpoch);
 
         // looks like we need to populate key map
         // at the start of this loop 'lastTimestamp' will be set to timestamp
@@ -68,6 +68,15 @@ class SampleByFillNoneNotKeyedRecordCursor extends AbstractVirtualRecordSampleBy
                 // When map is exhausted we would assign 'nextTimestamp' to 'lastTimestamp'
                 // and build another map
                 // todo: if we want to "fill" with null localEpoch could be "next"
+                if (rules != null) {
+                    long daylightSavings = rules.getOffset(localEpoch - baselineOffset);
+                    if (daylightSavings < baselineOffset) {
+                        GroupByUtils.updateExisting(groupByFunctions, n, simpleMapValue, baseRecord);
+                        baselineOffset = daylightSavings;
+                        sampleLocalEpoch -= daylightSavings;
+                        continue;
+                    }
+                }
                 this.localEpoch = timestampSampler.round(timestamp);
                 GroupByUtils.toTop(groupByFunctions);
                 return true;

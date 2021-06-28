@@ -77,25 +77,27 @@ class SampleByFillValueRecordCursor extends AbstractSplitVirtualRecordSampleByCu
         // for timestamp gaps
 
         // what is the next timestamp we are expecting?
-        long nextTimestamp = timestampSampler.nextTimestamp(lastTimestamp);
+        this.sampleLocalEpoch = localEpoch;
+        long next = timestampSampler.nextTimestamp(localEpoch);
 
         // is data timestamp ahead of next expected timestamp?
-        if (this.nextTimestamp > nextTimestamp) {
-            this.lastTimestamp = nextTimestamp;
+/*
+        if (this.nextTimestamp > next) {
+            this.sampleLocalEpoch = next;
             // reset iterator on map and stream contents
             refreshCursorAndRecord();
             return true;
         }
 
-        this.lastTimestamp = this.nextTimestamp;
+        this.sampleLocalEpoch = this.nextTimestamp;
+*/
 
         // looks like we need to populate key map
-
         int n = groupByFunctions.size();
         while (true) {
             interruptor.checkInterrupted();
-            final long timestamp = getBaseRecordTimestamp();
-            if (lastTimestamp == timestamp) {
+            final long timestamp = baseRecord.getTimestamp(timestampIndex) + baselineOffset;
+            if (timestamp < next) {
                 final MapKey key = map.withKey();
                 keyMapSink.copy(baseRecord, key);
                 final MapValue value = key.findValue();
@@ -123,9 +125,9 @@ class SampleByFillValueRecordCursor extends AbstractSplitVirtualRecordSampleByCu
             } else {
                 // timestamp changed, make sure we keep the value of 'lastTimestamp'
                 // unchanged. Timestamp columns uses this variable
-                // When map is exhausted we would assign 'nextTimestamp' to 'lastTimestamp'
+                // When map is exhausted we would assign 'next' to 'lastTimestamp'
                 // and build another map
-                this.nextTimestamp = timestamp;
+                this.localEpoch = timestampSampler.round(timestamp);
                 GroupByUtils.toTop(groupByFunctions);
             }
 
@@ -161,7 +163,7 @@ class SampleByFillValueRecordCursor extends AbstractSplitVirtualRecordSampleByCu
     }
 
     private boolean refreshRecord() {
-        if (mapRecord.getTimestamp(0) == lastTimestamp) {
+        if (mapRecord.getTimestamp(0) == sampleLocalEpoch) {
             record.setActiveA();
         } else {
             record.setActiveB();
