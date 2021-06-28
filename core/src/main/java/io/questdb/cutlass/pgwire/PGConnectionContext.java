@@ -159,6 +159,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     private boolean sendParameterDescription;
     private PGResumeProcessor resumeProcessor;
     private final PGResumeProcessor resumeCursorRef = this::resumeCursor;
+    private final PGResumeProcessor resumeCursorAndSendRef = this::resumeCursorAndSend;
     private long maxRows;
 
     public PGConnectionContext(
@@ -1722,7 +1723,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         if (typesAndSelect != null) {
             LOG.debug().$("executing query").$();
             setupFactoryAndCursor();
-            sendCursor(maxRows);
+            sendCursor(maxRows, resumeCursorRef);
         } else if (typesAndInsert != null) {
             LOG.debug().$("executing insert").$();
             executeInsert();
@@ -1883,7 +1884,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
             queryTag = TAG_SELECT;
             setupFactoryAndCursor();
             prepareRowDescription();
-            sendCursor(0);
+            sendCursor(0, resumeCursorAndSendRef);
         } else if (typesAndInsert != null) {
             executeInsert();
         } else {
@@ -1968,6 +1969,12 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         sendCursor0(record, columnCount);
     }
 
+    private void resumeCursorAndSend() throws SqlException, PeerDisconnectedException, PeerIsSlowToReadException {
+        resumeCursor();
+        prepareReadyForQuery();
+        sendAndReset();
+    }
+
     private void sendAndReset() throws PeerDisconnectedException, PeerIsSlowToReadException {
         doSend(0, (int) (sendBufferPtr - sendBuffer));
         responseAsciiSink.reset();
@@ -1998,7 +2005,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         sendAndReset();
     }
 
-    private void sendCursor(int maxRows) throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException {
+    private void sendCursor(int maxRows, PGResumeProcessor resumeProcessor) throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException {
         // the assumption for now is that any  will fit into response buffer. This of course precludes us from
         // streaming large BLOBs, but, and its a big one, PostgreSQL protocol for DataRow does not allow for
         // streaming anyway. On top of that Java PostgreSQL driver downloads data row fully. This simplifies our
@@ -2011,7 +2018,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         final int columnCount = metadata.getColumnCount();
         final long cursorRowCount = currentCursor.size();
         this.maxRows = maxRows > 0 ? Long.min(maxRows, cursorRowCount) : Long.MAX_VALUE;
-        resumeProcessor = resumeCursorRef;
+        this.resumeProcessor = resumeProcessor;
         sendCursor0(record, columnCount);
     }
 
