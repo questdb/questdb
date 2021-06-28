@@ -4518,6 +4518,52 @@ public class SampleByTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testIndexSampleByEmpty() throws Exception {
+        assertQuery("k\ts\tlat\tlon\n",
+                "select k, s, first(lat) lat, last(lon) lon " +
+                        "from x " +
+                        "where k > '2000-01-04' and s in ('a') " +
+                        "sample by 1h",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        "   rnd_double(1)*180 lat," +
+                        "   rnd_double(1)*180 lon," +
+                        "   rnd_symbol('a','b',null) s," +
+                        "   timestamp_sequence(172800000000, 1000000000) k" +
+                        "   from" +
+                        "   long_sequence(100)" +
+                        "), index(s capacity 10) timestamp(k) partition by DAY",
+                "k",
+                false,
+                false,
+                false);
+    }
+
+    @Test
+    public void testIndexSampleBy1ByteColumn() throws Exception {
+        assertQuery("k\ts\tlat\tlon\n",
+                "select k, s, first(lat) lat, last(lon) lon " +
+                        "from x " +
+                        "where k > '2000-01-04' and s in ('a') " +
+                        "sample by 1h",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        "   rnd_byte() lat," +
+                        "   rnd_byte() lon," +
+                        "   rnd_symbol('a','b',null) s," +
+                        "   timestamp_sequence(172800000000, 1000000000) k" +
+                        "   from" +
+                        "   long_sequence(100)" +
+                        "), index(s capacity 10) timestamp(k)",
+                "k",
+                false,
+                false,
+                false);
+    }
+
+    @Test
     public void testIndexSampleBy2() throws Exception {
         assertQuery("k\ts\tlat\tlon\n",
                 "select k, s, first(lat) lat, last(lon) lon " +
@@ -4904,6 +4950,7 @@ public class SampleByTest extends AbstractGriffinTest {
 
             compiler.compile("alter table xx add i1 int", sqlExecutionContext);
             compiler.compile("alter table xx add c1 char", sqlExecutionContext);
+            compiler.compile("alter table xx add l1 long", sqlExecutionContext);
 
             compiler.compile(
                     "insert into xx " +
@@ -4911,7 +4958,8 @@ public class SampleByTest extends AbstractGriffinTest {
                             "(case when x % 2 = 0 then 'a' else 'b' end) s,\n" +
                             "timestamp_sequence(100 * 60 * 1000000L, 1 * 60 * 1000000L) k,\n" +
                             "cast(x + 100 as int) i1, \n" +
-                            "rnd_char() c1 \n" +
+                            "rnd_char() c1,\n" +
+                            "x as l1\n" +
                             "from\n" +
                             "long_sequence(100)", sqlExecutionContext);
 
@@ -4920,19 +4968,20 @@ public class SampleByTest extends AbstractGriffinTest {
             compiler.compile("alter table xx add s1 symbol", sqlExecutionContext);
         });
 
-        assertSampleByIndexQuery("fi1\tli1\tfc1\tlc1\tff1\tlf1\tfd1\tld1\tfs1\tls1\tfk\tlk\tk\ts\n" +
-                        "NaN\tNaN\t\t\tNaN\tNaN\tNaN\tNaN\t\t\t1970-01-01T00:00:00.000000Z\t1970-01-01T00:28:00.000000Z\t1970-01-01T00:00:00.000000Z\tb\n" +
-                        "NaN\tNaN\t\t\tNaN\tNaN\tNaN\tNaN\t\t\t1970-01-01T00:30:00.000000Z\t1970-01-01T00:58:00.000000Z\t1970-01-01T00:30:00.000000Z\tb\n" +
-                        "NaN\tNaN\t\t\tNaN\tNaN\tNaN\tNaN\t\t\t1970-01-01T01:00:00.000000Z\t1970-01-01T01:28:00.000000Z\t1970-01-01T01:00:00.000000Z\tb\n" +
-                        "NaN\t119\t\tG\tNaN\tNaN\tNaN\tNaN\t\t\t1970-01-01T01:30:00.000000Z\t1970-01-01T01:58:00.000000Z\t1970-01-01T01:30:00.000000Z\tb\n" +
-                        "121\t149\tS\tL\tNaN\tNaN\tNaN\tNaN\t\t\t1970-01-01T02:00:00.000000Z\t1970-01-01T02:28:00.000000Z\t1970-01-01T02:00:00.000000Z\tb\n" +
-                        "151\t179\tD\tR\tNaN\tNaN\tNaN\tNaN\t\t\t1970-01-01T02:30:00.000000Z\t1970-01-01T02:58:00.000000Z\t1970-01-01T02:30:00.000000Z\tb\n" +
-                        "181\t209\tZ\tV\tNaN\t204.5000\tNaN\t222.5\t\tc3\t1970-01-01T03:00:00.000000Z\t1970-01-01T03:28:00.000000Z\t1970-01-01T03:00:00.000000Z\tb\n" +
-                        "211\t239\tD\tT\t205.5000\t219.5000\t227.5\t297.5\t\t\t1970-01-01T03:30:00.000000Z\t1970-01-01T03:58:00.000000Z\t1970-01-01T03:30:00.000000Z\tb\n" +
-                        "241\t269\tS\tL\t220.5000\t234.5000\t302.5\t372.5\tc3\tc3\t1970-01-01T04:00:00.000000Z\t1970-01-01T04:28:00.000000Z\t1970-01-01T04:00:00.000000Z\tb\n" +
-                        "271\t299\tO\tN\t235.5000\t249.5000\t377.5\t447.5\ta1\tc3\t1970-01-01T04:30:00.000000Z\t1970-01-01T04:58:00.000000Z\t1970-01-01T04:30:00.000000Z\tb\n",
+        assertSampleByIndexQuery("fi1\tli1\tfc1\tlc1\tfl1\tlf1\tff1\tlf11\tfd1\tld1\tfs1\tls1\tfk\tlk\tk\ts\n" +
+                        "NaN\tNaN\t\t\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t\t\t1970-01-01T00:00:00.000000Z\t1970-01-01T00:28:00.000000Z\t1970-01-01T00:00:00.000000Z\tb\n" +
+                        "NaN\tNaN\t\t\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t\t\t1970-01-01T00:30:00.000000Z\t1970-01-01T00:58:00.000000Z\t1970-01-01T00:30:00.000000Z\tb\n" +
+                        "NaN\tNaN\t\t\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t\t\t1970-01-01T01:00:00.000000Z\t1970-01-01T01:28:00.000000Z\t1970-01-01T01:00:00.000000Z\tb\n" +
+                        "NaN\t119\t\tG\tNaN\t19\tNaN\tNaN\tNaN\tNaN\t\t\t1970-01-01T01:30:00.000000Z\t1970-01-01T01:58:00.000000Z\t1970-01-01T01:30:00.000000Z\tb\n" +
+                        "121\t149\tS\tL\t21\t49\tNaN\tNaN\tNaN\tNaN\t\t\t1970-01-01T02:00:00.000000Z\t1970-01-01T02:28:00.000000Z\t1970-01-01T02:00:00.000000Z\tb\n" +
+                        "151\t179\tD\tR\t51\t79\tNaN\tNaN\tNaN\tNaN\t\t\t1970-01-01T02:30:00.000000Z\t1970-01-01T02:58:00.000000Z\t1970-01-01T02:30:00.000000Z\tb\n" +
+                        "181\t209\tZ\tV\t81\t109\tNaN\t204.5000\tNaN\t222.5\t\tc3\t1970-01-01T03:00:00.000000Z\t1970-01-01T03:28:00.000000Z\t1970-01-01T03:00:00.000000Z\tb\n" +
+                        "211\t239\tD\tT\t111\t139\t205.5000\t219.5000\t227.5\t297.5\t\t\t1970-01-01T03:30:00.000000Z\t1970-01-01T03:58:00.000000Z\t1970-01-01T03:30:00.000000Z\tb\n" +
+                        "241\t269\tS\tL\t141\t169\t220.5000\t234.5000\t302.5\t372.5\tc3\tc3\t1970-01-01T04:00:00.000000Z\t1970-01-01T04:28:00.000000Z\t1970-01-01T04:00:00.000000Z\tb\n" +
+                        "271\t299\tO\tN\t171\t199\t235.5000\t249.5000\t377.5\t447.5\ta1\tc3\t1970-01-01T04:30:00.000000Z\t1970-01-01T04:58:00.000000Z\t1970-01-01T04:30:00.000000Z\tb\n",
                 "select first(i1) fi1, last(i1) li1, first(c1) fc1, " +
-                        "last(c1) lc1, first(f1) ff1, last(f1) lf1, first(d1) fd1, last(d1) ld1, first(s1) fs1, last(s1) ls1, first(k) fk, last(k) lk, k, s\n" +
+                        "last(c1) lc1, first(l1) fl1, last(l1) lf1, first(f1) ff1, last(f1) lf1, " +
+                        "first(d1) fd1, last(d1) ld1, first(s1) fs1, last(s1) ls1, first(k) fk, last(k) lk, k, s\n" +
                         "from xx " +
                         "where s in ('b')" +
                         "sample by 30m",
@@ -4942,11 +4991,75 @@ public class SampleByTest extends AbstractGriffinTest {
                         "timestamp_sequence(200 * 60 * 1000000L, 1 * 60 * 1000000L) k,\n" +
                         "cast(x + 200 as int) i1, \n" +
                         "rnd_char() c1, \n" +
+                        "x+100 as l1,\n" +
                         "cast(x * 0.5 + 200 as float) f1, \n" +
                         "x*2.5 + 200 d1,\n" +
                         "rnd_symbol(null, 'a1', 'b2', 'c3') s1 \n" +
                         "from\n" +
                         "long_sequence(100)");
+    }
+
+    @Test
+    public void testIndexSampleMainIndexHasColumnTop() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table xx (k timestamp)\n" +
+                    " timestamp(k) partition by DAY", sqlExecutionContext);
+            compiler.compile(
+                    "insert into xx " +
+                            "select " +
+                            "timestamp_sequence(0, 1 * 60 * 1000000L) k\n" +
+                            "from\n" +
+                            "long_sequence(100)\n", sqlExecutionContext);
+            compiler.compile("alter table xx add s SYMBOL INDEX", sqlExecutionContext);
+            compiler.compile("insert into xx " +
+                    "select " +
+                    "timestamp_sequence(24 * 60 * 60 * 1000000L, 1 * 60 * 1000000L),\n" +
+                    "(case when x % 2 = 0 then 'a' else 'b' end) sk\n" +
+                    "from\n" +
+                    "long_sequence(60)\n", sqlExecutionContext);
+        });
+
+        // 1970-01-01 data does not have s column
+        // first hour of 1970-01-02 does not have s column
+        assertSampleByIndexQuery("fk\tlk\tk\ts\n" +
+                        "1970-01-02T00:00:00.000000Z\t1970-01-02T00:58:00.000000Z\t1970-01-02T00:00:00.000000Z\tb\n" +
+                        "1970-01-02T01:00:00.000000Z\t1970-01-02T01:58:00.000000Z\t1970-01-02T01:00:00.000000Z\tb\n" +
+                        "1970-01-02T02:00:00.000000Z\t1970-01-02T02:58:00.000000Z\t1970-01-02T02:00:00.000000Z\tb\n" +
+                        "1970-01-02T03:00:00.000000Z\t1970-01-02T03:58:00.000000Z\t1970-01-02T03:00:00.000000Z\tb\n" +
+                        "1970-01-02T04:00:00.000000Z\t1970-01-02T04:58:00.000000Z\t1970-01-02T04:00:00.000000Z\tb\n" +
+                        "1970-01-02T05:00:00.000000Z\t1970-01-02T05:58:00.000000Z\t1970-01-02T05:00:00.000000Z\tb\n",
+                "select first(k) fk, last(k) lk, k, s\n" +
+                        "from xx " +
+                        "where s in ('b')" +
+                        "sample by 1h",
+                "insert into xx " +
+                        "select " +
+                        "timestamp_sequence(25 * 60 * 60 * 1000000L, 1 * 60 * 1000000L),\n" +
+                        "(case when x % 2 = 0 then 'a' else 'b' end) sk\n" +
+                        "from\n" +
+                        "long_sequence(300)\n");
+    }
+
+    @Test
+    public void testNoSampleByWithDeferredSingleSymbolFilterDataFrameRecordCursorFactory() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table xx (k timestamp, d DOUBLE, s SYMBOL)" +
+                    ", index(s capacity 345) timestamp(k) partition by DAY \n", sqlExecutionContext);
+
+            compiler.compile("insert into xx " +
+                    "select " +
+                    "timestamp_sequence(25 * 60 * 60 * 1000000L, 1 * 60 * 1000000L),\n" +
+                    "rnd_double() d,\n" +
+                    "(case when x % 2 = 0 then 'a' else 'b' end) sk\n" +
+                    "from\n" +
+                    "long_sequence(300)\n", sqlExecutionContext);
+
+            assertSql("select sum(d)\n" +
+                            "from xx " +
+                            "where s in ('a')",
+                    "sum\n" +
+                            "75.42541658721542\n");
+        });
     }
 
     private void assertSampleByIndexQuery(String expected, String query, String insert) throws Exception {

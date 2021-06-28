@@ -102,20 +102,13 @@ public class DeferredSingleSymbolFilterDataFrameRecordCursorFactory extends Data
             DataFrameCursor dataFrameCursor,
             SqlExecutionContext executionContext
     ) {
-        if (convertedToFrame) {
-            convertedCursor.of(dataFrameCursor, executionContext);
-            return convertedCursor;
-        } else {
-            return super.getCursorInstance(dataFrameCursor, executionContext);
-        }
+        assert !this.convertedToFrame;
+        return super.getCursorInstance(dataFrameCursor, executionContext);
     }
 
     @Override
     public PageFrameCursor getPageFrameCursor(SqlExecutionContext executionContext) {
-        if (!convertedToFrame) {
-            return super.getPageFrameCursor(executionContext);
-        }
-
+        assert this.convertedToFrame;
         DataFrameCursor dataFrameCursor = dataFrameCursorFactory.getCursor(executionContext);
         if (pageFrameCursor == null) {
             pageFrameCursor = new TableReaderPageFrameCursor(columnIndexes, columnSizes, getMetadata().getTimestampIndex());
