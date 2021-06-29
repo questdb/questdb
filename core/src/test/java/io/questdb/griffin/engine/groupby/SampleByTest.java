@@ -588,6 +588,25 @@ public class SampleByTest extends AbstractGriffinTest {
                         "timestamp_sequence(0, 10 * 60 * 1000000L) k\n" +
                         "from\n" +
                         "long_sequence(150)\n");
+
+        assertWithSymbolColumnTop("k\ts\tlat\tlon\n" +
+                        "1970-01-01T00:10:00.000000Z\t\t-2.0\t13.0\n" +
+                        "1970-01-01T02:10:00.000000Z\t\t-14.0\t25.0\n" +
+                        "1970-01-01T04:10:00.000000Z\t\t-26.0\t37.0\n" +
+                        "1970-01-01T06:10:00.000000Z\t\t-38.0\t49.0\n" +
+                        "1970-01-01T08:10:00.000000Z\t\t-50.0\t61.0\n" +
+                        "1970-01-01T10:10:00.000000Z\t\t-62.0\t73.0\n" +
+                        "1970-01-01T12:10:00.000000Z\t\t-74.0\t85.0\n" +
+                        "1970-01-01T14:10:00.000000Z\t\t-86.0\t97.0\n" +
+                        "1970-01-01T16:10:00.000000Z\t\t-98.0\t109.0\n" +
+                        "1970-01-01T18:10:00.000000Z\t\t-110.0\t121.0\n" +
+                        "1970-01-01T20:10:00.000000Z\t\t-122.0\t133.0\n" +
+                        "1970-01-01T22:10:00.000000Z\t\t-134.0\t145.0\n" +
+                        "1970-01-02T00:10:00.000000Z\t\t-146.0\t150.0\n",
+                "select k, s, first(lat) lat, last(lon) lon \n" +
+                        "from xx \n" +
+                        "where k > '1970-01-01' and s = null \n" +
+                        "sample by 2h");
     }
 
     @Test
@@ -621,6 +640,17 @@ public class SampleByTest extends AbstractGriffinTest {
                         "timestamp_sequence(0, 10 * 60 * 1000000L) k\n" +
                         "from\n" +
                         "long_sequence(180)\n");
+
+        assertWithSymbolColumnTop("k\ts\tlat\tlon\n" +
+                        "1970-01-01T21:10:00.000000Z\t\t-128.0\t128.0\n" +
+                        "1970-01-01T23:10:00.000000Z\t\t-140.0\t140.0\n" +
+                        "1970-01-02T01:10:00.000000Z\t\t-152.0\t152.0\n" +
+                        "1970-01-02T03:10:00.000000Z\t\t-164.0\t164.0\n" +
+                        "1970-01-02T05:10:00.000000Z\t\t-176.0\t176.0\n",
+                "select k, s, first(lat) lat, first(lon) lon " +
+                        "from xx " +
+                        "where k > '1970-01-01T21:00' and s = null " +
+                        "sample by 2h");
     }
 
     @Test
@@ -666,16 +696,25 @@ public class SampleByTest extends AbstractGriffinTest {
                         "timestamp_sequence(0, 60 * 1000L * 1000L) k\n" +
                         "from\n" +
                         "long_sequence(30)\n");
+
+        assertWithSymbolColumnTop("k\ts\tlat\tlon\n" +
+                        "1970-01-01T00:00:00.000000Z\t\t-1.0\t10.0\n" +
+                        "1970-01-01T00:10:00.000000Z\t\t-11.0\t20.0\n" +
+                        "1970-01-01T00:20:00.000000Z\t\t-21.0\t30.0\n",
+                "select k, s, first(lat) lat, last(lon) lon " +
+                        "from xx " +
+                        "where s = null " +
+                        "sample by 10m");
     }
 
     @Test
     public void testIndexSampleByEmpty() throws Exception {
         assertQuery("k\ts\tlat\tlon\n",
                 "select k, s, first(lat) lat, last(lon) lon " +
-                        "from x " +
+                        "from xx " +
                         "where k > '2000-01-04' and s in ('a') " +
                         "sample by 1h",
-                "create table x as " +
+                "create table xx as " +
                         "(" +
                         "select" +
                         "   rnd_double(1)*180 lat," +
@@ -689,6 +728,12 @@ public class SampleByTest extends AbstractGriffinTest {
                 false,
                 false,
                 false);
+
+        assertWithSymbolColumnTop("k\ts\tlat\tlon\n",
+                "select k, s, first(lat) lat, last(lon) lon " +
+                        "from xx " +
+                        "where k > '2000-01-04' and s = null " +
+                        "sample by 1h");
     }
 
     @Test
@@ -732,6 +777,17 @@ public class SampleByTest extends AbstractGriffinTest {
                         "timestamp_sequence(0, 60 * 60 * 1000000L) k\n" + // 60 mins
                         "from\n" +
                         "long_sequence(365 * 24)\n");
+
+        assertWithSymbolColumnTop("k\ts\tlat\tlon\n" +
+                        "1970-02-01T00:00:00.000000Z\t\t-745.0\t816.0\n" +
+                        "1970-02-04T00:00:00.000000Z\t\t-817.0\t888.0\n" +
+                        "1970-02-07T00:00:00.000000Z\t\t-889.0\t960.0\n" +
+                        "1970-02-10T00:00:00.000000Z\t\t-961.0\t1032.0\n" +
+                        "1970-02-13T00:00:00.000000Z\t\t-1033.0\t1104.0\n",
+                "select k, s, first(lat) lat, last(lon) lon " +
+                        "from xx " +
+                        "where k in '1970-02' and k < '1970-02-16' and s = null " +
+                        "sample by 3d");
     }
 
     @Test
@@ -766,6 +822,18 @@ public class SampleByTest extends AbstractGriffinTest {
                         "timestamp_sequence(0, 10 * 60 * 1000000L) k\n" +
                         "from\n" +
                         "long_sequence(180)\n");
+
+        assertWithSymbolColumnTop("k\ts\tlat\tlon\n" +
+                        "1970-01-01T00:00:00.000000Z\t\t-1.0\t4.0\n" +
+                        "1970-01-01T04:00:00.000000Z\t\t-31.0\t34.0\n" +
+                        "1970-01-01T10:00:00.000000Z\t\t-61.0\t64.0\n" +
+                        "1970-01-01T14:00:00.000000Z\t\t-91.0\t94.0\n" +
+                        "1970-01-01T20:00:00.000000Z\t\t-121.0\t124.0\n" +
+                        "1970-01-02T00:00:00.000000Z\t\t-151.0\t154.0\n",
+                "select k, s, first(lat) lat, last(lon) lon " +
+                        "from xx " +
+                        "where k in '1970-01-01T00:00:00.000000Z;30m;5h;10' and s = null " +
+                        "sample by 2h");
     }
 
     @Test
@@ -797,6 +865,25 @@ public class SampleByTest extends AbstractGriffinTest {
                 false,
                 false,
                 false);
+
+        assertMemoryLeak(() -> {
+            compiler.compile("alter table xx drop column s", sqlExecutionContext);
+            compiler.compile("alter table xx add s SYMBOL INDEX", sqlExecutionContext);
+        });
+
+        assertQuery("s\tlat\tlon\n" +
+                        "\t-1.0\t4.0\n" +
+                        "\t-31.0\t34.0\n" +
+                        "\t-61.0\t64.0\n" +
+                        "\t-91.0\t94.0\n" +
+                        "\t-121.0\t124.0\n" +
+                        "\t-151.0\t154.0\n",
+                "select s, first(lat) lat, last(lon) lon " +
+                        "from xx " +
+                        "where k in '1970-01-01T00:00:00.000000Z;30m;5h;10' and s = null " +
+                        "sample by 2h",
+                null,
+                false);
     }
 
     @Test
@@ -822,6 +909,17 @@ public class SampleByTest extends AbstractGriffinTest {
                         "timestamp_sequence(0, 10 * 60 * 1000000L) k\n" +
                         "from\n" +
                         "long_sequence(360)\n");
+
+        assertWithSymbolColumnTop("k\ts\tlat\tlon\n" +
+                        "1970-01-01T20:00:00.000000Z\t\t1970-01-01T20:00:00.000000Z\t1970-01-01T21:50:00.000000Z\n" +
+                        "1970-01-01T22:00:00.000000Z\t\t1970-01-01T22:00:00.000000Z\t1970-01-01T23:50:00.000000Z\n" +
+                        "1970-01-02T00:00:00.000000Z\t\t1970-01-02T00:00:00.000000Z\t1970-01-02T01:50:00.000000Z\n" +
+                        "1970-01-02T02:00:00.000000Z\t\t1970-01-02T02:00:00.000000Z\t1970-01-02T03:50:00.000000Z\n" +
+                        "1970-01-02T04:00:00.000000Z\t\t1970-01-02T04:00:00.000000Z\t1970-01-02T04:00:00.000000Z\n",
+                "select k, s, first(k) lat, last(k) lon " +
+                        "from xx " +
+                        "where k between '1970-01-01T20:00' and '1970-01-02T04:00' and s = null " +
+                        "sample by 2h");
     }
 
     @Test
@@ -855,6 +953,17 @@ public class SampleByTest extends AbstractGriffinTest {
                         "timestamp_sequence(0, 10 * 60 * 1000000L) k\n" +
                         "from\n" +
                         "long_sequence(180)\n");
+
+        assertWithSymbolColumnTop("k\ts\tlat\tlon\n" +
+                        "1970-01-01T21:10:00.000000Z\t\t-128.0\t139.0\n" +
+                        "1970-01-01T23:10:00.000000Z\t\t-140.0\t151.0\n" +
+                        "1970-01-02T01:10:00.000000Z\t\t-152.0\t163.0\n" +
+                        "1970-01-02T03:10:00.000000Z\t\t-164.0\t175.0\n" +
+                        "1970-01-02T05:10:00.000000Z\t\t-176.0\t180.0\n",
+                "select k, s, first(lat) lat, last(lon) lon " +
+                        "from xx " +
+                        "where k > '1970-01-01T21:00' and s = null " +
+                        "sample by 2h");
     }
 
     @Test
@@ -5113,6 +5222,27 @@ public class SampleByTest extends AbstractGriffinTest {
         assertQuery(expected,
                 forceNoIndexQuery,
                 insert,
+                "k",
+                false);
+
+        assertQuery(expected,
+                query,
+                null,
+                "k",
+                false);
+    }
+
+    private void assertWithSymbolColumnTop(String expected, String query) throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("alter table xx drop column s", sqlExecutionContext);
+            compiler.compile("alter table xx add s SYMBOL INDEX", sqlExecutionContext);
+        });
+
+        String forceNoIndexQuery = query.replace("s = null", "(s = null or s = 'none')");
+
+        assertQuery(expected,
+                forceNoIndexQuery,
+                null,
                 "k",
                 false);
 
