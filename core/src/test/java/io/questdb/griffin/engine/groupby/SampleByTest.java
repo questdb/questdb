@@ -1051,6 +1051,41 @@ public class SampleByTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testIndexSampleByWithEmptyIndexPage() throws Exception {
+        assertQuery("k\ts\tlat\tlon\n",
+                "select k, s, first(lat) lat, first(lon) lon " +
+                        "from xx " +
+                        "where k in '1970-02' and s in ('b')" +
+                        "sample by 2h",
+                "create table xx (lat double, lon double, s symbol, k timestamp)" +
+                        ", index(s capacity 10) timestamp(k) partition by DAY",
+                "k",
+                false,
+                false,
+                true);
+
+        assertSampleByIndexQuery("k\ts\tlat\tlon\n" +
+                        "1970-02-02T00:00:00.000000Z\tb\t-33.0\t33.0\n" +
+                        "1970-02-04T00:00:00.000000Z\tb\t-35.0\t35.0\n" +
+                        "1970-02-06T00:00:00.000000Z\tb\t-37.0\t37.0\n" +
+                        "1970-02-08T00:00:00.000000Z\tb\t-39.0\t39.0\n" +
+                        "1970-02-10T00:00:00.000000Z\tb\t-41.0\t41.0\n" +
+                        "1970-02-12T00:00:00.000000Z\tb\t-43.0\t43.0\n" +
+                        "1970-02-14T00:00:00.000000Z\tb\t-45.0\t45.0\n",
+                "select k, s, first(lat) lat, first(lon) lon " +
+                        "from xx " +
+                        "where k in '1970-02' and k < '1970-02-16' and s in ('b')" +
+                        "sample by 1d",
+                "insert into xx " +
+                        "select -x lat,\n" +
+                        "x lon,\n" +
+                        "(case when x % 2 = 0 then 'a' else 'b' end) s,\n" +
+                        "timestamp_sequence(0, 24 * 60 * 60 * 1000000L) k\n" + // 60 mins
+                        "from\n" +
+                        "long_sequence(365)\n");
+    }
+
+    @Test
     public void testIndexSampleIndexNoRowsInIndex() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table xx (k timestamp)\n" +
