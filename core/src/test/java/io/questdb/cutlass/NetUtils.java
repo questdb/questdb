@@ -132,7 +132,7 @@ public class NetUtils {
                     if (expectDisconnect) {
                         Assert.assertTrue(Net.isDead(clientFd));
                     } else {
-                        int m = nf.recv(clientFd, recvBuf, len);
+                        nf.recv(clientFd, recvBuf, len);
                     }
                 }
             }
