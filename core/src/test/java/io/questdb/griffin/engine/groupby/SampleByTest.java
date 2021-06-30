@@ -734,6 +734,33 @@ public class SampleByTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testSampleByDayNoFillNotKeyedAlignToCalendarTimezone() throws Exception {
+
+        assertQuery(
+                "k\tc\n" +
+                        "2021-03-27T22:00:00.000000Z\t218\n" +
+                        "2021-03-28T21:00:00.000000Z\t240\n" +
+                        "2021-03-29T21:00:00.000000Z\t230\n" +
+                        "2021-03-30T21:00:00.000000Z\t240\n" +
+                        "2021-03-31T21:00:00.000000Z\t72\n",
+                "select k, count() c from x sample by 1d align to calendar time zone 'Europe/Riga'",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(cast('2021-03-28T00:15:00.000000Z' as timestamp), 6*60000000) k" +
+                        " from" +
+                        " long_sequence(1000)" +
+                        ") timestamp(k) partition by NONE",
+                "k",
+                false,
+                true,
+                false
+        );
+    }
+
+    @Test
     public void testSampleByNoFillNotKeyedAlignToCalendarTimezone() throws Exception {
         // We are going over spring time change. Because time is "expanding" we dont have
         // to do anything special. Our UTC timestamps will show "gap" and data doesn't
@@ -849,13 +876,12 @@ public class SampleByTest extends AbstractGriffinTest {
     public void testSampleByNoFillNotKeyedAlignToCalendarTimezoneOffset() throws Exception {
         assertQuery(
                 "k\tcount\n" +
-                        "1970-01-02T22:42:00.000000Z\t3\n" +
-                        "1970-01-03T00:12:00.000000Z\t18\n" +
-                        "1970-01-03T01:42:00.000000Z\t18\n" +
-                        "1970-01-03T03:12:00.000000Z\t18\n" +
-                        "1970-01-03T04:42:00.000000Z\t18\n" +
-                        "1970-01-03T06:12:00.000000Z\t18\n" +
-                        "1970-01-03T07:42:00.000000Z\t7\n",
+                        "1970-01-02T23:48:00.000000Z\t16\n" +
+                        "1970-01-03T01:18:00.000000Z\t18\n" +
+                        "1970-01-03T02:48:00.000000Z\t18\n" +
+                        "1970-01-03T04:18:00.000000Z\t18\n" +
+                        "1970-01-03T05:48:00.000000Z\t18\n" +
+                        "1970-01-03T07:18:00.000000Z\t12\n",
 
                 "select k, count() from x sample by 90m align to calendar time zone 'PST' with offset '00:42'",
                 "create table x as " +
@@ -878,38 +904,39 @@ public class SampleByTest extends AbstractGriffinTest {
     public void testSampleByNoFillAlignToCalendarTimezoneOffset() throws Exception {
         assertQuery(
                 "k\tb\tcount\n" +
-                        "1970-01-02T22:42:00.000000Z\t\t1\n" +
-                        "1970-01-02T22:42:00.000000Z\tVTJW\t1\n" +
-                        "1970-01-02T22:42:00.000000Z\tRXGZ\t1\n" +
-                        "1970-01-03T00:12:00.000000Z\tPEHN\t4\n" +
-                        "1970-01-03T00:12:00.000000Z\t\t10\n" +
-                        "1970-01-03T00:12:00.000000Z\tHYRX\t2\n" +
-                        "1970-01-03T00:12:00.000000Z\tVTJW\t1\n" +
-                        "1970-01-03T00:12:00.000000Z\tRXGZ\t1\n" +
-                        "1970-01-03T01:42:00.000000Z\t\t6\n" +
-                        "1970-01-03T01:42:00.000000Z\tPEHN\t1\n" +
-                        "1970-01-03T01:42:00.000000Z\tVTJW\t5\n" +
-                        "1970-01-03T01:42:00.000000Z\tCPSW\t3\n" +
-                        "1970-01-03T01:42:00.000000Z\tHYRX\t2\n" +
-                        "1970-01-03T01:42:00.000000Z\tRXGZ\t1\n" +
-                        "1970-01-03T03:12:00.000000Z\t\t10\n" +
-                        "1970-01-03T03:12:00.000000Z\tHYRX\t3\n" +
-                        "1970-01-03T03:12:00.000000Z\tCPSW\t4\n" +
-                        "1970-01-03T03:12:00.000000Z\tPEHN\t1\n" +
-                        "1970-01-03T04:42:00.000000Z\tRXGZ\t2\n" +
-                        "1970-01-03T04:42:00.000000Z\t\t10\n" +
-                        "1970-01-03T04:42:00.000000Z\tVTJW\t3\n" +
-                        "1970-01-03T04:42:00.000000Z\tHYRX\t2\n" +
-                        "1970-01-03T04:42:00.000000Z\tPEHN\t1\n" +
-                        "1970-01-03T06:12:00.000000Z\t\t11\n" +
-                        "1970-01-03T06:12:00.000000Z\tRXGZ\t4\n" +
-                        "1970-01-03T06:12:00.000000Z\tPEHN\t1\n" +
-                        "1970-01-03T06:12:00.000000Z\tHYRX\t1\n" +
-                        "1970-01-03T06:12:00.000000Z\tVTJW\t1\n" +
-                        "1970-01-03T07:42:00.000000Z\tVTJW\t3\n" +
-                        "1970-01-03T07:42:00.000000Z\tRXGZ\t2\n" +
-                        "1970-01-03T07:42:00.000000Z\t\t2\n",
+                        "1970-01-03T13:18:00.000000Z\t\t1\n" +
+                        "1970-01-03T13:18:00.000000Z\tVTJW\t1\n" +
+                        "1970-01-03T13:18:00.000000Z\tRXGZ\t1\n" +
+                        "1970-01-03T14:48:00.000000Z\tPEHN\t4\n" +
+                        "1970-01-03T14:48:00.000000Z\t\t10\n" +
+                        "1970-01-03T14:48:00.000000Z\tHYRX\t2\n" +
+                        "1970-01-03T14:48:00.000000Z\tVTJW\t1\n" +
+                        "1970-01-03T14:48:00.000000Z\tRXGZ\t1\n" +
+                        "1970-01-03T16:18:00.000000Z\t\t6\n" +
+                        "1970-01-03T16:18:00.000000Z\tPEHN\t1\n" +
+                        "1970-01-03T16:18:00.000000Z\tVTJW\t5\n" +
+                        "1970-01-03T16:18:00.000000Z\tCPSW\t3\n" +
+                        "1970-01-03T16:18:00.000000Z\tHYRX\t2\n" +
+                        "1970-01-03T16:18:00.000000Z\tRXGZ\t1\n" +
+                        "1970-01-03T17:48:00.000000Z\t\t10\n" +
+                        "1970-01-03T17:48:00.000000Z\tHYRX\t3\n" +
+                        "1970-01-03T17:48:00.000000Z\tCPSW\t4\n" +
+                        "1970-01-03T17:48:00.000000Z\tPEHN\t1\n" +
+                        "1970-01-03T19:18:00.000000Z\tRXGZ\t2\n" +
+                        "1970-01-03T19:18:00.000000Z\t\t10\n" +
+                        "1970-01-03T19:18:00.000000Z\tVTJW\t3\n" +
+                        "1970-01-03T19:18:00.000000Z\tHYRX\t2\n" +
+                        "1970-01-03T19:18:00.000000Z\tPEHN\t1\n" +
+                        "1970-01-03T20:48:00.000000Z\t\t11\n" +
+                        "1970-01-03T20:48:00.000000Z\tRXGZ\t4\n" +
+                        "1970-01-03T20:48:00.000000Z\tPEHN\t1\n" +
+                        "1970-01-03T20:48:00.000000Z\tHYRX\t1\n" +
+                        "1970-01-03T20:48:00.000000Z\tVTJW\t1\n" +
+                        "1970-01-03T22:18:00.000000Z\tVTJW\t3\n" +
+                        "1970-01-03T22:18:00.000000Z\tRXGZ\t2\n" +
+                        "1970-01-03T22:18:00.000000Z\t\t2\n",
 
+                // correct timestamp values are 18 and 48 because 'PST' offset is negative and static offset is positive
                 "select k, b, count() from x sample by 90m align to calendar time zone 'PST' with offset '00:42'",
                 "create table x as " +
                         "(" +
@@ -4512,7 +4539,8 @@ public class SampleByTest extends AbstractGriffinTest {
 
     @Test
     public void testSampleFillValueAllTypes() throws Exception {
-        assertQuery("b\tsum\tsum1\tsum2\tsum3\tsum4\tsum5\tk\n" +
+        assertQuery(
+                "b\tsum\tsum1\tsum2\tsum3\tsum4\tsum5\tk\n" +
                         "\t74.19752505948932\t113.1212830543518\t2557447177\t868\t12\t-6307312481136788016\t1970-01-03T00:00:00.000000Z\n" +
                         "CPSW\t0.35983672154330515\t76.75672769546509\t113506296\t27809\t9\t-8889930662239044040\t1970-01-03T00:00:00.000000Z\n" +
                         "PEHN\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T00:00:00.000000Z\n" +

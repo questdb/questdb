@@ -96,15 +96,15 @@ class SampleByFillValueRecordCursor extends AbstractSplitVirtualRecordSampleByCu
         int n = groupByFunctions.size();
         while (true) {
             interruptor.checkInterrupted();
-            final long timestamp = baseRecord.getTimestamp(timestampIndex) + baselineOffset;
+            final long timestamp = baseRecord.getTimestamp(timestampIndex) + combinedOffset;
             if (timestamp < next) {
                 final MapKey key = map.withKey();
                 keyMapSink.copy(baseRecord, key);
                 final MapValue value = key.findValue();
                 assert value != null;
 
-                if (value.getLong(0) != timestamp) {
-                    value.putLong(0, timestamp);
+                if (value.getLong(0) != localEpoch) {
+                    value.putLong(0, localEpoch);
                     for (int i = 0; i < n; i++) {
                         groupByFunctions.getQuick(i).computeFirst(value, baseRecord);
                     }

@@ -52,7 +52,8 @@ public abstract class AbstractNoRecordSampleByCursor implements NoRandomAccessRe
     protected long nextTimestamp;
     protected RecordCursor base;
     protected SqlExecutionInterruptor interruptor;
-    protected long baselineOffset;
+    protected long combinedOffset;
+    protected long fixedOffset;
     protected long topBaselineOffset;
     private long topLocalEpoch;
     protected long localEpoch;
@@ -85,7 +86,7 @@ public abstract class AbstractNoRecordSampleByCursor implements NoRandomAccessRe
         GroupByUtils.toTop(recordFunctions);
         this.base.toTop();
         this.localEpoch = topLocalEpoch;
-        this.baselineOffset = topBaselineOffset;
+        this.combinedOffset = topBaselineOffset;
     }
 
     @Override
@@ -123,10 +124,9 @@ public abstract class AbstractNoRecordSampleByCursor implements NoRandomAccessRe
                             Numbers.decodeLowInt(TimestampFormatUtils.enLocale.matchZone(tz, 0, tz.length())),
                             RESOLUTION_MICROS
                     );
-
                     // fixed rules means the timezone does not have historical or daylight time changes
                     alignmentOffset = rules.getOffset(timestamp);
-                    if (rules instanceof TimeZoneRulesMicros && timestampSampler.getBucketSize() <= Timestamps.HOUR_MICROS) {
+                    if (rules instanceof TimeZoneRulesMicros) {
                         this.rules = rules;
                     }
                 } else {
@@ -148,29 +148,34 @@ public abstract class AbstractNoRecordSampleByCursor implements NoRandomAccessRe
                 Misc.free(base);
                 throw SqlException.$(offsetFuncPos, "invalid offset: ").put(offset);
             }
+
+            this.fixedOffset = Numbers.decodeLowInt(val) * MINUTE_MICROS;
+
             if (alignmentOffset == Numbers.LONG_NaN) {
-                alignmentOffset = Numbers.decodeLowInt(val) * MINUTE_MICROS;
+                alignmentOffset = fixedOffset;
             } else {
-                alignmentOffset += Numbers.decodeLowInt(val) * MINUTE_MICROS;
+                alignmentOffset += fixedOffset;
             }
+        } else {
+            fixedOffset = 0;
         }
 
         this.nextTimestamp = timestampSampler.round(timestamp);
-        this.topBaselineOffset = this.baselineOffset = alignmentOffset == Numbers.LONG_NaN ? timestamp - nextTimestamp : alignmentOffset;
-        this.topLocalEpoch = this.localEpoch = timestampSampler.round(timestamp + baselineOffset);
-        this.nextTimestamp = timestampSampler.round(timestamp - baselineOffset);
+        this.topBaselineOffset = this.combinedOffset = alignmentOffset == Numbers.LONG_NaN ? timestamp - nextTimestamp : alignmentOffset;
+        this.topLocalEpoch = this.localEpoch = timestampSampler.round(timestamp + combinedOffset);
+        this.nextTimestamp = timestampSampler.round(timestamp - combinedOffset);
         interruptor = executionContext.getSqlExecutionInterruptor();
     }
 
     protected long getBaseRecordTimestamp() {
-        return timestampSampler.round(baseRecord.getTimestamp(timestampIndex) - baselineOffset);
+        return timestampSampler.round(baseRecord.getTimestamp(timestampIndex) - combinedOffset);
     }
 
     protected class TimestampFunc extends TimestampFunction implements Function {
 
         @Override
         public long getTimestamp(Record rec) {
-            return sampleLocalEpoch - baselineOffset;
+            return sampleLocalEpoch - combinedOffset;
         }
     }
 }
