@@ -111,6 +111,19 @@ void latest_scan_backward(uint64_t keys_memory_addr, size_t keys_memory_size, ui
     out_args->rows_size = row_count;
 }
 
+inline int64_t linked_search_lower(const int64_t *indexBase,
+                            const int64_t *dataBase,
+                            int64_t indexLength,
+                            const int64_t estimatedCount,
+                            const int64_t value) {
+    const auto step = std::max(1LL, indexLength / estimatedCount);
+    auto searchStart = 0;
+    while (searchStart + step < indexLength && dataBase[*(indexBase + searchStart + step)] < value) {
+        searchStart += step;
+    }
+    return searchStart + branch_free_linked_search_lower(indexBase + searchStart, dataBase, step, value);
+}
+
 int32_t findFirstLastInFrame0(
         int32_t outIndex
         , const int64_t rowIdLo
@@ -167,7 +180,7 @@ int32_t findFirstLastInFrame0(
                && outIndex < outSize - 1) {
 
             sampleStart = samplePeriods[periodIndex];
-            indexLo += branch_free_linked_search_lower(indexLo, tsBase, indexHi - indexLo,
+            indexLo += linked_search_lower(indexLo, tsBase, indexHi - indexLo, samplePeriodCount - periodIndex,
                                                        std::min(maxTs + 1, sampleStart));
 
             // Set last value as previous value to the found one
