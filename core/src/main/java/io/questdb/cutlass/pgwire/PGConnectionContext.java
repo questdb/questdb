@@ -91,6 +91,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     private static final int ERROR_TRANSACTION = 3;
     private static final int ROLLING_BACK_TRANSACTION = 4;
     private static final String WRITER_LOCK_REASON = "pgConnection";
+    private static final int PROTOCOL_TAIL_COMMAND_LENGTH = 64;
     private final long recvBuffer;
     private final long sendBuffer;
     private final int recvBufferSize;
@@ -150,7 +151,9 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     private long rowCount;
     private boolean completed = true;
     private boolean isEmptyQuery;
+    private final PGResumeProcessor resumeCommandCompleteRef = this::resumeCommandComplete;
     private int transactionState = NO_TRANSACTION;
+    private final PGResumeProcessor resumeQueryCompleteRef = this::resumeQueryComplete;
     private NamedStatementWrapper wrapper;
     private AssociativeCache<TypesAndSelect> typesAndSelectCache;
     private WeakAutoClosableObjectPool<TypesAndSelect> typesAndSelectPool;
@@ -158,8 +161,9 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     private IntList activeBindVariableTypes;
     private boolean sendParameterDescription;
     private PGResumeProcessor resumeProcessor;
-    private final PGResumeProcessor resumeCursorRef = this::resumeCursor;
     private long maxRows;
+    private final PGResumeProcessor resumeCursorExecuteRef = this::resumeCursorExecute;
+    private final PGResumeProcessor resumeCursorQueryRef = this::resumeCursorQuery;
 
     public PGConnectionContext(
             CairoEngine engine,
@@ -375,7 +379,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
                     } while (recvBufferReadOffset < recvBufferWriteOffset);
                     clearRecvBuffer();
                 }
-            } while (keepReceiving&&operation==IOOperation.READ);
+            } while (keepReceiving && operation == IOOperation.READ);
         } catch (SqlException e) {
             reportError(e.getPosition(), e.getFlyweightMessage());
         } catch (CairoException e) {
@@ -757,6 +761,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
             }
         }
         responseAsciiSink.putLen(offset);
+        rowCount += 1;
     }
 
     private void appendShortColumn(Record record, int columnIndex) {
@@ -769,6 +774,17 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         final short value = record.getShort(columnIndex);
         responseAsciiSink.putNetworkInt(Short.BYTES);
         responseAsciiSink.putNetworkShort(value);
+    }
+
+    private void appendSingleRecord(Record record, int columnCount) throws SqlException {
+        try {
+            appendRecord(record, columnCount);
+        } catch (NoSpaceLeftInResponseBufferException e1) {
+            // oopsie, buffer is too small for single record
+            LOG.error().$("not enough space in buffer for row data [buffer=").$(sendBufferSize).I$();
+            responseAsciiSink.reset();
+            throw CairoException.instance(0).put("server configuration error: not enough space in send buffer for row data");
+        }
     }
 
     private void appendStrColumn(Record record, int columnIndex) {
@@ -1199,19 +1215,15 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
                 break;
             default:
                 break;
-
-
         }
     }
 
-    private CharSequence getString(long lo, long hi, CharSequence errorMessage) throws BadProtocolException {
-        CharacterStoreEntry e = characterStore.newEntry();
-        if (Chars.utf8Decode(lo, hi, e)) {
-            return characterStore.toImmutable();
-        } else {
-            LOG.error().$(errorMessage).$();
-            throw BadProtocolException.INSTANCE;
+    @Nullable
+    private CharSequence getPortalName(long lo, long hi) throws BadProtocolException {
+        if (hi - lo > 0) {
+            return getString(lo, hi, "invalid UTF8 bytes in portal name");
         }
+        return null;
     }
 
     @Nullable
@@ -1222,12 +1234,14 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         return null;
     }
 
-    @Nullable
-    private CharSequence getPortalName(long lo, long hi) throws BadProtocolException {
-        if (hi - lo > 0) {
-            return getString(lo, hi, "invalid UTF8 bytes in portal name");
+    private CharSequence getString(long lo, long hi, CharSequence errorMessage) throws BadProtocolException {
+        CharacterStoreEntry e = characterStore.newEntry();
+        if (Chars.utf8Decode(lo, hi, e)) {
+            return characterStore.toImmutable();
+        } else {
+            LOG.error().$(errorMessage).$();
+            throw BadProtocolException.INSTANCE;
         }
-        return null;
     }
 
     /**
@@ -1378,13 +1392,6 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         }
     }
 
-    void prepareSuspended() {
-        LOG.debug().$("suspended").$();
-        responseAsciiSink.put(MESSAGE_TYPE_PORTAL_SUSPENDED);
-        responseAsciiSink.putIntDirect(INT_BYTES_X);
-    }
-
-
     private void prepareDescribePortalResponse() {
         if (typesAndSelect != null) {
             try {
@@ -1425,8 +1432,8 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     }
 
     private void prepareForNewQuery() {
-        LOG.debug().$("prepare for new query").$();
-        if(completed) {
+        if (completed) {
+            LOG.debug().$("prepare for new query").$();
             isEmptyQuery = false;
             characterStore.clear();
             bindVariableService.clear();
@@ -1533,6 +1540,12 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
 
     private void prepareSslResponse() {
         responseAsciiSink.put('N');
+    }
+
+    void prepareSuspended() {
+        LOG.debug().$("suspended").$();
+        responseAsciiSink.put(MESSAGE_TYPE_PORTAL_SUSPENDED);
+        responseAsciiSink.putIntDirect(INT_BYTES_X);
     }
 
     private void processBind(long lo, long msgLimit, @Transient SqlCompiler compiler)
@@ -1677,13 +1690,13 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         CharSequence target = getPortalName(lo + 1, hi);
         LOG.debug().$("describe [name=").$(target).$(']').$();
         if (isPortal && target != null) {
-           Portal p = namedPortalMap.get(target);
-           if (p != null) {
-               target = p.statementName;
-           } else {
-               LOG.error().$("invalid portal [name=").$(target).$(']').$();
-               throw BadProtocolException.INSTANCE;
-           }
+            Portal p = namedPortalMap.get(target);
+            if (p != null) {
+                target = p.statementName;
+            } else {
+                LOG.error().$("invalid portal [name=").$(target).$(']').$();
+                throw BadProtocolException.INSTANCE;
+            }
         }
 
         configureContextFromNamedStatement(target, compiler);
@@ -1703,7 +1716,8 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         }
     }
 
-    private void processExec(long lo, long msgLimit) throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException, BadProtocolException {
+    private void processExec(long lo, long msgLimit)
+            throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException, BadProtocolException {
         final long hi = getStringLength(lo, msgLimit, "bad portal name length");
         final CharSequence portalName = getPortalName(lo, hi);
         if (portalName != null) {
@@ -1722,7 +1736,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         if (typesAndSelect != null) {
             LOG.debug().$("executing query").$();
             setupFactoryAndCursor();
-            sendCursor(maxRows);
+            sendCursor(maxRows, resumeCursorExecuteRef, resumeCommandCompleteRef);
         } else if (typesAndInsert != null) {
             LOG.debug().$("executing insert").$();
             executeInsert();
@@ -1883,15 +1897,14 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
             queryTag = TAG_SELECT;
             setupFactoryAndCursor();
             prepareRowDescription();
-            sendCursor(0);
+            sendCursor(0, resumeCursorQueryRef, resumeQueryCompleteRef);
         } else if (typesAndInsert != null) {
             executeInsert();
         } else {
             executeTag();
             prepareCommandComplete(false);
         }
-        prepareReadyForQuery();
-        sendAndReset();
+        sendReadyForNewQuery();
     }
 
     private void processSyncActions() {
@@ -1955,17 +1968,38 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
 
     private void reportError(int position, CharSequence flyweightMessage) throws PeerDisconnectedException, PeerIsSlowToReadException {
         prepareError(position, flyweightMessage);
-        prepareReadyForQuery();
-        sendAndReset();
+        sendReadyForNewQuery();
         clearRecvBuffer();
     }
 
-    private void resumeCursor() throws SqlException, PeerDisconnectedException, PeerIsSlowToReadException {
+    private void resumeCommandComplete() {
+        prepareCommandComplete(true);
+    }
+
+    private void resumeCursorExecute() throws SqlException, PeerDisconnectedException, PeerIsSlowToReadException {
         final Record record = currentCursor.getRecord();
         final int columnCount = currentFactory.getMetadata().getColumnCount();
         responseAsciiSink.bookmark();
         appendSingleRecord(record, columnCount);
-        sendCursor0(record, columnCount);
+        sendCursor0(record, columnCount, resumeCommandCompleteRef);
+    }
+
+    private void resumeCursorQuery() throws SqlException, PeerDisconnectedException, PeerIsSlowToReadException {
+        resumeCursorQuery0();
+        sendReadyForNewQuery();
+    }
+
+    private void resumeCursorQuery0() throws SqlException, PeerDisconnectedException, PeerIsSlowToReadException {
+        final Record record = currentCursor.getRecord();
+        final int columnCount = currentFactory.getMetadata().getColumnCount();
+        responseAsciiSink.bookmark();
+        appendSingleRecord(record, columnCount);
+        sendCursor0(record, columnCount, resumeQueryCompleteRef);
+    }
+
+    private void resumeQueryComplete() throws PeerDisconnectedException, PeerIsSlowToReadException {
+        prepareCommandComplete(true);
+        sendReadyForNewQuery();
     }
 
     private void sendAndReset() throws PeerDisconnectedException, PeerIsSlowToReadException {
@@ -1974,11 +2008,12 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     }
 
     private void sendCopyInResponse(CairoEngine engine, TextLoader textLoader) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        if (TableUtils.TABLE_EXISTS == engine.getStatus(
-                sqlExecutionContext.getCairoSecurityContext(),
-                path,
-                textLoader.getTableName()
-        )) {
+        if (
+                TableUtils.TABLE_EXISTS == engine.getStatus(
+                        sqlExecutionContext.getCairoSecurityContext(),
+                        path,
+                        textLoader.getTableName()
+                )) {
             responseAsciiSink.put(MESSAGE_TYPE_COPY_IN_RESPONSE);
             long addr = responseAsciiSink.skip();
             responseAsciiSink.put((byte) 0); // TEXT (1=BINARY, which we do not support yet)
@@ -1998,8 +2033,12 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         sendAndReset();
     }
 
-    private void sendCursor(int maxRows) throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException {
-        // the assumption for now is that any  will fit into response buffer. This of course precludes us from
+    private void sendCursor(
+            int maxRows,
+            PGResumeProcessor cursorResumeProcessor,
+            PGResumeProcessor commandCompleteResumeProcessor
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException {
+        // the assumption for now is that any record will fit into response buffer. This of course precludes us from
         // streaming large BLOBs, but, and its a big one, PostgreSQL protocol for DataRow does not allow for
         // streaming anyway. On top of that Java PostgreSQL driver downloads data row fully. This simplifies our
         // approach for general queries. For streaming protocol we will code something else. PostgreSQL Java driver is
@@ -2011,12 +2050,12 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         final int columnCount = metadata.getColumnCount();
         final long cursorRowCount = currentCursor.size();
         this.maxRows = maxRows > 0 ? Long.min(maxRows, cursorRowCount) : Long.MAX_VALUE;
-        resumeProcessor = resumeCursorRef;
-        sendCursor0(record, columnCount);
+        this.resumeProcessor = cursorResumeProcessor;
+        sendCursor0(record, columnCount, commandCompleteResumeProcessor);
     }
 
-    private void sendCursor0(Record record, int columnCount) throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException {
-
+    private void sendCursor0(Record record, int columnCount, PGResumeProcessor commandCompleteResumeProcessor)
+            throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException {
         while (currentCursor.hasNext()) {
             // create checkpoint to which we can undo the buffer in case
             // current DataRow will does not fit fully.
@@ -2024,7 +2063,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
             try {
                 try {
                     appendRecord(record, columnCount);
-                    if(rowCount++ > maxRows) break;
+                    if (rowCount >= maxRows) break;
                 } catch (NoSpaceLeftInResponseBufferException e) {
                     responseAsciiSink.resetToBookmark();
                     sendAndReset();
@@ -2051,21 +2090,21 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
                 // free the factory when context finishes abnormally
                 this.typesAndSelect = null;
             }
+            // at this point buffer can contain unsent data
+            // and it may not have enough space for the command
+            if (sendBufferLimit - sendBufferPtr < PROTOCOL_TAIL_COMMAND_LENGTH) {
+                resumeProcessor = commandCompleteResumeProcessor;
+                sendAndReset();
+            }
             prepareCommandComplete(true);
-        } else  {
+        } else {
             prepareSuspended();
         }
     }
 
-    private void appendSingleRecord(Record record, int columnCount) throws SqlException {
-        try {
-            appendRecord(record, columnCount);
-        } catch (NoSpaceLeftInResponseBufferException e1) {
-            // oopsie, buffer is too small for single record
-            LOG.error().$("not enough space in buffer for row data [buffer=").$(sendBufferSize).I$();
-            responseAsciiSink.reset();
-            throw CairoException.instance(0).put("server configuration error: not enough space in send buffer for row data");
-        }
+    private void sendReadyForNewQuery() throws PeerDisconnectedException, PeerIsSlowToReadException {
+        prepareReadyForQuery();
+        sendAndReset();
     }
 
     private void setupFactoryAndCursor() {
@@ -2132,6 +2171,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
 
     public static class Portal implements Mutable {
         public CharSequence statementName = null;
+
         @Override
         public void clear() {
             statementName = null;
