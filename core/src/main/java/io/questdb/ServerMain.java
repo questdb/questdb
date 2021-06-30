@@ -143,7 +143,10 @@ public class ServerMain {
         }
 
         final WorkerPool workerPool = new WorkerPool(configuration.getWorkerPoolConfiguration());
-        final FunctionFactoryCache functionFactoryCache = new FunctionFactoryCache(configuration.getCairoConfiguration(), ServiceLoader.load(FunctionFactory.class));
+        final FunctionFactoryCache functionFactoryCache = new FunctionFactoryCache(
+                configuration.getCairoConfiguration(),
+                ServiceLoader.load(FunctionFactory.class, FunctionFactory.class.getClassLoader())
+        );
         final ObjList<Closeable> instancesToClean = new ObjList<>();
 
         LogFactory.configureFromSystemProperties(workerPool);

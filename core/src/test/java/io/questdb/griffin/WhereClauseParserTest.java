@@ -50,7 +50,10 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     private final PostOrderTreeTraversalAlgo traversalAlgo = new PostOrderTreeTraversalAlgo();
     private final PostOrderTreeTraversalAlgo.Visitor rpnBuilderVisitor = rpn::onNode;
     private final QueryModel queryModel = QueryModel.FACTORY.newInstance();
-    private final FunctionParser functionParser = new FunctionParser(configuration, new FunctionFactoryCache(configuration, ServiceLoader.load(FunctionFactory.class)));
+    private final FunctionParser functionParser = new FunctionParser(
+            configuration,
+            new FunctionFactoryCache(configuration, ServiceLoader.load(FunctionFactory.class, FunctionFactory.class.getClassLoader()))
+    );
     protected BindVariableService bindVariableService = new BindVariableServiceImpl(configuration);
     private SqlCompiler compiler;
     private SqlExecutionContext sqlExecutionContext;
