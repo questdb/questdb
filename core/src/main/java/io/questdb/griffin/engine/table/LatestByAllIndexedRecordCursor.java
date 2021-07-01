@@ -28,26 +28,38 @@ import io.questdb.MessageBus;
 import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.sql.DataFrame;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.geohash.GeoHashNative;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SOUnboundedCountDownLatch;
 import io.questdb.mp.Sequence;
-import io.questdb.std.BitmapIndexUtilsNative;
-import io.questdb.std.DirectLongList;
-import io.questdb.std.IntList;
-import io.questdb.std.Rows;
+import io.questdb.std.*;
 import io.questdb.tasks.LatestByTask;
 import org.jetbrains.annotations.NotNull;
 
 class LatestByAllIndexedRecordCursor extends AbstractRecordListCursor {
     private final int columnIndex;
+    private final int hashColumnIndex;
     private final SOUnboundedCountDownLatch doneLatch = new SOUnboundedCountDownLatch();
     protected long indexShift = 0;
     protected long aIndex;
     protected long aLimit;
 
-    public LatestByAllIndexedRecordCursor(int columnIndex, DirectLongList rows, @NotNull IntList columnIndexes) {
+    protected final DirectLongList prefixes;
+    protected final DirectLongList hashes;
+
+    public LatestByAllIndexedRecordCursor(
+            int columnIndex,
+            int hashColumnIndex,
+            @NotNull DirectLongList rows,
+            @NotNull DirectLongList hashes,
+            @NotNull IntList columnIndexes,
+            @NotNull DirectLongList prefixes
+            ) {
         super(rows, columnIndexes);
         this.columnIndex = columnIndex;
+        this.hashColumnIndex = hashColumnIndex;
+        this.prefixes = prefixes;
+        this.hashes = hashes;
     }
 
     @Override
@@ -183,14 +195,54 @@ class LatestByAllIndexedRecordCursor extends AbstractRecordListCursor {
     }
 
     protected void postProcessRows() {
+
+        final long rowsCapacity = rows.getCapacity();
+        rows.setPos(rowsCapacity);
+
         // we have to sort rows because multiple symbols
         // are liable to be looked up out of order
-        rows.setPos(rows.getCapacity());
         rows.sortAsUnsigned();
 
         //skip "holes"
+        indexShift = 0;
         while (rows.get(indexShift) <= 0) {
             indexShift++;
+        }
+
+        if (hashColumnIndex != -1) {
+            hashes.extend(rows.size() - indexShift);
+            hashes.setPos(hashes.getCapacity());
+
+            final long hashesAddress = hashes.getAddress();
+            for (long r = indexShift, sz = rows.size(); r < sz; ++r) {
+                long row = rows.get(r) - 1;
+                recordA.jumpTo(Rows.toPartitionIndex(row), Rows.toLocalRowID(row));
+                final long value = recordA.getLong(hashColumnIndex);
+                Unsafe.getUnsafe().putLong(hashesAddress + (r - indexShift) * Long.BYTES, value);
+            }
+
+
+            final long rowsAddress = rows.getAddress() + indexShift * Long.BYTES;
+            final long hashesCount = hashes.size();
+            final int hashesLength = 8; //TODO: get real size. meta?
+            final long prefixesAddress = prefixes.getAddress();
+            final long prefixesCount = prefixes.size();
+
+            GeoHashNative.filterWithPrefix(
+                    hashesAddress,
+                    rowsAddress,
+                    hashesCount,
+                    hashesLength,
+                    prefixesAddress,
+                    prefixesCount
+            );
+
+//        GeoHashNative.partitionBy(rows.getAddress(), rows.size(), 0);
+
+            //skip "holes" again
+            while (rows.get(indexShift) <= 0) {
+                indexShift++;
+            }
         }
 
         aLimit = rows.size();
