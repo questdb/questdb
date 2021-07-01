@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.geohash.GeoHashNative;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntList;
 import io.questdb.std.Rows;
@@ -36,11 +37,14 @@ class LatestByAllIndexedFilteredRecordCursor extends LatestByAllIndexedRecordCur
 
     public LatestByAllIndexedFilteredRecordCursor(
             int columnIndex,
+            int hashColumnIndex,
             @NotNull DirectLongList rows,
+            @NotNull DirectLongList hashes,
             @NotNull Function filter,
-            @NotNull IntList columnIndexes
+            @NotNull IntList columnIndexes,
+            @NotNull DirectLongList prefixes
     ) {
-        super(columnIndex, rows, columnIndexes);
+        super(columnIndex, hashColumnIndex, rows, hashes, columnIndexes, prefixes);
         this.filter = filter;
     }
 
@@ -54,27 +58,23 @@ class LatestByAllIndexedFilteredRecordCursor extends LatestByAllIndexedRecordCur
     protected void buildTreeMap(SqlExecutionContext executionContext) {
         filter.init(this, executionContext);
         super.buildTreeMap(executionContext);
-        postProcessRows();
     }
 
     @Override
     protected void postProcessRows() {
-        final long rowsCapacity = rows.getCapacity();
-        rows.setPos(rowsCapacity);
+        super.postProcessRows();
 
-        for (long r = 0; r < rowsCapacity; ++r) {
+        final long rowsCapacity = rows.getCapacity();
+        for (long r = indexShift; r < rowsCapacity; ++r) {
             long row = rows.get(r) - 1;
-            if (row >= 0) {
-                int partitionIndex = Rows.toPartitionIndex(row);
-                recordA.jumpTo(partitionIndex, 0);
-                recordA.setRecordIndex(Rows.toLocalRowID(row));
-                if (!filter.getBool(recordA)) {
-                    rows.set(r, 0); // clear row id
-                }
+            recordA.jumpTo(Rows.toPartitionIndex(row), Rows.toLocalRowID(row));
+            if (!filter.getBool(recordA)) {
+                rows.set(r, 0); // clear row id
             }
         }
 
-        rows.sortAsUnsigned();
+        GeoHashNative.partitionBy(rows.getAddress(), rows.size(), 0);
+
         while (rows.get(indexShift) <= 0) {
             indexShift++;
         }
