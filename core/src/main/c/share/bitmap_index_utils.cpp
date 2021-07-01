@@ -116,10 +116,12 @@ inline int64_t linked_search_lower(const int64_t *indexBase,
                             int64_t indexLength,
                             const int64_t estimatedCount,
                             const int64_t value) {
-    // Timeseries by data is usually distributed equally in time
+    // Timeseries data is usually distributed equally in time
     // This code optimises using assumption that as if there are 200 index elements within 20 mins
     // and sample by is by 1 minute the next value will be around every 10 elements
     // To not degrade it to full scan, use miniumum increment of 32
+    // This is same as
+    // return branch_free_linked_search_lower(indexBase, dataBase, indexLength, value);
     const auto step = std::max((int64_t)32, indexLength / estimatedCount);
     auto searchStart = 0;
     while (searchStart + step < indexLength && dataBase[*(indexBase + searchStart + step - 1)] < value) {
@@ -167,79 +169,75 @@ int32_t findFirstLastInFrame0(
     // firstRowIdOut:   7 ( index position                  )
     // lastRowIdOut:  108 ( timestamp column position       )
     // timestampOut:    4 ( last processed period end index )
-    if (indexPosition < indexCount) {
-        // SampleBy period index
-        int32_t periodIndex = 0;
-        int64_t sampleStart;
-        bool firstRowUpdated = false;
+    int32_t periodIndex = 0;
+    int64_t sampleStart;
+    bool firstRowUpdated = false;
 
-        const int64_t* indexLo = indexBase + indexPosition;
-        const int64_t* indexHi = indexBase + indexCount;
-        const int64_t* tsLo = tsBase + std::max(rowIdLo, *indexLo);
-        const int64_t* tsHi = tsBase + rowIdHi;
-        const int64_t maxTs = *(tsHi - 1);
+    const int64_t* indexLo = indexBase + indexPosition;
+    const int64_t* indexHi = indexBase + indexCount;
+    const int64_t* tsLo = tsBase + std::max(rowIdLo, *indexLo);
+    const int64_t* tsHi = tsBase + rowIdHi;
+    const int64_t maxTs = *(tsHi - 1);
 
-        while (indexLo < indexHi
-               && periodIndex < samplePeriodCount
-               && tsLo < tsHi
-               && outIndex < outSize - 1) {
+    while (indexLo < indexHi
+           && periodIndex < samplePeriodCount
+           && tsLo < tsHi
+           && outIndex < outSize - 1) {
 
-            sampleStart = samplePeriods[periodIndex];
-            indexLo += linked_search_lower(indexLo, tsBase, indexHi - indexLo, samplePeriodCount - periodIndex,
-                                                       std::min(maxTs + 1, sampleStart));
+        sampleStart = samplePeriods[periodIndex];
+        indexLo += linked_search_lower(indexLo, tsBase, indexHi - indexLo, samplePeriodCount - periodIndex,
+                                                   std::min(maxTs + 1, sampleStart));
 
-            // Set last value as previous value to the found one
-            if (outIndex > 0
-                && timestampOut[outIndex - 1] == periodIndex + sampleIndexOffset - 1 // prev out row is for period - 1
-                && indexLo - indexBase > 0
-                ) {
-                int64_t prevLastRowId = *(indexLo - 1);
-                lastRowIdOut[outIndex - 1] = prevLastRowId;
-                firstRowUpdated |= outIndex == 1;
-            }
-
-            if (indexLo == indexHi || sampleStart > maxTs) {
-                break;
-            }
-
-            int64_t indexTs = tsBase[*indexLo];
-            int64_t sampleEnd = (periodIndex + 1) < samplePeriodCount ? samplePeriods[periodIndex + 1] :
-                    std::numeric_limits<int64_t>::max();
-            if (indexTs >= sampleEnd) {
-                // indexTs is beyond sampling period. Find the sampling period the indexTs is in.
-                // branch_free_search_lower returns insert position of the value
-                // We need the index of the first value less or equal to indexTs
-                // This is the same as searching of (indexTs + 1) and getting previous index
-                periodIndex += (int32_t)branch_free_search_lower(samplePeriods + periodIndex,
-                                                        samplePeriodCount - periodIndex,
-                                                     indexTs + 1) - 1;
-                continue;
-            }
-
-            // Point next timestamp column position to found Index value
-            tsLo = tsBase + *indexLo;
-            if (tsLo >= tsHi || *tsLo < sampleStart) {
-                // If index value is beyond data frame limits
-                // or no symbol exists higher than the searched sampleStart
-                // abort the search and return results
-                break;
-            }
-            lastRowIdOut[outIndex] = firstRowIdOut[outIndex] = *indexLo;
-            timestampOut[outIndex] = sampleIndexOffset + periodIndex;
-            outIndex++;
-            periodIndex++;
+        // Set last value as previous value to the found one
+        if (outIndex > 0
+            && timestampOut[outIndex - 1] == periodIndex + sampleIndexOffset - 1 // prev out row is for period - 1
+            && indexLo - indexBase > 0
+            ) {
+            int64_t prevLastRowId = *(indexLo - 1);
+            lastRowIdOut[outIndex - 1] = prevLastRowId;
+            firstRowUpdated |= outIndex == 1;
         }
 
-        // Save additional values in out buffers Java expects to find
-        // Next timestamp to start from
-        timestampOut[outIndex] = sampleIndexOffset + std::min(periodIndex, samplePeriodCount - 1);
-        // Next indexPosition
-        firstRowIdOut[outIndex] = indexLo - indexBase;
-        // Next rowIdLo
-        lastRowIdOut[outIndex] = tsLo - tsBase;
-        return firstRowUpdated ? -outIndex : outIndex;
+        if (indexLo == indexHi || sampleStart > maxTs || periodIndex > samplePeriodCount - 2) {
+            break;
+        }
+
+        int64_t indexTs = tsBase[*indexLo];
+        int64_t sampleEnd = (periodIndex + 1) < samplePeriodCount ? samplePeriods[periodIndex + 1] :
+                std::numeric_limits<int64_t>::max();
+        if (indexTs >= sampleEnd) {
+            // indexTs is beyond sampling period. Find the sampling period the indexTs is in.
+            // branch_free_search_lower returns insert position of the value
+            // We need the index of the first value less or equal to indexTs
+            // This is the same as searching of (indexTs + 1) and getting previous index
+            periodIndex += (int32_t)branch_free_search_lower(samplePeriods + periodIndex,
+                                                    samplePeriodCount - periodIndex,
+                                                 indexTs + 1) - 1;
+            continue;
+        }
+
+        // Point next timestamp column position to found Index value
+        tsLo = tsBase + *indexLo;
+        if (tsLo >= tsHi || *tsLo < sampleStart) {
+            // If index value is beyond data frame limits
+            // or no symbol exists higher than the searched sampleStart
+            // abort the search and return results
+            break;
+        }
+        lastRowIdOut[outIndex] = firstRowIdOut[outIndex] = *indexLo;
+        timestampOut[outIndex] = sampleIndexOffset + periodIndex;
+        outIndex++;
+        periodIndex++;
     }
-    return outIndex;
+
+    // Save additional values in out buffers Java expects to find
+    // Next timestamp to start from
+    timestampOut[outIndex] = sampleIndexOffset + std::min(periodIndex, samplePeriodCount - 1);
+    // Next indexPosition
+    firstRowIdOut[outIndex] = indexLo - indexBase;
+    // Next rowIdLo
+    lastRowIdOut[outIndex] = tsLo - tsBase;
+    return firstRowUpdated ? -outIndex : outIndex;
 }
 
 int32_t findFirstLastInFrameNoFilter0(
@@ -286,12 +284,11 @@ int32_t findFirstLastInFrameNoFilter0(
             firstRowUpdated |= outIndex == 1;
         }
 
-        if (sampleStart > maxTs) {
+        if (sampleStart > maxTs || periodIndex > samplePeriodCount - 2) {
             break;
         }
 
-        int64_t sampleEnd = (periodIndex + 1) < samplePeriodCount ? samplePeriods[periodIndex + 1] :
-                            std::numeric_limits<int64_t>::max();
+        int64_t sampleEnd = samplePeriods[periodIndex + 1];
         if (*tsLo >= sampleEnd) {
             // indexTs is beyond sampling period. Find the sampling period the indexTs is in.
             // branch_free_search_lower returns insert position of the value

@@ -425,45 +425,36 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
                     // re-copy last values to crossFrameRow
                     checkSaveLastValues(firstRowLastRowIdUpdated);
 
-                    if (rowsFound > outPosition) {
-                        assert rowsFound < pageSize;
+                    assert rowsFound < pageSize;
+                    indexFramePosition = (int) firstRowIdOutAddress.get(rowsFound);
+                    frameNextRowId = lastRowIdOutAddress.get(rowsFound);
+                    prevSamplePeriodOffset = samplePeriodIndexOffset;
+                    samplePeriodIndexOffset = (int) startTimestampOutAddress.get(rowsFound);
+                    assert samplePeriodIndexOffset - prevSamplePeriodOffset < pageSize;
+                    samplePeriodStart = samplePeriodAddress.get(samplePeriodIndexOffset - prevSamplePeriodOffset);
 
-                        // Read positions to resume from the point last search finished
-                        indexFramePosition = (int) firstRowIdOutAddress.get(rowsFound);
-                        frameNextRowId = lastRowIdOutAddress.get(rowsFound);
-                        prevSamplePeriodOffset = samplePeriodIndexOffset;
-                        samplePeriodIndexOffset = (int) startTimestampOutAddress.get(rowsFound);
-                        samplePeriodStart = samplePeriodAddress.get(samplePeriodIndexOffset - prevSamplePeriodOffset);
-
-                        // decide what to do next
-                        int newState;
-                        if (rowsFound == pageSize - 1) {
-                            // Return values and next pass start from STATE_OUT_BUFFER_FULL
-                            newState = STATE_OUT_BUFFER_FULL;
-                        } else if (indexFramePosition >= indexFrame.getSize()) {
-                            // Index frame exhausted. Next time start from fetching new index frame
-                            newState = STATE_FETCH_NEXT_INDEX_FRAME;
-                        } else {
-                            // Data frame exhausted. Next time start from fetching new data frame
-                            newState = STATE_FETCH_NEXT_DATA_FRAME;
-                        }
-
-                        if (rowsFound > 1) {
-                            // return negative to returns rows back to signal that there are rows to iterate
-                            record.of(currentRow = 0);
-
-                            benchmarks[STATE_SEARCH] += System.nanoTime() - mc3;
-                            return -newState;
-                        }
-                        // No rows to iterate, return where to continue from (fetching next data or index frame)
-                        benchmarks[STATE_SEARCH] += System.nanoTime() - mc3;
-                        return newState;
-                        
+                    // decide what to do next
+                    int newState;
+                    if (indexFramePosition >= indexFrame.getSize()) {
+                        // Index frame exhausted. Next time start from fetching new index frame
+                        newState = indexFrame.getAddress() > 0 ? STATE_FETCH_NEXT_INDEX_FRAME : STATE_FETCH_NEXT_DATA_FRAME;
+                    } else if (rowsFound == pageSize - 1 || samplePeriodIndexOffset - prevSamplePeriodOffset == pageSize - 1) {
+                        // Return values and next pass start from STATE_OUT_BUFFER_FULL
+                        newState = STATE_OUT_BUFFER_FULL;
                     } else {
-                        // Noting found, continue search
-                        benchmarks[STATE_SEARCH] += System.nanoTime() - mc3;
-                        return indexFrame.getAddress() > 0 ? STATE_FETCH_NEXT_INDEX_FRAME : STATE_FETCH_NEXT_DATA_FRAME;
+                        // Data frame exhausted. Next time start from fetching new data frame
+                        newState = STATE_FETCH_NEXT_DATA_FRAME;
                     }
+
+                    if (rowsFound > 1) {
+                        // return negative to returns rows back to signal that there are rows to iterate
+                        record.of(currentRow = 0);
+                        newState = -newState;
+                    }
+
+                    // No rows to iterate, return where to continue from (fetching next data or index frame)
+                    benchmarks[STATE_SEARCH] += System.nanoTime() - mc3;
+                    return newState;
 
                 case STATE_RETURN_LAST_ROW:
                     if (crossRowState != NONE) {
@@ -510,7 +501,7 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
                 }
             }
             LOG.info().$("benchmarks[STATE_UNCOUNTED]=").$((benchmarks[totalIndex] - total) / 1000).$(" micros").$();
-            LOG.info().$("benchmarks[HAS_NEXT_TOTAL]=").$(total / 1000).$(" micros").$();
+            LOG.info().$("benchmarks[HAS_NEXT_TOTAL]=").$(benchmarks[totalIndex] / 1000).$(" micros").$();
         }
 
         private void saveFirstLastValuesToCrossFrameRowBuffer() {
@@ -573,8 +564,10 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
         }
 
         private class SampleByFirstLastRecord implements Record {
-            private final long[] addresses = new long[queryToFrameColumnMapping.length];
+            private long[] addresses_point;
+            private final long[] data_addresses = new long[queryToFrameColumnMapping.length];
             private final long[] crossFrameAddresses = new long[queryToFrameColumnMapping.length];
+            private final long nullBufferAddress = nullBuffer.getAddress();
 
             SampleByFirstLastRecord() {
                 for(int col = 0; col < crossFrameAddresses.length; col++) {
@@ -584,59 +577,58 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
 
             @Override
             public byte getByte(int col) {
-                return Unsafe.getUnsafe().getByte(addresses[col]);
+                return Unsafe.getUnsafe().getByte(addresses_point[col]);
             }
 
             @Override
             public char getChar(int col) {
-                return Unsafe.getUnsafe().getChar(addresses[col]);
+                return Unsafe.getUnsafe().getChar(addresses_point[col]);
             }
 
             @Override
             public double getDouble(int col) {
-                return Unsafe.getUnsafe().getDouble(addresses[col]);
+                return Unsafe.getUnsafe().getDouble(addresses_point[col]);
             }
 
             @Override
             public float getFloat(int col) {
-                return Unsafe.getUnsafe().getFloat(addresses[col]);
+                return Unsafe.getUnsafe().getFloat(addresses_point[col]);
             }
 
             @Override
             public int getInt(int col) {
-                return Unsafe.getUnsafe().getInt(addresses[col]);
+                return Unsafe.getUnsafe().getInt(addresses_point[col]);
             }
 
             @Override
             public long getLong(int col) {
-                return Unsafe.getUnsafe().getLong(addresses[col]);
+                return Unsafe.getUnsafe().getLong(addresses_point[col]);
             }
 
             @Override
             public CharSequence getSym(int col) {
-                int symbolId = Unsafe.getUnsafe().getInt(addresses[col]);
+                int symbolId = Unsafe.getUnsafe().getInt(addresses_point[col]);
                 return pageFrameCursor.getSymbolMapReader(queryToFrameColumnMapping[col]).valueBOf(symbolId);
             }
 
             @Override
             public long getTimestamp(int col) {
-                return Unsafe.getUnsafe().getLong(addresses[col]);
+                return Unsafe.getUnsafe().getLong(addresses_point[col]);
             }
 
             @Override
             public short getShort(int col) {
-                return Unsafe.getUnsafe().getShort(addresses[col]);
+                return Unsafe.getUnsafe().getShort(addresses_point[col]);
             }
-
-            private final long nullBufferAddress = nullBuffer.getAddress();
 
             public void of(long index) {
                 if (index == 0) {
                     // Cross frame row
-                    System.arraycopy(crossFrameAddresses, 0, addresses, 0, crossFrameAddresses.length);
+                    addresses_point = crossFrameAddresses;
                     return;
                 }
 
+                addresses_point = data_addresses;
                 long firstRowId = firstRowIdOutAddress.get(currentRow) - dataFrameLo;
                 long lastRowId = lastRowIdOutAddress.get(currentRow) - dataFrameLo;
 
@@ -646,7 +638,7 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
                         // Take it from timestampOutBuff instead of column
                         // It's the value of the beginning of the group, not where the first row found
                         long tsIndex = startTimestampOutAddress.get(currentRow) - prevSamplePeriodOffset;
-                        addresses[col] = samplePeriodAddress.getAddress() + (tsIndex << 3);
+                        addresses_point[col] = samplePeriodAddress.getAddress() + (tsIndex << 3);
                         continue;
                     }
 
@@ -655,10 +647,10 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
                         // Data from columns
                         long rowId = isColumnLast[col] ? lastRowId : firstRowId;
                         int shift = sampleByColShift[col];
-                        addresses[col] = pageAddress + (rowId << shift);
+                        addresses_point[col] = pageAddress + (rowId << shift);
                     } else {
                         // Column top
-                        addresses[col] = nullBufferAddress + ((long) col << 3);
+                        addresses_point[col] = nullBufferAddress + ((long) col << 3);
                     }
                 }
             }
