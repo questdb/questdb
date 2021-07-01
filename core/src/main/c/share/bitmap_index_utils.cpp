@@ -116,12 +116,17 @@ inline int64_t linked_search_lower(const int64_t *indexBase,
                             int64_t indexLength,
                             const int64_t estimatedCount,
                             const int64_t value) {
-    const auto step = std::max(1LL, indexLength / estimatedCount);
+    // Timeseries by data is usually distributed equally in time
+    // This code optimises using assumption that as if there are 200 index elements within 20 mins
+    // and sample by is by 1 minute the next value will be around every 10 elements
+    // To not degrade it to full scan, use miniumum increment of 32
+    const auto step = std::max((int64_t)32, indexLength / estimatedCount);
     auto searchStart = 0;
-    while (searchStart + step < indexLength && dataBase[*(indexBase + searchStart + step)] < value) {
+    while (searchStart + step < indexLength && dataBase[*(indexBase + searchStart + step - 1)] < value) {
         searchStart += step;
     }
-    return searchStart + branch_free_linked_search_lower(indexBase + searchStart, dataBase, step, value);
+    return searchStart + branch_free_linked_search_lower(indexBase + searchStart, dataBase,
+                                                         std::min(step, indexLength - searchStart), value);
 }
 
 int32_t findFirstLastInFrame0(
