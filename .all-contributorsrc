@@ -449,6 +449,15 @@
         "ideas",
         "userTesting"
       ]
+    },
+    {
+      "login": "welly87",
+      "name": "Welly Tambunan",
+      "avatar_url": "https://avatars.githubusercontent.com/u/242694?v=4",
+      "profile": "https://medium.com/@wellytambunan/",
+      "contributions": [
+        "ideas"
+      ]
     }
   ],
   "badgeTemplate": "[![All Contributors](https://img.shields.io/badge/all_contributors-<%= contributors.length %>-orange.svg)](#contributors)",
