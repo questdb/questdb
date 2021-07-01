@@ -438,6 +438,17 @@
         "code",
         "ideas"
       ]
+    },
+    {
+      "login": "bratseth",
+      "name": "Jon Bratseth",
+      "avatar_url": "https://avatars.githubusercontent.com/u/16574012?v=4",
+      "profile": "https://github.com/bratseth",
+      "contributions": [
+        "code",
+        "ideas",
+        "userTesting"
+      ]
     }
   ],
   "badgeTemplate": "[![All Contributors](https://img.shields.io/badge/all_contributors-<%= contributors.length %>-orange.svg)](#contributors)",
