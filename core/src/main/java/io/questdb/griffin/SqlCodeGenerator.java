@@ -900,6 +900,7 @@ public class SqlCodeGenerator implements Mutable {
             Function filter,
             SqlExecutionContext executionContext,
             int timestampIndex,
+            int hashColumnIndex,
             @NotNull IntList columnIndexes,
             @NotNull CharSequenceHashSet prefixes
     ) throws SqlException {
@@ -1050,7 +1051,7 @@ public class SqlCodeGenerator implements Mutable {
                         metadata,
                         dataFrameCursorFactory,
                         latestByIndex,
-                        -1,
+                        hashColumnIndex,
                         filter,
                         columnIndexes,
                         prefixes
@@ -2366,6 +2367,7 @@ public class SqlCodeGenerator implements Mutable {
                             f,
                             executionContext,
                             readerTimestampIndex,
+                            hashColumnIndex,
                             columnIndexes,
                             prefixes
                     );
