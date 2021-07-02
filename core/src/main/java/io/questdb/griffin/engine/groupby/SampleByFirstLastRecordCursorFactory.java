@@ -35,8 +35,6 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 
-import java.util.Arrays;
-
 public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory {
     private static final Log LOG = LogFactory.getLog(SampleByFirstLastRecordCursorFactory.class);
     private static final int FILTER_KEY_IS_NULL = 0;
@@ -57,7 +55,7 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
     private DirectLongList crossFrameRow;
     private DirectLongList nullBuffer;
     private int groupByTimestampIndex = -1;
-    private final int[] sampleByColShift;
+    private final int[] recordFirstLastIndex;
 
     public SampleByFirstLastRecordCursorFactory(
             RecordCursorFactory base,
@@ -75,7 +73,7 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
         this.isColumnLast = new boolean[columns.size()];
         this.nullBuffer = new DirectLongList(columns.size()).setSize(columns.size());
         this.crossFrameRow = new DirectLongList(columns.size()).setSize(columns.size());
-        this.sampleByColShift = new int[columns.size()];
+        this.recordFirstLastIndex = new int[columns.size()];
 
         this.groupByMetadata = groupByMetadata;
         this.timestampIndex = timestampIndex;
@@ -138,6 +136,7 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
             if (ast.rhs != null) {
                 if (Chars.equalsIgnoreCase(ast.token, "last")) {
                     isColumnLast[i] = true;
+                    recordFirstLastIndex[i] = 1;
                 } else if (!Chars.equalsIgnoreCase(ast.token, "first")) {
                     throw SqlException.$(ast.position, "expected first() or last() functions but got ").put(ast.token);
                 }
@@ -160,7 +159,6 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
                 }
             }
             nullBuffer.set(i, LongNullUtils.LONG_NULLs[resultSetColumnType]);
-            sampleByColShift[i] = ColumnType.pow2SizeOf(resultSetColumnType);
         }
     }
 
@@ -172,12 +170,6 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
         private final static int STATE_SEARCH = 5;
         private final static int STATE_RETURN_LAST_ROW = 6;
         private final static int STATE_DONE = 7;
-
-        private final static int ROW_SWITCH = 8;
-        private final static int HAS_NEXT_TOTAL = 6;
-        private final static int C_SEARCH = 4;
-        private final static int STATE_MACHINE = 9;
-
         private final static int NONE = 0;
         private final static int CROSS_ROW_STATE_SAVED = 1;
         private final static int CROSS_ROW_STATE_REFS_UPDATED = 2;
@@ -198,12 +190,6 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
         private long samplePeriodIndexOffset = 0;
         private long prevSamplePeriodOffset = 0;
         private long samplePeriodStart;
-        private final String[] benchmarksNames = new String[]{
-                "BUFFER_CROSS_ROW", "STATE_FETCH_NEXT_DATA_FRAME", "",
-                "STATE_FETCH_NEXT_INDEX_FRAME", "C_SEARCH", "JAVA_SEARCH",
-                "HAS_NEXT_TOTAL", "STATE_DONE", "ROW_SWITCH", "STATE_MACHINE"
-        };
-        private final long[] benchmarks = new long[benchmarksNames.length];
 
         public SampleByFirstLastRecordCursor(PageFrameCursor pageFrameCursor, int groupBySymbolKey) {
             this.pageFrameCursor = pageFrameCursor;
@@ -227,8 +213,6 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
 
         @Override
         public boolean hasNext() {
-            long timer = System.nanoTime();
-
             // This loop never returns last found sample by row.
             // The reason is that last row last() value can be changed on next data frame pass.
             // That's why the last row values are buffered
@@ -236,17 +220,10 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
             // Buffering values are unavoidable since rowids of last() and first() are from different data frames
             if (++currentRow < rowsFound - 1) {
                 record.of(currentRow);
-
-                long delta = System.nanoTime() - timer;
-                benchmarks[ROW_SWITCH] += delta;
-                benchmarks[HAS_NEXT_TOTAL] += delta;
-
                 return true;
             }
 
-            boolean found = hasNext0();
-            benchmarks[HAS_NEXT_TOTAL] += System.nanoTime() - timer;
-            return found;
+            return hasNext0();
         }
 
         @Override
@@ -266,7 +243,6 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
             state = STATE_START;
             crossRowState = NONE;
             pageFrameCursor.toTop();
-            Arrays.fill(benchmarks, 0);
         }
 
         @Override
@@ -336,9 +312,10 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
                     // Fall trough to STATE_FETCH_NEXT_DATA_FRAME;
 
                 case STATE_FETCH_NEXT_DATA_FRAME:
-                    long mc = System.nanoTime();
                     currentFrame = pageFrameCursor.next();
                     if (currentFrame != null) {
+                        record.switchFrame();
+
                         // Switch to new data frame
                         frameNextRowId = dataFrameLo = currentFrame.getFirstRowId();
                         dataFrameHi = dataFrameLo + currentFrame.getPageSize(timestampIndex) / Long.BYTES;
@@ -349,13 +326,10 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
 
                         // Fall through to STATE_FETCH_NEXT_INDEX_FRAME;
                     } else {
-                        benchmarks[STATE_FETCH_NEXT_DATA_FRAME] += System.nanoTime() - mc;
                         return STATE_RETURN_LAST_ROW;
                     }
-                    benchmarks[STATE_FETCH_NEXT_DATA_FRAME] += System.nanoTime() - mc;
 
                 case STATE_FETCH_NEXT_INDEX_FRAME:
-                    long mc1 = System.nanoTime();
                     indexFrame = indexCursor.getNext();
                     indexFramePosition = 0;
 
@@ -365,7 +339,6 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
                             frameNextRowId = dataFrameHi;
                             // Jump back to fetch next data frame
 
-                            benchmarks[STATE_FETCH_NEXT_INDEX_FRAME] += System.nanoTime() - mc1;
                             return STATE_FETCH_NEXT_DATA_FRAME;
                         }
                         // Special case - searching with `where symbol = null` on the partition where this column has not been added
@@ -378,12 +351,10 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
                         long offsetTimestampColumnAddress = currentFrame.getPageAddress(timestampIndex) - dataFrameLo * Long.BYTES;
                         samplePeriodStart = Unsafe.getUnsafe().getLong(offsetTimestampColumnAddress + rowId * Long.BYTES);
                     }
-                    benchmarks[STATE_FETCH_NEXT_INDEX_FRAME] += System.nanoTime() - mc1;
                     // Fall to STATE_SEARCH;
 
                 case STATE_OUT_BUFFER_FULL:
                 case STATE_SEARCH:
-                    long mc3 = System.nanoTime();
                     int outPosition = crossRowState == NONE ? 0 : 1;
                     long offsetTimestampColumnAddress = currentFrame.getPageAddress(timestampIndex) - dataFrameLo * Long.BYTES;
                     long lastIndexRowId = indexFrame.getAddress() > 0
@@ -393,13 +364,12 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
                     long lastInDataTimestamp = Unsafe.getUnsafe().getLong(offsetTimestampColumnAddress + lastInDataRowId * Long.BYTES);
                     int samplePeriodCount = fillSamplePeriodsUntil(lastInDataTimestamp);
 
-                    long cCodeTiming = System.nanoTime();
-                    benchmarks[STATE_SEARCH] += cCodeTiming - mc3;
                     rowsFound = BitmapIndexUtilsNative.findFirstLastInFrame(
                             outPosition,
                             frameNextRowId,
                             dataFrameHi,
                             offsetTimestampColumnAddress,
+                            dataFrameLo,
                             indexFrame.getAddress(),
                             indexFrame.getSize(),
                             indexFramePosition,
@@ -410,9 +380,6 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
                             firstRowIdOutAddress.getAddress(),
                             lastRowIdOutAddress.getAddress(),
                             pageSize);
-
-                    mc3 = System.nanoTime();
-                    benchmarks[C_SEARCH] += mc3 - cCodeTiming;
 
                     boolean firstRowLastRowIdUpdated = rowsFound < 0;
                     rowsFound = Math.abs(rowsFound);
@@ -448,20 +415,11 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
                     }
 
                     if (rowsFound > 1) {
-                        // return negative to returns rows back to signal that there are rows to iterate
-                        long mcOf = System.nanoTime();
-                        benchmarks[STATE_SEARCH] += mcOf - mc3;
-
                         record.of(currentRow = 0);
-
-                        mc3 = System.nanoTime();
-                        benchmarks[ROW_SWITCH] += mc3 - mcOf;
-
                         newState = -newState;
                     }
 
                     // No rows to iterate, return where to continue from (fetching next data or index frame)
-                    benchmarks[STATE_SEARCH] += System.nanoTime() - mc3;
                     return newState;
 
                 case STATE_RETURN_LAST_ROW:
@@ -482,45 +440,24 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
 
         private boolean hasNext0() {
             // Check if values from the last found sample by row have to be saved in crossFrameRow
-            long stateLoopMc = System.nanoTime();
             checkCrossRowAfterFoundBufferIterated();
-            benchmarks[STATE_START] += System.nanoTime() - stateLoopMc;
             rowsFound = 0;
 
             while (state != STATE_DONE) {
-                long stateMachStart = System.nanoTime();
                 state = getNextState(state);
-                benchmarks[STATE_MACHINE] += System.nanoTime() - stateMachStart;
-
                 if (state < 0) {
                     state = -state;
                     return true;
                 }
             }
 
-            logTimings();
             return false;
-        }
-
-        private void logTimings() {
-            int totalIndex = HAS_NEXT_TOTAL;
-            long total = 0;
-            for(int i = 0; i < benchmarks.length; i++) {
-                if (benchmarks[i] > 0 && i != totalIndex) {
-                    LOG.info().$("benchmarks[").$(benchmarksNames[i]).$("]=").$(benchmarks[i] / 1000).$(" micros").$();
-                    if (i != STATE_MACHINE) {
-                        total += benchmarks[i];
-                    }
-                }
-            }
-            LOG.info().$("benchmarks[STATE_UNCOUNTED]=").$((benchmarks[totalIndex] - total) / 1000).$(" micros").$();
-            LOG.info().$("benchmarks[HAS_NEXT_TOTAL]=").$(benchmarks[totalIndex] / 1000).$(" micros").$();
         }
 
         private void saveFirstLastValuesToCrossFrameRowBuffer() {
             // Copies column values of all columns to cross frame row buffer for found row with index 0
-            long firstRowId = firstRowIdOutAddress.get(0) - dataFrameLo;
-            long lastRowId = lastRowIdOutAddress.get(0) - dataFrameLo;
+            long firstRowId = firstRowIdOutAddress.get(0);
+            long lastRowId = lastRowIdOutAddress.get(0);
             for (int i = 0; i < isColumnLast.length; i++) {
                 if (i == groupByTimestampIndex) {
                     long tsIndex = startTimestampOutAddress.get(0) - prevSamplePeriodOffset;
@@ -554,7 +491,7 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
 
         private void saveLastValuesToBuffer() {
             // Copies only last() column values of all columns to cross frame row buffer for found row with index 0
-            long lastRowId = lastRowIdOutAddress.get(0) - dataFrameLo;
+            long lastRowId = lastRowIdOutAddress.get(0);
             for (int columnIndex = 0; columnIndex < isColumnLast.length; columnIndex++) {
                 if (isColumnLast[columnIndex]) {
                     // last() values only
@@ -577,94 +514,240 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
         }
 
         private class SampleByFirstLastRecord implements Record {
-            private long[] addresses_point;
-            private final long[] data_addresses = new long[queryToFrameColumnMapping.length];
-            private final long[] crossFrameAddresses = new long[queryToFrameColumnMapping.length];
-            private final long nullBufferAddress = nullBuffer.getAddress();
+            private final SampleByCrossRecord crossRecord = new SampleByCrossRecord();
+            private final SampleByDataRecord dataRecord = new SampleByDataRecord();
 
-            SampleByFirstLastRecord() {
-                for(int col = 0; col < crossFrameAddresses.length; col++) {
-                    crossFrameAddresses[col] = crossFrameRow.getAddress() + ((long) col << 3);
-                }
-            }
+            private Record currentRecord;
 
             @Override
             public byte getByte(int col) {
-                return Unsafe.getUnsafe().getByte(addresses_point[col]);
+                return currentRecord.getByte(col);
             }
 
             @Override
             public char getChar(int col) {
-                return Unsafe.getUnsafe().getChar(addresses_point[col]);
+                return currentRecord.getChar(col);
             }
 
             @Override
             public double getDouble(int col) {
-                return Unsafe.getUnsafe().getDouble(addresses_point[col]);
+                return currentRecord.getDouble(col);
             }
 
             @Override
             public float getFloat(int col) {
-                return Unsafe.getUnsafe().getFloat(addresses_point[col]);
+                return currentRecord.getFloat(col);
             }
 
             @Override
             public int getInt(int col) {
-                return Unsafe.getUnsafe().getInt(addresses_point[col]);
+                return currentRecord.getInt(col);
             }
 
             @Override
             public long getLong(int col) {
-                return Unsafe.getUnsafe().getLong(addresses_point[col]);
+                return currentRecord.getLong(col);
             }
 
             @Override
             public CharSequence getSym(int col) {
-                int symbolId = Unsafe.getUnsafe().getInt(addresses_point[col]);
-                return pageFrameCursor.getSymbolMapReader(queryToFrameColumnMapping[col]).valueBOf(symbolId);
-            }
-
-            @Override
-            public long getTimestamp(int col) {
-                return Unsafe.getUnsafe().getLong(addresses_point[col]);
+                return currentRecord.getSym(col);
             }
 
             @Override
             public short getShort(int col) {
-                return Unsafe.getUnsafe().getShort(addresses_point[col]);
+                return currentRecord.getShort(col);
+            }
+
+            @Override
+            public long getTimestamp(int col) {
+                return currentRecord.getTimestamp(col);
+            }
+
+            public void switchFrame() {
+                dataRecord.switchFrame();
             }
 
             public void of(long index) {
                 if (index == 0) {
-                    // Cross frame row
-                    addresses_point = crossFrameAddresses;
-                    return;
+                    currentRecord = crossRecord;
+                } else {
+                    currentRecord = dataRecord.of(currentRow);
+                }
+            }
+
+            private class SampleByCrossRecord implements Record {
+                private final long address = crossFrameRow.getAddress();
+
+                @Override
+                public byte getByte(int col) {
+                    return Unsafe.getUnsafe().getByte(address + ((long) col << 3));
                 }
 
-                addresses_point = data_addresses;
-                long firstRowId = firstRowIdOutAddress.get(currentRow) - dataFrameLo;
-                long lastRowId = lastRowIdOutAddress.get(currentRow) - dataFrameLo;
+                @Override
+                public char getChar(int col) {
+                    return Unsafe.getUnsafe().getChar(address + ((long) col << 3));
+                }
 
-                for(int col = 0; col < queryToFrameColumnMapping.length; col++) {
-                    if (col == groupByTimestampIndex) {
+                @Override
+                public double getDouble(int col) {
+                    return Unsafe.getUnsafe().getDouble(address + ((long) col << 3));
+                }
+
+                @Override
+                public float getFloat(int col) {
+                    return Unsafe.getUnsafe().getFloat(address + ((long) col << 3));
+                }
+
+                @Override
+                public int getInt(int col) {
+                    return Unsafe.getUnsafe().getInt(address + ((long) col << 3));
+                }
+
+                @Override
+                public long getLong(int col) {
+                    return Unsafe.getUnsafe().getLong(address + ((long) col << 3));
+                }
+
+                @Override
+                public CharSequence getSym(int col) {
+                    int symbolId = Unsafe.getUnsafe().getInt(address + ((long) col << 3));
+                    return pageFrameCursor.getSymbolMapReader(queryToFrameColumnMapping[col]).valueBOf(symbolId);
+                }
+
+                @Override
+                public long getTimestamp(int col) {
+                    return Unsafe.getUnsafe().getLong(address + ((long) col << 3));
+                }
+
+                @Override
+                public short getShort(int col) {
+                    return Unsafe.getUnsafe().getShort(address + ((long) col << 3));
+                }
+            }
+
+            private class SampleByDataRecord implements Record {
+                private long currentRow;
+                private final long[] pageAddresses = new long[queryToFrameColumnMapping.length];
+
+                public void switchFrame() {
+                    for (int i = 0; i < pageAddresses.length; i++) {
+                        pageAddresses[i] = currentFrame.getPageAddress(queryToFrameColumnMapping[i]);
+                    }
+                }
+
+                @Override
+                public byte getByte(int col) {
+                    long pageAddress = pageAddresses[col];
+                    if (pageAddress > 0) {
+                        long rowid = recordFirstLastIndex[col] == 0 ? firstRowIdOutAddress.get(currentRow) : lastRowIdOutAddress.get(currentRow);
+                        return Unsafe.getUnsafe().getByte(pageAddress + rowid);
+                    } else {
+                        return 0;
+                    }
+                }
+
+                @Override
+                public char getChar(int col) {
+                    long pageAddress = pageAddresses[col];
+                    if (pageAddress > 0) {
+                        long rowid = recordFirstLastIndex[col] == 0 ? firstRowIdOutAddress.get(currentRow) : lastRowIdOutAddress.get(currentRow);
+                        return Unsafe.getUnsafe().getChar(pageAddress + (rowid << 1));
+                    } else {
+                        return 0;
+                    }
+                }
+
+                @Override
+                public double getDouble(int col) {
+                    long pageAddress = pageAddresses[col];
+                    if (pageAddress > 0) {
+                        long rowid = recordFirstLastIndex[col] == 0 ? firstRowIdOutAddress.get(currentRow) : lastRowIdOutAddress.get(currentRow);
+                        return Unsafe.getUnsafe().getDouble(pageAddress + (rowid << 3));
+                    } else {
+                        return Double.NaN;
+                    }
+                }
+
+                @Override
+                public float getFloat(int col) {
+                    long pageAddress = pageAddresses[col];
+                    if (pageAddress > 0) {
+                        long rowid = recordFirstLastIndex[col] == 0 ? firstRowIdOutAddress.get(currentRow) : lastRowIdOutAddress.get(currentRow);
+                        return Unsafe.getUnsafe().getFloat(pageAddress + (rowid << 2));
+                    } else {
+                        return Float.NaN;
+                    }
+                }
+
+                @Override
+                public int getInt(int col) {
+                    long pageAddress = pageAddresses[col];
+                    if (pageAddress > 0) {
+                        long rowid = recordFirstLastIndex[col] == 0 ? firstRowIdOutAddress.get(currentRow) : lastRowIdOutAddress.get(currentRow);
+                        return Unsafe.getUnsafe().getInt(pageAddress + (rowid << 2));
+                    } else {
+                        return Numbers.INT_NaN;
+                    }
+                }
+
+                @Override
+                public long getLong(int col) {
+                    long pageAddress = pageAddresses[col];
+                    if (pageAddress > 0) {
+                        long rowid = recordFirstLastIndex[col] == 0 ? firstRowIdOutAddress.get(currentRow) : lastRowIdOutAddress.get(currentRow);
+                        return Unsafe.getUnsafe().getLong(pageAddress + (rowid << 3));
+                    } else {
+                        return Numbers.LONG_NaN;
+                    }
+                }
+
+                @Override
+                public CharSequence getSym(int col) {
+                    int symbolId;
+                    long pageAddress = pageAddresses[col];
+                    if (pageAddress > 0) {
+                        long rowid = recordFirstLastIndex[col] == 0 ? firstRowIdOutAddress.get(currentRow) : lastRowIdOutAddress.get(currentRow);
+                        symbolId = Unsafe.getUnsafe().getInt(pageAddress + (rowid << 2));
+                    } else {
+                        symbolId = SymbolTable.VALUE_IS_NULL;
+                    }
+                    return pageFrameCursor.getSymbolMapReader(queryToFrameColumnMapping[col]).valueBOf(symbolId);
+                }
+
+                @Override
+                public short getShort(int col) {
+                    long pageAddress = pageAddresses[col];
+                    if (pageAddress > 0) {
+                        long rowid = recordFirstLastIndex[col] == 0 ? firstRowIdOutAddress.get(currentRow) : lastRowIdOutAddress.get(currentRow);
+                        return Unsafe.getUnsafe().getShort(pageAddress + (rowid << 1));
+                    } else {
+                        return 0;
+                    }
+                }
+
+                @Override
+                public long getTimestamp(int col) {
+                    if (col == timestampIndex) {
                         // Special case - timestamp the sample by runs on
                         // Take it from timestampOutBuff instead of column
                         // It's the value of the beginning of the group, not where the first row found
                         long tsIndex = startTimestampOutAddress.get(currentRow) - prevSamplePeriodOffset;
-                        addresses_point[col] = samplePeriodAddress.getAddress() + (tsIndex << 3);
-                        continue;
+                        return samplePeriodAddress.get(tsIndex);
                     }
 
-                    long pageAddress = currentFrame.getPageAddress(queryToFrameColumnMapping[col]);
+                    long pageAddress = pageAddresses[col];
                     if (pageAddress > 0) {
-                        // Data from columns
-                        long rowId = !isColumnLast[col] ? firstRowId : lastRowId;
-                        int shift = sampleByColShift[col];
-                        addresses_point[col] = pageAddress + (rowId << shift);
+                        long rowid = recordFirstLastIndex[col] == 0 ? firstRowIdOutAddress.get(currentRow) : lastRowIdOutAddress.get(currentRow);
+                        return Unsafe.getUnsafe().getLong(pageAddress + (rowid << 3));
                     } else {
-                        // Column top
-                        addresses_point[col] = nullBufferAddress + ((long) col << 3);
+                        return Numbers.LONG_NaN;
                     }
+                }
+
+                public SampleByDataRecord of(long currentRow) {
+                    this.currentRow = currentRow;
+                    return this;
                 }
             }
         }

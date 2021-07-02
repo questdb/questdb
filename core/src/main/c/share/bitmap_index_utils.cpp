@@ -136,6 +136,7 @@ int32_t findFirstLastInFrame0(
         , const int64_t rowIdLo
         , const int64_t rowIdHi
         , const int64_t* tsBase
+        , const int64_t frameBaseOffset
         , const int64_t* indexBase
         , const int64_t indexCount
         , const int64_t indexPosition
@@ -194,7 +195,7 @@ int32_t findFirstLastInFrame0(
             && indexLo - indexBase > 0
             ) {
             int64_t prevLastRowId = *(indexLo - 1);
-            lastRowIdOut[outIndex - 1] = prevLastRowId;
+            lastRowIdOut[outIndex - 1] = prevLastRowId - frameBaseOffset;
             firstRowUpdated |= outIndex == 1;
         }
 
@@ -224,7 +225,7 @@ int32_t findFirstLastInFrame0(
             // abort the search and return results
             break;
         }
-        lastRowIdOut[outIndex] = firstRowIdOut[outIndex] = *indexLo;
+        lastRowIdOut[outIndex] = firstRowIdOut[outIndex] = *indexLo - frameBaseOffset;
         timestampOut[outIndex] = sampleIndexOffset + periodIndex;
         outIndex++;
         periodIndex++;
@@ -245,6 +246,7 @@ int32_t findFirstLastInFrameNoFilter0(
         , const int64_t rowIdLo
         , const int64_t rowIdHi
         , const int64_t* tsBase
+        , const int64_t frameBaseOffset
         , const int64_t* samplePeriods
         , const int32_t samplePeriodCount
         , const int64_t sampleIndexOffset
@@ -280,7 +282,7 @@ int32_t findFirstLastInFrameNoFilter0(
             && tsLo > tsStart
             ) {
             int64_t prevLastRowId = tsLo - tsBase - 1;
-            lastRowIdOut[outIndex - 1] = prevLastRowId;
+            lastRowIdOut[outIndex - 1] = prevLastRowId - frameBaseOffset;
             firstRowUpdated |= outIndex == 1;
         }
 
@@ -307,7 +309,7 @@ int32_t findFirstLastInFrameNoFilter0(
             // abort the search and return results
             break;
         }
-        lastRowIdOut[outIndex] = firstRowIdOut[outIndex] = tsLo - tsBase;
+        lastRowIdOut[outIndex] = firstRowIdOut[outIndex] = (tsLo - tsBase) - frameBaseOffset;
         timestampOut[outIndex] = sampleIndexOffset + periodIndex;
         outIndex++;
         periodIndex++;
@@ -345,6 +347,7 @@ Java_io_questdb_std_BitmapIndexUtilsNative_findFirstLastInFrame0(JNIEnv *env, jc
         , jlong rowIdLo
         , jlong rowIdHi
         , jlong timestampColAddress
+        , jlong frameBaseOffset
         , jlong symbolIndexAddress
         , jlong symbolIndexCount
         , jlong symbolIndexPosition
@@ -360,6 +363,7 @@ Java_io_questdb_std_BitmapIndexUtilsNative_findFirstLastInFrame0(JNIEnv *env, jc
             , rowIdLo
             , rowIdHi
             , reinterpret_cast<int64_t *>(timestampColAddress)
+            , frameBaseOffset
             , reinterpret_cast<int64_t *>(symbolIndexAddress)
             , symbolIndexCount
             , symbolIndexPosition
@@ -379,6 +383,7 @@ Java_io_questdb_std_BitmapIndexUtilsNative_findFirstLastInFrameNoFilter0(JNIEnv 
         , jlong rowIdLo
         , jlong rowIdHi
         , jlong timestampColAddress
+        , jlong frameBaseOffset
         , jlong samplePeriodsAddress
         , jint samplePeriodCount
         , jlong samplePeriodIndexOffset
@@ -391,6 +396,7 @@ Java_io_questdb_std_BitmapIndexUtilsNative_findFirstLastInFrameNoFilter0(JNIEnv 
             , rowIdLo
             , rowIdHi
             , reinterpret_cast<int64_t *>(timestampColAddress)
+            , frameBaseOffset
             , reinterpret_cast<int64_t *>(samplePeriodsAddress)
             , samplePeriodCount
             , samplePeriodIndexOffset
