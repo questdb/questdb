@@ -67,31 +67,33 @@ class SampleByFillNoneRecordCursor extends AbstractVirtualRecordSampleByCursor {
     }
 
     private boolean computeNextBatch() {
-        this.sampleLocalEpoch = this.nextTimestamp;
         this.map.clear();
+
+        this.sampleLocalEpoch = this.localEpoch;
+        long next = timestampSampler.nextTimestamp(this.localEpoch);
 
         // looks like we need to populate key map
         // at the start of this loop 'lastTimestamp' will be set to timestamp
         // of first record in base cursor
         int n = groupByFunctions.size();
         do {
-            final long timestamp = getBaseRecordTimestamp();
-            if (sampleLocalEpoch == timestamp) {
+            final long timestamp = baseRecord.getTimestamp(timestampIndex) + tzOffset;
+            if (timestamp < next) {
                 final MapKey key = map.withKey();
                 keyMapSink.copy(baseRecord, key);
                 GroupByUtils.updateFunctions(groupByFunctions, n, key.createValue(), baseRecord);
+                interruptor.checkInterrupted();
             } else {
                 // timestamp changed, make sure we keep the value of 'lastTimestamp'
                 // unchanged. Timestamp columns uses this variable
                 // When map is exhausted we would assign 'nextTimestamp' to 'lastTimestamp'
                 // and build another map
-                this.nextTimestamp = timestamp;
+                this.localEpoch = timestampSampler.round(timestamp);
 
                 // get group by function to top to indicate that they have a new pass over the data set
                 GroupByUtils.toTop(groupByFunctions);
                 return createMapCursor();
             }
-            interruptor.checkInterrupted();
         } while (base.hasNext());
 
         // we ran out of data, make sure hasNext() returns false at the next

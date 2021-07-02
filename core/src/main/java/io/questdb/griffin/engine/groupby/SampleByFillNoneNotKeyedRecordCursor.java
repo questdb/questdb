@@ -59,7 +59,7 @@ class SampleByFillNoneNotKeyedRecordCursor extends AbstractVirtualRecordSampleBy
         GroupByUtils.updateNew(groupByFunctions, n, simpleMapValue, baseRecord);
 
         while (base.hasNext()) {
-            long timestamp = baseRecord.getTimestamp(timestampIndex) + combinedOffset;
+            long timestamp = baseRecord.getTimestamp(timestampIndex) + tzOffset;
             if (timestamp < next) {
                 GroupByUtils.updateExisting(groupByFunctions, n, simpleMapValue, baseRecord);
             } else {
@@ -69,20 +69,21 @@ class SampleByFillNoneNotKeyedRecordCursor extends AbstractVirtualRecordSampleBy
                 // and build another map
                 // todo: if we want to "fill" with null localEpoch could be "next"
                 if (rules != null) {
-                    long daylightSavings = rules.getOffset(localEpoch - combinedOffset) + fixedOffset;
-                    if (daylightSavings != combinedOffset) {
-                        if (daylightSavings < combinedOffset) {
+                    long daylightSavings = rules.getOffset(localEpoch - tzOffset);
+                    if (daylightSavings != tzOffset) {
+                        if (daylightSavings < tzOffset) {
                             // time moved backwards, we need to check if we should be collapsing this
                             // hour into previous period or not
                             // todo: check if we need to collapse into sample by 2h, 1d, 1m etc
                             GroupByUtils.updateExisting(groupByFunctions, n, simpleMapValue, baseRecord);
-                            sampleLocalEpoch -= (combinedOffset - daylightSavings);
-                            combinedOffset = daylightSavings;
+                            sampleLocalEpoch -= (tzOffset - daylightSavings);
+                            tzOffset = daylightSavings;
                             continue;
                         } else {
                             // time moved forward, we need to make sure we move our sample boundary
-                            timestamp = timestamp - combinedOffset + daylightSavings;
-                            combinedOffset = daylightSavings;
+                            timestamp = timestamp - tzOffset + daylightSavings;
+                            sampleLocalEpoch -= (tzOffset - daylightSavings);
+                            tzOffset = daylightSavings;
                         }
                     }
                 }

@@ -52,11 +52,12 @@ public abstract class AbstractNoRecordSampleByCursor implements NoRandomAccessRe
     protected long nextTimestamp;
     protected RecordCursor base;
     protected SqlExecutionInterruptor interruptor;
-    protected long combinedOffset;
+    protected long tzOffset;
     protected long fixedOffset;
-    protected long topBaselineOffset;
-    private long topLocalEpoch;
+    protected long topTzOffset;
     protected long localEpoch;
+    protected TimeZoneRules rules;
+    private long topLocalEpoch;
 
     public AbstractNoRecordSampleByCursor(
             ObjList<Function> recordFunctions,
@@ -86,15 +87,15 @@ public abstract class AbstractNoRecordSampleByCursor implements NoRandomAccessRe
         GroupByUtils.toTop(recordFunctions);
         this.base.toTop();
         this.localEpoch = topLocalEpoch;
-        this.combinedOffset = topBaselineOffset;
+        this.sampleLocalEpoch = topLocalEpoch;
+        // timezone offset is liable to change when we pass over DST edges
+        this.tzOffset = topTzOffset;
     }
 
     @Override
     public long size() {
         return -1;
     }
-
-    protected TimeZoneRules rules;
 
     public void of(
             RecordCursor base,
@@ -113,7 +114,6 @@ public abstract class AbstractNoRecordSampleByCursor implements NoRandomAccessRe
         this.baseRecord = base.getRecord();
         final long timestamp = baseRecord.getTimestamp(timestampIndex);
 
-        long alignmentOffset = Numbers.LONG_NaN;
         final CharSequence tz = timezoneNameFunc.getStr(null);
         if (tz != null) {
             try {
@@ -125,18 +125,20 @@ public abstract class AbstractNoRecordSampleByCursor implements NoRandomAccessRe
                             RESOLUTION_MICROS
                     );
                     // fixed rules means the timezone does not have historical or daylight time changes
-                    alignmentOffset = rules.getOffset(timestamp);
+                    tzOffset = rules.getOffset(timestamp);
                     if (rules instanceof TimeZoneRulesMicros) {
                         this.rules = rules;
                     }
                 } else {
                     // here timezone is in numeric offset format
-                    alignmentOffset = Numbers.decodeLowInt(opt) * MINUTE_MICROS;
+                    tzOffset = Numbers.decodeLowInt(opt) * MINUTE_MICROS;
                 }
             } catch (NumericException e) {
                 Misc.free(base);
                 throw SqlException.$(timezoneNameFuncPos, "invalid timezone: ").put(tz);
             }
+        } else {
+            this.tzOffset = 0;
         }
 
         final CharSequence offset = offsetFunc.getStr(null);
@@ -150,32 +152,32 @@ public abstract class AbstractNoRecordSampleByCursor implements NoRandomAccessRe
             }
 
             this.fixedOffset = Numbers.decodeLowInt(val) * MINUTE_MICROS;
-
-            if (alignmentOffset == Numbers.LONG_NaN) {
-                alignmentOffset = fixedOffset;
-            } else {
-                alignmentOffset += fixedOffset;
-            }
         } else {
             fixedOffset = 0;
         }
 
-        this.nextTimestamp = timestampSampler.round(timestamp);
-        this.topBaselineOffset = this.combinedOffset = alignmentOffset == Numbers.LONG_NaN ? timestamp - nextTimestamp : alignmentOffset;
-        this.topLocalEpoch = this.localEpoch = timestampSampler.round(timestamp + combinedOffset);
-        this.nextTimestamp = timestampSampler.round(timestamp - combinedOffset);
+        if (tzOffset == 0 && fixedOffset == 0) {
+            // this is the default path, we align time intervals to the first observation
+            timestampSampler.setStart(timestamp + tzOffset);
+        } else if (fixedOffset > 0) {
+            timestampSampler.setStart(timestamp + tzOffset + this.fixedOffset - timestampSampler.getBucketSize());
+        } else {
+            timestampSampler.setStart(tzOffset);
+        }
+        this.topTzOffset = tzOffset;
+        this.topLocalEpoch = this.localEpoch = timestampSampler.round(timestamp + tzOffset);
         interruptor = executionContext.getSqlExecutionInterruptor();
     }
 
     protected long getBaseRecordTimestamp() {
-        return timestampSampler.round(baseRecord.getTimestamp(timestampIndex) - combinedOffset);
+        return baseRecord.getTimestamp(timestampIndex);
     }
 
     protected class TimestampFunc extends TimestampFunction implements Function {
 
         @Override
         public long getTimestamp(Record rec) {
-            return sampleLocalEpoch - combinedOffset;
+            return sampleLocalEpoch - tzOffset;
         }
     }
 }

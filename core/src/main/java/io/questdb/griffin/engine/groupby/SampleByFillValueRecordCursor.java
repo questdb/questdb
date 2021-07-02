@@ -77,26 +77,24 @@ class SampleByFillValueRecordCursor extends AbstractSplitVirtualRecordSampleByCu
         // for timestamp gaps
 
         // what is the next timestamp we are expecting?
-        this.sampleLocalEpoch = localEpoch;
         long next = timestampSampler.nextTimestamp(localEpoch);
+        long expectedLocalEpoch = timestampSampler.nextTimestamp(sampleLocalEpoch);
 
         // is data timestamp ahead of next expected timestamp?
-/*
-        if (this.nextTimestamp > next) {
-            this.sampleLocalEpoch = next;
+        if(expectedLocalEpoch < localEpoch) {
+            this.sampleLocalEpoch = expectedLocalEpoch;
             // reset iterator on map and stream contents
             refreshCursorAndRecord();
             return true;
         }
 
-        this.sampleLocalEpoch = this.nextTimestamp;
-*/
+        this.sampleLocalEpoch = localEpoch;
 
         // looks like we need to populate key map
         int n = groupByFunctions.size();
         while (true) {
             interruptor.checkInterrupted();
-            final long timestamp = baseRecord.getTimestamp(timestampIndex) + combinedOffset;
+            final long timestamp = baseRecord.getTimestamp(timestampIndex) + tzOffset;
             if (timestamp < next) {
                 final MapKey key = map.withKey();
                 keyMapSink.copy(baseRecord, key);
