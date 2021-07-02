@@ -40,50 +40,38 @@ public class BitmapIndexUtilsNative {
             long firstRowIdOutAddress,
             long lastRowIdOutAddress,
             int outSize) {
-
-        return findFirstLastInFrame0(
-                outIndex,
-                rowIdLo,
-                rowIdHi,
-                timestampColAddress,
-                symbolIndexAddress,
-                symbolIndexCount,
-                symbolIndexPosition,
-                samplePeriodsAddress,
-                samplePeriodsCount,
-                samplePeriodIndexOffset,
-                timestampOutAddress,
-                firstRowIdOutAddress,
-                lastRowIdOutAddress,
-                outSize
-        );
-    }
-
-    public static int findFirstLastInFrameNoFilter(
-            int outIndex,
-            long rowIdLo,
-            long rowIdHi,
-            long timestampColAddress,
-            long samplePeriodsAddress,
-            int samplePeriodsCount,
-            long samplePeriodIndexOffset,
-            long timestampOutAddress,
-            long firstRowIdOutAddress,
-            long lastRowIdOutAddress,
-            int outSize) {
-        return findFirstLastInFrameNoFilter0(
-                outIndex,
-                rowIdLo,
-                rowIdHi,
-                timestampColAddress,
-                samplePeriodsAddress,
-                samplePeriodsCount,
-                samplePeriodIndexOffset,
-                timestampOutAddress,
-                firstRowIdOutAddress,
-                lastRowIdOutAddress,
-                outSize
-        );
+        if (symbolIndexAddress > 0) {
+            return findFirstLastInFrame0(
+                    outIndex,
+                    rowIdLo,
+                    rowIdHi,
+                    timestampColAddress,
+                    symbolIndexAddress,
+                    symbolIndexCount,
+                    symbolIndexPosition,
+                    samplePeriodsAddress,
+                    samplePeriodsCount,
+                    samplePeriodIndexOffset,
+                    timestampOutAddress,
+                    firstRowIdOutAddress,
+                    lastRowIdOutAddress,
+                    outSize
+            );
+        } else {
+            return findFirstLastInFrameNoFilter0(
+                    outIndex,
+                    rowIdLo,
+                    rowIdHi,
+                    timestampColAddress,
+                    samplePeriodsAddress,
+                    samplePeriodsCount,
+                    samplePeriodIndexOffset,
+                    timestampOutAddress,
+                    firstRowIdOutAddress,
+                    lastRowIdOutAddress,
+                    outSize
+            );
+        }
     }
 
     public static void latestScanBackward(long keysMemory, long keysMemorySize, long valuesMemory,

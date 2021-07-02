@@ -46,6 +46,7 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
     private final boolean[] isColumnLast;
     private final int[] queryToFrameColumnMapping;
     private final int pageSize;
+    private final int maxSamplePeriodSize;
     private final SingleSymbolFilter symbolFilter;
     private final int groupBySymbolColIndex;
     private final int timestampIndex;
@@ -66,24 +67,25 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
             RecordMetadata metadata,
             int timestampIndex,
             SingleSymbolFilter symbolFilter,
-            int pageSize) throws SqlException {
+            int configPageSize) throws SqlException {
         this.base = base;
-        assert pageSize > 2;
-        this.pageSize = pageSize;
+        this.groupBySymbolColIndex = symbolFilter.getColumnIndex();
+        this.pageSize = configPageSize < 16 ? Math.max(groupByMetadata.getIndexValueBlockCapacity(groupBySymbolColIndex), 16) : configPageSize;
+        assert this.pageSize >= 16;
+        this.maxSamplePeriodSize = this.pageSize * 4;
         this.timestampSampler = timestampSampler;
         this.groupByMetadata = groupByMetadata;
         this.timestampIndex = timestampIndex;
         this.startTimestampOutAddress = new DirectLongList(pageSize).setSize(pageSize);
         this.firstRowIdOutAddress = new DirectLongList(pageSize).setSize(pageSize);
         this.lastRowIdOutAddress = new DirectLongList(pageSize).setSize(pageSize);
-        this.samplePeriodAddress = new DirectLongList(pageSize).setSize(pageSize);
+        this.samplePeriodAddress = new DirectLongList(maxSamplePeriodSize).setSize(maxSamplePeriodSize);
         this.symbolFilter = symbolFilter;
         this.queryToFrameColumnMapping = new int[columns.size()];
         this.isColumnLast = new boolean[columns.size()];
         this.nullBuffer = new DirectLongList(columns.size()).setSize(columns.size());
         this.sampleByColShift = new int[columns.size()];
         buildFirstLastIndex(isColumnLast, queryToFrameColumnMapping, metadata, columns, timestampIndex);
-        this.groupBySymbolColIndex = symbolFilter.getColumnIndex();
         this.crossFrameRow = new DirectLongList(columns.size()).setSize(columns.size());
     }
 
@@ -177,7 +179,7 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
         private PageFrameCursor pageFrameCursor;
         private PageFrame currentFrame;
         private long currentRow;
-        private long rowsFound;
+        private int rowsFound;
         private IndexFrameCursor indexCursor;
         private long dataFrameLo = -1;
         private long dataFrameHi = -1;
@@ -288,16 +290,15 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
         }
 
         private int fillSamplePeriodsUntil(long lastInDataTimestamp) {
-            long currentTs;
             long nextTs = samplePeriodStart;
-            int index = 0;
-
-            do {
+            long currentTs = Long.MIN_VALUE;
+            samplePeriodAddress.clear();
+            for (int i = 0; i < maxSamplePeriodSize && currentTs <= lastInDataTimestamp; i++) {
                 currentTs = nextTs;
                 nextTs = timestampSampler.nextTimestamp(currentTs);
-                samplePeriodAddress.set(index++, currentTs);
-            } while (currentTs <= lastInDataTimestamp && index < pageSize);
-            return index;
+                samplePeriodAddress.add(currentTs);
+            }
+            return (int) samplePeriodAddress.size();
         }
 
         // This method evaluates RecordCursor state
@@ -310,7 +311,7 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
         // - RETURN_LAST_ROW
         // - DONE
         // State machine can switch states non-linear until DONE reached.
-        private int getNextState(final int state) {
+        private int getNextState(int state) {
             // This method should not change this.state field
             // but instead produce next state given incoming state parameter.
             // This way the method is enforced to change state and less the caller to loop forever.
@@ -381,39 +382,21 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
 
                     long cCodeTiming = System.nanoTime();
                     benchmarks[STATE_SEARCH] += cCodeTiming - mc3;
-                    if (indexFrame.getAddress() > 0) {
-                        rowsFound = BitmapIndexUtilsNative.findFirstLastInFrame(
-                                outPosition,
-                                frameNextRowId,
-                                dataFrameHi,
-                                offsetTimestampColumnAddress,
-                                indexFrame.getAddress(),
-                                indexFrame.getSize(),
-                                indexFramePosition,
-                                samplePeriodAddress.getAddress(),
-                                samplePeriodCount,
-                                samplePeriodIndexOffset,
-                                startTimestampOutAddress.getAddress(),
-                                firstRowIdOutAddress.getAddress(),
-                                lastRowIdOutAddress.getAddress(),
-                                pageSize);
-                    } else {
-                        // Special case, search on partition where indexed column is not added (or partially added)
-                        // with filter `where symbol = null`
-                        // It means all rows in the data frame should be treated as in index
-                        rowsFound = BitmapIndexUtilsNative.findFirstLastInFrameNoFilter(
-                                outPosition,
-                                frameNextRowId,
-                                dataFrameHi,
-                                offsetTimestampColumnAddress,
-                                samplePeriodAddress.getAddress(),
-                                samplePeriodCount,
-                                samplePeriodIndexOffset,
-                                startTimestampOutAddress.getAddress(),
-                                firstRowIdOutAddress.getAddress(),
-                                lastRowIdOutAddress.getAddress(),
-                                pageSize);
-                    }
+                    rowsFound = BitmapIndexUtilsNative.findFirstLastInFrame(
+                            outPosition,
+                            frameNextRowId,
+                            dataFrameHi,
+                            offsetTimestampColumnAddress,
+                            indexFrame.getAddress(),
+                            indexFrame.getSize(),
+                            indexFramePosition,
+                            samplePeriodAddress.getAddress(),
+                            samplePeriodCount,
+                            samplePeriodIndexOffset,
+                            startTimestampOutAddress.getAddress(),
+                            firstRowIdOutAddress.getAddress(),
+                            lastRowIdOutAddress.getAddress(),
+                            pageSize);
 
                     mc3 = System.nanoTime();
                     benchmarks[STATE_OUT_BUFFER_FULL] += mc3 - cCodeTiming;
@@ -425,22 +408,27 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
                     // re-copy last values to crossFrameRow
                     checkSaveLastValues(firstRowLastRowIdUpdated);
 
-                    assert rowsFound < pageSize;
                     indexFramePosition = (int) firstRowIdOutAddress.get(rowsFound);
                     frameNextRowId = lastRowIdOutAddress.get(rowsFound);
                     prevSamplePeriodOffset = samplePeriodIndexOffset;
                     samplePeriodIndexOffset = (int) startTimestampOutAddress.get(rowsFound);
-                    assert samplePeriodIndexOffset - prevSamplePeriodOffset < pageSize;
                     samplePeriodStart = samplePeriodAddress.get(samplePeriodIndexOffset - prevSamplePeriodOffset);
 
                     // decide what to do next
                     int newState;
-                    if (indexFramePosition >= indexFrame.getSize()) {
+                    if (frameNextRowId >= dataFrameHi) {
+                        // Data frame exhausted. Next time start from fetching new data frame
+                        newState = STATE_FETCH_NEXT_DATA_FRAME;
+                    } else if (indexFramePosition >= indexFrame.getSize()) {
                         // Index frame exhausted. Next time start from fetching new index frame
                         newState = indexFrame.getAddress() > 0 ? STATE_FETCH_NEXT_INDEX_FRAME : STATE_FETCH_NEXT_DATA_FRAME;
-                    } else if (rowsFound == pageSize - 1 || samplePeriodIndexOffset - prevSamplePeriodOffset == pageSize - 1) {
-                        // Return values and next pass start from STATE_OUT_BUFFER_FULL
+                    } else if (rowsFound == startTimestampOutAddress.size() - 1) {
+                        // output rows filled the output buffers or
                         newState = STATE_OUT_BUFFER_FULL;
+                    } else if (samplePeriodIndexOffset - prevSamplePeriodOffset == maxSamplePeriodSize - 1) {
+                        //  search came to the end of sample by by periods
+                        // re-fill periods and search again
+                        newState = STATE_SEARCH;
                     } else {
                         // Data frame exhausted. Next time start from fetching new data frame
                         newState = STATE_FETCH_NEXT_DATA_FRAME;

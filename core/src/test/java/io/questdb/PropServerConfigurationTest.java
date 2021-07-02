@@ -252,7 +252,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(PartitionBy.DAY, configuration.getLineTcpReceiverConfiguration().getDefaultPartitionBy());
         Assert.assertEquals(0, configuration.getLineTcpReceiverConfiguration().getAggressiveReadRetryCount());
         Assert.assertEquals(10_000, configuration.getLineTcpReceiverConfiguration().getWriterIdleTimeout());
-        Assert.assertEquals(2048, configuration.getCairoConfiguration().getSampleByIndexSearchPageSize());
+        Assert.assertEquals(0, configuration.getCairoConfiguration().getSampleByIndexSearchPageSize());
 
         Assert.assertTrue(configuration.getHttpServerConfiguration().getHttpContextConfiguration().getServerKeepAlive());
         Assert.assertEquals("HTTP/1.1 ", configuration.getHttpServerConfiguration().getHttpContextConfiguration().getHttpVersion());

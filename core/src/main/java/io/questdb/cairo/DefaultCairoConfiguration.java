@@ -76,7 +76,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public int getSampleByIndexSearchPageSize() {
-        return 256;
+        return 0;
     }
 
     @Override
