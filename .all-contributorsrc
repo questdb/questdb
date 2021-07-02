@@ -458,6 +458,16 @@
       "contributions": [
         "ideas"
       ]
+    },
+    {
+      "login": "fuzzthink",
+      "name": "John Leung",
+      "avatar_url": "https://avatars.githubusercontent.com/u/20699?v=4",
+      "profile": "http://johnleung.com",
+      "contributions": [
+        "ideas",
+        "userTesting"
+      ]
     }
   ],
   "badgeTemplate": "[![All Contributors](https://img.shields.io/badge/all_contributors-<%= contributors.length %>-orange.svg)](#contributors)",
