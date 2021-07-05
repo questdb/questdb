@@ -122,8 +122,8 @@ inline int64_t linked_search_lower(const int64_t *indexBase,
     // To not degrade it to full scan, use miniumum increment of 32
     // This is same as
     // return branch_free_linked_search_lower(indexBase, dataBase, indexLength, value);
-    const auto step = std::max(32LL, indexLength / estimatedCount);
-    int64_t searchStart = 0LL;
+    const int64_t step = std::max<int64_t>(32LL, indexLength / estimatedCount);
+    int64_t searchStart = 0L;
     while (searchStart + step < indexLength && dataBase[*(indexBase + searchStart + step - 1)] < value) {
         searchStart += step;
     }
