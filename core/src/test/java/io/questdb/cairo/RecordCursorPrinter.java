@@ -133,6 +133,9 @@ public class RecordCursorPrinter {
             case ColumnType.INT:
                 sink.put(r.getInt(i));
                 break;
+            case ColumnType.NULL:
+                sink.put("null");
+                break;
             case ColumnType.STRING:
                 r.getStr(i, sink);
                 break;

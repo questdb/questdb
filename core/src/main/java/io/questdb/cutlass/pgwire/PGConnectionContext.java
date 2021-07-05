@@ -558,9 +558,14 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     }
 
     private void appendCharColumn(Record record, int columnIndex) {
-        long a = responseAsciiSink.skip();
-        responseAsciiSink.putUtf8(record.getChar(columnIndex));
-        responseAsciiSink.putLenEx(a);
+        final char charValue = record.getChar(columnIndex);
+        if (charValue == 0) {
+            responseAsciiSink.setNullValue();
+        } else {
+            long a = responseAsciiSink.skip();
+            responseAsciiSink.putUtf8(charValue);
+            responseAsciiSink.putLenEx(a);
+        }
     }
 
     private void appendDateColumn(Record record, int columnIndex) {
@@ -652,9 +657,16 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
 
     private void appendLong256Column(Record record, int columnIndex) {
         final Long256 long256Value = record.getLong256A(columnIndex);
-        final long a = responseAsciiSink.skip();
-        Numbers.appendLong256(long256Value.getLong0(), long256Value.getLong1(), long256Value.getLong2(), long256Value.getLong3(), responseAsciiSink);
-        responseAsciiSink.putLenEx(a);
+        if (long256Value.getLong0() == Numbers.LONG_NaN &&
+                long256Value.getLong1() == Numbers.LONG_NaN &&
+                long256Value.getLong2() == Numbers.LONG_NaN &&
+                long256Value.getLong3() == Numbers.LONG_NaN) {
+            responseAsciiSink.setNullValue();
+        } else {
+            final long a = responseAsciiSink.skip();
+            Numbers.appendLong256(long256Value.getLong0(), long256Value.getLong1(), long256Value.getLong2(), long256Value.getLong3(), responseAsciiSink);
+            responseAsciiSink.putLenEx(a);
+        }
     }
 
     private void appendLongColumn(Record record, int columnIndex) {
@@ -690,6 +702,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
                 case ColumnType.INT:
                     appendIntCol(record, i);
                     break;
+                case ColumnType.NULL:
                 case ColumnType.STRING:
                 case BINARY_TYPE_STRING:
                     appendStrColumn(record, i);
@@ -1515,7 +1528,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         sink.putNetworkShort((short) n);
         for (int i = 0; i < n; i++) {
             final int typeFlag = activeSelectColumnTypes.getQuick(i);
-            final int columnType = toColumnType(typeFlag);
+            final int columnType = toColumnType(typeFlag == ColumnType.NULL ? ColumnType.STRING : typeFlag);
             sink.encodeUtf8Z(metadata.getColumnName(i));
             sink.putIntDirect(0); //tableOid ?
             sink.putNetworkShort((short) (i + 1)); //column number, starting from 1

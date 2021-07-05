@@ -327,7 +327,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
 
     @Test
     public void testExplicitConstantNull() throws SqlException {
-        testConstantPassThru(StrConstant.NULL);
+        testConstantPassThru(NullConstant.NULL);
     }
 
     @Test

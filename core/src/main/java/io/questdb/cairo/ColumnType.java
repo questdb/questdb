@@ -36,6 +36,7 @@ public final class ColumnType {
     public static final int VERSION = 419;
     public static final int VERSION_THAT_ADDED_TABLE_ID = 417;
 
+    public static final int NULL = -2;
     public static final int UNDEFINED = -1;
     public static final int BOOLEAN = 0;
     public static final int BYTE = 1;
@@ -84,13 +85,13 @@ public final class ColumnType {
 
     static {
         overloadPriorityMatrix = new int[OVERLOAD_MATRIX_SIZE * OVERLOAD_MATRIX_SIZE];
-        for (int i = -1; i < MAX; i++) {
+        for (int i = 0; i < MAX; i++) {
             for (int j = 0; j < MAX; j++) {
-                if (i + 1 < overloadPriority.length) {
-                    int index = indexOf(overloadPriority[i + 1], j);
-                    overloadPriorityMatrix[OVERLOAD_MATRIX_SIZE * (i + 1) + j] = index >= 0 ? index + 1 : NO_OVERLOAD;
+                if (i < overloadPriority.length) {
+                    int index = indexOf(overloadPriority[i], j);
+                    overloadPriorityMatrix[OVERLOAD_MATRIX_SIZE * i + j] = index >= 0 ? index + 1 : NO_OVERLOAD;
                 } else {
-                    overloadPriorityMatrix[OVERLOAD_MATRIX_SIZE * (i + 1) + j] = NO_OVERLOAD;
+                    overloadPriorityMatrix[OVERLOAD_MATRIX_SIZE * i + j] = NO_OVERLOAD;
                 }
             }
         }
@@ -123,6 +124,9 @@ public final class ColumnType {
     }
 
     public static int sizeOf(int columnType) {
+        if (columnType == ColumnType.NULL) {
+            return 0;
+        }
         if (columnType < 0 || columnType > ColumnType.PARAMETER) {
             return -1;
         }

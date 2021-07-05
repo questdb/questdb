@@ -36,4 +36,9 @@ public abstract class AbstractEntityCastFunctionFactory implements FunctionFacto
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         return args.getQuick(0);
     }
+
+    @Override
+    public final boolean isCast() {
+        return true;
+    }
 }

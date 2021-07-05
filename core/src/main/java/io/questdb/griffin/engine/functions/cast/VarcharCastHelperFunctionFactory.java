@@ -32,7 +32,7 @@ import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
-public class VarcharCastHelperFunctionFactory implements FunctionFactory {
+public class VarcharCastHelperFunctionFactory extends AbstractEntityCastFunctionFactory {
     @Override
     public String getSignature() {
         return "VARCHAR(I)";

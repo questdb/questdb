@@ -36,7 +36,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.CharSink;
 
-public class CastBooleanToStrFunctionFactory implements FunctionFactory {
+public class CastBooleanToStrFunctionFactory extends AbstractEntityCastFunctionFactory {
     @Override
     public String getSignature() {
         return "cast(Ts)";

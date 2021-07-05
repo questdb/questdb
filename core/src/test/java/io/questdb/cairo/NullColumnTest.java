@@ -24,6 +24,7 @@
 
 package io.questdb.cairo;
 
+import io.questdb.std.Long256Impl;
 import io.questdb.std.Numbers;
 import org.junit.Assert;
 import org.junit.Test;
@@ -33,6 +34,11 @@ public class NullColumnTest {
     @Test
     public void close() {
         NullColumn.INSTANCE.close();
+    }
+
+    @Test
+    public void isDeleted() {
+        Assert.assertTrue(NullColumn.INSTANCE.isDeleted());
     }
 
     @Test
@@ -76,6 +82,11 @@ public class NullColumnTest {
     }
 
     @Test
+    public void getChar() {
+        Assert.assertEquals(0, NullColumn.INSTANCE.getChar(1234));
+    }
+
+    @Test
     public void getLong() {
         Assert.assertEquals(Numbers.LONG_NaN, NullColumn.INSTANCE.getLong(1234));
     }
@@ -91,8 +102,18 @@ public class NullColumnTest {
     }
 
     @Test
-    public void getStr2() {
+    public void getStrB() {
         Assert.assertNull(NullColumn.INSTANCE.getStr2(1234));
+    }
+
+    @Test
+    public void getLong256A() {
+        Assert.assertEquals(Long256Impl.NULL_LONG256, NullColumn.INSTANCE.getLong256A(1234));
+    }
+
+    @Test
+    public void getLong256B() {
+        Assert.assertEquals(Long256Impl.NULL_LONG256, NullColumn.INSTANCE.getLong256B(1234));
     }
 
     @Test
@@ -105,6 +126,11 @@ public class NullColumnTest {
         // this method does nothing. Make sure it doesn corrupt state of singleton and
         // doesn't throw exception
         NullColumn.INSTANCE.grow(100000);
+    }
+
+    @Test
+    public void size() {
+        Assert.assertEquals(0, NullColumn.INSTANCE.size());
     }
 
     @Test
