@@ -37,9 +37,7 @@ public class BitmapIndexUtilsNative {
             long samplePeriodsAddress,
             int samplePeriodsCount,
             long samplePeriodIndexOffset,
-            long timestampOutAddress,
-            long firstRowIdOutAddress,
-            long lastRowIdOutAddress,
+            long rowIdOutAddress,
             int outSize) {
         if (symbolIndexAddress > 0) {
             return findFirstLastInFrame0(
@@ -54,9 +52,7 @@ public class BitmapIndexUtilsNative {
                     samplePeriodsAddress,
                     samplePeriodsCount,
                     samplePeriodIndexOffset,
-                    timestampOutAddress,
-                    firstRowIdOutAddress,
-                    lastRowIdOutAddress,
+                    rowIdOutAddress,
                     outSize
             );
         } else {
@@ -69,9 +65,7 @@ public class BitmapIndexUtilsNative {
                     samplePeriodsAddress,
                     samplePeriodsCount,
                     samplePeriodIndexOffset,
-                    timestampOutAddress,
-                    firstRowIdOutAddress,
-                    lastRowIdOutAddress,
+                    rowIdOutAddress,
                     outSize
             );
         }
@@ -110,9 +104,7 @@ public class BitmapIndexUtilsNative {
             long samplePeriodsAddress,
             int samplePeriodCount,
             long samplePeriodIndexOffset,
-            long timestampOutAddress,
-            long firstRowIdOutAddress,
-            long lastRowIdOutAddress,
+            long rowIdOutAddress,
             int outSize);
 
     private static native int findFirstLastInFrameNoFilter0(
@@ -124,8 +116,6 @@ public class BitmapIndexUtilsNative {
             long samplePeriodsAddress,
             int samplePeriodCount,
             long samplePeriodIndexOffset,
-            long timestampOutAddress,
-            long firstRowIdOutAddress,
-            long lastRowIdOutAddress,
+            long rowIdOutAddress,
             int outSize);
 }

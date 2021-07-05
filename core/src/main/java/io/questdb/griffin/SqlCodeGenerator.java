@@ -1470,7 +1470,7 @@ public class SqlCodeGenerator implements Mutable {
 
             if (node.type != ExpressionNode.LITERAL) {
                 CharSequence token = column.getAst().token;
-                if (!Chars.equalsIgnoreCase(token, "first") && !Chars.equalsIgnoreCase(token, "last")) {
+                if (!SqlKeywords.isFirstFunction(token) && !SqlKeywords.isLastFunction(token)) {
                     return false;
                 }
             }

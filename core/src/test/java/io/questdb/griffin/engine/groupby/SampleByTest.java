@@ -34,6 +34,8 @@ import io.questdb.griffin.AbstractGriffinTest;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
@@ -44,6 +46,7 @@ import org.junit.Before;
 import org.junit.Test;
 
 public class SampleByTest extends AbstractGriffinTest {
+    private final static Log LOG = LogFactory.getLog(SampleByTest.class);
 
     @Before
     public void setUp3() {
@@ -814,7 +817,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         "1970-01-02T00:10:00.000000Z\ta\t-152.0\t152.0\n",
                 "select k, s, first(lat) lat, first(lon) lon " +
                         "from xx " +
-                        "where k in '1970-01-01T00:00:00.000000Z;30m;5h;10' and s in ('a')" +
+                        "where k in '1970-01-01T00:00:00.000000Z;30m;5h;10' and s in ('a', 'none')" +
                         "sample by 2h",
                 "insert into xx " +
                         "select -x lat,\n" +
@@ -839,10 +842,8 @@ public class SampleByTest extends AbstractGriffinTest {
 
     @Test
     public void testIndexSampleByIndexNoTimestampColSelected() throws Exception {
-        assertMemoryLeak(() -> {
-            compiler.compile("create table xx (lat double, lon double, s symbol, k timestamp)" +
-                    ", index(s capacity 256) timestamp(k) partition by DAY", sqlExecutionContext);
-        });
+        assertMemoryLeak(() -> compiler.compile("create table xx (lat double, lon double, s symbol, k timestamp)" +
+                ", index(s capacity 256) timestamp(k) partition by DAY", sqlExecutionContext));
 
         assertQuery("s\tlat\tlon\n" +
                         "a\t-2.0\t2.0\n" +
@@ -872,27 +873,23 @@ public class SampleByTest extends AbstractGriffinTest {
             compiler.compile("alter table xx add s SYMBOL INDEX", sqlExecutionContext);
         });
 
-        assertQuery("s\tlat\tlon\n" +
-                        "\t-1.0\t4.0\n" +
-                        "\t-31.0\t34.0\n" +
-                        "\t-61.0\t64.0\n" +
-                        "\t-91.0\t94.0\n" +
-                        "\t-121.0\t124.0\n" +
-                        "\t-151.0\t154.0\n",
+        TestUtils.assertSqlCursors( compiler,
+                sqlExecutionContext,
                 "select s, first(lat) lat, last(lon) lon " +
-                        "from xx " +
-                        "where k in '1970-01-01T00:00:00.000000Z;30m;5h;10' and s = null " +
-                        "sample by 2h",
-                null,
-                false);
+                "from xx " +
+                "where k in '1970-01-01T00:00:00.000000Z;30m;5h;10'" +
+                "sample by 2h",
+                "select s, first(lat) lat, last(lon) lon " +
+                "from xx " +
+                "where k in '1970-01-01T00:00:00.000000Z;30m;5h;10' and s = null " +
+                "sample by 2h",
+                LOG);
     }
 
     @Test
     public void testIndexSampleByIndexWithIrregularEmptyPeriods() throws Exception {
-        assertMemoryLeak(() -> {
-            compiler.compile("create table xx (s symbol, k timestamp)" +
-                    ", index(s capacity 256) timestamp(k) partition by DAY", sqlExecutionContext);
-        });
+        assertMemoryLeak(() -> compiler.compile("create table xx (s symbol, k timestamp)" +
+                ", index(s capacity 256) timestamp(k) partition by DAY", sqlExecutionContext));
 
         assertSampleByIndexQuery("k\ts\tlat\tlon\n" +
                         "1970-01-01T20:50:00.000000Z\ta\t1970-01-01T20:50:00.000000Z\t1970-01-01T21:30:00.000000Z\n" +
@@ -1129,7 +1126,6 @@ public class SampleByTest extends AbstractGriffinTest {
                         "-x as lon\n" +
                         "from long_sequence(17 * 1000L)\n" +
                         "), index(s) timestamp(k) partition by DAY",
-                "k",
                 true);
     }
 
@@ -1244,10 +1240,8 @@ public class SampleByTest extends AbstractGriffinTest {
 
     @Test
     public void testIndexSampleLatestRestrictedByWhere() throws Exception {
-        assertMemoryLeak(() -> {
-            compiler.compile("create table xx (s symbol, k timestamp)" +
-                    ", index(s capacity 256) timestamp(k) partition by DAY", sqlExecutionContext);
-        });
+        assertMemoryLeak(() -> compiler.compile("create table xx (s symbol, k timestamp)" +
+                ", index(s capacity 256) timestamp(k) partition by DAY", sqlExecutionContext));
 
         assertSampleByIndexQuery("k\ts\tlat\tlon\n" +
                         "1970-01-01T05:01:00.000000Z\ta\t1970-01-01T05:01:00.000000Z\t1970-01-01T05:29:00.000000Z\n",
@@ -5382,16 +5376,16 @@ public class SampleByTest extends AbstractGriffinTest {
     }
 
     private void assertSampleByIndexQuery(String expected, String query, String insert) throws Exception {
-        assertSampleByIndexQuery(expected, query, insert, "k", false);
+        assertSampleByIndexQuery(expected, query, insert, false);
     }
 
-    private void assertSampleByIndexQuery(String expected, String query, String insert, String timestamp, boolean expectSize) throws Exception {
+    private void assertSampleByIndexQuery(String expected, String query, String insert, boolean expectSize) throws Exception {
         String forceNoIndexQuery = query.replace("in ('b')", "in ('b', 'none')")
                 .replace("in ('a')", "in ('a', 'none')");
         assertQuery(expected,
                 forceNoIndexQuery,
                 insert,
-                timestamp,
+                "k",
                 false,
                 false,
                 expectSize);
@@ -5399,13 +5393,30 @@ public class SampleByTest extends AbstractGriffinTest {
         assertQuery(expected,
                 query,
                 null,
-                timestamp,
+                "k",
                 false,
                 false,
                 expectSize);
     }
 
     private void assertWithSymbolColumnTop(String expected, String query) throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("alter table xx drop column s", sqlExecutionContext);
+            compiler.compile("alter table xx add s SYMBOL INDEX", sqlExecutionContext);
+        });
 
+        String forceNoIndexQuery = query.replace("and s = null", " ");
+
+        assertQuery(expected,
+                forceNoIndexQuery,
+                null,
+                "k",
+                false);
+
+        assertQuery(expected,
+                query,
+                null,
+                "k",
+                false);
     }
 }

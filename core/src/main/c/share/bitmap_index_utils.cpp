@@ -122,14 +122,19 @@ inline int64_t linked_search_lower(const int64_t *indexBase,
     // To not degrade it to full scan, use miniumum increment of 32
     // This is same as
     // return branch_free_linked_search_lower(indexBase, dataBase, indexLength, value);
-    const auto step = std::max((int64_t)32, indexLength / estimatedCount);
-    auto searchStart = 0;
+    const auto step = std::max(32LL, indexLength / estimatedCount);
+    int64_t searchStart = 0LL;
     while (searchStart + step < indexLength && dataBase[*(indexBase + searchStart + step - 1)] < value) {
         searchStart += step;
     }
     return searchStart + branch_free_linked_search_lower(indexBase + searchStart, dataBase,
                                                          std::min(step, indexLength - searchStart), value);
 }
+
+constexpr int64_t FL_FIRST_ROWID_OUT_OFFSET = 0;
+constexpr int64_t FL_LAST_ROWID_OUT_OFFSET = 1;
+constexpr int64_t FL_TIMESTAMP_INDEX_OUT_OFFSET = 2;
+constexpr int64_t FL_ITEMS_PER_OUT_ARRAY = 4;
 
 int32_t findFirstLastInFrame0(
         int32_t outIndex
@@ -143,9 +148,7 @@ int32_t findFirstLastInFrame0(
         , const int64_t* samplePeriods
         , const int32_t samplePeriodCount
         , const int64_t sampleIndexOffset
-        , int64_t* timestampOut
-        , int64_t* firstRowIdOut
-        , int64_t* lastRowIdOut
+        , int64_t* outputRowIds
         , const int32_t outSize
         ) {
     // This method searches Timestamp column (tsBase, rowLo, rowHi)
@@ -162,14 +165,14 @@ int32_t findFirstLastInFrame0(
     // periodStarts are noted as | at: 14, 37, 62, 87, 108
     // and indexes of 'a' are        : 0, 9, 19, 26, 62, 70, 90, 102
     // the search should find
-    // firstRowIdOut                 : 19, 62,  90
-    // lastRowIdOut                  : 26, 70, 102
-    // timestampOut                  :  0,  2,   3
+    // outputRowIds(    first)       : 19, 62,  90
+    // outputRowIds(     last)       : 26, 70, 102
+    // outputRowIds(timestamp)       :  0,  2,   3
     // Output in timestampOut contains indexes of the periods found
     // Last value of output buffers reserved for positions to resume the search
-    // firstRowIdOut:   7 ( index position                  )
-    // lastRowIdOut:  108 ( timestamp column position       )
-    // timestampOut:    4 ( last processed period end index )
+    // outputRowIds[n + 0] :   7 ( index position                  )
+    // outputRowIds[n + 1] :  108 ( timestamp column position       )
+    // outputRowIds[n + 2] :    4 ( last processed period end index )
     int32_t periodIndex = 0;
     int64_t sampleStart;
     bool firstRowUpdated = false;
@@ -180,23 +183,26 @@ int32_t findFirstLastInFrame0(
     const int64_t* tsHi = tsBase + rowIdHi;
     const int64_t maxTs = *(tsHi - 1);
 
+    const int64_t maxOutLength = (outSize - 1) * FL_ITEMS_PER_OUT_ARRAY;
+    outIndex *= FL_ITEMS_PER_OUT_ARRAY;
+
     while (indexLo < indexHi
            && periodIndex < samplePeriodCount
            && tsLo < tsHi
-           && outIndex < outSize - 1) {
+           && outIndex < maxOutLength) {
 
         sampleStart = samplePeriods[periodIndex];
         indexLo += linked_search_lower(indexLo, tsBase, indexHi - indexLo, samplePeriodCount - periodIndex,
-                                                   std::min(maxTs + 1, sampleStart));
+                                       std::min(maxTs + 1, sampleStart));
 
         // Set last value as previous value to the found one
         if (outIndex > 0
-            && timestampOut[outIndex - 1] == periodIndex + sampleIndexOffset - 1 // prev out row is for period - 1
+            && outputRowIds[outIndex - FL_ITEMS_PER_OUT_ARRAY + FL_TIMESTAMP_INDEX_OUT_OFFSET] == periodIndex + sampleIndexOffset - 1 // prev out row is for period - 1
             && indexLo - indexBase > 0
-            ) {
+                ) {
             int64_t prevLastRowId = *(indexLo - 1);
-            lastRowIdOut[outIndex - 1] = prevLastRowId - frameBaseOffset;
-            firstRowUpdated |= outIndex == 1;
+            outputRowIds[outIndex - FL_ITEMS_PER_OUT_ARRAY + FL_LAST_ROWID_OUT_OFFSET] = prevLastRowId - frameBaseOffset;
+            firstRowUpdated |= outIndex == FL_ITEMS_PER_OUT_ARRAY;
         }
 
         if (indexLo == indexHi || sampleStart > maxTs || periodIndex > samplePeriodCount - 2) {
@@ -205,15 +211,15 @@ int32_t findFirstLastInFrame0(
 
         int64_t indexTs = tsBase[*indexLo];
         int64_t sampleEnd = (periodIndex + 1) < samplePeriodCount ? samplePeriods[periodIndex + 1] :
-                std::numeric_limits<int64_t>::max();
+                            std::numeric_limits<int64_t>::max();
         if (indexTs >= sampleEnd) {
             // indexTs is beyond sampling period. Find the sampling period the indexTs is in.
             // branch_free_search_lower returns insert position of the value
             // We need the index of the first value less or equal to indexTs
             // This is the same as searching of (indexTs + 1) and getting previous index
-            periodIndex += (int32_t)branch_free_search_lower(samplePeriods + periodIndex,
-                                                    samplePeriodCount - periodIndex,
-                                                 indexTs + 1) - 1;
+            periodIndex += (int32_t) branch_free_search_lower(samplePeriods + periodIndex,
+                                                              samplePeriodCount - periodIndex,
+                                                              indexTs + 1) - 1;
             continue;
         }
 
@@ -225,19 +231,21 @@ int32_t findFirstLastInFrame0(
             // abort the search and return results
             break;
         }
-        lastRowIdOut[outIndex] = firstRowIdOut[outIndex] = *indexLo - frameBaseOffset;
-        timestampOut[outIndex] = sampleIndexOffset + periodIndex;
-        outIndex++;
+        outputRowIds[outIndex + FL_LAST_ROWID_OUT_OFFSET] = outputRowIds[outIndex + FL_FIRST_ROWID_OUT_OFFSET]
+                = *indexLo - frameBaseOffset;
+        outputRowIds[outIndex + FL_TIMESTAMP_INDEX_OUT_OFFSET] = sampleIndexOffset + periodIndex;
+        outIndex += FL_ITEMS_PER_OUT_ARRAY;
         periodIndex++;
     }
 
     // Save additional values in out buffers Java expects to find
-    // Next timestamp to start from
-    timestampOut[outIndex] = sampleIndexOffset + std::min(periodIndex, samplePeriodCount - 1);
     // Next indexPosition
-    firstRowIdOut[outIndex] = indexLo - indexBase;
+    outputRowIds[outIndex + FL_FIRST_ROWID_OUT_OFFSET] = indexLo - indexBase;
     // Next rowIdLo
-    lastRowIdOut[outIndex] = tsLo - tsBase;
+    outputRowIds[outIndex + FL_LAST_ROWID_OUT_OFFSET] = tsLo - tsBase;
+    // Next timestamp to start from
+    outputRowIds[outIndex + FL_TIMESTAMP_INDEX_OUT_OFFSET] = sampleIndexOffset + std::min(periodIndex, samplePeriodCount - 1);
+    outIndex /= FL_ITEMS_PER_OUT_ARRAY;
     return firstRowUpdated ? -outIndex : outIndex;
 }
 
@@ -250,9 +258,7 @@ int32_t findFirstLastInFrameNoFilter0(
         , const int64_t* samplePeriods
         , const int32_t samplePeriodCount
         , const int64_t sampleIndexOffset
-        , int64_t* timestampOut
-        , int64_t* firstRowIdOut
-        , int64_t* lastRowIdOut
+        , int64_t* outputRowIds
         , const int32_t outSize
 ) {
     // This method is the same as findFirstLastInFrame0
@@ -268,9 +274,12 @@ int32_t findFirstLastInFrameNoFilter0(
     const int64_t* tsHi = tsBase + rowIdHi;
     const int64_t maxTs = *(tsHi - 1);
 
+    outIndex *= FL_ITEMS_PER_OUT_ARRAY;
+    const int64_t maxOutLength = (outSize - 1) * FL_ITEMS_PER_OUT_ARRAY;
+
     while (periodIndex < samplePeriodCount
            && tsLo < tsHi
-           && outIndex < outSize - 1) {
+           && outIndex < maxOutLength) {
 
         int64_t sampleStart = samplePeriods[periodIndex];
         tsLo += branch_free_search_lower(tsLo, tsHi - tsLo,
@@ -278,12 +287,12 @@ int32_t findFirstLastInFrameNoFilter0(
 
         // Set last value as previous value to the found one
         if (outIndex > 0
-            && timestampOut[outIndex - 1] == periodIndex + sampleIndexOffset - 1 // prev out row is for period - 1
+            && outputRowIds[outIndex - FL_ITEMS_PER_OUT_ARRAY + FL_TIMESTAMP_INDEX_OUT_OFFSET] == periodIndex + sampleIndexOffset - 1 // prev out row is for period - 1
             && tsLo > tsStart
             ) {
             int64_t prevLastRowId = tsLo - tsBase - 1;
-            lastRowIdOut[outIndex - 1] = prevLastRowId - frameBaseOffset;
-            firstRowUpdated |= outIndex == 1;
+            outputRowIds[outIndex - FL_ITEMS_PER_OUT_ARRAY + FL_LAST_ROWID_OUT_OFFSET] = prevLastRowId - frameBaseOffset;
+            firstRowUpdated |= outIndex == FL_ITEMS_PER_OUT_ARRAY;
         }
 
         if (sampleStart > maxTs || periodIndex > samplePeriodCount - 2) {
@@ -309,17 +318,19 @@ int32_t findFirstLastInFrameNoFilter0(
             // abort the search and return results
             break;
         }
-        lastRowIdOut[outIndex] = firstRowIdOut[outIndex] = (tsLo - tsBase) - frameBaseOffset;
-        timestampOut[outIndex] = sampleIndexOffset + periodIndex;
-        outIndex++;
+        outputRowIds[outIndex + FL_LAST_ROWID_OUT_OFFSET] = outputRowIds[outIndex + FL_FIRST_ROWID_OUT_OFFSET]
+                = (tsLo - tsBase) - frameBaseOffset;
+        outputRowIds[outIndex + FL_TIMESTAMP_INDEX_OUT_OFFSET] = sampleIndexOffset + periodIndex;
+        outIndex += FL_ITEMS_PER_OUT_ARRAY;
         periodIndex++;
     }
 
     // Save additional values in out buffers Java expects to find
     // Next timestamp to start from
-    timestampOut[outIndex] = sampleIndexOffset + std::min(periodIndex, samplePeriodCount - 1);
+    outputRowIds[outIndex + FL_TIMESTAMP_INDEX_OUT_OFFSET] = sampleIndexOffset + std::min(periodIndex, samplePeriodCount - 1);
     // Next rowIdLo
-    firstRowIdOut[outIndex] = lastRowIdOut[outIndex] = tsLo - tsBase + 1;
+    outputRowIds[outIndex + FL_FIRST_ROWID_OUT_OFFSET] = outputRowIds[outIndex + FL_LAST_ROWID_OUT_OFFSET] = tsLo - tsBase + 1;
+    outIndex /= FL_ITEMS_PER_OUT_ARRAY;
     return firstRowUpdated ? -outIndex : outIndex;
 }
 
@@ -354,9 +365,7 @@ Java_io_questdb_std_BitmapIndexUtilsNative_findFirstLastInFrame0(JNIEnv *env, jc
         , jlong samplePeriodsAddress
         , jint samplePeriodCount
         , jlong samplePeriodIndexOffset
-        , jlong timestampOutAddress
         , jlong firstRowIdOutAddress
-        , jlong lastRowIdOutAddress
         , jint outSize) {
     return findFirstLastInFrame0(
             outIndex
@@ -370,9 +379,7 @@ Java_io_questdb_std_BitmapIndexUtilsNative_findFirstLastInFrame0(JNIEnv *env, jc
             , reinterpret_cast<int64_t *>(samplePeriodsAddress)
             , samplePeriodCount
             , samplePeriodIndexOffset
-            , reinterpret_cast<int64_t *>(timestampOutAddress)
             , reinterpret_cast<int64_t *>(firstRowIdOutAddress)
-            , reinterpret_cast<int64_t *>(lastRowIdOutAddress)
             , outSize
     );
 }
@@ -387,9 +394,7 @@ Java_io_questdb_std_BitmapIndexUtilsNative_findFirstLastInFrameNoFilter0(JNIEnv 
         , jlong samplePeriodsAddress
         , jint samplePeriodCount
         , jlong samplePeriodIndexOffset
-        , jlong timestampOutAddress
         , jlong firstRowIdOutAddress
-        , jlong lastRowIdOutAddress
         , jint outSize) {
     return findFirstLastInFrameNoFilter0(
             outIndex
@@ -400,9 +405,7 @@ Java_io_questdb_std_BitmapIndexUtilsNative_findFirstLastInFrameNoFilter0(JNIEnv 
             , reinterpret_cast<int64_t *>(samplePeriodsAddress)
             , samplePeriodCount
             , samplePeriodIndexOffset
-            , reinterpret_cast<int64_t *>(timestampOutAddress)
             , reinterpret_cast<int64_t *>(firstRowIdOutAddress)
-            , reinterpret_cast<int64_t *>(lastRowIdOutAddress)
             , outSize
     );
 }
