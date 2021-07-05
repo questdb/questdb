@@ -22,33 +22,29 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.text.types;
+package io.questdb.griffin.engine.functions.cast;
 
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.TableWriter;
-import io.questdb.griffin.SqlKeywords;
-import io.questdb.std.Numbers;
-import io.questdb.std.str.DirectByteCharSequence;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.sql.Function;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.constants.Constants;
+import io.questdb.std.IntList;
+import io.questdb.std.ObjList;
 
-public final class FloatAdapter extends AbstractTypeAdapter {
-
-    public static final FloatAdapter INSTANCE = new FloatAdapter();
-
-    private FloatAdapter() {
+public class CastNullFunctionFactory implements FunctionFactory {
+    @Override
+    public String getSignature() {
+        return "cast(oV)";
     }
 
     @Override
-    public int getType() {
-        return ColumnType.FLOAT;
-    }
-
-    @Override
-    public boolean probe(CharSequence text) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void write(TableWriter.Row row, int column, DirectByteCharSequence value) throws Exception {
-        row.putFloat(column, SqlKeywords.isNullKeyword(value) ? Float.NaN : Numbers.parseFloat(value));
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        if (args.size() == 2) {
+            int castTo = args.getQuick(1).getType();
+            return Constants.getNullConstant(castTo);
+        }
+        throw SqlException.$(position, "cast accepts 2 arguments");
     }
 }

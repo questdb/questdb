@@ -84,6 +84,31 @@ public class CoalesceFunctionFactoryTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testLong2ArgsWithNulls() throws Exception {
+        assertQuery(
+                "c1\tc2\ta\tb\tx\n" +
+                        "3\t3\tNaN\t3\t1\n" +
+                        "NaN\tNaN\tNaN\tNaN\tNaN\n" +
+                        "6\t6\t6\tNaN\t3\n" +
+                        "12\t12\tNaN\t12\tNaN\n" +
+                        "5\tNaN\tNaN\tNaN\t5\n" +
+                        "12\t12\t12\tNaN\tNaN\n",
+                "select coalesce(b, a, x) c1, coalesce(b, a) c2, a, b, x\n" +
+                        "from alex",
+                "create table alex as (" +
+                        "select CASE WHEN x % 2 = 0 THEN NULL ELSE x END as x," +
+                        " CASE WHEN x % 3 = 0 THEN x * 2 ELSE NULL END as a," +
+                        " CASE WHEN x % 3 = 1 THEN x * 3 ELSE NULL END as b" +
+                        " from long_sequence(6)" +
+                        ")",
+                null,
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
     public void testIntArgs() throws Exception {
         assertQuery(
                 "c1\tc2\ta\tb\tx\n" +

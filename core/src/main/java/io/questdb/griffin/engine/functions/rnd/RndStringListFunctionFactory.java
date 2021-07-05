@@ -63,7 +63,7 @@ public class RndStringListFunctionFactory implements FunctionFactory {
         for (int i = 0, n = args.size(); i < n; i++) {
             final Function f = args.getQuick(i);
             if (f.isConstant()) {
-                if (f.getType() == ColumnType.STRING) {
+                if (f.getType() == ColumnType.STRING || f.getType() == ColumnType.NULL) {
                     symbols.add(Chars.toString(f.getStr(null)));
                     continue;
                 }

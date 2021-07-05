@@ -219,6 +219,22 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTimestampFollowedByIntrinsicOperatorWithNull() throws SqlException{
+        modelOf("timestamp = null");
+        modelOf("timestamp != null");
+        modelOf("timestamp in (null)");
+        modelOf("timestamp in (null, null)");
+        modelOf("timestamp not in (null)");
+        modelOf("timestamp not in (null, null)");
+        modelOf("timestamp >= null");
+        modelOf("timestamp > null");
+        modelOf("timestamp <= null");
+        modelOf("timestamp < null");
+        modelOf("timestamp between null and null");
+        modelOf("timestamp not between null and null");
+    }
+
+    @Test
     public void testBadPeriodInInterval() {
         try {
             modelOf("timestamp = '2015-02-23T10:00:55.000Z;30m;x;5'");
