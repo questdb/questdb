@@ -542,6 +542,32 @@ public class SampleByTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testIndexSampleBySameTimePoints() throws Exception {
+        assertQuery("k\ts\tlat\tlon\n" +
+                        "1970-01-01T00:00:00.000000Z\ta\t1\t58\n" +
+                        "1970-01-01T01:00:00.000000Z\ta\t63\t116\n" +
+                        "1970-01-01T02:00:00.000000Z\ta\t126\t178\n" +
+                        "1970-01-01T03:00:00.000000Z\ta\t184\t238\n" +
+                        "1970-01-01T04:00:00.000000Z\ta\t240\t299\n",
+                "select k, s, first(lat) lat, last(lat) lon " +
+                        "from x " +
+                        "where k between '1970-01-01' and '1970-01-01T04:00' and s in ('a') " +
+                        "sample by 1h",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        "   x lat," +
+                        "   x lon," +
+                        "   rnd_symbol('a','b',null) s," +
+                        "   cast(((x / 60L) * 1000000L * 60L * 60L) as timestamp) k" +
+                        "   from" +
+                        "   long_sequence(25*60)" +
+                        "), index(s) timestamp(k) partition by DAY",
+                "k",
+                false);
+    }
+
+    @Test
     public void testIndexSampleBy2() throws Exception {
         assertQuery("k\ts\tlat\tlon\n",
                 "select k, s, first(lat) lat, last(lon) lon " +
@@ -873,16 +899,16 @@ public class SampleByTest extends AbstractGriffinTest {
             compiler.compile("alter table xx add s SYMBOL INDEX", sqlExecutionContext);
         });
 
-        TestUtils.assertSqlCursors( compiler,
+        TestUtils.assertSqlCursors(compiler,
                 sqlExecutionContext,
                 "select s, first(lat) lat, last(lon) lon " +
-                "from xx " +
-                "where k in '1970-01-01T00:00:00.000000Z;30m;5h;10'" +
-                "sample by 2h",
+                        "from xx " +
+                        "where k in '1970-01-01T00:00:00.000000Z;30m;5h;10'" +
+                        "sample by 2h",
                 "select s, first(lat) lat, last(lon) lon " +
-                "from xx " +
-                "where k in '1970-01-01T00:00:00.000000Z;30m;5h;10' and s = null " +
-                "sample by 2h",
+                        "from xx " +
+                        "where k in '1970-01-01T00:00:00.000000Z;30m;5h;10' and s = null " +
+                        "sample by 2h",
                 LOG);
     }
 
