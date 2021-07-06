@@ -26,7 +26,6 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.geohash.GeoHashNative;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntList;
 import io.questdb.std.Rows;
@@ -49,6 +48,18 @@ class LatestByAllIndexedFilteredRecordCursor extends LatestByAllIndexedRecordCur
     }
 
     @Override
+    public boolean hasNext() {
+        boolean result = false;
+        do {
+            long row = rows.get(aIndex++) - 1; // we added 1 on cpp side
+            recordA.jumpTo(Rows.toPartitionIndex(row), Rows.toLocalRowID(row));
+            result = filter.getBool(recordA);
+        } while (aIndex < aLimit && !result);
+
+        return aIndex < aLimit;
+    }
+
+    @Override
     public void close() {
         filter.close();
         super.close();
@@ -58,27 +69,5 @@ class LatestByAllIndexedFilteredRecordCursor extends LatestByAllIndexedRecordCur
     protected void buildTreeMap(SqlExecutionContext executionContext) {
         filter.init(this, executionContext);
         super.buildTreeMap(executionContext);
-    }
-
-    @Override
-    protected void postProcessRows() {
-        super.postProcessRows();
-
-        final long rowsCapacity = rows.getCapacity();
-        for (long r = indexShift; r < rowsCapacity; ++r) {
-            long row = rows.get(r) - 1;
-            recordA.jumpTo(Rows.toPartitionIndex(row), Rows.toLocalRowID(row));
-            if (!filter.getBool(recordA)) {
-                rows.set(r, 0); // clear row id
-            }
-        }
-
-        GeoHashNative.partitionBy(rows.getAddress(), rows.size(), 0);
-
-        while (rows.get(indexShift) <= 0) {
-            indexShift++;
-        }
-        aLimit = rows.size();
-        aIndex = indexShift;
     }
 }

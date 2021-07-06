@@ -26,7 +26,9 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.MessageBus;
 import io.questdb.cairo.BitmapIndexReader;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.DataFrame;
+import io.questdb.cairo.vm.ReadOnlyVirtualMemory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.geohash.GeoHashNative;
 import io.questdb.mp.RingQueue;
@@ -87,36 +89,52 @@ class LatestByAllIndexedRecordCursor extends AbstractRecordListCursor {
         final MessageBus bus = executionContext.getMessageBus();
         assert bus != null;
 
+        final long lb = System.nanoTime();
+
         final RingQueue<LatestByTask> queue = bus.getLatestByQueue();
         final Sequence pubSeq = bus.getLatestByPubSeq();
         final Sequence subSeq = bus.getLatestBySubSeq();
 
-        final int workerCount = executionContext.getWorkerCount();
         int keyCount = getSymbolTable(columnIndex).size() + 1;
-
-        long keyLo = 0;
-        long keyHi = keyCount;
-
         rows.extend(keyCount);
-        rows.setPos(rows.getCapacity());
-        rows.zero(0);
+        GeoHashNative.iota(rows.getAddress(), rows.getCapacity(), 0);
 
-        final long argumentsAddress = LatestByArguments.allocateMemoryArray(workerCount);
-        long rowCount = 0;
+        final int workerCount = executionContext.getWorkerCount();
+
+        final long chunkSize = (keyCount + workerCount - 1) / workerCount;
+        final int taskCount = (int)((keyCount + chunkSize - 1) / chunkSize);
+
+        final long argumentsAddress = LatestByArguments.allocateMemoryArray(taskCount);
+        for (long i = 0; i < taskCount; ++i) {
+            final long klo = i * chunkSize;
+            final long khi = Long.min(klo + chunkSize, keyCount);
+            final long argsAddress = argumentsAddress + i * LatestByArguments.MEMORY_SIZE;
+            LatestByArguments.setRowsAddress(argsAddress, rows.getAddress());
+            LatestByArguments.setRowsCapacity(argsAddress, rows.getCapacity());
+            LatestByArguments.setKeyLo(argsAddress, klo);
+            LatestByArguments.setKeyHi(argsAddress, khi);
+            LatestByArguments.setRowsSize(argsAddress, 0);
+        }
+
+        final int hashesLength = 8; //TODO: hardcoder max hash size for AB
+        final long prefixesAddress = prefixes.getAddress();
+        final long prefixesCount = prefixes.size();
+
+
         DataFrame frame;
         // frame metadata is based on TableReader, which is "full" metadata
         // this cursor works with subset of columns, which warrants column index remap
         int frameColumnIndex = columnIndexes.getQuick(columnIndex);
-        while ((frame = this.dataFrameCursor.next()) != null && rowCount < keyCount) {
+
+        final TableReader reader = this.dataFrameCursor.getTableReader();
+
+        long foundRowCount = 0;
+        while ((frame = this.dataFrameCursor.next()) != null && foundRowCount < keyCount) {
             doneLatch.reset();
             final BitmapIndexReader indexReader = frame.getBitmapIndexReader(frameColumnIndex, BitmapIndexReader.DIR_BACKWARD);
-            final long frameKeyCount = keyHi - keyLo;
-
-            final long chunkSize = (frameKeyCount + workerCount - 1) / workerCount;
-            final long taskCount = (frameKeyCount + chunkSize - 1) / chunkSize;
 
             final long rowLo = frame.getRowLo();
-            final long rowHi = frame.getRowHi() - 1;
+            final long rowHi = frame.getRowHi();// - 1;
 
             final long keyBaseAddress = indexReader.getKeyBaseAddress();
             final long keysMemorySize = indexReader.getKeyMemorySize();
@@ -126,21 +144,32 @@ class LatestByAllIndexedRecordCursor extends AbstractRecordListCursor {
             final long unIndexedNullCount = indexReader.getUnIndexedNullCount();
             final int partitionIndex = frame.getPartitionIndex();
 
+            long hashColumnAddress = 0;
+            if (hashColumnIndex > -1) {
+                final int columnBase = reader.getColumnBase(partitionIndex);
+                final int primaryColumnIndex = TableReader.getPrimaryColumnIndex(columnBase, hashColumnIndex);
+                final ReadOnlyVirtualMemory column = reader.getColumn(primaryColumnIndex);
+                hashColumnAddress = column.getPageAddress(0);
+            }
+
             int queuedCount = 0;
             for (long i = 0; i < taskCount; ++i) {
-                final long klo = i * chunkSize;
-                final long khi = Long.min(klo + chunkSize, frameKeyCount);
-
                 final long argsAddress = argumentsAddress + i * LatestByArguments.MEMORY_SIZE;
-                LatestByArguments.setRowsAddress(argsAddress, rows.getAddress());
-                LatestByArguments.setRowsCapacity(argsAddress, rows.getCapacity());
-                LatestByArguments.setKeyLo(argsAddress, klo);
-                LatestByArguments.setKeyHi(argsAddress, khi);
-                LatestByArguments.setRowsSize(argsAddress, rows.size());
+                final long found = LatestByArguments.getRowsSize(argsAddress);
+                final long keyHi = LatestByArguments.getKeyHi(argsAddress);
+                final long keyLo = LatestByArguments.getKeyLo(argsAddress);
+
+                // Skip range if all keys found
+                if (found >= keyHi - keyLo) {
+                    continue;
+                }
+                // Update hash column address with current frame value
+                LatestByArguments.setHashesAddress(argsAddress, hashColumnAddress);
 
                 final long seq = pubSeq.next();
+
                 if (seq < 0) {
-                    BitmapIndexUtilsNative.latestScanBackward(
+                    GeoHashNative.latesByAndFilterPrefix(
                             keyBaseAddress,
                             keysMemorySize,
                             valueBaseAddress,
@@ -150,7 +179,11 @@ class LatestByAllIndexedRecordCursor extends AbstractRecordListCursor {
                             rowHi,
                             rowLo,
                             partitionIndex,
-                            valueBlockCapacity
+                            valueBlockCapacity,
+                            hashColumnAddress,
+                            hashesLength,
+                            prefixesAddress,
+                            prefixesCount
                     );
                 } else {
                     queue.get(seq).of(
@@ -164,6 +197,10 @@ class LatestByAllIndexedRecordCursor extends AbstractRecordListCursor {
                             rowLo,
                             partitionIndex,
                             valueBlockCapacity,
+                            hashColumnAddress,
+                            hashesLength,
+                            prefixesAddress,
+                            prefixesCount,
                             doneLatch
                     );
                     pubSeq.done(seq);
@@ -183,69 +220,18 @@ class LatestByAllIndexedRecordCursor extends AbstractRecordListCursor {
 
             doneLatch.await(queuedCount);
 
+            foundRowCount = 0; // Reset found counter
             for (int i = 0; i < taskCount; i++) {
-                final long addr = argumentsAddress + i * LatestByArguments.MEMORY_SIZE;
-                rowCount += LatestByArguments.getRowsSize(addr);
-                keyLo = Long.min(keyLo, LatestByArguments.getKeyLo(addr));
-                keyHi = Long.max(keyHi, LatestByArguments.getKeyHi(addr) + 1);
+                final long address = argumentsAddress + i * LatestByArguments.MEMORY_SIZE;
+                foundRowCount += LatestByArguments.getRowsSize(address);
             }
         }
-        LatestByArguments.releaseMemoryArray(argumentsAddress, workerCount);
-        postProcessRows();
-    }
+        final long rowCount = GeoHashNative.slideFoundBlocks(argumentsAddress, taskCount);
+        LatestByArguments.releaseMemoryArray(argumentsAddress, taskCount);
+        Vect.sortULongAscInPlace(rows.getAddress(), rowCount);
 
-    protected void postProcessRows() {
-
-        final long rowsCapacity = rows.getCapacity();
-        rows.setPos(rowsCapacity);
-
-        // we have to sort rows because multiple symbols
-        // are liable to be looked up out of order
-        rows.sortAsUnsigned();
-
-        //skip "holes"
-        indexShift = 0;
-        while (rows.get(indexShift) <= 0) {
-            indexShift++;
-        }
-
-        if (hashColumnIndex != -1) {
-            hashes.extend(rows.size() - indexShift);
-            hashes.setPos(hashes.getCapacity());
-
-            final long hashesAddress = hashes.getAddress();
-            for (long r = indexShift, sz = rows.size(); r < sz; ++r) {
-                long row = rows.get(r) - 1;
-                recordA.jumpTo(Rows.toPartitionIndex(row), Rows.toLocalRowID(row));
-                final long value = recordA.getLong(hashColumnIndex);
-                Unsafe.getUnsafe().putLong(hashesAddress + (r - indexShift) * Long.BYTES, value);
-            }
-
-
-            final long rowsAddress = rows.getAddress() + indexShift * Long.BYTES;
-            final long hashesCount = hashes.size();
-            final int hashesLength = 8; //TODO: get real size. meta?
-            final long prefixesAddress = prefixes.getAddress();
-            final long prefixesCount = prefixes.size();
-
-            GeoHashNative.filterWithPrefix(
-                    hashesAddress,
-                    rowsAddress,
-                    hashesCount,
-                    hashesLength,
-                    prefixesAddress,
-                    prefixesCount
-            );
-
-//        GeoHashNative.partitionBy(rows.getAddress(), rows.size(), 0);
-
-            //skip "holes" again
-            while (rows.get(indexShift) <= 0) {
-                indexShift++;
-            }
-        }
-
-        aLimit = rows.size();
+        System.out.println("lb: " + (System.nanoTime() - lb)/1000000);
+        aLimit = rowCount;
         aIndex = indexShift;
     }
 }

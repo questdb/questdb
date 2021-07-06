@@ -220,7 +220,7 @@ else ()
                 "$<$<CONFIG:DEBUG>:${DEBUG_OPTIONS}>"
                 "$<$<CONFIG:RELEASE>:${RELEASE_OPTIONS}>")
     endif (WIN32)
-    target_compile_options(questdb PRIVATE "-lrt;-m64"
+    target_compile_options(questdb PRIVATE "-m64"
             "$<$<CONFIG:DEBUG>:${DEBUG_OPTIONS}>"
             "$<$<CONFIG:RELEASE>:${RELEASE_OPTIONS}>")
 

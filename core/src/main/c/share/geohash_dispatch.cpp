@@ -26,13 +26,35 @@
 #include "geohash_dispatch.h"
 #include <vector>
 
+constexpr int64_t to_local_row_id(int64_t row_id) { return row_id & 0xFFFFFFFFFFFL; }
+
 constexpr int64_t unpack_length(int64_t packed_hash) { return packed_hash >> 60; }
 
 constexpr int64_t unpack_hash(int64_t packed_hash) { return packed_hash & 0x0fffffffffffffffll; }
 
-constexpr int64_t bitmask(uint8_t count, uint8_t shift) {
-    return ((static_cast<int64_t>(1) << count) - 1) << shift;
+constexpr int64_t bitmask(uint8_t count, uint8_t shift) { return ((static_cast<int64_t>(1) << count) - 1) << shift; }
+
+void MULTI_VERSION_NAME (simd_iota)(int64_t *array, const int64_t array_size, const int64_t start) {
+    const int step = 8;
+    const int64_t limit = array_size - step + 1;
+
+    Vec8q init_vec(0, 1, 2, 3, 4, 5, 6, 7);
+    init_vec += start;
+
+    Vec8q step_vec(step);
+
+    int64_t i = 0;
+    for (; i < limit; i += step) {
+        init_vec.store(array + i);
+        init_vec += step_vec;
+    }
+    int64_t next = init_vec[7] + 1;
+    for (; i < array_size; ++i) {
+        array[i] = next;
+        ++next;
+    }
 }
+
 
 void MULTI_VERSION_NAME (filter_with_prefix)(
         const int64_t *hashes,
@@ -41,61 +63,48 @@ void MULTI_VERSION_NAME (filter_with_prefix)(
         const int32_t hash_length,
         const int64_t *prefixes,
         const int64_t prefixes_count
-        ) {
-
-    struct normalized {
-        int64_t hash;
-        int64_t mask;
-    };
-
-    std::vector<normalized> normalized_hashes;
-    normalized_hashes.reserve(prefixes_count);
-    for (size_t i = 0; i < prefixes_count; ++i) {
-        const int64_t hash = unpack_hash(prefixes[i]);
-        const int64_t nbits = unpack_length(prefixes[i]) * 5;
-        const int64_t shift = hash_length * 5 - nbits;
-        const int64_t norm = hash << shift;
-        const int64_t mask = bitmask(nbits, shift);
-        normalized_hashes.push_back(normalized{norm, mask});
-    }
-
+) {
     int64_t i = 0;
     const int step = 8;
     const int64_t limit = rows_count - step + 1;
     for (; i < limit; i += step) {
-        MM_PREFETCH_T0(hashes + i + 64);
         MM_PREFETCH_T0(rows + i + 64);
+        Vec8q offset;
+        offset.load(rows + i);
 
-        Vec8q current_hashes_vec;
-        current_hashes_vec.load(hashes + i);
+        Vec8q current_hashes_vec(
+                hashes[to_local_row_id(offset[0] -1)],
+                hashes[to_local_row_id(offset[1] -1)],
+                hashes[to_local_row_id(offset[2] -1)],
+                hashes[to_local_row_id(offset[3] -1)],
+                hashes[to_local_row_id(offset[4] -1)],
+                hashes[to_local_row_id(offset[5] -1)],
+                hashes[to_local_row_id(offset[6] -1)],
+                hashes[to_local_row_id(offset[7] -1)]);
 
         Vec8qb hit_mask(false);
-        for (size_t j = 0, sz = normalized_hashes.size(); j < sz; ++j) {
-            const int64_t hash = normalized_hashes[j].hash;
-            const int64_t mask = normalized_hashes[j].mask;
+        for (size_t j = 0, sz = prefixes_count; j < sz; j+=2) {
+            const int64_t hash = prefixes[j];
+            const int64_t mask = prefixes[j + 1];
             Vec8q target_hash(hash); // broadcast hash
             Vec8q target_mask(mask); // broadcast mask
             hit_mask |= (current_hashes_vec & target_mask) == target_hash;
 
         }
-
-        for (int k = 0; k < 8; ++k) {
-            const int64_t cv = rows[i + k];
-            rows[i + k] = hit_mask[k] ? cv : 0;
-        }
+        Vec8q bit_mask(hit_mask);
+        offset &= bit_mask;
+        offset.store(rows + i);
     }
 
     for (; i < rows_count; ++i) {
         const int64_t current_hash = hashes[i];
         bool hit = false;
-        for (size_t j = 0, sz = normalized_hashes.size(); j < sz; ++j) {
-            const int64_t hash = normalized_hashes[j].hash;
-            const int64_t mask = normalized_hashes[j].mask;
+        for (size_t j = 0, sz = prefixes_count; j < sz; j+=2) {
+            const int64_t hash = prefixes[j];
+            const int64_t mask = prefixes[j+1];
             hit |= (current_hash & mask) == hash;
         }
         const int64_t cv = rows[i];
         rows[i] = hit ? cv : 0;
     }
-
-    std::partition(rows, rows + rows_count, [=](int64_t n) { return n == 0; });
 }

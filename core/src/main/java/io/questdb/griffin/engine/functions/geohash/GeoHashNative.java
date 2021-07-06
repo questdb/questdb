@@ -110,6 +110,10 @@ public class GeoHashNative {
         return new String(chars);
     }
 
+   public static long bitmask(int count , int shift) {
+        return ((1L << count) - 1) << shift;
+   }
+
     public static long toHash(long hashWithLength) {
         return hashWithLength & 0x0fffffffffffffffL;
     }
@@ -124,23 +128,39 @@ public class GeoHashNative {
 
     public static void fromStringToBits(final CharSequenceHashSet prefixes, final DirectLongList prefixesBits) {
         prefixesBits.clear();
-        //TODO: fix start position
+        // skip first (search column name) element
         for (int i = 1, sz = prefixes.size(); i < sz; i++) {
             final CharSequence prefix = prefixes.get(i);
             final long bits = fromString(prefix);
-            final long hash = toHashWithSize(bits, prefix.length());
-            prefixesBits.add(hash);
+            final int length = prefix.length();
+            final int shift = 8*5 - length*5;
+            final long norm = bits << shift;
+            final long mask = bitmask(length*5, shift);
+
+            prefixesBits.add(norm);
+            prefixesBits.add(mask);
         }
     }
 
-    public static native void filterWithPrefix(
+    public static native void latesByAndFilterPrefix(
+            long keysMemory,
+            long keysMemorySize,
+            long valuesMemory,
+            long valuesMemorySize,
+            long argsMemory,
+            long unIndexedNullCount,
+            long maxValue,
+            long minValue,
+            int partitionIndex,
+            int blockValueCountMod,
             long hashesAddress,
-            long rowsAddress,
-            long rowsCount,
             int hashLength,
             long prefixesAddress,
             long prefixesCount
     );
 
-    public static native void partitionBy(long pLongData, long count, long value);
+    public static native long slideFoundBlocks(long argsAddress, long argsCount);
+
+    public static native long iota(long address, long size, long init);
+
 }
