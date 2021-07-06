@@ -36,6 +36,17 @@ constexpr int64_t bitmask(uint8_t count, uint8_t shift) { return ((static_cast<i
 
 void MULTI_VERSION_NAME (simd_iota)(int64_t *array, const int64_t array_size, const int64_t start) {
     const int step = 8;
+    int64_t i = 0;
+
+    if (array_size < 8) {
+        int64_t  next = start;
+        for (; i < array_size; ++i) {
+            array[i] = next;
+            ++next;
+        }
+        return;
+    }
+
     const int64_t limit = array_size - step + 1;
 
     Vec8q init_vec(0, 1, 2, 3, 4, 5, 6, 7);
@@ -43,7 +54,6 @@ void MULTI_VERSION_NAME (simd_iota)(int64_t *array, const int64_t array_size, co
 
     Vec8q step_vec(step);
 
-    int64_t i = 0;
     for (; i < limit; i += step) {
         init_vec.store(array + i);
         init_vec += step_vec;
