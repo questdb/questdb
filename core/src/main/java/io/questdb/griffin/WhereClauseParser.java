@@ -1129,7 +1129,7 @@ final class WhereClauseParser implements Mutable {
     }
 
     public static boolean isWithinKeyword(CharSequence tok) {
-        if (tok.length() != 6) {
+        if (tok == null || tok.length() != 6) {
             return false;
         }
 
