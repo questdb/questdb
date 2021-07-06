@@ -34,33 +34,22 @@ constexpr int64_t unpack_hash(int64_t packed_hash) { return packed_hash & 0x0fff
 constexpr int64_t bitmask(uint8_t count, uint8_t shift) { return ((static_cast<int64_t>(1) << count) - 1) << shift; }
 
 void MULTI_VERSION_NAME (simd_iota)(int64_t *array, const int64_t array_size, const int64_t start) {
-    const int step = 8;
+    const int64_t step = 8;
     int64_t i = 0;
-
-    if (array_size < 8) {
-        int64_t  next = start;
-        for (; i < array_size; ++i) {
-            array[i] = next;
-            ++next;
-        }
-        return;
-    }
-
-    const int64_t limit = array_size - step + 1;
 
     Vec8q init_vec(0, 1, 2, 3, 4, 5, 6, 7);
     init_vec += start;
 
     Vec8q step_vec(step);
 
-    for (; i < limit; i += step) {
+    const int64_t limit = array_size - step + 1;
+    for (; i < limit; i += step, init_vec += step_vec) {
         init_vec.store(array + i);
-        init_vec += step_vec;
     }
-    int64_t next = init_vec[7] + 1;
+
+    int64_t next = i < step ? 0 : init_vec[step - 1]  - step + 1;
     for (; i < array_size; ++i) {
-        array[i] = next;
-        ++next;
+        array[i] = next++;
     }
 }
 
