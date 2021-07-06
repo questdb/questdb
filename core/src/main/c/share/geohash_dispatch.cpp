@@ -24,7 +24,6 @@
 
 #include "util.h"
 #include "geohash_dispatch.h"
-#include <vector>
 
 constexpr int64_t to_local_row_id(int64_t row_id) { return row_id & 0xFFFFFFFFFFFL; }
 
