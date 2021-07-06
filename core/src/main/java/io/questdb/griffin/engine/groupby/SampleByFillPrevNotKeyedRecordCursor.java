@@ -54,35 +54,33 @@ public class SampleByFillPrevNotKeyedRecordCursor extends AbstractVirtualRecordS
         // for timestamp gaps
 
         // what is the next timestamp we are expecting?
-        final long nextTimestamp = timestampSampler.nextTimestamp(sampleLocalEpoch);
+        long next = timestampSampler.nextTimestamp(localEpoch);
+        long expectedLocalEpoch = timestampSampler.nextTimestamp(sampleLocalEpoch);
 
         // is data timestamp ahead of next expected timestamp?
-        if (this.nextTimestamp > nextTimestamp) {
-            this.sampleLocalEpoch = nextTimestamp;
-            // reset iterator on map and stream contents
+        if(expectedLocalEpoch < localEpoch) {
+            this.sampleLocalEpoch = expectedLocalEpoch;
             return true;
         }
 
-        this.sampleLocalEpoch = getBaseRecordTimestamp();
+        // this is new timestamp value
+        this.sampleLocalEpoch = localEpoch;
 
         final int n = groupByFunctions.size();
-        for (int i = 0; i < n; i++) {
-            groupByFunctions.getQuick(i).computeFirst(simpleMapValue, baseRecord);
-        }
+        GroupByUtils.updateNew(groupByFunctions, n, simpleMapValue, baseRecord);
 
         while (base.hasNext()) {
             interruptor.checkInterrupted();
             long timestamp = getBaseRecordTimestamp();
-            if (sampleLocalEpoch == timestamp) {
-                for (int i = 0; i < n; i++) {
-                    groupByFunctions.getQuick(i).computeNext(simpleMapValue, baseRecord);
-                }
+            if (timestamp < next) {
+                GroupByUtils.updateExisting(groupByFunctions, n, simpleMapValue, baseRecord);
+                interruptor.checkInterrupted();
             } else {
                 // timestamp changed, make sure we keep the value of 'lastTimestamp'
                 // unchanged. Timestamp columns uses this variable
                 // When map is exhausted we would assign 'nextTimestamp' to 'lastTimestamp'
                 // and build another map
-                this.nextTimestamp = timestamp;
+                this.localEpoch = timestampSampler.round(timestamp);
                 GroupByUtils.toTop(groupByFunctions);
                 return true;
             }

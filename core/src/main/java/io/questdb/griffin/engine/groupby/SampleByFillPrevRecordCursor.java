@@ -68,21 +68,19 @@ class SampleByFillPrevRecordCursor extends AbstractVirtualRecordSampleByCursor {
             return false;
         }
 
-        // key map has been flushed
-        // before we build another one we need to check
-        // for timestamp gaps
-
         // what is the next timestamp we are expecting?
-        long nextTimestamp = timestampSampler.nextTimestamp(sampleLocalEpoch);
+        long next = timestampSampler.nextTimestamp(localEpoch);
+        long expectedLocalEpoch = timestampSampler.nextTimestamp(sampleLocalEpoch);
 
         // is data timestamp ahead of next expected timestamp?
-        if (this.nextTimestamp > nextTimestamp) {
-            this.sampleLocalEpoch = nextTimestamp;
+        if(expectedLocalEpoch < localEpoch) {
+            this.sampleLocalEpoch = expectedLocalEpoch;
             // reset iterator on map and stream contents
-            return map.getCursor().hasNext();
+            map.getCursor().hasNext();
+            return true;
         }
 
-        this.sampleLocalEpoch = this.nextTimestamp;
+        this.sampleLocalEpoch = localEpoch;
 
         // looks like we need to populate key map
 
@@ -90,21 +88,17 @@ class SampleByFillPrevRecordCursor extends AbstractVirtualRecordSampleByCursor {
         while (true) {
             interruptor.checkInterrupted();
             final long timestamp = getBaseRecordTimestamp();
-            if (sampleLocalEpoch == timestamp) {
+            if (timestamp < next) {
                 final MapKey key = map.withKey();
                 keyMapSink.copy(baseRecord, key);
                 final MapValue value = key.findValue();
                 assert value != null;
 
-                if (value.getLong(0) != timestamp) {
-                    value.putLong(0, timestamp);
-                    for (int i = 0; i < n; i++) {
-                        groupByFunctions.getQuick(i).computeFirst(value, baseRecord);
-                    }
+                if (value.getLong(0) != localEpoch) {
+                    value.putLong(0, localEpoch);
+                    GroupByUtils.updateNew(groupByFunctions, n, value, baseRecord);
                 } else {
-                    for (int i = 0; i < n; i++) {
-                        groupByFunctions.getQuick(i).computeNext(value, baseRecord);
-                    }
+                    GroupByUtils.updateExisting(groupByFunctions, n, value, baseRecord);
                 }
 
                 // carry on with the loop if we still have data
@@ -120,7 +114,7 @@ class SampleByFillPrevRecordCursor extends AbstractVirtualRecordSampleByCursor {
                 // unchanged. Timestamp columns uses this variable
                 // When map is exhausted we would assign 'nextTimestamp' to 'lastTimestamp'
                 // and build another map
-                this.nextTimestamp = timestamp;
+                this.localEpoch = timestampSampler.round(timestamp);
                 GroupByUtils.toTop(groupByFunctions);
             }
 

@@ -77,7 +77,7 @@ class SampleByFillNoneRecordCursor extends AbstractVirtualRecordSampleByCursor {
         // of first record in base cursor
         int n = groupByFunctions.size();
         do {
-            final long timestamp = baseRecord.getTimestamp(timestampIndex) + tzOffset;
+            final long timestamp = getBaseRecordTimestamp();
             if (timestamp < next) {
                 final MapKey key = map.withKey();
                 keyMapSink.copy(baseRecord, key);

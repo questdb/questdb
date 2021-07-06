@@ -49,7 +49,6 @@ public abstract class AbstractNoRecordSampleByCursor implements NoRandomAccessRe
     private final ObjList<Function> recordFunctions;
     protected Record baseRecord;
     protected long sampleLocalEpoch;
-    protected long nextTimestamp;
     protected RecordCursor base;
     protected SqlExecutionInterruptor interruptor;
     protected long tzOffset;
@@ -153,24 +152,25 @@ public abstract class AbstractNoRecordSampleByCursor implements NoRandomAccessRe
 
             this.fixedOffset = Numbers.decodeLowInt(val) * MINUTE_MICROS;
         } else {
-            fixedOffset = 0;
+            fixedOffset = Long.MIN_VALUE;
         }
 
-        if (tzOffset == 0 && fixedOffset == 0) {
+        if (tzOffset == 0 && fixedOffset == Long.MIN_VALUE) {
             // this is the default path, we align time intervals to the first observation
             timestampSampler.setStart(timestamp + tzOffset);
         } else if (fixedOffset > 0) {
-            timestampSampler.setStart(timestamp + tzOffset + this.fixedOffset - timestampSampler.getBucketSize());
+            timestampSampler.setStart(timestamp + tzOffset + this.fixedOffset);
         } else {
             timestampSampler.setStart(tzOffset);
         }
         this.topTzOffset = tzOffset;
         this.topLocalEpoch = this.localEpoch = timestampSampler.round(timestamp + tzOffset);
+        this.sampleLocalEpoch = localEpoch;
         interruptor = executionContext.getSqlExecutionInterruptor();
     }
 
     protected long getBaseRecordTimestamp() {
-        return baseRecord.getTimestamp(timestampIndex);
+        return baseRecord.getTimestamp(timestampIndex) + tzOffset;
     }
 
     protected class TimestampFunc extends TimestampFunction implements Function {

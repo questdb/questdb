@@ -80,18 +80,13 @@ public class SampleByFillValueNotKeyedRecordCursor extends AbstractSplitVirtualR
         int n = groupByFunctions.size();
 
         // initialize values
-        for (int i = 0; i < n; i++) {
-            interruptor.checkInterrupted();
-            groupByFunctions.getQuick(i).computeFirst(simpleMapValue, baseRecord);
-        }
+        GroupByUtils.updateNew(groupByFunctions, n, simpleMapValue, baseRecord);
 
         while (base.hasNext()) {
-            final long timestamp = baseRecord.getTimestamp(timestampIndex) + tzOffset;
+            final long timestamp = getBaseRecordTimestamp();
             if (timestamp < next) {
-                for (int i = 0; i < n; i++) {
-                    interruptor.checkInterrupted();
-                    groupByFunctions.getQuick(i).computeNext(simpleMapValue, baseRecord);
-                }
+                GroupByUtils.updateExisting(groupByFunctions, n, simpleMapValue, baseRecord);
+                interruptor.checkInterrupted();
             } else {
                 // timestamp changed, make sure we keep the value of 'lastTimestamp'
                 // unchanged. Timestamp columns uses this variable

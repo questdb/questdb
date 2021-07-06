@@ -242,7 +242,10 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
             // we have data in cursor, so we can grab first value
             final boolean good = baseCursor.hasNext();
             assert good;
-            long prevSample = sampler.round(baseRecord.getTimestamp(timestampIndex));
+            long timestamp = baseRecord.getTimestamp(timestampIndex);
+            sampler.setStart(timestamp);
+
+            long prevSample = sampler.round(timestamp);
             long loSample = prevSample; // the lowest timestamp value
             long hiSample;
 

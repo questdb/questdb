@@ -94,7 +94,7 @@ class SampleByFillValueRecordCursor extends AbstractSplitVirtualRecordSampleByCu
         int n = groupByFunctions.size();
         while (true) {
             interruptor.checkInterrupted();
-            final long timestamp = baseRecord.getTimestamp(timestampIndex) + tzOffset;
+            final long timestamp = getBaseRecordTimestamp();
             if (timestamp < next) {
                 final MapKey key = map.withKey();
                 keyMapSink.copy(baseRecord, key);
@@ -103,13 +103,9 @@ class SampleByFillValueRecordCursor extends AbstractSplitVirtualRecordSampleByCu
 
                 if (value.getLong(0) != localEpoch) {
                     value.putLong(0, localEpoch);
-                    for (int i = 0; i < n; i++) {
-                        groupByFunctions.getQuick(i).computeFirst(value, baseRecord);
-                    }
+                    GroupByUtils.updateNew(groupByFunctions, n, value, baseRecord);
                 } else {
-                    for (int i = 0; i < n; i++) {
-                        groupByFunctions.getQuick(i).computeNext(value, baseRecord);
-                    }
+                    GroupByUtils.updateExisting(groupByFunctions, n, value, baseRecord);
                 }
 
                 // carry on with the loop if we still have data

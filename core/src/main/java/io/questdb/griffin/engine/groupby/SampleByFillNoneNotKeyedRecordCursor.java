@@ -59,7 +59,7 @@ class SampleByFillNoneNotKeyedRecordCursor extends AbstractVirtualRecordSampleBy
         GroupByUtils.updateNew(groupByFunctions, n, simpleMapValue, baseRecord);
 
         while (base.hasNext()) {
-            long timestamp = baseRecord.getTimestamp(timestampIndex) + tzOffset;
+            long timestamp = getBaseRecordTimestamp();
             if (timestamp < next) {
                 GroupByUtils.updateExisting(groupByFunctions, n, simpleMapValue, baseRecord);
             } else {
