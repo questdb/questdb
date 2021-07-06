@@ -309,6 +309,55 @@ public class LineTcpServerTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFieldsReduced() throws Exception {
+        try (TableModel m = new TableModel(configuration, "weather", PartitionBy.DAY)) {
+            m.col("windspeed", ColumnType.DOUBLE)
+                    .timestamp("timestamp")
+                    .col("timetocycle", ColumnType.DOUBLE);
+            CairoTestUtils.createTableWithVersion(m, ColumnType.VERSION);
+        }
+
+        String lineData = "weather windspeed=1.0 631152015679140000\n" +
+                "weather windspeed=2.0 631152015988640000\n" +
+                "weather timetocycle=0.0,windspeed=3.0 631152016248640000\n" +
+                "weather windspeed=4.0 631163016248640000\n" +
+                "weather windspeed=5.0 642152016258640000\n";
+
+        runInContext(() -> {
+            send(lineData, "weather", true, false);
+
+            String expected = "windspeed\ttimestamp\ttimetocycle\n" +
+                    "1.0\t1990-01-01T00:00:15.679140Z\tNaN\n" +
+                    "2.0\t1990-01-01T00:00:15.988640Z\tNaN\n" +
+                    "3.0\t1990-01-01T00:00:16.248640Z\t0.0\n" +
+                    "4.0\t1990-01-01T03:03:36.248640Z\tNaN\n" +
+                    "5.0\t1990-05-08T07:33:36.258640Z\tNaN\n";
+            assertTable(expected, "weather");
+        });
+    }
+
+    @Test
+    public void testWindowsAccessDenied() throws Exception {
+        try (TableModel m = new TableModel(configuration, "table_a", PartitionBy.DAY)) {
+            m.timestamp("ReceiveTime")
+                    .col("SequenceNumber", ColumnType.SYMBOL).indexed(true, 256)
+                    .col("MessageType", ColumnType.SYMBOL).indexed(true, 256)
+                    .col("Length", ColumnType.INT);
+            CairoTestUtils.createTableWithVersion(m, ColumnType.VERSION);
+        }
+
+        String lineData = "table_a,MessageType=B,SequenceNumber=1 Length=92i,test=1.5 1465839830100400000\n";
+
+        runInContext(() -> {
+            send(lineData, "table_a", true, false);
+
+            String expected = "ReceiveTime\tSequenceNumber\tMessageType\tLength\ttest\n" +
+                    "2016-06-13T17:43:50.100400Z\t1\tB\t92\t1.5\n";
+            assertTable(expected, "table_a");
+        });
+    }
+
+    @Test
     public void testWriterAllLongs() throws Exception {
         currentMicros = 1;
         try (TableModel m = new TableModel(configuration, "messages", PartitionBy.MONTH)) {
