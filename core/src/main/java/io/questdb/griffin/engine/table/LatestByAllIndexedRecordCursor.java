@@ -89,8 +89,6 @@ class LatestByAllIndexedRecordCursor extends AbstractRecordListCursor {
         final MessageBus bus = executionContext.getMessageBus();
         assert bus != null;
 
-        final long lb = System.nanoTime();
-
         final RingQueue<LatestByTask> queue = bus.getLatestByQueue();
         final Sequence pubSeq = bus.getLatestByPubSeq();
         final Sequence subSeq = bus.getLatestBySubSeq();
@@ -116,7 +114,7 @@ class LatestByAllIndexedRecordCursor extends AbstractRecordListCursor {
             LatestByArguments.setRowsSize(argsAddress, 0);
         }
 
-        final int hashesLength = 8; //TODO: hardcoder max hash size for AB
+        final int hashesLength = 8; //TODO: max hash size for AB hardcoded
         final long prefixesAddress = prefixes.getAddress();
         final long prefixesCount = prefixes.size();
 
@@ -228,10 +226,13 @@ class LatestByAllIndexedRecordCursor extends AbstractRecordListCursor {
         }
         final long rowCount = GeoHashNative.slideFoundBlocks(argumentsAddress, taskCount);
         LatestByArguments.releaseMemoryArray(argumentsAddress, taskCount);
-        Vect.sortULongAscInPlace(rows.getAddress(), rowCount);
-
-        System.out.println("lb: " + (System.nanoTime() - lb)/1000000);
         aLimit = rowCount;
         aIndex = indexShift;
+        postProcessRows();
     }
+
+    protected void postProcessRows() {
+        Vect.sortULongAscInPlace(rows.getAddress(), aLimit);
+    }
+
 }

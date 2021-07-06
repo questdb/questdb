@@ -29,6 +29,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntList;
 import io.questdb.std.Rows;
+import io.questdb.std.Vect;
 import org.jetbrains.annotations.NotNull;
 
 class LatestByAllIndexedFilteredRecordCursor extends LatestByAllIndexedRecordCursor {
@@ -48,14 +49,6 @@ class LatestByAllIndexedFilteredRecordCursor extends LatestByAllIndexedRecordCur
     }
 
     @Override
-    public boolean hasNext() {
-        while(aIndex < aLimit && skip(aIndex)) {
-            ++aIndex;
-        }
-        return aIndex++ < aLimit;
-    }
-
-    @Override
     public void close() {
         filter.close();
         super.close();
@@ -67,9 +60,40 @@ class LatestByAllIndexedFilteredRecordCursor extends LatestByAllIndexedRecordCur
         super.buildTreeMap(executionContext);
     }
 
-    private boolean skip(long index) {
-        long row = rows.get(index) - 1; // we added 1 on cpp side
-        recordA.jumpTo(Rows.toPartitionIndex(row), Rows.toLocalRowID(row));
-        return !filter.getBool(recordA);
+    @Override
+    protected void postProcessRows() {
+        final long rowCount = aLimit;
+        rows.setPos(rowCount);
+
+        for (long r = 0; r < rowCount; ++r) {
+            long row = rows.get(r) - 1;
+            recordA.jumpTo(Rows.toPartitionIndex(row), Rows.toLocalRowID(row));
+            if (!filter.getBool(recordA)) {
+                rows.set(r, 0); // clear row id
+            }
+        }
+
+        Vect.sortULongAscInPlace(rows.getAddress(), rowCount);
+
+        while (rows.get(indexShift) <= 0) {
+            indexShift++;
+        }
+
+        aLimit = rowCount;
+        aIndex = indexShift;
     }
+
+//    @Override
+//    public boolean hasNext() {
+//        while(aIndex < aLimit && skip(aIndex)) {
+//            ++aIndex;
+//        }
+//        return aIndex++ < aLimit;
+//    }
+//    private boolean skip(long index) {
+//        long row = rows.get(index) - 1; // we added 1 on cpp side
+//        recordA.jumpTo(Rows.toPartitionIndex(row), Rows.toLocalRowID(row));
+//        return !filter.getBool(recordA);
+//    }
+
 }
