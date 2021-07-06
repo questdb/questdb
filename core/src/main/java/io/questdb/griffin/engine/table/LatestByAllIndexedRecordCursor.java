@@ -132,7 +132,7 @@ class LatestByAllIndexedRecordCursor extends AbstractRecordListCursor {
             final BitmapIndexReader indexReader = frame.getBitmapIndexReader(frameColumnIndex, BitmapIndexReader.DIR_BACKWARD);
 
             final long rowLo = frame.getRowLo();
-            final long rowHi = frame.getRowHi();// - 1;
+            final long rowHi = frame.getRowHi() - 1;
 
             final long keyBaseAddress = indexReader.getKeyBaseAddress();
             final long keysMemorySize = indexReader.getKeyMemorySize();
