@@ -24,23 +24,22 @@
 
 package io.questdb.griffin.engine.groupby;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.CairoException;
-import io.questdb.cairo.DefaultCairoConfiguration;
+import io.questdb.cairo.*;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.SingleSymbolFilter;
 import io.questdb.griffin.AbstractGriffinTest;
+import io.questdb.griffin.EmptyRecordMetadata;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
+import io.questdb.griffin.model.ExpressionNode;
+import io.questdb.griffin.model.QueryColumn;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.Chars;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.FilesFacadeImpl;
-import io.questdb.std.Rnd;
+import io.questdb.std.*;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -1397,6 +1396,66 @@ public class SampleByTest extends AbstractGriffinTest {
                         "cast(x as date) dt\n" +
                         "from\n" +
                         "long_sequence(100)");
+    }
+
+    @Test
+    public void testSampleByFirstLastRecordCursorFactoryInvalidColumns() {
+        try {
+            GenericRecordMetadata groupByMeta = new GenericRecordMetadata();
+            groupByMeta.add(new TableColumnMetadata("col1", ColumnType.STRING, false, 0, false, EmptyRecordMetadata.INSTANCE));
+
+            GenericRecordMetadata meta = new GenericRecordMetadata();
+            meta.add(new TableColumnMetadata("col1", ColumnType.LONG, false, 0, false, EmptyRecordMetadata.INSTANCE));
+
+            ObjList<QueryColumn> columns = new ObjList<>();
+            ExpressionNode first = ExpressionNode.FACTORY.newInstance().of(ColumnType.LONG, "first", 0, 0);
+            first.rhs = ExpressionNode.FACTORY.newInstance().of(ColumnType.LONG, "col1", 0, 0);
+            QueryColumn col = QueryColumn.FACTORY.newInstance().of("col1", first);
+            columns.add(col);
+
+            new SampleByFirstLastRecordCursorFactory(null, new MicroTimestampSampler(100L), groupByMeta, columns, meta, 0, getSymbolFilter(0, 0), -1);
+            Assert.fail();
+        } catch (SqlException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "first(), last() is not supported on data type");
+        }
+    }
+
+    @Test
+    public void testSampleByFirstLastRecordCursorFactoryInvalidNotFirstLast() {
+        try {
+            GenericRecordMetadata groupByMeta = new GenericRecordMetadata();
+            TableColumnMetadata column = new TableColumnMetadata("col1", ColumnType.LONG, false, 0, false, EmptyRecordMetadata.INSTANCE);
+            groupByMeta.add(column);
+
+            GenericRecordMetadata meta = new GenericRecordMetadata();
+            meta.add(column);
+
+            ObjList<QueryColumn> columns = new ObjList<>();
+            ExpressionNode first = ExpressionNode.FACTORY.newInstance().of(ColumnType.LONG, "min", 0, 0);
+            first.rhs = ExpressionNode.FACTORY.newInstance().of(ColumnType.LONG, "col1", 0, 0);
+            QueryColumn col = QueryColumn.FACTORY.newInstance().of("col1", first);
+            columns.add(col);
+
+            new SampleByFirstLastRecordCursorFactory(null, new MicroTimestampSampler(100L), groupByMeta, columns, meta, 0, getSymbolFilter(0, 0), -1);
+            Assert.fail();
+        } catch (SqlException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "expected first() or last() functions but got min");
+        }
+    }
+
+    @NotNull
+    private SingleSymbolFilter getSymbolFilter(final int col, final int key) {
+        return new SingleSymbolFilter() {
+            @Override
+            public int getColumnIndex() {
+                return col;
+            }
+
+            @Override
+            public int getSymbolFilterKey() {
+                return key;
+            }
+        };
     }
 
     @Test

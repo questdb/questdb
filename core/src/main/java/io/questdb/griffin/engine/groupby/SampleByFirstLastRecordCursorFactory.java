@@ -70,7 +70,8 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
 
         this.queryToFrameColumnMapping = new int[columns.size()];
         this.firstLastIndexByCol = new int[columns.size()];
-        this.crossFrameRow = new DirectLongList(columns.size()).setSize(columns.size());
+        this.crossFrameRow = new DirectLongList(columns.size());
+        this.crossFrameRow.setPos(columns.size());
 
         this.groupByMetadata = groupByMetadata;
         this.timestampIndex = timestampIndex;
@@ -81,8 +82,9 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
         this.maxSamplePeriodSize = this.pageSize * 4;
         this.timestampSampler = timestampSampler;
         int outSize = pageSize << ITEMS_PER_OUT_ARRAY_SHIFT;
-        this.rowIdOutAddress = new DirectLongList(outSize).setSize(outSize);
-        this.samplePeriodAddress = new DirectLongList(maxSamplePeriodSize).setSize(maxSamplePeriodSize);
+        this.rowIdOutAddress = new DirectLongList(outSize);
+        this.rowIdOutAddress.setPos(outSize);
+        this.samplePeriodAddress = new DirectLongList(pageSize);
         this.symbolFilter = symbolFilter;
         this.sampleByFirstLastRecordCursor = new SampleByFirstLastRecordCursor();
     }

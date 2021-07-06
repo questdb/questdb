@@ -25,7 +25,6 @@
 package io.questdb.griffin.engine.groupby;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.SymbolMapReader;
 import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
 
@@ -34,7 +33,7 @@ public final class LongNullUtils {
 
     static {
         long buffer = Unsafe.malloc(8);
-        for (int i = 0; i < LONG_NULLs.length; i++) {
+        for (int i = 0, n = LONG_NULLs.length; i < n; i++) {
             switch (i) {
                 case ColumnType.LONG:
                 case ColumnType.TIMESTAMP:
@@ -43,6 +42,7 @@ public final class LongNullUtils {
                     break;
 
                 case ColumnType.INT:
+                case ColumnType.SYMBOL:
                     LONG_NULLs[i] = Numbers.INT_NaN;
                     break;
 
@@ -56,10 +56,6 @@ public final class LongNullUtils {
                     Unsafe.getUnsafe().putLong(buffer, 0L);
                     Unsafe.getUnsafe().putDouble(buffer, Double.NaN);
                     LONG_NULLs[i] = Unsafe.getUnsafe().getLong(buffer);
-                    break;
-
-                case ColumnType.SYMBOL:
-                    LONG_NULLs[i] = SymbolMapReader.VALUE_IS_NULL;
                     break;
 
                 default:
