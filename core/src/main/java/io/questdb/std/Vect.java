@@ -24,8 +24,6 @@
 
 package io.questdb.std;
 
-import io.questdb.griffin.engine.groupby.TimestampSampler;
-
 public final class Vect {
 
     public static native double avgDouble(long pDouble, long count);
@@ -55,79 +53,6 @@ public final class Vect {
     }
 
     public static native void copyFromTimestampIndex(long pIndex, long indexLo, long indexHi, long pTs);
-
-    public static long findFirstLastInFrame(
-            long outIndex,
-            long sampleByStart,
-            long rowIdLo,
-            long rowIdHi,
-            long timestampColAddress,
-            TimestampSampler timestampSampler,
-            long symbolIndexAddress,
-            long symbolIndexSize,
-            long indexFrameIndex,
-            long timestampOutAddress,
-            long firstRowIdOutAddress,
-            long lastRowIdOutAddress,
-            long outBuffersSize
-    ) {
-        if (indexFrameIndex < symbolIndexSize) {
-            // Sample by window start, end
-            long sampleByEnd = timestampSampler.nextTimestamp(sampleByStart);
-            long maxOutRows = outBuffersSize - 1;
-
-            long iIndex = indexFrameIndex;
-            long indexRowId = 0;
-            boolean firstRowUpdated = false;
-            for (; iIndex < symbolIndexSize; iIndex++) {
-                indexRowId = Unsafe.getUnsafe().getLong(symbolIndexAddress + iIndex * Long.BYTES);
-                if (indexRowId >= rowIdLo && indexRowId < rowIdHi) {
-                    long indexRowTimestamp = Unsafe.getUnsafe().getLong(timestampColAddress + indexRowId * Long.BYTES);
-
-                    if (indexRowTimestamp < sampleByStart) {
-                        // Fast path, skip index rowid when it fails before current window
-                        if (outIndex > 0) {
-                            Unsafe.getUnsafe().putLong(lastRowIdOutAddress + (outIndex - 1) * Long.BYTES, indexRowId);
-                            if (outIndex == 1) {
-                                firstRowUpdated = true;
-                            }
-                        }
-                        continue;
-                    }
-
-                    while (indexRowTimestamp >= sampleByEnd) {
-                        // Go to next sample by window.
-                        sampleByStart = sampleByEnd;
-                        sampleByEnd = timestampSampler.nextTimestamp(sampleByStart);
-                    }
-
-                    if (indexRowTimestamp >= sampleByStart && indexRowTimestamp < sampleByEnd) {
-                        Unsafe.getUnsafe().putLong(timestampOutAddress + outIndex * Long.BYTES, sampleByStart);
-                        Unsafe.getUnsafe().putLong(firstRowIdOutAddress + outIndex * Long.BYTES, indexRowId);
-                        Unsafe.getUnsafe().putLong(lastRowIdOutAddress + outIndex * Long.BYTES, indexRowId);
-
-                        // Go to next sample by window.
-                        outIndex++;
-                        sampleByStart = sampleByEnd;
-                        sampleByEnd = timestampSampler.nextTimestamp(sampleByStart);
-
-                        if (outIndex > maxOutRows) {
-                            break;
-                        }
-                    }
-                } else if (indexRowId >= rowIdHi) {
-                    // Index row id is beyond data page
-                    break;
-                }
-            }
-
-            Unsafe.getUnsafe().putLong(timestampOutAddress + outIndex * Long.BYTES, sampleByStart);
-            Unsafe.getUnsafe().putLong(firstRowIdOutAddress + outIndex * Long.BYTES, iIndex);
-            Unsafe.getUnsafe().putLong(lastRowIdOutAddress + outIndex * Long.BYTES, indexRowId + 1);
-            return firstRowUpdated ? -outIndex : outIndex;
-        }
-        return outIndex;
-    }
 
     public static native void flattenIndex(long pIndex, long count);
 
