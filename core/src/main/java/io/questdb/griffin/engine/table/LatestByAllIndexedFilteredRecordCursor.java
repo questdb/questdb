@@ -49,14 +49,10 @@ class LatestByAllIndexedFilteredRecordCursor extends LatestByAllIndexedRecordCur
 
     @Override
     public boolean hasNext() {
-        boolean result = false;
-        do {
-            long row = rows.get(aIndex++) - 1; // we added 1 on cpp side
-            recordA.jumpTo(Rows.toPartitionIndex(row), Rows.toLocalRowID(row));
-            result = filter.getBool(recordA);
-        } while (aIndex < aLimit && !result);
-
-        return aIndex < aLimit;
+        while(aIndex < aLimit && skip(aIndex)) {
+            ++aIndex;
+        }
+        return aIndex++ < aLimit;
     }
 
     @Override
@@ -69,5 +65,11 @@ class LatestByAllIndexedFilteredRecordCursor extends LatestByAllIndexedRecordCur
     protected void buildTreeMap(SqlExecutionContext executionContext) {
         filter.init(this, executionContext);
         super.buildTreeMap(executionContext);
+    }
+
+    private boolean skip(long index) {
+        long row = rows.get(index) - 1; // we added 1 on cpp side
+        recordA.jumpTo(Rows.toPartitionIndex(row), Rows.toLocalRowID(row));
+        return !filter.getBool(recordA);
     }
 }
