@@ -72,10 +72,11 @@ int64_t find_latest_for_key(int64_t k,
                 return to_row_id(partition_index, local_row_id) + 1;
             }
         }
-        if (k == 0 && unindexed_null_count > 0) {
-            if (unindexed_null_count - 1 >= min_value) {
-                return to_row_id(partition_index, unindexed_null_count) + 1;
-            }
+    }
+
+    if (k == 0 && unindexed_null_count > 0) {
+        if (unindexed_null_count - 1 >= min_value) {
+            return to_row_id(partition_index, unindexed_null_count);
         }
     }
     return -1;
