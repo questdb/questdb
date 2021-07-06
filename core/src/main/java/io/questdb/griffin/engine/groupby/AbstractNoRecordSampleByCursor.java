@@ -35,7 +35,6 @@ import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.datetime.TimeZoneRules;
-import io.questdb.std.datetime.microtime.TimeZoneRulesMicros;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 
@@ -52,6 +51,8 @@ public abstract class AbstractNoRecordSampleByCursor implements NoRandomAccessRe
     protected RecordCursor base;
     protected SqlExecutionInterruptor interruptor;
     protected long tzOffset;
+    protected long nextDst;
+    private long topNextDst;
     protected long fixedOffset;
     protected long topTzOffset;
     protected long localEpoch;
@@ -89,6 +90,7 @@ public abstract class AbstractNoRecordSampleByCursor implements NoRandomAccessRe
         this.sampleLocalEpoch = topLocalEpoch;
         // timezone offset is liable to change when we pass over DST edges
         this.tzOffset = topTzOffset;
+        this.nextDst = topNextDst;
     }
 
     @Override
@@ -125,12 +127,12 @@ public abstract class AbstractNoRecordSampleByCursor implements NoRandomAccessRe
                     );
                     // fixed rules means the timezone does not have historical or daylight time changes
                     tzOffset = rules.getOffset(timestamp);
-                    if (rules instanceof TimeZoneRulesMicros) {
-                        this.rules = rules;
-                    }
+                    nextDst = rules.getNextDST(timestamp);
+                    this.rules = rules;
                 } else {
                     // here timezone is in numeric offset format
                     tzOffset = Numbers.decodeLowInt(opt) * MINUTE_MICROS;
+                    nextDst = Long.MAX_VALUE;
                 }
             } catch (NumericException e) {
                 Misc.free(base);
@@ -138,6 +140,7 @@ public abstract class AbstractNoRecordSampleByCursor implements NoRandomAccessRe
             }
         } else {
             this.tzOffset = 0;
+            this.nextDst = Long.MAX_VALUE;
         }
 
         final CharSequence offset = offsetFunc.getStr(null);
@@ -164,6 +167,7 @@ public abstract class AbstractNoRecordSampleByCursor implements NoRandomAccessRe
             timestampSampler.setStart(tzOffset);
         }
         this.topTzOffset = tzOffset;
+        this.topNextDst = nextDst;
         this.topLocalEpoch = this.localEpoch = timestampSampler.round(timestamp + tzOffset);
         this.sampleLocalEpoch = localEpoch;
         interruptor = executionContext.getSqlExecutionInterruptor();

@@ -34,9 +34,8 @@ public class TimeZoneRulesMillis extends AbstractTimeZoneRules {
     }
 
     @Override
-    public long getOffset(long millis) {
-        int y = Dates.getYear(millis);
-        return getOffset(millis, y, Dates.isLeapYear(y));
+    public long getNextDST(long utcEpoch) {
+        return 0;
     }
 
     @Override

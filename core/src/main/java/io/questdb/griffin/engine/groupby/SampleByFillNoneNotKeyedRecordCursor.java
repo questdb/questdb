@@ -62,19 +62,18 @@ class SampleByFillNoneNotKeyedRecordCursor extends AbstractVirtualRecordSampleBy
             long timestamp = getBaseRecordTimestamp();
             if (timestamp < next) {
                 GroupByUtils.updateExisting(groupByFunctions, n, simpleMapValue, baseRecord);
+                interruptor.checkInterrupted();
             } else {
                 // timestamp changed, make sure we keep the value of 'lastTimestamp'
                 // unchanged. Timestamp columns uses this variable
                 // When map is exhausted we would assign 'nextTimestamp' to 'lastTimestamp'
                 // and build another map
-                // todo: if we want to "fill" with null localEpoch could be "next"
-                if (rules != null) {
-                    long daylightSavings = rules.getOffset(localEpoch - tzOffset);
+                if (timestamp - tzOffset >= nextDst) {
+                    final long daylightSavings = rules.getOffset(localEpoch - tzOffset);
                     if (daylightSavings != tzOffset) {
                         if (daylightSavings < tzOffset) {
                             // time moved backwards, we need to check if we should be collapsing this
                             // hour into previous period or not
-                            // todo: check if we need to collapse into sample by 2h, 1d, 1m etc
                             GroupByUtils.updateExisting(groupByFunctions, n, simpleMapValue, baseRecord);
                             sampleLocalEpoch -= (tzOffset - daylightSavings);
                             tzOffset = daylightSavings;
@@ -91,7 +90,6 @@ class SampleByFillNoneNotKeyedRecordCursor extends AbstractVirtualRecordSampleBy
                 GroupByUtils.toTop(groupByFunctions);
                 return true;
             }
-            interruptor.checkInterrupted();
         }
 
         // opportunity, after we stream map that is.

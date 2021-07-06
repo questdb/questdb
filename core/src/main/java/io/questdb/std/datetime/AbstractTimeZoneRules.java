@@ -110,14 +110,13 @@ public abstract class AbstractTimeZoneRules implements TimeZoneRules {
         }
 
         if (ruleCount > 0 && utcEpoch > cutoffTransition) {
-            return fromRules(utcEpoch, year, leap);
+            return offsetFromRules(utcEpoch, year, leap);
         }
 
         if (utcEpoch > cutoffTransition) {
             return lastWall;
         }
-
-        return fromHistory(utcEpoch);
+        return offsetFromHistory(utcEpoch);
     }
 
     @Override
@@ -126,9 +125,121 @@ public abstract class AbstractTimeZoneRules implements TimeZoneRules {
         return getOffset(utcEpoch, y, isLeapYear(y));
     }
 
+    @Override
+    public long getNextDST(long utcEpoch, int year, boolean leap) {
+        if (standardOffset != Long.MIN_VALUE) {
+            // when we have standard offset the next DST does not exist
+            // since we are trying to avoid unnecessary offset lookup the max long
+            // should ensure all timestamps stay below next DST
+            return Long.MAX_VALUE;
+        }
+
+        if (ruleCount > 0 && utcEpoch >= cutoffTransition) {
+            return dstFromRules(utcEpoch, year, leap);
+        }
+
+        if (utcEpoch < cutoffTransition) {
+            return dstFromHistory(utcEpoch);
+        }
+
+        return Long.MAX_VALUE;
+    }
+
+    @Override
+    public long getNextDST(long utcEpoch) {
+        final int y = getYear(utcEpoch);
+        return getNextDST(utcEpoch, y, isLeapYear(y));
+    }
+
     abstract protected long addDays(long epoch, int days);
 
-    private long fromHistory(long epoch) {
+    private long dstFromHistory(long epoch) {
+        int index = historicTransitions.binarySearch(epoch);
+        if (index == -1) {
+            return Long.MAX_VALUE;
+        }
+
+        if (index < 0) {
+            index = -index - 2;
+        }
+        return historicTransitions.getQuick(index + 1);
+    }
+
+    private long dstFromRules(long epoch, int year, boolean leap) {
+
+        for (int i = 0; i < ruleCount; i++) {
+            long date = getDSTFromRule(year, leap, i);
+            if (epoch < date) {
+                return date;
+            }
+        }
+
+        if (ruleCount > 0) {
+            return getDSTFromRule(year + 1, isLeapYear(year + 1), 0);
+        }
+
+        return Long.MAX_VALUE;
+    }
+
+    private long getDSTFromRule(int year, boolean leap, int i) {
+        int offsetBefore;
+        TransitionRule zr = rules.getQuick(i);
+        offsetBefore = zr.offsetBefore;
+
+        int dom = zr.dom;
+        int month = zr.month;
+
+        int dow = zr.dow;
+        long date;
+        if (dom < 0) {
+            date = toEpoch(
+                    year,
+                    leap,
+                    month,
+                    getDaysPerMonth(month, leap) + 1 + dom,
+                    zr.hour,
+                    zr.minute
+            ) + zr.second * multiplier;
+            if (dow > -1) {
+                date = previousOrSameDayOfWeek(date, dow);
+            }
+        } else {
+            assert month > 0;
+            date = toEpoch(year, leap, month, dom, zr.hour, zr.minute) + zr.second * multiplier;
+            if (dow > -1) {
+                date = nextOrSameDayOfWeek(date, dow);
+            }
+        }
+
+        if (zr.midnightEOD) {
+            date = addDays(date, 1);
+        }
+
+        switch (zr.timeDef) {
+            case TransitionRule.UTC:
+                date += (offsetBefore - ZoneOffset.UTC.getTotalSeconds()) * multiplier;
+                break;
+            case TransitionRule.STANDARD:
+                date += (offsetBefore - zr.standardOffset) * multiplier;
+                break;
+            default:  // WALL
+                break;
+        }
+
+        // go back to epoch epoch
+        date -= offsetBefore * multiplier;
+        return date;
+    }
+
+    abstract protected int getDaysPerMonth(int month, boolean leapYear);
+
+    abstract protected int getYear(long epoch);
+
+    abstract protected boolean isLeapYear(int year);
+
+    abstract protected long nextOrSameDayOfWeek(long epoch, int dow);
+
+    private long offsetFromHistory(long epoch) {
         int index = historicTransitions.binarySearch(epoch);
         if (index == -1) {
             return firstWall;
@@ -140,7 +251,7 @@ public abstract class AbstractTimeZoneRules implements TimeZoneRules {
         return wallOffsets[index + 1] * multiplier;
     }
 
-    private long fromRules(long epoch, int year, boolean leap) {
+    private long offsetFromRules(long epoch, int year, boolean leap) {
 
         int offsetBefore;
         int offsetAfter = 0;
@@ -200,14 +311,6 @@ public abstract class AbstractTimeZoneRules implements TimeZoneRules {
 
         return offsetAfter * multiplier;
     }
-
-    abstract protected int getDaysPerMonth(int month, boolean leapYear);
-
-    abstract protected int getYear(long epoch);
-
-    abstract protected boolean isLeapYear(int year);
-
-    abstract protected long nextOrSameDayOfWeek(long epoch, int dow);
 
     abstract protected long previousOrSameDayOfWeek(long epoch, int dow);
 
