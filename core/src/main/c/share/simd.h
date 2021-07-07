@@ -29,9 +29,12 @@
 #include "asmlib/asmlib.h"
 #define __MEMCPY A_memcpy
 #define __MEMSET A_memset
+#define __MEMMOVE A_memmove
 #else
+#include <cstring>
 #define __MEMCPY memcpy
 #define __MEMSET memset
+#define __MEMMOVE memmove
 #endif
 
 

@@ -25,6 +25,7 @@
 #include <jni.h>
 #include "geohash_dispatch.h"
 #include "bitmap_index_utils.h"
+#include "simd.h"
 #include <algorithm>
 
 extern "C" {
@@ -135,9 +136,9 @@ Java_io_questdb_griffin_engine_functions_geohash_GeoHashNative_slideFoundBlocks
     const auto begin0 = addr + args[0].key_lo;
     auto dst = begin0 + args[0].filtered_size;
     for (auto i = 1; i < args_count; ++i) {
-        auto b = addr + args[i].key_lo;
-        auto bytes = args[i].filtered_size * sizeof(int64_t);
-        memmove(reinterpret_cast<void *>(dst), reinterpret_cast<const void *>(b), bytes);
+        auto src = addr + args[i].key_lo;
+        auto len = args[i].filtered_size * sizeof(int64_t);
+        __MEMMOVE(reinterpret_cast<void *>(dst), reinterpret_cast<void *>(src), len);
         dst += args[i].filtered_size;
     }
     return std::distance(addr, dst);
