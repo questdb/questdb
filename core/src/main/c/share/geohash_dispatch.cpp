@@ -47,7 +47,7 @@ void MULTI_VERSION_NAME (simd_iota)(int64_t *array, const int64_t array_size, co
         init_vec.store(array + i);
     }
 
-    int64_t next = i < step ? 0 : init_vec[step - 1]  - step + 1;
+    int64_t next = i < step ? i + start : init_vec[step - 1]  - step + 1;
     for (; i < array_size; ++i) {
         array[i] = next++;
     }
