@@ -45,56 +45,7 @@ class SampleByFillNoneNotKeyedRecordCursor extends AbstractVirtualRecordSampleBy
 
     @Override
     public boolean hasNext() {
-        if (baseRecord == null) {
-            return false;
-        }
-
-        this.sampleLocalEpoch = this.localEpoch;
-        long next = timestampSampler.nextTimestamp(this.localEpoch);
-
-        // looks like we need to populate key map
-        // at the start of this loop 'lastTimestamp' will be set to timestamp
-        // of first record in base cursor
-        int n = groupByFunctions.size();
-        GroupByUtils.updateNew(groupByFunctions, n, simpleMapValue, baseRecord);
-
-        while (base.hasNext()) {
-            long timestamp = getBaseRecordTimestamp();
-            if (timestamp < next) {
-                GroupByUtils.updateExisting(groupByFunctions, n, simpleMapValue, baseRecord);
-                interruptor.checkInterrupted();
-            } else {
-                // timestamp changed, make sure we keep the value of 'lastTimestamp'
-                // unchanged. Timestamp columns uses this variable
-                // When map is exhausted we would assign 'nextTimestamp' to 'lastTimestamp'
-                // and build another map
-                if (timestamp - tzOffset >= nextDst) {
-                    final long daylightSavings = rules.getOffset(localEpoch - tzOffset);
-                    if (daylightSavings != tzOffset) {
-                        if (daylightSavings < tzOffset) {
-                            // time moved backwards, we need to check if we should be collapsing this
-                            // hour into previous period or not
-                            GroupByUtils.updateExisting(groupByFunctions, n, simpleMapValue, baseRecord);
-                            sampleLocalEpoch -= (tzOffset - daylightSavings);
-                            tzOffset = daylightSavings;
-                            continue;
-                        } else {
-                            // time moved forward, we need to make sure we move our sample boundary
-                            timestamp = timestamp - tzOffset + daylightSavings;
-                            sampleLocalEpoch -= (tzOffset - daylightSavings);
-                            tzOffset = daylightSavings;
-                        }
-                    }
-                }
-                this.localEpoch = timestampSampler.round(timestamp);
-                GroupByUtils.toTop(groupByFunctions);
-                return true;
-            }
-        }
-
-        // opportunity, after we stream map that is.
-        baseRecord = null;
-        return true;
+        return baseRecord != null && notKeyedLoop(simpleMapValue);
     }
 
     @Override

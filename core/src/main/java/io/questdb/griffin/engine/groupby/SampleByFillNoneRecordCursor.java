@@ -54,19 +54,14 @@ class SampleByFillNoneRecordCursor extends AbstractVirtualRecordSampleByCursor {
 
     @Override
     public boolean hasNext() {
-        return mapHasNext() || baseRecord != null && computeNextBatch();
-    }
-
-    @Override
-    public void toTop() {
-        super.toTop();
-        if (base.hasNext()) {
-            baseRecord = base.getRecord();
-            map.clear();
+        if (mapCursor.hasNext()) {
+            return true;
         }
-    }
 
-    private boolean computeNextBatch() {
+        if (baseRecord == null) {
+            return false;
+
+        }
         this.map.clear();
 
         this.sampleLocalEpoch = this.localEpoch;
@@ -89,7 +84,6 @@ class SampleByFillNoneRecordCursor extends AbstractVirtualRecordSampleByCursor {
                 // When map is exhausted we would assign 'nextTimestamp' to 'lastTimestamp'
                 // and build another map
                 this.localEpoch = timestampSampler.round(timestamp);
-
                 // get group by function to top to indicate that they have a new pass over the data set
                 GroupByUtils.toTop(groupByFunctions);
                 return createMapCursor();
@@ -100,6 +94,15 @@ class SampleByFillNoneRecordCursor extends AbstractVirtualRecordSampleByCursor {
         // opportunity, after we stream map that is.
         baseRecord = null;
         return createMapCursor();
+    }
+
+    @Override
+    public void toTop() {
+        super.toTop();
+        if (base.hasNext()) {
+            baseRecord = base.getRecord();
+            map.clear();
+        }
     }
 
     private boolean createMapCursor() {

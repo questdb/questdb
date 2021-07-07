@@ -643,8 +643,8 @@ public class SampleByTest extends AbstractGriffinTest {
         assertQuery(
                 "k\tc\n" +
                         "2021-03-28T00:00:00.000000Z\t238\n" +
-                        "2021-03-29T00:00:00.000000Z\t240\n" +
-                        "2021-03-29T23:00:00.000000Z\t230\n" +
+                        "2021-03-28T23:00:00.000000Z\t230\n" +
+                        "2021-03-29T23:00:00.000000Z\t240\n" +
                         "2021-03-30T23:00:00.000000Z\t240\n" +
                         "2021-03-31T23:00:00.000000Z\t52\n",
                 "select k, count() c from x sample by 1d align to calendar time zone 'Europe/Riga'",
@@ -980,8 +980,8 @@ public class SampleByTest extends AbstractGriffinTest {
         // have to change
         assertQuery(
                 "k\tc\n" +
-                        "2021-10-31T00:00:00.000000Z\t8\n" +
-                        "2021-10-31T01:00:00.000000Z\t20\n" +
+                        "2021-10-31T00:00:00.000000Z\t18\n" +
+                        "2021-10-31T02:00:00.000000Z\t10\n" +
                         "2021-10-31T03:00:00.000000Z\t10\n" +
                         "2021-10-31T04:00:00.000000Z\t10\n" +
                         "2021-10-31T05:00:00.000000Z\t10\n" +
@@ -1015,8 +1015,8 @@ public class SampleByTest extends AbstractGriffinTest {
         assertQuery(
                 "k\tc\n" +
                         "2021-10-31T00:00:00.000000Z\t3\n" +
-                        "2021-10-31T00:30:00.000000Z\t5\n" +
-                        "2021-10-31T01:00:00.000000Z\t15\n" +
+                        "2021-10-31T00:30:00.000000Z\t15\n" +
+                        "2021-10-31T02:00:00.000000Z\t5\n" +
                         "2021-10-31T02:30:00.000000Z\t5\n" +
                         "2021-10-31T03:00:00.000000Z\t5\n" +
                         "2021-10-31T03:30:00.000000Z\t5\n" +

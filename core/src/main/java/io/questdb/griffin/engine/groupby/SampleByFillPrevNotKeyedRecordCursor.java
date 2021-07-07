@@ -54,42 +54,13 @@ public class SampleByFillPrevNotKeyedRecordCursor extends AbstractVirtualRecordS
         // for timestamp gaps
 
         // what is the next timestamp we are expecting?
-        long next = timestampSampler.nextTimestamp(localEpoch);
         long expectedLocalEpoch = timestampSampler.nextTimestamp(sampleLocalEpoch);
-
         // is data timestamp ahead of next expected timestamp?
         if(expectedLocalEpoch < localEpoch) {
             this.sampleLocalEpoch = expectedLocalEpoch;
             return true;
         }
-
-        // this is new timestamp value
-        this.sampleLocalEpoch = localEpoch;
-
-        final int n = groupByFunctions.size();
-        GroupByUtils.updateNew(groupByFunctions, n, simpleMapValue, baseRecord);
-
-        while (base.hasNext()) {
-            interruptor.checkInterrupted();
-            long timestamp = getBaseRecordTimestamp();
-            if (timestamp < next) {
-                GroupByUtils.updateExisting(groupByFunctions, n, simpleMapValue, baseRecord);
-                interruptor.checkInterrupted();
-            } else {
-                // timestamp changed, make sure we keep the value of 'lastTimestamp'
-                // unchanged. Timestamp columns uses this variable
-                // When map is exhausted we would assign 'nextTimestamp' to 'lastTimestamp'
-                // and build another map
-                this.localEpoch = timestampSampler.round(timestamp);
-                GroupByUtils.toTop(groupByFunctions);
-                return true;
-            }
-
-        }
-        // no more data from base cursor
-        // return what we aggregated so far and stop
-        baseRecord = null;
-        return true;
+        return notKeyedLoop(simpleMapValue);
     }
 
     @Override

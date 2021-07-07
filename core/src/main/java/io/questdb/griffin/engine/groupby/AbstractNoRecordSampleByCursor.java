@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.groupby;
 
+import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -52,11 +53,11 @@ public abstract class AbstractNoRecordSampleByCursor implements NoRandomAccessRe
     protected SqlExecutionInterruptor interruptor;
     protected long tzOffset;
     protected long nextDst;
-    private long topNextDst;
     protected long fixedOffset;
     protected long topTzOffset;
     protected long localEpoch;
     protected TimeZoneRules rules;
+    private long topNextDst;
     private long topLocalEpoch;
 
     public AbstractNoRecordSampleByCursor(
@@ -172,6 +173,62 @@ public abstract class AbstractNoRecordSampleByCursor implements NoRandomAccessRe
         this.sampleLocalEpoch = localEpoch;
         interruptor = executionContext.getSqlExecutionInterruptor();
     }
+
+    protected long adjustDST(long timestamp, int n, MapValue mapValue) {
+        final long t = timestamp - tzOffset;
+        if (t >= nextDst) {
+            final long daylightSavings = rules.getOffset(t);
+            nextDst = rules.getNextDST(t);
+            if (daylightSavings < tzOffset) {
+                // time moved backwards, we need to check if we should be collapsing this
+                // hour into previous period or not
+                GroupByUtils.updateExisting(groupByFunctions, n, mapValue, baseRecord);
+                sampleLocalEpoch -= (tzOffset - daylightSavings);
+                tzOffset = daylightSavings;
+                return Long.MIN_VALUE;
+            }
+            // time moved forward, we need to make sure we move our sample boundary
+            nextDst = rules.getNextDST(t);
+            timestamp = t + daylightSavings;
+            sampleLocalEpoch -= (tzOffset - daylightSavings);
+            tzOffset = daylightSavings;
+        }
+        return timestamp;
+    }
+
+    protected boolean notKeyedLoop(MapValue mapValue) {
+        long next = timestampSampler.nextTimestamp(this.localEpoch);
+        this.sampleLocalEpoch = this.localEpoch;
+        // looks like we need to populate key map
+        // at the start of this loop 'lastTimestamp' will be set to timestamp
+        // of first record in base cursor
+        int n = groupByFunctions.size();
+        GroupByUtils.updateNew(groupByFunctions, n, mapValue, baseRecord);
+        while (base.hasNext()) {
+            long timestamp = getBaseRecordTimestamp();
+            if (timestamp < next) {
+                GroupByUtils.updateExisting(groupByFunctions, n, mapValue, baseRecord);
+                interruptor.checkInterrupted();
+            } else {
+                // timestamp changed, make sure we keep the value of 'lastTimestamp'
+                // unchanged. Timestamp columns uses this variable
+                // When map is exhausted we would assign 'next' to 'lastTimestamp'
+                // and build another map
+                timestamp = adjustDST(timestamp, n, mapValue);
+                if (timestamp != Long.MIN_VALUE) {
+                    this.localEpoch = timestampSampler.round(timestamp);
+                    GroupByUtils.toTop(groupByFunctions);
+                    return true;
+                }
+            }
+        }
+
+        // opportunity, after we stream map that is.
+        baseRecord = null;
+        return true;
+    }
+
+
 
     protected long getBaseRecordTimestamp() {
         return baseRecord.getTimestamp(timestampIndex) + tzOffset;

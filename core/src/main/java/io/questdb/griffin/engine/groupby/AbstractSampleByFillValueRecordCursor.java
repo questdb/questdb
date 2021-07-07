@@ -35,24 +35,25 @@ import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
-class SampleByFillPrevRecordCursor extends AbstractVirtualRecordSampleByCursor {
-    private final Map map;
+public abstract class AbstractSampleByFillValueRecordCursor extends AbstractSplitVirtualRecordSampleByCursor {
+    protected final Map map;
     private final RecordSink keyMapSink;
     private final RecordCursor mapCursor;
 
-    public SampleByFillPrevRecordCursor(
+    public AbstractSampleByFillValueRecordCursor(
             Map map,
             RecordSink keyMapSink,
-            ObjList<GroupByFunction> groupByFunctions,
             ObjList<Function> recordFunctions,
-            int timestampIndex, // index of timestamp column in base cursor
-            TimestampSampler timestampSampler
+            int timestampIndex,
+            TimestampSampler timestampSampler,
+            ObjList<GroupByFunction> groupByFunctions,
+            ObjList<Function> placeholderFunctions
     ) {
-        super(recordFunctions, timestampIndex, timestampSampler, groupByFunctions);
+        super(recordFunctions, timestampIndex, timestampSampler, groupByFunctions, placeholderFunctions);
         this.map = map;
         this.keyMapSink = keyMapSink;
+        this.record.of(map.getRecord());
         this.mapCursor = map.getCursor();
-        record.of(map.getRecord());
     }
 
     @Override
@@ -61,31 +62,34 @@ class SampleByFillPrevRecordCursor extends AbstractVirtualRecordSampleByCursor {
         if (mapCursor.hasNext()) {
             // scroll down the map iterator
             // next() will return record that uses current map position
-            return true;
+            return refreshRecord();
         }
 
         if (baseRecord == null) {
             return false;
         }
 
+        // key map has been flushed
+        // before we build another one we need to check
+        // for timestamp gaps
+
         // what is the next timestamp we are expecting?
-        final long expectedLocalEpoch = timestampSampler.nextTimestamp(sampleLocalEpoch);
+        long expectedLocalEpoch = timestampSampler.nextTimestamp(sampleLocalEpoch);
 
         // is data timestamp ahead of next expected timestamp?
-        if(expectedLocalEpoch < localEpoch) {
+        if (expectedLocalEpoch < localEpoch) {
             this.sampleLocalEpoch = expectedLocalEpoch;
             // reset iterator on map and stream contents
-            map.getCursor().hasNext();
-            return true;
+            return refreshMapCursor();
         }
 
         long next = timestampSampler.nextTimestamp(localEpoch);
         this.sampleLocalEpoch = localEpoch;
 
         // looks like we need to populate key map
-
         int n = groupByFunctions.size();
         while (true) {
+            interruptor.checkInterrupted();
             final long timestamp = getBaseRecordTimestamp();
             if (timestamp < next) {
                 final MapKey key = map.withKey();
@@ -102,7 +106,6 @@ class SampleByFillPrevRecordCursor extends AbstractVirtualRecordSampleByCursor {
 
                 // carry on with the loop if we still have data
                 if (base.hasNext()) {
-                    interruptor.checkInterrupted();
                     continue;
                 }
 
@@ -118,7 +121,7 @@ class SampleByFillPrevRecordCursor extends AbstractVirtualRecordSampleByCursor {
                 GroupByUtils.toTop(groupByFunctions);
             }
 
-            return this.map.getCursor().hasNext();
+            return refreshMapCursor();
         }
     }
 
@@ -142,4 +145,11 @@ class SampleByFillPrevRecordCursor extends AbstractVirtualRecordSampleByCursor {
             }
         }
     }
+
+    private boolean refreshMapCursor() {
+        this.map.getCursor().hasNext();
+        return refreshRecord();
+    }
+
+    protected abstract boolean refreshRecord();
 }
