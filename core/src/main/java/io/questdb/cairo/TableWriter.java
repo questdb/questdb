@@ -1525,8 +1525,13 @@ public class TableWriter implements Closeable {
     }
 
     void cancelRow() {
-
         if ((masterRef & 1) == 0) {
+            return;
+        }
+
+        if (hasO3()) {
+            masterRef--;
+            setO3AppendPosition(getO3RowCount());
             return;
         }
 
@@ -1544,6 +1549,7 @@ public class TableWriter implements Closeable {
                     try {
                         setStateForTimestamp(path, dirtyMaxTimestamp, false);
                         int errno;
+                        closeActivePartition();
                         if ((errno = ff.rmdir(path.$())) != 0) {
                             throw CairoException.instance(errno).put("Cannot remove directory: ").put(path);
                         }
@@ -1583,13 +1589,15 @@ public class TableWriter implements Closeable {
         } else {
             txFile.cancelRow();
             // we are staying within same partition, prepare append positions for row count
-            boolean rowChanged = false;
-            // verify if any of the columns have been changed
-            // if not - we don't have to do
-            for (int i = 0; i < columnCount; i++) {
-                if (refs.getQuick(i) == masterRef) {
-                    rowChanged = true;
-                    break;
+            boolean rowChanged = partitionBy != PartitionBy.NONE;
+            if (!rowChanged) {
+                // verify if any of the columns have been changed
+                // if not - we don't have to do
+                for (int i = 0; i < columnCount; i++) {
+                    if (refs.getQuick(i) == masterRef) {
+                        rowChanged = true;
+                        break;
+                    }
                 }
             }
 
@@ -1635,6 +1643,7 @@ public class TableWriter implements Closeable {
         closeAppendMemoryNoTruncate(true);
         Misc.freeObjList(denseIndexers);
         denseIndexers.clear();
+        indexCount = 0;
     }
 
     void closeActivePartition(long size) {
@@ -2973,6 +2982,33 @@ public class TableWriter implements Closeable {
         }
     }
 
+    private void o3SetAppendOffset(
+            int columnIndex,
+            final int columnType,
+            long o3RowCount
+    ) {
+        if (columnIndex != metadata.getTimestampIndex()) {
+            ContiguousVirtualMemory o3DataMem = o3Columns.get(getPrimaryColumnIndex(columnIndex));
+            ContiguousVirtualMemory o3IndexMem = o3Columns.get(getSecondaryColumnIndex(columnIndex));
+
+            long size;
+            final int shl = ColumnType.pow2SizeOf(columnType);
+            if (null == o3IndexMem) {
+                // Fixed size column
+                size = o3RowCount << shl;
+            } else {
+                // Var size column
+                size = o3RowCount > 0 ? o3IndexMem.getLong((o3RowCount - 1) * 8) : 0;
+                o3IndexMem.jumpTo(o3RowCount * 8);
+            }
+
+            o3DataMem.jumpTo(size);
+        } else {
+            // Special case, designated timestamp column
+            o3TimestampMem.jumpTo(o3RowCount * 16);
+        }
+    }
+
     private long o3MoveUncommitted(final int timestampIndex) {
         final long committedRowCount = txFile.getCommittedFixedRowCount() + txFile.getCommittedTransientRowCount();
         final long rowsAdded = txFile.getRowCount() - committedRowCount;
@@ -4223,6 +4259,12 @@ public class TableWriter implements Closeable {
             throwDistressException(err);
         }
         throw e;
+    }
+
+    private void setO3AppendPosition(final long position) {
+        for (int i = 0; i < columnCount; i++) {
+            o3SetAppendOffset(i, metadata.getColumnType(i), position);
+        }
     }
 
     private void setAppendPosition(final long position, boolean ensureFileSize) {
