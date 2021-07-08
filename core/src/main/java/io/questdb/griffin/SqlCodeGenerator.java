@@ -1317,7 +1317,7 @@ public class SqlCodeGenerator implements Mutable {
 
 
                 boolean isFillNone = fillCount == 0 || fillCount == 1 && Chars.equalsLowerCaseAscii(sampleByFill.getQuick(0).token, "none");
-                boolean allGroupsFirstLast = isFillNone && allGroupsFirstLastWithSingleSymbolFilter(model);
+                boolean allGroupsFirstLast = isFillNone && allGroupsFirstLastWithSingleSymbolFilter(model, metadata);
                 if (allGroupsFirstLast) {
                     SingleSymbolFilter symbolFilter = factory.convertToSampleByIndexDataFrameCursorFactory();
                     if (symbolFilter != null) {
@@ -1462,15 +1462,20 @@ public class SqlCodeGenerator implements Mutable {
         }
     }
 
-    private static boolean allGroupsFirstLastWithSingleSymbolFilter(QueryModel model) {
+    private static boolean allGroupsFirstLastWithSingleSymbolFilter(QueryModel model, RecordMetadata metadata) {
         final ObjList<QueryColumn> columns = model.getColumns();
         for (int i = 0, n = columns.size(); i < n; i++) {
             final QueryColumn column = columns.getQuick(i);
             final ExpressionNode node = column.getAst();
 
             if (node.type != ExpressionNode.LITERAL) {
-                CharSequence token = column.getAst().token;
+                ExpressionNode columnAst = column.getAst();
+                CharSequence token = columnAst.token;
                 if (!SqlKeywords.isFirstFunction(token) && !SqlKeywords.isLastFunction(token)) {
+                    return false;
+                }
+
+                if (columnAst.rhs.type != ExpressionNode.LITERAL || metadata.getColumnIndex(columnAst.rhs.token) < 0) {
                     return false;
                 }
             }

@@ -68,15 +68,6 @@ public class GroupByUtils {
                 // this can fail
                 ExpressionNode columnAst = column.getAst();
 
-                if (SqlKeywords.isLastFunction(columnAst.token) || SqlKeywords.isFirstFunction(columnAst.token)) {
-                    if (columnAst.rhs.type != ExpressionNode.LITERAL || metadata.getColumnIndex(columnAst.rhs.token) < 0) {
-                        throw SqlException
-                                .unexpectedToken(columnAst.rhs.position, "expected column name as the argument of ")
-                                .put(columnAst.token)
-                                .put("() function");
-                    }
-                }
-
                 final Function function = functionParser.parseFunction(
                         columnAst,
                         metadata,

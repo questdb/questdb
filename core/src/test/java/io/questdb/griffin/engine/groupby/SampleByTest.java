@@ -567,62 +567,50 @@ public class SampleByTest extends AbstractGriffinTest {
 
     @Test
     public void testIndexSampleByWithInvalidFunctionArgs() throws Exception {
-        try {
-            assertQuery("k\ts\tlat\tlon\n" +
-                            "1970-01-04T00:26:40.000000Z\ta\t71.00560222114518\t336.09942524982637\n" +
-                            "1970-01-04T01:26:40.000000Z\ta\t7.612327943200507\t302.609357768427\n" +
-                            "1970-01-04T02:26:40.000000Z\ta\t118.11888283070247\tNaN\n" +
-                            "1970-01-04T03:26:40.000000Z\ta\t100.02039650915859\t256.84202790934114\n",
-                    "select k, s, first(lat + 1) lat, last(lon * 2) lon " +
-                            "from x " +
-                            "where k > '1970-01-04' and s in ('a') " +
-                            "sample by 1h",
-                    "create table x as " +
-                            "(" +
-                            "select" +
-                            "   rnd_double(1)*180 lat," +
-                            "   rnd_double(1)*180 lon," +
-                            "   rnd_symbol('a','b',null) s," +
-                            "   timestamp_sequence(172800000000, 1000000000) k" +
-                            "   from" +
-                            "   long_sequence(100)" +
-                            "), index(s capacity 10) timestamp(k) partition by DAY",
-                    "k",
-                    false);
-            Assert.fail();
-        } catch(SqlException ex) {
-            TestUtils.assertContains(ex.getFlyweightMessage(), "unexpected token: expected column name as the argument of first()");
-        }
+        assertSampleByIndexQuery("k\ts\tlat\tlon\n" +
+                        "1970-01-04T00:26:40.000000Z\ta\t71.00560222114518\t336.09942524982637\n" +
+                        "1970-01-04T01:26:40.000000Z\ta\t7.612327943200507\t302.609357768427\n" +
+                        "1970-01-04T02:26:40.000000Z\ta\t118.11888283070247\tNaN\n" +
+                        "1970-01-04T03:26:40.000000Z\ta\t100.02039650915859\t256.84202790934114\n",
+                "select k, s, first(lat + 1) lat, last(lon * 2) lon " +
+                        "from x " +
+                        "where k > '1970-01-04' and s in ('a') " +
+                        "sample by 1h",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        "   rnd_double(1)*180 lat," +
+                        "   rnd_double(1)*180 lon," +
+                        "   rnd_symbol('a','b',null) s," +
+                        "   timestamp_sequence(172800000000, 1000000000) k" +
+                        "   from" +
+                        "   long_sequence(100)" +
+                        "), index(s capacity 10) timestamp(k) partition by DAY",
+                false);
     }
 
     @Test
     public void testIndexSampleByWithInvalidFunctionArgs2() throws Exception {
-        try {
-            assertQuery("k\ts\tlat\tlon\n" +
-                            "1970-01-04T00:26:40.000000Z\ta\t71.00560222114518\t336.09942524982637\n" +
-                            "1970-01-04T01:26:40.000000Z\ta\t7.612327943200507\t302.609357768427\n" +
-                            "1970-01-04T02:26:40.000000Z\ta\t118.11888283070247\tNaN\n" +
-                            "1970-01-04T03:26:40.000000Z\ta\t100.02039650915859\t256.84202790934114\n",
-                    "select k, s, first(lat) lat, last(1) lon " +
-                            "from x " +
-                            "where k > '1970-01-04' and s in ('a') " +
-                            "sample by 1h",
-                    "create table x as " +
-                            "(" +
-                            "select" +
-                            "   rnd_double(1)*180 lat," +
-                            "   rnd_double(1)*180 lon," +
-                            "   rnd_symbol('a','b',null) s," +
-                            "   timestamp_sequence(172800000000, 1000000000) k" +
-                            "   from" +
-                            "   long_sequence(100)" +
-                            "), index(s capacity 10) timestamp(k) partition by DAY",
-                    "k",
-                    false);
-            Assert.fail();
-        } catch(SqlException ex) {
-            TestUtils.assertContains(ex.getFlyweightMessage(), "unexpected token: expected column name as the argument of last()");
-        }
+        assertSampleByIndexQuery("k\ts\tlat\tlon\n" +
+                        "1970-01-04T00:26:40.000000Z\ta\t70.00560222114518\t1\n" +
+                        "1970-01-04T01:26:40.000000Z\ta\t6.612327943200507\t1\n" +
+                        "1970-01-04T02:26:40.000000Z\ta\t117.11888283070247\t1\n" +
+                        "1970-01-04T03:26:40.000000Z\ta\t99.02039650915859\t1\n",
+                "select k, s, first(lat) lat, last(1) lon " +
+                        "from x " +
+                        "where k > '1970-01-04' and s in ('a') " +
+                        "sample by 1h",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        "   rnd_double(1)*180 lat," +
+                        "   rnd_double(1)*180 lon," +
+                        "   rnd_symbol('a','b',null) s," +
+                        "   timestamp_sequence(172800000000, 1000000000) k" +
+                        "   from" +
+                        "   long_sequence(100)" +
+                        "), index(s capacity 10) timestamp(k) partition by DAY",
+                false);
     }
 
     @Test
