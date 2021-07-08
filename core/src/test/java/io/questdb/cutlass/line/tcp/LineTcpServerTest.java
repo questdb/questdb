@@ -351,6 +351,27 @@ public class LineTcpServerTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFieldsReducedO3VarLen() throws Exception {
+        String lineData =
+                "weather dir=\"NA\",windspeed=1.0 631152000000000000\n" +
+                "weather dir=\"South\",windspeed=2.0 631150000000000000\n" +
+                "weather dir=\"North\",windspeed=3.0,timetocycle=0.0 631160000000000000\n" +
+                "weather dir=\"SSW\",windspeed=4.0 631170000000000000\n";
+
+        runInContext(() -> {
+            send(lineData, "weather", true, false);
+
+            String expected =
+                    "dir\twindspeed\ttimestamp\ttimetocycle\n" +
+                    "South\t2.0\t1989-12-31T23:26:40.000000Z\tNaN\n" +
+                    "NA\t1.0\t1990-01-01T00:00:00.000000Z\tNaN\n" +
+                    "North\t3.0\t1990-01-01T02:13:20.000000Z\t0.0\n" +
+                    "SSW\t4.0\t1990-01-01T05:00:00.000000Z\tNaN\n";
+            assertTable(expected, "weather");
+        });
+    }
+
+    @Test
     public void testWindowsAccessDenied() throws Exception {
         try (TableModel m = new TableModel(configuration, "table_a", PartitionBy.DAY)) {
             m.timestamp("ReceiveTime")
@@ -396,7 +417,6 @@ public class LineTcpServerTest extends AbstractCairoTest {
             assertTable(expected, "table_a");
         });
     }
-
 
     @Test
     public void testWriterAllLongs() throws Exception {

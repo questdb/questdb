@@ -1643,7 +1643,6 @@ public class TableWriter implements Closeable {
         closeAppendMemoryNoTruncate(true);
         Misc.freeObjList(denseIndexers);
         denseIndexers.clear();
-        indexCount = 0;
     }
 
     void closeActivePartition(long size) {
@@ -2998,7 +2997,7 @@ public class TableWriter implements Closeable {
                 size = o3RowCount << shl;
             } else {
                 // Var size column
-                size = o3RowCount > 0 ? o3IndexMem.getLong((o3RowCount - 1) * 8) : 0;
+                size = o3IndexMem.getLong(o3RowCount * 8);
                 o3IndexMem.jumpTo(o3RowCount * 8);
             }
 
@@ -4467,7 +4466,7 @@ public class TableWriter implements Closeable {
 
     private void updateIndexesSerially(long lo, long hi) {
         LOG.info().$("serial indexing [indexCount=").$(indexCount).$(']').$();
-        for (int i = 0, n = indexCount; i < n; i++) {
+        for (int i = 0, n = denseIndexers.size(); i < n; i++) {
             try {
                 denseIndexers.getQuick(i).refreshSourceAndIndex(lo, hi);
             } catch (CairoException e) {
