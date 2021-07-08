@@ -49,15 +49,20 @@ public class SampleByFillPrevNotKeyedRecordCursor extends AbstractVirtualRecordS
             return false;
         }
 
-        // key map has been flushed
-        // before we build another one we need to check
-        // for timestamp gaps
+        // the next sample epoch could be different from current sample epoch due to DST transition,
+        // e.g. clock going backward
+        // we need to ensure we do not fill time transition
+        if (sampleLocalEpoch != nextSampleLocalEpoch) {
+            System.out.println("oops");
+        }
+        sampleLocalEpoch = nextSampleLocalEpoch;
 
         // what is the next timestamp we are expecting?
         long expectedLocalEpoch = timestampSampler.nextTimestamp(sampleLocalEpoch);
         // is data timestamp ahead of next expected timestamp?
         if(expectedLocalEpoch < localEpoch) {
             this.sampleLocalEpoch = expectedLocalEpoch;
+            this.nextSampleLocalEpoch = expectedLocalEpoch;
             return true;
         }
         return notKeyedLoop(simpleMapValue);
