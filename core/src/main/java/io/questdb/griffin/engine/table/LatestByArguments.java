@@ -48,6 +48,10 @@ public final class LatestByArguments {
         return Unsafe.getUnsafe().getLong(address + FILTERED_SIZE_OFFSET);
     }
 
+    public static void setFilteredSize(long address, long size) {
+        Unsafe.getUnsafe().putLong(address + FILTERED_SIZE_OFFSET, size);
+    }
+
     public static long getHashesAddress(long address) {
         return Unsafe.getUnsafe().getLong(address + HASHES_ADDRESS_OFFSET);
     }

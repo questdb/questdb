@@ -59,7 +59,7 @@ public class GeoHashNative {
         return output;
     }
 
-    public static long fromCoordinats(double lat, double lng, int bits) {
+    public static long fromCoordinates(double lat, double lng, int bits) {
         double minLat = -90,  maxLat = 90;
         double minLng = -180, maxLng = 180;
         long result = 0;
@@ -99,9 +99,7 @@ public class GeoHashNative {
         return result;
     }
 
-    public static String toString(long geohashAsLong)
-    {
-        int precision = 8;
+    public static String toString(long geohashAsLong, int precision) {
         char[] chars = new char[precision];
         for (int i = precision - 1; i >= 0 ; i--) {
             chars[i] =  base32[(int) (geohashAsLong & 31)];
