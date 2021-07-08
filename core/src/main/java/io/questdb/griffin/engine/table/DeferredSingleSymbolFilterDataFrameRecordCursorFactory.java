@@ -35,13 +35,11 @@ import org.jetbrains.annotations.Nullable;
 public class DeferredSingleSymbolFilterDataFrameRecordCursorFactory extends DataFrameRecordCursorFactory {
     private final int symbolColumnIndex;
     private final SingleSymbolFilter symbolFilter;
-    private final Function filter;
     private final IntList columnIndexes;
     private final IntList columnSizes;
     private final CharSequence symbolValue;
     private int symbolKey;
     private boolean convertedToFrame;
-    private DataFrameRecordCursor convertedCursor;
     private TableReaderPageFrameCursor pageFrameCursor;
 
     public DeferredSingleSymbolFilterDataFrameRecordCursorFactory(
@@ -65,7 +63,6 @@ public class DeferredSingleSymbolFilterDataFrameRecordCursorFactory extends Data
                 columnSizes);
         this.symbolValue = symbolValue;
         this.symbolKey = SymbolTable.VALUE_NOT_FOUND;
-        this.filter = filter;
         this.columnIndexes = columnIndexes;
         this.symbolColumnIndex = columnIndexes.indexOf(tableSymColIndex, 0, columnIndexes.size());
         this.columnSizes = columnSizes;
@@ -86,8 +83,6 @@ public class DeferredSingleSymbolFilterDataFrameRecordCursorFactory extends Data
     public SingleSymbolFilter convertToSampleByIndexDataFrameCursorFactory() {
         if (!this.convertedToFrame) {
             this.convertedToFrame = true;
-            DataFrameRowCursorFactory rowCursorFactory = new DataFrameRowCursorFactory();
-            this.convertedCursor = new DataFrameRecordCursor(rowCursorFactory, true, filter, columnIndexes);
         }
         return symbolFilter;
     }
