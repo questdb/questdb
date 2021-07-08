@@ -37,6 +37,7 @@ import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
+import org.junit.Ignore;
 import org.junit.Test;
 
 public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractGriffinTest {
@@ -528,6 +529,7 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractGriff
     // for stable reproduce
     //select s, haversine_dist_deg(lat, lon, k), k from tab sample by 3h fill(linear)
     @Test
+    @Ignore
     public void testAggregationWithSampleFill5() throws Exception {
         class ParseHelper {
             public Record[] parse(String raw) throws NumericException {

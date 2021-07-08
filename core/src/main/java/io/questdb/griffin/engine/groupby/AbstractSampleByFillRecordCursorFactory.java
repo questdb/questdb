@@ -38,8 +38,7 @@ import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
 
-public abstract class AbstractSampleByFillRecordCursorFactory
-        extends AbstractSampleByRecordCursorFactory {
+public abstract class AbstractSampleByFillRecordCursorFactory extends AbstractSampleByRecordCursorFactory {
 
     protected final Map map;
     protected final ObjList<GroupByFunction> groupByFunctions;
@@ -66,6 +65,12 @@ public abstract class AbstractSampleByFillRecordCursorFactory
         this.mapSink = RecordSinkFactory.getInstance(asm, base.getMetadata(), listColumnFilter, false);
         // this is the map itself, which we must not forget to free when factory closes
         this.map = MapFactory.createMap(configuration, keyTypes, valueTypes);
+    }
+
+    @Override
+    public void close() {
+        super.close();
+        Misc.free(map);
     }
 
     @Override
@@ -115,11 +120,5 @@ public abstract class AbstractSampleByFillRecordCursorFactory
             baseCursor.close();
             throw ex;
         }
-    }
-
-    @Override
-    public void close() {
-        super.close();
-        Misc.free(map);
     }
 }

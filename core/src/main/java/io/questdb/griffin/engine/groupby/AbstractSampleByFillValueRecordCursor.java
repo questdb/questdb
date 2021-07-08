@@ -89,7 +89,6 @@ public abstract class AbstractSampleByFillValueRecordCursor extends AbstractSpli
         // looks like we need to populate key map
         int n = groupByFunctions.size();
         while (true) {
-            interruptor.checkInterrupted();
             final long timestamp = getBaseRecordTimestamp();
             if (timestamp < next) {
                 final MapKey key = map.withKey();
@@ -106,6 +105,7 @@ public abstract class AbstractSampleByFillValueRecordCursor extends AbstractSpli
 
                 // carry on with the loop if we still have data
                 if (base.hasNext()) {
+                    interruptor.checkInterrupted();
                     continue;
                 }
 

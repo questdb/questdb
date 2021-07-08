@@ -56,5 +56,4 @@ public abstract class AbstractSplitVirtualRecordSampleByCursor extends AbstractN
     public Record getRecord() {
         return record;
     }
-
 }
