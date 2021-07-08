@@ -378,7 +378,7 @@ public class TableWriterTest extends AbstractCairoTest {
             long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
             Rnd rnd = new Rnd();
             populateProducts(writer, rnd, ts, N, 6 * 60000 * 1000L);
-            writer.closeActivePartition();
+            writer.closeActivePartition(true);
             writer.rollback();
             Assert.assertEquals(0, writer.size());
         }
@@ -891,6 +891,35 @@ public class TableWriterTest extends AbstractCairoTest {
 
     @Test
     public void testCancelFirstRowPartitioned() throws Exception {
+        ff = new FilesFacadeImpl() {
+            long kIndexFd = -1;
+
+            @Override
+            public long openRW(LPSZ name) {
+                if (Chars.contains(name, "2013-03-04") && Chars.endsWith(name, "category.k")) {
+                    return kIndexFd = super.openRW(name);
+                }
+                return super.openRW(name);
+            }
+
+            @Override
+            public boolean close(long fd) {
+                if (fd == kIndexFd) {
+                    kIndexFd = -1;
+                }
+                return super.close(fd);
+            }
+
+            @Override
+            public int rmdir(Path name) {
+                if (kIndexFd != -1) {
+                    // Access dinied, file is open
+                    return 5;
+                }
+                return super.rmdir(name);
+            }
+        };
+
         TestUtils.assertMemoryLeak(() -> {
             create(FF, PartitionBy.DAY, 4);
             try (TableWriter writer = new TableWriter(configuration, PRODUCT)) {
@@ -2828,7 +2857,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 .col("productId", ColumnType.INT)
                 .col("productName", ColumnType.STRING)
                 .col("supplier", ColumnType.SYMBOL).symbolCapacity(N)
-                .col("category", ColumnType.SYMBOL).symbolCapacity(N)
+                .col("category", ColumnType.SYMBOL).symbolCapacity(N).indexed(true, 256)
                 .col("price", ColumnType.DOUBLE)
                 .timestamp()) {
             CairoTestUtils.create(model);

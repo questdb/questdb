@@ -351,6 +351,30 @@ public class LineTcpServerTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFieldsReducedNonPartitioned() throws Exception {
+        try (TableModel m = new TableModel(configuration, "weather", PartitionBy.NONE)) {
+            m.col("windspeed", ColumnType.DOUBLE).timestamp();
+            CairoTestUtils.createTableWithVersion(m, ColumnType.VERSION);
+        }
+
+        String lineData =
+            "weather windspeed=2.0 631150000000000000\n" +
+            "weather timetocycle=0.0,windspeed=3.0 631160000000000000\n" +
+            "weather windspeed=4.0 631170000000000000\n";
+
+        runInContext(() -> {
+            send(lineData, "weather", true, false);
+
+            String expected =
+                    "windspeed\ttimestamp\ttimetocycle\n" +
+                            "2.0\t1989-12-31T23:26:40.000000Z\tNaN\n" +
+                            "3.0\t1990-01-01T02:13:20.000000Z\t0.0\n" +
+                            "4.0\t1990-01-01T05:00:00.000000Z\tNaN\n";
+            assertTable(expected, "weather");
+        });
+    }
+
+    @Test
     public void testFieldsReducedO3VarLen() throws Exception {
         String lineData =
                 "weather dir=\"NA\",windspeed=1.0 631152000000000000\n" +

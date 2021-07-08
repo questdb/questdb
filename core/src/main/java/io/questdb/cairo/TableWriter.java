@@ -1544,12 +1544,11 @@ public class TableWriter implements Closeable {
         if (dirtyTransientRowCount == 1) {
             if (partitionBy != PartitionBy.NONE) {
                 // we have to undo creation of partition
-                freeColumns(false);
+                closeActivePartition(false);
                 if (removeDirOnCancelRow) {
                     try {
                         setStateForTimestamp(path, dirtyMaxTimestamp, false);
                         int errno;
-                        closeActivePartition();
                         if ((errno = ff.rmdir(path.$())) != 0) {
                             throw CairoException.instance(errno).put("Cannot remove directory: ").put(path);
                         }
@@ -1589,7 +1588,7 @@ public class TableWriter implements Closeable {
         } else {
             txFile.cancelRow();
             // we are staying within same partition, prepare append positions for row count
-            boolean rowChanged = partitionBy != PartitionBy.NONE;
+            boolean rowChanged = metadata.getTimestampIndex() >= 0; // adding new row already writes timestamp
             if (!rowChanged) {
                 // verify if any of the columns have been changed
                 // if not - we don't have to do
@@ -1638,9 +1637,9 @@ public class TableWriter implements Closeable {
         }
     }
 
-    void closeActivePartition() {
+    void closeActivePartition(boolean truncate) {
         LOG.info().$("closing last partition [table=").$(tableName).I$();
-        closeAppendMemoryNoTruncate(true);
+        closeAppendMemoryTruncate(truncate);
         Misc.freeObjList(denseIndexers);
         denseIndexers.clear();
     }
@@ -1666,7 +1665,7 @@ public class TableWriter implements Closeable {
         denseIndexers.clear();
     }
 
-    private void closeAppendMemoryNoTruncate(boolean truncate) {
+    private void closeAppendMemoryTruncate(boolean truncate) {
         for (int i = 0, n = columns.size(); i < n; i++) {
             AppendOnlyVirtualMemory m = columns.getQuick(i);
             if (m != null) {
@@ -2067,7 +2066,7 @@ public class TableWriter implements Closeable {
     private void freeColumns(boolean truncate) {
         // null check is because this method could be called from the constructor
         if (columns != null) {
-            closeAppendMemoryNoTruncate(truncate);
+            closeAppendMemoryTruncate(truncate);
         }
         Misc.freeObjListAndKeepObjects(o3Columns);
         Misc.freeObjListAndKeepObjects(o3Columns2);
@@ -2991,10 +2990,9 @@ public class TableWriter implements Closeable {
             ContiguousVirtualMemory o3IndexMem = o3Columns.get(getSecondaryColumnIndex(columnIndex));
 
             long size;
-            final int shl = ColumnType.pow2SizeOf(columnType);
             if (null == o3IndexMem) {
                 // Fixed size column
-                size = o3RowCount << shl;
+                size = o3RowCount << ColumnType.pow2SizeOf(columnType);
             } else {
                 // Var size column
                 size = o3IndexMem.getLong(o3RowCount * 8);
@@ -3138,7 +3136,7 @@ public class TableWriter implements Closeable {
         final int partitionIndex = txFile.findAttachedPartitionIndexByLoTimestamp(partitionTimestamp);
         if (partitionTimestamp == lastPartitionTimestamp) {
             if (partitionMutates) {
-                closeActivePartition();
+                closeActivePartition(true);
             } else if (rowDelta < -1) {
                 closeActivePartition(partitionSize);
             } else {

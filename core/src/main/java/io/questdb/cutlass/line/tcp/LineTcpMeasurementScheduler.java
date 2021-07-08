@@ -855,8 +855,8 @@ class LineTcpMeasurementScheduler implements Closeable {
                     if (commit) {
                         writer.commit();
                     }
-                } catch (CairoException ex) {
-                    LOG.error().$("writer commit fails, force closing it [table=").$(writer.getTableName()).$(",ex=").$((Throwable) ex).I$();
+                } catch (Throwable ex) {
+                    LOG.error().$("writer commit fails, force closing it [table=").$(writer.getTableName()).$(",ex=").$(ex).I$();
                 } finally {
                     // writer or FS can be in a bad state
                     // do not leave writer locked
