@@ -541,6 +541,91 @@ public class SampleByTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testIndexSampleByWithArithmetics() throws Exception {
+        assertQuery("k\ts\tlat\tlon\tconst\n" +
+                        "1970-01-04T00:26:40.000000Z\ta\t71.00560222114518\t336.09942524982637\t1\n" +
+                        "1970-01-04T01:26:40.000000Z\ta\t7.612327943200507\t302.609357768427\t1\n" +
+                        "1970-01-04T02:26:40.000000Z\ta\t118.11888283070247\tNaN\t1\n" +
+                        "1970-01-04T03:26:40.000000Z\ta\t100.02039650915859\t256.84202790934114\t1\n",
+                "select k, s, first(lat) + 1 lat, last(lon) * 2 lon, 1 as const " +
+                        "from x " +
+                        "where k > '1970-01-04' and s in ('a') " +
+                        "sample by 1h",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        "   rnd_double(1)*180 lat," +
+                        "   rnd_double(1)*180 lon," +
+                        "   rnd_symbol('a','b',null) s," +
+                        "   timestamp_sequence(172800000000, 1000000000) k" +
+                        "   from" +
+                        "   long_sequence(100)" +
+                        "), index(s capacity 10) timestamp(k) partition by DAY",
+                "k",
+                false);
+    }
+
+    @Test
+    public void testIndexSampleByWithInvalidFunctionArgs() throws Exception {
+        try {
+            assertQuery("k\ts\tlat\tlon\n" +
+                            "1970-01-04T00:26:40.000000Z\ta\t71.00560222114518\t336.09942524982637\n" +
+                            "1970-01-04T01:26:40.000000Z\ta\t7.612327943200507\t302.609357768427\n" +
+                            "1970-01-04T02:26:40.000000Z\ta\t118.11888283070247\tNaN\n" +
+                            "1970-01-04T03:26:40.000000Z\ta\t100.02039650915859\t256.84202790934114\n",
+                    "select k, s, first(lat + 1) lat, last(lon * 2) lon " +
+                            "from x " +
+                            "where k > '1970-01-04' and s in ('a') " +
+                            "sample by 1h",
+                    "create table x as " +
+                            "(" +
+                            "select" +
+                            "   rnd_double(1)*180 lat," +
+                            "   rnd_double(1)*180 lon," +
+                            "   rnd_symbol('a','b',null) s," +
+                            "   timestamp_sequence(172800000000, 1000000000) k" +
+                            "   from" +
+                            "   long_sequence(100)" +
+                            "), index(s capacity 10) timestamp(k) partition by DAY",
+                    "k",
+                    false);
+            Assert.fail();
+        } catch(SqlException ex) {
+            TestUtils.assertContains(ex.getFlyweightMessage(), "unexpected token: expected column name as the argument of first()");
+        }
+    }
+
+    @Test
+    public void testIndexSampleByWithInvalidFunctionArgs2() throws Exception {
+        try {
+            assertQuery("k\ts\tlat\tlon\n" +
+                            "1970-01-04T00:26:40.000000Z\ta\t71.00560222114518\t336.09942524982637\n" +
+                            "1970-01-04T01:26:40.000000Z\ta\t7.612327943200507\t302.609357768427\n" +
+                            "1970-01-04T02:26:40.000000Z\ta\t118.11888283070247\tNaN\n" +
+                            "1970-01-04T03:26:40.000000Z\ta\t100.02039650915859\t256.84202790934114\n",
+                    "select k, s, first(lat) lat, last(1) lon " +
+                            "from x " +
+                            "where k > '1970-01-04' and s in ('a') " +
+                            "sample by 1h",
+                    "create table x as " +
+                            "(" +
+                            "select" +
+                            "   rnd_double(1)*180 lat," +
+                            "   rnd_double(1)*180 lon," +
+                            "   rnd_symbol('a','b',null) s," +
+                            "   timestamp_sequence(172800000000, 1000000000) k" +
+                            "   from" +
+                            "   long_sequence(100)" +
+                            "), index(s capacity 10) timestamp(k) partition by DAY",
+                    "k",
+                    false);
+            Assert.fail();
+        } catch(SqlException ex) {
+            TestUtils.assertContains(ex.getFlyweightMessage(), "unexpected token: expected column name as the argument of last()");
+        }
+    }
+
+    @Test
     public void testIndexSampleBySameTimePoints() throws Exception {
         assertQuery("k\ts\tlat\tlon\n" +
                         "1970-01-01T00:00:00.000000Z\ta\t1\t58\n" +
@@ -1413,7 +1498,7 @@ public class SampleByTest extends AbstractGriffinTest {
             QueryColumn col = QueryColumn.FACTORY.newInstance().of("col1", first);
             columns.add(col);
 
-            new SampleByFirstLastRecordCursorFactory(null, new MicroTimestampSampler(100L), groupByMeta, columns, meta, 0, getSymbolFilter(0, 0), -1);
+            new SampleByFirstLastRecordCursorFactory(null, new MicroTimestampSampler(100L), groupByMeta, columns, meta, 0, getSymbolFilter(), -1);
             Assert.fail();
         } catch (SqlException e) {
             TestUtils.assertContains(e.getFlyweightMessage(), "first(), last() is not supported on data type");
@@ -1436,7 +1521,7 @@ public class SampleByTest extends AbstractGriffinTest {
             QueryColumn col = QueryColumn.FACTORY.newInstance().of("col1", first);
             columns.add(col);
 
-            new SampleByFirstLastRecordCursorFactory(null, new MicroTimestampSampler(100L), groupByMeta, columns, meta, 0, getSymbolFilter(0, 0), -1);
+            new SampleByFirstLastRecordCursorFactory(null, new MicroTimestampSampler(100L), groupByMeta, columns, meta, 0, getSymbolFilter(), -1);
             Assert.fail();
         } catch (SqlException e) {
             TestUtils.assertContains(e.getFlyweightMessage(), "expected first() or last() functions but got min");
@@ -1444,16 +1529,16 @@ public class SampleByTest extends AbstractGriffinTest {
     }
 
     @NotNull
-    private SingleSymbolFilter getSymbolFilter(final int col, final int key) {
+    private SingleSymbolFilter getSymbolFilter() {
         return new SingleSymbolFilter() {
             @Override
             public int getColumnIndex() {
-                return col;
+                return 0;
             }
 
             @Override
             public int getSymbolFilterKey() {
-                return key;
+                return 0;
             }
         };
     }

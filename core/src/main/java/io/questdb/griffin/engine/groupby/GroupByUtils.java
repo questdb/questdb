@@ -32,6 +32,7 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlKeywords;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.columns.*;
@@ -65,8 +66,19 @@ public class GroupByUtils {
 
             if (node.type != ExpressionNode.LITERAL) {
                 // this can fail
+                ExpressionNode columnAst = column.getAst();
+
+                if (SqlKeywords.isLastFunction(columnAst.token) || SqlKeywords.isFirstFunction(columnAst.token)) {
+                    if (columnAst.rhs.type != ExpressionNode.LITERAL || metadata.getColumnIndex(columnAst.rhs.token) < 0) {
+                        throw SqlException
+                                .unexpectedToken(columnAst.rhs.position, "expected column name as the argument of ")
+                                .put(columnAst.token)
+                                .put("() function");
+                    }
+                }
+
                 final Function function = functionParser.parseFunction(
-                        column.getAst(),
+                        columnAst,
                         metadata,
                         executionContext
                 );
@@ -78,7 +90,7 @@ public class GroupByUtils {
                 GroupByFunction func = (GroupByFunction) function;
                 func.pushValueTypes(valueTypes);
                 groupByFunctions.add(func);
-                groupByFunctionPositions.add(column.getAst().position);
+                groupByFunctionPositions.add(columnAst.position);
             }
         }
     }

@@ -71,6 +71,14 @@ struct value_block_link {
     int64_t next;
 } __attribute__((packed));
 
+struct fl_record {
+    int64_t first_row_id;
+    int64_t last_row_id;
+    int64_t timestamp_index;
+private:
+    int8_t padding[8];
+} __attribute__((packed));
+
 class keys_reader {
 public:
     //local copy
