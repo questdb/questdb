@@ -24,6 +24,7 @@
 
 #include "util.h"
 #include "geohash_dispatch.h"
+#include <string>
 
 constexpr int64_t to_local_row_id(int64_t row_id) { return row_id & 0xFFFFFFFFFFFL; }
 
@@ -32,6 +33,23 @@ constexpr int64_t unpack_length(int64_t packed_hash) { return packed_hash >> 60;
 constexpr int64_t unpack_hash(int64_t packed_hash) { return packed_hash & 0x0fffffffffffffffll; }
 
 constexpr int64_t bitmask(uint8_t count, uint8_t shift) { return ((static_cast<int64_t>(1) << count) - 1) << shift; }
+
+static const char base32_codes[] = {
+        '0', '1', '2', '3', '4', '5', '6', '7',
+        '8', '9', 'b', 'c', 'd', 'e', 'f', 'g',
+        'h', 'j', 'k', 'm', 'n', 'p', 'q', 'r',
+        's', 't', 'u', 'v', 'w', 'x', 'y', 'z',
+};
+
+static std::string geohash_to_str(int64_t g, int p)
+{
+    std::string chars(p, ' ');
+    for (int i = p - 1; i >= 0 ; i--) {
+        chars[i] =  base32_codes[g & 31];
+        g >>= 5;
+    }
+    return chars;
+}
 
 void MULTI_VERSION_NAME (simd_iota)(int64_t *array, const int64_t array_size, const int64_t start) {
     const int64_t step = 8;
@@ -81,9 +99,9 @@ void MULTI_VERSION_NAME (filter_with_prefix)(
                 hashes[to_local_row_id(offset[7] -1)]);
 
         Vec8qb hit_mask(false);
-        for (size_t j = 0, sz = prefixes_count; j < sz; j+=2) {
-            const int64_t hash = prefixes[j];
-            const int64_t mask = prefixes[j + 1];
+        for (size_t j = 0, sz = prefixes_count/2; j < sz; ++j) {
+            const int64_t hash = prefixes[2*j];
+            const int64_t mask = prefixes[2*j + 1];
             Vec8q target_hash(hash); // broadcast hash
             Vec8q target_mask(mask); // broadcast mask
             hit_mask |= (current_hashes_vec & target_mask) == target_hash;
@@ -95,11 +113,11 @@ void MULTI_VERSION_NAME (filter_with_prefix)(
     }
 
     for (; i < rows_count; ++i) {
-        const int64_t current_hash = hashes[i];
+        const int64_t current_hash = hashes[to_local_row_id(rows[i] - 1)];
         bool hit = false;
-        for (size_t j = 0, sz = prefixes_count; j < sz; j+=2) {
-            const int64_t hash = prefixes[j];
-            const int64_t mask = prefixes[j+1];
+        for (size_t j = 0, sz = prefixes_count/2; j < sz; ++j) {
+            const int64_t hash = prefixes[2*j];
+            const int64_t mask = prefixes[2*j+1];
             hit |= (current_hash & mask) == hash;
         }
         const int64_t cv = rows[i];
