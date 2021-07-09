@@ -75,6 +75,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getSampleByIndexSearchPageSize() {
+        return 0;
+    }
+
+    @Override
     public int getSqlCopyBufferSize() {
         return 1024 * 1024;
     }

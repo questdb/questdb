@@ -24,7 +24,15 @@
 
 package io.questdb.cairo.sql;
 
+import io.questdb.cairo.BitmapIndexReader;
+
 public interface PageFrame {
+
+    BitmapIndexReader getBitmapIndexReader(int columnIndex, int dirForward);
+
+    long getFirstRowId();
+
+    int getPartitionIndex();
 
     // todo: implement for TablePageFrameCursor
     default long getFirstTimestamp() {
