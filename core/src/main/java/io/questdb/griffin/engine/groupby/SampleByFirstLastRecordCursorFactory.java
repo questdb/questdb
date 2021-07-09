@@ -98,7 +98,7 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
     }
 
     @Override
-    public RecordCursor getCursor(SqlExecutionContext executionContext) {
+    public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         PageFrameCursor pageFrameCursor = base.getPageFrameCursor(executionContext);
         int groupByIndexKey = symbolFilter.getSymbolFilterKey();
         if (groupByIndexKey == SymbolMapReader.VALUE_NOT_FOUND) {
