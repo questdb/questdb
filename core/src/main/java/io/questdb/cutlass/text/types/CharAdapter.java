@@ -26,6 +26,7 @@ package io.questdb.cutlass.text.types;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableWriter;
+import io.questdb.griffin.SqlKeywords;
 import io.questdb.std.str.DirectByteCharSequence;
 
 public final class CharAdapter extends AbstractTypeAdapter {
@@ -50,6 +51,6 @@ public final class CharAdapter extends AbstractTypeAdapter {
 
     @Override
     public void write(TableWriter.Row row, int column, DirectByteCharSequence value) {
-        row.putChar(column, value.charAt(0));
+        row.putChar(column, SqlKeywords.isNullKeyword(value) ?  (char) 0 : value.charAt(0));
     }
 }

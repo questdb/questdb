@@ -26,6 +26,7 @@ package io.questdb.cutlass.text.types;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableWriter;
+import io.questdb.griffin.SqlKeywords;
 import io.questdb.std.Long256Util;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
@@ -68,6 +69,6 @@ public final class Long256Adapter extends AbstractTypeAdapter {
 
     @Override
     public void write(TableWriter.Row row, int column, DirectByteCharSequence value) {
-        row.putLong256(column, value);
+        row.putLong256(column, SqlKeywords.isNullKeyword(value) ? null : value);
     }
 }
