@@ -440,7 +440,7 @@ public class WriterPool extends AbstractPool {
         final CharSequence name = e.writer.getTableName();
         try {
             e.writer.rollback();
-        } catch (CairoException | CairoError ex) {
+        } catch (Throwable ex) {
             // We are here because of a systemic issues of some kind
             // one of the known issues is "disk is full" so we could not rollback properly.
             // In this case we just close TableWriter
