@@ -141,6 +141,7 @@ public class DirectLongList implements Mutable, Closeable {
     }
 
     public void setPos(long p) {
+        assert p * Long.BYTES <= capacity;
         pos = start + p * Long.BYTES;
     }
 
