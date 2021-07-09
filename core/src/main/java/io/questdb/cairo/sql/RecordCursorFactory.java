@@ -93,4 +93,8 @@ public interface RecordCursorFactory extends Closeable, Sinkable {
     default void toSink(CharSink sink) {
         throw new UnsupportedOperationException();
     }
+
+    default SingleSymbolFilter convertToSampleByIndexDataFrameCursorFactory() {
+        return null;
+    }
 }

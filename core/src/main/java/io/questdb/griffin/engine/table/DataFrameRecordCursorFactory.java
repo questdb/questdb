@@ -57,6 +57,7 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
             @Nullable IntList columnSizes
     ) {
         super(metadata, dataFrameCursorFactory);
+
         this.cursor = new DataFrameRecordCursor(rowCursorFactory, rowCursorFactory.isEntity(), filter, columnIndexes);
         this.followsOrderByAdvice = followsOrderByAdvice;
         this.filter = filter;
@@ -118,7 +119,7 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
         return cursor;
     }
 
-    private static class TableReaderPageFrameCursor implements PageFrameCursor {
+    public static class TableReaderPageFrameCursor implements PageFrameCursor {
         private final LongList columnPageNextAddress = new LongList();
         private final LongList columnPageAddress = new LongList();
         private final TableReaderPageFrameCursor.TableReaderPageFrame frame = new TableReaderPageFrameCursor.TableReaderPageFrame();
@@ -134,6 +135,7 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
         private long partitionRemaining = 0L;
         private DataFrameCursor dataFrameCursor;
         private final int timestampIndex;
+        private long rowLo = -1;
 
         public TableReaderPageFrameCursor(IntList columnIndexes, IntList columnSizes, int timestampIndex) {
             this.columnIndexes = columnIndexes;
@@ -153,6 +155,8 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
             if (partitionIndex > -1) {
                 final long m = computePageMin(reader.getColumnBase(partitionIndex));
                 if (m < Long.MAX_VALUE) {
+                    // Offset next frame lowest RowId with the count of rows returned in previous frame.
+                    rowLo += pageSizes.get(timestampIndex) >> columnSizes.get(timestampIndex);
                     return computeFrame(m);
                 }
             }
@@ -208,9 +212,12 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
                             }
                         }
                     }
-                    return computeFrame(computePageMin(base));
+                    rowLo = dataFrame.getRowLo();
+                    TableReaderPageFrameCursor.TableReaderPageFrame pageFrame = computeFrame(computePageMin(base));
+                    return pageFrame;
                 }
             }
+            rowLo = 0;
             return null;
         }
 
@@ -243,7 +250,7 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
             return this;
         }
 
-        private PageFrame computeFrame(long min) {
+        private TableReaderPageFrameCursor.TableReaderPageFrame computeFrame(long min) {
             for (int i = 0; i < columnCount; i++) {
                 final long top = topsRemaining.getQuick(i);
                 if (top > 0) {
@@ -307,6 +314,21 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
         }
 
         private class TableReaderPageFrame implements PageFrame {
+            @Override
+            public BitmapIndexReader getBitmapIndexReader(int columnIndex, int direction) {
+                return reader.getBitmapIndexReader(partitionIndex, columnIndexes.getQuick(columnIndex), direction);
+            }
+
+            @Override
+            public long getFirstRowId() {
+                assert rowLo >= 0;
+                return rowLo;
+            }
+
+            @Override
+            public int getPartitionIndex() {
+                return partitionIndex;
+            }
 
             @Override
             public long getFirstTimestamp() {
@@ -330,6 +352,7 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
             public int getColumnSize(int columnIndex) {
                 return columnSizes.getQuick(columnIndex);
             }
+
         }
     }
 

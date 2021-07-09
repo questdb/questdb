@@ -1,6 +1,6 @@
 #!/bin/bash
 
-COV_CLASSES=$(curl https://api.github.com/repos/questdb/questdb/pulls/$1/files -s \
+COV_CLASSES=$(curl https://api.github.com/repos/questdb/questdb/pulls/$1/files?per_page=100 -s \
       | grep -oP 'filename": "core/src/main/java/io/questdb.*\/\K[^.]+' \
       | tr '\n' ',' | sed -e 's/,/,+:*./g' | sed 's/,+:\*\.$//')
 

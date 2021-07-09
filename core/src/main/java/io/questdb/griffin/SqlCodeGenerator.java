@@ -653,6 +653,7 @@ public class SqlCodeGenerator implements Mutable {
         model.setWhereClause(null);
         final Function f = compileFilter(filter, factory.getMetadata(), executionContext);
         if (f.isConstant()) {
+            //noinspection TryFinallyCanBeTryWithResources
             try {
                 if (f.getBool(null)) {
                     return factory;
@@ -1314,6 +1315,25 @@ public class SqlCodeGenerator implements Mutable {
                         timestampIndex
                 );
 
+
+                boolean isFillNone = fillCount == 0 || fillCount == 1 && Chars.equalsLowerCaseAscii(sampleByFill.getQuick(0).token, "none");
+                boolean allGroupsFirstLast = isFillNone && allGroupsFirstLastWithSingleSymbolFilter(model, metadata);
+                if (allGroupsFirstLast) {
+                    SingleSymbolFilter symbolFilter = factory.convertToSampleByIndexDataFrameCursorFactory();
+                    if (symbolFilter != null) {
+                        return new SampleByFirstLastRecordCursorFactory(
+                                factory,
+                                timestampSampler,
+                                groupByMetadata,
+                                model.getColumns(),
+                                metadata,
+                                timestampIndex,
+                                symbolFilter,
+                                configuration.getSampleByIndexSearchPageSize()
+                        );
+                    }
+                }
+
                 if (fillCount == 1 && Chars.equalsLowerCaseAscii(sampleByFill.getQuick(0).token, "prev")) {
                     if (keyTypes.getColumnCount() == 0) {
                         return new SampleByFillPrevNotKeyedRecordCursorFactory(
@@ -1342,7 +1362,7 @@ public class SqlCodeGenerator implements Mutable {
                     );
                 }
 
-                if (fillCount == 0 || fillCount == 1 && Chars.equalsLowerCaseAscii(sampleByFill.getQuick(0).token, "none")) {
+                if (isFillNone) {
 
                     if (keyTypes.getColumnCount() == 0) {
                         // this sample by is not keyed
@@ -1440,6 +1460,28 @@ public class SqlCodeGenerator implements Mutable {
         } finally {
             executionContext.popTimestampRequiredFlag();
         }
+    }
+
+    private static boolean allGroupsFirstLastWithSingleSymbolFilter(QueryModel model, RecordMetadata metadata) {
+        final ObjList<QueryColumn> columns = model.getColumns();
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            final QueryColumn column = columns.getQuick(i);
+            final ExpressionNode node = column.getAst();
+
+            if (node.type != ExpressionNode.LITERAL) {
+                ExpressionNode columnAst = column.getAst();
+                CharSequence token = columnAst.token;
+                if (!SqlKeywords.isFirstFunction(token) && !SqlKeywords.isLastFunction(token)) {
+                    return false;
+                }
+
+                if (columnAst.rhs.type != ExpressionNode.LITERAL || metadata.getColumnIndex(columnAst.rhs.token) < 0) {
+                    return false;
+                }
+            }
+        }
+
+        return true;
     }
 
     private RecordCursorFactory generateSelect(
@@ -2450,6 +2492,21 @@ public class SqlCodeGenerator implements Mutable {
                                 } else {
                                     rcf = new SymbolIndexFilteredRowCursorFactory(keyColumnIndex, symbolKey, f, true, indexDirection, columnIndexes, null);
                                 }
+                            }
+
+                            if (f == null) {
+                                // This special case factory can later be disassembled to framing and index
+                                // cursors in Sample By processing
+                                return new DeferredSingleSymbolFilterDataFrameRecordCursorFactory(
+                                        keyColumnIndex,
+                                        symbol,
+                                        rcf,
+                                        myMeta,
+                                        dfcFactory,
+                                        orderByKeyColumn,
+                                        f,
+                                        columnIndexes,
+                                        columnSizes);
                             }
                             return new DataFrameRecordCursorFactory(myMeta, dfcFactory, rcf, orderByKeyColumn, f, false, columnIndexes, columnSizes);
                         }
