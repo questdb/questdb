@@ -2266,7 +2266,10 @@ public class SqlCodeGenerator implements Mutable {
                     executionContext.pushTimestampRequiredFlag(true);
                 }
 
-                if (topDownColumnCount > 0) {
+                boolean contextTimestampRequired = executionContext.isTimestampRequired();
+                // some "sample by" queries don't select any cols but needs timestamp col selected
+                // for example "select count() from x sample by 1h" implicitly needs timestamp column selected
+                if (topDownColumnCount > 0 || contextTimestampRequired) {
                     framingSupported = true;
                     for (int i = 0; i < topDownColumnCount; i++) {
                         int columnIndex = readerMeta.getColumnIndexQuiet(topDownColumns.getQuick(i).getName());
@@ -2295,7 +2298,7 @@ public class SqlCodeGenerator implements Mutable {
                     }
 
                     // select timestamp when it is required but not already selected
-                    if (readerTimestampIndex != -1 && myMeta.getTimestampIndex() == -1 && executionContext.isTimestampRequired()) {
+                    if (readerTimestampIndex != -1 && myMeta.getTimestampIndex() == -1 && contextTimestampRequired) {
                         myMeta.add(new TableColumnMetadata(
                                 readerMeta.getColumnName(readerTimestampIndex),
                                 readerMeta.getColumnType(readerTimestampIndex),
