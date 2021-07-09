@@ -44,7 +44,7 @@ inline static int64_t to_row_id(int32_t partition_index, int64_t local_row_id) {
 struct out_arguments {
     int64_t key_lo;
     int64_t key_hi;
-    int64_t* rows;
+    int64_t* rows_address;
     int64_t rows_capacity;
     int64_t rows_size;
     int64_t hashes_address;
