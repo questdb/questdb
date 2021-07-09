@@ -2076,6 +2076,86 @@ nodejs code:
     }
 
     @Test
+    public void testPreparedStatementSelectNull() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (
+                    final PGWireServer ignored = createPGServer(2);
+                    final Connection connection = getConnection(false, false);
+                    final PreparedStatement statement = connection.prepareStatement("select ? from long_sequence(1)")
+            ) {
+                StringSink sink = new StringSink();
+                statement.setNull(1, Types.NULL);
+                try (ResultSet rs = statement.executeQuery()) {
+                    assertResultSet("$1[VARCHAR]\nnull\n", sink, rs);
+                }
+                statement.setNull(1, Types.VARCHAR);
+                try (ResultSet rs = statement.executeQuery()) {
+                    sink.clear();
+                    assertResultSet("$1[VARCHAR]\nnull\n", sink, rs);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testPreparedStatementInsertSelectNullDesignatedColumn() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (
+                    final PGWireServer ignored = createPGServer(2);
+                    final Connection connection = getConnection(false, false);
+                    final Statement statement = connection.createStatement();
+                    final PreparedStatement insert = connection.prepareStatement("insert into tab(ts, value) values(?, ?)")
+            ) {
+                statement.execute("create table tab(ts timestamp, value double) timestamp(ts) partition by MONTH");
+                // Null is not allowed
+                insert.setNull(1, Types.NULL);
+                insert.setNull(2, Types.NULL);
+                try {
+                    insert.executeUpdate();
+                    fail("cannot insert null when the column is designated");
+                } catch (PSQLException expected) {
+                    Assert.assertEquals("ERROR: timestamp before 1970-01-01 is not allowed", expected.getMessage());
+                }
+                // Insert a dud
+                insert.setString(1, "1970-01-01 00:11:22.334455");
+                insert.setNull(2, Types.NULL);
+                insert.executeUpdate();
+                try (ResultSet rs = statement.executeQuery("select null, ts, value from tab where value = null")) {
+                    StringSink sink = new StringSink();
+                    String expected = "null[VARCHAR],ts[TIMESTAMP],value[DOUBLE]\n" +
+                            "null,1970-01-01 00:11:22.334455,null\n";
+                    assertResultSet(expected, sink, rs);
+                }
+                statement.execute("drop table tab");
+            }
+        });
+    }
+
+    @Test
+    public void testPreparedStatementInsertSelectNullNoDesignatedColumn() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (
+                    final PGWireServer ignored = createPGServer(2);
+                    final Connection connection = getConnection(false, false);
+                    final Statement statement = connection.createStatement();
+                    final PreparedStatement insert = connection.prepareStatement("insert into tab(ts, value) values(?, ?)")
+            ) {
+                statement.execute("create table tab(ts timestamp, value double)");
+                insert.setNull(1, Types.NULL);
+                insert.setNull(2, Types.NULL);
+                insert.executeUpdate();
+                try (ResultSet rs = statement.executeQuery("select null, ts, value from tab where value = null")) {
+                    StringSink sink = new StringSink();
+                    String expected = "null[VARCHAR],ts[TIMESTAMP],value[DOUBLE]\n" +
+                            "null,null,null\n";
+                    assertResultSet(expected, sink, rs);
+                }
+                statement.execute("drop table tab");
+            }
+        });
+    }
+
+    @Test
     public void testPreparedStatementHex() throws Exception {
         assertHexScript(NetworkFacadeImpl.INSTANCE, ">0000006e00030000757365720078797a0064617461626173650071646200636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e65004575726f70652f4c6f6e646f6e0065787472615f666c6f61745f64696769747300320000\n" +
                 "<520000000800000003\n" +
