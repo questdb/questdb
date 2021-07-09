@@ -38,6 +38,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
+import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_MICROS;
 import static io.questdb.std.datetime.microtime.Timestamps.MINUTE_MICROS;
@@ -178,7 +179,7 @@ public abstract class AbstractNoRecordSampleByCursor implements NoRandomAccessRe
         interruptor = executionContext.getSqlExecutionInterruptor();
     }
 
-    protected long adjustDST(long timestamp, int n, MapValue mapValue) {
+    protected long adjustDST(long timestamp, int n, @Nullable MapValue mapValue) {
         final long t = timestamp - tzOffset;
         if (t >= nextDst) {
             final long daylightSavings = rules.getOffset(t);
@@ -186,6 +187,7 @@ public abstract class AbstractNoRecordSampleByCursor implements NoRandomAccessRe
             if (daylightSavings < tzOffset) {
                 // time moved backwards, we need to check if we should be collapsing this
                 // hour into previous period or not
+                updateValueWhenClockMovesBack(mapValue, n);
                 GroupByUtils.updateExisting(groupByFunctions, n, mapValue, baseRecord);
                 nextSampleLocalEpoch = timestampSampler.round(timestamp);
                 sampleLocalEpoch -= (tzOffset - daylightSavings);
@@ -200,6 +202,10 @@ public abstract class AbstractNoRecordSampleByCursor implements NoRandomAccessRe
             tzOffset = daylightSavings;
         }
         return timestamp;
+    }
+
+    protected void updateValueWhenClockMovesBack(MapValue value, int n) {
+        GroupByUtils.updateExisting(groupByFunctions, n, value, baseRecord);
     }
 
     protected boolean notKeyedLoop(MapValue mapValue) {

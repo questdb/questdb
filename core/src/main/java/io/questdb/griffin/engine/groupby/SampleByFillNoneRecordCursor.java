@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.groupby;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapKey;
+import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.griffin.engine.functions.GroupByFunction;
@@ -72,21 +73,22 @@ class SampleByFillNoneRecordCursor extends AbstractVirtualRecordSampleByCursor {
         // of first record in base cursor
         int n = groupByFunctions.size();
         do {
-            final long timestamp = getBaseRecordTimestamp();
+            long timestamp = getBaseRecordTimestamp();
             if (timestamp < next) {
                 final MapKey key = map.withKey();
                 keyMapSink.copy(baseRecord, key);
                 GroupByUtils.updateFunctions(groupByFunctions, n, key.createValue(), baseRecord);
                 interruptor.checkInterrupted();
             } else {
-                // timestamp changed, make sure we keep the value of 'lastTimestamp'
-                // unchanged. Timestamp columns uses this variable
-                // When map is exhausted we would assign 'nextTimestamp' to 'lastTimestamp'
-                // and build another map
-                this.localEpoch = timestampSampler.round(timestamp);
-                // get group by function to top to indicate that they have a new pass over the data set
-                GroupByUtils.toTop(groupByFunctions);
-                return createMapCursor();
+                // map value is conditional and only required when clock goes back
+                // we override base method for when this happens
+                // see: updateValueWhenClockMovesBack()
+                timestamp = adjustDST(timestamp, n, null);
+                if (timestamp != Long.MIN_VALUE) {
+                    this.localEpoch = timestampSampler.round(timestamp);
+                    GroupByUtils.toTop(groupByFunctions);
+                    return createMapCursor();
+                }
             }
         } while (base.hasNext());
 
@@ -94,6 +96,13 @@ class SampleByFillNoneRecordCursor extends AbstractVirtualRecordSampleByCursor {
         // opportunity, after we stream map that is.
         baseRecord = null;
         return createMapCursor();
+    }
+
+    @Override
+    protected void updateValueWhenClockMovesBack(MapValue value, int n) {
+        final MapKey key = map.withKey();
+        keyMapSink.copy(baseRecord, key);
+        super.updateValueWhenClockMovesBack(key.createValue(), n);
     }
 
     @Override
