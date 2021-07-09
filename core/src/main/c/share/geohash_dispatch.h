@@ -25,6 +25,7 @@
 #ifndef QUESTDB_GEOHASH_DISPATCH_H
 #define QUESTDB_GEOHASH_DISPATCH_H
 
+#include "util.h"
 #include "dispatcher.h"
 
 DECLARE_DISPATCHER_TYPE(filter_with_prefix,
