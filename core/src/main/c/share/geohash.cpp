@@ -87,16 +87,16 @@ Java_io_questdb_griffin_engine_functions_geohash_GeoHashNative_latesByAndFilterP
             blockValueCountMod);
 
     auto rows_count_after = out_args->rows_size;
-
     const auto *hashes = reinterpret_cast<const int64_t *>(hashesAddress);
     const auto hash_length = static_cast<int32_t>(hashLength);
     const auto *prefixes = reinterpret_cast<const int64_t *>(prefixesAddress);
     const auto prefixes_count = static_cast<int64_t>(prefixesCount);
 
-    auto start = rows + out_args->key_lo;
-    auto stop = rows + out_args->key_lo + rows_count_after;
+    auto found_start = rows + out_args->key_lo;
+    auto found_stop = rows + out_args->key_lo + rows_count_after;
 
     if (hashes && prefixes && prefixes_count) {
+
         filter_with_prefix(
                 hashes,
                 rows + out_args->key_lo + rows_count_prev,
@@ -106,13 +106,16 @@ Java_io_questdb_griffin_engine_functions_geohash_GeoHashNative_latesByAndFilterP
                 prefixes_count
                 );
 
-        if (rows_count_after >= (out_args->key_hi - out_args->key_lo) || partitionIndex == 0) {
-            auto p = std::partition(start, stop, [](int64_t n) { return n != 0; });
-            auto filtered = std::distance(start, p);
-            out_args->filtered_size = filtered;
-        }
+        auto filtered_start = rows + out_args->key_lo + rows_count_prev;
+        auto filtered_stop = rows + out_args->key_lo + rows_count_after;
+        auto p = std::partition(filtered_start, filtered_stop, [](int64_t n) { return n != 0; });
+        auto filtered_count = std::distance(filtered_start, p);
+        auto len = filtered_count * sizeof(int64_t);
+        auto dst = rows + out_args->key_lo + out_args->filtered_size;
+        __MEMMOVE(reinterpret_cast<void *>(dst), reinterpret_cast<void *>(filtered_start), len);
+        out_args->filtered_size += filtered_count;
     } else {
-        out_args->filtered_size = std::distance(start, stop);
+        out_args->filtered_size = std::distance(found_start, found_stop);
     }
 }
 
