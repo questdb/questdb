@@ -45,6 +45,7 @@ struct out_arguments {
     int64_t key_lo;
     int64_t key_hi;
     int64_t* rows;
+    int64_t rows_capacity;
     int64_t rows_size;
 };
 

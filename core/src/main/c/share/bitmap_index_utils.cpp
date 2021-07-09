@@ -43,7 +43,6 @@ void latest_scan_backward(
 
     auto key_begin = out_args->key_lo;
     auto key_end = out_args->key_hi;
-
     auto rows = out_args->rows;
 
     const auto vblock_capacity = vblock_capacity_mask + 1;
@@ -252,7 +251,7 @@ extern "C" {
 
 JNIEXPORT void JNICALL
 Java_io_questdb_std_BitmapIndexUtilsNative_latestScanBackward0(
-        JAVA_STATIC,
+        JNIEnv *env, jclass cl,
         jlong keysMemory,
         jlong keysMemorySize,
         jlong valuesMemory,
@@ -280,7 +279,8 @@ Java_io_questdb_std_BitmapIndexUtilsNative_latestScanBackward0(
 
 JNIEXPORT jint JNICALL
 Java_io_questdb_std_BitmapIndexUtilsNative_findFirstLastInFrame0(
-        JAVA_STATIC,
+        JNIEnv *env,
+        jclass cl,
         jint outIndex,
         jlong rowIdLo,
         jlong rowIdHi,
@@ -329,7 +329,8 @@ Java_io_questdb_std_BitmapIndexUtilsNative_findFirstLastInFrame0(
 
 JNIEXPORT jint JNICALL
 Java_io_questdb_std_BitmapIndexUtilsNative_findFirstLastInFrameNoFilter0(
-        JAVA_STATIC,
+        JNIEnv *env,
+        jclass cl,
         jint outIndex,
         jlong rowIdLo,
         jlong rowIdHi,
