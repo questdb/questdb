@@ -25,10 +25,56 @@
 package io.questdb.std;
 
 public class BitmapIndexUtilsNative {
+    public static int findFirstLastInFrame(
+            int outIndex,
+            long rowIdLo,
+            long rowIdHi,
+            long timestampColAddress,
+            long frameBaseOffset,
+            long symbolIndexAddress,
+            long symbolIndexCount,
+            long symbolIndexPosition,
+            long samplePeriodsAddress,
+            int samplePeriodsCount,
+            long samplePeriodIndexOffset,
+            long rowIdOutAddress,
+            int outSize) {
+        if (symbolIndexAddress > 0) {
+            return findFirstLastInFrame0(
+                    outIndex,
+                    rowIdLo,
+                    rowIdHi,
+                    timestampColAddress,
+                    frameBaseOffset,
+                    symbolIndexAddress,
+                    symbolIndexCount,
+                    symbolIndexPosition,
+                    samplePeriodsAddress,
+                    samplePeriodsCount,
+                    samplePeriodIndexOffset,
+                    rowIdOutAddress,
+                    outSize
+            );
+        } else {
+            return findFirstLastInFrameNoFilter0(
+                    outIndex,
+                    rowIdLo,
+                    rowIdHi,
+                    timestampColAddress,
+                    frameBaseOffset,
+                    samplePeriodsAddress,
+                    samplePeriodsCount,
+                    samplePeriodIndexOffset,
+                    rowIdOutAddress,
+                    outSize
+            );
+        }
+    }
+
     public static void latestScanBackward(long keysMemory, long keysMemorySize, long valuesMemory,
-                                                   long valuesMemorySize, long argsMemory, long unIndexedNullCount,
-                                                   long maxValue, long minValue,
-                                                   int partitionIndex, int blockValueCountMod) {
+                                          long valuesMemorySize, long argsMemory, long unIndexedNullCount,
+                                          long maxValue, long minValue,
+                                          int partitionIndex, int blockValueCountMod) {
         assert keysMemory > 0;
         assert keysMemorySize > 0;
         assert valuesMemory > 0;
@@ -42,7 +88,34 @@ public class BitmapIndexUtilsNative {
     }
 
     private static native void latestScanBackward0(long keysMemory, long keysMemorySize, long valuesMemory,
-                                                 long valuesMemorySize, long argsMemory, long unIndexedNullCount,
-                                                 long maxValue, long minValue,
-                                                 int partitionIndex, int blockValueCountMod);
+                                                   long valuesMemorySize, long argsMemory, long unIndexedNullCount,
+                                                   long maxValue, long minValue,
+                                                   int partitionIndex, int blockValueCountMod);
+
+    private static native int findFirstLastInFrame0(
+            int outIndex,
+            long rowIdLo,
+            long rowIdHi,
+            long timestampColAddress,
+            long frameBaseOffset,
+            long symbolIndexAddress,
+            long symbolIndexCount,
+            long symbolIndexPosition,
+            long samplePeriodsAddress,
+            int samplePeriodCount,
+            long samplePeriodIndexOffset,
+            long rowIdOutAddress,
+            int outSize);
+
+    private static native int findFirstLastInFrameNoFilter0(
+            int outIndex,
+            long rowIdLo,
+            long rowIdHi,
+            long timestampColAddress,
+            long frameBaseOffset,
+            long samplePeriodsAddress,
+            int samplePeriodCount,
+            long samplePeriodIndexOffset,
+            long rowIdOutAddress,
+            int outSize);
 }

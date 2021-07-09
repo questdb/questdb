@@ -154,6 +154,20 @@ int64_t branch_free_search_lower(const T* array, const int64_t count, T x) {
 }
 
 template<typename T>
+int64_t branch_free_linked_search_lower(const int64_t * index, const T* values, const int64_t count, T x) {
+    const T *base = index;
+    int64_t n = count;
+    while (n > 1) {
+        int64_t half = n / 2;
+        MM_PREFETCH_T0(base + half / 2);
+        MM_PREFETCH_T0(base + half + half / 2);
+        base = (values[base[half]] < x) ? base + half : base;
+        n -= half;
+    }
+    return (values[*base] < x) + base - index;
+}
+
+template<typename T>
 int64_t branch_free_search_upper(const T* array, const int64_t count, T x) {
     const T *base = array;
     int64_t n = count;

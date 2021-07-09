@@ -78,7 +78,7 @@ public abstract class AbstractFullDataFrameCursor implements DataFrameCursor {
 
         @Override
         public BitmapIndexReader getBitmapIndexReader(int columnIndex, int direction) {
-            return reader.getBitmapIndexReader(partitionIndex, reader.getColumnBase(partitionIndex), columnIndex, direction);
+            return reader.getBitmapIndexReader(partitionIndex, columnIndex, direction);
         }
 
         @Override

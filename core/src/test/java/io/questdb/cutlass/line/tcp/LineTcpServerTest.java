@@ -309,6 +309,140 @@ public class LineTcpServerTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFieldsReduced() throws Exception {
+        String lineData =
+                "weather windspeed=1.0 631150000000000000\n" +
+                        "weather windspeed=2.0 631152000000000000\n" +
+                        "weather timetocycle=0.0,windspeed=3.0 631160000000000000\n" +
+                        "weather windspeed=4.0 631170000000000000\n";
+
+        runInContext(() -> {
+            send(lineData, "weather", true, false);
+
+            String expected =
+                    "windspeed\ttimestamp\ttimetocycle\n" +
+                            "1.0\t1989-12-31T23:26:40.000000Z\tNaN\n" +
+                            "2.0\t1990-01-01T00:00:00.000000Z\tNaN\n" +
+                            "3.0\t1990-01-01T02:13:20.000000Z\t0.0\n" +
+                            "4.0\t1990-01-01T05:00:00.000000Z\tNaN\n";
+            assertTable(expected, "weather");
+        });
+    }
+
+    @Test
+    public void testFieldsReducedO3() throws Exception {
+        String lineData =
+                "weather windspeed=1.0 631152000000000000\n" +
+                        "weather windspeed=2.0 631150000000000000\n" +
+                        "weather timetocycle=0.0,windspeed=3.0 631160000000000000\n" +
+                        "weather windspeed=4.0 631170000000000000\n";
+
+        runInContext(() -> {
+            send(lineData, "weather", true, false);
+
+            String expected =
+                    "windspeed\ttimestamp\ttimetocycle\n" +
+                            "2.0\t1989-12-31T23:26:40.000000Z\tNaN\n" +
+                            "1.0\t1990-01-01T00:00:00.000000Z\tNaN\n" +
+                            "3.0\t1990-01-01T02:13:20.000000Z\t0.0\n" +
+                            "4.0\t1990-01-01T05:00:00.000000Z\tNaN\n";
+            assertTable(expected, "weather");
+        });
+    }
+
+    @Test
+    public void testFieldsReducedNonPartitioned() throws Exception {
+        try (TableModel m = new TableModel(configuration, "weather", PartitionBy.NONE)) {
+            m.col("windspeed", ColumnType.DOUBLE).timestamp();
+            CairoTestUtils.createTableWithVersion(m, ColumnType.VERSION);
+        }
+
+        String lineData =
+            "weather windspeed=2.0 631150000000000000\n" +
+            "weather timetocycle=0.0,windspeed=3.0 631160000000000000\n" +
+            "weather windspeed=4.0 631170000000000000\n";
+
+        runInContext(() -> {
+            send(lineData, "weather", true, false);
+
+            String expected =
+                    "windspeed\ttimestamp\ttimetocycle\n" +
+                            "2.0\t1989-12-31T23:26:40.000000Z\tNaN\n" +
+                            "3.0\t1990-01-01T02:13:20.000000Z\t0.0\n" +
+                            "4.0\t1990-01-01T05:00:00.000000Z\tNaN\n";
+            assertTable(expected, "weather");
+        });
+    }
+
+    @Test
+    public void testFieldsReducedO3VarLen() throws Exception {
+        String lineData =
+                "weather dir=\"NA\",windspeed=1.0 631152000000000000\n" +
+                "weather dir=\"South\",windspeed=2.0 631150000000000000\n" +
+                "weather dir=\"North\",windspeed=3.0,timetocycle=0.0 631160000000000000\n" +
+                "weather dir=\"SSW\",windspeed=4.0 631170000000000000\n";
+
+        runInContext(() -> {
+            send(lineData, "weather", true, false);
+
+            String expected =
+                    "dir\twindspeed\ttimestamp\ttimetocycle\n" +
+                    "South\t2.0\t1989-12-31T23:26:40.000000Z\tNaN\n" +
+                    "NA\t1.0\t1990-01-01T00:00:00.000000Z\tNaN\n" +
+                    "North\t3.0\t1990-01-01T02:13:20.000000Z\t0.0\n" +
+                    "SSW\t4.0\t1990-01-01T05:00:00.000000Z\tNaN\n";
+            assertTable(expected, "weather");
+        });
+    }
+
+    @Test
+    public void testWindowsAccessDenied() throws Exception {
+        try (TableModel m = new TableModel(configuration, "table_a", PartitionBy.DAY)) {
+            m.timestamp("ReceiveTime")
+                    .col("SequenceNumber", ColumnType.SYMBOL).indexed(true, 256)
+                    .col("MessageType", ColumnType.SYMBOL).indexed(true, 256)
+                    .col("Length", ColumnType.INT);
+            CairoTestUtils.createTableWithVersion(m, ColumnType.VERSION);
+        }
+
+        String lineData = "table_a,MessageType=B,SequenceNumber=1 Length=92i,test=1.5 1465839830100400000\n";
+
+        runInContext(() -> {
+            send(lineData, "table_a", true, false);
+
+            String expected = "ReceiveTime\tSequenceNumber\tMessageType\tLength\ttest\n" +
+                    "2016-06-13T17:43:50.100400Z\t1\tB\t92\t1.5\n";
+            assertTable(expected, "table_a");
+        });
+    }
+
+    @Test
+    public void testWrterCommitFails() throws Exception {
+        try (TableModel m = new TableModel(configuration, "table_a", PartitionBy.DAY)) {
+            m.timestamp("ReceiveTime")
+                    .col("SequenceNumber", ColumnType.SYMBOL).indexed(true, 256)
+                    .col("MessageType", ColumnType.SYMBOL).indexed(true, 256)
+                    .col("Length", ColumnType.INT);
+            CairoTestUtils.createTableWithVersion(m, ColumnType.VERSION);
+        }
+
+        runInContext(() -> {
+            ff = new FilesFacadeImpl() {
+                @Override
+                public int rmdir(Path path) {
+                    return 5;
+                }
+            };
+
+            String lineData = "table_a,MessageType=B,SequenceNumber=1 Length=92i,test=1.5 1465839830100400000\n";
+            send(lineData, "table_a", true, false);
+
+            String expected = "ReceiveTime\tSequenceNumber\tMessageType\tLength\n";
+            assertTable(expected, "table_a");
+        });
+    }
+
+    @Test
     public void testWriterAllLongs() throws Exception {
         currentMicros = 1;
         try (TableModel m = new TableModel(configuration, "messages", PartitionBy.MONTH)) {

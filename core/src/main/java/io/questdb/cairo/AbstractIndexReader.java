@@ -39,7 +39,7 @@ public abstract class AbstractIndexReader implements BitmapIndexReader {
     public static final String INDEX_CORRUPT = "cursor could not consistently read index header [corrupt?]";
     protected final static Log LOG = LogFactory.getLog(BitmapIndexBwdReader.class);
     protected final MappedReadOnlyMemory keyMem = new SinglePageMappedReadOnlyPageMemory();
-    protected final MappedReadOnlyMemory valueMem = new SinglePageMappedReadOnlyPageMemory();
+    protected final SinglePageMappedReadOnlyPageMemory valueMem = new SinglePageMappedReadOnlyPageMemory();
     protected int blockValueCountMod;
     protected int blockCapacity;
     protected long spinLockTimeoutUs;
@@ -57,7 +57,7 @@ public abstract class AbstractIndexReader implements BitmapIndexReader {
     }
 
     public long getValueBaseAddress() {
-        return ((SinglePageMappedReadOnlyPageMemory)valueMem).addressOf(0);
+        return valueMem.addressOf(0);
     }
 
     public long getValueMemorySize() {
@@ -119,7 +119,6 @@ public abstract class AbstractIndexReader implements BitmapIndexReader {
             // read. Confirm start sequence hasn't changed after values read. If it has changed - retry the whole thing.
             int blockValueCountMod;
             int keyCount;
-            long valuesMemorySize;
             final long deadline = clock.getTicks() + spinLockTimeoutUs;
             while (true) {
                 long seq = this.keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE);
@@ -129,7 +128,6 @@ public abstract class AbstractIndexReader implements BitmapIndexReader {
 
                     blockValueCountMod = this.keyMem.getInt(BitmapIndexUtils.KEY_RESERVED_OFFSET_BLOCK_VALUE_COUNT) - 1;
                     keyCount = this.keyMem.getInt(BitmapIndexUtils.KEY_RESERVED_OFFSET_KEY_COUNT);
-                    valuesMemorySize = this.keyMem.getInt(BitmapIndexUtils.KEY_RESERVED_OFFSET_VALUE_MEM_SIZE);
 
                     Unsafe.getUnsafe().loadFence();
                     if (this.keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE) == seq) {

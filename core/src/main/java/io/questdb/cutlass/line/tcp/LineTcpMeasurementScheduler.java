@@ -433,6 +433,7 @@ class LineTcpMeasurementScheduler implements Closeable {
         private int rebalanceFromThreadId;
         private int rebalanceToThreadId;
         private volatile boolean rebalanceReleasedByFromThread;
+        private boolean commitOnWriterClose;
 
         private LineTcpMeasurementEvent(int maxMeasurementSize, MicrosecondClock clock, LineProtoTimestampAdapter timestampAdapter) {
             bufSize = (long) (maxMeasurementSize / 4) * (Integer.BYTES + Double.BYTES + 1);
@@ -556,9 +557,10 @@ class LineTcpMeasurementScheduler implements Closeable {
             rebalanceReleasedByFromThread = false;
         }
 
-        void createReleaseWriterEvent(TableUpdateDetails tableUpdateDetails) {
+        void createReleaseWriterEvent(TableUpdateDetails tableUpdateDetails, boolean commitOnWriterClose) {
             threadId = RELEASE_WRITER_EVENT_ID;
             this.tableUpdateDetails = tableUpdateDetails;
+            this.commitOnWriterClose = commitOnWriterClose;
         }
 
         void processMeasurementEvent(WriterJob job) {
@@ -806,8 +808,14 @@ class LineTcpMeasurementScheduler implements Closeable {
             if (writerThreadId != Integer.MIN_VALUE) {
                 LOG.info().$("closing table writer [tableName=").$(tableName).$(']').$();
                 if (null != writer) {
-                    writer.commit();
-                    writer = Misc.free(writer);
+                    try {
+                        writer.commit();
+                    } catch (CairoException ex) {
+                        LOG.error().$("cannot commit writer transaction, rolling back before releasing it [table=").$(tableName).$(",ex=").$((Throwable) ex).I$();
+                        writer.rollback();
+                    } finally {
+                        writer = Misc.free(writer);
+                    }
                 }
                 writerThreadId = Integer.MIN_VALUE;
             }
@@ -840,11 +848,20 @@ class LineTcpMeasurementScheduler implements Closeable {
             }
         }
 
-        void handleWriterRelease() {
+        void handleWriterRelease(boolean commit) {
             if (null != writer) {
                 LOG.debug().$("release commit [table=").$(writer.getTableName()).I$();
-                writer.commit();
-                writer = Misc.free(writer);
+                try {
+                    if (commit) {
+                        writer.commit();
+                    }
+                } catch (Throwable ex) {
+                    LOG.error().$("writer commit fails, force closing it [table=").$(writer.getTableName()).$(",ex=").$(ex).I$();
+                } finally {
+                    // writer or FS can be in a bad state
+                    // do not leave writer locked
+                    writer = Misc.free(writer);
+                }
                 lastCommitMillis = milliClock.getTicks();
             }
         }
@@ -868,7 +885,7 @@ class LineTcpMeasurementScheduler implements Closeable {
 
         void switchThreads() {
             assignedToJob = false;
-            handleWriterRelease();
+            handleWriterRelease(true);
         }
 
         private class ThreadLocalDetails implements Closeable {
@@ -1026,28 +1043,40 @@ class LineTcpMeasurementScheduler implements Closeable {
                 busy = true;
                 final LineTcpMeasurementEvent event = queue.get(cursor);
                 boolean eventProcessed;
-                if (event.threadId == workerId) {
-                    if (!event.tableUpdateDetails.assignedToJob) {
-                        assignedTables.add(event.tableUpdateDetails);
-                        event.tableUpdateDetails.assignedToJob = true;
-                        LOG.info().$("assigned table to writer thread [tableName=").$(event.tableUpdateDetails.tableName).$(", threadId=").$(workerId).I$();
-                    }
-                    event.processMeasurementEvent(this);
-                    eventProcessed = true;
-                } else {
-                    switch (event.threadId) {
-                        case REBALANCE_EVENT_ID:
-                            eventProcessed = processRebalance(event);
-                            break;
 
-                        case RELEASE_WRITER_EVENT_ID:
-                            eventProcessed = processReleaseWriter(event);
-                            break;
-
-                        default:
+                try {
+                    if (event.threadId == workerId) {
+                        try {
+                            if (!event.tableUpdateDetails.assignedToJob) {
+                                assignedTables.add(event.tableUpdateDetails);
+                                event.tableUpdateDetails.assignedToJob = true;
+                                LOG.info().$("assigned table to writer thread [tableName=").$(event.tableUpdateDetails.tableName).$(", threadId=").$(workerId).I$();
+                            }
+                            event.processMeasurementEvent(this);
                             eventProcessed = true;
-                            break;
+                        } catch (Throwable ex) {
+                            LOG.error().$("closing writer for because of error [table=").$(event.tableUpdateDetails.tableName).$(",ex=").$(ex).I$();
+                            event.createReleaseWriterEvent(event.tableUpdateDetails, false);
+                            eventProcessed = false;
+                        }
+                    } else {
+                        switch (event.threadId) {
+                            case REBALANCE_EVENT_ID:
+                                eventProcessed = processRebalance(event);
+                                break;
+
+                            case RELEASE_WRITER_EVENT_ID:
+                                eventProcessed = processReleaseWriter(event);
+                                break;
+
+                            default:
+                                eventProcessed = true;
+                                break;
+                        }
                     }
+                } catch (Throwable ex) {
+                    eventProcessed = true;
+                    LOG.error().$("failed to process ILP event because of exception [ex=").$(ex).I$();
                 }
 
                 // by not releasing cursor we force the sequence to return us the same value over and over
@@ -1109,7 +1138,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                         .$("[tableName=").$(tableUpdateDetails.tableName)
                         .I$();
 
-                tableUpdateDetails.handleWriterRelease();
+                tableUpdateDetails.handleWriterRelease(event.commitOnWriterClose);
             } finally {
                 tableUpdateDetailsLock.readLock().unlock();
             }
@@ -1202,7 +1231,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                             final long seq = getNextPublisherEventSequence();
                             if (seq > -1) {
                                 LineTcpMeasurementEvent event = queue.get(seq);
-                                event.createReleaseWriterEvent(tableUpdateDetails);
+                                event.createReleaseWriterEvent(tableUpdateDetails, true);
                                 removeTableUpdateDetails(tableUpdateDetails);
                                 final CharSequence tableName = tableUpdateDetails.tableName;
                                 tableUpdateDetailsByTableName.remove(tableName);
