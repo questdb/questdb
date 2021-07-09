@@ -23,16 +23,10 @@
  ******************************************************************************/
 
 #include "util.h"
+#include "bitmap_index_utils.h"
 #include "geohash_dispatch.h"
 #include <string>
 
-constexpr int64_t to_local_row_id(int64_t row_id) { return row_id & 0xFFFFFFFFFFFL; }
-
-constexpr int64_t unpack_length(int64_t packed_hash) { return packed_hash >> 60; }
-
-constexpr int64_t unpack_hash(int64_t packed_hash) { return packed_hash & 0x0fffffffffffffffll; }
-
-constexpr int64_t bitmask(uint8_t count, uint8_t shift) { return ((static_cast<int64_t>(1) << count) - 1) << shift; }
 
 static const char base32_codes[] = {
         '0', '1', '2', '3', '4', '5', '6', '7',

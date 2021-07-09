@@ -28,6 +28,12 @@
 #include "util.h"
 #include "dispatcher.h"
 
+constexpr int64_t unpack_length(int64_t packed_hash) { return packed_hash >> 60; }
+
+constexpr int64_t unpack_hash(int64_t packed_hash) { return packed_hash & 0x0fffffffffffffffll; }
+
+constexpr int64_t bitmask(uint8_t count, uint8_t shift) { return ((static_cast<int64_t>(1) << count) - 1) << shift; }
+
 DECLARE_DISPATCHER_TYPE(filter_with_prefix,
                         const int64_t *hashes,
                         int64_t *rows,
