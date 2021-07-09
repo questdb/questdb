@@ -1640,8 +1640,7 @@ public class TableWriter implements Closeable {
     void closeActivePartition(boolean truncate) {
         LOG.info().$("closing last partition [table=").$(tableName).I$();
         closeAppendMemoryTruncate(truncate);
-        Misc.freeObjList(denseIndexers);
-        denseIndexers.clear();
+        freeIndexers();
     }
 
     void closeActivePartition(long size) {
@@ -2074,8 +2073,12 @@ public class TableWriter implements Closeable {
 
     private void freeIndexers() {
         if (indexers != null) {
-            Misc.freeObjList(indexers);
-            indexers.clear();
+            // Don't change items of indexers, they are re-used
+            if (indexers != null) {
+                for (int i = 0, n = indexers.size(); i < n; i++) {
+                    Misc.free(indexers.getQuick(i));
+                }
+            }
             denseIndexers.clear();
         }
     }

@@ -1085,6 +1085,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
             class X extends FilesFacadeImpl {
                 boolean fail = false;
+                long kIndexFd = -1;
 
                 @Override
                 public long read(long fd, long buf, long len, long offset) {
@@ -1094,10 +1095,31 @@ public class TableWriterTest extends AbstractCairoTest {
                     return super.read(fd, buf, len, offset);
                 }
 
+
+                @Override
+                public long openRW(LPSZ name) {
+                    if (Chars.contains(name, "2013") && Chars.endsWith(name, "category.k")) {
+                        return kIndexFd = super.openRW(name);
+                    }
+                    return super.openRW(name);
+                }
+
+                @Override
+                public boolean close(long fd) {
+                    if (fd == kIndexFd) {
+                        kIndexFd = -1;
+                    }
+                    return super.close(fd);
+                }
+
                 @Override
                 public int rmdir(Path name) {
                     if (fail) {
                         return 1;
+                    }
+                    if (kIndexFd != -1) {
+                        // Access dinied, file is open
+                        return 5;
                     }
                     return super.rmdir(name);
                 }
