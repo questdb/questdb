@@ -1060,18 +1060,18 @@ final class WhereClauseParser implements Mutable {
         // see: http://en.wikipedia.org/wiki/Tree_traversal
         prefixes.clear();
 
-        if (removeAndWithin(translator, node, metadata, prefixes)) {
+        if (removeWithin(translator, node, metadata, prefixes)) {
             return collapseWithinNodes(node);
         }
 
         ExpressionNode root = node;
         while (!stack.isEmpty() || node != null) {
             if (node != null) {
-                if (isAndKeyword(node.token)) {
-                    if (!removeAndWithin(translator, node.rhs, metadata, prefixes)) {
+                if (isAndKeyword(node.token) || isOrKeyword(node.token)) {
+                    if (!removeWithin(translator, node.rhs, metadata, prefixes)) {
                         stack.push(node.rhs);
                     }
-                    node = removeAndWithin(translator, node.lhs, metadata, prefixes) ? null : node.lhs;
+                    node = removeWithin(translator, node.lhs, metadata, prefixes) ? null : node.lhs;
                 } else {
                     node = stack.poll();
                 }
@@ -1083,8 +1083,12 @@ final class WhereClauseParser implements Mutable {
         return collapseWithinNodes(root);
     }
 
-    private boolean removeAndWithin(AliasTranslator translator, ExpressionNode node, RecordMetadata metadata, CharSequenceHashSet prefixes) throws SqlException {
+    private boolean removeWithin(AliasTranslator translator, ExpressionNode node, RecordMetadata metadata, CharSequenceHashSet prefixes) throws SqlException {
         if (isWithinKeyword(node.token)) {
+
+            if (prefixes.size() > 0) {
+                throw SqlException.$(node.position, "Using more than one 'within' operator per query is not allowed");
+            }
 
             if (node.paramCount < 2) {
                 throw SqlException.$(node.position, "Too few arguments for 'within'");
@@ -1128,20 +1132,6 @@ final class WhereClauseParser implements Mutable {
         }
     }
 
-    public static boolean isWithinKeyword(CharSequence tok) {
-        if (tok == null || tok.length() != 6) {
-            return false;
-        }
-
-        int i = 0;
-        return (tok.charAt(i++) | 32) == 'w'
-                && (tok.charAt(i++) | 32) == 'i'
-                && (tok.charAt(i++) | 32) == 't'
-                && (tok.charAt(i++) | 32) == 'h'
-                && (tok.charAt(i++) | 32) == 'i'
-                && (tok.charAt(i) | 32) == 'n';
-    }
-
     private ExpressionNode collapseWithinNodes(ExpressionNode node) {
         if (node == null || isWithinKeyword(node.token)) {
             return null;
@@ -1155,7 +1145,7 @@ final class WhereClauseParser implements Mutable {
         if (node == null || isWithinKeyword(node.token)) {
             return null;
         }
-        if (node.queryModel == null && isAndKeyword(node.token)) {
+        if (node.queryModel == null && (isAndKeyword(node.token) || isOrKeyword(node.token))) {
             if (node.lhs == null || isWithinKeyword(node.lhs.token)) {
                 return node.rhs;
             }

@@ -97,6 +97,16 @@ public class SqlKeywords {
                 && (tok.charAt(i) | 32) == 'd';
     }
 
+    public static boolean isOrKeyword(CharSequence tok) {
+        if (tok.length() != 2) {
+            return false;
+        }
+
+        int i = 0;
+        return (tok.charAt(i++) | 32) == 'o'
+                && (tok.charAt(i) | 32) == 'r';
+    }
+
     public static boolean isAsKeyword(CharSequence tok) {
         if (tok.length() != 2) {
             return false;
@@ -548,6 +558,20 @@ public class SqlKeywords {
 
         int i = 0;
         return (tok.charAt(i++) | 32) == 'i'
+                && (tok.charAt(i) | 32) == 'n';
+    }
+
+    public static boolean isWithinKeyword(CharSequence tok) {
+        if (tok == null || tok.length() != 6) {
+            return false;
+        }
+
+        int i = 0;
+        return (tok.charAt(i++) | 32) == 'w'
+                && (tok.charAt(i++) | 32) == 'i'
+                && (tok.charAt(i++) | 32) == 't'
+                && (tok.charAt(i++) | 32) == 'h'
+                && (tok.charAt(i++) | 32) == 'i'
                 && (tok.charAt(i) | 32) == 'n';
     }
 
