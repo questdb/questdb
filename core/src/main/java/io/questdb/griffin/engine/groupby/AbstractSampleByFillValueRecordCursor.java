@@ -74,22 +74,24 @@ public abstract class AbstractSampleByFillValueRecordCursor extends AbstractSpli
         // for timestamp gaps
 
         // what is the next timestamp we are expecting?
-        long expectedLocalEpoch = timestampSampler.nextTimestamp(sampleLocalEpoch);
+        long expectedLocalEpoch = timestampSampler.nextTimestamp(nextSampleLocalEpoch);
 
         // is data timestamp ahead of next expected timestamp?
         if (expectedLocalEpoch < localEpoch) {
             this.sampleLocalEpoch = expectedLocalEpoch;
+            this.nextSampleLocalEpoch = expectedLocalEpoch;
             // reset iterator on map and stream contents
             return refreshMapCursor();
         }
 
         long next = timestampSampler.nextTimestamp(localEpoch);
         this.sampleLocalEpoch = localEpoch;
+        this.nextSampleLocalEpoch = localEpoch;
 
         // looks like we need to populate key map
         int n = groupByFunctions.size();
         while (true) {
-            final long timestamp = getBaseRecordTimestamp();
+            long timestamp = getBaseRecordTimestamp();
             if (timestamp < next) {
                 final MapKey key = map.withKey();
                 keyMapSink.copy(baseRecord, key);
@@ -117,12 +119,21 @@ public abstract class AbstractSampleByFillValueRecordCursor extends AbstractSpli
                 // unchanged. Timestamp columns uses this variable
                 // When map is exhausted we would assign 'next' to 'lastTimestamp'
                 // and build another map
-                this.localEpoch = timestampSampler.round(timestamp);
-                GroupByUtils.toTop(groupByFunctions);
+                timestamp = adjustDST(timestamp, n, null);
+                if (timestamp != Long.MIN_VALUE) {
+                    this.localEpoch = timestampSampler.round(timestamp);
+                    GroupByUtils.toTop(groupByFunctions);
+                }
             }
-
             return refreshMapCursor();
         }
+    }
+
+    @Override
+    protected void updateValueWhenClockMovesBack(MapValue value, int n) {
+        final MapKey key = map.withKey();
+        keyMapSink.copy(baseRecord, key);
+        super.updateValueWhenClockMovesBack(key.createValue(), n);
     }
 
     @Override

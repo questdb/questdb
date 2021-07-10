@@ -189,6 +189,7 @@ public abstract class AbstractNoRecordSampleByCursor implements NoRandomAccessRe
                 // hour into previous period or not
                 updateValueWhenClockMovesBack(mapValue, n);
                 nextSampleLocalEpoch = timestampSampler.round(timestamp);
+                localEpoch = nextSampleLocalEpoch;
                 sampleLocalEpoch -= (tzOffset - daylightSavings);
                 tzOffset = daylightSavings;
                 return Long.MIN_VALUE;

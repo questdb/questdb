@@ -68,12 +68,15 @@ class SampleByFillPrevRecordCursor extends AbstractVirtualRecordSampleByCursor {
             return false;
         }
 
-        // what is the next timestamp we are expecting?
-        final long expectedLocalEpoch = timestampSampler.nextTimestamp(sampleLocalEpoch);
+        // the next sample epoch could be different from current sample epoch due to DST transition,
+        // e.g. clock going backward
+        // we need to ensure we do not fill time transition
+        final long expectedLocalEpoch = timestampSampler.nextTimestamp(nextSampleLocalEpoch);
 
         // is data timestamp ahead of next expected timestamp?
         if(expectedLocalEpoch < localEpoch) {
             this.sampleLocalEpoch = expectedLocalEpoch;
+            this.nextSampleLocalEpoch = expectedLocalEpoch;
             // reset iterator on map and stream contents
             map.getCursor().hasNext();
             return true;
@@ -81,12 +84,13 @@ class SampleByFillPrevRecordCursor extends AbstractVirtualRecordSampleByCursor {
 
         long next = timestampSampler.nextTimestamp(localEpoch);
         this.sampleLocalEpoch = localEpoch;
+        this.nextSampleLocalEpoch = localEpoch;
 
         // looks like we need to populate key map
 
         int n = groupByFunctions.size();
         while (true) {
-            final long timestamp = getBaseRecordTimestamp();
+            long timestamp = getBaseRecordTimestamp();
             if (timestamp < next) {
                 final MapKey key = map.withKey();
                 keyMapSink.copy(baseRecord, key);
@@ -114,12 +118,22 @@ class SampleByFillPrevRecordCursor extends AbstractVirtualRecordSampleByCursor {
                 // unchanged. Timestamp columns uses this variable
                 // When map is exhausted we would assign 'next' to 'lastTimestamp'
                 // and build another map
-                this.localEpoch = timestampSampler.round(timestamp);
-                GroupByUtils.toTop(groupByFunctions);
+                timestamp = adjustDST(timestamp, n, null);
+                if (timestamp != Long.MIN_VALUE) {
+                    this.localEpoch = timestampSampler.round(timestamp);
+                    GroupByUtils.toTop(groupByFunctions);
+                }
             }
 
             return this.map.getCursor().hasNext();
         }
+    }
+
+    @Override
+    protected void updateValueWhenClockMovesBack(MapValue value, int n) {
+        final MapKey key = map.withKey();
+        keyMapSink.copy(baseRecord, key);
+        super.updateValueWhenClockMovesBack(key.createValue(), n);
     }
 
     @Override

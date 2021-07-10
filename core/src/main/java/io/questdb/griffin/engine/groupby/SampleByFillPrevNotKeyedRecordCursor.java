@@ -52,10 +52,7 @@ public class SampleByFillPrevNotKeyedRecordCursor extends AbstractVirtualRecordS
         // the next sample epoch could be different from current sample epoch due to DST transition,
         // e.g. clock going backward
         // we need to ensure we do not fill time transition
-        sampleLocalEpoch = nextSampleLocalEpoch;
-
-        // what is the next timestamp we are expecting?
-        long expectedLocalEpoch = timestampSampler.nextTimestamp(sampleLocalEpoch);
+        final long expectedLocalEpoch = timestampSampler.nextTimestamp(nextSampleLocalEpoch);
         // is data timestamp ahead of next expected timestamp?
         if(expectedLocalEpoch < localEpoch) {
             this.sampleLocalEpoch = expectedLocalEpoch;
