@@ -303,6 +303,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.cast.CastLongToStrFunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastLongToDateFunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastLongToTimestampFunctionFactory,
+            io.questdb.griffin.engine.functions.cast.CastNullFunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastLongToSymbolFunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastLongToLong256FunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastLongToBooleanFunctionFactory,

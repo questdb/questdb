@@ -36,7 +36,6 @@ public final class ColumnType {
     public static final int VERSION = 419;
     public static final int VERSION_THAT_ADDED_TABLE_ID = 417;
 
-    public static final int NULL = -2;
     public static final int UNDEFINED = -1;
     public static final int BOOLEAN = 0;
     public static final int BYTE = 1;
@@ -56,7 +55,10 @@ public final class ColumnType {
     public static final int CURSOR = 15;
     public static final int VAR_ARG = 16;
     public static final int RECORD = 17;
-    public static final int MAX = RECORD;
+
+    public static final int NULL = 18;
+
+    public static final int MAX = NULL;
     public static final int NO_OVERLOAD = 10000;
     private static final IntObjHashMap<String> typeNameMap = new IntObjHashMap<>();
     private static final LowerCaseAsciiCharSequenceIntHashMap nameTypeMap = new LowerCaseAsciiCharSequenceIntHashMap();
@@ -84,8 +86,9 @@ public final class ColumnType {
     private static final int[] overloadPriorityMatrix;
 
     static {
+        assert OVERLOAD_MATRIX_SIZE > MAX;
         overloadPriorityMatrix = new int[OVERLOAD_MATRIX_SIZE * OVERLOAD_MATRIX_SIZE];
-        for (int i = 0; i < MAX; i++) {
+        for (int i = 0; i <= MAX; i++) {
             for (int j = 0; j < MAX; j++) {
                 if (i < overloadPriority.length) {
                     int index = indexOf(overloadPriority[i], j);

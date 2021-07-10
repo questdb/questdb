@@ -27,14 +27,24 @@ package io.questdb.griffin.engine.functions.cast;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.constants.Constants;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
-// TODO: to be removed and repaced back by FunctionFactory
-public abstract class AbstractEntityCastFunctionFactory implements FunctionFactory {
+public class CastNullFunctionFactory implements FunctionFactory {
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return args.getQuick(0);
+    public String getSignature() {
+        return "cast(oV)";
+    }
+
+    @Override
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        if (args.size() == 2) {
+            int castTo = args.getQuick(1).getType();
+            return Constants.getNullConstant(castTo);
+        }
+        throw SqlException.$(position, "cast accepts 2 arguments");
     }
 }
