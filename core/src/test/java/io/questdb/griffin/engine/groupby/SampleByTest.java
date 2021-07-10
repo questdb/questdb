@@ -7360,6 +7360,25 @@ public class SampleByTest extends AbstractGriffinTest {
                 false);
     }
 
+    @Test
+    public void testSampleByCountWithNoTsColSelected() throws Exception {
+        assertQuery("count\n" +
+                        "300\n" +
+                        "300\n" +
+                        "300\n" +
+                        "100\n",
+                "select count() from x sample by 1h",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " timestamp_sequence(172800000000, 12000000) k" +
+                        " from" +
+                        " long_sequence(1000)" +
+                        ") timestamp(k) partition by NONE",
+                null,
+                false);
+    }
+
     @NotNull
     private SingleSymbolFilter getSymbolFilter() {
         return new SingleSymbolFilter() {

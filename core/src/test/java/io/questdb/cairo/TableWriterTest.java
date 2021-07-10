@@ -378,7 +378,7 @@ public class TableWriterTest extends AbstractCairoTest {
             long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
             Rnd rnd = new Rnd();
             populateProducts(writer, rnd, ts, N, 6 * 60000 * 1000L);
-            writer.closeActivePartition();
+            writer.closeActivePartition(true);
             writer.rollback();
             Assert.assertEquals(0, writer.size());
         }
@@ -891,6 +891,35 @@ public class TableWriterTest extends AbstractCairoTest {
 
     @Test
     public void testCancelFirstRowPartitioned() throws Exception {
+        ff = new FilesFacadeImpl() {
+            long kIndexFd = -1;
+
+            @Override
+            public long openRW(LPSZ name) {
+                if (Chars.contains(name, "2013-03-04") && Chars.endsWith(name, "category.k")) {
+                    return kIndexFd = super.openRW(name);
+                }
+                return super.openRW(name);
+            }
+
+            @Override
+            public boolean close(long fd) {
+                if (fd == kIndexFd) {
+                    kIndexFd = -1;
+                }
+                return super.close(fd);
+            }
+
+            @Override
+            public int rmdir(Path name) {
+                if (kIndexFd != -1) {
+                    // Access dinied, file is open
+                    return 5;
+                }
+                return super.rmdir(name);
+            }
+        };
+
         TestUtils.assertMemoryLeak(() -> {
             create(FF, PartitionBy.DAY, 4);
             try (TableWriter writer = new TableWriter(configuration, PRODUCT)) {
@@ -1056,6 +1085,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
             class X extends FilesFacadeImpl {
                 boolean fail = false;
+                long kIndexFd = -1;
 
                 @Override
                 public long read(long fd, long buf, long len, long offset) {
@@ -1065,10 +1095,31 @@ public class TableWriterTest extends AbstractCairoTest {
                     return super.read(fd, buf, len, offset);
                 }
 
+
+                @Override
+                public long openRW(LPSZ name) {
+                    if (Chars.contains(name, "2013") && Chars.endsWith(name, "category.k")) {
+                        return kIndexFd = super.openRW(name);
+                    }
+                    return super.openRW(name);
+                }
+
+                @Override
+                public boolean close(long fd) {
+                    if (fd == kIndexFd) {
+                        kIndexFd = -1;
+                    }
+                    return super.close(fd);
+                }
+
                 @Override
                 public int rmdir(Path name) {
                     if (fail) {
                         return 1;
+                    }
+                    if (kIndexFd != -1) {
+                        // Access dinied, file is open
+                        return 5;
                     }
                     return super.rmdir(name);
                 }
@@ -2733,6 +2784,58 @@ public class TableWriterTest extends AbstractCairoTest {
         return ts;
     }
 
+    @Test
+    public void testO3WithCancelRow() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (TableModel model = new TableModel(configuration, "weather", PartitionBy.DAY)
+                    .col("windspeed", ColumnType.DOUBLE)
+                    .timestamp()) {
+                CairoTestUtils.create(model);
+            }
+
+            long[] tss = new long[]{
+                    631150000000000L,
+                    631152000000000L,
+                    631160000000000L
+            };
+            try (TableWriter writer = new TableWriter(configuration, "weather")) {
+                TableWriter.Row r = writer.newRow(tss[1]);
+                r.putDouble(0, 1.0);
+                r.append();
+
+                // Out of order
+                r = writer.newRow(tss[0]);
+                r.putDouble(0, 2.0);
+                r.append();
+
+                r = writer.newRow(tss[2]);
+                r.putDouble(0, 3.0);
+                r.cancel();
+
+                // Implicit commit
+                writer.addColumn("timetocycle", ColumnType.DOUBLE);
+
+                writer.newRow(tss[2]);
+                r.putDouble(0, 3.0);
+                r.putDouble(2, -1.0);
+                r.append();
+
+                writer.commit();
+            }
+
+            try (TableReader reader = new TableReader(configuration, "weather")) {
+                int col = reader.getMetadata().getColumnIndex("timestamp");
+                RecordCursor cursor = reader.getCursor();
+                final Record r = cursor.getRecord();
+                int i = 0;
+                while (cursor.hasNext()) {
+                    Assert.assertEquals("Row " + i, tss[i++], r.getTimestamp(col));
+                }
+                Assert.assertEquals(tss.length, i);
+            }
+        });
+    }
+
     private long append10KWithNewName(long ts, Rnd rnd, TableWriter writer) {
         int productId = writer.getColumnIndex("productId");
         int productName = writer.getColumnIndex("productName");
@@ -2776,7 +2879,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 .col("productId", ColumnType.INT)
                 .col("productName", ColumnType.STRING)
                 .col("supplier", ColumnType.SYMBOL).symbolCapacity(N)
-                .col("category", ColumnType.SYMBOL).symbolCapacity(N)
+                .col("category", ColumnType.SYMBOL).symbolCapacity(N).indexed(true, 256)
                 .col("price", ColumnType.DOUBLE)
                 .timestamp()) {
             CairoTestUtils.create(model);
