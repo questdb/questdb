@@ -188,7 +188,6 @@ public abstract class AbstractNoRecordSampleByCursor implements NoRandomAccessRe
                 // time moved backwards, we need to check if we should be collapsing this
                 // hour into previous period or not
                 updateValueWhenClockMovesBack(mapValue, n);
-                GroupByUtils.updateExisting(groupByFunctions, n, mapValue, baseRecord);
                 nextSampleLocalEpoch = timestampSampler.round(timestamp);
                 sampleLocalEpoch -= (tzOffset - daylightSavings);
                 tzOffset = daylightSavings;
