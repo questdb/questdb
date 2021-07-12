@@ -50,7 +50,6 @@ public class DeferredSingleSymbolFilterDataFrameRecordCursorFactory extends Data
             RecordMetadata metadata,
             DataFrameCursorFactory dataFrameCursorFactory,
             boolean followsOrderByAdvice,
-            @Nullable Function filter,
             @NotNull IntList columnIndexes,
             @Nullable IntList columnSizes
     ) {
@@ -58,7 +57,8 @@ public class DeferredSingleSymbolFilterDataFrameRecordCursorFactory extends Data
                 metadata,
                 dataFrameCursorFactory,
                 rowCursorFactory,
-                followsOrderByAdvice, filter,
+                followsOrderByAdvice,
+                null,
                 false,
                 columnIndexes,
                 columnSizes);

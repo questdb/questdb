@@ -165,6 +165,28 @@ public class SqlCodeGenerator implements Mutable {
         return model.getOrderByDirectionAdvice().getQuick(index);
     }
 
+    private static boolean allGroupsFirstLastWithSingleSymbolFilter(QueryModel model, RecordMetadata metadata) {
+        final ObjList<QueryColumn> columns = model.getColumns();
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            final QueryColumn column = columns.getQuick(i);
+            final ExpressionNode node = column.getAst();
+
+            if (node.type != ExpressionNode.LITERAL) {
+                ExpressionNode columnAst = column.getAst();
+                CharSequence token = columnAst.token;
+                if (!SqlKeywords.isFirstFunction(token) && !SqlKeywords.isLastFunction(token)) {
+                    return false;
+                }
+
+                if (columnAst.rhs.type != ExpressionNode.LITERAL || metadata.getColumnIndex(columnAst.rhs.token) < 0) {
+                    return false;
+                }
+            }
+        }
+
+        return true;
+    }
+
     private VectorAggregateFunctionConstructor assembleFunctionReference(RecordMetadata metadata, ExpressionNode ast) {
         int columnIndex;
         if (ast.type == FUNCTION && ast.paramCount == 1 && SqlKeywords.isSumKeyword(ast.token) && ast.rhs.type == LITERAL) {
@@ -1530,28 +1552,6 @@ public class SqlCodeGenerator implements Mutable {
         }
     }
 
-    private static boolean allGroupsFirstLastWithSingleSymbolFilter(QueryModel model, RecordMetadata metadata) {
-        final ObjList<QueryColumn> columns = model.getColumns();
-        for (int i = 0, n = columns.size(); i < n; i++) {
-            final QueryColumn column = columns.getQuick(i);
-            final ExpressionNode node = column.getAst();
-
-            if (node.type != ExpressionNode.LITERAL) {
-                ExpressionNode columnAst = column.getAst();
-                CharSequence token = columnAst.token;
-                if (!SqlKeywords.isFirstFunction(token) && !SqlKeywords.isLastFunction(token)) {
-                    return false;
-                }
-
-                if (columnAst.rhs.type != ExpressionNode.LITERAL || metadata.getColumnIndex(columnAst.rhs.token) < 0) {
-                    return false;
-                }
-            }
-        }
-
-        return true;
-    }
-
     private RecordCursorFactory generateSelect(
             QueryModel model,
             SqlExecutionContext executionContext,
@@ -2575,11 +2575,20 @@ public class SqlCodeGenerator implements Mutable {
                                         myMeta,
                                         dfcFactory,
                                         orderByKeyColumn,
-                                        f,
                                         columnIndexes,
-                                        columnSizes);
+                                        columnSizes
+                                );
                             }
-                            return new DataFrameRecordCursorFactory(myMeta, dfcFactory, rcf, orderByKeyColumn, f, false, columnIndexes, columnSizes);
+                            return new DataFrameRecordCursorFactory(
+                                    myMeta,
+                                    dfcFactory,
+                                    rcf,
+                                    orderByKeyColumn,
+                                    f,
+                                    false,
+                                    columnIndexes,
+                                    columnSizes
+                            );
                         }
 
                         symbolValueList.clear();
