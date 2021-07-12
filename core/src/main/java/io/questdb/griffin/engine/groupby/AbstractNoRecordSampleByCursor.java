@@ -112,15 +112,26 @@ public abstract class AbstractNoRecordSampleByCursor implements NoRandomAccessRe
             Function offsetFunc,
             int offsetFuncPos
     ) throws SqlException {
+        this.base = base;
+        this.baseRecord = base.getRecord();
+        final long timestamp = baseRecord.getTimestamp(timestampIndex);
+        of(base, timestamp, executionContext, timezoneNameFunc, timezoneNameFuncPos, offsetFunc, offsetFuncPos);
+    }
+
+    public void of(
+            RecordCursor base,
+            long timestamp,
+            SqlExecutionContext executionContext,
+            Function timezoneNameFunc,
+            int timezoneNameFuncPos,
+            Function offsetFunc,
+            int offsetFuncPos
+    ) throws SqlException {
         // factory guarantees that base cursor is not empty
         timezoneNameFunc.init(base, executionContext);
         offsetFunc.init(base, executionContext);
 
         this.rules = null;
-        this.base = base;
-        this.baseRecord = base.getRecord();
-        final long timestamp = baseRecord.getTimestamp(timestampIndex);
-
         final CharSequence tz = timezoneNameFunc.getStr(null);
         if (tz != null) {
             try {

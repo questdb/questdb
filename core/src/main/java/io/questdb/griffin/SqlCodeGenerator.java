@@ -1381,10 +1381,16 @@ public class SqlCodeGenerator implements Mutable {
                     if (symbolFilter != null) {
                         return new SampleByFirstLastRecordCursorFactory(
                                 factory,
+                                recordFunctions,
                                 timestampSampler,
+                                groupByFunctions,
                                 groupByMetadata,
                                 model.getColumns(),
                                 metadata,
+                                timezoneNameFunc,
+                                timezoneNameFuncPos,
+                                offsetFunc,
+                                offsetFuncPos,
                                 timestampIndex,
                                 symbolFilter,
                                 configuration.getSampleByIndexSearchPageSize()
