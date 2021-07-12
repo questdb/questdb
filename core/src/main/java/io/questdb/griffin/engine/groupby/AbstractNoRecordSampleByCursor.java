@@ -166,11 +166,9 @@ public abstract class AbstractNoRecordSampleByCursor implements NoRandomAccessRe
 
         if (tzOffset == 0 && fixedOffset == Long.MIN_VALUE) {
             // this is the default path, we align time intervals to the first observation
-            timestampSampler.setStart(timestamp + tzOffset);
-        } else if (fixedOffset > 0) {
-            timestampSampler.setStart(timestamp + tzOffset + this.fixedOffset);
+            timestampSampler.setStart(timestamp);
         } else {
-            timestampSampler.setStart(tzOffset);
+            timestampSampler.setStart(this.fixedOffset != Long.MIN_VALUE ? this.fixedOffset : 0L);
         }
         this.topTzOffset = tzOffset;
         this.topNextDst = nextDst;
@@ -204,8 +202,8 @@ public abstract class AbstractNoRecordSampleByCursor implements NoRandomAccessRe
         return timestamp;
     }
 
-    protected void updateValueWhenClockMovesBack(MapValue value, int n) {
-        GroupByUtils.updateExisting(groupByFunctions, n, value, baseRecord);
+    protected long getBaseRecordTimestamp() {
+        return baseRecord.getTimestamp(timestampIndex) + tzOffset;
     }
 
     protected boolean notKeyedLoop(MapValue mapValue) {
@@ -241,10 +239,8 @@ public abstract class AbstractNoRecordSampleByCursor implements NoRandomAccessRe
         return true;
     }
 
-
-
-    protected long getBaseRecordTimestamp() {
-        return baseRecord.getTimestamp(timestampIndex) + tzOffset;
+    protected void updateValueWhenClockMovesBack(MapValue value, int n) {
+        GroupByUtils.updateExisting(groupByFunctions, n, value, baseRecord);
     }
 
     protected class TimestampFunc extends TimestampFunction implements Function {
