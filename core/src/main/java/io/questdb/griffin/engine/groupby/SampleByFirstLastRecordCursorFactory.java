@@ -35,7 +35,7 @@ import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.std.*;
 
-public class SampleByFirstLastRecordCursorFactory extends AbstractSampleByRecordCursorFactory {
+public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory {
     private static final int FILTER_KEY_IS_NULL = 0;
     private static final int ITEMS_PER_OUT_ARRAY_SHIFT = 2;
     private static final int FIRST_OUT_INDEX = 0;
@@ -49,11 +49,13 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractSampleByRecord
     private final int maxSamplePeriodSize;
     private final SingleSymbolFilter symbolFilter;
     private final int groupBySymbolColIndex;
+    private final int timestampIndex;
     private final SampleByFirstLastRecordCursor sampleByFirstLastRecordCursor;
     private DirectLongList rowIdOutAddress;
     private DirectLongList samplePeriodAddress;
     private DirectLongList crossFrameRow;
     private int groupByTimestampIndex = -1;
+    private final TzSampler internalTimestampSampler;
 
     public SampleByFirstLastRecordCursorFactory(
             RecordCursorFactory base,
@@ -71,7 +73,6 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractSampleByRecord
             SingleSymbolFilter symbolFilter,
             int configPageSize
     ) throws SqlException {
-        super(base, metadata, recordFunctions, timezoneNameFunc, timezoneNameFuncPos, offsetFunc, offsetFuncPos);
         this.base = base;
         this.groupBySymbolColIndex = symbolFilter.getColumnIndex();
         this.queryToFrameColumnMapping = new int[columns.size()];
@@ -79,6 +80,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractSampleByRecord
         this.crossFrameRow = new DirectLongList(columns.size());
         this.crossFrameRow.setPos(columns.size());
         this.groupByMetadata = groupByMetadata;
+        this.timestampIndex = timestampIndex;
         buildFirstLastIndex(firstLastIndexByCol, queryToFrameColumnMapping, metadata, columns, timestampIndex);
         int blockSize = metadata.getIndexValueBlockCapacity(groupBySymbolColIndex);
         this.pageSize = configPageSize < 16 ? Math.max(blockSize, 16) : configPageSize;
@@ -88,12 +90,8 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractSampleByRecord
         this.rowIdOutAddress.setPos(outSize);
         this.samplePeriodAddress = new DirectLongList(pageSize);
         this.symbolFilter = symbolFilter;
-        this.sampleByFirstLastRecordCursor = new SampleByFirstLastRecordCursor(
-                recordFunctions,
-                timestampIndex,
-                timestampSampler,
-                groupByFunctions
-        );
+        this.internalTimestampSampler = new TzSampler(false, timestampSampler, timezoneNameFunc, offsetFunc, timezoneNameFuncPos, offsetFuncPos);
+        this.sampleByFirstLastRecordCursor = new SampleByFirstLastRecordCursor();
     }
 
     @Override
@@ -112,8 +110,9 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractSampleByRecord
             Misc.free(pageFrameCursor);
             return EmptyTableRecordCursor.INSTANCE;
         }
-        return sampleByFirstLastRecordCursor.of(pageFrameCursor, groupByIndexKey, executionContext);
-//        return initFunctionsAndCursor(executionContext, sampleByFirstLastRecordCursor.of(pageFrameCursor, groupByIndexKey));
+        SampleByFirstLastRecordCursor cursor = sampleByFirstLastRecordCursor.of(pageFrameCursor, groupByIndexKey);
+        internalTimestampSampler.init(cursor, executionContext);
+        return cursor;
     }
 
     @Override
@@ -124,11 +123,6 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractSampleByRecord
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return false;
-    }
-
-    @Override
-    protected AbstractNoRecordSampleByCursor getRawCursor() {
-        return this.sampleByFirstLastRecordCursor;
     }
 
     private void buildFirstLastIndex(
@@ -171,7 +165,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractSampleByRecord
         }
     }
 
-    private class SampleByFirstLastRecordCursor extends AbstractNoRecordSampleByCursor {
+    private class SampleByFirstLastRecordCursor implements RecordCursor {
         private final static int STATE_START = 0;
         private final static int STATE_FETCH_NEXT_DATA_FRAME = 1;
         private final static int STATE_FETCH_NEXT_INDEX_FRAME = 3;
@@ -184,7 +178,6 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractSampleByRecord
         private final static int CROSS_ROW_STATE_REFS_UPDATED = 2;
         private final SampleByFirstLastRecord record = new SampleByFirstLastRecord();
         private int groupBySymbolKey;
-        private SqlExecutionContext executionContext;
         private int state;
         private int crossRowState;
         private PageFrameCursor pageFrameCursor;
@@ -200,21 +193,10 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractSampleByRecord
         private long samplePeriodIndexOffset = 0;
         private long prevSamplePeriodOffset = 0;
         private long samplePeriodStart;
-        private Sampler internalTimestampSampler = new Sampler();
 
-        public SampleByFirstLastRecordCursor(
-                ObjList<Function> recordFunctions,
-                int timestampIndex,
-                TimestampSampler timestampSampler,
-                ObjList<GroupByFunction> groupByFunctions
-        ) {
-            super(recordFunctions, timestampIndex, timestampSampler, groupByFunctions);
-        }
-
-        SampleByFirstLastRecordCursor of(PageFrameCursor pageFrameCursor, int groupBySymbolKey, SqlExecutionContext executionContext) {
+        SampleByFirstLastRecordCursor of(PageFrameCursor pageFrameCursor, int groupBySymbolKey) {
             this.pageFrameCursor = pageFrameCursor;
             this.groupBySymbolKey = groupBySymbolKey;
-            this.executionContext = executionContext;
             toTop();
             return this;
         }
@@ -375,12 +357,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractSampleByRecord
                         long rowId = indexFrameAddress > 0 ? Unsafe.getUnsafe().getLong(indexFrameAddress) : dataFrameLo;
                         long offsetTimestampColumnAddress = currentFrame.getPageAddress(timestampIndex) - dataFrameLo * Long.BYTES;
                         samplePeriodStart = Unsafe.getUnsafe().getLong(offsetTimestampColumnAddress + rowId * Long.BYTES);
-                        try {
-                            super.of(this, samplePeriodStart, executionContext,  timezoneNameFunc, timezoneNameFuncPos, offsetFunc, offsetFuncPos);
-                            internalTimestampSampler.of(timestampSampler, samplePeriodStart);
-                        } catch (SqlException e) {
-                            throw CairoException.instance(0).put(e.getFlyweightMessage());
-                        }
+                        internalTimestampSampler.startFrom(samplePeriodStart);
                     }
                     // Fall to STATE_SEARCH;
 
@@ -543,30 +520,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractSampleByRecord
         }
 
         private class Sampler {
-            private long lastTimestamp;
-            private TimestampSampler timestampSampler;
 
-            public long getNextTimestamp() {
-                long nextTimestamp = timestampSampler.nextTimestamp(lastTimestamp);
-                if (nextTimestamp >= nextDst) {
-                    final long daylightSavings = rules.getOffset(nextTimestamp);
-                    nextDst = rules.getNextDST(nextTimestamp);
-                    nextTimestamp -= daylightSavings;
-                    while (nextTimestamp <= lastTimestamp) {
-                        nextTimestamp = timestampSampler.nextTimestamp(nextTimestamp);
-                    }
-                }
-                return lastTimestamp = nextTimestamp;
-            }
-
-            public long startFrom(long lastTimestamp) {
-                return this.lastTimestamp = timestampSampler.round(lastTimestamp);
-            }
-
-            public void of(TimestampSampler timestampSampler, long firstTsUtc) {
-                this.timestampSampler = timestampSampler;
-                lastTimestamp = timestampSampler.round(firstTsUtc);
-            }
         }
 
         private class SampleByFirstLastRecord implements Record {

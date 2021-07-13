@@ -565,16 +565,17 @@ public class SampleByTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testIndexSampleByAlignToCalendarWithTimezone() throws Exception {
-        assertSampleByIndexQuery("k\ts\tlat\tlon\n" +
-                        "2021-03-26T00:00:00.000000Z\ta\t142.30215575416736\t2021-03-26T22:50:00.000000Z\n" +
-                        "2021-03-27T00:00:00.000000Z\ta\tNaN\t2021-03-27T23:00:00.000000Z\n" +
-                        "2021-03-27T23:00:00.000000Z\ta\t33.45558404694713\t2021-03-28T20:40:00.000000Z\n" +
-                        "2021-03-28T23:00:00.000000Z\ta\t70.00560222114518\t2021-03-29T16:40:00.000000Z\n",
-                "select k, s, first(lat) lat, last(k) lon " +
+    public void testIndexSampleByAlignToCalendarWithTimezoneLondonShiftBack() throws Exception {
+        assertQuery("to_timezone\tk\ts\tlat\tlon\n" +
+                        "2021-03-26T00:00:00.000000Z\t2021-03-26T00:00:00.000000Z\ta\t142.30215575416736\t2021-03-26T22:50:00.000000Z\n" +
+                        "2021-03-27T00:00:00.000000Z\t2021-03-27T00:00:00.000000Z\ta\tNaN\t2021-03-27T23:00:00.000000Z\n" +
+                        "2021-03-28T00:00:00.000000Z\t2021-03-28T00:00:00.000000Z\ta\t33.45558404694713\t2021-03-28T20:40:00.000000Z\n" +
+                        "2021-03-29T00:00:00.000000Z\t2021-03-28T23:00:00.000000Z\ta\t70.00560222114518\t2021-03-29T16:40:00.000000Z\n" +
+                        "2021-03-30T00:00:00.000000Z\t2021-03-29T23:00:00.000000Z\ta\t13.290235514836048\t2021-03-30T02:40:00.000000Z\n",
+                "select to_timezone(k, 'Europe/London'), k, s, lat, lon from (select k, s, first(lat) lat, last(k) lon " +
                         "from x " +
                         "where s in ('a') " +
-                        "sample by 1d align to calendar time zone 'Europe/London'",
+                        "sample by 1d align to calendar time zone 'Europe/London')",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -583,31 +584,90 @@ public class SampleByTest extends AbstractGriffinTest {
                         "   rnd_symbol('a','b',null) s," +
                         "   timestamp_sequence('2021-03-25T23:30:00.00000Z', 50 * 60 * 1000000L) k" +
                         "   from" +
-                        "   long_sequence(110)" +
-                        "),index(s) timestamp(k)");
+                        "   long_sequence(120)" +
+                        "),index(s) timestamp(k)",
+                "k",
+                false);
     }
 
     @Test
-    public void testIndexSampleByAlignToCalendarWithTimezone2() throws Exception {
-        assertSampleByIndexQuery("k\ts\tlat\tlon\n" +
-                        "2021-03-26T00:00:00.000000Z\ta\t142.30215575416736\t2021-03-26T22:50:00.000000Z\n" +
-                        "2021-03-27T00:00:00.000000Z\ta\t106.0418967098362\t2021-03-27T22:10:00.000000Z\n" +
-                        "2021-03-27T23:00:00.000000Z\ta\tNaN\t2021-03-28T16:30:00.000000Z\n" +
-                        "2021-03-28T23:00:00.000000Z\ta\tNaN\t2021-03-29T07:30:00.000000Z\n",
-                "select k, s, first(lat) lat, last(k) lon " +
+    public void testIndexSampleByAlignToCalendarWithTimezoneLondonShiftForward() throws Exception {
+        assertSampleByIndexQuery("to_timezone\tk\ts\tlat\tlon\n" +
+                        "2020-10-23T00:00:00.000000Z\t2020-10-22T23:00:00.000000Z\ta\t142.30215575416736\t2020-10-23T22:10:00.000000Z\n" +
+                        "2020-10-24T00:00:00.000000Z\t2020-10-23T23:00:00.000000Z\ta\t7.457062446418488\t2020-10-24T22:20:00.000000Z\n" +
+                        "2020-10-25T00:00:00.000000Z\t2020-10-24T23:00:00.000000Z\ta\tNaN\t2020-10-26T00:10:00.000000Z\n" +
+                        "2020-10-26T00:00:00.000000Z\t2020-10-26T00:00:00.000000Z\ta\t112.06802636277182\t2020-10-26T21:50:00.000000Z\n" +
+                        "2020-10-27T00:00:00.000000Z\t2020-10-27T00:00:00.000000Z\ta\t6.612327943200507\t2020-10-27T23:40:00.000000Z\n",
+                "select to_timezone(k, 'Europe/London'), k, s, lat, lon from (select k, s, first(lat) lat, last(k) lon " +
                         "from x " +
                         "where s in ('a') " +
-                        "sample by 1d align to calendar time zone 'Europe/Berlin'",
+                        "sample by 1d align to calendar time zone 'Europe/London')",
                 "create table x as " +
                         "(" +
                         "select" +
                         "   rnd_double(1)*180 lat," +
                         "   rnd_double(1)*180 lon," +
                         "   rnd_symbol('a','b',null) s," +
-                        "   timestamp_sequence('2021-03-25T23:30:00.00000Z', 100 * 60 * 1000000L) k" +
+                        "   timestamp_sequence('2020-10-23T20:30:00.00000Z', 50 * 60 * 1000000L) k" +
                         "   from" +
-                        "   long_sequence(55)" +
+                        "   long_sequence(120)" +
                         "),index(s) timestamp(k)");
+    }
+
+    @Test
+    public void testIndexSampleByAlignToCalendarWithTimezoneBerlinShiftBack() throws Exception {
+        assertQuery("to_timezone\tk\ts\tlat\tlon\n" +
+                        "2020-10-24T00:00:00.000000Z\t2020-10-23T22:00:00.000000Z\ta\t142.30215575416736\t2020-10-24T19:50:00.000000Z\n" +
+                        "2020-10-25T00:00:00.000000Z\t2020-10-24T22:00:00.000000Z\ta\tNaN\t2020-10-25T20:00:00.000000Z\n" +
+                        "2020-10-26T00:00:00.000000Z\t2020-10-25T23:00:00.000000Z\ta\t33.45558404694713\t2020-10-26T21:50:00.000000Z\n" +
+                        "2020-10-27T00:00:00.000000Z\t2020-10-26T23:00:00.000000Z\ta\t6.612327943200507\t2020-10-27T22:00:00.000000Z\n" +
+                        "2020-10-28T00:00:00.000000Z\t2020-10-27T23:00:00.000000Z\ta\tNaN\t2020-10-27T23:40:00.000000Z\n",
+                "select to_timezone(k, 'Europe/Berlin'), k, s, lat, lon from (" +
+                        "select k, s, first(lat) lat, last(k) lon " +
+                        "from x " +
+                        "where s in ('a') " +
+                        "sample by 1d align to calendar time zone 'Europe/Berlin'" +
+                        ")",
+                "create table x as " +
+                "(" +
+                        "select" +
+                        "   rnd_double(1)*180 lat," +
+                        "   rnd_double(1)*180 lon," +
+                        "   rnd_symbol('a','b',null) s," +
+                        "   timestamp_sequence('2020-10-23T20:30:00.00000Z', 50 * 60 * 1000000L) k" +
+                        "   from" +
+                        "   long_sequence(120)" +
+                        "),index(s) timestamp(k)",
+                "k",
+                false);
+    }
+
+    @Test
+    public void testIndexSampleByAlignToCalendarWithTimezoneBerlinShiftForward() throws Exception {
+        assertQuery("to_timezone\tk\ts\tlat\tlon\n" +
+                        "2021-03-26T00:00:00.000000Z\t2021-03-25T23:00:00.000000Z\ta\t142.30215575416736\t2021-03-26T22:50:00.000000Z\n" +
+                        "2021-03-27T00:00:00.000000Z\t2021-03-26T23:00:00.000000Z\ta\tNaN\t2021-03-27T22:10:00.000000Z\n" +
+                        "2021-03-28T00:00:00.000000Z\t2021-03-27T23:00:00.000000Z\ta\t109.94209864193589\t2021-03-28T20:40:00.000000Z\n" +
+                        "2021-03-29T00:00:00.000000Z\t2021-03-28T22:00:00.000000Z\ta\t70.00560222114518\t2021-03-29T16:40:00.000000Z\n" +
+                        "2021-03-30T00:00:00.000000Z\t2021-03-29T22:00:00.000000Z\ta\t13.290235514836048\t2021-03-30T02:40:00.000000Z\n",
+                "select to_timezone(k, 'Europe/Berlin'), k, s, lat, lon from (" +
+                        "select k, s, first(lat) lat, last(k) lon " +
+                        "from x " +
+                        "where s in ('a') " +
+                        "sample by 1d align to calendar time zone 'Europe/Berlin'" +
+                        ")",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        "   rnd_double(1)*180 lat," +
+                        "   rnd_double(1)*180 lon," +
+                        "   rnd_symbol('a','b',null) s," +
+                        "   timestamp_sequence('2021-03-25T23:30:00.00000Z', 50 * 60 * 1000000L) k" +
+                        "   from" +
+                        "   long_sequence(120)" +
+                        "),index(s) timestamp(k)",
+                "k",
+                false);
     }
 
     @Test
