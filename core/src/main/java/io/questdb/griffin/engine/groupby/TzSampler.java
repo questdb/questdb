@@ -39,7 +39,6 @@ import static io.questdb.std.datetime.microtime.Timestamps.MINUTE_MICROS;
 
 public class TzSampler {
     private long lastTimestampLoc;
-    private final boolean alignToCalendar;
     private TimestampSampler timestampSampler;
     private long nextDst;
     private Function timezoneNameFunc;
@@ -55,14 +54,12 @@ public class TzSampler {
     protected TimeZoneRules rules;
 
     public TzSampler(
-            boolean alignToCalendar,
             TimestampSampler timestampSampler,
             Function timezoneNameFunc,
             Function offsetFunc,
             int timezoneNameFuncPos,
             int offsetFuncPos
     ) {
-        this.alignToCalendar = alignToCalendar;
         this.timestampSampler = timestampSampler;
         this.timezoneNameFunc = timezoneNameFunc;
         this.offsetFunc = offsetFunc;
@@ -132,6 +129,7 @@ public class TzSampler {
         this.topLocalEpoch = this.localEpoch = timestampSampler.round(timestamp + tzOffset);
         this.sampleLocalEpoch = this.nextSampleLocalEpoch = localEpoch;
 
+        boolean alignToCalendar = fixedOffset != Long.MIN_VALUE;
         if (alignToCalendar) {
             lastTimestampLoc = timestampSampler.round(timestamp + tzOffset);
         } else {

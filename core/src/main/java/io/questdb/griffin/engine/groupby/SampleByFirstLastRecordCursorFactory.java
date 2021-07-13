@@ -90,7 +90,7 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
         this.rowIdOutAddress.setPos(outSize);
         this.samplePeriodAddress = new DirectLongList(pageSize);
         this.symbolFilter = symbolFilter;
-        this.internalTimestampSampler = new TzSampler(false, timestampSampler, timezoneNameFunc, offsetFunc, timezoneNameFuncPos, offsetFuncPos);
+        this.internalTimestampSampler = new TzSampler(timestampSampler, timezoneNameFunc, offsetFunc, timezoneNameFuncPos, offsetFuncPos);
         this.sampleByFirstLastRecordCursor = new SampleByFirstLastRecordCursor();
     }
 
