@@ -617,6 +617,102 @@ public class SampleByTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testIndexSampleByAlignToCalendarWithTimezoneLondonShiftForwardHourly() throws Exception {
+        assertQuery("to_timezone\tk\ts\tlat\tlastk\n" +
+                        "2020-10-24T22:00:00.000000Z\t2020-10-24T21:00:00.000000Z\ta\t154.93777586404912\t2020-10-24T21:49:28.000000Z\n" +
+                        "2020-10-24T23:00:00.000000Z\t2020-10-24T22:00:00.000000Z\ta\t43.799859246867385\t2020-10-24T22:54:13.000000Z\n" +
+                        "2020-10-25T00:00:00.000000Z\t2020-10-24T23:00:00.000000Z\ta\t38.34194069380561\t2020-10-25T00:55:05.000000Z\n" +
+                        "2020-10-25T01:00:00.000000Z\t2020-10-25T01:00:00.000000Z\ta\t27.635284834188102\t2020-10-25T01:51:12.000000Z\n" +
+                        "2020-10-25T02:00:00.000000Z\t2020-10-25T02:00:00.000000Z\ta\t95.73868763606973\t2020-10-25T02:47:19.000000Z\n" +
+                        "2020-10-25T03:00:00.000000Z\t2020-10-25T03:00:00.000000Z\ta\tNaN\t2020-10-25T03:43:26.000000Z\n" +
+                        "2020-10-25T04:00:00.000000Z\t2020-10-25T04:00:00.000000Z\ta\t34.49948946607576\t2020-10-25T04:56:49.000000Z\n",
+                "select to_timezone(k, 'Europe/London'), k, s, lat, lastk from (" +
+                        "select k, s, first(lat) lat, last(k) lastk " +
+                        "from x " +
+                        "where s in ('a') and k between '2020-10-24 21:00:00' and '2020-10-25 05:00:00'" +
+                        "sample by 1h align to calendar time zone 'Europe/London'" +
+                        ")",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        "   rnd_double(1)*180 lat," +
+                        "   rnd_double(1)*180 lon," +
+                        "   rnd_symbol('a','b') s," +
+                        "   timestamp_sequence('2020-10-23 20:30:00.00000Z', 259 * 1000000L) k" +
+                        "   from" +
+                        "   long_sequence(1000)" +
+                        "),index(s) timestamp(k)",
+                "k",
+                false);
+    }
+
+    @Test
+    public void testIndexSampleByAlignToCalendarWithTimezoneLondon365Days() throws Exception {
+        assertQuery("to_timezone\tk\ts\tlat\tlon\n" +
+                        "2020-01-02T00:00:00.000000Z\t2020-01-02T00:00:00.000000Z\ta\t142.30215575416736\t2020-01-02T03:23:00.000000Z\n" +
+                        "2020-02-15T00:00:00.000000Z\t2020-02-15T00:00:00.000000Z\ta\t135.8378128727785\t2020-02-15T17:44:30.000000Z\n" +
+                        "2020-02-16T00:00:00.000000Z\t2020-02-16T00:00:00.000000Z\ta\t149.54213547651923\t2020-02-16T17:50:00.000000Z\n" +
+                        "2020-03-31T00:00:00.000000Z\t2020-03-30T23:00:00.000000Z\ta\tNaN\t2020-03-31T21:52:00.000000Z\n" +
+                        "2020-04-01T00:00:00.000000Z\t2020-03-31T23:00:00.000000Z\ta\t136.72774150518887\t2020-04-01T04:45:00.000000Z\n" +
+                        "2020-05-15T00:00:00.000000Z\t2020-05-14T23:00:00.000000Z\ta\t7.639734467015391\t2020-05-15T22:33:00.000000Z\n" +
+                        "2020-05-16T00:00:00.000000Z\t2020-05-15T23:00:00.000000Z\ta\t140.2722640805293\t2020-05-16T22:38:30.000000Z\n" +
+                        "2020-06-29T00:00:00.000000Z\t2020-06-28T23:00:00.000000Z\ta\tNaN\t2020-06-29T19:47:30.000000Z\n" +
+                        "2020-06-30T00:00:00.000000Z\t2020-06-29T23:00:00.000000Z\ta\t176.93009129230163\t2020-06-30T16:26:30.000000Z\n" +
+                        "2020-09-27T00:00:00.000000Z\t2020-09-26T23:00:00.000000Z\ta\tNaN\t2020-09-27T21:09:30.000000Z\n" +
+                        "2020-09-28T00:00:00.000000Z\t2020-09-27T23:00:00.000000Z\ta\t80.7879827891636\t2020-09-28T21:15:00.000000Z\n" +
+                        "2020-11-11T00:00:00.000000Z\t2020-11-11T00:00:00.000000Z\ta\t42.602417804870136\t2020-11-11T14:57:30.000000Z\n" +
+                        "2020-11-12T00:00:00.000000Z\t2020-11-12T00:00:00.000000Z\ta\t105.23048053435602\t2020-11-12T21:56:00.000000Z\n" +
+                        "2020-12-26T00:00:00.000000Z\t2020-12-26T00:00:00.000000Z\ta\t94.59407457021454\t2020-12-26T08:45:30.000000Z\n" +
+                        "2020-12-27T00:00:00.000000Z\t2020-12-27T00:00:00.000000Z\ta\tNaN\t2020-12-27T22:37:00.000000Z\n",
+                "select to_timezone(k, 'Europe/London'), k, s, lat, lon from (select k, s, first(lat) lat, last(k) lon " +
+                        "from x " +
+                        "where s in ('a') and k in '2020-01-01T00:00:00.000000Z;2d;45d;48'" +
+                        "sample by 1d align to calendar time zone 'Europe/London')",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        "   rnd_double(1)*180 lat," +
+                        "   rnd_double(1)*180 lon," +
+                        "   rnd_symbol('a','b',null) s," +
+                        "   timestamp_sequence('2020-01-01T20:30:00.00000Z', 35 * 6 * 59 * 1000000L) k" + // ~3.5 hour interval
+                        "   from" +
+                        "   long_sequence(365 * 7)" +
+                        "),index(s) timestamp(k)",
+                "k",
+                false);
+    }
+
+    @Test
+    public void testIndexSampleByAlignToCalendarWithTimezoneBerlinShiftBackHourly() throws Exception {
+        assertQuery("to_timezone\tk\ts\tlat\tlon\n" +
+                        "2021-03-27T22:00:00.000000Z\t2021-03-27T21:00:00.000000Z\ta\t132.09083798490755\t2021-03-27T21:51:00.000000Z\n" +
+                        "2021-03-27T23:00:00.000000Z\t2021-03-27T22:00:00.000000Z\ta\t77.68770182183965\t2021-03-27T22:56:00.000000Z\n" +
+                        "2021-03-28T00:00:00.000000Z\t2021-03-27T23:00:00.000000Z\ta\tNaN\t2021-03-27T23:48:00.000000Z\n" +
+                        "2021-03-28T01:00:00.000000Z\t2021-03-28T00:00:00.000000Z\ta\t3.6703591550328163\t2021-03-28T00:27:00.000000Z\n" +
+                        "2021-03-28T03:00:00.000000Z\t2021-03-28T01:00:00.000000Z\ta\t94.70222369149758\t2021-03-28T01:45:00.000000Z\n" +
+                        "2021-03-28T04:00:00.000000Z\t2021-03-28T02:00:00.000000Z\ta\t109.23418649425325\t2021-03-28T02:37:00.000000Z\n" +
+                        "2021-03-28T05:00:00.000000Z\t2021-03-28T03:00:00.000000Z\ta\t38.20430552091481\t2021-03-28T03:16:00.000000Z\n",
+                "select to_timezone(k, 'Europe/Berlin'), k, s, lat, lon from (" +
+                        "select k, s, first(lat) lat, last(k) lon " +
+                        "from x " +
+                        "where s in ('a') and k between '2021-03-27 21:00' and  '2021-03-28 04:00'" +
+                        "sample by 1h align to calendar time zone 'Europe/Berlin'" +
+                        ")",
+                "create table x as " +
+                "(" +
+                        "select" +
+                        "   rnd_double(1)*180 lat," +
+                        "   rnd_double(1)*180 lon," +
+                        "   rnd_symbol('a','b') s," +
+                        "   timestamp_sequence('2021-03-26T20:30:00.00000Z', 13 * 60 * 1000000L) k" +
+                        "   from" +
+                        "   long_sequence(1000)" +
+                        "),index(s) timestamp(k)",
+                "k",
+                false);
+    }
+
+    @Test
     public void testIndexSampleByAlignToCalendarWithTimezoneBerlinShiftBack() throws Exception {
         assertQuery("to_timezone\tk\ts\tlat\tlon\n" +
                         "2020-10-24T00:00:00.000000Z\t2020-10-23T22:00:00.000000Z\ta\t142.30215575416736\t2020-10-24T19:50:00.000000Z\n" +
@@ -631,7 +727,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         "sample by 1d align to calendar time zone 'Europe/Berlin'" +
                         ")",
                 "create table x as " +
-                "(" +
+                        "(" +
                         "select" +
                         "   rnd_double(1)*180 lat," +
                         "   rnd_double(1)*180 lon," +

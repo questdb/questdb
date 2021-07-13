@@ -30,7 +30,6 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlKeywords;
 import io.questdb.griffin.engine.EmptyTableRecordCursor;
-import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.std.*;
@@ -59,9 +58,7 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
 
     public SampleByFirstLastRecordCursorFactory(
             RecordCursorFactory base,
-            ObjList<Function> recordFunctions,
             TimestampSampler timestampSampler,
-            ObjList<GroupByFunction> groupByFunctions,
             GenericRecordMetadata groupByMetadata,
             ObjList<QueryColumn> columns,
             RecordMetadata metadata,
@@ -517,10 +514,6 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
             } else {
                 crossFrameRow.set(columnIndex, LongNullUtils.LONG_NULLs[columnType]);
             }
-        }
-
-        private class Sampler {
-
         }
 
         private class SampleByFirstLastRecord implements Record {
