@@ -25,7 +25,6 @@
 #include <cstring>
 #include "util.h"
 #include "simd.h"
-#include "asmlib/asmlib.h"
 #include "ooo_dispatch.h"
 
 #ifdef OOO_CPP_PROFILE_TIMING
@@ -405,9 +404,10 @@ JNIEXPORT void JNICALL Java_io_questdb_std_Vect_memcpy0
     );
 }
 
+DECLARE_DISPATCHER(platform_memmove);
 JNIEXPORT void JNICALL Java_io_questdb_std_Vect_memmove
         (JNIEnv *e, jclass cl, jlong dst, jlong src, jlong len) {
-    memmove(
+    platform_memmove(
             reinterpret_cast<void *>(dst),
             reinterpret_cast<void *>(src),
             __JLONG_REINTERPRET_CAST__(int64_t, len)

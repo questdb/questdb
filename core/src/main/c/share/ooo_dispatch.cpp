@@ -23,11 +23,9 @@
  ******************************************************************************/
 
 
-#include <cstring>
 #include "util.h"
 #include "simd.h"
 
-#include "asmlib/asmlib.h"
 #include "vcl/vectorclass.h"
 #include <x86intrin.h>
 #include <xmmintrin.h>
@@ -241,6 +239,10 @@ void MULTI_VERSION_NAME (platform_memcpy)(void *dst, const void *src, const size
 
 void MULTI_VERSION_NAME (platform_memset)(void *dst, const int val, const size_t len) {
     __MEMSET(dst, val, len);
+}
+
+void MULTI_VERSION_NAME (platform_memmove)(void *dst, const void *src, const size_t len) {
+    __MEMMOVE(dst, src, len);
 }
 
 // 0

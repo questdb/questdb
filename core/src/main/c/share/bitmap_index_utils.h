@@ -44,19 +44,21 @@ inline static int64_t to_row_id(int32_t partition_index, int64_t local_row_id) {
 struct out_arguments {
     int64_t key_lo;
     int64_t key_hi;
-    int64_t* rows;
+    int64_t* rows_address;
     int64_t rows_capacity;
     int64_t rows_size;
+    int64_t hashes_address;
+    int64_t filtered_size;
 };
 
 struct key_header {
-   int8_t  signature;
-   int64_t sequence;
-   int64_t value_mem_size;
-   int32_t block_value_count;
-   int64_t key_count;
-   int64_t sequence_check;
-   int8_t  padding[27];
+    int8_t signature;
+    int64_t sequence;
+    int64_t value_mem_size;
+    int32_t block_value_count;
+    int64_t key_count;
+    int64_t sequence_check;
+    int8_t padding[27];
 } __attribute__((packed));
 
 struct key_entry {
@@ -83,18 +85,18 @@ class keys_reader {
 public:
     //local copy
     struct key_entry_proxy : public key_entry {
-       bool is_block_consistent;
+        bool is_block_consistent;
     };
 
     explicit keys_reader(const uint8_t *base_ptr, size_t memory_size)
-            : header_ptr_(reinterpret_cast<const key_header *>(base_ptr))
-            , keys_ptr_(reinterpret_cast<const key_entry *>(base_ptr + sizeof(key_header)))
-            , memory_size_(memory_size) {}
+            : header_ptr_(reinterpret_cast<const key_header *>(base_ptr)),
+              keys_ptr_(reinterpret_cast<const key_entry *>(base_ptr + sizeof(key_header))),
+              memory_size_(memory_size) {}
 
-    const key_entry_proxy& operator[](size_t index) const noexcept {
+    const key_entry_proxy &operator[](size_t index) const noexcept {
         auto retries_count = 10;
         proxy_.is_block_consistent = false;
-        while(retries_count--) {
+        while (retries_count--) {
             proxy_.value_count = keys_ptr_[index].value_count;
             std::atomic_thread_fence(std::memory_order_acquire);
             if (keys_ptr_[index].count_check == proxy_.value_count) {
@@ -111,9 +113,13 @@ public:
     }
 
     [[nodiscard]] size_t memory_size() const noexcept { return memory_size_; };
+
     [[nodiscard]] size_t key_count() const noexcept { return header_ptr_->key_count; }
+
     [[nodiscard]] size_t values_total_count() const noexcept { return header_ptr_->block_value_count; }
+
     [[nodiscard]] size_t value_memory_size() const noexcept { return header_ptr_->value_mem_size; }
+
     [[nodiscard]] size_t key_count_in_memory() const noexcept {
         return (memory_size_ - sizeof(key_header)) / sizeof(int64_t);
     };
@@ -131,22 +137,35 @@ public:
     explicit block(const uint8_t *base_ptr, size_t offset, size_t cap) noexcept
             : base_ptr_(base_ptr), offset_(offset), cap_(cap), msk_(cap - 1) {}
 
-    const T& operator[](size_t index) const noexcept { return data()[index & msk_]; }
-    [[nodiscard]] const T* data() const noexcept { return reinterpret_cast<const T*>(memory()); }
-    [[nodiscard]] const uint8_t* memory() const noexcept { return base_ptr_ + offset_; }
+    const T &operator[](size_t index) const noexcept { return data()[index & msk_]; }
+
+    [[nodiscard]] const T *data() const noexcept { return reinterpret_cast<const T *>(memory()); }
+
+    [[nodiscard]] const uint8_t *memory() const noexcept { return base_ptr_ + offset_; }
+
     [[nodiscard]] size_t offset() const noexcept { return offset_; }
+
     [[nodiscard]] size_t capacity() const noexcept { return cap_; }
+
     [[nodiscard]] size_t memory_size() const noexcept { return cap_ * sizeof(T) + sizeof(value_block_link); }
-    [[nodiscard]] const uint8_t* next() const noexcept { return base_ptr_ + next_offset(); }
-    [[nodiscard]] const uint8_t* prev() const noexcept { return base_ptr_ + prev_offset(); }
+
+    [[nodiscard]] const uint8_t *next() const noexcept { return base_ptr_ + next_offset(); }
+
+    [[nodiscard]] const uint8_t *prev() const noexcept { return base_ptr_ + prev_offset(); }
+
     [[nodiscard]] uint64_t next_offset() const noexcept { return link()->next; }
+
     [[nodiscard]] uint64_t prev_offset() const noexcept { return link()->prev; }
+
     void move_next() noexcept { offset_ = next_offset(); }
+
     void move_prev() noexcept { offset_ = prev_offset(); }
+
 private:
-    [[nodiscard]] const value_block_link* link() const {
+    [[nodiscard]] const value_block_link *link() const {
         return reinterpret_cast<const value_block_link *>(memory() + memory_size() - sizeof(value_block_link));
     }
+
     const uint8_t *base_ptr_;
     size_t offset_;
     size_t cap_;
@@ -154,7 +173,7 @@ private:
 };
 
 template<typename T>
-int64_t search_in_block(const T* memory, int64_t count, T value) {
+int64_t search_in_block(const T *memory, int64_t count, T value) {
     // when block is "small", we just scan it linearly
     if (count < 64) {
         // this will definitely exit because we had checked that at least the last value is greater than value
@@ -171,7 +190,7 @@ int64_t search_in_block(const T* memory, int64_t count, T value) {
 }
 
 template<typename T>
-int64_t scan_blocks_backward(block<T>& current_block, int64_t value_count, T max_value) {
+int64_t scan_blocks_backward(block<T> &current_block, int64_t value_count, T max_value) {
     int64_t stored;
     do {
         // check block range by peeking at first and last value
@@ -203,7 +222,7 @@ int64_t scan_blocks_backward(block<T>& current_block, int64_t value_count, T max
 }
 
 template<typename T>
-int64_t scan_blocks_forward(block<T>& current_block, int64_t initial_count, T min_value) {
+int64_t scan_blocks_forward(block<T> &current_block, int64_t initial_count, T min_value) {
     int64_t value_count = initial_count;
     int64_t stored;
     do {
@@ -231,5 +250,18 @@ int64_t scan_blocks_forward(block<T>& current_block, int64_t initial_count, T mi
     }
     return value_count;
 }
+
+void latest_scan_backward(
+        uint64_t keys_memory_addr,
+        size_t keys_memory_size,
+        uint64_t values_memory_addr,
+        size_t value_memory_size,
+        uint64_t args_memory_addr,
+        int64_t unindexed_null_count,
+        int64_t max_value,
+        int64_t min_value,
+        int32_t partition_index,
+        uint32_t vblock_capacity_mask
+);
 
 #endif //QUESTDB_BITMAP_INDEX_UTILS_H

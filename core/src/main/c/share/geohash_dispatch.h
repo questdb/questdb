@@ -22,24 +22,27 @@
  *
  ******************************************************************************/
 
-#ifndef QDB_SIMD_H
-#define QDB_SIMD_H
+#ifndef QUESTDB_GEOHASH_DISPATCH_H
+#define QUESTDB_GEOHASH_DISPATCH_H
 
-#include <cstring>
+#include "util.h"
+#include "dispatcher.h"
 
-#ifdef ENABLE_ASMLIB
-#include "asmlib/asmlib.h"
-#define __MEMCPY A_memcpy
-#define __MEMSET A_memset
-//TODO: replace with A_memmove (-fPIC asm lib)
-#define __MEMMOVE memmove
-#else
-#define __MEMCPY memcpy
-#define __MEMSET memset
-#define __MEMMOVE memmove
-#endif
+constexpr int64_t unpack_length(int64_t packed_hash) { return packed_hash >> 60; }
 
+constexpr int64_t unpack_hash(int64_t packed_hash) { return packed_hash & 0x0fffffffffffffffll; }
 
+constexpr int64_t bitmask(uint8_t count, uint8_t shift) { return ((static_cast<int64_t>(1) << count) - 1) << shift; }
 
+DECLARE_DISPATCHER_TYPE(filter_with_prefix,
+                        const int64_t *hashes,
+                        int64_t *rows,
+                        const int64_t rows_count,
+                        const int32_t hash_length,
+                        const int64_t *prefixes,
+                        const int64_t prefixes_count
+);
 
-#endif //QDB_SIMD_H
+DECLARE_DISPATCHER_TYPE(simd_iota, int64_t *array, const int64_t array_size, const int64_t start);
+
+#endif //QUESTDB_GEOHASH_DISPATCH_H
