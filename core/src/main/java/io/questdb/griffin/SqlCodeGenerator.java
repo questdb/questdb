@@ -100,6 +100,7 @@ public class SqlCodeGenerator implements Mutable {
     private final IntList recordFunctionPositions = new IntList();
     private final IntList groupByFunctionPositions = new IntList();
     private boolean fullFatJoins = false;
+    private final CharSequenceHashSet prefixes = new CharSequenceHashSet();
 
     public SqlCodeGenerator(
             CairoEngine engine,
@@ -923,7 +924,9 @@ public class SqlCodeGenerator implements Mutable {
             Function filter,
             SqlExecutionContext executionContext,
             int timestampIndex,
-            @NotNull IntList columnIndexes
+            int hashColumnIndex,
+            @NotNull IntList columnIndexes,
+            @NotNull CharSequenceHashSet prefixes
     ) throws SqlException {
         final DataFrameCursorFactory dataFrameCursorFactory;
         if (intrinsicModel.hasIntervalFilters()) {
@@ -1072,8 +1075,10 @@ public class SqlCodeGenerator implements Mutable {
                         metadata,
                         dataFrameCursorFactory,
                         latestByIndex,
+                        hashColumnIndex,
                         filter,
-                        columnIndexes
+                        columnIndexes,
+                        prefixes
                 );
             }
         }
@@ -2300,7 +2305,6 @@ public class SqlCodeGenerator implements Mutable {
             SqlExecutionContext executionContext
     ) throws SqlException {
         final ObjList<ExpressionNode> latestBy = model.getLatestBy();
-        final ExpressionNode whereClause = model.getWhereClause();
 
         try (TableReader reader = engine.getReader(
                 executionContext.getCairoSecurityContext(),
@@ -2408,7 +2412,23 @@ public class SqlCodeGenerator implements Mutable {
 
             final String tableName = reader.getTableName();
 
-            if (whereClause != null) {
+            final ExpressionNode withinExtracted = whereClauseParser.extractWithin(
+                    model,
+                    model.getWhereClause(),
+                    myMeta,
+                    prefixes
+            );
+
+            int hashColumnIndex = -1;
+            if (prefixes.size() > 1) {
+                CharSequence column = prefixes.get(0);
+                hashColumnIndex = reader.getMetadata().getColumnIndexQuiet(column);
+            }
+
+            model.setWhereClause(withinExtracted);
+
+            if (withinExtracted != null) {
+
                 CharSequence preferredKeyColumn = null;
 
                 if (listColumnFilterA.size() == 1) {
@@ -2419,9 +2439,10 @@ public class SqlCodeGenerator implements Mutable {
                     }
                 }
 
+
                 final IntrinsicModel intrinsicModel = whereClauseParser.extract(
                         model,
-                        whereClause,
+                        withinExtracted,
                         readerMeta,
                         preferredKeyColumn,
                         readerTimestampIndex,
@@ -2459,7 +2480,9 @@ public class SqlCodeGenerator implements Mutable {
                             f,
                             executionContext,
                             readerTimestampIndex,
-                            columnIndexes
+                            hashColumnIndex,
+                            columnIndexes,
+                            prefixes
                     );
                 }
 
@@ -2714,8 +2737,10 @@ public class SqlCodeGenerator implements Mutable {
                         myMeta,
                         new FullBwdDataFrameCursorFactory(engine, tableName, model.getTableVersion()),
                         listColumnFilterA.getColumnIndexFactored(0),
+                        hashColumnIndex,
                         null,
-                        columnIndexes
+                        columnIndexes,
+                        prefixes
                 );
             }
 

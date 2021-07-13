@@ -28,6 +28,7 @@ import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.vm.AppendOnlyVirtualMemory;
 import io.questdb.cairo.vm.PagedMappedReadWriteMemory;
 import io.questdb.cairo.vm.PagedSlidingReadOnlyMemory;
+import io.questdb.griffin.engine.functions.geohash.GeoHashNative;
 import io.questdb.griffin.engine.table.LatestByArguments;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
@@ -849,7 +850,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
 
         rows.extend(keyCount);
         rows.setPos(rows.getCapacity());
-        rows.zero(0);
+        GeoHashNative.iota(rows.getAddress(), rows.getCapacity(), 0);
 
         try (BitmapIndexBwdReader reader = new BitmapIndexBwdReader(configuration, path.trimTo(plen), "x", 0)) {
             long argsAddress = LatestByArguments.allocateMemory();
@@ -858,7 +859,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
 
             LatestByArguments.setKeyLo(argsAddress, 0);
             LatestByArguments.setKeyHi(argsAddress, keyCount);
-            LatestByArguments.setRowsSize(argsAddress, rows.size());
+            LatestByArguments.setRowsSize(argsAddress, 0);
 
             BitmapIndexUtilsNative.latestScanBackward(
                     reader.getKeyBaseAddress(),
@@ -874,9 +875,9 @@ public class BitmapIndexTest extends AbstractCairoTest {
             long rowCount = LatestByArguments.getRowsSize(argsAddress);
             Assert.assertEquals(keyCount, rowCount);
             long keyLo = LatestByArguments.getKeyLo(argsAddress);
-            Assert.assertEquals(Long.MAX_VALUE, keyLo);
+            Assert.assertEquals(0, keyLo); // we do not update key range anymore
             long keyHi = LatestByArguments.getKeyHi(argsAddress);
-            Assert.assertEquals(Long.MIN_VALUE, keyHi);
+            Assert.assertEquals(keyCount, keyHi);
 
             LatestByArguments.releaseMemory(argsAddress);
 
@@ -891,6 +892,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
     public void testCppLatestByIndexReaderIgnoreUpdates() {
         final int valueBlockCapacity = 32;
         final long keyCount = 1024;
+
         create(configuration, path.trimTo(plen), "x", valueBlockCapacity);
 
         try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration, path, "x")) {
@@ -905,7 +907,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
 
         rows.extend(keyCount);
         rows.setPos(rows.getCapacity());
-        rows.zero(0);
+        GeoHashNative.iota(rows.getAddress(), rows.getCapacity(), 0);
 
         //fixing memory mapping here
         BitmapIndexBwdReader reader = new BitmapIndexBwdReader(configuration, path.trimTo(plen), "x", 0);
@@ -930,7 +932,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
 
         LatestByArguments.setKeyLo(argsAddress, 0);
         LatestByArguments.setKeyHi(argsAddress, keyCount);
-        LatestByArguments.setRowsSize(argsAddress, rows.size());
+        LatestByArguments.setRowsSize(argsAddress, 0);
 
         BitmapIndexUtilsNative.latestScanBackward(
                 reader.getKeyBaseAddress(),
@@ -946,9 +948,9 @@ public class BitmapIndexTest extends AbstractCairoTest {
         long rowCount = LatestByArguments.getRowsSize(argsAddress);
         Assert.assertEquals(keyCount, rowCount);
         long keyLo = LatestByArguments.getKeyLo(argsAddress);
-        Assert.assertEquals(Long.MAX_VALUE, keyLo);
+        Assert.assertEquals(0, keyLo);
         long keyHi = LatestByArguments.getKeyHi(argsAddress);
-        Assert.assertEquals(Long.MIN_VALUE, keyHi);
+        Assert.assertEquals(keyCount, keyHi);
 
         LatestByArguments.releaseMemory(argsAddress);
 
@@ -1017,8 +1019,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
                 DirectLongList rows = new DirectLongList(N);
 
                 rows.setPos(rows.getCapacity());
-                rows.zero(0);
-
+                GeoHashNative.iota(rows.getAddress(), rows.getCapacity(), 0);
 
                 try (TableReader tableReader = new TableReader(configuration, "x")) {
                     tableReader.openPartition(0);
@@ -1036,7 +1037,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
 
                     LatestByArguments.setKeyLo(argsAddress, 0);
                     LatestByArguments.setKeyHi(argsAddress, N);
-                    LatestByArguments.setRowsSize(argsAddress, rows.size());
+                    LatestByArguments.setRowsSize(argsAddress, 0);
                     BitmapIndexUtilsNative.latestScanBackward(
                             reader.getKeyBaseAddress(),
                             reader.getKeyMemorySize(),
@@ -1051,9 +1052,9 @@ public class BitmapIndexTest extends AbstractCairoTest {
                     long rowCount = LatestByArguments.getRowsSize(argsAddress);
                     Assert.assertEquals(N, rowCount);
                     long keyLo = LatestByArguments.getKeyLo(argsAddress);
-                    Assert.assertEquals(Long.MAX_VALUE, keyLo);
+                    Assert.assertEquals(0, keyLo);
                     long keyHi = LatestByArguments.getKeyHi(argsAddress);
-                    Assert.assertEquals(Long.MIN_VALUE, keyHi);
+                    Assert.assertEquals(N, keyHi);
 
                     LatestByArguments.releaseMemory(argsAddress);
                     Assert.assertEquals(columnTop - 1, Rows.toLocalRowID(rows.get(0) - 1));

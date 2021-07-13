@@ -27,56 +27,83 @@ package io.questdb.griffin.engine.table;
 import io.questdb.std.Unsafe;
 
 public final class LatestByArguments {
-    private static final long KEY_LO_OFFSET = 0*8;
-    private static final long KEY_HI_OFFSET = 1*8;
-    private static final long ROWS_ADDRESS_OFFSET = 2*8;
-    private static final long ROWS_CAPACITY_OFFSET = 3*8;
-    private static final long ROWS_SIZE_OFFSET = 4*8;
-    public static final long MEMORY_SIZE = 5*8;
+    public static final long MEMORY_SIZE = 7 * 8;
+    private static final long KEY_LO_OFFSET = 0 * 8;
+    private static final long KEY_HI_OFFSET = 1 * 8;
+    private static final long ROWS_ADDRESS_OFFSET = 2 * 8;
+    private static final long ROWS_CAPACITY_OFFSET = 3 * 8;
+    private static final long ROWS_SIZE_OFFSET = 4 * 8;
+    private static final long HASHES_ADDRESS_OFFSET = 5 * 8;
+    private static final long FILTERED_SIZE_OFFSET = 6 * 8;
 
     public static long allocateMemory() {
         return Unsafe.calloc(MEMORY_SIZE);
-    }
-
-    public static void releaseMemory(long address) {
-        Unsafe.free(address, MEMORY_SIZE);
     }
 
     public static long allocateMemoryArray(int elements) {
         return Unsafe.calloc(MEMORY_SIZE * elements);
     }
 
-    public static void releaseMemoryArray(long address, int elements) {
-        Unsafe.free(address, MEMORY_SIZE * elements);
+    public static long getFilteredSize(long address) {
+        return Unsafe.getUnsafe().getLong(address + FILTERED_SIZE_OFFSET);
+    }
+
+    public static void setFilteredSize(long address, long size) {
+        Unsafe.getUnsafe().putLong(address + FILTERED_SIZE_OFFSET, size);
+    }
+
+    public static long getHashesAddress(long address) {
+        return Unsafe.getUnsafe().getLong(address + HASHES_ADDRESS_OFFSET);
+    }
+
+    public static long getKeyHi(long address) {
+        return Unsafe.getUnsafe().getLong(address + KEY_HI_OFFSET);
     }
 
     public static long getKeyLo(long address) {
         return Unsafe.getUnsafe().getLong(address + KEY_LO_OFFSET);
     }
-    public static long getKeyHi(long address) {
-        return Unsafe.getUnsafe().getLong(address + KEY_HI_OFFSET);
-    }
+
     public static long getRowsAddress(long address) {
         return Unsafe.getUnsafe().getLong(address + ROWS_ADDRESS_OFFSET);
     }
+
     public static long getRowsCapacity(long address) {
         return Unsafe.getUnsafe().getLong(address + ROWS_CAPACITY_OFFSET);
     }
+
     public static long getRowsSize(long address) {
         return Unsafe.getUnsafe().getLong(address + ROWS_SIZE_OFFSET);
     }
-    public static void setKeyLo(long address, long lo) {
-        Unsafe.getUnsafe().putLong(address + KEY_LO_OFFSET, lo);
+
+    public static void releaseMemory(long address) {
+        Unsafe.free(address, MEMORY_SIZE);
     }
+
+    public static void releaseMemoryArray(long address, int elements) {
+        Unsafe.free(address, MEMORY_SIZE * elements);
+    }
+
+    public static void setHashesAddress(long address, long addr) {
+        Unsafe.getUnsafe().putLong(address + HASHES_ADDRESS_OFFSET, addr);
+    }
+
     public static void setKeyHi(long address, long up) {
         Unsafe.getUnsafe().putLong(address + KEY_HI_OFFSET, up);
     }
+
+    public static void setKeyLo(long address, long lo) {
+        Unsafe.getUnsafe().putLong(address + KEY_LO_OFFSET, lo);
+    }
+
     public static void setRowsAddress(long address, long addr) {
         Unsafe.getUnsafe().putLong(address + ROWS_ADDRESS_OFFSET, addr);
     }
+
     public static void setRowsCapacity(long address, long cap) {
         Unsafe.getUnsafe().putLong(address + ROWS_CAPACITY_OFFSET, cap);
     }
+
     public static void setRowsSize(long address, long size) {
         Unsafe.getUnsafe().putLong(address + ROWS_SIZE_OFFSET, size);
     }

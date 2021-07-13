@@ -24,8 +24,8 @@
 
 package io.questdb.tasks;
 
+import io.questdb.griffin.engine.functions.geohash.GeoHashNative;
 import io.questdb.mp.CountDownLatchSPI;
-import io.questdb.std.BitmapIndexUtilsNative;
 
 public class LatestByTask {
     private long keyBaseAddress;
@@ -38,6 +38,11 @@ public class LatestByTask {
     private long rowLo;
     private int partitionIndex;
     private int valueBlockCapacity;
+    private long hashesAddress;
+    private int hashLength;
+    private long prefixesAddress;
+    private long prefixesCount;
+
     private CountDownLatchSPI doneLatch;
 
     public void of(
@@ -51,6 +56,10 @@ public class LatestByTask {
             long rowLo,
             int partitionIndex,
             int valueBlockCapacity,
+            long hashesAddress,
+            int hashLength,
+            long prefixesAddress,
+            long prefixesCount,
             CountDownLatchSPI doneLatch
     ) {
         this.keyBaseAddress = keyBaseAddress;
@@ -63,11 +72,15 @@ public class LatestByTask {
         this.rowLo = rowLo;
         this.partitionIndex = partitionIndex;
         this.valueBlockCapacity = valueBlockCapacity;
+        this.hashesAddress = hashesAddress;
+        this.hashLength = hashLength;
+        this.prefixesAddress = prefixesAddress;
+        this.prefixesCount = prefixesCount;
         this.doneLatch = doneLatch;
     }
 
     public boolean run() {
-        BitmapIndexUtilsNative.latestScanBackward(
+        GeoHashNative.latesByAndFilterPrefix(
                 keyBaseAddress,
                 keysMemorySize,
                 valueBaseAddress,
@@ -77,8 +90,13 @@ public class LatestByTask {
                 rowHi,
                 rowLo,
                 partitionIndex,
-                valueBlockCapacity
+                valueBlockCapacity,
+                hashesAddress,
+                hashLength,
+                prefixesAddress,
+                prefixesCount
         );
+
         doneLatch.countDown();
         return true;
     }
