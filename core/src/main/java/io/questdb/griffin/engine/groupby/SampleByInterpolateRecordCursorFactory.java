@@ -192,13 +192,11 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
 
     @Override
     public void close() {
-        for (int i = 0, n = recordFunctions.size(); i < n; i++) {
-            recordFunctions.getQuick(i).close();
-        }
-        recordKeyMap.close();
-        dataMap.close();
+        Misc.freeObjList(recordFunctions);
+        Misc.free(recordKeyMap);
+        Misc.free(dataMap);
         freeYData();
-        base.close();
+        Misc.free(base);
     }
 
     @Override
