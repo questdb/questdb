@@ -659,6 +659,7 @@ public class SampleByTest extends AbstractGriffinTest {
 
     @Test
     @Ignore
+    // this is test for indexed first/last, to be implemented on another branch
     public void testIndexSampleByAlignToCalendar() throws Exception {
         assertQuery("k\ts\tlat\tlon\n" +
                         "2021-03-27T23:00:00.000000Z\ta\t142.30215575416736\t165.69007104574442\n" +
@@ -684,7 +685,6 @@ public class SampleByTest extends AbstractGriffinTest {
     }
 
     @Test
-    @Ignore
     public void testIndexSampleByAlignToCalendarWithTimezoneLondonShiftBack() throws Exception {
         assertQuery("to_timezone\ts\tlat\tlon\n" +
                         "2021-03-26T00:00:00.000000Z\ta\t142.30215575416736\t2021-03-26T22:50:00.000000Z\n" +
