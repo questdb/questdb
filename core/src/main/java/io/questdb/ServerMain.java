@@ -115,6 +115,11 @@ public class ServerMain {
         }
 
         readServerConfiguration(rootDirectory, properties, log, buildInformation);
+        log.info().$("Server config : ").$(configurationFile.getAbsoluteFile()).$();
+        log.info().$("Config changes applied:").$();
+        log.info().$("  http.enabled : ").$(configuration.getHttpServerConfiguration().isEnabled()).$();
+        log.info().$("  tcp.enabled  : ").$(configuration.getLineTcpReceiverConfiguration().isEnabled()).$();
+        log.info().$("  pg.enabled   : ").$(configuration.getPGWireConfiguration().isEnabled()).$();
 
         log.info().$("open database [id=").$(configuration.getCairoConfiguration().getDatabaseIdLo()).$('.').$(configuration.getCairoConfiguration().getDatabaseIdHi()).$(']').$();
         log.info().$("platform [bit=").$(System.getProperty("sun.arch.data.model")).$(']').$();
