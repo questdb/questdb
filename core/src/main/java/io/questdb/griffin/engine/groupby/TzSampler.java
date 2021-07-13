@@ -49,9 +49,6 @@ public class TzSampler {
     private int offsetFuncPos;
     private long fixedOffset;
     private long localEpoch;
-    private long topLocalEpoch;
-    private long nextSampleLocalEpoch;
-    private long sampleLocalEpoch;
     protected TimeZoneRules rules;
 
     public TzSampler(
@@ -121,18 +118,14 @@ public class TzSampler {
     }
 
     public long startFrom(long timestamp) {
-        // fixed rules means the timezone does not have historical or daylight time changes
+        // null rules means the timezone does not have daylight time changes
         if (rules != null) {
             tzOffset = rules.getOffset(timestamp);
             nextDst = rules.getNextDST(timestamp);
         }
-
-        this.topLocalEpoch = this.localEpoch = timestampSampler.round(timestamp + tzOffset);
-        this.sampleLocalEpoch = this.nextSampleLocalEpoch = localEpoch;
-
         boolean alignToCalendar = fixedOffset != Long.MIN_VALUE;
         if (alignToCalendar) {
-            lastTimestampLoc = timestampSampler.round(timestamp + tzOffset);
+            lastTimestampLoc = timestampSampler.round(timestamp + tzOffset - fixedOffset) + fixedOffset;
         } else {
             lastTimestampLoc = timestamp + tzOffset;
         }
