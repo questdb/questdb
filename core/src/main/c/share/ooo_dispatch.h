@@ -115,6 +115,7 @@ DECLARE_DISPATCHER_TYPE(platform_memcpy, void *dst, const void *src, const size_
 
 DECLARE_DISPATCHER_TYPE(platform_memset, void *dst, const int val, const size_t len);
 
+DECLARE_DISPATCHER_TYPE(platform_memmove, void *dst, const void *src, const size_t len);
 // 8 - 11
 template<typename T>
 inline void
