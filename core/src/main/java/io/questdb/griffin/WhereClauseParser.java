@@ -1047,6 +1047,116 @@ final class WhereClauseParser implements Mutable {
         return model;
     }
 
+    ExpressionNode extractWithin(
+            AliasTranslator translator,
+            ExpressionNode node,
+            RecordMetadata metadata,
+            CharSequenceHashSet prefixes
+    ) throws SqlException {
+
+        if (node == null) return null;
+
+        // pre-order iterative tree traversal
+        // see: http://en.wikipedia.org/wiki/Tree_traversal
+        prefixes.clear();
+
+        if (removeWithin(translator, node, metadata, prefixes)) {
+            return collapseWithinNodes(node);
+        }
+
+        ExpressionNode root = node;
+        while (!stack.isEmpty() || node != null) {
+            if (node != null) {
+                if (isAndKeyword(node.token) || isOrKeyword(node.token)) {
+                    if (!removeWithin(translator, node.rhs, metadata, prefixes)) {
+                        stack.push(node.rhs);
+                    }
+                    node = removeWithin(translator, node.lhs, metadata, prefixes) ? null : node.lhs;
+                } else {
+                    node = stack.poll();
+                }
+            } else {
+                node = stack.poll();
+            }
+        }
+
+        return collapseWithinNodes(root);
+    }
+
+    private boolean removeWithin(AliasTranslator translator, ExpressionNode node, RecordMetadata metadata, CharSequenceHashSet prefixes) throws SqlException {
+        if (isWithinKeyword(node.token)) {
+
+            if (prefixes.size() > 0) {
+                throw SqlException.$(node.position, "Using more than one 'within' operator per query is not allowed");
+            }
+
+            if (node.paramCount < 2) {
+                throw SqlException.$(node.position, "Too few arguments for 'within'");
+            }
+
+            ExpressionNode col = node.paramCount < 3 ? node.lhs : node.args.getLast();
+
+            if (col.type != ExpressionNode.LITERAL) {
+                return false;
+            }
+
+            CharSequence column = translator.translateAlias(col.token);
+
+            if (metadata.getColumnIndexQuiet(column) == -1) {
+                throw SqlException.invalidColumn(col.position, col.token);
+            }
+
+            if(prefixes.size() == 0) {
+                prefixes.add(column); //TODO: make a proper data struct
+            }
+
+            int i = node.paramCount - 1;
+
+            if (i == 1) {
+                if (node.rhs == null || node.rhs.type != ExpressionNode.CONSTANT) {
+                    return false;
+                }
+                prefixes.add(unquote(node.rhs.token));
+            } else {
+                for (i--; i > -1; i--) {
+                    ExpressionNode c = node.args.getQuick(i);
+                    if (c.type != ExpressionNode.CONSTANT || isNullKeyword(c.token)) {
+                        return false;
+                    }
+                    prefixes.add(unquote(c.token));
+                }
+            }
+            return true;
+        } else {
+            return false;
+        }
+    }
+
+    private ExpressionNode collapseWithinNodes(ExpressionNode node) {
+        if (node == null || isWithinKeyword(node.token)) {
+            return null;
+        }
+        node.lhs = collapseWithinNodes(collapseWithin0(node.lhs));
+        node.rhs = collapseWithinNodes(collapseWithin0(node.rhs));
+        return collapseWithin0(node);
+    }
+
+    private ExpressionNode collapseWithin0(ExpressionNode node) {
+        if (node == null || isWithinKeyword(node.token)) {
+            return null;
+        }
+        if (node.queryModel == null && (isAndKeyword(node.token) || isOrKeyword(node.token))) {
+            if (node.lhs == null || isWithinKeyword(node.lhs.token)) {
+                return node.rhs;
+            }
+            if (node.rhs == null || isWithinKeyword(node.rhs.token)) {
+                return node.lhs;
+            }
+        }
+        return node;
+
+    }
+
     private boolean isTimestamp(ExpressionNode n) {
         return Chars.equalsNc(n.token, timestamp);
     }

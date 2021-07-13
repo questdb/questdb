@@ -92,6 +92,10 @@ void platform_memset(void *dst, const int val, const size_t len) {
     __MEMSET(dst, val, len);
 }
 
+void platform_memmove(void *dst, const void *src, const size_t len) {
+    __MEMMOVE(dst, src, len);
+}
+
 // 0
 void merge_copy_var_column_int32(
         index_t *merge_index,
