@@ -42,7 +42,7 @@ public class TzSamplerTest {
     }
 
     @Test
-    public void testSimple() throws NumericException, SqlException {
+    public void testStartFrom() throws NumericException, SqlException {
         String[][] testCases = new String[][] {
                 new String[] {"2021-03-28 00:01", "2021-03-28T00:00:00.000Z"},
                 new String[] {"2021-03-28 00:59", "2021-03-28T00:00:00.000Z"},
@@ -56,7 +56,8 @@ public class TzSamplerTest {
                 new String[] {"2021-03-28 04:01", "2021-03-28T04:00:00.000Z"}
         };
         for(int i = 0; i < testCases.length; i++) {
-            assertStartFrom("Europe/Berlin", testCases[i][0], testCases[i][1], "00:00", Timestamps.HOUR_MICROS);
+            assertStartFrom("Europe/Berlin", testCases[i][0], testCases[i][1],"00:00", Timestamps.HOUR_MICROS);
+            assertStartFrom("Europe/Prague", testCases[i][0], testCases[i][1],"00:00", Timestamps.HOUR_MICROS);
         }
     }
 
@@ -92,10 +93,68 @@ public class TzSamplerTest {
         TestUtils.assertEquals("2021-10-31T05:00:00.000Z", getNext(timezone, sampler));
     }
 
-    private String getNext(String timezone, TzSampler sampler) throws NumericException {
+    @Test
+    public void testResumesCorrectlyAfterPassingNoCalendarAlign() throws NumericException, SqlException {
+        final String timezone = "Europe/Kiev";
+        TzSampler sampler = createSampler(timezone, null, Timestamps.HOUR_MICROS);
+        assertStartFrom(timezone, "2021-10-31 00:01", "2021-10-31T00:01:00.000Z", sampler);
+        TestUtils.assertEquals("2021-10-31T01:01:00.000Z", getNext(timezone, sampler));
+        TestUtils.assertEquals("2021-10-31T02:01:00.000Z", getNext(timezone, sampler));
+        TestUtils.assertEquals("2021-10-31T03:01:00.000Z", getNext(timezone, sampler));
+        TestUtils.assertEquals("2021-10-31T04:01:00.000Z", getNext(timezone, sampler));
+        TestUtils.assertEquals("2021-10-31T05:01:00.000Z", getNext(timezone, sampler));
+    }
+
+    @Test
+    public void testInitCannotParseOffset() {
+        final String timezone = "Europe/Kiev";
+        try {
+            createSampler(timezone, "abcd", Timestamps.HOUR_MICROS);
+            Assert.fail();
+        } catch (SqlException ex) {
+            TestUtils.assertContains(ex.getFlyweightMessage(), "invalid offset: abc");
+        }
+    }
+
+    @Test
+    public void testInitCannotParseTimezone() {
+        final String timezone = "INV_TZ";
+        try {
+            createSampler(timezone, "abcd", Timestamps.HOUR_MICROS);
+            Assert.fail();
+        } catch (SqlException ex) {
+            TestUtils.assertContains(ex.getFlyweightMessage(), "invalid timezone: INV_TZ");
+        }
+    }
+
+    @Test
+    public void testFixedOffsetTimeZone() throws NumericException, SqlException {
+        final String timezone = "+02:00";
+        TzSampler sampler = createSampler(timezone, null, Timestamps.HOUR_MICROS);
+        assertStartFrom(timezone, "2021-10-31 00:01", "2021-10-31T00:01:00.000Z", sampler);
+        TestUtils.assertEquals("2021-10-31T01:01:00.000Z", getNext(timezone, sampler));
+        TestUtils.assertEquals("2021-10-31T02:01:00.000Z", getNext(timezone, sampler));
+        TestUtils.assertEquals("2021-10-31T03:01:00.000Z", getNext(timezone, sampler));
+        TestUtils.assertEquals("2021-10-31T04:01:00.000Z", getNext(timezone, sampler));
+        TestUtils.assertEquals("2021-10-31T05:01:00.000Z", getNext(timezone, sampler));
+    }
+
+    @Test
+    public void testNoTimezoneWithOffset() throws NumericException, SqlException {
+        final String timezone = null;
+        TzSampler sampler = createSampler(timezone, "00:30", Timestamps.HOUR_MICROS);
+        assertStartFrom(timezone, "2021-10-31 00:35", "2021-10-31T00:30:00.000Z", sampler);
+        TestUtils.assertEquals("2021-10-31T01:30:00.000Z", getNext(timezone, sampler));
+        TestUtils.assertEquals("2021-10-31T02:30:00.000Z", getNext(timezone, sampler));
+        TestUtils.assertEquals("2021-10-31T03:30:00.000Z", getNext(timezone, sampler));
+        TestUtils.assertEquals("2021-10-31T04:30:00.000Z", getNext(timezone, sampler));
+        TestUtils.assertEquals("2021-10-31T05:30:00.000Z", getNext(timezone, sampler));
+    }
+
+    private String getNext(String tz, TzSampler sampler) throws NumericException {
         long nextTimestamp = sampler.getNextTimestamp();
-        return Timestamps.toString(
-                Timestamps.toTimezone(nextTimestamp, TimestampFormatUtils.enLocale, timezone));
+        long nextTsLoc = tz != null ? Timestamps.toTimezone(nextTimestamp, TimestampFormatUtils.enLocale, tz) : nextTimestamp;
+        return Timestamps.toString(nextTsLoc);
     }
 
     private void assertStartFrom(String tz, String startFromLoc, String startFromRoundedLocExpected, String offset, long sampleByMicro) throws NumericException, SqlException {
@@ -105,9 +164,9 @@ public class TzSamplerTest {
 
     private void assertStartFrom(String tz, String tsLoc, String tsLocExpected, TzSampler sampler) throws NumericException {
         long timestampLocal = IntervalUtils.parseFloorPartialDate(tsLoc);
-        long utcTimezone = Timestamps.toUTC(timestampLocal, TimestampFormatUtils.enLocale, tz);
+        long utcTimezone = tz != null ? Timestamps.toUTC(timestampLocal, TimestampFormatUtils.enLocale, tz) : timestampLocal;
         long startFromUtc = sampler.startFrom(utcTimezone);
-        long startFromRoundedLoc = Timestamps.toTimezone(startFromUtc, TimestampFormatUtils.enLocale, tz);
+        long startFromRoundedLoc = tz != null ? Timestamps.toTimezone(startFromUtc, TimestampFormatUtils.enLocale, tz) : startFromUtc;
 
         String actual = Timestamps.toString(startFromRoundedLoc);
         Assert.assertEquals(tsLocExpected, actual);

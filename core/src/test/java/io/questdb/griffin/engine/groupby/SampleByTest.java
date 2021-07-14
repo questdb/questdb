@@ -565,7 +565,7 @@ public class SampleByTest extends AbstractGriffinTest {
 
     @Test
     public void testIndexSampleByAlignToCalendarWithTimezoneLondonShiftBack() throws Exception {
-        assertQuery("to_timezone\tk\ts\tlat\tlon\n" +
+        assertSampleByIndexQuery("to_timezone\tk\ts\tlat\tlon\n" +
                         "2021-03-26T00:00:00.000000Z\t2021-03-26T00:00:00.000000Z\ta\t142.30215575416736\t2021-03-26T22:50:00.000000Z\n" +
                         "2021-03-27T00:00:00.000000Z\t2021-03-27T00:00:00.000000Z\ta\tNaN\t2021-03-27T23:00:00.000000Z\n" +
                         "2021-03-28T00:00:00.000000Z\t2021-03-28T00:00:00.000000Z\ta\t33.45558404694713\t2021-03-28T20:40:00.000000Z\n" +
@@ -584,14 +584,12 @@ public class SampleByTest extends AbstractGriffinTest {
                         "   timestamp_sequence('2021-03-25T23:30:00.00000Z', 50 * 60 * 1000000L) k" +
                         "   from" +
                         "   long_sequence(120)" +
-                        "),index(s) timestamp(k)",
-                "k",
-                false);
+                        "),index(s) timestamp(k)");
     }
 
     @Test
     public void testIndexSampleByAlignToCalendarWithTimezoneLondonShiftForward() throws Exception {
-        assertQuery("to_timezone\tk\ts\tlat\tlon\n" +
+        assertSampleByIndexQuery("to_timezone\tk\ts\tlat\tlon\n" +
                         "2020-10-23T00:00:00.000000Z\t2020-10-22T23:00:00.000000Z\ta\t142.30215575416736\t2020-10-23T22:10:00.000000Z\n" +
                         "2020-10-24T00:00:00.000000Z\t2020-10-23T23:00:00.000000Z\ta\t7.457062446418488\t2020-10-24T22:20:00.000000Z\n" +
                         "2020-10-25T00:00:00.000000Z\t2020-10-24T23:00:00.000000Z\ta\tNaN\t2020-10-25T20:00:00.000000Z\n" +
@@ -610,14 +608,13 @@ public class SampleByTest extends AbstractGriffinTest {
                         "   timestamp_sequence('2020-10-23T20:30:00.00000Z', 50 * 60 * 1000000L) k" +
                         "   from" +
                         "   long_sequence(120)" +
-                        "),index(s) timestamp(k)",
-                "k",
-                false);
+                        "),index(s) timestamp(k)"
+                );
     }
 
     @Test
     public void testIndexSampleByAlignToCalendarWithTimezoneLondonShiftForwardHourly() throws Exception {
-        assertQuery("to_timezone\tk\ts\tlat\tlastk\n" +
+        assertSampleByIndexQuery("to_timezone\tk\ts\tlat\tlastk\n" +
                         "2020-10-24T22:00:00.000000Z\t2020-10-24T21:00:00.000000Z\ta\t154.93777586404912\t2020-10-24T21:49:28.000000Z\n" +
                         "2020-10-24T23:00:00.000000Z\t2020-10-24T22:00:00.000000Z\ta\t43.799859246867385\t2020-10-24T22:54:13.000000Z\n" +
                         "2020-10-25T00:00:00.000000Z\t2020-10-24T23:00:00.000000Z\ta\t38.34194069380561\t2020-10-24T23:41:42.000000Z\n" +
@@ -640,14 +637,40 @@ public class SampleByTest extends AbstractGriffinTest {
                         "   timestamp_sequence('2020-10-23 20:30:00.00000Z', 259 * 1000000L) k" +
                         "   from" +
                         "   long_sequence(1000)" +
-                        "),index(s) timestamp(k)",
-                "k",
-                false);
+                        "),index(s) timestamp(k)");
+    }
+
+    @Test
+    public void testIndexSampleByAlignToCalendarWithTimezoneLondonShiftBackwardHourly() throws Exception {
+        assertSampleByIndexQuery("to_timezone\tk\ts\tlat\tlastk\n" +
+                        "2021-03-27T21:00:00.000000Z\t2021-03-27T21:00:00.000000Z\ta\t132.09083798490755\t2021-03-27T21:51:00.000000Z\n" +
+                        "2021-03-27T22:00:00.000000Z\t2021-03-27T22:00:00.000000Z\ta\t77.68770182183965\t2021-03-27T22:56:00.000000Z\n" +
+                        "2021-03-27T23:00:00.000000Z\t2021-03-27T23:00:00.000000Z\ta\tNaN\t2021-03-27T23:48:00.000000Z\n" +
+                        "2021-03-28T00:00:00.000000Z\t2021-03-28T00:00:00.000000Z\ta\t3.6703591550328163\t2021-03-28T00:27:00.000000Z\n" +
+                        "2021-03-28T02:00:00.000000Z\t2021-03-28T01:00:00.000000Z\ta\t94.70222369149758\t2021-03-28T01:45:00.000000Z\n" +
+                        "2021-03-28T03:00:00.000000Z\t2021-03-28T02:00:00.000000Z\ta\t109.23418649425325\t2021-03-28T02:37:00.000000Z\n" +
+                        "2021-03-28T04:00:00.000000Z\t2021-03-28T03:00:00.000000Z\ta\t38.20430552091481\t2021-03-28T03:16:00.000000Z\n",
+                "select to_timezone(k, 'Europe/London'), k, s, lat, lastk from (" +
+                        "select k, s, first(lat) lat, last(k) lastk " +
+                        "from x " +
+                        "where s in ('a') and k between '2021-03-27 21:00' and '2021-03-28 04:00'" +
+                        "sample by 1h align to calendar time zone 'Europe/London'" +
+                        ")",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        "   rnd_double(1)*180 lat," +
+                        "   rnd_double(1)*180 lon," +
+                        "   rnd_symbol('a','b') s," +
+                        "   timestamp_sequence('2021-03-26T20:30:00.00000Z', 13 * 60 * 1000000L) k" +
+                        "   from" +
+                        "   long_sequence(1000)" +
+                        "),index(s) timestamp(k)");
     }
 
     @Test
     public void testIndexSampleByAlignToCalendarWithTimezoneLondon365Days() throws Exception {
-        assertQuery("to_timezone\tk\ts\tlat\tlon\n" +
+        assertSampleByIndexQuery("to_timezone\tk\ts\tlat\tlon\n" +
                         "2020-01-02T00:00:00.000000Z\t2020-01-02T00:00:00.000000Z\ta\t142.30215575416736\t2020-01-02T03:23:00.000000Z\n" +
                         "2020-02-15T00:00:00.000000Z\t2020-02-15T00:00:00.000000Z\ta\t135.8378128727785\t2020-02-15T17:44:30.000000Z\n" +
                         "2020-02-16T00:00:00.000000Z\t2020-02-16T00:00:00.000000Z\ta\t149.54213547651923\t2020-02-16T17:50:00.000000Z\n" +
@@ -676,14 +699,12 @@ public class SampleByTest extends AbstractGriffinTest {
                         "   timestamp_sequence('2020-01-01T20:30:00.00000Z', 35 * 6 * 59 * 1000000L) k" + // ~3.5 hour interval
                         "   from" +
                         "   long_sequence(365 * 7)" +
-                        "),index(s) timestamp(k)",
-                "k",
-                false);
+                        "),index(s) timestamp(k)");
     }
 
     @Test
     public void testIndexSampleByAlignToCalendarWithTimezoneLondon365DaysWithOffset() throws Exception {
-        assertQuery("to_timezone\tk\ts\tlat\tlon\n" +
+        assertSampleByIndexQuery("to_timezone\tk\ts\tlat\tlon\n" +
                         "2019-12-31T00:51:00.000000Z\t2019-12-31T00:51:00.000000Z\ta\t144.77803379943109\t2020-01-01T00:30:00.000000Z\n" +
                         "2020-01-01T00:51:00.000000Z\t2020-01-01T00:51:00.000000Z\ta\t145.3027002009222\t2020-01-01T03:56:30.000000Z\n" +
                         "2020-01-02T00:51:00.000000Z\t2020-01-02T00:51:00.000000Z\ta\t0.19935649945118428\t2020-01-02T04:02:00.000000Z\n" +
@@ -714,14 +735,12 @@ public class SampleByTest extends AbstractGriffinTest {
                         "   timestamp_sequence('2020-01-01 00:30:00', 35 * 6 * 59 * 1000000L) k" + // ~3.5 hour interval
                         "   from" +
                         "   long_sequence(365 * 7)" +
-                        "),index(s) timestamp(k)",
-                "k",
-                false);
+                        "),index(s) timestamp(k)");
     }
 
     @Test
     public void testIndexSampleByAlignToCalendarWithTimezoneBerlinShiftBackHourly() throws Exception {
-        assertQuery("to_timezone\tk\ts\tlat\tlon\n" +
+        assertSampleByIndexQuery("to_timezone\tk\ts\tlat\tlon\n" +
                         "2021-03-27T22:00:00.000000Z\t2021-03-27T21:00:00.000000Z\ta\t132.09083798490755\t2021-03-27T21:51:00.000000Z\n" +
                         "2021-03-27T23:00:00.000000Z\t2021-03-27T22:00:00.000000Z\ta\t77.68770182183965\t2021-03-27T22:56:00.000000Z\n" +
                         "2021-03-28T00:00:00.000000Z\t2021-03-27T23:00:00.000000Z\ta\tNaN\t2021-03-27T23:48:00.000000Z\n" +
@@ -744,14 +763,12 @@ public class SampleByTest extends AbstractGriffinTest {
                         "   timestamp_sequence('2021-03-26T20:30:00.00000Z', 13 * 60 * 1000000L) k" +
                         "   from" +
                         "   long_sequence(1000)" +
-                        "),index(s) timestamp(k)",
-                "k",
-                false);
+                        "),index(s) timestamp(k)");
     }
 
     @Test
     public void testIndexSampleByAlignToCalendarWithTimezoneBerlinShiftBackHourlyWithOffst() throws Exception {
-        assertQuery("to_timezone\tk\ts\tlat\tlon\n" +
+        assertSampleByIndexQuery("to_timezone\tk\ts\tlat\tlon\n" +
                         "2021-03-27T21:15:00.000000Z\t2021-03-27T20:15:00.000000Z\ta\t132.09083798490755\t2021-03-27T21:12:00.000000Z\n" +
                         "2021-03-27T22:15:00.000000Z\t2021-03-27T21:15:00.000000Z\ta\t179.5841357536068\t2021-03-27T21:51:00.000000Z\n" +
                         "2021-03-27T23:15:00.000000Z\t2021-03-27T22:15:00.000000Z\ta\t77.68770182183965\t2021-03-27T22:56:00.000000Z\n" +
@@ -775,14 +792,12 @@ public class SampleByTest extends AbstractGriffinTest {
                         "   timestamp_sequence('2021-03-26T20:30:00.00000Z', 13 * 60 * 1000000L) k" +
                         "   from" +
                         "   long_sequence(1000)" +
-                        "),index(s) timestamp(k)",
-                "k",
-                false);
+                        "),index(s) timestamp(k)");
     }
 
     @Test
     public void testIndexSampleByAlignToCalendarWithTimezoneBerlinShiftBack() throws Exception {
-        assertQuery("to_timezone\tk\ts\tlat\tlon\n" +
+        assertSampleByIndexQuery("to_timezone\tk\ts\tlat\tlon\n" +
                         "2020-10-24T00:00:00.000000Z\t2020-10-23T22:00:00.000000Z\ta\t142.30215575416736\t2020-10-24T19:50:00.000000Z\n" +
                         "2020-10-25T00:00:00.000000Z\t2020-10-24T22:00:00.000000Z\ta\tNaN\t2020-10-25T20:00:00.000000Z\n" +
                         "2020-10-26T00:00:00.000000Z\t2020-10-25T23:00:00.000000Z\ta\t33.45558404694713\t2020-10-26T21:50:00.000000Z\n" +
@@ -803,14 +818,12 @@ public class SampleByTest extends AbstractGriffinTest {
                         "   timestamp_sequence('2020-10-23T20:30:00.00000Z', 50 * 60 * 1000000L) k" +
                         "   from" +
                         "   long_sequence(120)" +
-                        "),index(s) timestamp(k)",
-                "k",
-                false);
+                        "),index(s) timestamp(k)");
     }
 
     @Test
     public void testIndexSampleByAlignToCalendarWithTimezoneBerlinShiftForward() throws Exception {
-        assertQuery("to_timezone\tk\ts\tlat\tlon\n" +
+        assertSampleByIndexQuery("to_timezone\tk\ts\tlat\tlon\n" +
                         "2021-03-26T00:00:00.000000Z\t2021-03-25T23:00:00.000000Z\ta\t142.30215575416736\t2021-03-26T22:50:00.000000Z\n" +
                         "2021-03-27T00:00:00.000000Z\t2021-03-26T23:00:00.000000Z\ta\tNaN\t2021-03-27T22:10:00.000000Z\n" +
                         "2021-03-28T00:00:00.000000Z\t2021-03-27T23:00:00.000000Z\ta\t109.94209864193589\t2021-03-28T20:40:00.000000Z\n" +
@@ -831,9 +844,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         "   timestamp_sequence('2021-03-25T23:30:00.00000Z', 50 * 60 * 1000000L) k" +
                         "   from" +
                         "   long_sequence(120)" +
-                        "),index(s) timestamp(k)",
-                "k",
-                false);
+                        "),index(s) timestamp(k)");
     }
 
     @Test
