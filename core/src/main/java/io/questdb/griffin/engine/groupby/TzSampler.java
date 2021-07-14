@@ -48,8 +48,8 @@ public class TzSampler {
     private int timezoneNameFuncPos;
     private int offsetFuncPos;
     private long fixedOffset;
-    private long localEpoch;
     protected TimeZoneRules rules;
+    private boolean initialized;
 
     public TzSampler(
             TimestampSampler timestampSampler,
@@ -66,12 +66,16 @@ public class TzSampler {
     }
 
     public long getNextTimestamp() {
-        long nextTimestampLoc = timestampSampler.nextTimestamp(lastTimestampLoc);
-        if (nextTimestampLoc >= nextDst) {
-            nextDst = rules.getNextDST(nextTimestampLoc);
-            tzOffset = rules.getOffset(nextTimestampLoc);
+        long lastTimestampLocUtc = lastTimestampLoc - tzOffset;
+        long nextLastTimestampLoc = timestampSampler.nextTimestamp(lastTimestampLoc);
+        if (nextLastTimestampLoc - tzOffset >= nextDst) {
+            tzOffset = rules.getOffset(nextLastTimestampLoc - tzOffset);
+            nextDst = rules.getNextDST(nextLastTimestampLoc -  tzOffset);
+            while (nextLastTimestampLoc - tzOffset <= lastTimestampLocUtc) {
+                nextLastTimestampLoc = timestampSampler.nextTimestamp(nextLastTimestampLoc);
+            }
         }
-        lastTimestampLoc = nextTimestampLoc;
+        lastTimestampLoc =  nextLastTimestampLoc;
         return lastTimestampLoc - tzOffset;
     }
 
@@ -115,19 +119,27 @@ public class TzSampler {
         } else {
             fixedOffset = Long.MIN_VALUE;
         }
+        initialized = false;
     }
 
     public long startFrom(long timestamp) {
-        // null rules means the timezone does not have daylight time changes
-        if (rules != null) {
-            tzOffset = rules.getOffset(timestamp);
-            nextDst = rules.getNextDST(timestamp);
-        }
-        boolean alignToCalendar = fixedOffset != Long.MIN_VALUE;
-        if (alignToCalendar) {
-            lastTimestampLoc = timestampSampler.round(timestamp + tzOffset - fixedOffset) + fixedOffset;
-        } else {
-            lastTimestampLoc = timestamp + tzOffset;
+        // Skip initialization if timestamp is the same as last returned
+        if (!initialized || timestamp != lastTimestampLoc - tzOffset) {
+            // null rules means the timezone does not have daylight time changes
+            if (rules != null) {
+                tzOffset = rules.getOffset(timestamp);
+                // we really need UTC timestamp to get offset correctly
+                // this will converge to UTC timestamp
+                tzOffset = rules.getOffset(timestamp + tzOffset);
+                nextDst = rules.getNextDST(timestamp + tzOffset);
+            }
+            boolean alignToCalendar = fixedOffset != Long.MIN_VALUE;
+            if (alignToCalendar) {
+                lastTimestampLoc = timestampSampler.round(timestamp + tzOffset - fixedOffset) + fixedOffset;
+            } else {
+                lastTimestampLoc = timestamp + tzOffset;
+            }
+            initialized = true;
         }
         return lastTimestampLoc - tzOffset;
     }

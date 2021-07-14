@@ -621,8 +621,8 @@ public class SampleByTest extends AbstractGriffinTest {
         assertQuery("to_timezone\tk\ts\tlat\tlastk\n" +
                         "2020-10-24T22:00:00.000000Z\t2020-10-24T21:00:00.000000Z\ta\t154.93777586404912\t2020-10-24T21:49:28.000000Z\n" +
                         "2020-10-24T23:00:00.000000Z\t2020-10-24T22:00:00.000000Z\ta\t43.799859246867385\t2020-10-24T22:54:13.000000Z\n" +
-                        "2020-10-25T00:00:00.000000Z\t2020-10-24T23:00:00.000000Z\ta\t38.34194069380561\t2020-10-25T00:55:05.000000Z\n" +
-                        "2020-10-25T01:00:00.000000Z\t2020-10-25T01:00:00.000000Z\ta\t27.635284834188102\t2020-10-25T01:51:12.000000Z\n" +
+                        "2020-10-25T00:00:00.000000Z\t2020-10-24T23:00:00.000000Z\ta\t38.34194069380561\t2020-10-24T23:41:42.000000Z\n" +
+                        "2020-10-25T01:00:00.000000Z\t2020-10-25T00:00:00.000000Z\ta\t4.158342987512034\t2020-10-25T01:51:12.000000Z\n" +
                         "2020-10-25T02:00:00.000000Z\t2020-10-25T02:00:00.000000Z\ta\t95.73868763606973\t2020-10-25T02:47:19.000000Z\n" +
                         "2020-10-25T03:00:00.000000Z\t2020-10-25T03:00:00.000000Z\ta\tNaN\t2020-10-25T03:43:26.000000Z\n" +
                         "2020-10-25T04:00:00.000000Z\t2020-10-25T04:00:00.000000Z\ta\t34.49948946607576\t2020-10-25T04:56:49.000000Z\n",
@@ -1991,50 +1991,76 @@ public class SampleByTest extends AbstractGriffinTest {
         );
     }
 
-//    @Test
-//    public void testSampleByFirstLastRecordCursorFactoryInvalidColumns() {
-//        try {
-//            GenericRecordMetadata groupByMeta = new GenericRecordMetadata();
-//            groupByMeta.add(new TableColumnMetadata("col1", ColumnType.STRING, false, 0, false, EmptyRecordMetadata.INSTANCE));
-//
-//            GenericRecordMetadata meta = new GenericRecordMetadata();
-//            meta.add(new TableColumnMetadata("col1", ColumnType.LONG, false, 0, false, EmptyRecordMetadata.INSTANCE));
-//
-//            ObjList<QueryColumn> columns = new ObjList<>();
-//            ExpressionNode first = ExpressionNode.FACTORY.newInstance().of(ColumnType.LONG, "first", 0, 0);
-//            first.rhs = ExpressionNode.FACTORY.newInstance().of(ColumnType.LONG, "col1", 0, 0);
-//            QueryColumn col = QueryColumn.FACTORY.newInstance().of("col1", first);
-//            columns.add(col);
-//
-//            new SampleByFirstLastRecordCursorFactory(null, new MicroTimestampSampler(100L), groupByMeta, columns, meta, 0, getSymbolFilter(), -1);
-//            Assert.fail();
-//        } catch (SqlException e) {
-//            TestUtils.assertContains(e.getFlyweightMessage(), "first(), last() is not supported on data type");
-//        }
-//    }
+    @Test
+    public void testSampleByFirstLastRecordCursorFactoryInvalidColumns() {
+        try {
+            GenericRecordMetadata groupByMeta = new GenericRecordMetadata();
+            groupByMeta.add(new TableColumnMetadata("col1", ColumnType.STRING, false, 0, false, EmptyRecordMetadata.INSTANCE));
 
-//    @Test
-//    public void testSampleByFirstLastRecordCursorFactoryInvalidNotFirstLast() {
-//        try {
-//            GenericRecordMetadata groupByMeta = new GenericRecordMetadata();
-//            TableColumnMetadata column = new TableColumnMetadata("col1", ColumnType.LONG, false, 0, false, EmptyRecordMetadata.INSTANCE);
-//            groupByMeta.add(column);
-//
-//            GenericRecordMetadata meta = new GenericRecordMetadata();
-//            meta.add(column);
-//
-//            ObjList<QueryColumn> columns = new ObjList<>();
-//            ExpressionNode first = ExpressionNode.FACTORY.newInstance().of(ColumnType.LONG, "min", 0, 0);
-//            first.rhs = ExpressionNode.FACTORY.newInstance().of(ColumnType.LONG, "col1", 0, 0);
-//            QueryColumn col = QueryColumn.FACTORY.newInstance().of("col1", first);
-//            columns.add(col);
-//
-//            new SampleByFirstLastRecordCursorFactory(null, new MicroTimestampSampler(100L), groupByMeta, columns, meta, 0, getSymbolFilter(), -1);
-//            Assert.fail();
-//        } catch (SqlException e) {
-//            TestUtils.assertContains(e.getFlyweightMessage(), "expected first() or last() functions but got min");
-//        }
-//    }
+            GenericRecordMetadata meta = new GenericRecordMetadata();
+            meta.add(new TableColumnMetadata("col1", ColumnType.LONG, false, 0, false, EmptyRecordMetadata.INSTANCE));
+
+            ObjList<QueryColumn> columns = new ObjList<>();
+            ExpressionNode first = ExpressionNode.FACTORY.newInstance().of(ColumnType.LONG, "first", 0, 0);
+            first.rhs = ExpressionNode.FACTORY.newInstance().of(ColumnType.LONG, "col1", 0, 0);
+            QueryColumn col = QueryColumn.FACTORY.newInstance().of("col1", first);
+            columns.add(col);
+
+            new SampleByFirstLastRecordCursorFactory(
+                    null,
+                    new MicroTimestampSampler(100L),
+                    groupByMeta,
+                    columns,
+                    meta,
+                    null,
+                    0,
+                    null,
+                    0,
+                    0,
+                    getSymbolFilter(),
+                    -1
+            );
+            Assert.fail();
+        } catch (SqlException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "first(), last() is not supported on data type");
+        }
+    }
+
+    @Test
+    public void testSampleByFirstLastRecordCursorFactoryInvalidNotFirstLast() {
+        try {
+            GenericRecordMetadata groupByMeta = new GenericRecordMetadata();
+            TableColumnMetadata column = new TableColumnMetadata("col1", ColumnType.LONG, false, 0, false, EmptyRecordMetadata.INSTANCE);
+            groupByMeta.add(column);
+
+            GenericRecordMetadata meta = new GenericRecordMetadata();
+            meta.add(column);
+
+            ObjList<QueryColumn> columns = new ObjList<>();
+            ExpressionNode first = ExpressionNode.FACTORY.newInstance().of(ColumnType.LONG, "min", 0, 0);
+            first.rhs = ExpressionNode.FACTORY.newInstance().of(ColumnType.LONG, "col1", 0, 0);
+            QueryColumn col = QueryColumn.FACTORY.newInstance().of("col1", first);
+            columns.add(col);
+
+            new SampleByFirstLastRecordCursorFactory(
+                    null,
+                    new MicroTimestampSampler(100L),
+                    groupByMeta,
+                    columns,
+                    meta,
+                    null,
+                    0,
+                    null,
+                    0,
+                    0,
+                    getSymbolFilter(),
+                    -1
+            );
+            Assert.fail();
+        } catch (SqlException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "expected first() or last() functions but got min");
+        }
+    }
 
     @Test
     public void testSampleByMillisFillNoneNotKeyedEmpty() throws Exception {
