@@ -125,20 +125,8 @@ public class RuntimeIntervalModelBuilder implements Mutable {
 
     public void setBetweenBoundary(long timestamp) {
         if (!betweenBoundarySet) {
-            if (timestamp == Numbers.LONG_NaN) {
-                if (!betweenNegated) {
-                    intersectEmpty();
-                }
-                // else {
-                // NOT BETWEEN with NULL
-                // to be consistent with non-designated filtering
-                // do no filtering
-                // }
-                betweenBoundarySet = false;
-            } else {
-                betweenBoundary = timestamp;
-                betweenBoundarySet = true;
-            }
+            betweenBoundary = timestamp;
+            betweenBoundarySet = true;
         } else {
             if (betweenBoundaryFunc == null) {
                 // Constant interval
