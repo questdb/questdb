@@ -1368,7 +1368,7 @@ nodejs code:
                         batchInsert.executeBatch();
                         Assert.fail();
                     } catch (SQLException e) {
-                        TestUtils.assertContains(e.getMessage(), "Cannot insert rows out of order");
+                        TestUtils.assertContains(e.getMessage(), "Cannot insert rows before 1970-01-01. Table=");
                         connection.rollback();
                     }
 
@@ -2076,6 +2076,86 @@ nodejs code:
     }
 
     @Test
+    public void testPreparedStatementSelectNull() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (
+                    final PGWireServer ignored = createPGServer(2);
+                    final Connection connection = getConnection(false, false);
+                    final PreparedStatement statement = connection.prepareStatement("select ? from long_sequence(1)")
+            ) {
+                StringSink sink = new StringSink();
+                statement.setNull(1, Types.NULL);
+                try (ResultSet rs = statement.executeQuery()) {
+                    assertResultSet("$1[VARCHAR]\nnull\n", sink, rs);
+                }
+                statement.setNull(1, Types.VARCHAR);
+                try (ResultSet rs = statement.executeQuery()) {
+                    sink.clear();
+                    assertResultSet("$1[VARCHAR]\nnull\n", sink, rs);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testPreparedStatementInsertSelectNullDesignatedColumn() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (
+                    final PGWireServer ignored = createPGServer(2);
+                    final Connection connection = getConnection(false, false);
+                    final Statement statement = connection.createStatement();
+                    final PreparedStatement insert = connection.prepareStatement("insert into tab(ts, value) values(?, ?)")
+            ) {
+                statement.execute("create table tab(ts timestamp, value double) timestamp(ts) partition by MONTH");
+                // Null is not allowed
+                insert.setNull(1, Types.NULL);
+                insert.setNull(2, Types.NULL);
+                try {
+                    insert.executeUpdate();
+                    fail("cannot insert null when the column is designated");
+                } catch (PSQLException expected) {
+                    Assert.assertEquals("ERROR: timestamp before 1970-01-01 is not allowed", expected.getMessage());
+                }
+                // Insert a dud
+                insert.setString(1, "1970-01-01 00:11:22.334455");
+                insert.setNull(2, Types.NULL);
+                insert.executeUpdate();
+                try (ResultSet rs = statement.executeQuery("select null, ts, value from tab where value = null")) {
+                    StringSink sink = new StringSink();
+                    String expected = "null[VARCHAR],ts[TIMESTAMP],value[DOUBLE]\n" +
+                            "null,1970-01-01 00:11:22.334455,null\n";
+                    assertResultSet(expected, sink, rs);
+                }
+                statement.execute("drop table tab");
+            }
+        });
+    }
+
+    @Test
+    public void testPreparedStatementInsertSelectNullNoDesignatedColumn() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (
+                    final PGWireServer ignored = createPGServer(2);
+                    final Connection connection = getConnection(false, false);
+                    final Statement statement = connection.createStatement();
+                    final PreparedStatement insert = connection.prepareStatement("insert into tab(ts, value) values(?, ?)")
+            ) {
+                statement.execute("create table tab(ts timestamp, value double)");
+                insert.setNull(1, Types.NULL);
+                insert.setNull(2, Types.NULL);
+                insert.executeUpdate();
+                try (ResultSet rs = statement.executeQuery("select null, ts, value from tab where value = null")) {
+                    StringSink sink = new StringSink();
+                    String expected = "null[VARCHAR],ts[TIMESTAMP],value[DOUBLE]\n" +
+                            "null,null,null\n";
+                    assertResultSet(expected, sink, rs);
+                }
+                statement.execute("drop table tab");
+            }
+        });
+    }
+
+    @Test
     public void testPreparedStatementHex() throws Exception {
         assertHexScript(NetworkFacadeImpl.INSTANCE, ">0000006e00030000757365720078797a0064617461626173650071646200636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e65004575726f70652f4c6f6e646f6e0065787472615f666c6f61745f64696769747300320000\n" +
                 "<520000000800000003\n" +
@@ -2539,6 +2619,59 @@ nodejs code:
     }
 
     @Test
+    public void testPHPSelectHex() throws Exception {
+        //         PHP client script to reproduce
+        //        $dbName = 'qdb';
+        //        $hostname = '127.0.0.1';
+        //        $password = 'quest';
+        //        $port = 8812;
+        //        $username = 'admin';
+        //
+        //        $pdo = new PDO("pgsql:host=$hostname;dbname=$dbName;port=$port;options='--client_encoding=UTF8'", $username, $password);
+        //        $stmt = $pdo->prepare("SELECT * FROM x00 limit 10");
+        //        try {
+        //            $stmt->execute(array());
+        //            $res = $stmt->fetchAll();
+        //            print_r($res);
+        //        } catch(PDOException $e) {
+        //            echo $e;
+        //        }
+
+        String scriptx00 = ">0000000804d2162f\n" +
+                "<4e\n" +
+                ">0000004000030000757365720061646d696e00646174616261736500716462006f7074696f6e73002d2d636c69656e745f656e636f64696e673d555446380000\n" +
+                "<520000000800000003\n" +
+                ">700000000a717565737400\n" +
+                "<520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638005a0000000549\n" +
+                ">500000003370646f5f73746d745f30303030303030310053454c454354202a2046524f4d20783030206c696d69742031300000005300000004\n" +
+                "<31000000045a0000000549\n" +
+                ">420000001f0070646f5f73746d745f303030303030303100000000000001000044000000065000450000000900000000005300000004\n" +
+                "<3200000004540000008a00066900000000000001000000170004ffffffff000073796d0000000000000200000413ffffffffffff0000616d7400000000000003000002bd0008ffffffff000074696d657374616d70000000000000040000045a0008ffffffff0000630000000000000500000413ffffffffffff00006400000000000006000002bd0008ffffffff0000440000006500060000000131000000046d73667400000012332e393533303030303030303030303030330000001a323031382d30312d30312030303a31323a30302e3030303030300000000343444500000013302e31393334393930303530383033393539374400000064000600000001320000000369626d0000001233362e3533323030303030303030303030340000001a323031382d30312d30312030303a32343a30302e3030303030300000000343444500000013302e303137393731333835303439393736343244000000570006000000013300000005676f6f676c0000000633322e3532360000001a323031382d30312d30312030303a33363a30302e303030303030ffffffff00000013302e343437303539353331333539373930393344000000580006000000013400000005676f6f676c00000005322e3032310000001a323031382d30312d30312030303a34383a30302e3030303030300000000358595a00000012302e313435343332373036383831323130384400000059000600000001350000000369626d0000000632392e3231320000001a323031382d30312d30312030313a30303a30302e3030303030300000000358595a00000014302e30303635383231353737323635323632363144000000470006000000013600000005676f6f676c0000000635372e3438380000001a323031382d30312d30312030313a31323a30302e30303030303000000003434445ffffffff44000000580006000000013700000005676f6f676c0000000537382e36340000001a323031382d30312d30312030313a32343a30302e3030303030300000000343444500000012302e373934303335303536363330373436354400000057000600000001380000000369626d0000000639302e3637390000001a323031382d30312d30312030313a33363a30302e3030303030300000000341424300000012302e3638313533363539303332353330333344000000650006000000013900000005676f6f676c0000001234392e3533383030303030303030303030340000001a323031382d30312d30312030313a34383a30302e3030303030300000000358595a00000012302e3639323037363838383536363839393544000000580006000000023130000000046d7366740000000537342e31360000001a323031382d30312d30312030323a30303a30302e3030303030300000000358595a00000012302e35303032313137303034343236393534430000000e53454c454354203130005a0000000549\n" +
+                ">51000000214445414c4c4f434154452070646f5f73746d745f303030303030303100\n" +
+                "<450000003e433030303030004d7461626c6520646f6573206e6f74206578697374205b6e616d653d4445414c4c4f434154455d00534552524f5200503100005a0000000549\n" +
+                ">5800000004";
+
+        assertMemoryLeak(() -> {
+            compiler.compile(
+                    "create table x00 as (" +
+                            "select" +
+                            " cast(x as int) i," +
+                            " rnd_symbol('msft','ibm', 'googl') sym," +
+                            " round(rnd_double(0)*100, 3) amt," +
+                            " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                            " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                            " rnd_double(2) d" +
+                            " from long_sequence(10)" +
+                            ") timestamp (timestamp)",
+                    sqlExecutionContext
+            );
+            try (PGWireServer ignored = createPGServer(new DefaultPGWireConfiguration())) {
+                NetUtils.playScript(NetworkFacadeImpl.INSTANCE, scriptx00, "127.0.0.1", 8812);
+            }
+        });
+    }
+
+    @Test
     public void testRegProcedure() throws Exception {
         assertMemoryLeak(() -> {
             try (
@@ -2914,8 +3047,8 @@ nodejs code:
                 try (ResultSet rs = metaData.getSchemas()) {
                     assertResultSet(
                             "TABLE_SCHEM[VARCHAR],TABLE_CATALOG[VARCHAR]\n" +
-                                    "pg_catalog,null\n" +
-                                    "public,null\n",
+                                    "pg_catalog,pg_catalog\n" +
+                                    "public,public\n",
                             sink,
                             rs
                     );
@@ -2928,21 +3061,20 @@ nodejs code:
                 )) {
                     assertResultSet(
                             "TABLE_CAT[VARCHAR],TABLE_SCHEM[VARCHAR],TABLE_NAME[VARCHAR],TABLE_TYPE[VARCHAR],REMARKS[VARCHAR],TYPE_CAT[CHAR],TYPE_SCHEM[CHAR],TYPE_NAME[CHAR],SELF_REFERENCING_COL_NAME[CHAR],REF_GENERATION[CHAR]\n" +
-                                    "null,pg_catalog,pg_class,SYSTEM TABLE,null,\0,\0,\0,\0,\0\n" +
-                                    "null,public,test,TABLE,null,\0,\0,\0,\0,\0\n" +
-                                    "null,public,test2,TABLE,null,\0,\0,\0,\0,\0\n",
+                                    "pg_catalog,pg_catalog,pg_class,SYSTEM TABLE,null,null,null,null,null,null\n" +
+                                    "public,public,test,TABLE,null,null,null,null,null,null\n" +
+                                    "public,public,test2,TABLE,null,null,null,null,null,null\n",
                             sink,
                             rs
                     );
                 }
 
-
                 sink.clear();
                 try (ResultSet rs = metaData.getColumns("qdb", null, "test", null)) {
                     assertResultSet(
                             "TABLE_CAT[VARCHAR],TABLE_SCHEM[VARCHAR],TABLE_NAME[VARCHAR],COLUMN_NAME[VARCHAR],DATA_TYPE[SMALLINT],TYPE_NAME[VARCHAR],COLUMN_SIZE[INTEGER],BUFFER_LENGTH[VARCHAR],DECIMAL_DIGITS[INTEGER],NUM_PREC_RADIX[INTEGER],NULLABLE[INTEGER],REMARKS[VARCHAR],COLUMN_DEF[VARCHAR],SQL_DATA_TYPE[INTEGER],SQL_DATETIME_SUB[INTEGER],CHAR_OCTET_LENGTH[VARCHAR],ORDINAL_POSITION[INTEGER],IS_NULLABLE[VARCHAR],SCOPE_CATALOG[VARCHAR],SCOPE_SCHEMA[VARCHAR],SCOPE_TABLE[VARCHAR],SOURCE_DATA_TYPE[SMALLINT],IS_AUTOINCREMENT[VARCHAR],IS_GENERATEDCOLUMN[VARCHAR]\n" +
-                                    "null,public,test,id,-5,int8,19,null,0,10,1,null,null,null,null,19,0,YES,null,null,null,0,YES,\n" +
-                                    "null,public,test,val,4,int4,10,null,0,10,1,null,null,null,null,10,1,YES,null,null,null,0,YES,\n",
+                                    "null,public,test,id,-5,int8,19,null,0,10,1,null,null,null,null,19,0,YES,null,null,null,0,NO,\n" +
+                                    "null,public,test,val,4,int4,10,null,0,10,1,null,null,null,null,10,1,YES,null,null,null,0,NO,\n",
                             sink,
                             rs
                     );
@@ -3737,11 +3869,11 @@ nodejs code:
                         }
                         break;
                     case CHAR:
-                        char charValue = rs.getString(i).charAt(0);
+                        String strValue = rs.getString(i);
                         if (rs.wasNull()) {
                             sink.put("null");
                         } else {
-                            sink.put(charValue);
+                            sink.put(strValue.charAt(0));
                         }
                         break;
                     case BIT:
@@ -3750,7 +3882,7 @@ nodejs code:
                     case TIME:
                     case DATE:
                         timestamp = rs.getTimestamp(i);
-                        if (timestamp == null) {
+                        if (rs.wasNull()) {
                             sink.put("null");
                         } else {
                             sink.put(timestamp.toString());
@@ -3758,12 +3890,14 @@ nodejs code:
                         break;
                     case BINARY:
                         InputStream stream = rs.getBinaryStream(i);
-                        if (stream == null) {
+                        if (rs.wasNull()) {
                             sink.put("null");
                         } else {
                             toSink(stream, sink);
                         }
                         break;
+                    default:
+                        assert false;
                 }
             }
             sink.put('\n');

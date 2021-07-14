@@ -57,6 +57,7 @@ public abstract class AbstractNoRecordSampleByCursor implements NoRandomAccessRe
     protected RecordCursor base;
     protected SqlExecutionInterruptor interruptor;
     protected long tzOffset;
+    protected long prevDst;
     protected long nextDst;
     protected long fixedOffset;
     protected long topTzOffset;
@@ -96,6 +97,7 @@ public abstract class AbstractNoRecordSampleByCursor implements NoRandomAccessRe
         this.sampleLocalEpoch = this.nextSampleLocalEpoch = topLocalEpoch;
         // timezone offset is liable to change when we pass over DST edges
         this.tzOffset = topTzOffset;
+        this.prevDst = Long.MIN_VALUE;
         this.nextDst = topNextDst;
     }
 
@@ -119,6 +121,7 @@ public abstract class AbstractNoRecordSampleByCursor implements NoRandomAccessRe
         this.rules = null;
         this.base = base;
         this.baseRecord = base.getRecord();
+        this.prevDst = Long.MIN_VALUE;
         final long timestamp = baseRecord.getTimestamp(timestampIndex);
 
         final CharSequence tz = timezoneNameFunc.getStr(null);
@@ -181,6 +184,7 @@ public abstract class AbstractNoRecordSampleByCursor implements NoRandomAccessRe
         final long t = timestamp - tzOffset;
         if (t >= nextDst) {
             final long daylightSavings = rules.getOffset(t);
+            prevDst = nextDst;
             nextDst = rules.getNextDST(t);
             if (daylightSavings < tzOffset) {
                 // time moved backwards, we need to check if we should be collapsing this
@@ -188,14 +192,13 @@ public abstract class AbstractNoRecordSampleByCursor implements NoRandomAccessRe
                 updateValueWhenClockMovesBack(mapValue, n);
                 nextSampleLocalEpoch = timestampSampler.round(timestamp);
                 localEpoch = nextSampleLocalEpoch;
-                sampleLocalEpoch -= (tzOffset - daylightSavings);
+                sampleLocalEpoch += (daylightSavings - tzOffset);
                 tzOffset = daylightSavings;
                 return Long.MIN_VALUE;
             }
             // time moved forward, we need to make sure we move our sample boundary
-            nextDst = rules.getNextDST(t);
             timestamp = t + daylightSavings;
-            sampleLocalEpoch -= (tzOffset - daylightSavings);
+            sampleLocalEpoch += (daylightSavings - tzOffset);
             nextSampleLocalEpoch = sampleLocalEpoch;
             tzOffset = daylightSavings;
         }
@@ -227,8 +230,7 @@ public abstract class AbstractNoRecordSampleByCursor implements NoRandomAccessRe
                 // and build another map
                 timestamp = adjustDST(timestamp, n, mapValue);
                 if (timestamp != Long.MIN_VALUE) {
-                    this.localEpoch = timestampSampler.round(timestamp);
-                    GroupByUtils.toTop(groupByFunctions);
+                    nextSamplePeriod(timestamp);
                     return true;
                 }
             }
@@ -237,6 +239,17 @@ public abstract class AbstractNoRecordSampleByCursor implements NoRandomAccessRe
         // opportunity, after we stream map that is.
         baseRecord = null;
         return true;
+    }
+
+    protected void nextSamplePeriod(long timestamp) {
+        this.localEpoch = timestampSampler.round(timestamp);
+        // Sometimes rounding, especially around Days can throw localEpoch
+        // to the "before" previous DST. When this happens we need to compensate for
+        // tzOffset subtraction at the time of delivery of the timestamp to client
+        if (localEpoch - tzOffset < prevDst) {
+            localEpoch += tzOffset;
+        }
+        GroupByUtils.toTop(groupByFunctions);
     }
 
     protected void updateValueWhenClockMovesBack(MapValue value, int n) {

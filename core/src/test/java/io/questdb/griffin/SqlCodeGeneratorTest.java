@@ -32,7 +32,6 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.engine.functions.test.TestMatchFunctionFactory;
 import io.questdb.griffin.engine.groupby.vect.GroupByJob;
-import io.questdb.griffin.engine.table.LatestByAllIndexedJob;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.Sequence;
 import io.questdb.std.Chars;
@@ -1945,6 +1944,71 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 true,
                 true
         );
+    }
+
+    @Test
+    public void testLatestByAllIndexedGeohash() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    createGeohashTable();
+                    assertQuery("time\tuuid\thash8s\thash8i\n" +
+                                    "2021-05-10T23:59:59.150000Z\tXXX\tf91t48s7\t490759922439\n" +
+                                    "2021-05-11T00:00:00.083000Z\tYYY\tz31wzd5w\t1068437057724\n" +
+                                    "2021-05-12T00:00:00.186000Z\tZZZ\tvepe7h62\t942390100162\n",
+                            "select * from pos latest by uuid where hash8i within('z31','f91','vepe7h')",
+                            "time",
+                            true,
+                            true,
+                            true
+                    );
+                });
+    }
+
+    @Test
+    public void testLatestByAllIndexedGeohashTimeRange() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    createGeohashTable();
+                    assertQuery(
+                            "time\tuuid\thash8s\thash8i\n" +
+                                    "2021-05-11T00:00:00.083000Z\tYYY\tz31wzd5w\t1068437057724\n",
+                            "select * from pos latest by uuid where time in '2021-05-11' and hash8i within ('z31','bbx')",
+                            "time",
+                            true,
+                            true,
+                            true
+                    );
+                });
+    }
+
+    private void createGeohashTable() throws SqlException {
+        compiler.compile("create table pos(time timestamp, uuid symbol, hash8s symbol, hash8i long)" +
+                ", index(uuid) timestamp(time) partition by DAY", sqlExecutionContext);
+        executeInsert("insert into pos values('2021-05-11T00:00:00.083000Z','YYY','z31wzd5w',1068437057724)");
+        executeInsert("insert into pos values('2021-05-10T23:59:59.150000Z','XXX','f91t48s7',490759922439)");
+        executeInsert("insert into pos values('2021-05-10T23:59:59.322000Z','ddd','bbqyzfp6',355105487526)");
+        executeInsert("insert into pos values('2021-05-10T23:59:59.351000Z','bbb','9egcyrxq',323712147382)");
+        executeInsert("insert into pos values('2021-05-10T23:59:59.439000Z','bbb','ewef1vk8',477192318536)");
+        executeInsert("insert into pos values('2021-05-10T00:00:00.016000Z','aaa','vb2wg49h',938547319088)");
+        executeInsert("insert into pos values('2021-05-10T00:00:00.042000Z','ccc','bft3gn89',359472288009)");
+        executeInsert("insert into pos values('2021-05-10T00:00:00.055000Z','aaa','z6cf5j85',1071978300677)");
+        executeInsert("insert into pos values('2021-05-11T00:00:00.066000Z','ddd','vcunv6j7',940418374183)");
+        executeInsert("insert into pos values('2021-05-11T00:00:00.072000Z','ccc','edez0n5y',460030234814)");
+        executeInsert("insert into pos values('2021-05-11T00:00:00.074000Z','aaa','fds32zgc',494729788907)");
+        executeInsert("insert into pos values('2021-05-11T00:00:00.092000Z','ddd','v9nwc4ny',938077426334)");
+        executeInsert("insert into pos values('2021-05-11T00:00:00.107000Z','ccc','f6yb1yx9',488495971241)");
+        executeInsert("insert into pos values('2021-05-11T00:00:00.111000Z','ddd','bcnktpnw',356099348124)");
+        executeInsert("insert into pos values('2021-05-11T00:00:00.123000Z','aaa','z3t2we5z',1069215003839)");
+        executeInsert("insert into pos values('2021-05-11T00:00:00.127000Z','aaa','bgn1yt4y',360376657054)");
+        executeInsert("insert into pos values('2021-05-11T00:00:00.144000Z','aaa','fuetk3k6',509416640070)");
+        executeInsert("insert into pos values('2021-05-12T00:00:00.167000Z','ccc','bchx5x14',355976016932)");
+        executeInsert("insert into pos values('2021-05-12T00:00:00.167000Z','ZZZ','bbxwb5jj',355337573937)");
+        executeInsert("insert into pos values('2021-05-12T00:00:00.186000Z','ZZZ','vepe7h62',942390100162)");
+        executeInsert("insert into pos values('2021-05-12T00:00:00.241000Z','bbb','bchxpmmg',355976531567)");
+        executeInsert("insert into pos values('2021-05-12T00:00:00.245000Z','ddd','f90z3bs5',490732628741)");
+        executeInsert("insert into pos values('2021-05-12T00:00:00.247000Z','bbb','bftqreuh',359492466512)");
+        executeInsert("insert into pos values('2021-05-12T00:00:00.295000Z','ddd','u2rqgy9s',896296024376)");
+        executeInsert("insert into pos values('2021-05-12T00:00:00.304000Z','aaa','w23bhjd2',964331849090)");
     }
 
     @Test

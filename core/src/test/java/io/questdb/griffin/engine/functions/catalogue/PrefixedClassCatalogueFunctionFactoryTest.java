@@ -60,7 +60,7 @@ public class PrefixedClassCatalogueFunctionFactoryTest extends AbstractGriffinTe
     public void testKafkaJdbcTableQuery() throws Exception {
         assertQuery(
                 "TABLE_CAT\tTABLE_SCHEM\tTABLE_NAME\tTABLE_TYPE\tREMARKS\tTYPE_CAT\tTYPE_SCHEM\tTYPE_NAME\tSELF_REFERENCING_COL_NAME\tREF_GENERATION\n" +
-                        "\tpublic\talpha\tTABLE\t\t\t\t\t\t\n",
+                        "null\tpublic\talpha\tTABLE\t\t\t\t\t\t\n",
                 "SELECT \n" +
                         "     NULL AS TABLE_CAT, \n" +
                         "     n.nspname AS TABLE_SCHEM, \n" +

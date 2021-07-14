@@ -26,6 +26,7 @@ package io.questdb.cutlass.text.types;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableWriter;
+import io.questdb.griffin.SqlKeywords;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.str.DirectByteCharSequence;
@@ -66,6 +67,6 @@ public final class LongAdapter extends AbstractTypeAdapter implements TimestampC
 
     @Override
     public void write(TableWriter.Row row, int column, DirectByteCharSequence value) throws Exception {
-        row.putLong(column, getLong(value));
+        row.putLong(column, SqlKeywords.isNullKeyword(value) ? Numbers.LONG_NaN : getLong(value));
     }
 }

@@ -1036,23 +1036,96 @@ public class TimestampQueryTest extends AbstractGriffinTest {
                     "2020-01-02T00:00:00.000000Z\t2020-01-02T23:00:00.000000Z\n";
             assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where nts between '2020-01-02' and case when 1=1 then now() else now() end");
 
+            // Between with NULL and NULL
+            expected = "dts\tnts\n";
+            assertTimestampTtQuery(expected, "select * from tt where nts between NULL and NULL");
+
+            // Not between with NULL and NULL
+            expected = "dts\tnts\n" +
+                    "2020-01-01T00:00:00.000000Z\t2020-01-01T00:00:00.000000Z\n" +
+                    "2020-01-01T01:00:00.000000Z\t2020-01-01T01:00:00.000000Z\n" +
+                    "2020-01-01T02:00:00.000000Z\t2020-01-01T02:00:00.000000Z\n" +
+                    "2020-01-01T03:00:00.000000Z\t2020-01-01T03:00:00.000000Z\n" +
+                    "2020-01-01T04:00:00.000000Z\t2020-01-01T04:00:00.000000Z\n" +
+                    "2020-01-01T05:00:00.000000Z\t2020-01-01T05:00:00.000000Z\n" +
+                    "2020-01-01T06:00:00.000000Z\t2020-01-01T06:00:00.000000Z\n" +
+                    "2020-01-01T07:00:00.000000Z\t2020-01-01T07:00:00.000000Z\n" +
+                    "2020-01-01T08:00:00.000000Z\t2020-01-01T08:00:00.000000Z\n" +
+                    "2020-01-01T09:00:00.000000Z\t2020-01-01T09:00:00.000000Z\n" +
+                    "2020-01-01T10:00:00.000000Z\t2020-01-01T10:00:00.000000Z\n" +
+                    "2020-01-01T11:00:00.000000Z\t2020-01-01T11:00:00.000000Z\n" +
+                    "2020-01-01T12:00:00.000000Z\t2020-01-01T12:00:00.000000Z\n" +
+                    "2020-01-01T13:00:00.000000Z\t2020-01-01T13:00:00.000000Z\n" +
+                    "2020-01-01T14:00:00.000000Z\t2020-01-01T14:00:00.000000Z\n" +
+                    "2020-01-01T15:00:00.000000Z\t2020-01-01T15:00:00.000000Z\n" +
+                    "2020-01-01T16:00:00.000000Z\t2020-01-01T16:00:00.000000Z\n" +
+                    "2020-01-01T17:00:00.000000Z\t2020-01-01T17:00:00.000000Z\n" +
+                    "2020-01-01T18:00:00.000000Z\t2020-01-01T18:00:00.000000Z\n" +
+                    "2020-01-01T19:00:00.000000Z\t2020-01-01T19:00:00.000000Z\n" +
+                    "2020-01-01T20:00:00.000000Z\t2020-01-01T20:00:00.000000Z\n" +
+                    "2020-01-01T21:00:00.000000Z\t2020-01-01T21:00:00.000000Z\n" +
+                    "2020-01-01T22:00:00.000000Z\t2020-01-01T22:00:00.000000Z\n" +
+                    "2020-01-01T23:00:00.000000Z\t2020-01-01T23:00:00.000000Z\n" +
+                    "2020-01-02T00:00:00.000000Z\t2020-01-02T00:00:00.000000Z\n" +
+                    "2020-01-02T01:00:00.000000Z\t2020-01-02T01:00:00.000000Z\n" +
+                    "2020-01-02T02:00:00.000000Z\t2020-01-02T02:00:00.000000Z\n" +
+                    "2020-01-02T03:00:00.000000Z\t2020-01-02T03:00:00.000000Z\n" +
+                    "2020-01-02T04:00:00.000000Z\t2020-01-02T04:00:00.000000Z\n" +
+                    "2020-01-02T05:00:00.000000Z\t2020-01-02T05:00:00.000000Z\n" +
+                    "2020-01-02T06:00:00.000000Z\t2020-01-02T06:00:00.000000Z\n" +
+                    "2020-01-02T07:00:00.000000Z\t2020-01-02T07:00:00.000000Z\n" +
+                    "2020-01-02T08:00:00.000000Z\t2020-01-02T08:00:00.000000Z\n" +
+                    "2020-01-02T09:00:00.000000Z\t2020-01-02T09:00:00.000000Z\n" +
+                    "2020-01-02T10:00:00.000000Z\t2020-01-02T10:00:00.000000Z\n" +
+                    "2020-01-02T11:00:00.000000Z\t2020-01-02T11:00:00.000000Z\n" +
+                    "2020-01-02T12:00:00.000000Z\t2020-01-02T12:00:00.000000Z\n" +
+                    "2020-01-02T13:00:00.000000Z\t2020-01-02T13:00:00.000000Z\n" +
+                    "2020-01-02T14:00:00.000000Z\t2020-01-02T14:00:00.000000Z\n" +
+                    "2020-01-02T15:00:00.000000Z\t2020-01-02T15:00:00.000000Z\n" +
+                    "2020-01-02T16:00:00.000000Z\t2020-01-02T16:00:00.000000Z\n" +
+                    "2020-01-02T17:00:00.000000Z\t2020-01-02T17:00:00.000000Z\n" +
+                    "2020-01-02T18:00:00.000000Z\t2020-01-02T18:00:00.000000Z\n" +
+                    "2020-01-02T19:00:00.000000Z\t2020-01-02T19:00:00.000000Z\n" +
+                    "2020-01-02T20:00:00.000000Z\t2020-01-02T20:00:00.000000Z\n" +
+                    "2020-01-02T21:00:00.000000Z\t2020-01-02T21:00:00.000000Z\n" +
+                    "2020-01-02T22:00:00.000000Z\t2020-01-02T22:00:00.000000Z\n" +
+                    "2020-01-02T23:00:00.000000Z\t2020-01-02T23:00:00.000000Z\n";
+            assertTimestampTtQuery(expected, "select * from tt where nts not between NULL and NULL");
+
             // Between with NULL
             expected = "dts\tnts\n";
             assertTimestampTtQuery(expected, "select * from tt where nts between CAST(NULL as TIMESTAMP) and '2020-01-01'");
+            assertTimestampTtQuery(expected, "select * from tt where nts between NULL and '2020-01-01'");
+            assertTimestampTtQuery(expected, "select * from tt where nts between '2020-01-01' and NULL");
 
             // NOT Between with NULL
             expected = "min\tmax\n" +
                     "2020-01-01T00:00:00.000000Z\t2020-01-02T23:00:00.000000Z\n";
             assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where nts not between CAST(NULL as TIMESTAMP) and '2020-01-01'");
+            assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where nts not between NULL and '2020-01-01'");
+            assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where nts not between '2020-01-01' and NULL");
 
             // Between with NULL and now()
             expected = "dts\tnts\n";
             assertTimestampTtQuery(expected, "select * from tt where nts between CAST(NULL as TIMESTAMP) and now()");
+            assertTimestampTtQuery(expected, "select * from tt where nts between NULL and now()");
+
+            // Between with now() and NULL
+            expected = "dts\tnts\n";
+            assertTimestampTtQuery(expected, "select * from tt where nts between now() and CAST(NULL as TIMESTAMP)");
+            assertTimestampTtQuery(expected, "select * from tt where nts between now() and NULL");
 
             // NOT Between with NULL and now()
             expected = "min\tmax\n" +
                     "2020-01-01T00:00:00.000000Z\t2020-01-02T23:00:00.000000Z\n";
             assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where nts not between CAST(NULL as TIMESTAMP) and now()");
+            assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where nts not between NULL and now()");
+
+            // NOT Between with now() and NULL
+            expected = "min\tmax\n" +
+                    "2020-01-01T00:00:00.000000Z\t2020-01-02T23:00:00.000000Z\n";
+            assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where nts not between now() and CAST(NULL as TIMESTAMP)");
+            assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where nts not between now() and NULL");
 
             // Between runtime const evaluating to NULL
             expected = "dts\tnts\n";
