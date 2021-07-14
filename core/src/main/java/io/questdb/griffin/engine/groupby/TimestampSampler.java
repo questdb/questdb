@@ -36,7 +36,5 @@ public interface TimestampSampler {
 
     long round(long timestamp);
 
-    default void setStart(long timestamp) {
-        throw new UnsupportedOperationException();
-    }
+    void setStart(long timestamp);
 }

@@ -67,20 +67,14 @@ public class SampleByFillNoneRecordCursorFactory extends AbstractSampleByRecordC
         final RecordSink mapSink = RecordSinkFactory.getInstance(asm, base.getMetadata(), listColumnFilter, false);
         // this is the map itself, which we must not forget to free when factory closes
         this.map = MapFactory.createMap(configuration, keyTypes, valueTypes);
-        try {
-            this.cursor = new SampleByFillNoneRecordCursor(
-                    this.map,
-                    mapSink,
-                    groupByFunctions,
-                    this.recordFunctions,
-                    timestampIndex,
-                    timestampSampler
-            );
-        } catch (Throwable e) {
-            Misc.free(map);
-            Misc.freeObjList(recordFunctions);
-            throw e;
-        }
+        this.cursor = new SampleByFillNoneRecordCursor(
+                this.map,
+                mapSink,
+                groupByFunctions,
+                this.recordFunctions,
+                timestampIndex,
+                timestampSampler
+        );
     }
 
     @Override
