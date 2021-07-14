@@ -4621,7 +4621,9 @@ public class TableWriter implements Closeable {
         public Row newRow(long timestamp) {
             bumpMasterRef();
             txFile.append();
-            if (timestamp >= txFile.getMaxTimestamp()) {
+            if (timestamp < 0) {
+                throw CairoException.instance(ff.errno()).put("Cannot insert rows before 1970-01-01. Table=").put(path);
+            } else if (timestamp >= txFile.getMaxTimestamp()) {
                 updateMaxTimestamp(timestamp);
                 return row;
             }

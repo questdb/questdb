@@ -452,6 +452,8 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                     socket.put(c);
                 }
                 break;
+            case ColumnType.NULL:
+                break;
             case ColumnType.STRING:
                 putStringOrNull(socket, rec.getStr(col));
                 break;

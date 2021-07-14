@@ -2632,6 +2632,145 @@ public class TextLoaderTest extends AbstractGriffinTest {
         });
     }
 
+    @Test
+    public void testImportNullTimestampFailsForTableWithDesignatedColumn() throws Exception {
+        assertNoLeak(
+                engine,
+                textLoader -> {
+                    compiler.compile("create table test(ts timestamp) timestamp(ts) partition by NONE", sqlExecutionContext);
+
+                    try {
+                        String csv = "ts\n" +
+                                "null\n";
+
+                        configureLoaderDefaults(
+                                textLoader,
+                                (byte) ',',
+                                Atomicity.SKIP_COL,
+                                false,
+                                PartitionBy.NONE,
+                                "ts");
+                        textLoader.setForceHeaders(true);
+                        playText(engine,
+                                textLoader,
+                                csv,
+                                1024,
+                                null,
+                                null,
+                                -1,
+                                -1
+                        );
+                        Assert.fail("cannot insert null timestamp in designated column");
+                    } catch (TextException expected) {
+                        Assert.assertEquals("not a timestamp 'ts'", expected.getMessage());
+                    }
+                });
+    }
+
+    @Test
+    public void testImportNullTimestampIgnoredForTableWithDesignatedColumn() throws Exception {
+        assertNoLeak(
+                engine,
+                textLoader -> {
+                    compiler.compile("create table test(ts timestamp) timestamp(ts) partition by NONE", sqlExecutionContext);
+
+                    try {
+                        String csv = "ts\n" +
+                                "null\n";
+
+                        configureLoaderDefaults(
+                                textLoader,
+                                (byte) ',',
+                                Atomicity.SKIP_ROW,
+                                false,
+                                PartitionBy.NONE,
+                                "ts");
+                        textLoader.setForceHeaders(true);
+                        playText(engine,
+                                textLoader,
+                                csv,
+                                1024,
+                                "ts\n",
+                                "{\"columnCount\":1,\"columns\":[{\"index\":0,\"name\":\"ts\",\"type\":\"TIMESTAMP\"}],\"timestampIndex\":0}",
+                                1,
+                                0
+                        );
+                        Assert.fail("cannot insert null timestamp in designated column");
+                    } catch (TextException expected) {
+                        Assert.assertEquals("not a timestamp 'ts'", expected.getMessage());
+                    }
+                });
+    }
+
+    @Test
+    public void testImportNullForAllTypesWithDesignatedColumnWhenTableExists() throws Exception {
+        assertNoLeak(
+                engine,
+                textLoader -> {
+                    compiler.compile("create table test(" +
+                                    "ts timestamp, " +
+                                    "byte byte, " +
+                                    "short short," +
+                                    "char char," +
+                                    "int int," +
+                                    "long long," +
+                                    "boolean boolean," +
+                                    "float float," +
+                                    "double double," +
+                                    "string string," +
+                                    "symbol symbol," +
+                                    "long256 long256," +
+                                    "timestamp timestamp," +
+                                    "date date) timestamp(ts) partition by NONE",
+                            sqlExecutionContext);
+
+                    String expectedMetadata = "{\"columnCount\":14,\"columns\":[" +
+                            "{\"index\":0,\"name\":\"ts\",\"type\":\"TIMESTAMP\"}," +
+                            "{\"index\":1,\"name\":\"byte\",\"type\":\"BYTE\"}," +
+                            "{\"index\":2,\"name\":\"short\",\"type\":\"SHORT\"}," +
+                            "{\"index\":3,\"name\":\"char\",\"type\":\"CHAR\"}," +
+                            "{\"index\":4,\"name\":\"int\",\"type\":\"INT\"}," +
+                            "{\"index\":5,\"name\":\"long\",\"type\":\"LONG\"}," +
+                            "{\"index\":6,\"name\":\"boolean\",\"type\":\"BOOLEAN\"}," +
+                            "{\"index\":7,\"name\":\"float\",\"type\":\"FLOAT\"}," +
+                            "{\"index\":8,\"name\":\"double\",\"type\":\"DOUBLE\"}," +
+                            "{\"index\":9,\"name\":\"string\",\"type\":\"STRING\"}," +
+                            "{\"index\":10,\"name\":\"symbol\",\"type\":\"SYMBOL\"}," +
+                            "{\"index\":11,\"name\":\"long256\",\"type\":\"LONG256\"}," +
+                            "{\"index\":12,\"name\":\"timestamp\",\"type\":\"TIMESTAMP\"}," +
+                            "{\"index\":13,\"name\":\"date\",\"type\":\"DATE\"}" +
+                            "],\"timestampIndex\":0}";
+
+                    String expected = "ts\tbyte\tshort\tchar\tint\tlong\tboolean\tfloat\tdouble\tstring\tsymbol\tlong256\ttimestamp\tdate\n" +
+                            "2021-07-09T19:15:08.000000Z\t0\t0\t\tNaN\tNaN\tfalse\tNaN\tNaN\tnull\tnull\t\t\t\n" +
+                            "2021-07-09T19:15:09.000903Z\t0\t0\t\tNaN\tNaN\tfalse\tNaN\tNaN\t\t\t\t\t\n" +
+                            "2021-07-09T19:15:11.001000Z\t0\t0\t\tNaN\tNaN\tfalse\tNaN\tNaN\tnull\tnull\t\t\t\n";
+
+                    String csv = "ts,byte,short,char,int,long,boolean,float,double,string,symbol,long256,timestamp,date\n" +
+                            "2021-07-09T19:15:08.000000Z,null,null,null,null,null,null,null,null,null,null,null,null,null\n" +
+                            "2021-07-09T19:15:09.000903Z,,,,,,,,,,,,,\n" +
+                            "2021-07-09T19:15:11.001000Z,null,null,null,null,null,null,null,null,null,null,null,null,null\n";
+
+                    configureLoaderDefaults(
+                            textLoader,
+                            (byte) ',',
+                            Atomicity.SKIP_COL,
+                            false,
+                            PartitionBy.NONE,
+                            "ts");
+                    textLoader.setForceHeaders(true);
+                    playText(engine,
+                            textLoader,
+                            csv,
+                            1024,
+                            expected,
+                            expectedMetadata,
+                            3,
+                            3
+                    );
+                });
+    }
+
     private void assertNoLeak(TestCode code) throws Exception {
         assertNoLeak(engine, code);
     }

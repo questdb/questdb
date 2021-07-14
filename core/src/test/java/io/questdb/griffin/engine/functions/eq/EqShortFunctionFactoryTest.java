@@ -22,33 +22,27 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.text.types;
+package io.questdb.griffin.engine.functions.eq;
 
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.TableWriter;
-import io.questdb.griffin.SqlKeywords;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.AbstractFunctionFactoryTest;
 import io.questdb.std.Numbers;
-import io.questdb.std.str.DirectByteCharSequence;
+import org.junit.Test;
 
-public final class FloatAdapter extends AbstractTypeAdapter {
+public class EqShortFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
-    public static final FloatAdapter INSTANCE = new FloatAdapter();
-
-    private FloatAdapter() {
+    @Test
+    public void testAll() throws SqlException {
+        call(10, 20).andAssert(false);
+        call(150, 150).andAssert(true);
+        call(0, 77).andAssert(false);
+        call(0, 0).andAssert(true);
     }
 
     @Override
-    public int getType() {
-        return ColumnType.FLOAT;
+    protected FunctionFactory getFunctionFactory() {
+        return new EqShortFunctionFactory();
     }
 
-    @Override
-    public boolean probe(CharSequence text) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void write(TableWriter.Row row, int column, DirectByteCharSequence value) throws Exception {
-        row.putFloat(column, SqlKeywords.isNullKeyword(value) ? Float.NaN : Numbers.parseFloat(value));
-    }
 }

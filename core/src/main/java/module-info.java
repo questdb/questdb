@@ -103,6 +103,8 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.array.StrArrayDereferenceFunctionFactory,
             // '=' operators
             io.questdb.griffin.engine.functions.eq.EqStrFunctionFactory,
+            io.questdb.griffin.engine.functions.eq.EqByteFunctionFactory,
+            io.questdb.griffin.engine.functions.eq.EqShortFunctionFactory,
             io.questdb.griffin.engine.functions.eq.EqIntFunctionFactory,
             io.questdb.griffin.engine.functions.eq.EqLongFunctionFactory,
             io.questdb.griffin.engine.functions.eq.EqDoubleFunctionFactory,
@@ -114,6 +116,8 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.eq.EqCharCharFunctionFactory,
             io.questdb.griffin.engine.functions.eq.EqIntStrCFunctionFactory,
             io.questdb.griffin.engine.functions.eq.EqTimestampFunctionFactory,
+            io.questdb.griffin.engine.functions.eq.EqBooleanFunctionFactory,
+            io.questdb.griffin.engine.functions.eq.EqBinaryFunctionFactory,
 
             //nullif
             io.questdb.griffin.engine.functions.eq.NullIfCharCharFunctionFactory,
@@ -299,6 +303,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.cast.CastLongToStrFunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastLongToDateFunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastLongToTimestampFunctionFactory,
+            io.questdb.griffin.engine.functions.cast.CastNullFunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastLongToSymbolFunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastLongToLong256FunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastLongToBooleanFunctionFactory,
