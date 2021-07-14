@@ -75,6 +75,7 @@ class SampleByFillNoneRecordCursor extends AbstractVirtualRecordSampleByCursor {
         do {
             long timestamp = getBaseRecordTimestamp();
             if (timestamp < next) {
+                adjustDSTInFlight(timestamp - tzOffset);
                 final MapKey key = map.withKey();
                 keyMapSink.copy(baseRecord, key);
                 GroupByUtils.updateFunctions(groupByFunctions, n, key.createValue(), baseRecord);

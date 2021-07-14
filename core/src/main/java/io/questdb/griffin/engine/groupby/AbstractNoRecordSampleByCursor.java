@@ -205,8 +205,32 @@ public abstract class AbstractNoRecordSampleByCursor implements NoRandomAccessRe
         return timestamp;
     }
 
+    protected void adjustDSTInFlight(long t) {
+        if (t < nextDst) {
+            return;
+        }
+        final long daylightSavings = rules.getOffset(t);
+        prevDst = nextDst;
+        nextDst = rules.getNextDST(t);
+        // time moved forward, we need to make sure we move our sample boundary
+        sampleLocalEpoch += (daylightSavings - tzOffset);
+        nextSampleLocalEpoch = sampleLocalEpoch;
+        tzOffset = daylightSavings;
+    }
+
     protected long getBaseRecordTimestamp() {
         return baseRecord.getTimestamp(timestampIndex) + tzOffset;
+    }
+
+    protected void nextSamplePeriod(long timestamp) {
+        this.localEpoch = timestampSampler.round(timestamp);
+        // Sometimes rounding, especially around Days can throw localEpoch
+        // to the "before" previous DST. When this happens we need to compensate for
+        // tzOffset subtraction at the time of delivery of the timestamp to client
+        if (localEpoch - tzOffset < prevDst) {
+            localEpoch += tzOffset;
+        }
+        GroupByUtils.toTop(groupByFunctions);
     }
 
     protected boolean notKeyedLoop(MapValue mapValue) {
@@ -221,6 +245,7 @@ public abstract class AbstractNoRecordSampleByCursor implements NoRandomAccessRe
         while (base.hasNext()) {
             long timestamp = getBaseRecordTimestamp();
             if (timestamp < next) {
+                adjustDSTInFlight(timestamp - tzOffset);
                 GroupByUtils.updateExisting(groupByFunctions, n, mapValue, baseRecord);
                 interruptor.checkInterrupted();
             } else {
@@ -239,17 +264,6 @@ public abstract class AbstractNoRecordSampleByCursor implements NoRandomAccessRe
         // opportunity, after we stream map that is.
         baseRecord = null;
         return true;
-    }
-
-    protected void nextSamplePeriod(long timestamp) {
-        this.localEpoch = timestampSampler.round(timestamp);
-        // Sometimes rounding, especially around Days can throw localEpoch
-        // to the "before" previous DST. When this happens we need to compensate for
-        // tzOffset subtraction at the time of delivery of the timestamp to client
-        if (localEpoch - tzOffset < prevDst) {
-            localEpoch += tzOffset;
-        }
-        GroupByUtils.toTop(groupByFunctions);
     }
 
     protected void updateValueWhenClockMovesBack(MapValue value, int n) {

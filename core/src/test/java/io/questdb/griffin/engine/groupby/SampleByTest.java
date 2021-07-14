@@ -1998,19 +1998,19 @@ public class SampleByTest extends AbstractGriffinTest {
     @Test
     public void testSampleByDayNoFillNotKeyedAlignToCalendarTimezone() throws Exception {
         assertQuery(
-                "k\tc\n" +
-                        "2021-03-28T00:00:00.000000Z\t218\n" +
-                        "2021-03-29T00:00:00.000000Z\t230\n" +
-                        "2021-03-30T00:00:00.000000Z\t240\n" +
-                        "2021-03-31T00:00:00.000000Z\t240\n" +
-                        "2021-04-01T00:00:00.000000Z\t72\n",
-                "select to_timezone(k, 'Europe/Riga') k, c from (select k, count() c from x sample by 1d align to calendar time zone 'Europe/Riga')",
+                "k\tc\ta\tlk\n" +
+                        "2021-03-27T00:00:00.000000Z\t218\t78.61254708288084\t2021-03-27T21:57:00.000000Z\n" +
+                        "2021-03-28T00:00:00.000000Z\t230\t16.41641076342043\t2021-03-28T20:57:00.000000Z\n" +
+                        "2021-03-29T00:00:00.000000Z\t240\t10.130283315402789\t2021-03-29T20:57:00.000000Z\n" +
+                        "2021-03-30T00:00:00.000000Z\t240\t22.52165473191222\t2021-03-30T20:57:00.000000Z\n" +
+                        "2021-03-31T00:00:00.000000Z\t72\t45.38592869415369\t2021-03-31T04:09:00.000000Z\n",
+                "select to_timezone(k, 'Europe/Riga') k, c, a, lk from (select k, count() c, last(a) a, last(k) lk from x sample by 1d align to calendar time zone 'Europe/Riga')",
                 "create table x as " +
                         "(" +
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(cast('2021-03-28T00:15:00.000000Z' as timestamp), 6*60000000) k" +
+                        " timestamp_sequence(cast('2021-03-27T00:15:00.000000Z' as timestamp), 6*60000000) k" +
                         " from" +
                         " long_sequence(1000)" +
                         ") timestamp(k) partition by NONE",
