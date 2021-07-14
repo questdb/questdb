@@ -85,14 +85,7 @@ class SampleByFillNoneRecordCursor extends AbstractVirtualRecordSampleByCursor {
                 // see: updateValueWhenClockMovesBack()
                 timestamp = adjustDST(timestamp, n, null);
                 if (timestamp != Long.MIN_VALUE) {
-                    this.localEpoch = timestampSampler.round(timestamp);
-                    // Sometimes rounding, especially around Days can throw localEpoch
-                    // to the "before" previous DST. When this happens we need to compensate for
-                    // tzOffset subtraction at the time of delivery of the timestamp to client
-                    if (localEpoch <= prevDst) {
-                        localEpoch += tzOffset;
-                    }
-                    GroupByUtils.toTop(groupByFunctions);
+                    nextSamplePeriod(timestamp);
                     return createMapCursor();
                 }
             }

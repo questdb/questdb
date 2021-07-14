@@ -685,7 +685,7 @@ public class SampleByTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testIndexSampleByAlignToCalendarWithTimezoneLondonShiftBack() throws Exception {
+    public void testSampleByDayNoFillAlignToCalendarWithTimezoneLondon() throws Exception {
         assertQuery("to_timezone\ts\tlat\tlon\n" +
                         "2021-03-26T00:00:00.000000Z\ta\t142.30215575416736\t2021-03-26T22:50:00.000000Z\n" +
                         "2021-03-27T00:00:00.000000Z\ta\tNaN\t2021-03-27T23:00:00.000000Z\n" +
@@ -693,6 +693,30 @@ public class SampleByTest extends AbstractGriffinTest {
                         "2021-03-29T00:00:00.000000Z\ta\t70.00560222114518\t2021-03-29T16:40:00.000000Z\n" +
                         "2021-03-30T00:00:00.000000Z\ta\t13.290235514836048\t2021-03-30T02:40:00.000000Z\n",
                 "select to_timezone(k, 'Europe/London'), s, lat, lon from (select k, s, first(lat) lat, last(k) lon " +
+                        "from x " +
+                        "where s in ('a') " +
+                        "sample by 1d align to calendar time zone 'Europe/London')",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        "   rnd_double(1)*180 lat," +
+                        "   rnd_double(1)*180 lon," +
+                        "   rnd_symbol('a','b',null) s," +
+                        "   timestamp_sequence('2021-03-25T23:30:00.00000Z', 50 * 60 * 1000000L) k" +
+                        "   from" +
+                        "   long_sequence(120)" +
+                        ") timestamp(k)", null, false);
+    }
+
+    @Test
+    public void testSampleByDayNoFillNotKeyedAlignToCalendarWithTimezoneLondon() throws Exception {
+        assertQuery("to_timezone\tlat\tlon\n" +
+                        "2021-03-26T00:00:00.000000Z\t142.30215575416736\t2021-03-26T22:50:00.000000Z\n" +
+                        "2021-03-27T00:00:00.000000Z\tNaN\t2021-03-27T23:00:00.000000Z\n" +
+                        "2021-03-28T00:00:00.000000Z\t33.45558404694713\t2021-03-28T20:40:00.000000Z\n" +
+                        "2021-03-29T00:00:00.000000Z\t70.00560222114518\t2021-03-29T16:40:00.000000Z\n" +
+                        "2021-03-30T00:00:00.000000Z\t13.290235514836048\t2021-03-30T02:40:00.000000Z\n",
+                "select to_timezone(k, 'Europe/London'), lat, lon from (select k, first(lat) lat, last(k) lon " +
                         "from x " +
                         "where s in ('a') " +
                         "sample by 1d align to calendar time zone 'Europe/London')",

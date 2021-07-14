@@ -121,8 +121,7 @@ public abstract class AbstractSampleByFillValueRecordCursor extends AbstractSpli
                 // and build another map
                 timestamp = adjustDST(timestamp, n, null);
                 if (timestamp != Long.MIN_VALUE) {
-                    this.localEpoch = timestampSampler.round(timestamp);
-                    GroupByUtils.toTop(groupByFunctions);
+                    nextSamplePeriod(timestamp);
                 }
             }
             return refreshMapCursor();

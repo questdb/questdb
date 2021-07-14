@@ -230,8 +230,7 @@ public abstract class AbstractNoRecordSampleByCursor implements NoRandomAccessRe
                 // and build another map
                 timestamp = adjustDST(timestamp, n, mapValue);
                 if (timestamp != Long.MIN_VALUE) {
-                    this.localEpoch = timestampSampler.round(timestamp);
-                    GroupByUtils.toTop(groupByFunctions);
+                    nextSamplePeriod(timestamp);
                     return true;
                 }
             }
@@ -240,6 +239,17 @@ public abstract class AbstractNoRecordSampleByCursor implements NoRandomAccessRe
         // opportunity, after we stream map that is.
         baseRecord = null;
         return true;
+    }
+
+    protected void nextSamplePeriod(long timestamp) {
+        this.localEpoch = timestampSampler.round(timestamp);
+        // Sometimes rounding, especially around Days can throw localEpoch
+        // to the "before" previous DST. When this happens we need to compensate for
+        // tzOffset subtraction at the time of delivery of the timestamp to client
+        if (localEpoch - tzOffset < prevDst) {
+            localEpoch += tzOffset;
+        }
+        GroupByUtils.toTop(groupByFunctions);
     }
 
     protected void updateValueWhenClockMovesBack(MapValue value, int n) {
