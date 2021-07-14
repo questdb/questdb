@@ -55,6 +55,7 @@ public class CairoTextWriter implements Closeable, Mutable {
     private boolean durable;
     private int atomicity;
     private int partitionBy;
+    private int maxUncommittedRows;
     private int timestampIndex = -1;
     private CharSequence importedTimestampColumnName;
     private CharSequence designatedTimestampColumnName;
@@ -121,6 +122,10 @@ public class CairoTextWriter implements Closeable, Mutable {
         return partitionBy;
     }
 
+    public int getMaxUncommittedRows() {
+        return maxUncommittedRows;
+    }
+
     public CharSequence getTableName() {
         return tableName;
     }
@@ -141,13 +146,20 @@ public class CairoTextWriter implements Closeable, Mutable {
         return writer == null ? 0 : writer.size() - _size;
     }
 
-    public void of(CharSequence name, boolean overwrite, boolean durable, int atomicity, int partitionBy, CharSequence timestampIndexCol) {
+    public void of(CharSequence name,
+                   boolean overwrite,
+                   boolean durable,
+                   int atomicity,
+                   int partitionBy,
+                   CharSequence timestampIndexCol,
+                   int maxUncommittedRows) {
         this.tableName = name;
         this.overwrite = overwrite;
         this.durable = durable;
         this.atomicity = atomicity;
         this.partitionBy = partitionBy;
         this.importedTimestampColumnName = timestampIndexCol;
+        this.maxUncommittedRows = maxUncommittedRows;
     }
 
     public void onFieldsNonPartitioned(long line, ObjList<DirectByteCharSequence> values, int valuesLength) {
@@ -175,6 +187,8 @@ public class CairoTextWriter implements Closeable, Mutable {
                 if (onField(line, dbcs, w, i)) return;
             }
             w.append();
+            writer.checkMaxAndCommitLag();
+            System.out.printf("POLLA[%s]: Time to commit, written %d lines%n", Thread.currentThread().getName(), getWrittenLineCount());
         } catch (Exception e) {
             logError(line, timestampIndex, dbcs);
         }
@@ -325,6 +339,9 @@ public class CairoTextWriter implements Closeable, Mutable {
                 break;
             default:
                 throw CairoException.instance(0).put("name is reserved [table=").put(tableName).put(']');
+        }
+        if (maxUncommittedRows > 0) {
+            writer.setMetaMaxUncommittedRows(maxUncommittedRows);
         }
         _size = writer.size();
         columnErrorCounts.seed(writer.getMetadata().getColumnCount(), 0);

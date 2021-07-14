@@ -25,6 +25,7 @@
 package io.questdb.griffin;
 
 import io.questdb.MessageBus;
+import io.questdb.PropServerConfiguration;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.AppendOnlyVirtualMemory;
@@ -2024,7 +2025,14 @@ public class SqlCompiler implements Closeable {
         // todo: configure the following
         //   - what happens when data row errors out, max errors may be?
         //   - we should be able to skip X rows from top, dodgy headers etc.
-        textLoader.configureDestination(model.getTableName().token, false, false, Atomicity.SKIP_ROW, PartitionBy.NONE, null);
+        textLoader.configureDestination(
+                model.getTableName().token,
+                false,
+                false,
+                Atomicity.SKIP_ROW,
+                PartitionBy.NONE,
+                null,
+                PropServerConfiguration.MAX_UNCOMMITTED_ROWS_DEFAULT);
     }
 
     private CompiledQuery sqlBackup(SqlExecutionContext executionContext) throws SqlException {

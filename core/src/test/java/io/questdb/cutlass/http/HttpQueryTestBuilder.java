@@ -37,6 +37,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.std.Misc;
+import io.questdb.std.str.Path;
 import org.jetbrains.annotations.Nullable;
 import org.junit.rules.TemporaryFolder;
 
@@ -124,6 +125,7 @@ public class HttpQueryTestBuilder {
                     return false;
                 }
             });
+            workerPool.assignCleaner(Path.CLEANER);
 
             DefaultCairoConfiguration cairoConfiguration = new DefaultCairoConfiguration(baseDir);
 

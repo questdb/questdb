@@ -2491,6 +2491,8 @@ public class TableWriter implements Closeable {
                         srcOooMax = 0;
                     }
                 }
+                System.out.printf("O3COMMIT: o3Min:%d, o3Max:%d, lag:%d, thre:%s, srcOooMax:%d%n",
+                        o3TimestampMin, o3TimestampMax, lag, lagThresholdTimestamp, srcOooMax);
                 LOG.debug().$("o3 commit lag [table=").$(tableName)
                         .$(", lag=").$(lag)
                         .$(", maxUncommittedRows=").$(maxUncommittedRows)

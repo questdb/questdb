@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.http.processors;
 
+import io.questdb.PropServerConfiguration;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cutlass.http.*;
@@ -131,6 +132,16 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
                 sendErrorAndThrowDisconnect("when specifying partitionBy you must also specify timestamp");
             }
 
+            CharSequence maxUncommittedRowsChars = rh.getUrlParam("maxUncommittedRows");
+            int maxUncommittedRows = PropServerConfiguration.MAX_UNCOMMITTED_ROWS_DEFAULT;
+            if (maxUncommittedRowsChars != null) {
+                try {
+                    maxUncommittedRows = Numbers.parseInt(maxUncommittedRowsChars);
+                } catch (NumericException e) {
+                    sendErrorAndThrowDisconnect("invalid maxUncommittedRows, must be an int > 0");
+                }
+            }
+
             transientState.analysed = false;
             transientState.textLoader.configureDestination(
                     name,
@@ -138,7 +149,8 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
                     Chars.equalsNc("true", rh.getUrlParam("durable")),
                     getAtomicity(rh.getUrlParam("atomicity")),
                     partitionBy,
-                    timestampIndexCol
+                    timestampIndexCol,
+                    maxUncommittedRows
             );
             transientState.textLoader.setForceHeaders(Chars.equalsNc("true", rh.getUrlParam("forceHeader")));
             transientState.textLoader.setSkipRowsWithExtraValues(Chars.equalsNc("true", rh.getUrlParam("skipLev")));

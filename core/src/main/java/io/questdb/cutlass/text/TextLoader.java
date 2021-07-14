@@ -111,8 +111,14 @@ public class TextLoader implements Closeable, Mutable {
         assert this.columnDelimiter > 0;
     }
 
-    public void configureDestination(CharSequence tableName, boolean overwrite, boolean durable, int atomicity, int partitionBy, CharSequence timestampIndexCol) {
-        textWriter.of(tableName, overwrite, durable, atomicity, partitionBy, timestampIndexCol);
+    public void configureDestination(CharSequence tableName,
+                                     boolean overwrite,
+                                     boolean durable,
+                                     int atomicity,
+                                     int partitionBy,
+                                     CharSequence timestampIndexCol,
+                                     int maxUncommittedRows) {
+        textWriter.of(tableName, overwrite, durable, atomicity, partitionBy, timestampIndexCol, maxUncommittedRows);
         textDelimiterScanner.setTableName(tableName);
         textMetadataParser.setTableName(tableName);
         textLexer.setTableName(tableName);
@@ -124,6 +130,7 @@ public class TextLoader implements Closeable, Mutable {
                 .$(", atomicity=").$(atomicity)
                 .$(", partitionBy=").$(PartitionBy.toString(partitionBy))
                 .$(", timestamp=").$(timestampIndexCol)
+                .$(", maxUncommittedRows=").$(maxUncommittedRows)
                 .$(']').$();
     }
 
@@ -149,6 +156,10 @@ public class TextLoader implements Closeable, Mutable {
 
     public int getPartitionBy() {
         return textWriter.getPartitionBy();
+    }
+
+    public int getMaxUncommittedRows() {
+        return textWriter.getMaxUncommittedRows();
     }
 
     public CharSequence getTableName() {

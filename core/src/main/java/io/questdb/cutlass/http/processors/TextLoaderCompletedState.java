@@ -65,6 +65,10 @@ public class TextLoaderCompletedState {
         return textLoader.getPartitionBy();
     }
 
+    public int getMaxUncommittedRows() {
+        return textLoader.getMaxUncommittedRows();
+    }
+
     public CharSequence getTableName() {
         return textLoader.getTableName();
     }

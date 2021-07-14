@@ -62,6 +62,7 @@ import java.util.Map;
 import java.util.Properties;
 
 public class PropServerConfiguration implements ServerConfiguration {
+    public static final int MAX_UNCOMMITTED_ROWS_DEFAULT = 500_000;
     public static final String CONFIG_DIRECTORY = "conf";
     private final IODispatcherConfiguration httpIODispatcherConfiguration = new PropHttpIODispatcherConfiguration();
     private final WaitProcessorConfiguration httpWaitProcessorConfiguration = new PropWaitProcessorConfiguration();
@@ -651,7 +652,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.o3UpdPartitionSizeQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.o3.upd.partition.size.queue.capacity", 128));
             this.o3PurgeDiscoveryQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.o3.purge.discovery.queue.capacity", 128));
             this.o3PurgeQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.o3.purge.queue.capacity", 128));
-            this.maxUncommittedRows = getInt(properties, env, "cairo.max.uncommitted.rows", 500_000);
+            this.maxUncommittedRows = getInt(properties, env, "cairo.max.uncommitted.rows", MAX_UNCOMMITTED_ROWS_DEFAULT);
             this.commitLag = getLong(properties, env, "cairo.commit.lag", 300_000) * 1_000;
             this.o3QuickSortEnabled = getBoolean(properties, env, "cairo.o3.quicksort.enabled", false);
             this.sqlAnalyticStorePageSize = Numbers.ceilPow2(getIntSize(properties, env, "cairo.sql.analytic.store.page.size", 1024 * 1024));

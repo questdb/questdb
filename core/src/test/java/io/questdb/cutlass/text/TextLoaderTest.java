@@ -24,25 +24,39 @@
 
 package io.questdb.cutlass.text;
 
+import io.questdb.PropServerConfiguration;
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cutlass.http.HttpQueryTestBuilder;
+import io.questdb.cutlass.http.HttpServerConfigurationBuilder;
+import io.questdb.cutlass.http.SendAndReceiveRequestBuilder;
 import io.questdb.cutlass.http.ex.NotEnoughLinesException;
 import io.questdb.cutlass.json.JsonLexer;
 import io.questdb.griffin.AbstractGriffinTest;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.functions.constants.NullConstant;
 import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.After;
 import org.junit.AfterClass;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.lang.reflect.Method;
+import java.lang.reflect.Proxy;
+import java.lang.reflect.UndeclaredThrowableException;
 import java.nio.charset.StandardCharsets;
+import java.util.concurrent.atomic.AtomicInteger;
 
 public class TextLoaderTest extends AbstractGriffinTest {
 
@@ -1179,6 +1193,149 @@ public class TextLoaderTest extends AbstractGriffinTest {
                         try (TableReader r = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "test")) {
                             Assert.assertEquals(PartitionBy.DAY, r.getPartitionedBy());
                         }
+                    }
+            );
+        }
+    }
+
+    // TODO: MARKER TO MAKE IT FINDABLE
+    @Test
+    public void testImportMaxUncommittedRows() throws Exception {
+
+        final int maxUncommittedRows = 1;
+        final long commitLagMs = 4000;
+
+        final AtomicInteger fsyncCounter = new AtomicInteger();
+
+        final TestFilesFacade ff = new TestFilesFacade() {
+            @Override
+            public int fsync(long fd) {
+                fsyncCounter.incrementAndGet();
+                // Called by:
+                // - TableUtils.createTable
+                return super.fsync(fd);
+            }
+
+            @Override
+            public boolean wasCalled() {
+                return false;
+            }
+        };
+
+        final FilesFacade reportingFF = (FilesFacade) Proxy.newProxyInstance(
+                FilesFacade.class.getClassLoader(),
+                new Class[]{FilesFacade.class},
+                (proxy, method, args) -> {
+                    StringSink sink = new StringSink();
+                    if (args != null) {
+                        for (int i = 0; i < args.length; i++) {
+                            Object arg = args[i];
+                            sink.put(arg.toString());
+                            if (i + 1 < args.length) {
+                                sink.put(", ");
+                            }
+                        }
+                    }
+                    System.out.printf("INVOKED %s(%s)%n", method.getName(), sink);
+                    return method.invoke(ff, args);
+                }
+        );
+
+        final TextConfiguration textConfiguration = new DefaultTextConfiguration() {
+            @Override
+            public int getTextAnalysisMaxLines() {
+                return 1;
+            }
+        };
+
+        CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+            @Override
+            public TextConfiguration getTextConfiguration() {
+                return textConfiguration;
+            }
+
+            @Override
+            public long getCommitLag() {
+                return commitLagMs;
+            }
+
+            @Override
+            public int getMaxUncommittedRows() {
+                return maxUncommittedRows;
+            }
+
+            @Override
+            public FilesFacade getFilesFacade() {
+                return reportingFF;
+            }
+        };
+
+        try (CairoEngine engine = new CairoEngine(configuration)) {
+            assertNoLeak(
+                    engine,
+                    textLoader -> {
+
+                        configureLoaderDefaults(
+                                textLoader,
+                                (byte) ',',
+                                0,
+                                false,
+                                PartitionBy.DAY,
+                                "ts",
+                                maxUncommittedRows);
+                        textLoader.setForceHeaders(true);
+
+                        String csv = "ts,sym,open,highest,lowest,close,volumefrom,volumeto\n" +
+                                "2021-02-28T00:00:02.000000Z,EUR,5834,5196,5031,5031,9999,50566\n" +
+                                "2021-02-28T00:00:03.000000Z,EUR,6008,6145,6008,6145,1638,9873\n" +
+                                "2021-02-28T00:00:01.000000Z,EUR,6398,6398,6398,6398,0,0\n" +
+                                "2021-02-28T00:00:04.000000Z,EUR,6145,6398,6201,6398,4928,3098\n" +
+                                "2021-02-28T00:00:05.000000Z,EUR,6398,6398,6398,6398,0,0\n" +
+                                "2021-02-28T00:00:07.000000Z,EUR,6398,6398,6398,6398,0,0\n" +
+                                "2021-02-28T00:00:06.000000Z,EUR,6398,6398,6398,6398,0,0\n" +
+                                "2021-02-28T00:00:08.000000Z,EUR,6398,5792,5699,5785,1688,9764\n" +
+                                "2021-02-28T00:00:10.000000Z,EUR,5834,5834,5834,5834,0,0\n" +
+                                "2021-02-28T00:00:09.000000Z,EUR,5785,5838,5834,5834,2068,1207\n";
+
+                        String expectedMetadata = "{\"columnCount\":8,\"columns\":[" +
+                                "{\"index\":0,\"name\":\"ts\",\"type\":\"TIMESTAMP\"}," +
+                                "{\"index\":1,\"name\":\"sym\",\"type\":\"STRING\"}," +
+                                "{\"index\":2,\"name\":\"open\",\"type\":\"INT\"}," +
+                                "{\"index\":3,\"name\":\"highest\",\"type\":\"INT\"}," +
+                                "{\"index\":4,\"name\":\"lowest\",\"type\":\"INT\"}," +
+                                "{\"index\":5,\"name\":\"close\",\"type\":\"INT\"}," +
+                                "{\"index\":6,\"name\":\"volumefrom\",\"type\":\"INT\"}," +
+                                "{\"index\":7,\"name\":\"volumeto\",\"type\":\"INT\"}]," +
+                                "\"timestampIndex\":0}";
+
+                        String expectedData = "ts\tsym\topen\thighest\tlowest\tclose\tvolumefrom\tvolumeto\n" +
+                                "2021-02-28T00:00:01.000000Z\tEUR\t6398\t6398\t6398\t6398\t0\t0\n" +
+                                "2021-02-28T00:00:02.000000Z\tEUR\t5834\t5196\t5031\t5031\t9999\t50566\n" +
+                                "2021-02-28T00:00:03.000000Z\tEUR\t6008\t6145\t6008\t6145\t1638\t9873\n" +
+                                "2021-02-28T00:00:04.000000Z\tEUR\t6145\t6398\t6201\t6398\t4928\t3098\n" +
+                                "2021-02-28T00:00:05.000000Z\tEUR\t6398\t6398\t6398\t6398\t0\t0\n" +
+                                "2021-02-28T00:00:06.000000Z\tEUR\t6398\t6398\t6398\t6398\t0\t0\n" +
+                                "2021-02-28T00:00:07.000000Z\tEUR\t6398\t6398\t6398\t6398\t0\t0\n" +
+                                "2021-02-28T00:00:08.000000Z\tEUR\t6398\t5792\t5699\t5785\t1688\t9764\n" +
+                                "2021-02-28T00:00:09.000000Z\tEUR\t5785\t5838\t5834\t5834\t2068\t1207\n" +
+                                "2021-02-28T00:00:10.000000Z\tEUR\t5834\t5834\t5834\t5834\t0\t0\n";
+
+                        playText(
+                                engine,
+                                textLoader,
+                                csv,
+                                1024,
+                                expectedData,
+                                expectedMetadata,
+                                10,
+                                10
+                        );
+
+                        try (TableReader r = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "test")) {
+                            Assert.assertEquals(maxUncommittedRows, r.getMaxUncommittedRows());
+                            Assert.assertEquals(commitLagMs, r.getCommitLag());
+                        }
+                        Assert.assertEquals(1, fsyncCounter.get());
                     }
             );
         }
@@ -2865,16 +3022,48 @@ public class TextLoaderTest extends AbstractGriffinTest {
     }
 
     private void configureLoaderDefaults(TextLoader textLoader, byte columnSeparator, int atomicity, boolean overwrite) {
-        textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
-        textLoader.configureDestination("test", overwrite, false, atomicity, PartitionBy.NONE, null);
-        if (columnSeparator > 0) {
-            textLoader.configureColumnDelimiter(columnSeparator);
-        }
+        configureLoaderDefaults(
+                textLoader,
+                columnSeparator,
+                atomicity,
+                overwrite,
+                PartitionBy.NONE,
+                null,
+                PropServerConfiguration.MAX_UNCOMMITTED_ROWS_DEFAULT);
     }
 
-    private void configureLoaderDefaults(TextLoader textLoader, byte columnSeparator, int atomicity, boolean overwrite, int partitionBy, CharSequence timestampIndexCol) {
+    private void configureLoaderDefaults(TextLoader textLoader,
+                                         byte columnSeparator,
+                                         int atomicity,
+                                         boolean overwrite,
+                                         int partitionBy,
+                                         CharSequence timestampIndexCol) {
+        configureLoaderDefaults(
+                textLoader,
+                columnSeparator,
+                atomicity,
+                overwrite,
+                partitionBy,
+                timestampIndexCol,
+                PropServerConfiguration.MAX_UNCOMMITTED_ROWS_DEFAULT);
+    }
+
+    private void configureLoaderDefaults(TextLoader textLoader,
+                                         byte columnSeparator,
+                                         int atomicity,
+                                         boolean overwrite,
+                                         int partitionBy,
+                                         CharSequence timestampIndexCol,
+                                         int maxUncommittedRows) {
         textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
-        textLoader.configureDestination("test", overwrite, false, atomicity, partitionBy, timestampIndexCol);
+        textLoader.configureDestination(
+                "test",
+                overwrite,
+                false,
+                atomicity,
+                partitionBy,
+                timestampIndexCol,
+                maxUncommittedRows);
         if (columnSeparator > 0) {
             textLoader.configureColumnDelimiter(columnSeparator);
         }
