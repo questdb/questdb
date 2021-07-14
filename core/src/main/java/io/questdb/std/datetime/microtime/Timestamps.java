@@ -694,7 +694,8 @@ final public class Timestamps {
         long l = parseOffset(timezone, lo, hi);
         if (l == Long.MIN_VALUE) {
             TimeZoneRules zoneRules = locale.getZoneRules(
-                    Numbers.decodeLowInt(locale.matchZone(timezone, lo, hi)), RESOLUTION_MICROS
+                    Numbers.decodeLowInt(locale.matchZone(timezone, lo, hi)),
+                    RESOLUTION_MICROS
             );
             offset = zoneRules.getOffset(timestampWithTimezone);
             // getOffst really needs UTC date, not local
