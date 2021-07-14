@@ -24,6 +24,7 @@
 
 package io.questdb.std;
 
+import io.questdb.griffin.engine.functions.constants.CharConstant;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
@@ -305,7 +306,7 @@ public final class Chars {
     }
 
     public static boolean equalsNc(CharSequence l, char r) {
-        return l != null && equals(l, r);
+        return (l == null && r == CharConstant.ZERO.getChar(null)) || (l != null && equals(l, r));
     }
 
     public static boolean equalsNc(CharSequence l, CharSequence r) {

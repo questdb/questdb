@@ -110,10 +110,15 @@ public class ToUTCTimestampFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testVarNullTimezone() throws Exception {
-        assertToUTC(
-                "select to_utc(cast('2020-03-12T15:30:00.000000Z' as timestamp), zone) from (select null zone)",
-                "2020-03-12T15:30:00.000000Z\n"
-        );
+        assertMemoryLeak(() -> {
+            try {
+                compiler.compile("select to_utc(cast('2020-03-12T15:30:00.000000Z' as timestamp), zone) from (select null zone)", sqlExecutionContext);
+                Assert.fail();
+            } catch (SqlException e) {
+                Assert.assertEquals(64, e.getPosition());
+                TestUtils.assertContains(e.getFlyweightMessage(), "timezone must not be null");
+            }
+        });
     }
 
     private void assertToUTC(String sql, String expected) throws Exception {

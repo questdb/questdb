@@ -42,6 +42,8 @@ public interface CairoConfiguration {
 
     int getO3PurgeQueueCapacity();
 
+    int getSampleByIndexSearchPageSize();
+
     int getSqlCopyBufferSize();
 
     int getCopyPoolCapacity();

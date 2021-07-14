@@ -110,6 +110,8 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
                 return TimestampColumn.newInstance(index);
             case ColumnType.RECORD:
                 return new RecordColumn(index, metadata.getMetadata(index));
+            case ColumnType.NULL:
+                return NullConstant.NULL;
             default:
                 return Long256Column.newInstance(index);
         }
@@ -126,7 +128,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
                     return new StrConstant(name);
             }
         }
-        return StrConstant.NULL;
+        return NullConstant.NULL;
     }
 
     public Function createBindVariable0(int position, CharSequence name) throws SqlException {
@@ -391,7 +393,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
         final int len = tok.length();
 
         if (isNullKeyword(tok)) {
-            return StrConstant.NULL;
+            return NullConstant.NULL;
         }
 
         if (Chars.isQuoted(tok)) {
@@ -467,13 +469,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
             throw invalidFunction(node, args);
         }
 
-        final int argCount;
-        if (args == null) {
-            argCount = 0;
-        } else {
-            argCount = args.size();
-        }
-
+        final int argCount = args == null ? 0 : args.size();
         FunctionFactory candidate = null;
         FunctionFactoryDescriptor candidateDescriptor = null;
         boolean candidateSigVarArgConst = false;
@@ -499,9 +495,6 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
             final boolean sigVarArg;
             final boolean sigVarArgConst;
 
-            if (candidateDescriptor == null) {
-                candidateDescriptor = descriptor;
-            }
 
             if (sigArgCount > 0) {
                 final int lastSigArgMask = descriptor.getArgTypeMask(sigArgCount - 1);
@@ -522,6 +515,9 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
             }
 
             // otherwise, is number of arguments the same?
+            if (candidateDescriptor == null) {
+                candidateDescriptor = descriptor;
+            }
             if (sigArgCount == argCount || (sigVarArg && argCount >= sigArgCount)) {
                 int match = MATCH_NO_MATCH; // no match
                 if (sigArgCount == 0) {
@@ -531,7 +527,6 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
                 int sigArgTypeSum = 0;
                 for (int k = 0; k < sigArgCount; k++) {
                     final Function arg = args.getQuick(k);
-                    final boolean undefined = arg.isUndefined();
                     final int sigArgTypeMask = descriptor.getArgTypeMask(k);
 
                     if (FunctionFactoryDescriptor.isConstant(sigArgTypeMask) && !arg.isConstant()) {
@@ -547,7 +542,6 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
                     }
 
                     final int sigArgType = FunctionFactoryDescriptor.toType(sigArgTypeMask);
-
 
                     if (sigArgType == arg.getType()) {
                         switch (match) {
@@ -566,7 +560,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
 
                     final int argType = arg.getType();
 
-                    int overloadDistance = ColumnType.overloadDistance(argType, sigArgType);
+                    int overloadDistance = ColumnType.overloadDistance(argType, sigArgType); // NULL to any is 0
                     sigArgTypeSum += overloadDistance;
                     // Overload with cast to higher precision
                     boolean overloadPossible = overloadDistance != ColumnType.NO_OVERLOAD;
@@ -589,13 +583,17 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
                     overloadPossible |= argType == ColumnType.SYMBOL &&
                             sigArgType == ColumnType.TIMESTAMP && !factory.isGroupBy();
 
-                    overloadPossible |= undefined;
+                    overloadPossible |= arg.isUndefined();
 
                     // can we use overload mechanism?
                     if (overloadPossible) {
                         switch (match) {
                             case MATCH_NO_MATCH: // no match?
-                                match = MATCH_FUZZY_MATCH; // upgrade to fuzzy match
+                                if (argType == ColumnType.NULL) {
+                                    match = MATCH_PARTIAL_MATCH;
+                                } else {
+                                    match = MATCH_FUZZY_MATCH; // upgrade to fuzzy match
+                                }
                                 break;
                             case MATCH_EXACT_MATCH: // was it full match so far? ? oh, well, fuzzy now
                                 match = MATCH_PARTIAL_MATCH; // downgrade
@@ -654,18 +652,6 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
             }
         }
 
-        // substitute NaNs with appropriate types
-        for (int k = 0; k < candidateSigArgCount; k++) {
-            final Function arg = args.getQuick(k);
-            final int sigArgType = FunctionFactoryDescriptor.toType(candidateDescriptor.getArgTypeMask(k));
-            if (arg.getType() == ColumnType.DOUBLE && arg.isConstant() && Double.isNaN(arg.getDouble(null))) {
-                if (sigArgType == ColumnType.LONG) {
-                    args.setQuick(k, LongConstant.NULL);
-                } else if (sigArgType == ColumnType.INT) {
-                    args.setQuick(k, IntConstant.NULL);
-                }
-            }
-        }
 
         // it is possible that we have more undefined variables than
         // args in the descriptor, in case of vararg for example
@@ -679,11 +665,18 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
             }
         }
 
-        // convert arguments if necessary
         for (int k = 0; k < candidateSigArgCount; k++) {
             final Function arg = args.getQuick(k);
             final int sigArgType = FunctionFactoryDescriptor.toType(candidateDescriptor.getArgTypeMask(k));
-            if ((arg.getType() == ColumnType.STRING  || arg.getType() == ColumnType.SYMBOL) && sigArgType == ColumnType.TIMESTAMP) {
+            if (arg.getType() == ColumnType.DOUBLE && arg.isConstant() && Double.isNaN(arg.getDouble(null))) {
+                // substitute NaNs with appropriate types
+                if (sigArgType == ColumnType.LONG) {
+                    args.setQuick(k, LongConstant.NULL);
+                } else if (sigArgType == ColumnType.INT) {
+                    args.setQuick(k, IntConstant.NULL);
+                }
+            } else if ((arg.getType() == ColumnType.STRING || arg.getType() == ColumnType.SYMBOL) && sigArgType == ColumnType.TIMESTAMP) {
+                // convert arguments if necessary
                 int position = argPositions.getQuick(k);
                 if (arg.isConstant()) {
                     long timestamp = convertToTimestamp(arg.getStr(null), position);

@@ -55,7 +55,10 @@ public final class ColumnType {
     public static final int CURSOR = 15;
     public static final int VAR_ARG = 16;
     public static final int RECORD = 17;
-    public static final int MAX = RECORD;
+
+    public static final int NULL = 18;
+
+    public static final int MAX = NULL;
     public static final int NO_OVERLOAD = 10000;
     private static final IntObjHashMap<String> typeNameMap = new IntObjHashMap<>();
     private static final LowerCaseAsciiCharSequenceIntHashMap nameTypeMap = new LowerCaseAsciiCharSequenceIntHashMap();
@@ -83,14 +86,15 @@ public final class ColumnType {
     private static final int[] overloadPriorityMatrix;
 
     static {
+        assert OVERLOAD_MATRIX_SIZE > MAX;
         overloadPriorityMatrix = new int[OVERLOAD_MATRIX_SIZE * OVERLOAD_MATRIX_SIZE];
-        for (int i = -1; i < MAX; i++) {
+        for (int i = 0; i <= MAX; i++) {
             for (int j = 0; j < MAX; j++) {
-                if (i + 1 < overloadPriority.length) {
-                    int index = indexOf(overloadPriority[i + 1], j);
-                    overloadPriorityMatrix[OVERLOAD_MATRIX_SIZE * (i + 1) + j] = index >= 0 ? index + 1 : NO_OVERLOAD;
+                if (i < overloadPriority.length) {
+                    int index = indexOf(overloadPriority[i], j);
+                    overloadPriorityMatrix[OVERLOAD_MATRIX_SIZE * i + j] = index >= 0 ? index + 1 : NO_OVERLOAD;
                 } else {
-                    overloadPriorityMatrix[OVERLOAD_MATRIX_SIZE * (i + 1) + j] = NO_OVERLOAD;
+                    overloadPriorityMatrix[OVERLOAD_MATRIX_SIZE * i + j] = NO_OVERLOAD;
                 }
             }
         }
@@ -123,6 +127,9 @@ public final class ColumnType {
     }
 
     public static int sizeOf(int columnType) {
+        if (columnType == ColumnType.NULL) {
+            return 0;
+        }
         if (columnType < 0 || columnType > ColumnType.PARAMETER) {
             return -1;
         }

@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.eq;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
@@ -57,6 +58,10 @@ public class EqStrCharFunctionFactory implements FunctionFactory {
 
         Function strFunc = args.getQuick(0);
         Function charFunc = args.getQuick(1);
+
+        if (strFunc.getType() == ColumnType.NULL || charFunc.getType() == ColumnType.NULL) {
+            return new Func(strFunc, charFunc);
+        }
 
         if (strFunc.isConstant() && !charFunc.isConstant()) {
             CharSequence str = strFunc.getStr(null);

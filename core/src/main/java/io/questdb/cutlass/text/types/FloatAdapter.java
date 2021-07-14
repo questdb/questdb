@@ -26,6 +26,7 @@ package io.questdb.cutlass.text.types;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableWriter;
+import io.questdb.griffin.SqlKeywords;
 import io.questdb.std.Numbers;
 import io.questdb.std.str.DirectByteCharSequence;
 
@@ -48,6 +49,6 @@ public final class FloatAdapter extends AbstractTypeAdapter {
 
     @Override
     public void write(TableWriter.Row row, int column, DirectByteCharSequence value) throws Exception {
-        row.putFloat(column, Numbers.parseFloat(value));
+        row.putFloat(column, SqlKeywords.isNullKeyword(value) ? Float.NaN : Numbers.parseFloat(value));
     }
 }

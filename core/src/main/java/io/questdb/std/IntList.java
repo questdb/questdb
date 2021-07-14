@@ -54,6 +54,18 @@ public class IntList implements Mutable {
         System.arraycopy(that.buffer, 0, this.buffer, p, s);
     }
 
+    public int indexOf(int v, int low, int high) {
+        assert high <= pos;
+
+        for (int i = low; i < high; i++) {
+            int f = buffer[i];
+            if (f == v) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
     public void setPos(int capacity) {
         ensureCapacity(capacity);
         pos = capacity;

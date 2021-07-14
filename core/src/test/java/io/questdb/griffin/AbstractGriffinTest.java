@@ -329,7 +329,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             }
 
             if (!sizeCanBeVariable) {
-                Assert.assertTrue((sizeExpected && cursorSize != -1) || (!sizeExpected && cursorSize == -1));
+                Assert.assertTrue((sizeExpected && cursorSize != -1) || (!sizeExpected && cursorSize <= 0));
             }
             Assert.assertTrue(cursorSize == -1 || count == cursorSize);
 

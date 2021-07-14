@@ -80,11 +80,10 @@ class SymbolColumnIndexer implements ColumnIndexer, Closeable {
         // while we may have to read column starting with zero offset
         // index values have to be adjusted to partition-level row id
         writer.rollbackConditionally(loRow);
-        final long lim = hiRow + columnTop;
-        for (long lo = loRow; lo < lim; lo++) {
+        for (long lo = loRow; lo < hiRow; lo++) {
             writer.add(TableUtils.toIndexKey(mem.getInt((lo - columnTop) * Integer.BYTES)), lo);
         }
-        writer.setMaxValue(lim - 1);
+        writer.setMaxValue(hiRow - 1);
     }
 
     @Override

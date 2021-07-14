@@ -28,25 +28,45 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.DataFrameCursorFactory;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.engine.functions.geohash.GeoHashNative;
+import io.questdb.std.CharSequenceHashSet;
+import io.questdb.std.DirectLongList;
 import io.questdb.std.IntList;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public class LatestByAllIndexedFilteredRecordCursorFactory extends AbstractTreeSetRecordCursorFactory {
+    protected final DirectLongList prefixes;
+    protected final DirectLongList hashes;
+
     public LatestByAllIndexedFilteredRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
             @NotNull RecordMetadata metadata,
             @NotNull DataFrameCursorFactory dataFrameCursorFactory,
             int columnIndex,
+            int hashColumnIndex,
             @Nullable Function filter,
-            @NotNull IntList columnIndexes
+            @NotNull IntList columnIndexes,
+            @NotNull CharSequenceHashSet prefixes
     ) {
         super(metadata, dataFrameCursorFactory, configuration);
+
+        this.hashes = new DirectLongList(configuration.getSqlLatestByRowCount());
+        this.prefixes = new DirectLongList(64);
+        GeoHashNative.fromStringToBits(prefixes, this.prefixes);
+
         if (filter == null) {
-            this.cursor = new LatestByAllIndexedRecordCursor(columnIndex, rows, columnIndexes);
+            this.cursor = new LatestByAllIndexedRecordCursor(columnIndex, hashColumnIndex, rows, hashes, columnIndexes, this.prefixes);
         } else {
-            this.cursor = new LatestByAllIndexedFilteredRecordCursor(columnIndex, rows, filter, columnIndexes);
+            this.cursor = new LatestByAllIndexedFilteredRecordCursor(columnIndex, hashColumnIndex, rows, hashes, filter, columnIndexes, this.prefixes);
         }
+    }
+
+    @Override
+    public void close() {
+        super.close();
+        hashes.close();
+        prefixes.close();
     }
 
     @Override

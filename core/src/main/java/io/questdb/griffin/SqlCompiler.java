@@ -264,11 +264,15 @@ public class SqlCompiler implements Closeable {
             asm.aload(1);
             asm.iconst(i);
 
-
-            switch (from.getColumnType(i)) {
+            final int toColumnType = to.getColumnType(toColumnIndex);
+            int fromColumnType = from.getColumnType(i);
+            if (fromColumnType == ColumnType.NULL) {
+                fromColumnType = toColumnType;
+            }
+            switch (fromColumnType) {
                 case ColumnType.INT:
                     asm.invokeInterface(rGetInt, 1);
-                    switch (to.getColumnType(toColumnIndex)) {
+                    switch (toColumnType) {
                         case ColumnType.LONG:
                             asm.i2l();
                             asm.invokeVirtual(wPutLong);
@@ -304,7 +308,7 @@ public class SqlCompiler implements Closeable {
                     break;
                 case ColumnType.LONG:
                     asm.invokeInterface(rGetLong, 1);
-                    switch (to.getColumnType(toColumnIndex)) {
+                    switch (toColumnType) {
                         case ColumnType.INT:
                             asm.l2i();
                             asm.invokeVirtual(wPutInt);
@@ -340,7 +344,7 @@ public class SqlCompiler implements Closeable {
                     break;
                 case ColumnType.DATE:
                     asm.invokeInterface(rGetDate, 1);
-                    switch (to.getColumnType(toColumnIndex)) {
+                    switch (toColumnType) {
                         case ColumnType.INT:
                             asm.l2i();
                             asm.invokeVirtual(wPutInt);
@@ -376,7 +380,7 @@ public class SqlCompiler implements Closeable {
                     break;
                 case ColumnType.TIMESTAMP:
                     asm.invokeInterface(rGetTimestamp, 1);
-                    switch (to.getColumnType(toColumnIndex)) {
+                    switch (toColumnType) {
                         case ColumnType.INT:
                             asm.l2i();
                             asm.invokeVirtual(wPutInt);
@@ -412,7 +416,7 @@ public class SqlCompiler implements Closeable {
                     break;
                 case ColumnType.BYTE:
                     asm.invokeInterface(rGetByte, 1);
-                    switch (to.getColumnType(toColumnIndex)) {
+                    switch (toColumnType) {
                         case ColumnType.INT:
                             asm.invokeVirtual(wPutInt);
                             break;
@@ -447,7 +451,7 @@ public class SqlCompiler implements Closeable {
                     break;
                 case ColumnType.SHORT:
                     asm.invokeInterface(rGetShort, 1);
-                    switch (to.getColumnType(toColumnIndex)) {
+                    switch (toColumnType) {
                         case ColumnType.INT:
                             asm.invokeVirtual(wPutInt);
                             break;
@@ -486,7 +490,7 @@ public class SqlCompiler implements Closeable {
                     break;
                 case ColumnType.FLOAT:
                     asm.invokeInterface(rGetFloat, 1);
-                    switch (to.getColumnType(toColumnIndex)) {
+                    switch (toColumnType) {
                         case ColumnType.INT:
                             asm.f2i();
                             asm.invokeVirtual(wPutInt);
@@ -524,7 +528,7 @@ public class SqlCompiler implements Closeable {
                     break;
                 case ColumnType.DOUBLE:
                     asm.invokeInterface(rGetDouble, 1);
-                    switch (to.getColumnType(toColumnIndex)) {
+                    switch (toColumnType) {
                         case ColumnType.INT:
                             asm.d2i();
                             asm.invokeVirtual(wPutInt);
@@ -562,7 +566,7 @@ public class SqlCompiler implements Closeable {
                     break;
                 case ColumnType.CHAR:
                     asm.invokeInterface(rGetChar, 1);
-                    switch (to.getColumnType(toColumnIndex)) {
+                    switch (toColumnType) {
                         case ColumnType.STRING:
                             asm.invokeVirtual(wPutStrChar);
                             break;
@@ -576,7 +580,7 @@ public class SqlCompiler implements Closeable {
                     break;
                 case ColumnType.SYMBOL:
                     asm.invokeInterface(rGetSym, 1);
-                    if (to.getColumnType(toColumnIndex) == ColumnType.STRING) {
+                    if (toColumnType == ColumnType.STRING) {
                         asm.invokeVirtual(wPutStr);
                     } else {
                         asm.invokeVirtual(wPutSym);
@@ -584,7 +588,7 @@ public class SqlCompiler implements Closeable {
                     break;
                 case ColumnType.STRING:
                     asm.invokeInterface(rGetStr, 1);
-                    switch (to.getColumnType(toColumnIndex)) {
+                    switch (toColumnType) {
                         case ColumnType.SYMBOL:
                             asm.invokeVirtual(wPutSym);
                             break;
@@ -643,6 +647,7 @@ public class SqlCompiler implements Closeable {
 
     public static boolean isAssignableFrom(int to, int from) {
         return to == from
+                || from == ColumnType.NULL
                 || (from >= ColumnType.BYTE
                 && to >= ColumnType.BYTE
                 && to <= ColumnType.DOUBLE
@@ -1774,7 +1779,7 @@ public class SqlCompiler implements Closeable {
             }
 
             // validate timestamp
-            if (writerTimestampIndex > -1 && timestampFunction == null) {
+            if (writerTimestampIndex > -1 && (timestampFunction == null || timestampFunction.getType() == ColumnType.NULL)) {
                 throw SqlException.$(0, "insert statement must populate timestamp");
             }
 
@@ -1807,7 +1812,7 @@ public class SqlCompiler implements Closeable {
                     throw SqlException.$(name.position, "select clause must provide timestamp column");
                 } else {
                     int columnType = cursorMetadata.getColumnType(writerTimestampIndex);
-                    if (columnType != ColumnType.TIMESTAMP && columnType != ColumnType.STRING) {
+                    if (columnType != ColumnType.TIMESTAMP && columnType != ColumnType.STRING && columnType != ColumnType.NULL) {
                         throw SqlException.$(name.position, "expected timestamp column but type is ").put(ColumnType.nameOf(columnType));
                     }
                 }

@@ -40,6 +40,8 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
 
     public static CairoException instance(int errno) {
         CairoException ex = tlException.get();
+        // This is to have correct stack trace in local debuggin with -ea option
+        assert (ex = new CairoException()) != null;
         ex.message.clear();
         ex.errno = errno;
         ex.cacheable = false;

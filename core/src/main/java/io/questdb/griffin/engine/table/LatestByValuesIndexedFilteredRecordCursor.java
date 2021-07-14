@@ -78,7 +78,7 @@ class LatestByValuesIndexedFilteredRecordCursor extends AbstractRecordListCursor
                 int index = found.keyIndex(symbolKey);
                 if (index > -1) {
                     RowCursor cursor = indexReader.getCursor(false, symbolKey, rowLo, rowHi);
-                    while (cursor.hasNext()) {
+                    if (cursor.hasNext()) {
                         final long row = cursor.next();
                         recordA.setRecordIndex(row);
                         if (filter.getBool(recordA)) {
