@@ -50,18 +50,13 @@ public class SampleByFillNoneNotKeyedRecordCursorFactory extends AbstractSampleB
     ) {
         super(base, groupByMetadata, recordFunctions, timezoneNameFunc, timezoneNameFuncPos, offsetFunc, offsetFuncPos);
         final SimpleMapValue simpleMapValue = new SimpleMapValue(valueCount);
-        try {
-            this.cursor = new SampleByFillNoneNotKeyedRecordCursor(
-                    simpleMapValue,
-                    groupByFunctions,
-                    recordFunctions,
-                    timestampIndex,
-                    timestampSampler
-            );
-        } catch (Throwable e) {
-            Misc.freeObjList(recordFunctions);
-            throw e;
-        }
+        this.cursor = new SampleByFillNoneNotKeyedRecordCursor(
+                simpleMapValue,
+                groupByFunctions,
+                recordFunctions,
+                timestampIndex,
+                timestampSampler
+        );
     }
 
     @Override

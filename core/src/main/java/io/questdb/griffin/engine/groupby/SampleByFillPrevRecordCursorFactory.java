@@ -72,20 +72,14 @@ public class SampleByFillPrevRecordCursorFactory extends AbstractSampleByFillRec
                 offsetFunc,
                 offsetFuncPos
         );
-        try {
-            this.cursor = new SampleByFillPrevRecordCursor(
-                    map,
-                    mapSink,
-                    groupByFunctions,
-                    recordFunctions,
-                    timestampIndex,
-                    timestampSampler
-            );
-        } catch (Throwable e) {
-            Misc.freeObjList(recordFunctions);
-            Misc.free(map);
-            throw e;
-        }
+        this.cursor = new SampleByFillPrevRecordCursor(
+                map,
+                mapSink,
+                groupByFunctions,
+                recordFunctions,
+                timestampIndex,
+                timestampSampler
+        );
     }
 
     @Override
