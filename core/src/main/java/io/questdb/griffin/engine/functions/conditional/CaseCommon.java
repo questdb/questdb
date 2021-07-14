@@ -31,6 +31,7 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.cast.*;
+import io.questdb.griffin.engine.functions.constants.Constants;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
@@ -281,8 +282,11 @@ public class CaseCommon {
     }
 
     static int getCommonType(int commonType, int valueType, int valuePos) throws SqlException {
-        if (commonType == -1) {
+        if (commonType == -1 || commonType == ColumnType.NULL) {
             return valueType;
+        }
+        if (valueType == ColumnType.NULL) {
+            return commonType;
         }
         final int type = typeEscalationMap.get(Numbers.encodeLowHighInts(commonType, valueType));
 
@@ -299,6 +303,9 @@ public class CaseCommon {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
+        if (arg.getType() == ColumnType.NULL) {
+            return Constants.getNullConstant(toType);
+        }
         final int keyIndex = castFactories.keyIndex(Numbers.encodeLowHighInts(arg.getType(), toType));
         if (keyIndex < 0) {
             FunctionFactory fact = castFactories.valueAt(keyIndex);

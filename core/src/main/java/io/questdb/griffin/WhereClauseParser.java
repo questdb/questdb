@@ -116,6 +116,10 @@ final class WhereClauseParser implements Mutable {
         if (a.type == ExpressionNode.LITERAL && (b.type == ExpressionNode.CONSTANT || isFunc(b))) {
             if (isTimestamp(a)) {
                 if (b.type == ExpressionNode.CONSTANT) {
+                    if (isNullKeyword(b.token)) {
+                        node.intrinsicValue = IntrinsicModel.FALSE;
+                        return false;
+                    }
                     model.intersectTimestamp(b.token, 1, b.token.length() - 1, b.position);
                     node.intrinsicValue = IntrinsicModel.TRUE;
                     return true;
@@ -247,6 +251,10 @@ final class WhereClauseParser implements Mutable {
                                             ExpressionNode compareWithNode) throws SqlException {
         long lo;
         if (compareWithNode.type == ExpressionNode.CONSTANT) {
+            if (isNullKeyword(compareWithNode.token)) {
+                node.intrinsicValue = IntrinsicModel.FALSE;
+                return false;
+            }
             try {
                 lo = parseFullOrPartialDate(equalsTo, compareWithNode, true);
             } catch (NumericException e) {
@@ -429,7 +437,7 @@ final class WhereClauseParser implements Mutable {
 
     private static long parseTokenAsTimestamp(ExpressionNode lo) throws SqlException {
         try {
-            if (!SqlKeywords.isNullKeyword(lo.token)) {
+            if (!isNullKeyword(lo.token)) {
                 return IntervalUtils.parseFloorPartialDate(lo.token, 1, lo.token.length() - 1);
             }
             return Numbers.LONG_NaN;
@@ -455,10 +463,18 @@ final class WhereClauseParser implements Mutable {
             // Single value ts in '2010-01-01' - treat string literal as an interval, not single Timestamp point
             ExpressionNode inArg = in.rhs;
             if (inArg.type == ExpressionNode.CONSTANT) {
-                if (!isNegated) {
-                    model.intersectIntervals(inArg.token, 1, inArg.token.length() - 1, inArg.position);
+                if (isNullKeyword(inArg.token)) {
+                    if (!isNegated) {
+                        model.intersectIntervals(Numbers.LONG_NaN, Numbers.LONG_NaN);
+                    } else {
+                        model.subtractIntervals(Numbers.LONG_NaN, Numbers.LONG_NaN);
+                    }
                 } else {
-                    model.subtractIntervals(inArg.token, 1, inArg.token.length() - 1, inArg.position);
+                    if (!isNegated) {
+                        model.intersectIntervals(inArg.token, 1, inArg.token.length() - 1, inArg.position);
+                    } else {
+                        model.subtractIntervals(inArg.token, 1, inArg.token.length() - 1, inArg.position);
+                    }
                 }
                 in.intrinsicValue = IntrinsicModel.TRUE;
                 return true;
@@ -595,6 +611,10 @@ final class WhereClauseParser implements Mutable {
                                          SqlExecutionContext executionContext,
                                          ExpressionNode compareWithNode) throws SqlException {
         if (compareWithNode.type == ExpressionNode.CONSTANT) {
+            if (isNullKeyword(compareWithNode.token)) {
+                node.intrinsicValue = IntrinsicModel.FALSE;
+                return false;
+            }
             try {
                 long hi = parseFullOrPartialDate(equalsTo, compareWithNode, false);
                 model.intersectIntervals(Long.MIN_VALUE, hi);
@@ -720,6 +740,10 @@ final class WhereClauseParser implements Mutable {
 
         if (a.type == ExpressionNode.LITERAL && b.type == ExpressionNode.CONSTANT) {
             if (isTimestamp(a)) {
+                if (isNullKeyword(b.token)) {
+                    node.intrinsicValue = IntrinsicModel.FALSE;
+                    return false;
+                }
                 model.subtractIntervals(b.token, 1, b.token.length() - 1, b.position);
                 node.intrinsicValue = IntrinsicModel.TRUE;
                 return true;

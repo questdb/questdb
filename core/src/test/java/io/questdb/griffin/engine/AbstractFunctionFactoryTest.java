@@ -417,6 +417,7 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
         public void andAssert(boolean expected) {
             Assert.assertEquals(expected, function1.getBool(record));
             Assert.assertEquals(expected, function2.getBool(record));
+            closeFunctions();
         }
 
         public void andAssert(CharSequence expected) {
@@ -513,7 +514,6 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
 
     private static class TestRecord implements Record {
         private final Object[] args;
-        private final TestBinarySequence byteSequence = new TestBinarySequence();
 
         public TestRecord(Object[] args) {
             this.args = args;
@@ -525,6 +525,7 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
             if (o == null) {
                 return null;
             }
+            TestBinarySequence byteSequence = new TestBinarySequence();
             return byteSequence.of((byte[]) o);
         }
 
