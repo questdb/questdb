@@ -86,6 +86,7 @@ public class ServerMain {
                 buildInformation.getQuestDbVersion(),
                 Dates.getYear(System.currentTimeMillis())
         );
+        
         if (args.length < 1) {
             System.err.println("Root directory name expected");
             return;
