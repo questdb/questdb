@@ -93,6 +93,7 @@ public abstract class AbstractSampleByFillValueRecordCursor extends AbstractSpli
         while (true) {
             long timestamp = getBaseRecordTimestamp();
             if (timestamp < next) {
+                adjustDSTInFlight(timestamp - tzOffset);
                 final MapKey key = map.withKey();
                 keyMapSink.copy(baseRecord, key);
                 final MapValue value = key.findValue();

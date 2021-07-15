@@ -1390,6 +1390,10 @@ public class SqlCodeGenerator implements Mutable {
                                 groupByMetadata,
                                 model.getColumns(),
                                 metadata,
+                                timezoneNameFunc,
+                                timezoneNameFuncPos,
+                                offsetFunc,
+                                offsetFuncPos,
                                 timestampIndex,
                                 symbolFilter,
                                 configuration.getSampleByIndexSearchPageSize()

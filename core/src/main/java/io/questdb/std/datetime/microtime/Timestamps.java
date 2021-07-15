@@ -29,6 +29,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.datetime.DateLocale;
+import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.str.CharSink;
 
 import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_MICROS;
@@ -689,12 +690,17 @@ final public class Timestamps {
             int lo,
             int hi
     ) throws NumericException {
-        final long offset;
+        long offset;
         long l = parseOffset(timezone, lo, hi);
         if (l == Long.MIN_VALUE) {
-            return timestampWithTimezone - locale.getZoneRules(
-                    Numbers.decodeLowInt(locale.matchZone(timezone, lo, hi)), RESOLUTION_MICROS
-            ).getOffset(timestampWithTimezone);
+            TimeZoneRules zoneRules = locale.getZoneRules(
+                    Numbers.decodeLowInt(locale.matchZone(timezone, lo, hi)),
+                    RESOLUTION_MICROS
+            );
+            offset = zoneRules.getOffset(timestampWithTimezone);
+            // getOffst really needs UTC date, not local
+            offset = zoneRules.getOffset(timestampWithTimezone - offset);
+            return timestampWithTimezone - offset;
 
         }
         offset = Numbers.decodeLowInt(l) * MINUTE_MICROS;

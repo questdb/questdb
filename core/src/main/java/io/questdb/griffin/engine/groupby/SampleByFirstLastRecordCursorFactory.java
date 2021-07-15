@@ -41,7 +41,6 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
     private static final int LAST_OUT_INDEX = 1;
     private static final int TIMESTAMP_OUT_INDEX = 2;
     private final RecordCursorFactory base;
-    private final TimestampSampler timestampSampler;
     private final GenericRecordMetadata groupByMetadata;
     private final int[] firstLastIndexByCol;
     private final int[] queryToFrameColumnMapping;
@@ -55,6 +54,7 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
     private DirectLongList samplePeriodAddress;
     private DirectLongList crossFrameRow;
     private int groupByTimestampIndex = -1;
+    private final TzSampler internalTimestampSampler;
 
     public SampleByFirstLastRecordCursorFactory(
             RecordCursorFactory base,
@@ -62,9 +62,14 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
             GenericRecordMetadata groupByMetadata,
             ObjList<QueryColumn> columns,
             RecordMetadata metadata,
+            Function timezoneNameFunc,
+            int timezoneNameFuncPos,
+            Function offsetFunc,
+            int offsetFuncPos,
             int timestampIndex,
             SingleSymbolFilter symbolFilter,
-            int configPageSize) throws SqlException {
+            int configPageSize
+    ) throws SqlException {
         this.base = base;
         this.groupBySymbolColIndex = symbolFilter.getColumnIndex();
         this.queryToFrameColumnMapping = new int[columns.size()];
@@ -77,12 +82,12 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
         int blockSize = metadata.getIndexValueBlockCapacity(groupBySymbolColIndex);
         this.pageSize = configPageSize < 16 ? Math.max(blockSize, 16) : configPageSize;
         this.maxSamplePeriodSize = this.pageSize * 4;
-        this.timestampSampler = timestampSampler;
         int outSize = pageSize << ITEMS_PER_OUT_ARRAY_SHIFT;
         this.rowIdOutAddress = new DirectLongList(outSize);
         this.rowIdOutAddress.setPos(outSize);
         this.samplePeriodAddress = new DirectLongList(pageSize);
         this.symbolFilter = symbolFilter;
+        this.internalTimestampSampler = new TzSampler(timestampSampler, timezoneNameFunc, offsetFunc, timezoneNameFuncPos, offsetFuncPos);
         this.sampleByFirstLastRecordCursor = new SampleByFirstLastRecordCursor();
     }
 
@@ -102,7 +107,9 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
             Misc.free(pageFrameCursor);
             return EmptyTableRecordCursor.INSTANCE;
         }
-        return sampleByFirstLastRecordCursor.of(pageFrameCursor, groupByIndexKey);
+        SampleByFirstLastRecordCursor cursor = sampleByFirstLastRecordCursor.of(pageFrameCursor, groupByIndexKey);
+        internalTimestampSampler.init(cursor, executionContext);
+        return cursor;
     }
 
     @Override
@@ -276,10 +283,12 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
         private int fillSamplePeriodsUntil(long lastInDataTimestamp) {
             long nextTs = samplePeriodStart;
             long currentTs = Long.MIN_VALUE;
+            nextTs = internalTimestampSampler.startFrom(nextTs);
+
             samplePeriodAddress.clear();
             for (int i = 0; i < maxSamplePeriodSize && currentTs <= lastInDataTimestamp; i++) {
                 currentTs = nextTs;
-                nextTs = timestampSampler.nextTimestamp(currentTs);
+                nextTs = internalTimestampSampler.getNextTimestamp();
                 samplePeriodAddress.add(currentTs);
             }
             return (int) samplePeriodAddress.size();
@@ -334,7 +343,6 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
                             // No rows in index for this dataframe left, go to next data frame
                             frameNextRowId = dataFrameHi;
                             // Jump back to fetch next data frame
-
                             return STATE_FETCH_NEXT_DATA_FRAME;
                         }
                         // Special case - searching with `where symbol = null` on the partition where this column has not been added
@@ -346,6 +354,7 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
                         long rowId = indexFrameAddress > 0 ? Unsafe.getUnsafe().getLong(indexFrameAddress) : dataFrameLo;
                         long offsetTimestampColumnAddress = currentFrame.getPageAddress(timestampIndex) - dataFrameLo * Long.BYTES;
                         samplePeriodStart = Unsafe.getUnsafe().getLong(offsetTimestampColumnAddress + rowId * Long.BYTES);
+                        internalTimestampSampler.startFrom(samplePeriodStart);
                     }
                     // Fall to STATE_SEARCH;
 
