@@ -213,7 +213,7 @@ stages:
           - bash: |
               count=$(az pipelines runs list --pipeline-ids 1 --status inProgress --detect true --project questdb | jq length)
               echo "Running builds: ${count}"
-              if [ "$count" -eq "0" ]; then
+              if [ "$count" -qt "1" ]; then
                 echo "Stopping the build agent!"
                 aws autoscaling set-desired-capacity --auto-scaling-group-name ondemand-pipeline-dev --desired-capacity 0
               else
