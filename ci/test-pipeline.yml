@@ -194,8 +194,21 @@ stages:
         displayName: 'Stop ARM Agent'
         pool:
           vmImage: "ubuntu-latest"
+        
         steps:
           - checkout: none
+          - bash: echo ${AZURE_DEVOPS_CLI_PAT} | az devops login
+            env:
+              AZURE_DEVOPS_CLI_PAT: $(System.AccessToken)
+            displayName: 'Login Azure DevOps Extension'
+
+          - bash: az devops configure --defaults organization=$(System.TeamFoundationCollectionUri) project=$(System.TeamProject) --use-git-aliases true
+            displayName: 'Set default Azure DevOps organization and project'
+
+          - bash: |
+              az pipelines build list
+              az pipelines runs list --status inProgress --detect true --project questdb
+            displayName: 'Show build list and PRs'
           - bash: |
               sudo apt-get update
               sudo apt-get install awscli
