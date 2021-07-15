@@ -58,7 +58,7 @@ public abstract class AbstractNoRecordSampleByCursor implements NoRandomAccessRe
     protected SqlExecutionInterruptor interruptor;
     protected long tzOffset;
     protected long prevDst;
-    protected long nextDst;
+    protected long nextDstUTC;
     protected long fixedOffset;
     protected long topTzOffset;
     protected long localEpoch;
@@ -98,7 +98,7 @@ public abstract class AbstractNoRecordSampleByCursor implements NoRandomAccessRe
         // timezone offset is liable to change when we pass over DST edges
         this.tzOffset = topTzOffset;
         this.prevDst = Long.MIN_VALUE;
-        this.nextDst = topNextDst;
+        this.nextDstUTC = topNextDst;
     }
 
     @Override
@@ -136,12 +136,12 @@ public abstract class AbstractNoRecordSampleByCursor implements NoRandomAccessRe
                     );
                     // fixed rules means the timezone does not have historical or daylight time changes
                     tzOffset = rules.getOffset(timestamp);
-                    nextDst = rules.getNextDST(timestamp);
+                    nextDstUTC = rules.getNextDST(timestamp);
                     this.rules = rules;
                 } else {
                     // here timezone is in numeric offset format
                     tzOffset = Numbers.decodeLowInt(opt) * MINUTE_MICROS;
-                    nextDst = Long.MAX_VALUE;
+                    nextDstUTC = Long.MAX_VALUE;
                 }
             } catch (NumericException e) {
                 Misc.free(base);
@@ -149,7 +149,7 @@ public abstract class AbstractNoRecordSampleByCursor implements NoRandomAccessRe
             }
         } else {
             this.tzOffset = 0;
-            this.nextDst = Long.MAX_VALUE;
+            this.nextDstUTC = Long.MAX_VALUE;
         }
 
         final CharSequence offset = offsetFunc.getStr(null);
@@ -161,7 +161,6 @@ public abstract class AbstractNoRecordSampleByCursor implements NoRandomAccessRe
                 Misc.free(base);
                 throw SqlException.$(offsetFuncPos, "invalid offset: ").put(offset);
             }
-
             this.fixedOffset = Numbers.decodeLowInt(val) * MINUTE_MICROS;
         } else {
             fixedOffset = Long.MIN_VALUE;
@@ -174,54 +173,56 @@ public abstract class AbstractNoRecordSampleByCursor implements NoRandomAccessRe
             timestampSampler.setStart(this.fixedOffset != Long.MIN_VALUE ? this.fixedOffset : 0L);
         }
         this.topTzOffset = tzOffset;
-        this.topNextDst = nextDst;
+        this.topNextDst = nextDstUTC;
         this.topLocalEpoch = this.localEpoch = timestampSampler.round(timestamp + tzOffset);
         this.sampleLocalEpoch = this.nextSampleLocalEpoch = localEpoch;
         interruptor = executionContext.getSqlExecutionInterruptor();
     }
 
     protected long adjustDST(long timestamp, int n, @Nullable MapValue mapValue, long nextSampleTimestamp) {
-        final long t = timestamp - tzOffset;
-        if (t >= nextDst) {
-            final long daylightSavings = rules.getOffset(t);
-            prevDst = nextDst;
-            nextDst = rules.getNextDST(t);
-
-            // check if DST takes this timestamp back "before" the nextSampleTimestamp
-            if (timestamp - (tzOffset - daylightSavings) < nextSampleTimestamp) {
-                // time moved backwards, we need to check if we should be collapsing this
-                // hour into previous period or not
-                updateValueWhenClockMovesBack(mapValue, n);
-                nextSampleLocalEpoch = timestampSampler.round(timestamp);
-                localEpoch = nextSampleLocalEpoch;
-                sampleLocalEpoch += (daylightSavings - tzOffset);
-                tzOffset = daylightSavings;
-                return Long.MIN_VALUE;
-            }
-            // time moved forward, we need to make sure we move our sample boundary
-            timestamp = t + daylightSavings;
-            sampleLocalEpoch += (daylightSavings - tzOffset);
-            nextSampleLocalEpoch = sampleLocalEpoch;
-            tzOffset = daylightSavings;
+        final long utcTimestamp = timestamp - tzOffset;
+        if (utcTimestamp < nextDstUTC) {
+            return timestamp;
         }
-        return timestamp;
+        final long newTzOffset = rules.getOffset(utcTimestamp);
+        prevDst = nextDstUTC;
+        nextDstUTC = rules.getNextDST(utcTimestamp);
+        // check if DST takes this timestamp back "before" the nextSampleTimestamp
+        if (timestamp - (tzOffset - newTzOffset) < nextSampleTimestamp) {
+            // time moved backwards, we need to check if we should be collapsing this
+            // hour into previous period or not
+            updateValueWhenClockMovesBack(mapValue, n);
+            nextSampleLocalEpoch = timestampSampler.round(timestamp);
+            localEpoch = nextSampleLocalEpoch;
+            sampleLocalEpoch += (newTzOffset - tzOffset);
+            tzOffset = newTzOffset;
+            return Long.MIN_VALUE;
+        }
+        kludge(newTzOffset);
+
+        // time moved forward, we need to make sure we move our sample boundary
+        return utcTimestamp + newTzOffset;
     }
 
     protected void adjustDSTInFlight(long t) {
-        if (t < nextDst) {
+        if (t < nextDstUTC) {
             return;
         }
         final long daylightSavings = rules.getOffset(t);
-        prevDst = nextDst;
-        nextDst = rules.getNextDST(t);
-        // time moved forward, we need to make sure we move our sample boundary
-        sampleLocalEpoch += (daylightSavings - tzOffset);
-        nextSampleLocalEpoch = sampleLocalEpoch;
-        tzOffset = daylightSavings;
+        prevDst = nextDstUTC;
+        nextDstUTC = rules.getNextDST(t);
+        kludge(daylightSavings);
     }
 
     protected long getBaseRecordTimestamp() {
         return baseRecord.getTimestamp(timestampIndex) + tzOffset;
+    }
+
+    private void kludge(long newTzOffset) {
+        // time moved forward, we need to make sure we move our sample boundary
+        sampleLocalEpoch += (newTzOffset - tzOffset);
+        nextSampleLocalEpoch = sampleLocalEpoch;
+        tzOffset = newTzOffset;
     }
 
     protected void nextSamplePeriod(long timestamp) {
