@@ -180,13 +180,15 @@ public abstract class AbstractNoRecordSampleByCursor implements NoRandomAccessRe
         interruptor = executionContext.getSqlExecutionInterruptor();
     }
 
-    protected long adjustDST(long timestamp, int n, @Nullable MapValue mapValue) {
+    protected long adjustDST(long timestamp, int n, @Nullable MapValue mapValue, long nextSampleTimestamp) {
         final long t = timestamp - tzOffset;
         if (t >= nextDst) {
             final long daylightSavings = rules.getOffset(t);
             prevDst = nextDst;
             nextDst = rules.getNextDST(t);
-            if (daylightSavings < tzOffset) {
+
+            // check if DST takes this timestamp back "before" the nextSampleTimestamp
+            if (timestamp - (tzOffset - daylightSavings) < nextSampleTimestamp) {
                 // time moved backwards, we need to check if we should be collapsing this
                 // hour into previous period or not
                 updateValueWhenClockMovesBack(mapValue, n);
@@ -253,7 +255,7 @@ public abstract class AbstractNoRecordSampleByCursor implements NoRandomAccessRe
                 // unchanged. Timestamp columns uses this variable
                 // When map is exhausted we would assign 'next' to 'lastTimestamp'
                 // and build another map
-                timestamp = adjustDST(timestamp, n, mapValue);
+                timestamp = adjustDST(timestamp, n, mapValue, next);
                 if (timestamp != Long.MIN_VALUE) {
                     nextSamplePeriod(timestamp);
                     return true;

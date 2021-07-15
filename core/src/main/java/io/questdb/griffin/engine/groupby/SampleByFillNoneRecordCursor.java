@@ -84,7 +84,7 @@ class SampleByFillNoneRecordCursor extends AbstractVirtualRecordSampleByCursor {
                 // map value is conditional and only required when clock goes back
                 // we override base method for when this happens
                 // see: updateValueWhenClockMovesBack()
-                timestamp = adjustDST(timestamp, n, null);
+                timestamp = adjustDST(timestamp, n, null, next);
                 if (timestamp != Long.MIN_VALUE) {
                     nextSamplePeriod(timestamp);
                     return createMapCursor();

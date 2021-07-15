@@ -119,7 +119,7 @@ class SampleByFillPrevRecordCursor extends AbstractVirtualRecordSampleByCursor {
                 // unchanged. Timestamp columns uses this variable
                 // When map is exhausted we would assign 'next' to 'lastTimestamp'
                 // and build another map
-                timestamp = adjustDST(timestamp, n, null);
+                timestamp = adjustDST(timestamp, n, null, next);
                 if (timestamp != Long.MIN_VALUE) {
                     nextSamplePeriod(timestamp);
                 }
