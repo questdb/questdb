@@ -204,18 +204,24 @@ stages:
 
           - bash: az devops configure --defaults organization=$(System.TeamFoundationCollectionUri) project=$(System.TeamProject) --use-git-aliases true
             displayName: 'Set default Azure DevOps organization and project'
-
-          - bash: |
-              az pipelines build list
-              az pipelines runs list --status inProgress --detect true --project questdb
-            displayName: 'Show build list and PRs'
+          
           - bash: |
               sudo apt-get update
-              sudo apt-get install awscli
-              aws autoscaling set-desired-capacity --auto-scaling-group-name ondemand-pipeline-dev --desired-capacity 0
+              sudo apt-get install -y awscli jq
+            displayName: 'Install dependecies'
+          
+          - bash: |
+              count=$(az pipelines runs list --pipeline-ids 1 --status inProgress --detect true --project questdb | jq length)
+              echo "Running builds: ${count}"
+              if [ "$count" -eq "0" ]; then
+                echo "Stopping the build agent!"
+                aws autoscaling set-desired-capacity --auto-scaling-group-name ondemand-pipeline-dev --desired-capacity 0
+              else
+                echo "Skipping another build is running in background.."
+              fi
             env:
               AWS_ACCESS_KEY_ID: $(AWS_ACCESS_KEY_ID)
               AWS_SECRET_ACCESS_KEY: $(AWS_SECRET_ACCESS_KEY)
               AWS_DEFAULT_REGION: eu-west-1
-            name: stop_agent
-            displayName: 'Stop ARM build agent'
+            name: check_if_stop_agent
+            displayName: 'Check/stop build agent'
