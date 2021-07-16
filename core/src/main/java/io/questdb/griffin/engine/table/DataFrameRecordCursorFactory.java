@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.table;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.ReadOnlyVirtualMemory;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
@@ -78,7 +79,7 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
     }
 
     @Override
-    public PageFrameCursor getPageFrameCursor(SqlExecutionContext executionContext) {
+    public PageFrameCursor getPageFrameCursor(SqlExecutionContext executionContext) throws SqlException {
         DataFrameCursor dataFrameCursor = dataFrameCursorFactory.getCursor(executionContext);
         if (pageFrameCursor != null) {
             return pageFrameCursor.of(dataFrameCursor);
@@ -111,7 +112,7 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
     protected RecordCursor getCursorInstance(
             DataFrameCursor dataFrameCursor,
             SqlExecutionContext executionContext
-    ) {
+    ) throws SqlException {
         cursor.of(dataFrameCursor, executionContext);
         if (filter != null) {
             filter.init(cursor, executionContext);

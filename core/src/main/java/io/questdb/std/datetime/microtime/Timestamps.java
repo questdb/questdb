@@ -29,6 +29,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.datetime.DateLocale;
+import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.str.CharSink;
 
 import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_MICROS;
@@ -475,6 +476,10 @@ final public class Timestamps {
         }
     }
 
+    public static long parseOffset(CharSequence in) {
+        return parseOffset(in, 0, in.length());
+    }
+
     public static long parseOffset(CharSequence in, int lo, int hi) {
         int p = lo;
         int state = STATE_INIT;
@@ -619,6 +624,33 @@ final public class Timestamps {
         return yearMicros(y, leap) + monthOfYearMicros(m, leap) + (d - 1) * DAY_MICROS + h * HOUR_MICROS + mi * MINUTE_MICROS;
     }
 
+    public static long toMicros(
+            int y,
+            boolean leap,
+            int day,
+            int month,
+            int hour,
+            int min,
+            int sec,
+            int millis,
+            int micros
+    ) {
+        int maxDay = Math.min(day, getDaysPerMonth(month, leap)) - 1;
+        return yearMicros(y, leap)
+                + monthOfYearMicros(month, leap)
+                + maxDay * DAY_MICROS
+                + hour * HOUR_MICROS
+                + min * MINUTE_MICROS
+                + sec * SECOND_MICROS
+                + millis * MILLI_MICROS
+                + micros;
+    }
+
+    public static long toMicros(int y, int m, int d) {
+        boolean l = isLeapYear(y);
+        return yearMicros(y, l) + monthOfYearMicros(m, l) + (d - 1) * DAY_MICROS;
+    }
+
     public static String toString(long micros) {
         CharSink sink = Misc.getThreadLocalBuilder();
         TimestampFormatUtils.appendDateTime(sink, micros);
@@ -642,7 +674,6 @@ final public class Timestamps {
             return utc + locale.getZoneRules(
                     Numbers.decodeLowInt(locale.matchZone(timezone, lo, hi)), RESOLUTION_MICROS
             ).getOffset(utc);
-
         }
         offset = Numbers.decodeLowInt(l) * MINUTE_MICROS;
         return utc + offset;
@@ -659,12 +690,17 @@ final public class Timestamps {
             int lo,
             int hi
     ) throws NumericException {
-        final long offset;
+        long offset;
         long l = parseOffset(timezone, lo, hi);
         if (l == Long.MIN_VALUE) {
-            return timestampWithTimezone - locale.getZoneRules(
-                    Numbers.decodeLowInt(locale.matchZone(timezone, lo, hi)), RESOLUTION_MICROS
-            ).getOffset(timestampWithTimezone);
+            TimeZoneRules zoneRules = locale.getZoneRules(
+                    Numbers.decodeLowInt(locale.matchZone(timezone, lo, hi)),
+                    RESOLUTION_MICROS
+            );
+            offset = zoneRules.getOffset(timestampWithTimezone);
+            // getOffst really needs UTC date, not local
+            offset = zoneRules.getOffset(timestampWithTimezone - offset);
+            return timestampWithTimezone - offset;
 
         }
         offset = Numbers.decodeLowInt(l) * MINUTE_MICROS;
@@ -704,11 +740,6 @@ final public class Timestamps {
 
     private static long getTimeMicros(long micros) {
         return micros < 0 ? DAY_MICROS - 1 + (micros % DAY_MICROS) : micros % DAY_MICROS;
-    }
-
-    private static long toMicros(int y, int m, int d) {
-        boolean l = isLeapYear(y);
-        return yearMicros(y, l) + monthOfYearMicros(m, l) + (d - 1) * DAY_MICROS;
     }
 
     @FunctionalInterface

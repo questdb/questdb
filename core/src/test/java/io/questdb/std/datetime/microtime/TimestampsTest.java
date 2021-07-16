@@ -24,14 +24,18 @@
 
 package io.questdb.std.datetime.microtime;
 
+import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.DateLocaleFactory;
+import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
+
+import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_MICROS;
 
 public class TimestampsTest {
 
@@ -61,68 +65,6 @@ public class TimestampsTest {
         long micros = TimestampFormatUtils.parseTimestamp("1888-05-12T23:45:51.045Z");
         TimestampFormatUtils.appendDateTime(sink, Timestamps.addMonths(micros, -10));
         TestUtils.assertEquals("1887-07-12T23:45:51.045Z", sink);
-    }
-
-    @Test
-    public void testToTimezoneWithTimezoneName() throws NumericException {
-        DateLocale locale = DateLocaleFactory.INSTANCE.getLocale("en");
-        long micros = TimestampFormatUtils.parseTimestamp("2019-12-10T10:00:00.000000Z");
-        long offsetMicros = Timestamps.toTimezone(micros, locale, "Europe/Prague");
-        TestUtils.assertEquals("2019-12-10T11:00:00.000Z", Timestamps.toString(offsetMicros));
-    }
-
-    @Test(expected = NumericException.class)
-    public void testToTimezoneInvalidTimezoneName() throws NumericException {
-        DateLocale locale = DateLocaleFactory.INSTANCE.getLocale("en");
-        long micros = TimestampFormatUtils.parseTimestamp("2019-12-10T10:00:00.000000Z");
-        Timestamps.toTimezone(micros, locale, "Somewhere");
-    }
-
-    @Test
-    public void testToTimezoneWithHours() throws NumericException {
-        DateLocale locale = DateLocaleFactory.INSTANCE.getLocale("en");
-        long micros = TimestampFormatUtils.parseTimestamp("2019-12-10T10:00:00.000000Z");
-        long offsetMicros = Timestamps.toTimezone(micros, locale, "+03:45");
-        TestUtils.assertEquals("2019-12-10T13:45:00.000Z", Timestamps.toString(offsetMicros));
-    }
-
-    @Test
-    public void testToTimezoneWithHoursInString() throws NumericException {
-        DateLocale locale = DateLocaleFactory.INSTANCE.getLocale("en");
-        long micros = TimestampFormatUtils.parseTimestamp("2019-12-10T10:00:00.000000Z");
-        long offsetMicros = Timestamps.toTimezone(micros, locale, "hello +03:45 there", 6, 12);
-        TestUtils.assertEquals("2019-12-10T13:45:00.000Z", Timestamps.toString(offsetMicros));
-    }
-
-    @Test
-    public void testToUTCWithTimezoneName() throws NumericException {
-        DateLocale locale = DateLocaleFactory.INSTANCE.getLocale("en");
-        long micros = TimestampFormatUtils.parseTimestamp("2019-12-10T10:00:00.000000Z");
-        long offsetMicros = Timestamps.toUTC(micros, locale, "Europe/Prague");
-        TestUtils.assertEquals("2019-12-10T09:00:00.000Z", Timestamps.toString(offsetMicros));
-    }
-
-    @Test(expected = NumericException.class)
-    public void testToUTCInvalidTimezoneName() throws NumericException {
-        DateLocale locale = DateLocaleFactory.INSTANCE.getLocale("en");
-        long micros = TimestampFormatUtils.parseTimestamp("2019-12-10T10:00:00.000000Z");
-        Timestamps.toUTC(micros, locale, "Somewhere");
-    }
-
-    @Test
-    public void testToUTCWithHours() throws NumericException {
-        DateLocale locale = DateLocaleFactory.INSTANCE.getLocale("en");
-        long micros = TimestampFormatUtils.parseTimestamp("2019-12-10T10:00:00.000000Z");
-        long offsetMicros = Timestamps.toUTC(micros, locale, "+03:45");
-        TestUtils.assertEquals("2019-12-10T06:15:00.000Z", Timestamps.toString(offsetMicros));
-    }
-
-    @Test
-    public void testToUTCWithHoursInString() throws NumericException {
-        DateLocale locale = DateLocaleFactory.INSTANCE.getLocale("en");
-        long micros = TimestampFormatUtils.parseTimestamp("2019-12-10T10:00:00.000000Z");
-        long offsetMicros = Timestamps.toUTC(micros, locale, "hello +03:45 there", 6, 12);
-        TestUtils.assertEquals("2019-12-10T06:15:00.000Z", Timestamps.toString(offsetMicros));
     }
 
     @Test
@@ -335,6 +277,78 @@ public class TimestampsTest {
     }
 
     @Test
+    public void testNextDSTRulesAfterLast() throws NumericException {
+        String tz = "Europe/Berlin";
+        TimeZoneRules rules = TimestampFormatUtils.enLocale.getZoneRules(
+                Numbers.decodeLowInt(TimestampFormatUtils.enLocale.matchZone(tz, 0, tz.length())),
+                RESOLUTION_MICROS
+        );
+
+        final long ts = rules.getNextDST(TimestampFormatUtils.parseUTCTimestamp("2021-10-31T01:00:00.000000Z"));
+        Assert.assertEquals("2022-03-27T01:00:00.000Z", Timestamps.toString(ts));
+    }
+
+    @Test
+    public void testNextDSTRulesAfterFirst() throws NumericException {
+        String tz = "Europe/Berlin";
+        TimeZoneRules rules = TimestampFormatUtils.enLocale.getZoneRules(
+                Numbers.decodeLowInt(TimestampFormatUtils.enLocale.matchZone(tz, 0, tz.length())),
+                RESOLUTION_MICROS
+        );
+
+        final long ts = rules.getNextDST(TimestampFormatUtils.parseUTCTimestamp("2021-07-03T01:00:00.000000Z"));
+        Assert.assertEquals("2021-10-31T01:00:00.000Z", Timestamps.toString(ts));
+    }
+
+    @Test
+    public void testNextDSTHistory() throws NumericException {
+        String tz = "Europe/Berlin";
+        TimeZoneRules rules = TimestampFormatUtils.enLocale.getZoneRules(
+                Numbers.decodeLowInt(TimestampFormatUtils.enLocale.matchZone(tz, 0, tz.length())),
+                RESOLUTION_MICROS
+        );
+
+        final long ts = rules.getNextDST(TimestampFormatUtils.parseUTCTimestamp("1991-09-20T01:00:00.000000Z"));
+        Assert.assertEquals("1991-09-29T01:00:00.000Z", Timestamps.toString(ts));
+    }
+
+    @Test
+    public void testNextDSTHistoryLast() throws NumericException {
+        String tz = "Europe/Berlin";
+        TimeZoneRules rules = TimestampFormatUtils.enLocale.getZoneRules(
+                Numbers.decodeLowInt(TimestampFormatUtils.enLocale.matchZone(tz, 0, tz.length())),
+                RESOLUTION_MICROS
+        );
+
+        final long ts = rules.getNextDST(TimestampFormatUtils.parseUTCTimestamp("1997-10-26T01:00:00.000000Z"));
+        Assert.assertEquals("1998-03-29T01:00:00.000Z", Timestamps.toString(ts));
+    }
+
+    @Test
+    public void testNextDSTRulesBeforeFirst() throws NumericException {
+        String tz = "Europe/Berlin";
+        TimeZoneRules rules = TimestampFormatUtils.enLocale.getZoneRules(
+                Numbers.decodeLowInt(TimestampFormatUtils.enLocale.matchZone(tz, 0, tz.length())),
+                RESOLUTION_MICROS
+        );
+
+        final long ts = rules.getNextDST(TimestampFormatUtils.parseUTCTimestamp("2021-02-10T01:00:00.000000Z"));
+        Assert.assertEquals("2021-03-28T01:00:00.000Z", Timestamps.toString(ts));
+    }
+
+    @Test
+    public void testNextDSTFixed() throws NumericException {
+        String tz = "GMT";
+        TimeZoneRules rules = TimestampFormatUtils.enLocale.getZoneRules(
+                Numbers.decodeLowInt(TimestampFormatUtils.enLocale.matchZone(tz, 0, tz.length())),
+                RESOLUTION_MICROS
+        );
+
+        final long ts = rules.getNextDST(TimestampFormatUtils.parseUTCTimestamp("2021-02-10T01:00:00.000000Z"));
+        Assert.assertEquals(Long.MAX_VALUE, ts);
+    }
+
+    @Test
     public void testNextOrSameDow1() throws Exception {
         // thursday
         long micros = TimestampFormatUtils.parseTimestamp("2017-04-06T00:00:00.000Z");
@@ -452,6 +466,68 @@ public class TimestampsTest {
         long micros = TimestampFormatUtils.parseTimestamp("2017-04-06T00:00:00.000Z");
         TimestampFormatUtils.appendDateTime(sink, Timestamps.previousOrSameDayOfWeek(micros, 4));
         TestUtils.assertEquals("2017-04-06T00:00:00.000Z", sink);
+    }
+
+    @Test(expected = NumericException.class)
+    public void testToTimezoneInvalidTimezoneName() throws NumericException {
+        DateLocale locale = DateLocaleFactory.INSTANCE.getLocale("en");
+        long micros = TimestampFormatUtils.parseTimestamp("2019-12-10T10:00:00.000000Z");
+        Timestamps.toTimezone(micros, locale, "Somewhere");
+    }
+
+    @Test
+    public void testToTimezoneWithHours() throws NumericException {
+        DateLocale locale = DateLocaleFactory.INSTANCE.getLocale("en");
+        long micros = TimestampFormatUtils.parseTimestamp("2019-12-10T10:00:00.000000Z");
+        long offsetMicros = Timestamps.toTimezone(micros, locale, "+03:45");
+        TestUtils.assertEquals("2019-12-10T13:45:00.000Z", Timestamps.toString(offsetMicros));
+    }
+
+    @Test
+    public void testToTimezoneWithHoursInString() throws NumericException {
+        DateLocale locale = DateLocaleFactory.INSTANCE.getLocale("en");
+        long micros = TimestampFormatUtils.parseTimestamp("2019-12-10T10:00:00.000000Z");
+        long offsetMicros = Timestamps.toTimezone(micros, locale, "hello +03:45 there", 6, 12);
+        TestUtils.assertEquals("2019-12-10T13:45:00.000Z", Timestamps.toString(offsetMicros));
+    }
+
+    @Test
+    public void testToTimezoneWithTimezoneName() throws NumericException {
+        DateLocale locale = DateLocaleFactory.INSTANCE.getLocale("en");
+        long micros = TimestampFormatUtils.parseTimestamp("2019-12-10T10:00:00.000000Z");
+        long offsetMicros = Timestamps.toTimezone(micros, locale, "Europe/Prague");
+        TestUtils.assertEquals("2019-12-10T11:00:00.000Z", Timestamps.toString(offsetMicros));
+    }
+
+    @Test(expected = NumericException.class)
+    public void testToUTCInvalidTimezoneName() throws NumericException {
+        DateLocale locale = DateLocaleFactory.INSTANCE.getLocale("en");
+        long micros = TimestampFormatUtils.parseTimestamp("2019-12-10T10:00:00.000000Z");
+        Timestamps.toUTC(micros, locale, "Somewhere");
+    }
+
+    @Test
+    public void testToUTCWithHours() throws NumericException {
+        DateLocale locale = DateLocaleFactory.INSTANCE.getLocale("en");
+        long micros = TimestampFormatUtils.parseTimestamp("2019-12-10T10:00:00.000000Z");
+        long offsetMicros = Timestamps.toUTC(micros, locale, "+03:45");
+        TestUtils.assertEquals("2019-12-10T06:15:00.000Z", Timestamps.toString(offsetMicros));
+    }
+
+    @Test
+    public void testToUTCWithHoursInString() throws NumericException {
+        DateLocale locale = DateLocaleFactory.INSTANCE.getLocale("en");
+        long micros = TimestampFormatUtils.parseTimestamp("2019-12-10T10:00:00.000000Z");
+        long offsetMicros = Timestamps.toUTC(micros, locale, "hello +03:45 there", 6, 12);
+        TestUtils.assertEquals("2019-12-10T06:15:00.000Z", Timestamps.toString(offsetMicros));
+    }
+
+    @Test
+    public void testToUTCWithTimezoneName() throws NumericException {
+        DateLocale locale = DateLocaleFactory.INSTANCE.getLocale("en");
+        long micros = TimestampFormatUtils.parseTimestamp("2019-12-10T10:00:00.000000Z");
+        long offsetMicros = Timestamps.toUTC(micros, locale, "Europe/Prague");
+        TestUtils.assertEquals("2019-12-10T09:00:00.000Z", Timestamps.toString(offsetMicros));
     }
 
     @Test

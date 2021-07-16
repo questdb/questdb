@@ -5581,17 +5581,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     public void testVectorSumAvgDoubleRndColumnWithNullsParallel() throws Exception {
 
         Sequence seq = engine.getMessageBus().getVectorAggregateSubSeq();
-        // consume sequence fully and do nothing
-        // this might be needed to make sure we don't consume things other tests publish here
-        while (true) {
-            long cursor = seq.next();
-            if (cursor == -1) {
-                break;
-            } else if (cursor > -1) {
-                seq.done(cursor);
-            }
-        }
-
         final AtomicBoolean running = new AtomicBoolean(true);
         final SOCountDownLatch haltLatch = new SOCountDownLatch(1);
         final GroupByJob job = new GroupByJob(engine.getMessageBus());

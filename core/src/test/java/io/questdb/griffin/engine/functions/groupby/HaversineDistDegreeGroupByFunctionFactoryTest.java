@@ -34,6 +34,7 @@ import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.std.NumericException;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Ignore;
@@ -298,32 +299,18 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractGriff
             w.commit();
         }
 
-        try (RecordCursorFactory factory = compiler.compile("select s, haversine_dist_deg(lat, lon, k), sum(p) from tab sample by 1h fill(linear)", sqlExecutionContext).getRecordCursorFactory()) {
-            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                Record record = cursor.getRecord();
-                Assert.assertEquals(5, cursor.size());
-                Assert.assertTrue(cursor.hasNext());
-                Assert.assertEquals("AAA", record.getSym(0));
-                Assert.assertEquals(78.50616567866791, record.getDouble(1), DELTA);
-                Assert.assertEquals(1000, record.getDouble(2), DELTA);
-                Assert.assertTrue(cursor.hasNext());
-                Assert.assertEquals("AAA", record.getSym(0));
-                Assert.assertEquals(264.19224423853797, record.getDouble(1), DELTA);
-                Assert.assertEquals(2000, record.getDouble(2), DELTA);
-                Assert.assertTrue(cursor.hasNext());
-                Assert.assertEquals("AAA", record.getSym(0));
-                Assert.assertEquals(85.73439427824682, record.getDouble(1), DELTA);
-                Assert.assertEquals(1500, record.getDouble(2), DELTA);
-                Assert.assertTrue(cursor.hasNext());
-                Assert.assertEquals("AAA", record.getSym(0));
-                Assert.assertEquals(121.48099900324064, record.getDouble(1), DELTA);
-                Assert.assertEquals(1000, record.getDouble(2), DELTA);
-                Assert.assertTrue(cursor.hasNext());
-                Assert.assertEquals("AAA", record.getSym(0));
-                Assert.assertEquals(78.61380186411724, record.getDouble(1), DELTA);
-                Assert.assertEquals(1000, record.getDouble(2), DELTA);
-            }
-        }
+        TestUtils.assertSql(
+                compiler,
+                sqlExecutionContext,
+                "select k, s, haversine_dist_deg(lat, lon, k), sum(p) from tab sample by 1h fill(linear)",
+                sink,
+                "k\ts\thaversine_dist_deg\tsum\n" +
+                        "1970-01-01T00:30:00.000000Z\tAAA\t157.01233135733582\t1000.0\n" +
+                        "1970-01-01T01:30:00.000000Z\tAAA\t228.55327569899347\t2000.0\n" +
+                        "1970-01-01T02:30:00.000000Z\tAAA\t85.73439427824682\t1500.0\n" +
+                        "1970-01-01T03:30:00.000000Z\tAAA\t157.22760372823447\t1000.0\n" +
+                        "1970-01-01T04:30:00.000000Z\tAAA\t0.0\t1000.0\n"
+        );
     }
 
     //select s, haversine_dist_deg(lat, lon, k), k from tab sample by 3h fill(linear)
@@ -371,40 +358,38 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractGriff
                 true, true, true);
 
         assertQuery("s\thaversine_dist_deg\tk\n" +
-                        "VTJW\t140.48471753024785\t1970-01-03T00:00:00.000000Z\n" +
-                        "RXGZ\t268.93561321686246\t1970-01-03T00:00:00.000000Z\n" +
-                        "VTJW\t297.7248158372856\t1970-01-03T01:00:00.000000Z\n" +
-                        "RXGZ\t268.93561321686246\t1970-01-03T01:00:00.000000Z\n" +
-                        "VTJW\t297.911239737792\t1970-01-03T02:00:00.000000Z\n" +
-                        "RXGZ\t268.93561321686246\t1970-01-03T02:00:00.000000Z\n" +
-                        "VTJW\t49.65838525039151\t1970-01-03T03:00:00.000000Z\n" +
-                        "RXGZ\t268.93561321686246\t1970-01-03T03:00:00.000000Z\n" +
-                        "VTJW\t297.950311502349\t1970-01-03T04:00:00.000000Z\n" +
-                        "RXGZ\t268.93561321686246\t1970-01-03T04:00:00.000000Z\n" +
-                        "VTJW\t297.950311502349\t1970-01-03T05:00:00.000000Z\n" +
-                        "RXGZ\t268.93561321686246\t1970-01-03T05:00:00.000000Z\n" +
-                        "VTJW\t297.950311502349\t1970-01-03T06:00:00.000000Z\n" +
-                        "RXGZ\t268.93561321686246\t1970-01-03T06:00:00.000000Z\n" +
-                        "VTJW\t297.950311502349\t1970-01-03T07:00:00.000000Z\n" +
-                        "RXGZ\t268.93561321686246\t1970-01-03T07:00:00.000000Z\n" +
-                        "VTJW\t297.950311502349\t1970-01-03T08:00:00.000000Z\n" +
-                        "RXGZ\t268.93561321686246\t1970-01-03T08:00:00.000000Z\n" +
-                        "VTJW\t297.950311502349\t1970-01-03T09:00:00.000000Z\n" +
-                        "RXGZ\t268.93561321686246\t1970-01-03T09:00:00.000000Z\n" +
-                        "VTJW\t297.950311502349\t1970-01-03T10:00:00.000000Z\n" +
-                        "RXGZ\t268.93561321686246\t1970-01-03T10:00:00.000000Z\n" +
-                        "VTJW\t297.950311502349\t1970-01-03T11:00:00.000000Z\n" +
-                        "RXGZ\t268.93561321686246\t1970-01-03T11:00:00.000000Z\n" +
-                        "VTJW\t297.950311502349\t1970-01-03T12:00:00.000000Z\n" +
-                        "RXGZ\t268.93561321686246\t1970-01-03T12:00:00.000000Z\n" +
-                        "VTJW\t297.950311502349\t1970-01-03T13:00:00.000000Z\n" +
-                        "RXGZ\t268.93561321686246\t1970-01-03T13:00:00.000000Z\n" +
-                        "VTJW\t297.950311502349\t1970-01-03T14:00:00.000000Z\n" +
-                        "RXGZ\t268.93561321686246\t1970-01-03T14:00:00.000000Z\n" +
-                        "RXGZ\t141.19868683690248\t1970-01-03T15:00:00.000000Z\n" +
-                        "VTJW\t297.950311502349\t1970-01-03T15:00:00.000000Z\n" +
-                        "RXGZ\t0.0\t1970-01-03T16:00:00.000000Z\n" +
-                        "VTJW\t297.950311502349\t1970-01-03T16:00:00.000000Z\n",
+                        "VTJW\t297.5825998454617\t1970-01-03T00:31:40.000000Z\n" +
+                        "RXGZ\t267.5343540067626\t1970-01-03T00:31:40.000000Z\n" +
+                        "VTJW\t297.84445706403625\t1970-01-03T01:31:40.000000Z\n" +
+                        "RXGZ\t267.5343540067626\t1970-01-03T01:31:40.000000Z\n" +
+                        "VTJW\t190.35210144621897\t1970-01-03T02:31:40.000000Z\n" +
+                        "RXGZ\t267.5343540067626\t1970-01-03T02:31:40.000000Z\n" +
+                        "VTJW\t297.90493337981263\t1970-01-03T03:31:40.000000Z\n" +
+                        "RXGZ\t267.5343540067626\t1970-01-03T03:31:40.000000Z\n" +
+                        "VTJW\t297.90493337981263\t1970-01-03T04:31:40.000000Z\n" +
+                        "RXGZ\t267.5343540067626\t1970-01-03T04:31:40.000000Z\n" +
+                        "VTJW\t297.90493337981263\t1970-01-03T05:31:40.000000Z\n" +
+                        "RXGZ\t267.5343540067626\t1970-01-03T05:31:40.000000Z\n" +
+                        "VTJW\t297.90493337981263\t1970-01-03T06:31:40.000000Z\n" +
+                        "RXGZ\t267.5343540067626\t1970-01-03T06:31:40.000000Z\n" +
+                        "VTJW\t297.90493337981263\t1970-01-03T07:31:40.000000Z\n" +
+                        "RXGZ\t267.5343540067626\t1970-01-03T07:31:40.000000Z\n" +
+                        "VTJW\t297.90493337981263\t1970-01-03T08:31:40.000000Z\n" +
+                        "RXGZ\t267.5343540067626\t1970-01-03T08:31:40.000000Z\n" +
+                        "VTJW\t297.90493337981263\t1970-01-03T09:31:40.000000Z\n" +
+                        "RXGZ\t267.5343540067626\t1970-01-03T09:31:40.000000Z\n" +
+                        "VTJW\t297.90493337981263\t1970-01-03T10:31:40.000000Z\n" +
+                        "RXGZ\t267.5343540067626\t1970-01-03T10:31:40.000000Z\n" +
+                        "VTJW\t297.90493337981263\t1970-01-03T11:31:40.000000Z\n" +
+                        "RXGZ\t267.5343540067626\t1970-01-03T11:31:40.000000Z\n" +
+                        "VTJW\t297.90493337981263\t1970-01-03T12:31:40.000000Z\n" +
+                        "RXGZ\t267.5343540067626\t1970-01-03T12:31:40.000000Z\n" +
+                        "VTJW\t297.90493337981263\t1970-01-03T13:31:40.000000Z\n" +
+                        "RXGZ\t267.5343540067626\t1970-01-03T13:31:40.000000Z\n" +
+                        "RXGZ\t0.0\t1970-01-03T14:31:40.000000Z\n" +
+                        "VTJW\t297.90493337981263\t1970-01-03T14:31:40.000000Z\n" +
+                        "RXGZ\t141.93824030889962\t1970-01-03T15:31:40.000000Z\n" +
+                        "VTJW\t297.90493337981263\t1970-01-03T15:31:40.000000Z\n",
                 "select s, haversine_dist_deg(lat, lon, k), k from tab sample by 1h fill(linear)",
                 null,
                 "k",
@@ -493,9 +478,9 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractGriff
                 true, true, true);
 
         assertQuery("s\thaversine_dist_deg\tk\n" +
-                        "AAA\t1131.3799004998614\t1970-01-01T00:00:00.000000Z\n" +
-                        "AAA\t1128.9573035397307\t1970-01-01T01:00:00.000000Z\n" +
-                        "AAA\t716.1464591924607\t1970-01-01T02:00:00.000000Z\n",
+                        "AAA\t1131.6942599455483\t1970-01-01T00:00:01.000000Z\n" +
+                        "AAA\t1128.9553037924868\t1970-01-01T01:00:01.000000Z\n" +
+                        "AAA\t715.8340994940178\t1970-01-01T02:00:01.000000Z\n",
                 "select s, haversine_dist_deg(lat, lon, k), k from tab sample by 1h fill(linear)",
                 null,
                 "k",
@@ -558,21 +543,20 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractGriff
                 return records;
             }
 
-            Record parse4(String[] cols) throws NumericException {
-                Assert.assertEquals(cols.length, 4);
+            Record parse3(String[] cols) throws NumericException {
+                Assert.assertEquals(cols.length, 3);
                 final CharSequence s = cols[0];
-                final double lat = Double.parseDouble(cols[1]);
-                final double lon = Double.parseDouble(cols[2]);
-                final long k = TimestampFormatUtils.parseTimestamp(cols[3]);
+                final double h = Double.parseDouble(cols[1]);
+                final long k = TimestampFormatUtils.parseTimestamp(cols[2]);
                 return new Record() {
                     @Override
-                    public CharSequence getSym(int col) {
-                        return s.length()>0 ? s : null;
+                    public double getDouble(int col) {
+                        return h;
                     }
 
                     @Override
-                    public double getDouble(int col) {
-                        return col == 1 ? lat : lon;
+                    public CharSequence getSym(int col) {
+                        return s.length() > 0 ? s : null;
                     }
 
                     @Override
@@ -582,20 +566,21 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractGriff
                 };
             }
 
-            Record parse3(String[] cols) throws NumericException {
-                Assert.assertEquals(cols.length, 3);
+            Record parse4(String[] cols) throws NumericException {
+                Assert.assertEquals(cols.length, 4);
                 final CharSequence s = cols[0];
-                final double h = Double.parseDouble(cols[1]);
-                final long k = TimestampFormatUtils.parseTimestamp(cols[2]);
+                final double lat = Double.parseDouble(cols[1]);
+                final double lon = Double.parseDouble(cols[2]);
+                final long k = TimestampFormatUtils.parseTimestamp(cols[3]);
                 return new Record() {
                     @Override
-                    public CharSequence getSym(int col) {
-                        return s.length()>0 ? s : null;
+                    public double getDouble(int col) {
+                        return col == 1 ? lat : lon;
                     }
 
                     @Override
-                    public double getDouble(int col) {
-                        return h;
+                    public CharSequence getSym(int col) {
+                        return s.length() > 0 ? s : null;
                     }
 
                     @Override

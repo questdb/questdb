@@ -61,6 +61,7 @@ public class AbstractCairoTest {
     protected static long configOverrideCommitLag = -1;
     protected static int configOverrideMaxUncommittedRows = -1;
     protected static Metrics metrics = Metrics.enabled();
+    protected static int capacity = -1;
     protected static int sampleByIndexSearchPageSize;
 
     @Rule
@@ -85,6 +86,11 @@ public class AbstractCairoTest {
                     return ff;
                 }
                 return super.getFilesFacade();
+            }
+
+            @Override
+            public int getCopyPoolCapacity() {
+                return capacity == -1 ? super.getCopyPoolCapacity() : capacity;
             }
 
             @Override

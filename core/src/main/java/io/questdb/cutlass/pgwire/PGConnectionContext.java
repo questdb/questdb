@@ -1158,7 +1158,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         }
     }
 
-    private void executeInsert() {
+    private void executeInsert() throws SqlException {
         final TableWriter w;
         try {
             switch (transactionState) {

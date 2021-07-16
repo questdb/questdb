@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.groupby.vect;
 import io.questdb.MessageBus;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.*;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -67,7 +68,7 @@ public class GroupByNotKeyedVectorRecordCursorFactory implements RecordCursorFac
     }
 
     @Override
-    public RecordCursor getCursor(SqlExecutionContext executionContext) {
+    public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         final MessageBus bus = executionContext.getMessageBus();
         assert bus != null;
 

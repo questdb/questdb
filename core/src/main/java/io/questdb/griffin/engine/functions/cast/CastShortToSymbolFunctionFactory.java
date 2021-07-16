@@ -25,16 +25,14 @@
 package io.questdb.griffin.engine.functions.cast;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.SymbolFunction;
-import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.SymbolConstant;
-import io.questdb.std.*;
+import io.questdb.std.IntList;
+import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
 
 public class CastShortToSymbolFunctionFactory implements FunctionFactory {
@@ -54,83 +52,19 @@ public class CastShortToSymbolFunctionFactory implements FunctionFactory {
         return new Func(arg);
     }
 
-    private static class Func extends SymbolFunction implements UnaryFunction {
-        private final Function arg;
-        private final StringSink sink = new StringSink();
-        private final IntIntHashMap symbolTableShortcut = new IntIntHashMap();
-        private final ObjList<String> symbols = new ObjList<>();
-        private int next = 1;
-
+    private static class Func extends AbstractToSymbolCastFunction {
         public Func(Function arg) {
-            this.arg = arg;
-            symbols.add(null);
-        }
-
-        @Override
-        public Function getArg() {
-            return arg;
-        }
-
-        @Override
-        public CharSequence getSymbol(Record rec) {
-            final short value = arg.getShort(rec);
-
-            final int keyIndex = symbolTableShortcut.keyIndex(value);
-            if (keyIndex < 0) {
-                return symbols.getQuick(symbolTableShortcut.valueAt(keyIndex));
-            }
-
-            symbolTableShortcut.putAt(keyIndex, value, next++);
-            sink.clear();
-            sink.put(value);
-            final String str = Chars.toString(sink);
-            symbols.add(Chars.toString(sink));
-            return str;
-        }
-
-        @Override
-        public CharSequence getSymbolB(Record rec) {
-            return getSymbol(rec);
-        }
-
-        @Override
-        public CharSequence valueOf(int symbolKey) {
-            return symbols.getQuick(TableUtils.toIndexKey(symbolKey));
-        }
-
-        @Override
-        public CharSequence valueBOf(int key) {
-            return valueOf(key);
+            super(arg);
         }
 
         @Override
         public int getInt(Record rec) {
-            final short value = arg.getShort(rec);
-
-            final int keyIndex = symbolTableShortcut.keyIndex(value);
-            if (keyIndex < 0) {
-                return symbolTableShortcut.valueAt(keyIndex) - 1;
-            }
-
-            symbolTableShortcut.putAt(keyIndex, value, next);
-            sink.clear();
-            sink.put(value);
-            symbols.add(Chars.toString(sink));
-            return next++ - 1;
+            return getInt0(arg.getShort(rec));
         }
 
         @Override
-        public boolean isSymbolTableStatic() {
-            return false;
-        }
-
-        @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
-            arg.init(symbolTableSource, executionContext);
-            symbolTableShortcut.clear();
-            symbols.clear();
-            symbols.add(null);
-            next = 1;
+        public CharSequence getSymbol(Record rec) {
+            return getSymbol0(arg.getShort(rec));
         }
     }
 }

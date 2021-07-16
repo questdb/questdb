@@ -28,6 +28,7 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.DataFrame;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.sql.RowCursorFactory;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.ObjList;
 
@@ -57,7 +58,7 @@ public class SequentialRowCursorFactory implements RowCursorFactory {
     }
 
     @Override
-    public void prepareCursor(TableReader tableReader, SqlExecutionContext sqlExecutionContext) {
+    public void prepareCursor(TableReader tableReader, SqlExecutionContext sqlExecutionContext) throws SqlException {
         RowCursorFactory.prepareCursor(cursorFactories, tableReader, sqlExecutionContext);
     }
 
