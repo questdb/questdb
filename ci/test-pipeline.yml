@@ -213,7 +213,7 @@ stages:
           - bash: |
               count=$(az pipelines runs list --pipeline-ids 1 --status inProgress --detect true --project questdb | jq length)
               echo "Running builds: ${count}"
-              if [ "$count" -qt "1" ]; then
+              if [ $count -gt 1 ]; then
                 echo "Skipping another build is running in background.."
               else
                 echo "Stopping the build agent!"
