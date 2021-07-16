@@ -299,6 +299,9 @@ public class CairoTextWriter implements Closeable, Mutable {
             case TableUtils.TABLE_DOES_NOT_EXIST:
                 createTable(names, detectedTypes, cairoSecurityContext);
                 writer = engine.getWriter(cairoSecurityContext, tableName, WRITER_LOCK_REASON);
+                designatedTimestampColumnName = writer.getDesignatedTimestampColumnName();
+                designatedTimestampIndex = writer.getMetadata().getTimestampIndex();
+                partitionBy = writer.getPartitionBy();
                 break;
             case TableUtils.TABLE_EXISTS:
                 if (overwrite) {

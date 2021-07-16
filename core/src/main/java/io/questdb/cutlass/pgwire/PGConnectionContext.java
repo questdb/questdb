@@ -1331,7 +1331,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
                 processBind(msgLo, msgLimit, compiler);
                 break;
             case 'E': // execute
-                processExec(msgLo, msgLimit);
+                processExec(msgLo, msgLimit, compiler);
                 break;
             case 'S': // sync
                 processSyncActions();
@@ -1731,7 +1731,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         }
     }
 
-    private void processExec(long lo, long msgLimit)
+    private void processExec(long lo, long msgLimit, SqlCompiler compiler)
             throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException, BadProtocolException {
         final long hi = getStringLength(lo, msgLimit, "bad portal name length");
         final CharSequence portalName = getPortalName(lo, hi);
@@ -1743,14 +1743,14 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         final int maxRows = getInt(lo, msgLimit, "could not read max rows value");
 
         processSyncActions();
-        processExecute(maxRows);
+        processExecute(maxRows, compiler);
         wrapper = null;
     }
 
-    private void processExecute(int maxRows) throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException {
+    private void processExecute(int maxRows, SqlCompiler compiler) throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException {
         if (typesAndSelect != null) {
             LOG.debug().$("executing query").$();
-            setupFactoryAndCursor();
+            setupFactoryAndCursor(compiler);
             sendCursor(maxRows, resumeCursorExecuteRef, resumeCommandCompleteRef);
         } else if (typesAndInsert != null) {
             LOG.debug().$("executing insert").$();
@@ -1910,7 +1910,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
             buildSelectColumnTypes();
             assert queryText != null;
             queryTag = TAG_SELECT;
-            setupFactoryAndCursor();
+            setupFactoryAndCursor(compiler);
             prepareRowDescription();
             sendCursor(0, resumeCursorQueryRef, resumeQueryCompleteRef);
         } else if (typesAndInsert != null) {
@@ -2122,17 +2122,26 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         sendAndReset();
     }
 
-    private void setupFactoryAndCursor() throws SqlException {
+    private void setupFactoryAndCursor(SqlCompiler compiler) throws SqlException, PeerIsSlowToReadException, PeerDisconnectedException {
         if (currentCursor == null) {
-            currentFactory = typesAndSelect.getFactory();
-            try {
-                currentCursor = currentFactory.getCursor(sqlExecutionContext);
-                // cache random if it was replaced
-                this.rnd = sqlExecutionContext.getRandom();
-            } catch (Throwable e) {
-                currentFactory = Misc.free(currentFactory);
-                throw e;
-            }
+            boolean recompileStale = true;
+            do {
+                currentFactory = typesAndSelect.getFactory();
+                try {
+                    currentCursor = currentFactory.getCursor(sqlExecutionContext);
+                    recompileStale = false;
+                    // cache random if it was replaced
+                    this.rnd = sqlExecutionContext.getRandom();
+                } catch (ReaderOutOfDateException e) {
+                    LOG.info().$(e.getFlyweightMessage()).$();
+                    currentFactory = Misc.free(currentFactory);
+                    compileQuery(compiler);
+                    buildSelectColumnTypes();
+                } catch (Throwable e) {
+                    currentFactory = Misc.free(currentFactory);
+                    throw e;
+                }
+            } while (recompileStale);
         }
     }
 

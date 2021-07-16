@@ -113,6 +113,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private int setOperationType;
     private int modelPosition = 0;
     private int orderByAdviceMnemonic;
+    private int tableId;
 
     private QueryModel() {
         joinModels.add(this);
@@ -226,6 +227,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         selectModelType = SELECT_MODEL_NONE;
         columnNameToAliasMap.clear();
         tableNameFunction = null;
+        tableId = -1;
         tableVersion = -1;
         bottomUpColumnNames.clear();
         expressionModels.clear();
@@ -306,6 +308,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public ExpressionNode getAlias() {
         return alias;
+    }
+
+    public int getTableId() {
+        return tableId;
     }
 
     public void moveAliasFrom(QueryModel that) {
@@ -556,6 +562,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public ExpressionNode getTableName() {
         return tableName;
+    }
+
+    public void setTableId(int id) {
+        this.tableId = id;
     }
 
     public void setTableName(ExpressionNode tableName) {

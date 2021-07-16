@@ -40,18 +40,21 @@ public class DistinctSymbolRecordCursorFactory implements RecordCursorFactory {
     private final String tableName;
     private final int columnIndex;
     private final long tableVersion;
+    private final int tableId;
 
     public DistinctSymbolRecordCursorFactory(
             final CairoEngine engine,
             final GenericRecordMetadata metadata,
             final String tableName,
             final int columnIndex,
+            final int tableId,
             final long tableVersion) {
         this.engine = engine;
         this.metadata = metadata;
         this.tableName = tableName;
         this.columnIndex = columnIndex;
         this.tableVersion = tableVersion;
+        this.tableId = tableId;
         this.cursor = new DistinctSymbolRecordCursor();
     }
 
@@ -62,7 +65,7 @@ public class DistinctSymbolRecordCursorFactory implements RecordCursorFactory {
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        TableReader reader = engine.getReader(executionContext.getCairoSecurityContext(), tableName, tableVersion);
+        TableReader reader = engine.getReader(executionContext.getCairoSecurityContext(), tableName, tableId, tableVersion);
         cursor.of(reader, columnIndex);
         return cursor;
     }

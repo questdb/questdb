@@ -930,9 +930,9 @@ public class SqlCodeGenerator implements Mutable {
     ) throws SqlException {
         final DataFrameCursorFactory dataFrameCursorFactory;
         if (intrinsicModel.hasIntervalFilters()) {
-            dataFrameCursorFactory = new IntervalBwdDataFrameCursorFactory(engine, tableName, model.getTableVersion(), intrinsicModel.buildIntervalModel(), timestampIndex);
+            dataFrameCursorFactory = new IntervalBwdDataFrameCursorFactory(engine, tableName, model.getTableId(), model.getTableVersion(), intrinsicModel.buildIntervalModel(), timestampIndex);
         } else {
-            dataFrameCursorFactory = new FullBwdDataFrameCursorFactory(engine, tableName, model.getTableVersion());
+            dataFrameCursorFactory = new FullBwdDataFrameCursorFactory(engine, tableName, model.getTableId(), model.getTableVersion());
         }
 
         // 'latest by' clause takes over the filter
@@ -1904,6 +1904,7 @@ public class SqlCodeGenerator implements Mutable {
                             distinctSymbolMetadata,
                             Chars.toString(tableName),
                             columnIndex,
+                            reader.getMetadata().getId(),
                             reader.getVersion()
                     );
                 }
@@ -2313,6 +2314,7 @@ public class SqlCodeGenerator implements Mutable {
         try (TableReader reader = engine.getReader(
                 executionContext.getCairoSecurityContext(),
                 model.getTableName().token,
+                model.getTableId(),
                 model.getTableVersion())
         ) {
             final RecordMetadata readerMeta = reader.getMetadata();
@@ -2495,10 +2497,10 @@ public class SqlCodeGenerator implements Mutable {
                 final boolean intervalHitsOnlyOnePartition;
                 if (intrinsicModel.hasIntervalFilters()) {
                     RuntimeIntrinsicIntervalModel intervalModel = intrinsicModel.buildIntervalModel();
-                    dfcFactory = new IntervalFwdDataFrameCursorFactory(engine, tableName, model.getTableVersion(), intervalModel, readerTimestampIndex);
+                    dfcFactory = new IntervalFwdDataFrameCursorFactory(engine, tableName, model.getTableId(), model.getTableVersion(),  intervalModel, readerTimestampIndex);
                     intervalHitsOnlyOnePartition = intervalModel.allIntervalsHitOnePartition(reader.getPartitionedBy());
                 } else {
-                    dfcFactory = new FullFwdDataFrameCursorFactory(engine, tableName, model.getTableVersion());
+                    dfcFactory = new FullFwdDataFrameCursorFactory(engine, tableName, model.getTableId(), model.getTableVersion());
                     intervalHitsOnlyOnePartition = false;
                 }
 
@@ -2728,6 +2730,7 @@ public class SqlCodeGenerator implements Mutable {
                         myMeta,
                         engine,
                         tableName,
+                        model.getTableId(),
                         model.getTableVersion(),
                         columnIndexes,
                         columnSizes,
@@ -2739,7 +2742,7 @@ public class SqlCodeGenerator implements Mutable {
                 return new LatestByAllIndexedFilteredRecordCursorFactory(
                         configuration,
                         myMeta,
-                        new FullBwdDataFrameCursorFactory(engine, tableName, model.getTableVersion()),
+                        new FullBwdDataFrameCursorFactory(engine, tableName, model.getTableId(), model.getTableVersion()),
                         listColumnFilterA.getColumnIndexFactored(0),
                         hashColumnIndex,
                         null,
@@ -2751,7 +2754,7 @@ public class SqlCodeGenerator implements Mutable {
             return new LatestByAllFilteredRecordCursorFactory(
                     myMeta,
                     configuration,
-                    new FullBwdDataFrameCursorFactory(engine, tableName, model.getTableVersion()),
+                    new FullBwdDataFrameCursorFactory(engine, tableName, model.getTableId(), model.getTableVersion()),
                     RecordSinkFactory.getInstance(asm, myMeta, listColumnFilterA, false),
                     keyTypes,
                     null,

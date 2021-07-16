@@ -34,6 +34,7 @@ import io.questdb.std.Misc;
 import org.jetbrains.annotations.NotNull;
 
 public class TableReaderRecordCursorFactory extends AbstractRecordCursorFactory {
+    private final int tableId;
     private final TableReaderSelectedColumnRecordCursor cursor;
     private final CairoEngine engine;
     private final String tableName;
@@ -47,12 +48,14 @@ public class TableReaderRecordCursorFactory extends AbstractRecordCursorFactory 
             RecordMetadata metadata,
             CairoEngine engine,
             String tableName,
+            int tableId,
             long tableVersion,
             @NotNull IntList columnIndexes,
             @NotNull IntList columnSizes,
             boolean framingSupported
     ) {
         super(metadata);
+        this.tableId = tableId;
         this.cursor = new TableReaderSelectedColumnRecordCursor(columnIndexes);
         this.engine = engine;
         this.tableName = tableName;
@@ -70,7 +73,7 @@ public class TableReaderRecordCursorFactory extends AbstractRecordCursorFactory 
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        cursor.of(engine.getReader(executionContext.getCairoSecurityContext(), tableName, tableVersion));
+        cursor.of(engine.getReader(executionContext.getCairoSecurityContext(), tableName, tableId, tableVersion));
         return cursor;
     }
 

@@ -26,6 +26,7 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
+import io.questdb.cairo.sql.ReaderOutOfDateException;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -394,6 +395,104 @@ public class TruncateTest extends AbstractGriffinTest {
         });
     }
 
+    @Test
+    public void testDropTableWithCachedPlanSelectFull() throws Exception {
+        testDropTableWithCachedPlan("select * from y");
+    }
+
+    @Test
+    public void testDropTableWithCachedPlanSelectCount() throws Exception {
+        testDropTableWithCachedPlan("select count() from y");
+    }
+
+    @Test
+    public void testDropTableWithCachedPlanSelectFirst() throws Exception {
+        testDropTableWithCachedPlan("select first(symbol1) from y");
+    }
+
+    @Test
+    public void testDropTableWithCachedPlanSelectFirstSampleBy() throws Exception {
+        testDropTableWithCachedPlan("select first(symbol1) from y sample by 1h");
+    }
+
+    @Test
+    public void testDropTableWithCachedPlanLatestBy() throws Exception {
+        testDropTableWithCachedPlan("select * from y latest by symbol1");
+    }
+
+    private void testDropTableWithCachedPlan(String query) throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile(
+                    "create table y as (" +
+                            "select timestamp_sequence(0, 1000000000) timestamp," +
+                            " rnd_symbol('a','b',null) symbol1 " +
+                            " from long_sequence(10)" +
+                            ") timestamp (timestamp)",
+                    sqlExecutionContext
+            );
+
+            try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    sink.clear();
+                    TestUtils.printCursor(cursor, factory.getMetadata(), true, sink, printer);
+                }
+
+                compiler.compile("drop table y", sqlExecutionContext);
+                compiler.compile(
+                        "create table y as ( " +
+                                " select " +
+                                " timestamp_sequence('1970-01-01T02:30:00.000000Z', 1000000000L) timestamp " +
+                                " ,rnd_str('a','b','c', 'd', 'e', 'f',null) symbol2" +
+                                " ,rnd_str('a','b',null) symbol1" +
+                                " from long_sequence(10)" +
+                                ")",
+                        sqlExecutionContext
+                );
+
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    TestUtils.printCursor(cursor, factory.getMetadata(), true, sink, printer);
+                    Assert.fail();
+                } catch (ReaderOutOfDateException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "cannot be used because table schema has changed [table='y']");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testDropColumnWithCachedPlanSelectFull() throws Exception {
+        testDropColumnWithCachedPlan("select * from y");
+    }
+    
+    private void testDropColumnWithCachedPlan(String query) throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile(
+                    "create table y as (" +
+                            "select timestamp_sequence(0, 1000000000) timestamp," +
+                            " rnd_symbol('a','b',null) symbol1 " +
+                            " from long_sequence(10)" +
+                            ") timestamp (timestamp)",
+                    sqlExecutionContext
+            );
+
+            try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    sink.clear();
+                    TestUtils.printCursor(cursor, factory.getMetadata(), true, sink, printer);
+                }
+
+                compiler.compile("alter table y drop column symbol1", sqlExecutionContext);
+
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    TestUtils.printCursor(cursor, factory.getMetadata(), true, sink, printer);
+                    Assert.fail();
+                } catch (ReaderOutOfDateException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "cannot be used because table schema has changed [table='y']");
+                }
+            }
+        });
+    }
+    
     private void createX() throws SqlException {
         createX(10);
     }

@@ -71,7 +71,7 @@ public class TableReplicationRecordCursorFactory extends AbstractRecordCursorFac
     }
 
     private static RecordMetadata createMetadata(CairoEngine engine, CharSequence tableName) {
-        try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName, -1)) {
+        try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName, -1, -1)) {
             return GenericRecordMetadata.copyOf(reader.getMetadata());
         }
     }

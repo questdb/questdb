@@ -37,11 +37,12 @@ public class IntervalFwdDataFrameCursorFactory extends AbstractDataFrameCursorFa
     public IntervalFwdDataFrameCursorFactory(
             CairoEngine engine,
             String tableName,
+            int tableId,
             long tableVersion,
             RuntimeIntrinsicIntervalModel intervals,
             int timestampIndex
     ) {
-        super(engine, tableName, tableVersion);
+        super(engine, tableName, tableId, tableVersion);
         this.cursor = new IntervalFwdDataFrameCursor(intervals, timestampIndex);
         this.intervals = intervals;
     }
