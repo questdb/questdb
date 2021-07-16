@@ -50,7 +50,6 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
     private final int groupBySymbolColIndex;
     private final int timestampIndex;
     private final SampleByFirstLastRecordCursor sampleByFirstLastRecordCursor;
-    //    private final TzSampler internalTimestampSampler;
     private DirectLongList rowIdOutAddress;
     private DirectLongList samplePeriodAddress;
     private DirectLongList crossFrameRow;
@@ -87,7 +86,6 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
         this.rowIdOutAddress.setPos(outSize);
         this.samplePeriodAddress = new DirectLongList(pageSize);
         this.symbolFilter = symbolFilter;
-//        this.internalTimestampSampler = new TzSampler(timestampSampler, timezoneNameFunc, offsetFunc, timezoneNameFuncPos, offsetFuncPos);
         this.sampleByFirstLastRecordCursor = new SampleByFirstLastRecordCursor(
                 timestampSampler,
                 timezoneNameFunc,
@@ -285,8 +283,7 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
                     tzOffset = rules.getOffset(timestamp + tzOffset);
                     nextDstUTC = rules.getNextDST(timestamp + tzOffset);
                 }
-                boolean alignToCalendar = fixedOffset != Long.MIN_VALUE;
-                if (alignToCalendar) {
+                if (fixedOffset != Long.MIN_VALUE) {
                     localEpoch = timestampSampler.round(timestamp + tzOffset - fixedOffset) + fixedOffset;
                 } else {
                     localEpoch = timestamp + tzOffset;
@@ -693,8 +690,7 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
                 public byte getByte(int col) {
                     long pageAddress = pageAddresses[col];
                     if (pageAddress > 0) {
-                        long rowid = rowIdOutAddress.get((currentRow << ITEMS_PER_OUT_ARRAY_SHIFT) + firstLastIndexByCol[col]);
-                        return Unsafe.getUnsafe().getByte(pageAddress + rowid);
+                        return Unsafe.getUnsafe().getByte(pageAddress + getRowId(firstLastIndexByCol[col]));
                     } else {
                         return 0;
                     }
@@ -704,8 +700,7 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
                 public char getChar(int col) {
                     long pageAddress = pageAddresses[col];
                     if (pageAddress > 0) {
-                        long rowid = rowIdOutAddress.get((currentRow << ITEMS_PER_OUT_ARRAY_SHIFT) + firstLastIndexByCol[col]);
-                        return Unsafe.getUnsafe().getChar(pageAddress + (rowid << 1));
+                        return Unsafe.getUnsafe().getChar(pageAddress + (getRowId(firstLastIndexByCol[col]) << 1));
                     } else {
                         return 0;
                     }
@@ -715,8 +710,7 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
                 public double getDouble(int col) {
                     long pageAddress = pageAddresses[col];
                     if (pageAddress > 0) {
-                        long rowid = rowIdOutAddress.get((currentRow << ITEMS_PER_OUT_ARRAY_SHIFT) + firstLastIndexByCol[col]);
-                        return Unsafe.getUnsafe().getDouble(pageAddress + (rowid << 3));
+                        return Unsafe.getUnsafe().getDouble(pageAddress + (getRowId(firstLastIndexByCol[col]) << 3));
                     } else {
                         return Double.NaN;
                     }
@@ -726,8 +720,7 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
                 public float getFloat(int col) {
                     long pageAddress = pageAddresses[col];
                     if (pageAddress > 0) {
-                        long rowid = rowIdOutAddress.get((currentRow << ITEMS_PER_OUT_ARRAY_SHIFT) + firstLastIndexByCol[col]);
-                        return Unsafe.getUnsafe().getFloat(pageAddress + (rowid << 2));
+                        return Unsafe.getUnsafe().getFloat(pageAddress + (getRowId(firstLastIndexByCol[col]) << 2));
                     } else {
                         return Float.NaN;
                     }
@@ -737,8 +730,7 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
                 public int getInt(int col) {
                     long pageAddress = pageAddresses[col];
                     if (pageAddress > 0) {
-                        long rowid = rowIdOutAddress.get((currentRow << ITEMS_PER_OUT_ARRAY_SHIFT) + firstLastIndexByCol[col]);
-                        return Unsafe.getUnsafe().getInt(pageAddress + (rowid << 2));
+                        return Unsafe.getUnsafe().getInt(pageAddress + (getRowId(firstLastIndexByCol[col]) << 2));
                     } else {
                         return Numbers.INT_NaN;
                     }
@@ -748,8 +740,7 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
                 public long getLong(int col) {
                     long pageAddress = pageAddresses[col];
                     if (pageAddress > 0) {
-                        long rowid = rowIdOutAddress.get((currentRow << ITEMS_PER_OUT_ARRAY_SHIFT) + firstLastIndexByCol[col]);
-                        return Unsafe.getUnsafe().getLong(pageAddress + (rowid << 3));
+                        return Unsafe.getUnsafe().getLong(pageAddress + (getRowId(firstLastIndexByCol[col]) << 3));
                     } else {
                         return Numbers.LONG_NaN;
                     }
@@ -759,8 +750,7 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
                 public short getShort(int col) {
                     long pageAddress = pageAddresses[col];
                     if (pageAddress > 0) {
-                        long rowid = rowIdOutAddress.get((currentRow << ITEMS_PER_OUT_ARRAY_SHIFT) + firstLastIndexByCol[col]);
-                        return Unsafe.getUnsafe().getShort(pageAddress + (rowid << 1));
+                        return Unsafe.getUnsafe().getShort(pageAddress + (getRowId(firstLastIndexByCol[col]) << 1));
                     } else {
                         return 0;
                     }
@@ -771,8 +761,7 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
                     int symbolId;
                     long pageAddress = pageAddresses[col];
                     if (pageAddress > 0) {
-                        long rowid = rowIdOutAddress.get((currentRow << ITEMS_PER_OUT_ARRAY_SHIFT) + firstLastIndexByCol[col]);
-                        symbolId = Unsafe.getUnsafe().getInt(pageAddress + (rowid << 2));
+                        symbolId = Unsafe.getUnsafe().getInt(pageAddress + (getRowId(firstLastIndexByCol[col]) << 2));
                     } else {
                         symbolId = SymbolTable.VALUE_IS_NULL;
                     }
@@ -785,10 +774,8 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
                         // Special case - timestamp the sample by runs on
                         // Take it from timestampOutBuff instead of column
                         // It's the value of the beginning of the group, not where the first row found
-                        long rowid = rowIdOutAddress.get((currentRow << ITEMS_PER_OUT_ARRAY_SHIFT) + TIMESTAMP_OUT_INDEX) - prevSamplePeriodOffset;
-                        return samplePeriodAddress.get(rowid);
+                        return samplePeriodAddress.get(getRowId(TIMESTAMP_OUT_INDEX) - prevSamplePeriodOffset);
                     }
-
                     return getLong(col);
                 }
 
@@ -801,6 +788,10 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
                     for (int i = 0, length = pageAddresses.length; i < length; i++) {
                         pageAddresses[i] = currentFrame.getPageAddress(queryToFrameColumnMapping[i]);
                     }
+                }
+
+                private long getRowId(int col) {
+                    return rowIdOutAddress.get((currentRow << ITEMS_PER_OUT_ARRAY_SHIFT) + col);
                 }
             }
         }

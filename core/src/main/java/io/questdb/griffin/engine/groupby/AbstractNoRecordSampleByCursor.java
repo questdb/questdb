@@ -34,16 +34,8 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionInterruptor;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
-import io.questdb.std.Numbers;
-import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
-import io.questdb.std.datetime.TimeZoneRules;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
-import io.questdb.std.datetime.microtime.Timestamps;
 import org.jetbrains.annotations.Nullable;
-
-import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_MICROS;
-import static io.questdb.std.datetime.microtime.Timestamps.MINUTE_MICROS;
 
 public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCursor {
     protected final int timestampIndex;
