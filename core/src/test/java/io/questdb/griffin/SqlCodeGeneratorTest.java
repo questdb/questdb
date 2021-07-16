@@ -545,7 +545,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
             ) {
                 compiler.compile("create table y as (x), cast(col as symbol cache)", sqlExecutionContext);
 
-                try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "y", TableUtils.ANY_TABLE_VERSION)) {
+                try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "y", TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION)) {
                     Assert.assertTrue(reader.getSymbolMapReader(0).isCached());
                 }
             }
@@ -575,7 +575,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
             compiler.compile("create table y as (x), cast(col as symbol nocache)", sqlExecutionContext);
 
-            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "y", TableUtils.ANY_TABLE_VERSION)) {
+            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "y", TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION)) {
                 Assert.assertFalse(reader.getSymbolMapReader(0).isCached());
             }
         });

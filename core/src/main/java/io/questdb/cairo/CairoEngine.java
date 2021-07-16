@@ -227,18 +227,20 @@ public class CairoEngine implements Closeable, WriterSource {
             CairoSecurityContext securityContext,
             CharSequence tableName
     ) {
-        return getReader(securityContext, tableName, TableUtils.ANY_TABLE_VERSION);
+        return getReader(securityContext, tableName,  TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION);
     }
 
     public TableReader getReader(
             CairoSecurityContext securityContext,
             CharSequence tableName,
+            int tableId,
             long version
     ) {
         TableReader reader = readerPool.get(tableName);
-        if (version > -1 && reader.getVersion() != version) {
+        if ((version > -1 && reader.getVersion() != version)
+            || tableId > -1 && reader.getMetadata().getId() != tableId) {
             reader.close();
-            throw ReaderOutOfDateException.INSTANCE;
+            throw ReaderOutOfDateException.of(tableName);
         }
         return reader;
     }

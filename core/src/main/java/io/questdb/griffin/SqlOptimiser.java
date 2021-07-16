@@ -1854,9 +1854,11 @@ class SqlOptimiser {
         try (TableReader r = engine.getReader(
                 executionContext.getCairoSecurityContext(),
                 tableLookupSequence.of(tableName, lo, hi - lo),
+                TableUtils.ANY_TABLE_ID,
                 TableUtils.ANY_TABLE_VERSION
         )) {
             model.setTableVersion(r.getVersion());
+            model.setTableId(r.getMetadata().getId());
             copyColumnsFromMetadata(model, r.getMetadata());
         } catch (EntryLockedException e) {
             throw SqlException.position(tableNamePosition).put("table is locked: ").put(tableLookupSequence);

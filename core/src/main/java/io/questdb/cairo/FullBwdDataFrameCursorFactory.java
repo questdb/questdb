@@ -30,8 +30,8 @@ import io.questdb.griffin.SqlExecutionContext;
 public class FullBwdDataFrameCursorFactory extends AbstractDataFrameCursorFactory {
     private final FullBwdDataFrameCursor cursor = new FullBwdDataFrameCursor();
 
-    public FullBwdDataFrameCursorFactory(CairoEngine engine, String tableName, long tableVersion) {
-        super(engine, tableName, tableVersion);
+    public FullBwdDataFrameCursorFactory(CairoEngine engine, String tableName, int tableId, long tableVersion) {
+        super(engine, tableName, tableId, tableVersion);
     }
 
     @Override

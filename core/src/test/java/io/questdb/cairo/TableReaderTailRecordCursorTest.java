@@ -168,7 +168,7 @@ public class TableReaderTailRecordCursorTest extends AbstractGriffinTest {
             }).start();
 
             new Thread(() -> {
-                try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "xyz", TableUtils.ANY_TABLE_VERSION)) {
+                try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "xyz", TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION)) {
                     Rnd rnd = new Rnd();
                     int count = 0;
                     final TableReaderTailRecordCursor cursor = new TableReaderTailRecordCursor();
@@ -219,7 +219,7 @@ public class TableReaderTailRecordCursorTest extends AbstractGriffinTest {
                     appendRecords(0, n, timestampIncrement, writer, ts, addr, rnd);
                     ts = n * timestampIncrement;
                     try (
-                            TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "xyz", TableUtils.ANY_TABLE_VERSION);
+                            TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "xyz", TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION);
                             TableReaderTailRecordCursor cursor = new TableReaderTailRecordCursor()
                     ) {
                         cursor.of(reader);
@@ -278,7 +278,7 @@ public class TableReaderTailRecordCursorTest extends AbstractGriffinTest {
                     appendRecords(0, n, timestampIncrement, writer, ts, addr, rnd);
                     ts = n * timestampIncrement;
                     try (
-                            TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "xyz", TableUtils.ANY_TABLE_VERSION);
+                            TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "xyz", TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION);
                             TableReaderTailRecordCursor cursor = new TableReaderTailRecordCursor()
                     ) {
                         cursor.of(reader);

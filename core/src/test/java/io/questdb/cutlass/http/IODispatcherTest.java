@@ -610,7 +610,7 @@ public class IODispatcherTest {
             // upload file
             NetUtils.playScript(NetworkFacadeImpl.INSTANCE, uploadScript, "127.0.0.1", 9001);
 
-            try (TableReader reader = cairoEngine.getReader(AllowAllCairoSecurityContext.INSTANCE, "sample.csv", TableUtils.ANY_TABLE_VERSION)) {
+            try (TableReader reader = cairoEngine.getReader(AllowAllCairoSecurityContext.INSTANCE, "sample.csv", TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION)) {
                 StringSink sink = new StringSink();
                 reader.getMetadata().toJson(sink);
                 TestUtils.assertEquals(expectedTableMetadata, sink);
@@ -677,7 +677,7 @@ public class IODispatcherTest {
             // upload file
             NetUtils.playScript(NetworkFacadeImpl.INSTANCE, uploadScript, "127.0.0.1", 9001);
 
-            try (TableReader reader = cairoEngine.getReader(AllowAllCairoSecurityContext.INSTANCE, "sample.csv", TableUtils.ANY_TABLE_VERSION)) {
+            try (TableReader reader = cairoEngine.getReader(AllowAllCairoSecurityContext.INSTANCE, "sample.csv", TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION)) {
                 StringSink sink = new StringSink();
                 reader.getMetadata().toJson(sink);
                 TestUtils.assertEquals(expectedTableMetadata, sink);

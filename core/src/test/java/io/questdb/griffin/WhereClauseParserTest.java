@@ -219,7 +219,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testTimestampFollowedByIntrinsicOperatorWithNull() throws SqlException{
+    public void testTimestampFollowedByIntrinsicOperatorWithNull() throws SqlException {
         modelOf("timestamp = null");
         modelOf("timestamp != null");
         modelOf("timestamp in (null)");

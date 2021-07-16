@@ -213,8 +213,7 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
                         }
                     }
                     rowLo = dataFrame.getRowLo();
-                    TableReaderPageFrameCursor.TableReaderPageFrame pageFrame = computeFrame(computePageMin(base));
-                    return pageFrame;
+                    return computeFrame(computePageMin(base));
                 }
             }
             rowLo = 0;

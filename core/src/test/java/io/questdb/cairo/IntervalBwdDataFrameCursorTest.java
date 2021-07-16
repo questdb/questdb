@@ -359,6 +359,7 @@ public class IntervalBwdDataFrameCursorTest extends AbstractCairoTest {
             final IntervalBwdDataFrameCursorFactory factory = new IntervalBwdDataFrameCursorFactory(
                     engine,
                     "x",
+                    -1,
                     0,
                     new RuntimeIntervalModel(intervals),
                     timestampIndex);

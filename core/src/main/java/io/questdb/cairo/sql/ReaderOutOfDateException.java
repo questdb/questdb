@@ -24,6 +24,37 @@
 
 package io.questdb.cairo.sql;
 
-public class ReaderOutOfDateException extends RuntimeException {
-    public static final ReaderOutOfDateException INSTANCE = new ReaderOutOfDateException();
+import io.questdb.std.FlyweightMessageContainer;
+import io.questdb.std.Sinkable;
+import io.questdb.std.ThreadLocal;
+import io.questdb.std.str.CharSink;
+import io.questdb.std.str.StringSink;
+
+public class ReaderOutOfDateException  extends RuntimeException implements Sinkable, FlyweightMessageContainer {
+    private static final ThreadLocal<ReaderOutOfDateException> tlException = new ThreadLocal<>(ReaderOutOfDateException::new);
+    private final StringSink message = new StringSink();
+
+    public static ReaderOutOfDateException of(CharSequence tableName) {
+        ReaderOutOfDateException ex = tlException.get();
+        // This is to have correct stack trace in local debugging with -ea option
+        assert (ex = new ReaderOutOfDateException()) != null;
+        ex.message.clear();
+        ex.message.put("cached query plan cannot be used because table schema has changed [table='").put(tableName).put("']");
+        return ex;
+    }
+
+    @Override
+    public CharSequence getFlyweightMessage() {
+        return message;
+    }
+
+    @Override
+    public String getMessage() {
+        return message.toString();
+    }
+
+    @Override
+    public void toSink(CharSink sink) {
+        sink.put(message);
+    }
 }

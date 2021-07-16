@@ -52,7 +52,7 @@ public class AlterTableAlterColumnTest extends AbstractGriffinTest {
         assertMemoryLeak(
                 () -> {
                     createX();
-                    try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_VERSION)) {
+                    try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION)) {
                         try {
                             reader.getBitmapIndexReader(0, reader.getMetadata().getColumnIndex("ik"), BitmapIndexReader.DIR_FORWARD);
                             Assert.fail();
@@ -62,7 +62,7 @@ public class AlterTableAlterColumnTest extends AbstractGriffinTest {
 
                     Assert.assertEquals(ALTER, compiler.compile("alter table x alter column ik add index", sqlExecutionContext).getType());
 
-                    try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_VERSION)) {
+                    try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION)) {
                         Assert.assertNotNull(reader.getBitmapIndexReader(0, reader.getMetadata().getColumnIndex("ik"), BitmapIndexReader.DIR_FORWARD));
                     }
                 }
