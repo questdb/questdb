@@ -2124,27 +2124,24 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
 
     private void setupFactoryAndCursor(SqlCompiler compiler) throws SqlException, PeerIsSlowToReadException, PeerDisconnectedException {
         if (currentCursor == null) {
-            boolean forceReCompile = false;
+            boolean recompileStale = true;
             do {
-                if (forceReCompile) {
-                    typesAndSelect.close();
-                    compileQuery(compiler);
-                    buildSelectColumnTypes();
-                    forceReCompile = false;
-                }
                 currentFactory = typesAndSelect.getFactory();
                 try {
                     currentCursor = currentFactory.getCursor(sqlExecutionContext);
+                    recompileStale = false;
                     // cache random if it was replaced
                     this.rnd = sqlExecutionContext.getRandom();
                 } catch (ReaderOutOfDateException e) {
                     LOG.info().$(e.getFlyweightMessage()).$();
-                    forceReCompile = true;
+                    currentFactory = Misc.free(currentFactory);
+                    compileQuery(compiler);
+                    buildSelectColumnTypes();
                 } catch (Throwable e) {
                     currentFactory = Misc.free(currentFactory);
                     throw e;
                 }
-            } while (forceReCompile);
+            } while (recompileStale);
         }
     }
 
