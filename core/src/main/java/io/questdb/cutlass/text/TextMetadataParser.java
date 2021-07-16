@@ -220,7 +220,7 @@ public class TextMetadataParser implements JsonParser, Mutable, Closeable {
 
         columnNames.add(name);
 
-        switch (type) {
+        switch (ColumnType.tagOf(type)) {
             case ColumnType.DATE:
                 DateLocale dateLocale = locale == null ? this.dateLocale : dateLocaleFactory.getLocale(locale);
 

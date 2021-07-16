@@ -48,7 +48,7 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
         boolean allConst = true;
         for (int i = 1, n = args.size(); i < n; i++) {
             Function func = args.getQuick(i);
-            switch (func.getType()) {
+            switch (ColumnType.tagOf(func.getType())) {
                 case ColumnType.NULL:
                 case ColumnType.TIMESTAMP:
                 case ColumnType.LONG:
@@ -69,7 +69,7 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
             return new InTimestampConstFunction(args.getQuick(0), parseToTs(args, argPositions));
         }
 
-        if (args.size() == 2 && args.get(1).getType() == ColumnType.STRING) {
+        if (args.size() == 2 && ColumnType.tagOf(args.get(1).getType()) == ColumnType.STRING) {
             // special case - one argument and it a string
             return new InTimestampStrFunctionFactory.EqTimestampStrFunction(args.get(0), args.get(1));
         }
@@ -85,7 +85,7 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
         for (int i = 1, n = args.size(); i < n; i++) {
             Function func = args.getQuick(i);
             long val = Numbers.LONG_NaN;
-            switch (func.getType()) {
+            switch (ColumnType.tagOf(func.getType())) {
                 case ColumnType.TIMESTAMP:
                 case ColumnType.LONG:
                 case ColumnType.INT:
@@ -134,7 +134,7 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
             for (int i = 1, n = args.size(); i < n; i++) {
                 Function func = args.getQuick(i);
                 long val = Numbers.LONG_NaN;
-                switch (func.getType()) {
+                switch (ColumnType.tagOf(func.getType())) {
                     case ColumnType.TIMESTAMP:
                     case ColumnType.LONG:
                     case ColumnType.INT:

@@ -134,7 +134,7 @@ final class WhereClauseParser implements Mutable {
                     throw SqlException.invalidColumn(a.position, a.token);
                 }
 
-                switch (m.getColumnType(index)) {
+                switch (ColumnType.tagOf(m.getColumnType(index))) {
                     case ColumnType.SYMBOL:
                     case ColumnType.STRING:
                     case ColumnType.LONG:
@@ -297,7 +297,8 @@ final class WhereClauseParser implements Mutable {
             Function function,
             int functionPosition
     ) throws SqlException {
-        if (function.getType() != ColumnType.STRING && function.getType() != ColumnType.SYMBOL) {
+        final int typeTag = ColumnType.tagOf(function.getType());
+        if (typeTag != ColumnType.STRING && typeTag != ColumnType.SYMBOL) {
             return function.getTimestamp(null);
         }
         CharSequence str = function.getStr(null);
@@ -323,7 +324,7 @@ final class WhereClauseParser implements Mutable {
         if (type == ColumnType.UNDEFINED) {
             function.assignType(ColumnType.STRING, executionContext.getBindVariableService());
         }
-        return type == ColumnType.STRING || type == ColumnType.UNDEFINED;
+        return ColumnType.tagOf(type) == ColumnType.STRING || type == ColumnType.UNDEFINED;
     }
 
     private boolean analyzeBetween(
@@ -429,10 +430,11 @@ final class WhereClauseParser implements Mutable {
     }
 
     private static boolean canCastToTimestamp(int type) {
-        return type == ColumnType.TIMESTAMP
-                || type == ColumnType.DATE
-                || type == ColumnType.STRING
-                || type == ColumnType.SYMBOL;
+        final int typeTag = ColumnType.tagOf(type);
+        return typeTag == ColumnType.TIMESTAMP
+                || typeTag == ColumnType.DATE
+                || typeTag == ColumnType.STRING
+                || typeTag == ColumnType.SYMBOL;
     }
 
     private static long parseTokenAsTimestamp(ExpressionNode lo) throws SqlException {
@@ -754,7 +756,7 @@ final class WhereClauseParser implements Mutable {
                     throw SqlException.invalidColumn(a.position, a.token);
                 }
 
-                switch (m.getColumnType(index)) {
+                switch (ColumnType.tagOf(m.getColumnType(index))) {
                     case ColumnType.SYMBOL:
                     case ColumnType.STRING:
                     case ColumnType.LONG:

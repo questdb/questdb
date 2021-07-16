@@ -80,7 +80,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             long tmpBuf
     ) {
         final long dstLen = srcOooHi - srcOooLo + 1 + srcDataMax - srcDataTop;
-        switch (columnType) {
+        final int typeTag = columnType < ColumnType.UNDEFINED ? -ColumnType.tagOf(Math.abs(columnType)): ColumnType.tagOf(columnType);
+        switch (typeTag) {
             case ColumnType.BINARY:
             case ColumnType.STRING:
                 appendVarColumn(
@@ -465,7 +466,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             long tmpBuf
     ) {
         final long offset;
-        if (columnType == ColumnType.STRING) {
+        if (ColumnType.tagOf(columnType) == ColumnType.STRING) {
             if (ff.read(dataFd, tmpBuf, Integer.BYTES, lastValueOffset) != Integer.BYTES) {
                 throw CairoException.instance(ff.errno()).put("could not read string length [fd=").put(dataFd).put(']');
             }
@@ -563,7 +564,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
         }
 
         final long dstLen = srcOooHi - srcOooLo + 1 + srcDataMax - srcDataTop;
-        switch (columnType) {
+        final int typeTag = columnType < ColumnType.UNDEFINED ? -ColumnType.tagOf(Math.abs(columnType)): ColumnType.tagOf(columnType);
+        switch (typeTag) {
             case ColumnType.BINARY:
             case ColumnType.STRING:
                 try {
@@ -1602,7 +1604,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             BitmapIndexWriter indexWriter,
             long tmpBuf
     ) {
-        switch (columnType) {
+        switch (ColumnType.tagOf(columnType)) {
             case ColumnType.BINARY:
             case ColumnType.STRING:
                 // index files are opened as normal
@@ -1776,7 +1778,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
 
         long srcDataFixFd = 0;
         long srcDataVarFd = 0;
-        switch (columnType) {
+        switch (ColumnType.tagOf(columnType)) {
             case ColumnType.BINARY:
             case ColumnType.STRING:
                 try {
@@ -2283,7 +2285,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
 
                     // at bottom of source var column set length of strings to null (-1) for as many strings
                     // as srcDataTop value.
-                    if (columnType == ColumnType.STRING) {
+                    if (ColumnType.tagOf(columnType) == ColumnType.STRING) {
                         srcDataVarOffset = srcDataVarSize;
                         srcDataVarSize += srcDataTop * Integer.BYTES + srcDataVarSize;
                         srcDataVarAddr = O3Utils.mapRW(ff, srcVarFd, srcDataVarSize);
@@ -2513,7 +2515,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
     }
 
     private static void setNull(int columnType, long addr, long count) {
-        switch (columnType) {
+        final int typeTag = columnType < ColumnType.UNDEFINED ? -ColumnType.tagOf(Math.abs(columnType)): ColumnType.tagOf(columnType);
+        switch (typeTag) {
             case ColumnType.BOOLEAN:
             case ColumnType.BYTE:
                 Vect.memset(addr, count, 0);
@@ -2582,7 +2585,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
         final FilesFacade ff = tableWriter.getFilesFacade();
 
         try {
-            switch (columnType) {
+            switch (ColumnType.tagOf(columnType)) {
                 case ColumnType.BINARY:
                 case ColumnType.STRING:
                     setPath(pathToPartition.trimTo(plen), columnName, FILE_SUFFIX_I);

@@ -53,7 +53,7 @@ public class EqLong256StrFunctionFactory implements FunctionFactory {
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
         final Function arg = args.getQuick(1);
-        if (arg.getType() == ColumnType.NULL) {
+        if (ColumnType.tagOf(arg.getType()) == ColumnType.NULL) {
             return new Func(arg);
         }
         try {

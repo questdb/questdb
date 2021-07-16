@@ -81,7 +81,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
             throw SqlException.invalidColumn(position, name);
         }
 
-        switch (metadata.getColumnType(index)) {
+        switch (ColumnType.tagOf(metadata.getColumnType(index))) {
             case ColumnType.BOOLEAN:
                 return BooleanColumn.newInstance(index);
             case ColumnType.BYTE:
@@ -498,7 +498,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
 
             if (sigArgCount > 0) {
                 final int lastSigArgMask = descriptor.getArgTypeMask(sigArgCount - 1);
-                sigVarArg = FunctionFactoryDescriptor.toType(lastSigArgMask) == ColumnType.VAR_ARG;
+                sigVarArg = ColumnType.tagOf(FunctionFactoryDescriptor.toType(lastSigArgMask)) == ColumnType.VAR_ARG;
                 sigVarArgConst = FunctionFactoryDescriptor.isConstant(lastSigArgMask);
             } else {
                 sigVarArg = false;
@@ -566,22 +566,24 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
                     boolean overloadPossible = overloadDistance != ColumnType.NO_OVERLOAD;
 
                     // Overload when arg is double NaN to func which accepts INT, LONG
-                    overloadPossible |= argType == ColumnType.DOUBLE &&
+                    final int argTypeTag = ColumnType.tagOf(argType);
+                    final int sigArgTypeTag = ColumnType.tagOf(sigArgType);
+                    overloadPossible |= argTypeTag == ColumnType.DOUBLE &&
                             arg.isConstant() &&
                             Double.isNaN(arg.getDouble(null)) &&
-                            (sigArgType == ColumnType.LONG || sigArgType == ColumnType.INT);
+                            (sigArgTypeTag == ColumnType.LONG || sigArgTypeTag == ColumnType.INT);
 
                     // Implicit cast from CHAR to STRING
-                    overloadPossible |= argType == ColumnType.CHAR &&
-                            sigArgType == ColumnType.STRING;
+                    overloadPossible |= argTypeTag == ColumnType.CHAR &&
+                            sigArgTypeTag == ColumnType.STRING;
 
                     // Implicit cast from STRING to TIMESTAMP
-                    overloadPossible |= argType == ColumnType.STRING &&
-                            sigArgType == ColumnType.TIMESTAMP && !factory.isGroupBy();
+                    overloadPossible |= argTypeTag == ColumnType.STRING &&
+                            sigArgTypeTag == ColumnType.TIMESTAMP && !factory.isGroupBy();
 
                     // Implicit cast from SYMBOL to TIMESTAMP
-                    overloadPossible |= argType == ColumnType.SYMBOL &&
-                            sigArgType == ColumnType.TIMESTAMP && !factory.isGroupBy();
+                    overloadPossible |= argTypeTag == ColumnType.SYMBOL &&
+                            sigArgTypeTag == ColumnType.TIMESTAMP && !factory.isGroupBy();
 
                     overloadPossible |= arg.isUndefined();
 
@@ -589,7 +591,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
                     if (overloadPossible) {
                         switch (match) {
                             case MATCH_NO_MATCH: // no match?
-                                if (argType == ColumnType.NULL) {
+                                if (argTypeTag == ColumnType.NULL) {
                                     match = MATCH_PARTIAL_MATCH;
                                 } else {
                                     match = MATCH_FUZZY_MATCH; // upgrade to fuzzy match
@@ -667,15 +669,17 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
 
         for (int k = 0; k < candidateSigArgCount; k++) {
             final Function arg = args.getQuick(k);
-            final int sigArgType = FunctionFactoryDescriptor.toType(candidateDescriptor.getArgTypeMask(k));
-            if (arg.getType() == ColumnType.DOUBLE && arg.isConstant() && Double.isNaN(arg.getDouble(null))) {
+            final int sigArgTypeTag = ColumnType.tagOf(FunctionFactoryDescriptor.toType(candidateDescriptor.getArgTypeMask(k)));
+            final int argTypeTag = ColumnType.tagOf(arg.getType());
+
+            if (argTypeTag == ColumnType.DOUBLE && arg.isConstant() && Double.isNaN(arg.getDouble(null))) {
                 // substitute NaNs with appropriate types
-                if (sigArgType == ColumnType.LONG) {
+                if (sigArgTypeTag == ColumnType.LONG) {
                     args.setQuick(k, LongConstant.NULL);
-                } else if (sigArgType == ColumnType.INT) {
+                } else if (sigArgTypeTag == ColumnType.INT) {
                     args.setQuick(k, IntConstant.NULL);
                 }
-            } else if ((arg.getType() == ColumnType.STRING || arg.getType() == ColumnType.SYMBOL) && sigArgType == ColumnType.TIMESTAMP) {
+            } else if ((argTypeTag == ColumnType.STRING || argTypeTag == ColumnType.SYMBOL) && sigArgTypeTag == ColumnType.TIMESTAMP) {
                 // convert arguments if necessary
                 int position = argPositions.getQuick(k);
                 if (arg.isConstant()) {
@@ -683,7 +687,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
                     args.set(k, TimestampConstant.newInstance(timestamp));
                 } else {
                     AbstractUnaryTimestampFunction castFn;
-                    if (arg.getType() == ColumnType.STRING) {
+                    if (argTypeTag == ColumnType.STRING) {
                         castFn = new CastStrToTimestampFunctionFactory.Func(position, arg);
                     } else {
                         castFn = new CastSymbolToTimestampFunctionFactory.Func(arg);
@@ -698,7 +702,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
     }
 
     private Function functionToConstant(Function function) {
-        switch (function.getType()) {
+        switch (ColumnType.tagOf(function.getType())) {
             case ColumnType.INT:
                 if (function instanceof IntConstant) {
                     return function;

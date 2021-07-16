@@ -106,7 +106,7 @@ public class BindVariableServiceImpl implements BindVariableService {
 
     @Override
     public int define(int index, int type, int position) throws SqlException {
-        switch (type) {
+        switch (ColumnType.tagOf(type)) {
             case ColumnType.BOOLEAN:
                 setBoolean(index);
                 return type;
@@ -620,7 +620,7 @@ public class BindVariableServiceImpl implements BindVariableService {
     }
 
     private static void setDouble0(Function function, double value, int index, @Nullable CharSequence name) throws SqlException {
-        final int functionType = function.getType();
+        final int functionType = ColumnType.tagOf(function.getType());
         switch (functionType) {
             case ColumnType.DOUBLE:
                 ((DoubleBindVariable) function).value = value;
@@ -639,7 +639,7 @@ public class BindVariableServiceImpl implements BindVariableService {
     }
 
     private static void setFloat0(Function function, float value, int index, @Nullable CharSequence name) throws SqlException {
-        final int functionType = function.getType();
+        final int functionType = ColumnType.tagOf(function.getType());
         switch (functionType) {
             case ColumnType.FLOAT:
                 ((FloatBindVariable) function).value = value;
@@ -661,7 +661,7 @@ public class BindVariableServiceImpl implements BindVariableService {
     }
 
     private static void setInt0(Function function, int value, int index, @Nullable CharSequence name) throws SqlException {
-        final int functionType = function.getType();
+        final int functionType = ColumnType.tagOf(function.getType());
         switch (functionType) {
             case ColumnType.INT:
                 ((IntBindVariable) function).value = value;
@@ -691,7 +691,7 @@ public class BindVariableServiceImpl implements BindVariableService {
     }
 
     private static void setLong0(Function function, long value, int index, @Nullable CharSequence name, int srcType) throws SqlException {
-        final int functionType = function.getType();
+        final int functionType = ColumnType.tagOf(function.getType());
         switch (functionType) {
             case ColumnType.INT:
                 ((IntBindVariable) function).value = (int) value;
@@ -721,7 +721,7 @@ public class BindVariableServiceImpl implements BindVariableService {
     }
 
     private static void setTimestamp0(Function function, long value, int index) throws SqlException {
-        final int functionType = function.getType();
+        final int functionType = ColumnType.tagOf(function.getType());
         switch (functionType) {
             case ColumnType.INT:
                 ((IntBindVariable) function).value = (int) value;
@@ -751,7 +751,7 @@ public class BindVariableServiceImpl implements BindVariableService {
     }
 
     private static void setBoolean0(Function function, boolean value, int index, @Nullable CharSequence name) throws SqlException {
-        final int functionType = function.getType();
+        final int functionType = ColumnType.tagOf(function.getType());
         switch (functionType) {
             case ColumnType.BOOLEAN:
                 ((BooleanBindVariable) function).value = value;
@@ -766,7 +766,7 @@ public class BindVariableServiceImpl implements BindVariableService {
     }
 
     private static void setChar0(Function function, char value, int index, @Nullable CharSequence name) throws SqlException {
-        final int functionType = function.getType();
+        final int functionType = ColumnType.tagOf(function.getType());
         switch (functionType) {
             case ColumnType.CHAR:
                 ((CharBindVariable) function).value = value;
@@ -789,7 +789,7 @@ public class BindVariableServiceImpl implements BindVariableService {
             int index,
             @Nullable CharSequence name
     ) throws SqlException {
-        final int functionType = function.getType();
+        final int functionType = ColumnType.tagOf(function.getType());
         switch (functionType) {
             case ColumnType.LONG256:
                 ((Long256BindVariable) function).setValue(l0, l1, l2, l3);
@@ -804,7 +804,7 @@ public class BindVariableServiceImpl implements BindVariableService {
     }
 
     private static void setShort0(Function function, short value, int index, @Nullable CharSequence name) throws SqlException {
-        final int functionType = function.getType();
+        final int functionType = ColumnType.tagOf(function.getType());
         switch (functionType) {
             case ColumnType.SHORT:
                 ((ShortBindVariable) function).value = value;
@@ -843,7 +843,7 @@ public class BindVariableServiceImpl implements BindVariableService {
     }
 
     private static void setByte0(Function function, byte value, int index, @Nullable CharSequence name) throws SqlException {
-        final int functionType = function.getType();
+        final int functionType = ColumnType.tagOf(function.getType());
         switch (functionType) {
             case ColumnType.BYTE:
                 ((ByteBindVariable) function).value = value;
@@ -879,7 +879,7 @@ public class BindVariableServiceImpl implements BindVariableService {
     }
 
     private static void setStr0(Function function, CharSequence value, int index, @Nullable CharSequence name) throws SqlException {
-        final int functionType = function.getType();
+        final int functionType = ColumnType.tagOf(function.getType());
         try {
             switch (functionType) {
                 case ColumnType.BOOLEAN:

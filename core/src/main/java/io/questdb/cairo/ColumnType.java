@@ -28,6 +28,12 @@ import io.questdb.std.IntObjHashMap;
 import io.questdb.std.Long256;
 import io.questdb.std.LowerCaseAsciiCharSequenceIntHashMap;
 
+// ColumnType layout - 32bit
+//
+// | PGWire format | Extra type information | Type discriminant (tag) |
+// +---------------+------------------------+-------------------------+
+// |    1 bit      |        23 bits         |         8 bits          |
+// +---------------+------------------------+-------------------------+
 /**
  * Column types as numeric (integer) values
  */
@@ -101,6 +107,10 @@ public final class ColumnType {
     }
 
     private ColumnType() {
+    }
+
+    public static int tagOf(int type) {
+        return type & 0xFF;
     }
 
     public static int columnTypeOf(CharSequence name) {

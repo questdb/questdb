@@ -114,7 +114,7 @@ public class FastMap implements Map {
 
             for (int i = 0; i < columnSplit; i++) {
                 valueOffsets[i] = offset;
-                switch (valueTypes.getColumnType(i)) {
+                switch (ColumnType.tagOf(valueTypes.getColumnType(i))) {
                     case ColumnType.BYTE:
                     case ColumnType.BOOLEAN:
                         offset++;

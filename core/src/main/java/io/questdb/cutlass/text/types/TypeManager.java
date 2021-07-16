@@ -102,7 +102,7 @@ public class TypeManager implements Mutable {
     }
 
     public TypeAdapter getTypeAdapter(int columnType) {
-        switch (columnType) {
+        switch (ColumnType.tagOf(columnType)) {
             case ColumnType.BYTE:
                 return ByteAdapter.INSTANCE;
             case ColumnType.SHORT:

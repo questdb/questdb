@@ -59,7 +59,7 @@ public class EqStrCharFunctionFactory implements FunctionFactory {
         Function strFunc = args.getQuick(0);
         Function charFunc = args.getQuick(1);
 
-        if (strFunc.getType() == ColumnType.NULL || charFunc.getType() == ColumnType.NULL) {
+        if (ColumnType.tagOf(strFunc.getType()) == ColumnType.NULL || ColumnType.tagOf(charFunc.getType()) == ColumnType.NULL) {
             return new Func(strFunc, charFunc);
         }
 

@@ -137,7 +137,7 @@ public class GroupByUtils {
                     }
 
                     final Function fun;
-                    switch (type) {
+                    switch (ColumnType.tagOf(type)) {
                         case ColumnType.BOOLEAN:
                             fun = BooleanColumn.newInstance(keyColumnIndex - 1);
                             break;
@@ -194,7 +194,7 @@ public class GroupByUtils {
                     if (groupByMetadata.getTimestampIndex() == -1) {
                         groupByMetadata.setTimestampIndex(i);
                     }
-                    assert type == ColumnType.TIMESTAMP;
+                    assert ColumnType.tagOf(type) == ColumnType.TIMESTAMP;
                 }
 
                 // and finish with populating metadata for this factory

@@ -66,7 +66,7 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
     public CreateTableModel cached(boolean cached) {
         int last = columnBits.size() - 1;
         assert last > 0;
-        assert getLowAt(last - 1) == ColumnType.SYMBOL;
+        assert ColumnType.tagOf(getLowAt(last - 1)) == ColumnType.SYMBOL;
         if (cached) {
             columnBits.setQuick(last, Numbers.encodeLowHighInts(getLowAt(last) | COLUMN_FLAG_CACHED, getHighAt(last)));
         } else {
@@ -207,7 +207,7 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
         final int pos = columnBits.size() - 2;
         assert pos > -1;
         final int type = getLowAt(pos);
-        assert type == ColumnType.SYMBOL;
+        assert ColumnType.tagOf(type) == ColumnType.SYMBOL;
         columnBits.setQuick(pos, Numbers.encodeLowHighInts(type, capacity));
     }
 
@@ -239,7 +239,7 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
                 sink.put(ColumnType.nameOf(type));
                 sink.put(':');
                 sink.put(m.getColumnTypePos());
-                if (type == ColumnType.SYMBOL) {
+                if (ColumnType.tagOf(type) == ColumnType.SYMBOL) {
                     sink.put(" capacity ");
                     sink.put(m.getSymbolCapacity());
                     if (m.getSymbolCacheFlag()) {
@@ -266,7 +266,7 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
                 sink.put(' ');
                 sink.put(ColumnType.nameOf(getColumnType(i)));
 
-                if (getColumnType(i) == ColumnType.SYMBOL) {
+                if (ColumnType.tagOf(getColumnType(i)) == ColumnType.SYMBOL) {
                     sink.put(" capacity ");
                     sink.put(getSymbolCapacity(i));
                     if (getSymbolCacheFlag(i)) {

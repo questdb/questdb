@@ -64,7 +64,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         for (int i = 0; i < argsSize; i++) {
             returnType = CaseCommon.getCommonType(returnType, args.getQuick(i).getType(), argPositions.getQuick(i));
         }
-        switch (returnType) {
+        switch (ColumnType.tagOf(returnType)) {
             case ColumnType.DOUBLE:
                 return argsSize == 2 ? new TwoDoubleCoalesceFunction(args) : new DoubleCoalesceFunction(args, argsSize);
             case ColumnType.DATE:
@@ -82,8 +82,8 @@ public class CoalesceFunctionFactory implements FunctionFactory {
             case ColumnType.STRING:
             case ColumnType.SYMBOL:
                 if (argsSize == 2) {
-                    int type0 = args.getQuick(0).getType();
-                    if (type0 != args.getQuick(1).getType()) {
+                    int type0 = ColumnType.tagOf(args.getQuick(0).getType());
+                    if (type0 != ColumnType.tagOf(args.getQuick(1).getType())) {
                         return new TwoSymStrCoalesceFunction(args);
                     } else if (type0 == ColumnType.SYMBOL) {
                         return new TwoSymCoalesceFunction(args);
@@ -569,8 +569,8 @@ public class CoalesceFunctionFactory implements FunctionFactory {
             assert args.size() == 2;
             this.args0 = args.getQuick(0);
             this.args1 = args.getQuick(1);
-            this.args0IsSymbol = args0.getType() == ColumnType.SYMBOL;
-            this.arg1IsSymbol = args1.getType() == ColumnType.SYMBOL;
+            this.args0IsSymbol = ColumnType.tagOf(args0.getType()) == ColumnType.SYMBOL;
+            this.arg1IsSymbol = ColumnType.tagOf(args1.getType()) == ColumnType.SYMBOL;
         }
 
         @Override
@@ -689,7 +689,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         public CharSequence getStr(Record rec) {
             for (int i = 0; i < size; i++) {
                 Function arg = args.getQuick(i);
-                CharSequence value = (arg.getType() == ColumnType.SYMBOL) ? arg.getSymbol(rec) : arg.getStr(rec);
+                CharSequence value = (ColumnType.tagOf(arg.getType()) == ColumnType.SYMBOL) ? arg.getSymbol(rec) : arg.getStr(rec);
                 if (value != null) {
                     return value;
                 }
@@ -701,7 +701,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         public CharSequence getStrB(Record rec) {
             for (int i = 0; i < size; i++) {
                 Function arg = args.getQuick(i);
-                CharSequence value = (arg.getType() == ColumnType.SYMBOL) ? arg.getSymbolB(rec) : arg.getStrB(rec);
+                CharSequence value = (ColumnType.tagOf(arg.getType()) == ColumnType.SYMBOL) ? arg.getSymbolB(rec) : arg.getStrB(rec);
                 if (value != null) {
                     return value;
                 }

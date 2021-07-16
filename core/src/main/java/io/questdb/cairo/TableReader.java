@@ -190,7 +190,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             closeColumn(getColumnBase(partitionIndex), columnIndex);
         }
 
-        if (metadata.getColumnType(columnIndex) == ColumnType.SYMBOL) {
+        if (ColumnType.tagOf(metadata.getColumnType(columnIndex)) == ColumnType.SYMBOL) {
             // same goes for symbol map reader - replace object with maker instance
             Misc.free(symbolMapReaders.getAndSetQuick(columnIndex, EmptySymbolMapReader.INSTANCE));
         }
@@ -540,7 +540,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     private static void growColumn(ReadOnlyVirtualMemory mem1, ReadOnlyVirtualMemory mem2, int type, long rowCount) {
         if (rowCount > 0) {
             // subtract column top
-            switch (type) {
+            switch (ColumnType.tagOf(type)) {
                 default:
                     mem1.grow(rowCount << ColumnType.pow2SizeOf(type));
                     break;
@@ -971,7 +971,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         final int columnCount = metadata.getColumnCount();
         symbolMapReaders.setPos(columnCount);
         for (int i = 0; i < columnCount; i++) {
-            if (metadata.getColumnType(i) == ColumnType.SYMBOL) {
+            if (ColumnType.tagOf(metadata.getColumnType(i)) == ColumnType.SYMBOL) {
                 SymbolMapReaderImpl symbolMapReader = new SymbolMapReaderImpl(configuration, path, metadata.getColumnName(i), symbolCountSnapshot.getQuick(symbolColumnIndex++));
                 symbolMapReaders.extendAndSet(i, symbolMapReader);
             }
@@ -1122,7 +1122,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                 final long columnTop = TableUtils.readColumnTop(ff, path.trimTo(plen), name, plen, tempMem8b);
                 final int type = metadata.getColumnType(columnIndex);
 
-                switch (type) {
+                switch (ColumnType.tagOf(type)) {
                     case ColumnType.BINARY:
                     case ColumnType.STRING:
                         TableUtils.iFile(path.trimTo(plen), name);
@@ -1270,7 +1270,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     private void reloadSymbolMapCounts() {
         int symbolMapIndex = 0;
         for (int i = 0; i < columnCount; i++) {
-            if (metadata.getColumnType(i) != ColumnType.SYMBOL) {
+            if (ColumnType.tagOf(metadata.getColumnType(i)) != ColumnType.SYMBOL) {
                 continue;
             }
             symbolMapReaders.getQuick(i).updateSymbolCount(symbolCountSnapshot.getQuick(symbolMapIndex++));
@@ -1278,7 +1278,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     private SymbolMapReader reloadSymbolMapReader(int columnIndex, SymbolMapReader reader) {
-        if (metadata.getColumnType(columnIndex) == ColumnType.SYMBOL) {
+        if (ColumnType.tagOf(metadata.getColumnType(columnIndex)) == ColumnType.SYMBOL) {
             if (reader instanceof SymbolMapReaderImpl) {
                 ((SymbolMapReaderImpl) reader).of(configuration, path, metadata.getColumnName(columnIndex), 0);
                 return reader;

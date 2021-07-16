@@ -259,7 +259,7 @@ public class CairoTextWriter implements Closeable, Mutable {
                 // when DATE type is mis-detected as STRING we
                 // wouldn't have neither date format nor locale to
                 // use when populating this field
-                switch (columnType) {
+                switch (ColumnType.tagOf(columnType)) {
                     case ColumnType.DATE:
                         logTypeError(i);
                         this.types.setQuick(i, BadDateAdapter.INSTANCE);
@@ -328,7 +328,7 @@ public class CairoTextWriter implements Closeable, Mutable {
         }
         _size = writer.size();
         columnErrorCounts.seed(writer.getMetadata().getColumnCount(), 0);
-        if (timestampIndex != -1 && types.getQuick(timestampIndex).getType() == ColumnType.TIMESTAMP) {
+        if (timestampIndex != -1 && ColumnType.tagOf(types.getQuick(timestampIndex).getType()) == ColumnType.TIMESTAMP) {
             timestampAdapter = (TimestampAdapter) types.getQuick(timestampIndex);
         } else {
             timestampAdapter = null;
@@ -425,7 +425,8 @@ public class CairoTextWriter implements Closeable, Mutable {
 
             if (timestampIndex > -1) {
                 final TypeAdapter timestampAdapter = types.getQuick(timestampIndex);
-                if ((timestampAdapter.getType() != ColumnType.LONG && timestampAdapter.getType() != ColumnType.TIMESTAMP) || timestampAdapter == BadTimestampAdapter.INSTANCE) {
+                final int typeTag = ColumnType.tagOf(timestampAdapter.getType());
+                if ((typeTag != ColumnType.LONG && typeTag != ColumnType.TIMESTAMP) || timestampAdapter == BadTimestampAdapter.INSTANCE) {
                     throw TextException.$("not a timestamp '").put(importedTimestampColumnName).put('\'');
                 }
             }

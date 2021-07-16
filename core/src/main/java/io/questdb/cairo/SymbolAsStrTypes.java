@@ -39,6 +39,6 @@ public class SymbolAsStrTypes implements ColumnTypes {
     @Override
     public int getColumnType(int columnIndex) {
         final int type = base.getColumnType(columnIndex);
-        return type == ColumnType.SYMBOL ? ColumnType.STRING : type;
+        return ColumnType.tagOf(type) == ColumnType.SYMBOL ? ColumnType.STRING : type;
     }
 }

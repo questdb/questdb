@@ -695,7 +695,11 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         final long offset = responseAsciiSink.skip();
         responseAsciiSink.putNetworkShort((short) columnCount);
         for (int i = 0; i < columnCount; i++) {
-            switch (activeSelectColumnTypes.getQuick(i)) {
+            final int type = activeSelectColumnTypes.getQuick(i);
+            final short columnBinaryFlag = getColumnBinaryFlag(type);
+            final int typeTag = ColumnType.tagOf(type);
+            final int tagWithFlag = toColumnBinaryType(columnBinaryFlag, typeTag);
+            switch (tagWithFlag) {
                 case BINARY_TYPE_INT:
                     appendIntColumnBin(record, i);
                     break;
@@ -1528,12 +1532,12 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         sink.putNetworkShort((short) n);
         for (int i = 0; i < n; i++) {
             final int typeFlag = activeSelectColumnTypes.getQuick(i);
-            final int columnType = toColumnType(typeFlag == ColumnType.NULL ? ColumnType.STRING : typeFlag);
+            final int columnType = toColumnType(ColumnType.tagOf(typeFlag) == ColumnType.NULL ? ColumnType.STRING : typeFlag);
             sink.encodeUtf8Z(metadata.getColumnName(i));
             sink.putIntDirect(0); //tableOid ?
             sink.putNetworkShort((short) (i + 1)); //column number, starting from 1
             sink.putNetworkInt(TYPE_OIDS.get(columnType)); // type
-            if (columnType < ColumnType.STRING) {
+            if (ColumnType.tagOf(columnType) < ColumnType.STRING) {
                 // type size
                 // todo: cache small endian type sizes and do not check if type is valid - its coming from metadata, must be always valid
                 sink.putNetworkShort((short) ColumnType.sizeOf(columnType));
@@ -1546,7 +1550,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
             sink.putIntDirect(INT_NULL_X);
             // this is special behaviour for binary fields to prevent binary data being hex encoded on the wire
             // format code
-            sink.putNetworkShort(typeFlag == ColumnType.BINARY ? 1 : getColumnBinaryFlag(typeFlag)); // format code
+            sink.putNetworkShort(ColumnType.tagOf(typeFlag) == ColumnType.BINARY ? 1 : getColumnBinaryFlag(typeFlag)); // format code
         }
         sink.putLen(addr);
     }

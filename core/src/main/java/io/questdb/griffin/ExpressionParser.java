@@ -353,9 +353,8 @@ class ExpressionParser {
                             } else {
                                 if (thisWasCast) {
                                     // validate type
-                                    final int columnType = ColumnType.columnTypeOf(node.token);
-
-                                    if ((columnType < 0 || columnType > ColumnType.LONG256) && !asPoppedNull) {
+                                    final int columnTypeTag = ColumnType.tagOf(ColumnType.columnTypeOf(node.token));
+                                    if ((columnTypeTag < 0 || columnTypeTag > ColumnType.LONG256) && !asPoppedNull) {
                                         throw SqlException.$(node.position, "invalid type");
                                     }
 
@@ -564,7 +563,7 @@ class ExpressionParser {
                                     // timestamp with time zone '2005-04-02 12:00:00-07'
 
                                     // validate type
-                                    final int columnType = ColumnType.columnTypeOf(prevNode.token);
+                                    final int columnType = ColumnType.tagOf(ColumnType.columnTypeOf(prevNode.token));
                                     if (columnType < 0 || columnType > ColumnType.LONG256) {
                                         throw SqlException.$(prevNode.position, "invalid type");
                                     } else {

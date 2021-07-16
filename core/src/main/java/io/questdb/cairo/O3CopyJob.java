@@ -754,7 +754,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             long dstVarOffset,
             long dstVarAdjust
     ) {
-        switch (columnType) {
+        switch (ColumnType.tagOf(columnType)) {
             case ColumnType.STRING:
             case ColumnType.BINARY:
                 copyVarSizeCol(
@@ -799,7 +799,8 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             long dstVarOffset,
             long dstVarAdjust
     ) {
-        switch (columnType) {
+        final int typeTag = columnType < ColumnType.UNDEFINED ? -ColumnType.tagOf(Math.abs(columnType)): ColumnType.tagOf(columnType);
+        switch (typeTag) {
             case ColumnType.STRING:
             case ColumnType.BINARY:
                 // we can find out the edge of string column in one of two ways
@@ -897,7 +898,8 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             long dstVarOffset
     ) {
         final long rowCount = srcOooHi - srcOooLo + 1 + srcDataHi - srcDataLo + 1;
-        switch (columnType) {
+        final int typeTag = columnType < ColumnType.UNDEFINED ? -ColumnType.tagOf(Math.abs(columnType)): ColumnType.tagOf(columnType);
+        switch (typeTag) {
             case ColumnType.BOOLEAN:
             case ColumnType.BYTE:
                 Vect.mergeShuffle8Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, mergeIndexAddr, rowCount);

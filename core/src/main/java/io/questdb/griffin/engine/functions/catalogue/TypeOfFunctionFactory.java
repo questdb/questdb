@@ -51,7 +51,7 @@ public class TypeOfFunctionFactory implements FunctionFactory {
         if (args != null && args.size() == 1) {
             final Function arg = args.getQuick(0);
             final int argType = arg.getType();
-            return argType == ColumnType.NULL ? NULL : TYPE_NAMES[arg.getType()];
+            return ColumnType.tagOf(argType) == ColumnType.NULL ? NULL : TYPE_NAMES[arg.getType()];
         }
         throw SqlException.$(position, "exactly one argument expected");
     }

@@ -639,7 +639,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                         }
 
                         case NewLineProtoParser.ENTITY_TYPE_INTEGER: {
-                            final int colType = writer.getMetadata().getColumnType(colIndex);
+                            final int colType = ColumnType.tagOf(writer.getMetadata().getColumnType(colIndex));
                             long v = Unsafe.getUnsafe().getLong(bufPos);
                             bufPos += Long.BYTES;
                             switch (colType) {
@@ -698,7 +698,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                             double v = Unsafe.getUnsafe().getDouble(bufPos);
                             bufPos += Double.BYTES;
                             final int colType = writer.getMetadata().getColumnType(colIndex);
-                            switch (colType) {
+                            switch (ColumnType.tagOf(colType)) {
                                 case ColumnType.DOUBLE:
                                     row.putDouble(colIndex, v);
                                     break;
@@ -730,7 +730,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                             job.floatingCharSink.asCharSequence(bufPos, hi);
                             bufPos = hi;
                             final int colType = writer.getMetadata().getColumnType(colIndex);
-                            if (colType == ColumnType.STRING) {
+                            if (ColumnType.tagOf(colType) == ColumnType.STRING) {
                                 row.putStr(colIndex, job.floatingCharSink);
                             } else {
                                 throw CairoException.instance(0)
@@ -969,7 +969,7 @@ class LineTcpMeasurementScheduler implements Closeable {
             private int resolveSymbolIndex(TableReaderMetadata metadata, int colIndex) {
                 int symIndex = 0;
                 for (int n = 0; n < colIndex; n++) {
-                    if (metadata.getColumnType(n) == ColumnType.SYMBOL) {
+                    if (ColumnType.tagOf(metadata.getColumnType(n)) == ColumnType.SYMBOL) {
                         symIndex++;
                     }
                 }

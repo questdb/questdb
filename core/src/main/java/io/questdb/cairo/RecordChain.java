@@ -62,7 +62,7 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
         for (int i = 0; i < count; i++) {
             int type = columnTypes.getColumnType(i);
 
-            switch (type) {
+            switch (ColumnType.tagOf(type)) {
                 case ColumnType.STRING:
                 case ColumnType.BINARY:
                     columnOffsets[i] = varOffset;

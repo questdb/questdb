@@ -226,7 +226,7 @@ public class RecordComparatorCompiler {
             // decrement to get real column index
             index--;
 
-            switch (columnTypes.getColumnType(index)) {
+            switch (ColumnType.tagOf(columnTypes.getColumnType(index))) {
                 case ColumnType.BOOLEAN:
                     fieldType = "Z";
                     getterNameA = "getBool";

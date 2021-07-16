@@ -366,25 +366,31 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
         assert valueType > -1;
         if (columnType > -1) {
             boolean valid;
-            switch (valueType) {
+            final int valueTypeTag = ColumnType.tagOf(valueType);
+            final int columnTypeTag = ColumnType.tagOf(columnType);
+            switch (valueTypeTag) {
                 case ColumnType.LONG:
-                    valid = columnType == ColumnType.LONG || columnType == ColumnType.INT || columnType == ColumnType.SHORT || columnType == ColumnType.BYTE
-                            || columnType == ColumnType.TIMESTAMP || columnType == ColumnType.DATE;
+                    valid = columnTypeTag == ColumnType.LONG
+                            || columnTypeTag == ColumnType.INT
+                            || columnTypeTag == ColumnType.SHORT
+                            || columnTypeTag == ColumnType.BYTE
+                            || columnTypeTag == ColumnType.TIMESTAMP
+                            || columnTypeTag == ColumnType.DATE;
                     break;
                 case ColumnType.BOOLEAN:
-                    valid = columnType == ColumnType.BOOLEAN;
+                    valid = columnTypeTag == ColumnType.BOOLEAN;
                     break;
                 case ColumnType.STRING:
-                    valid = columnType == ColumnType.STRING;
+                    valid = columnTypeTag == ColumnType.STRING;
                     break;
                 case ColumnType.DOUBLE:
-                    valid = columnType == ColumnType.DOUBLE || columnType == ColumnType.FLOAT;
+                    valid = columnTypeTag == ColumnType.DOUBLE || columnTypeTag == ColumnType.FLOAT;
                     break;
                 case ColumnType.SYMBOL:
-                    valid = columnType == ColumnType.SYMBOL;
+                    valid = columnTypeTag == ColumnType.SYMBOL;
                     break;
                 case ColumnType.LONG256:
-                    valid = columnType == ColumnType.LONG256;
+                    valid = columnTypeTag == ColumnType.LONG256;
                     break;
                 default:
                     valid = false;

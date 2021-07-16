@@ -779,7 +779,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 final long srcOooFixSize;
                 final long srcOooVarAddr;
                 final long srcOooVarSize;
-                if (columnType != ColumnType.STRING && columnType != ColumnType.BINARY) {
+                final int columnTypeTag = ColumnType.tagOf(columnType);
+                if (columnTypeTag != ColumnType.STRING && columnTypeTag != ColumnType.BINARY) {
                     activeFixFd = mem1.getFd();
                     activeVarFd = 0;
                     srcOooFixAddr = oooMem1.addressOf(0);

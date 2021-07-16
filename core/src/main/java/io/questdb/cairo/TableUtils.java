@@ -186,7 +186,7 @@ public final class TableUtils {
             // create symbol maps
             int symbolMapCount = 0;
             for (int i = 0; i < count; i++) {
-                if (structure.getColumnType(i) == ColumnType.SYMBOL) {
+                if (ColumnType.tagOf(structure.getColumnType(i)) == ColumnType.SYMBOL) {
                     SymbolMapWriter.createSymbolMapFiles(
                             ff,
                             mem,
@@ -549,7 +549,7 @@ public final class TableUtils {
 
             if (timestampIndex != -1) {
                 int timestampType = getColumnType(metaMem, timestampIndex);
-                if (timestampType != ColumnType.TIMESTAMP) {
+                if (ColumnType.tagOf(timestampType) != ColumnType.TIMESTAMP) {
                     throw validationException(metaMem).put("Timestamp column must be TIMESTAMP, but found ").put(ColumnType.nameOf(timestampType));
                 }
             }
@@ -562,7 +562,7 @@ public final class TableUtils {
                 }
 
                 if (isColumnIndexed(metaMem, i)) {
-                    if (type != ColumnType.SYMBOL) {
+                    if (ColumnType.tagOf(type) != ColumnType.SYMBOL) {
                         throw validationException(metaMem).put("Index flag is only supported for SYMBOL").put(" at [").put(i).put(']');
                     }
 

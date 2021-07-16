@@ -35,7 +35,7 @@ public class SymbolAsIntTypes implements ColumnTypes {
     @Override
     public int getColumnType(int columnIndex) {
         final int type = base.getColumnType(columnIndex);
-        return type == ColumnType.SYMBOL ? ColumnType.INT : type;
+        return ColumnType.tagOf(type) == ColumnType.SYMBOL ? ColumnType.INT : type;
     }
 
     public SymbolAsIntTypes of(ColumnTypes base) {

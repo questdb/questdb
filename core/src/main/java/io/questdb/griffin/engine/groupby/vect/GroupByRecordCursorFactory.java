@@ -89,7 +89,7 @@ public class GroupByRecordCursorFactory implements RecordCursorFactory {
             // todo: init key to null value
 
             // remember, single key for now
-            switch (columnTypes.getColumnType(0)) {
+            switch (ColumnType.tagOf(columnTypes.getColumnType(0))) {
                 case ColumnType.INT:
                     Unsafe.getUnsafe().putInt(Rosti.getInitialValueSlot(pRosti[i], 0), Numbers.INT_NaN);
                     break;

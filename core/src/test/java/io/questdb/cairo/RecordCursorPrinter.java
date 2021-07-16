@@ -117,7 +117,7 @@ public class RecordCursorPrinter {
     }
 
     protected void printColumn(Record r, RecordMetadata m, int i, CharSink sink) {
-        switch (m.getColumnType(i)) {
+        switch (ColumnType.tagOf(m.getColumnType(i))) {
             case ColumnType.DATE:
                 DateFormatUtils.appendDateTime(sink, r.getDate(i));
                 break;

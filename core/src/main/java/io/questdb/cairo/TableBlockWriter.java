@@ -457,7 +457,7 @@ public class TableBlockWriter implements Closeable {
 
                     partitionStruct.setColumnDataFd(columnIndex, TableUtils.openFileRWOrFail(ff, TableUtils.dFile(path.trimTo(plen), name)));
                     int columnType = metadata.getColumnType(columnIndex);
-                    switch (columnType) {
+                    switch (ColumnType.tagOf(columnType)) {
                         case ColumnType.STRING:
                         case ColumnType.BINARY:
                             partitionStruct.setColumnIndexFd(columnIndex, TableUtils.openFileRWOrFail(ff, iFile(path.trimTo(plen), name)));
@@ -608,7 +608,7 @@ public class TableBlockWriter implements Closeable {
                 long offsetHi = partitionStruct.getColumnAppendOffset(columnIndex);
 
                 // Add binary and string indexes
-                switch (columnType) {
+                switch (ColumnType.tagOf(columnType)) {
                     case ColumnType.STRING:
                     case ColumnType.BINARY: {
                         TableBlockWriterTask task = getConcurrentTask();
@@ -620,7 +620,7 @@ public class TableBlockWriter implements Closeable {
                             long indexFd = partitionStruct.getColumnIndexFd(columnIndex);
                             long indexOffsetLo = writer.getSecondaryAppendOffset(timestampLo, columnIndex);
 
-                            if (columnType == ColumnType.STRING) {
+                            if (ColumnType.tagOf(columnType) == ColumnType.STRING) {
                                 task.assignUpdateStringIndex(columnDataAddressLo, columnDataAddressHi, offsetLo, indexFd, indexOffsetLo, columnIndex, partitionStruct);
                             } else {
                                 task.assignUpdateBinaryIndex(columnDataAddressLo, columnDataAddressHi, offsetLo, indexFd, indexOffsetLo, columnIndex, partitionStruct);

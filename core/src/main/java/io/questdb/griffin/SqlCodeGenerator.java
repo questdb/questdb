@@ -121,7 +121,7 @@ public class SqlCodeGenerator implements Mutable {
     @NotNull
     public Function compileFilter(ExpressionNode expr, RecordMetadata metadata, SqlExecutionContext executionContext) throws SqlException {
         final Function filter = functionParser.parseFunction(expr, metadata, executionContext);
-        if (filter.getType() == ColumnType.BOOLEAN) {
+        if (ColumnType.tagOf(filter.getType()) == ColumnType.BOOLEAN) {
             return filter;
         }
         Misc.free(filter);
@@ -240,13 +240,13 @@ public class SqlCodeGenerator implements Mutable {
             if (ast.type == LITERAL) {
                 if (checkLiterals) {
                     final int columnIndex = metadata.getColumnIndex(ast.token);
-                    final int type = metadata.getColumnType(columnIndex);
-                    if (type == ColumnType.INT) {
+                    final int typeTag = ColumnType.tagOf(metadata.getColumnType(columnIndex));
+                    if (typeTag == ColumnType.INT) {
                         tempKeyIndexesInBase.add(columnIndex);
                         tempKeyIndex.add(i);
                         arrayColumnTypes.add(ColumnType.INT);
                         tempKeyKinds.add(GKK_VANILLA_INT);
-                    } else if (type == ColumnType.SYMBOL) {
+                    } else if (typeTag == ColumnType.SYMBOL) {
                         tempKeyIndexesInBase.add(columnIndex);
                         tempKeyIndex.add(i);
                         tempSymbolSkewIndexes.extendAndSet(i, columnIndex);
@@ -333,8 +333,8 @@ public class SqlCodeGenerator implements Mutable {
 
         for (int k = 0, m = slaveMetadata.getColumnCount(); k < m; k++) {
             if (intHashSet.excludes(k)) {
-                int type = slaveMetadata.getColumnType(k);
-                if (type == ColumnType.STRING || type == ColumnType.BINARY) {
+                int typeTag = ColumnType.tagOf(slaveMetadata.getColumnType(k));
+                if (typeTag == ColumnType.STRING || typeTag == ColumnType.BINARY) {
                     throw SqlException
                             .position(joinPosition).put("right side column '")
                             .put(slaveMetadata.getColumnName(k)).put("' is of unsupported type");
@@ -386,7 +386,7 @@ public class SqlCodeGenerator implements Mutable {
             for (int i = 0, n = listColumnFilterA.getColumnCount(); i < n; i++) {
                 int index = listColumnFilterA.getColumnIndexFactored(i);
                 final TableColumnMetadata m = ((BaseRecordMetadata) slaveMetadata).getColumnQuick(index);
-                if (m.getType() == ColumnType.SYMBOL) {
+                if (ColumnType.tagOf(m.getType()) == ColumnType.SYMBOL) {
                     metadata.add(
                             slaveAlias,
                             m.getName(),
@@ -427,7 +427,7 @@ public class SqlCodeGenerator implements Mutable {
             for (int i = 0, n = listColumnFilterA.getColumnCount(); i < n; i++) {
                 int index = listColumnFilterA.getColumnIndexFactored(i);
                 int type = slaveMetadata.getColumnType(index);
-                if (type == ColumnType.SYMBOL) {
+                if (ColumnType.tagOf(type) == ColumnType.SYMBOL) {
                     type = ColumnType.STRING;
                 }
                 metadata.add(
@@ -694,7 +694,7 @@ public class SqlCodeGenerator implements Mutable {
     private RecordCursorFactory generateFunctionQuery(QueryModel model) throws SqlException {
         final Function function = model.getTableNameFunction();
         assert function != null;
-        if (function.getType() != ColumnType.CURSOR) {
+        if (ColumnType.tagOf(function.getType()) != ColumnType.CURSOR) {
             throw SqlException.position(model.getTableName().position).put("function must return CURSOR [actual=").put(ColumnType.nameOf(function.getType())).put(']');
         }
         return function.getRecordCursorFactory();
@@ -942,7 +942,7 @@ public class SqlCodeGenerator implements Mutable {
             final int latestByIndex = listColumnFilterA.getColumnIndexFactored(0);
             final boolean indexed = metadata.isColumnIndexed(latestByIndex);
 
-            if (metadata.getColumnType(latestByIndex) != ColumnType.SYMBOL) {
+            if (ColumnType.tagOf(metadata.getColumnType(latestByIndex)) != ColumnType.SYMBOL) {
                 return new LatestByAllFilteredRecordCursorFactory(
                         metadata,
                         configuration,
@@ -1164,7 +1164,7 @@ public class SqlCodeGenerator implements Mutable {
                     int index = metadata.getColumnIndexQuiet(column);
 
                     // check if column type is supported
-                    if (metadata.getColumnType(index) == ColumnType.BINARY) {
+                    if (ColumnType.tagOf(metadata.getColumnType(index)) == ColumnType.BINARY) {
                         // find position of offending column
 
                         ObjList<ExpressionNode> nodes = model.getOrderBy();
@@ -1896,7 +1896,7 @@ public class SqlCodeGenerator implements Mutable {
                 TableReaderMetadata readerMetadata = reader.getMetadata();
                 int columnIndex = readerMetadata.getColumnIndex(columnName);
                 int columnType = readerMetadata.getColumnType(columnIndex);
-                if (readerMetadata.getVersion() >= 416 && columnType == ColumnType.SYMBOL) {
+                if (readerMetadata.getVersion() >= 416 && ColumnType.tagOf(columnType) == ColumnType.SYMBOL) {
                     final GenericRecordMetadata distinctSymbolMetadata = new GenericRecordMetadata();
                     distinctSymbolMetadata.add(BaseRecordMetadata.copyOf(readerMetadata, columnIndex));
                     return new DistinctSymbolRecordCursorFactory(
@@ -2027,7 +2027,7 @@ public class SqlCodeGenerator implements Mutable {
                     final int indexInBase = tempKeyIndexesInBase.getQuick(i);
                     final int type = arrayColumnTypes.getColumnType(i);
 
-                    if (type == ColumnType.SYMBOL) {
+                    if (ColumnType.tagOf(type) == ColumnType.SYMBOL) {
                         meta.add(
                                 indexInThis,
                                 new TableColumnMetadata(
@@ -2440,7 +2440,7 @@ public class SqlCodeGenerator implements Mutable {
                 if (listColumnFilterA.size() == 1) {
                     final int latestByIndex = listColumnFilterA.getColumnIndexFactored(0);
 
-                    if (myMeta.getColumnType(latestByIndex) == ColumnType.SYMBOL) {
+                    if (ColumnType.tagOf(myMeta.getColumnType(latestByIndex)) == ColumnType.SYMBOL) {
                         preferredKeyColumn = latestBy.getQuick(0).token;
                     }
                 }
@@ -2832,7 +2832,7 @@ public class SqlCodeGenerator implements Mutable {
             if (timestampIndex == -1) {
                 throw SqlException.invalidColumn(timestamp.position, timestamp.token);
             }
-            if (metadata.getColumnType(timestampIndex) != ColumnType.TIMESTAMP) {
+            if (ColumnType.tagOf(metadata.getColumnType(timestampIndex)) != ColumnType.TIMESTAMP) {
                 throw SqlException.$(timestamp.position, "not a TIMESTAMP");
             }
             return timestampIndex;
@@ -2845,7 +2845,9 @@ public class SqlCodeGenerator implements Mutable {
     }
 
     private boolean isSymbolOrString(int columnType) {
-        return (columnType == ColumnType.SYMBOL) || (columnType == ColumnType.STRING);
+        final int columnTypeTag= ColumnType.tagOf(columnType);
+
+        return (columnTypeTag == ColumnType.SYMBOL) || (columnTypeTag == ColumnType.STRING);
     }
 
     private void lookupColumnIndexes(
@@ -2900,8 +2902,8 @@ public class SqlCodeGenerator implements Mutable {
         // compare types and populate keyTypes
         keyTypes.clear();
         for (int k = 0, m = listColumnFilterA.getColumnCount(); k < m; k++) {
-            int columnTypeA = slaveMetadata.getColumnType(listColumnFilterA.getColumnIndexFactored(k));
-            int columnTypeB = masterMetadata.getColumnType(listColumnFilterB.getColumnIndexFactored(k));
+            int columnTypeA = ColumnType.tagOf(slaveMetadata.getColumnType(listColumnFilterA.getColumnIndexFactored(k)));
+            int columnTypeB = ColumnType.tagOf(masterMetadata.getColumnType(listColumnFilterB.getColumnIndexFactored(k)));
             if (columnTypeB != columnTypeA && !(isSymbolOrString(columnTypeB) && isSymbolOrString(columnTypeA))) {
                 // index in column filter and join context is the same
                 throw SqlException.$(jc.aNodes.getQuick(k).position, "join column type mismatch");
@@ -2964,8 +2966,8 @@ public class SqlCodeGenerator implements Mutable {
     }
 
     private Record.CharSequenceFunction validateSubQueryColumnAndGetGetter(IntrinsicModel intrinsicModel, RecordMetadata metadata) throws SqlException {
-        final int zeroColumnType = metadata.getColumnType(0);
-        if (zeroColumnType != ColumnType.STRING && zeroColumnType != ColumnType.SYMBOL) {
+        final int zeroColumnTypeTag = ColumnType.tagOf(metadata.getColumnType(0));
+        if (zeroColumnTypeTag != ColumnType.STRING && zeroColumnTypeTag != ColumnType.SYMBOL) {
             assert intrinsicModel.keySubQuery.getColumns() != null;
             assert intrinsicModel.keySubQuery.getColumns().size() > 0;
 
@@ -2974,10 +2976,10 @@ public class SqlCodeGenerator implements Mutable {
                     .put("unsupported column type: ")
                     .put(metadata.getColumnName(0))
                     .put(": ")
-                    .put(ColumnType.nameOf(zeroColumnType));
+                    .put(ColumnType.nameOf(zeroColumnTypeTag));
         }
 
-        return zeroColumnType == ColumnType.STRING ? Record.GET_STR : Record.GET_SYM;
+        return zeroColumnTypeTag == ColumnType.STRING ? Record.GET_STR : Record.GET_SYM;
     }
 
     @FunctionalInterface

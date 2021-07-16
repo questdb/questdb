@@ -36,7 +36,7 @@ public class NullConstantTest {
     public void testConstant() {
         NullConstant constant = NullConstant.NULL;
 
-        Assert.assertTrue(constant.getType() == ColumnType.NULL);
+        Assert.assertTrue(ColumnType.tagOf(constant.getType()) == ColumnType.NULL);
         Assert.assertTrue(constant.isConstant());
         Assert.assertTrue(constant.isRuntimeConstant());
         Assert.assertFalse(constant.supportsRandomAccess());

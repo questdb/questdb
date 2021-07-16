@@ -66,7 +66,7 @@ public class TableWriterMetadata extends BaseRecordMetadata {
                             null
                     )
             );
-            if (type == ColumnType.SYMBOL) {
+            if (ColumnType.tagOf(type) == ColumnType.SYMBOL) {
                 symbolMapCount++;
             }
             offset += VmUtils.getStorageLength(name);
@@ -91,7 +91,7 @@ public class TableWriterMetadata extends BaseRecordMetadata {
                 )
         );
         columnCount++;
-        if (type == ColumnType.SYMBOL) {
+        if (ColumnType.tagOf(type) == ColumnType.SYMBOL) {
             symbolMapCount++;
         }
     }
@@ -99,7 +99,7 @@ public class TableWriterMetadata extends BaseRecordMetadata {
     void removeColumn(CharSequence name) {
         int index = columnNameIndexMap.keyIndex(name);
         int columnIndex = columnNameIndexMap.valueAt(index);
-        if (columnMetadata.getQuick(columnIndex).getType() == ColumnType.SYMBOL) {
+        if (ColumnType.tagOf(columnMetadata.getQuick(columnIndex).getType()) == ColumnType.SYMBOL) {
             symbolMapCount--;
         }
         columnMetadata.remove(columnIndex);

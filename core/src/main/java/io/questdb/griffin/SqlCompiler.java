@@ -264,8 +264,8 @@ public class SqlCompiler implements Closeable {
             asm.aload(1);
             asm.iconst(i);
 
-            final int toColumnType = to.getColumnType(toColumnIndex);
-            int fromColumnType = from.getColumnType(i);
+            final int toColumnType = ColumnType.tagOf(to.getColumnType(toColumnIndex));
+            int fromColumnType = ColumnType.tagOf(from.getColumnType(i));
             if (fromColumnType == ColumnType.NULL) {
                 fromColumnType = toColumnType;
             }
@@ -646,18 +646,20 @@ public class SqlCompiler implements Closeable {
     }
 
     public static boolean isAssignableFrom(int to, int from) {
-        return to == from
-                || from == ColumnType.NULL
-                || (from >= ColumnType.BYTE
-                && to >= ColumnType.BYTE
-                && to <= ColumnType.DOUBLE
-                && from < to)
-                || (from == ColumnType.STRING && to == ColumnType.SYMBOL)
-                || (from == ColumnType.SYMBOL && to == ColumnType.STRING)
-                || (from == ColumnType.CHAR && to == ColumnType.SYMBOL)
-                || (from == ColumnType.CHAR && to == ColumnType.STRING)
-                || (from == ColumnType.STRING && to == ColumnType.TIMESTAMP)
-                || (from == ColumnType.SYMBOL && to == ColumnType.TIMESTAMP);
+        final int toTag = ColumnType.tagOf(to);
+        final int fromTag = ColumnType.tagOf(from);
+        return toTag == fromTag
+                || fromTag == ColumnType.NULL
+                || (fromTag >= ColumnType.BYTE
+                && toTag >= ColumnType.BYTE
+                && toTag <= ColumnType.DOUBLE
+                && fromTag < toTag)
+                || (fromTag == ColumnType.STRING && toTag == ColumnType.SYMBOL)
+                || (fromTag == ColumnType.SYMBOL && toTag == ColumnType.STRING)
+                || (fromTag == ColumnType.CHAR && toTag == ColumnType.SYMBOL)
+                || (fromTag == ColumnType.CHAR && toTag == ColumnType.STRING)
+                || (fromTag == ColumnType.STRING && toTag == ColumnType.TIMESTAMP)
+                || (fromTag == ColumnType.SYMBOL && toTag == ColumnType.TIMESTAMP);
     }
 
     @Override
@@ -924,7 +926,7 @@ public class SqlCompiler implements Closeable {
             int symbolCapacity;
             final boolean indexed;
 
-            if (type == ColumnType.SYMBOL && tok != null && !Chars.equals(tok, ',')) {
+            if (ColumnType.tagOf(type) == ColumnType.SYMBOL && tok != null && !Chars.equals(tok, ',')) {
 
                 if (isCapacityKeyword(tok)) {
                     tok = expectToken(lexer, "symbol capacity");
@@ -1050,7 +1052,7 @@ public class SqlCompiler implements Closeable {
                 throw SqlException.invalidColumn(lexer.lastTokenPosition(), columnName);
             }
 
-            if (metadata.getColumnType(columnIndex) != ColumnType.SYMBOL) {
+            if (ColumnType.tagOf(metadata.getColumnType(columnIndex)) != ColumnType.SYMBOL) {
                 throw SqlException.$(lexer.lastTokenPosition(), "Invalid column type - Column should be of type symbol");
             }
 
@@ -1103,7 +1105,7 @@ public class SqlCompiler implements Closeable {
                 GenericRecordMetadata metadata = new GenericRecordMetadata();
                 metadata.add(new TableColumnMetadata(designatedTimestampColumnName, ColumnType.TIMESTAMP, null));
                 Function function = functionParser.parseFunction(expr, metadata, currentExecutionContext);
-                if (function != null && function.getType() == ColumnType.BOOLEAN) {
+                if (function != null && ColumnType.tagOf(function.getType()) == ColumnType.BOOLEAN) {
                     function.init(null, executionContext);
                     writer.removePartition(function, pos);
                 } else {
@@ -1305,7 +1307,7 @@ public class SqlCompiler implements Closeable {
             path.trimTo(rootLen).$();
             int symbolMapCount = 0;
             for (int i = 0, sz = sourceMetaData.getColumnCount(); i < sz; i++) {
-                if (sourceMetaData.getColumnType(i) == ColumnType.SYMBOL) {
+                if (ColumnType.tagOf(sourceMetaData.getColumnType(i)) == ColumnType.SYMBOL) {
                     SymbolMapReader mapReader = reader.getSymbolMapReader(i);
                     SymbolMapWriter.createSymbolMapFiles(ff, mem, path, sourceMetaData.getColumnName(i), mapReader.getSymbolCapacity(), mapReader.isCached());
                     symbolMapCount++;
@@ -1381,7 +1383,7 @@ public class SqlCompiler implements Closeable {
     }
 
     private void copyOrdered(TableWriter writer, RecordMetadata metadata, RecordCursor cursor, RecordToRowCopier copier, int cursorTimestampIndex) {
-        int timestampType = metadata.getColumnType(cursorTimestampIndex);
+        int timestampType = ColumnType.tagOf(metadata.getColumnType(cursorTimestampIndex));
         if (timestampType == ColumnType.STRING || timestampType == ColumnType.SYMBOL) {
             copyOrderedStrTimestamp(writer, cursor, copier, cursorTimestampIndex);
         } else {
@@ -1408,7 +1410,7 @@ public class SqlCompiler implements Closeable {
             long batchSize,
             long commitLag
     ) {
-        int timestampType = metadata.getColumnType(cursorTimestampIndex);
+        int timestampType = ColumnType.tagOf(metadata.getColumnType(cursorTimestampIndex));
         if (timestampType == ColumnType.STRING || timestampType == ColumnType.SYMBOL) {
             copyOrderedBatchedStrTimestamp(writer, cursor, copier, cursorTimestampIndex, batchSize, commitLag);
         } else {
@@ -1785,7 +1787,7 @@ public class SqlCompiler implements Closeable {
             }
 
             // validate timestamp
-            if (writerTimestampIndex > -1 && (timestampFunction == null || timestampFunction.getType() == ColumnType.NULL)) {
+            if (writerTimestampIndex > -1 && (timestampFunction == null || ColumnType.tagOf(timestampFunction.getType()) == ColumnType.NULL)) {
                 throw SqlException.$(0, "insert statement must populate timestamp");
             }
 
@@ -1863,7 +1865,7 @@ public class SqlCompiler implements Closeable {
                     if (cursorColumnCount <= writerTimestampIndex) {
                         throw SqlException.$(name.position, "select clause must provide timestamp column");
                     } else {
-                        int columnType = cursorMetadata.getColumnType(writerTimestampIndex);
+                        int columnType = ColumnType.tagOf(cursorMetadata.getColumnType(writerTimestampIndex));
                         if (columnType != ColumnType.TIMESTAMP && columnType != ColumnType.STRING && columnType != ColumnType.NULL) {
                             throw SqlException.$(name.position, "expected timestamp column but type is ").put(ColumnType.nameOf(columnType));
                         }

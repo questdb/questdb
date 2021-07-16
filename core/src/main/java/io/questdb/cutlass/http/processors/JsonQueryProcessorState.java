@@ -373,7 +373,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         }
 
         int columnType = metadata.getColumnType(columnIndex);
-        if (columnType == ColumnType.NULL) {
+        if (ColumnType.tagOf(columnType) == ColumnType.NULL) {
             columnType = ColumnType.STRING;
         }
         this.columnTypes.add(columnType);
@@ -571,7 +571,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
             columnCount = metadata.getColumnCount();
             for (int i = 0; i < columnCount; i++) {
                 int columnType = metadata.getColumnType(i);
-                if (columnType == ColumnType.NULL) {
+                if (ColumnType.tagOf(columnType) == ColumnType.NULL) {
                     columnType = ColumnType.STRING;
                 }
                 this.columnTypes.add(columnType);

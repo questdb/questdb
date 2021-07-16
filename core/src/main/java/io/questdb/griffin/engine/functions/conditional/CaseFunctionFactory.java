@@ -70,7 +70,7 @@ public class CaseFunctionFactory implements FunctionFactory {
             Function bool = args.getQuick(i);
             Function value = args.getQuick(i + 1);
 
-            if (bool.getType() != ColumnType.BOOLEAN) {
+            if (ColumnType.tagOf(bool.getType()) != ColumnType.BOOLEAN) {
                 throw SqlException.position(argPositions.getQuick(i)).put("BOOLEAN expected, found ").put(ColumnType.nameOf(bool.getType()));
             }
 

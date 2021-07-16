@@ -121,7 +121,7 @@ public class TablePageFrameCursor implements PageFrameCursor {
                     long columnPageLength;
 
                     int columnType = reader.getMetadata().getColumnType(columnIndex);
-                    switch (columnType) {
+                    switch (ColumnType.tagOf(columnType)) {
                         case ColumnType.STRING: {
                             final ReadOnlyVirtualMemory strLenCol = reader.getColumn(TableReader.getPrimaryColumnIndex(columnBase, columnIndex) + 1);
                             columnPageLength = calculateStringPagePosition(col, strLenCol, colFrameLastRow, colMaxRow);

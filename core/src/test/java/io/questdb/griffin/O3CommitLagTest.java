@@ -279,7 +279,7 @@ public class O3CommitLagTest extends AbstractO3Test {
         int flotColIndex = -1;
         int strColIndex = -1;
         for(int i = 0; i < tableModel.getColumnCount(); i++) {
-            switch (tableModel.getColumnType(i)) {
+            switch (ColumnType.tagOf(tableModel.getColumnType(i))) {
                 case ColumnType.LONG:
                     longColIndex = i;
                     break;

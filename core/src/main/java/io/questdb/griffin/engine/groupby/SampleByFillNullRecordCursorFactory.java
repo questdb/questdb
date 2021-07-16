@@ -100,7 +100,7 @@ public class SampleByFillNullRecordCursorFactory extends AbstractSampleByFillRec
         for (int i = 0, n = recordFunctions.size(); i < n; i++) {
             Function function = recordFunctions.getQuick(i);
             if (function instanceof GroupByFunction) {
-                switch (function.getType()) {
+                switch (ColumnType.tagOf(function.getType())) {
                     case ColumnType.INT:
                         placeholderFunctions.add(IntConstant.NULL);
                         break;
