@@ -53,13 +53,9 @@ public abstract class AbstractSampleByFillRecordCursorFactory extends AbstractSa
             @Transient @NotNull ArrayColumnTypes valueTypes,
             RecordMetadata groupByMetadata,
             ObjList<GroupByFunction> groupByFunctions,
-            ObjList<Function> recordFunctions,
-            Function timezoneNameFunc,
-            int timezoneNameFuncPos,
-            Function offsetFunc,
-            int offsetFuncPos
+            ObjList<Function> recordFunctions
     ) {
-        super(base, groupByMetadata, recordFunctions, timezoneNameFunc, timezoneNameFuncPos, offsetFunc, offsetFuncPos);
+        super(base, groupByMetadata, recordFunctions);
         this.groupByFunctions = groupByFunctions;
         // sink will be storing record columns to map key
         this.mapSink = RecordSinkFactory.getInstance(asm, base.getMetadata(), listColumnFilter, false);

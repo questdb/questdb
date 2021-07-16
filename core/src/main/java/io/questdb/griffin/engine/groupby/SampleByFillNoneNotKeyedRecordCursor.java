@@ -36,9 +36,22 @@ class SampleByFillNoneNotKeyedRecordCursor extends AbstractVirtualRecordSampleBy
             ObjList<GroupByFunction> groupByFunctions,
             ObjList<Function> recordFunctions,
             int timestampIndex, // index of timestamp column in base cursor
-            TimestampSampler timestampSampler
+            TimestampSampler timestampSampler,
+            Function timezoneNameFunc,
+            int timezoneNameFuncPos,
+            Function offsetFunc,
+            int offsetFuncPos
     ) {
-        super(recordFunctions, timestampIndex, timestampSampler, groupByFunctions);
+        super(
+                recordFunctions,
+                timestampIndex,
+                timestampSampler,
+                groupByFunctions,
+                timezoneNameFunc,
+                timezoneNameFuncPos,
+                offsetFunc,
+                offsetFuncPos
+        );
         this.simpleMapValue = simpleMapValue;
         this.record.of(simpleMapValue);
     }

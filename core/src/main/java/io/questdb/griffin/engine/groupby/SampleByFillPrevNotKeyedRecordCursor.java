@@ -36,9 +36,22 @@ public class SampleByFillPrevNotKeyedRecordCursor extends AbstractVirtualRecordS
             ObjList<Function> recordFunctions,
             int timestampIndex, // index of timestamp column in base cursor
             TimestampSampler timestampSampler,
-            SimpleMapValue simpleMapValue
+            SimpleMapValue simpleMapValue,
+            Function timezoneNameFunc,
+            int timezoneNameFuncPos,
+            Function offsetFunc,
+            int offsetFuncPos
     ) {
-        super(recordFunctions, timestampIndex, timestampSampler, groupByFunctions);
+        super(
+                recordFunctions,
+                timestampIndex,
+                timestampSampler,
+                groupByFunctions,
+                timezoneNameFunc,
+                timezoneNameFuncPos,
+                offsetFunc,
+                offsetFuncPos
+        );
         this.simpleMapValue = simpleMapValue;
         this.record.of(simpleMapValue);
     }
@@ -54,7 +67,7 @@ public class SampleByFillPrevNotKeyedRecordCursor extends AbstractVirtualRecordS
         // we need to ensure we do not fill time transition
         final long expectedLocalEpoch = timestampSampler.nextTimestamp(nextSampleLocalEpoch);
         // is data timestamp ahead of next expected timestamp?
-        if(expectedLocalEpoch < localEpoch) {
+        if (expectedLocalEpoch < localEpoch) {
             this.sampleLocalEpoch = expectedLocalEpoch;
             this.nextSampleLocalEpoch = expectedLocalEpoch;
             return true;

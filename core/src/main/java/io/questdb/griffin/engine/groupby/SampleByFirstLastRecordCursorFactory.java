@@ -50,11 +50,11 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
     private final int groupBySymbolColIndex;
     private final int timestampIndex;
     private final SampleByFirstLastRecordCursor sampleByFirstLastRecordCursor;
+    //    private final TzSampler internalTimestampSampler;
     private DirectLongList rowIdOutAddress;
     private DirectLongList samplePeriodAddress;
     private DirectLongList crossFrameRow;
     private int groupByTimestampIndex = -1;
-    private final TzSampler internalTimestampSampler;
 
     public SampleByFirstLastRecordCursorFactory(
             RecordCursorFactory base,
@@ -87,8 +87,14 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
         this.rowIdOutAddress.setPos(outSize);
         this.samplePeriodAddress = new DirectLongList(pageSize);
         this.symbolFilter = symbolFilter;
-        this.internalTimestampSampler = new TzSampler(timestampSampler, timezoneNameFunc, offsetFunc, timezoneNameFuncPos, offsetFuncPos);
-        this.sampleByFirstLastRecordCursor = new SampleByFirstLastRecordCursor();
+//        this.internalTimestampSampler = new TzSampler(timestampSampler, timezoneNameFunc, offsetFunc, timezoneNameFuncPos, offsetFuncPos);
+        this.sampleByFirstLastRecordCursor = new SampleByFirstLastRecordCursor(
+                timestampSampler,
+                timezoneNameFunc,
+                timezoneNameFuncPos,
+                offsetFunc,
+                offsetFuncPos
+        );
     }
 
     @Override
@@ -107,9 +113,17 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
             Misc.free(pageFrameCursor);
             return EmptyTableRecordCursor.INSTANCE;
         }
-        SampleByFirstLastRecordCursor cursor = sampleByFirstLastRecordCursor.of(pageFrameCursor, groupByIndexKey);
-        internalTimestampSampler.init(cursor, executionContext);
-        return cursor;
+        try {
+            sampleByFirstLastRecordCursor.of(
+                    pageFrameCursor,
+                    groupByIndexKey,
+                    executionContext
+            );
+            return sampleByFirstLastRecordCursor;
+        } catch (Throwable e) {
+            Misc.free(pageFrameCursor);
+            throw e;
+        }
     }
 
     @Override
@@ -162,7 +176,7 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
         }
     }
 
-    private class SampleByFirstLastRecordCursor implements RecordCursor {
+    private class SampleByFirstLastRecordCursor extends AbstractSampleByCursor {
         private final static int STATE_START = 0;
         private final static int STATE_FETCH_NEXT_DATA_FRAME = 1;
         private final static int STATE_FETCH_NEXT_INDEX_FRAME = 3;
@@ -190,17 +204,35 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
         private long samplePeriodIndexOffset = 0;
         private long prevSamplePeriodOffset = 0;
         private long samplePeriodStart;
+        private boolean initialized;
 
-        SampleByFirstLastRecordCursor of(PageFrameCursor pageFrameCursor, int groupBySymbolKey) {
-            this.pageFrameCursor = pageFrameCursor;
-            this.groupBySymbolKey = groupBySymbolKey;
-            toTop();
-            return this;
+        public SampleByFirstLastRecordCursor(
+                TimestampSampler timestampSampler,
+                Function timezoneNameFunc,
+                int timezoneNameFuncPos,
+                Function offsetFunc,
+                int offsetFuncPos
+        ) {
+            super(timestampSampler, timezoneNameFunc, timezoneNameFuncPos, offsetFunc, offsetFuncPos);
         }
 
         @Override
         public void close() {
             pageFrameCursor = Misc.free(pageFrameCursor);
+        }
+
+        public long getNextTimestamp() {
+            long lastTimestampLocUtc = localEpoch - tzOffset;
+            long nextLastTimestampLoc = timestampSampler.nextTimestamp(localEpoch);
+            if (nextLastTimestampLoc - tzOffset >= nextDstUTC) {
+                tzOffset = rules.getOffset(nextLastTimestampLoc - tzOffset);
+                nextDstUTC = rules.getNextDST(nextLastTimestampLoc - tzOffset);
+                while (nextLastTimestampLoc - tzOffset <= lastTimestampLocUtc) {
+                    nextLastTimestampLoc = timestampSampler.nextTimestamp(nextLastTimestampLoc);
+                }
+            }
+            localEpoch = nextLastTimestampLoc;
+            return localEpoch - tzOffset;
         }
 
         @Override
@@ -229,16 +261,6 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
         }
 
         @Override
-        public Record getRecordB() {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public void recordAt(Record record, long atRowId) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
         public void toTop() {
             currentRow = rowsFound = 0;
             frameNextRowId = dataFrameLo = dataFrameHi = -1;
@@ -250,6 +272,28 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
         @Override
         public long size() {
             return -1;
+        }
+
+        public long startFrom(long timestamp) {
+            // Skip initialization if timestamp is the same as last returned
+            if (!initialized || timestamp != localEpoch - tzOffset) {
+                // null rules means the timezone does not have daylight time changes
+                if (rules != null) {
+                    tzOffset = rules.getOffset(timestamp);
+                    // we really need UTC timestamp to get offset correctly
+                    // this will converge to UTC timestamp
+                    tzOffset = rules.getOffset(timestamp + tzOffset);
+                    nextDstUTC = rules.getNextDST(timestamp + tzOffset);
+                }
+                boolean alignToCalendar = fixedOffset != Long.MIN_VALUE;
+                if (alignToCalendar) {
+                    localEpoch = timestampSampler.round(timestamp + tzOffset - fixedOffset) + fixedOffset;
+                } else {
+                    localEpoch = timestamp + tzOffset;
+                }
+                initialized = true;
+            }
+            return localEpoch - tzOffset;
         }
 
         private void checkCrossRowAfterFoundBufferIterated() {
@@ -283,12 +327,12 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
         private int fillSamplePeriodsUntil(long lastInDataTimestamp) {
             long nextTs = samplePeriodStart;
             long currentTs = Long.MIN_VALUE;
-            nextTs = internalTimestampSampler.startFrom(nextTs);
+            nextTs = startFrom(nextTs);
 
             samplePeriodAddress.clear();
             for (int i = 0; i < maxSamplePeriodSize && currentTs <= lastInDataTimestamp; i++) {
                 currentTs = nextTs;
-                nextTs = internalTimestampSampler.getNextTimestamp();
+                nextTs = getNextTimestamp();
                 samplePeriodAddress.add(currentTs);
             }
             return (int) samplePeriodAddress.size();
@@ -354,7 +398,7 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
                         long rowId = indexFrameAddress > 0 ? Unsafe.getUnsafe().getLong(indexFrameAddress) : dataFrameLo;
                         long offsetTimestampColumnAddress = currentFrame.getPageAddress(timestampIndex) - dataFrameLo * Long.BYTES;
                         samplePeriodStart = Unsafe.getUnsafe().getLong(offsetTimestampColumnAddress + rowId * Long.BYTES);
-                        internalTimestampSampler.startFrom(samplePeriodStart);
+                        startFrom(samplePeriodStart);
                     }
                     // Fall to STATE_SEARCH;
 
@@ -460,6 +504,18 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
             return false;
         }
 
+        void of(
+                PageFrameCursor pageFrameCursor,
+                int groupBySymbolKey,
+                SqlExecutionContext sqlExecutionContext
+        ) throws SqlException {
+            this.pageFrameCursor = pageFrameCursor;
+            this.groupBySymbolKey = groupBySymbolKey;
+            toTop();
+            parseParams(this, sqlExecutionContext);
+            this.initialized = false;
+        }
+
         private void saveFirstLastValuesToCrossFrameRowBuffer() {
             // Copies column values of all columns to cross frame row buffer for found row with index 0
             for (int i = 0, length = firstLastIndexByCol.length; i < length; i++) {
@@ -553,22 +609,18 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
             }
 
             @Override
-            public CharSequence getSym(int col) {
-                return currentRecord.getSym(col);
-            }
-
-            @Override
             public short getShort(int col) {
                 return currentRecord.getShort(col);
             }
 
             @Override
-            public long getTimestamp(int col) {
-                return currentRecord.getTimestamp(col);
+            public CharSequence getSym(int col) {
+                return currentRecord.getSym(col);
             }
 
-            public void switchFrame() {
-                dataRecord.switchFrame();
+            @Override
+            public long getTimestamp(int col) {
+                return currentRecord.getTimestamp(col);
             }
 
             public void of(long index) {
@@ -577,6 +629,10 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
                 } else {
                     currentRecord = dataRecord.of(currentRow);
                 }
+            }
+
+            public void switchFrame() {
+                dataRecord.switchFrame();
             }
 
             private class SampleByCrossRecord implements Record {
@@ -613,6 +669,11 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
                 }
 
                 @Override
+                public short getShort(int col) {
+                    return Unsafe.getUnsafe().getShort(address + ((long) col << 3));
+                }
+
+                @Override
                 public CharSequence getSym(int col) {
                     int symbolId = Unsafe.getUnsafe().getInt(address + ((long) col << 3));
                     return pageFrameCursor.getSymbolMapReader(queryToFrameColumnMapping[col]).valueBOf(symbolId);
@@ -622,22 +683,11 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
                 public long getTimestamp(int col) {
                     return Unsafe.getUnsafe().getLong(address + ((long) col << 3));
                 }
-
-                @Override
-                public short getShort(int col) {
-                    return Unsafe.getUnsafe().getShort(address + ((long) col << 3));
-                }
             }
 
             private class SampleByDataRecord implements Record {
-                private long currentRow;
                 private final long[] pageAddresses = new long[queryToFrameColumnMapping.length];
-
-                public void switchFrame() {
-                    for (int i = 0, length = pageAddresses.length; i < length; i++) {
-                        pageAddresses[i] = currentFrame.getPageAddress(queryToFrameColumnMapping[i]);
-                    }
-                }
+                private long currentRow;
 
                 @Override
                 public byte getByte(int col) {
@@ -706,6 +756,17 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
                 }
 
                 @Override
+                public short getShort(int col) {
+                    long pageAddress = pageAddresses[col];
+                    if (pageAddress > 0) {
+                        long rowid = rowIdOutAddress.get((currentRow << ITEMS_PER_OUT_ARRAY_SHIFT) + firstLastIndexByCol[col]);
+                        return Unsafe.getUnsafe().getShort(pageAddress + (rowid << 1));
+                    } else {
+                        return 0;
+                    }
+                }
+
+                @Override
                 public CharSequence getSym(int col) {
                     int symbolId;
                     long pageAddress = pageAddresses[col];
@@ -719,17 +780,6 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
                 }
 
                 @Override
-                public short getShort(int col) {
-                    long pageAddress = pageAddresses[col];
-                    if (pageAddress > 0) {
-                        long rowid = rowIdOutAddress.get((currentRow << ITEMS_PER_OUT_ARRAY_SHIFT) + firstLastIndexByCol[col]);
-                        return Unsafe.getUnsafe().getShort(pageAddress + (rowid << 1));
-                    } else {
-                        return 0;
-                    }
-                }
-
-                @Override
                 public long getTimestamp(int col) {
                     if (col == timestampIndex) {
                         // Special case - timestamp the sample by runs on
@@ -739,12 +789,18 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
                         return samplePeriodAddress.get(rowid);
                     }
 
-                   return getLong(col);
+                    return getLong(col);
                 }
 
                 public SampleByDataRecord of(long currentRow) {
                     this.currentRow = currentRow;
                     return this;
+                }
+
+                public void switchFrame() {
+                    for (int i = 0, length = pageAddresses.length; i < length; i++) {
+                        pageAddresses[i] = currentFrame.getPageAddress(queryToFrameColumnMapping[i]);
+                    }
                 }
             }
         }

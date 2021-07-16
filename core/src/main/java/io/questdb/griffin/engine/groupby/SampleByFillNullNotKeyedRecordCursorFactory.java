@@ -53,7 +53,7 @@ public class SampleByFillNullNotKeyedRecordCursorFactory extends AbstractSampleB
             Function offsetFunc,
             int offsetFuncPos
     ) throws SqlException {
-        super(base, groupByMetadata, recordFunctions, timezoneNameFunc, timezoneNameFuncPos, offsetFunc, offsetFuncPos);
+        super(base, groupByMetadata, recordFunctions);
         try {
             final SimpleMapValue simpleMapValue = new SimpleMapValue(valueCount);
             this.cursor = new SampleByFillValueNotKeyedRecordCursor(
@@ -62,7 +62,11 @@ public class SampleByFillNullNotKeyedRecordCursorFactory extends AbstractSampleB
                     SampleByFillNullRecordCursorFactory.createPlaceholderFunctions(recordFunctions, recordFunctionPositions),
                     timestampIndex,
                     timestampSampler,
-                    simpleMapValue
+                    simpleMapValue,
+                    timezoneNameFunc,
+                    timezoneNameFuncPos,
+                    offsetFunc,
+                    offsetFuncPos
             );
         } catch (Throwable e) {
             Misc.freeObjList(recordFunctions);

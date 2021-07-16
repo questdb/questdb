@@ -41,9 +41,25 @@ class SampleByFillValueRecordCursor extends AbstractSampleByFillValueRecordCurso
             ObjList<Function> recordFunctions,
             ObjList<Function> placeholderFunctions,
             int timestampIndex, // index of timestamp column in base cursor
-            TimestampSampler timestampSampler
+            TimestampSampler timestampSampler,
+            Function timezoneNameFunc,
+            int timezoneNameFuncPos,
+            Function offsetFunc,
+            int offsetFuncPos
     ) {
-        super(map, keyMapSink, recordFunctions, timestampIndex, timestampSampler, groupByFunctions, placeholderFunctions);
+        super(
+                map,
+                keyMapSink,
+                recordFunctions,
+                timestampIndex,
+                timestampSampler,
+                groupByFunctions,
+                placeholderFunctions,
+                timezoneNameFunc,
+                timezoneNameFuncPos,
+                offsetFunc,
+                offsetFuncPos
+        );
         this.mapRecord = map.getRecord();
     }
 

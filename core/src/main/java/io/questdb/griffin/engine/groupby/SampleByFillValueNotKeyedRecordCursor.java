@@ -38,9 +38,23 @@ public class SampleByFillValueNotKeyedRecordCursor extends AbstractSplitVirtualR
             ObjList<Function> placeholderFunctions,
             int timestampIndex, // index of timestamp column in base cursor
             TimestampSampler timestampSampler,
-            SimpleMapValue simpleMapValue
+            SimpleMapValue simpleMapValue,
+            Function timezoneNameFunc,
+            int timezoneNameFuncPos,
+            Function offsetFunc,
+            int offsetFuncPos
     ) {
-        super(recordFunctions, timestampIndex, timestampSampler, groupByFunctions, placeholderFunctions);
+        super(
+                recordFunctions,
+                timestampIndex,
+                timestampSampler,
+                groupByFunctions,
+                placeholderFunctions,
+                timezoneNameFunc,
+                timezoneNameFuncPos,
+                offsetFunc,
+                offsetFuncPos
+        );
         this.simpleMapValue = simpleMapValue;
         this.record.of(simpleMapValue);
     }

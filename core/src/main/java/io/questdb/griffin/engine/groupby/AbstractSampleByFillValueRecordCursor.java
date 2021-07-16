@@ -47,9 +47,23 @@ public abstract class AbstractSampleByFillValueRecordCursor extends AbstractSpli
             int timestampIndex,
             TimestampSampler timestampSampler,
             ObjList<GroupByFunction> groupByFunctions,
-            ObjList<Function> placeholderFunctions
+            ObjList<Function> placeholderFunctions,
+            Function timezoneNameFunc,
+            int timezoneNameFuncPos,
+            Function offsetFunc,
+            int offsetFuncPos
     ) {
-        super(recordFunctions, timestampIndex, timestampSampler, groupByFunctions, placeholderFunctions);
+        super(
+                recordFunctions,
+                timestampIndex,
+                timestampSampler,
+                groupByFunctions,
+                placeholderFunctions,
+                timezoneNameFunc,
+                timezoneNameFuncPos,
+                offsetFunc,
+                offsetFuncPos
+        );
         this.map = map;
         this.keyMapSink = keyMapSink;
         this.record.of(map.getRecord());

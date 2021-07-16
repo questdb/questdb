@@ -25,13 +25,15 @@
 package io.questdb.griffin.engine.groupby;
 
 import io.questdb.cairo.map.MapValue;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionInterruptor;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
-import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
@@ -43,8 +45,7 @@ import org.jetbrains.annotations.Nullable;
 import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_MICROS;
 import static io.questdb.std.datetime.microtime.Timestamps.MINUTE_MICROS;
 
-public abstract class AbstractNoRecordSampleByCursor implements NoRandomAccessRecordCursor {
-    protected final TimestampSampler timestampSampler;
+public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCursor {
     protected final int timestampIndex;
     protected final ObjList<GroupByFunction> groupByFunctions;
     private final ObjList<Function> recordFunctions;
@@ -56,13 +57,7 @@ public abstract class AbstractNoRecordSampleByCursor implements NoRandomAccessRe
     protected long nextSampleLocalEpoch;
     protected RecordCursor base;
     protected SqlExecutionInterruptor interruptor;
-    protected long tzOffset;
-    protected long prevDst;
-    protected long nextDstUTC;
-    protected long fixedOffset;
     protected long topTzOffset;
-    protected long localEpoch;
-    protected TimeZoneRules rules;
     private long topNextDst;
     private long topLocalEpoch;
 
@@ -70,10 +65,14 @@ public abstract class AbstractNoRecordSampleByCursor implements NoRandomAccessRe
             ObjList<Function> recordFunctions,
             int timestampIndex, // index of timestamp column in base cursor
             TimestampSampler timestampSampler,
-            ObjList<GroupByFunction> groupByFunctions
+            ObjList<GroupByFunction> groupByFunctions,
+            Function timezoneNameFunc,
+            int timezoneNameFuncPos,
+            Function offsetFunc,
+            int offsetFuncPos
     ) {
+        super(timestampSampler, timezoneNameFunc, timezoneNameFuncPos, offsetFunc, offsetFuncPos);
         this.timestampIndex = timestampIndex;
-        this.timestampSampler = timestampSampler;
         this.recordFunctions = recordFunctions;
         this.groupByFunctions = groupByFunctions;
     }
@@ -106,65 +105,18 @@ public abstract class AbstractNoRecordSampleByCursor implements NoRandomAccessRe
         return -1;
     }
 
-    public void of(
-            RecordCursor base,
-            SqlExecutionContext executionContext,
-            Function timezoneNameFunc,
-            int timezoneNameFuncPos,
-            Function offsetFunc,
-            int offsetFuncPos
-    ) throws SqlException {
-        // factory guarantees that base cursor is not empty
-        timezoneNameFunc.init(base, executionContext);
-        offsetFunc.init(base, executionContext);
+    public void of(RecordCursor base, SqlExecutionContext executionContext) throws SqlException {
+        this.prevDst = Long.MIN_VALUE;
+        parseParams(base, executionContext);
 
-        this.rules = null;
         this.base = base;
         this.baseRecord = base.getRecord();
-        this.prevDst = Long.MIN_VALUE;
         final long timestamp = baseRecord.getTimestamp(timestampIndex);
-
-        final CharSequence tz = timezoneNameFunc.getStr(null);
-        if (tz != null) {
-            try {
-                long opt = Timestamps.parseOffset(tz);
-                if (opt == Long.MIN_VALUE) {
-                    // this is timezone name
-                    TimeZoneRules rules = TimestampFormatUtils.enLocale.getZoneRules(
-                            Numbers.decodeLowInt(TimestampFormatUtils.enLocale.matchZone(tz, 0, tz.length())),
-                            RESOLUTION_MICROS
-                    );
-                    // fixed rules means the timezone does not have historical or daylight time changes
-                    tzOffset = rules.getOffset(timestamp);
-                    nextDstUTC = rules.getNextDST(timestamp);
-                    this.rules = rules;
-                } else {
-                    // here timezone is in numeric offset format
-                    tzOffset = Numbers.decodeLowInt(opt) * MINUTE_MICROS;
-                    nextDstUTC = Long.MAX_VALUE;
-                }
-            } catch (NumericException e) {
-                Misc.free(base);
-                throw SqlException.$(timezoneNameFuncPos, "invalid timezone: ").put(tz);
-            }
-        } else {
-            this.tzOffset = 0;
-            this.nextDstUTC = Long.MAX_VALUE;
+        if (rules != null) {
+            tzOffset = rules.getOffset(timestamp);
+            nextDstUTC = rules.getNextDST(timestamp);
         }
 
-        final CharSequence offset = offsetFunc.getStr(null);
-
-        if (offset != null) {
-            final long val = Timestamps.parseOffset(offset);
-            if (val == Numbers.LONG_NaN) {
-                // bad value for offset
-                Misc.free(base);
-                throw SqlException.$(offsetFuncPos, "invalid offset: ").put(offset);
-            }
-            this.fixedOffset = Numbers.decodeLowInt(val) * MINUTE_MICROS;
-        } else {
-            fixedOffset = Long.MIN_VALUE;
-        }
 
         if (tzOffset == 0 && fixedOffset == Long.MIN_VALUE) {
             // this is the default path, we align time intervals to the first observation

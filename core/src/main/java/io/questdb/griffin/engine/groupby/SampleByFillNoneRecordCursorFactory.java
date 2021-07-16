@@ -62,7 +62,7 @@ public class SampleByFillNoneRecordCursorFactory extends AbstractSampleByRecordC
             Function offsetFunc,
             int offsetFuncPos
     ) {
-        super(base, groupByMetadata, recordFunctions, timezoneNameFunc, timezoneNameFuncPos, offsetFunc, offsetFuncPos);
+        super(base, groupByMetadata, recordFunctions);
         // sink will be storing record columns to map key
         final RecordSink mapSink = RecordSinkFactory.getInstance(asm, base.getMetadata(), listColumnFilter, false);
         // this is the map itself, which we must not forget to free when factory closes
@@ -73,7 +73,11 @@ public class SampleByFillNoneRecordCursorFactory extends AbstractSampleByRecordC
                 groupByFunctions,
                 this.recordFunctions,
                 timestampIndex,
-                timestampSampler
+                timestampSampler,
+                timezoneNameFunc,
+                timezoneNameFuncPos,
+                offsetFunc,
+                offsetFuncPos
         );
     }
 

@@ -46,9 +46,22 @@ class SampleByFillPrevRecordCursor extends AbstractVirtualRecordSampleByCursor {
             ObjList<GroupByFunction> groupByFunctions,
             ObjList<Function> recordFunctions,
             int timestampIndex, // index of timestamp column in base cursor
-            TimestampSampler timestampSampler
+            TimestampSampler timestampSampler,
+            Function timezoneNameFunc,
+            int timezoneNameFuncPos,
+            Function offsetFunc,
+            int offsetFuncPos
     ) {
-        super(recordFunctions, timestampIndex, timestampSampler, groupByFunctions);
+        super(
+                recordFunctions,
+                timestampIndex,
+                timestampSampler,
+                groupByFunctions,
+                timezoneNameFunc,
+                timezoneNameFuncPos,
+                offsetFunc,
+                offsetFuncPos
+        );
         this.map = map;
         this.keyMapSink = keyMapSink;
         this.mapCursor = map.getCursor();
@@ -74,7 +87,7 @@ class SampleByFillPrevRecordCursor extends AbstractVirtualRecordSampleByCursor {
         final long expectedLocalEpoch = timestampSampler.nextTimestamp(nextSampleLocalEpoch);
 
         // is data timestamp ahead of next expected timestamp?
-        if(expectedLocalEpoch < localEpoch) {
+        if (expectedLocalEpoch < localEpoch) {
             this.sampleLocalEpoch = expectedLocalEpoch;
             this.nextSampleLocalEpoch = expectedLocalEpoch;
             // reset iterator on map and stream contents
@@ -130,13 +143,6 @@ class SampleByFillPrevRecordCursor extends AbstractVirtualRecordSampleByCursor {
     }
 
     @Override
-    protected void updateValueWhenClockMovesBack(MapValue value, int n) {
-        final MapKey key = map.withKey();
-        keyMapSink.copy(baseRecord, key);
-        super.updateValueWhenClockMovesBack(key.createValue(), n);
-    }
-
-    @Override
     public void toTop() {
         super.toTop();
         if (base.hasNext()) {
@@ -155,5 +161,12 @@ class SampleByFillPrevRecordCursor extends AbstractVirtualRecordSampleByCursor {
                 }
             }
         }
+    }
+
+    @Override
+    protected void updateValueWhenClockMovesBack(MapValue value, int n) {
+        final MapKey key = map.withKey();
+        keyMapSink.copy(baseRecord, key);
+        super.updateValueWhenClockMovesBack(key.createValue(), n);
     }
 }

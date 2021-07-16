@@ -34,17 +34,13 @@ import io.questdb.griffin.engine.EmptyTableNoSizeRecordCursor;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
-public abstract class AbstractSampleByNotKeyedRecordCursorFactory extends AbstractSampleByRecordCursorFactory{
+public abstract class AbstractSampleByNotKeyedRecordCursorFactory extends AbstractSampleByRecordCursorFactory {
     public AbstractSampleByNotKeyedRecordCursorFactory(
             RecordCursorFactory base,
             RecordMetadata metadata,
-            ObjList<Function> recordFunctions,
-            Function timezoneNameFunc,
-            int timezoneNameFuncPos,
-            Function offsetFunc,
-            int offsetFuncPos
+            ObjList<Function> recordFunctions
     ) {
-        super(base, metadata, recordFunctions, timezoneNameFunc, timezoneNameFuncPos, offsetFunc, offsetFuncPos);
+        super(base, metadata, recordFunctions);
     }
 
     @Override

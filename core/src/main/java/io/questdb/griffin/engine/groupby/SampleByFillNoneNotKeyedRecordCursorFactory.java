@@ -28,7 +28,6 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.engine.functions.GroupByFunction;
-import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 
@@ -48,14 +47,18 @@ public class SampleByFillNoneNotKeyedRecordCursorFactory extends AbstractSampleB
             Function offsetFunc,
             int offsetFuncPos
     ) {
-        super(base, groupByMetadata, recordFunctions, timezoneNameFunc, timezoneNameFuncPos, offsetFunc, offsetFuncPos);
+        super(base, groupByMetadata, recordFunctions);
         final SimpleMapValue simpleMapValue = new SimpleMapValue(valueCount);
         this.cursor = new SampleByFillNoneNotKeyedRecordCursor(
                 simpleMapValue,
                 groupByFunctions,
                 recordFunctions,
                 timestampIndex,
-                timestampSampler
+                timestampSampler,
+                timezoneNameFunc,
+                timezoneNameFuncPos,
+                offsetFunc,
+                offsetFuncPos
         );
     }
 

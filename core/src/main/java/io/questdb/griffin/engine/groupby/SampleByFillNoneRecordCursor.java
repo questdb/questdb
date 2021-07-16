@@ -44,9 +44,22 @@ class SampleByFillNoneRecordCursor extends AbstractVirtualRecordSampleByCursor {
             ObjList<GroupByFunction> groupByFunctions,
             ObjList<Function> recordFunctions,
             int timestampIndex, // index of timestamp column in base cursor
-            TimestampSampler timestampSampler
+            TimestampSampler timestampSampler,
+            Function timezoneNameFunc,
+            int timezoneNameFuncPos,
+            Function offsetFunc,
+            int offsetFuncPos
     ) {
-        super(recordFunctions, timestampIndex, timestampSampler, groupByFunctions);
+        super(
+                recordFunctions,
+                timestampIndex,
+                timestampSampler,
+                groupByFunctions,
+                timezoneNameFunc,
+                timezoneNameFuncPos,
+                offsetFunc,
+                offsetFuncPos
+        );
         this.map = map;
         this.keyMapSink = keyMapSink;
         this.record.of(map.getRecord());
@@ -99,19 +112,19 @@ class SampleByFillNoneRecordCursor extends AbstractVirtualRecordSampleByCursor {
     }
 
     @Override
-    protected void updateValueWhenClockMovesBack(MapValue value, int n) {
-        final MapKey key = map.withKey();
-        keyMapSink.copy(baseRecord, key);
-        super.updateValueWhenClockMovesBack(key.createValue(), n);
-    }
-
-    @Override
     public void toTop() {
         super.toTop();
         if (base.hasNext()) {
             baseRecord = base.getRecord();
             map.clear();
         }
+    }
+
+    @Override
+    protected void updateValueWhenClockMovesBack(MapValue value, int n) {
+        final MapKey key = map.withKey();
+        keyMapSink.copy(baseRecord, key);
+        super.updateValueWhenClockMovesBack(key.createValue(), n);
     }
 
     private boolean createMapCursor() {

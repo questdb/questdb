@@ -38,34 +38,20 @@ public abstract class AbstractSampleByRecordCursorFactory implements RecordCurso
     protected final RecordCursorFactory base;
     protected final RecordMetadata metadata;
     protected final ObjList<Function> recordFunctions;
-    protected final Function timezoneNameFunc;
-    protected final int timezoneNameFuncPos;
-    protected final Function offsetFunc;
-    protected final int offsetFuncPos;
 
     public AbstractSampleByRecordCursorFactory(
             RecordCursorFactory base,
             RecordMetadata metadata,
-            ObjList<Function> recordFunctions,
-            Function timezoneNameFunc,
-            int timezoneNameFuncPos,
-            Function offsetFunc,
-            int offsetFuncPos
+            ObjList<Function> recordFunctions
     ) {
         this.base = base;
         this.metadata = metadata;
         this.recordFunctions = recordFunctions;
-        this.timezoneNameFunc = timezoneNameFunc;
-        this.timezoneNameFuncPos = timezoneNameFuncPos;
-        this.offsetFunc = offsetFunc;
-        this.offsetFuncPos = offsetFuncPos;
     }
 
     @Override
     public void close() {
         Misc.freeObjList(recordFunctions);
-        Misc.free(timezoneNameFunc);
-        Misc.free(offsetFunc);
         Misc.free(base);
     }
 
@@ -87,12 +73,12 @@ public abstract class AbstractSampleByRecordCursorFactory implements RecordCurso
     ) throws SqlException {
         try {
             AbstractNoRecordSampleByCursor cursor = getRawCursor();
-            cursor.of(baseCursor, executionContext, timezoneNameFunc, timezoneNameFuncPos, offsetFunc, offsetFuncPos);
+            cursor.of(baseCursor, executionContext);
             // init all record function for this cursor, in case functions require metadata and/or symbol tables
             Function.init(recordFunctions, baseCursor, executionContext);
             return cursor;
         } catch (Throwable ex) {
-            baseCursor.close();
+            Misc.free(baseCursor);
             throw ex;
         }
     }

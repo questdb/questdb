@@ -68,11 +68,7 @@ public class SampleByFillNullRecordCursorFactory extends AbstractSampleByFillRec
                 valueTypes,
                 groupByMetadata,
                 groupByFunctions,
-                recordFunctions,
-                timezoneNameFunc,
-                timezoneNameFuncPos,
-                offsetFunc,
-                offsetFuncPos
+                recordFunctions
         );
         try {
             this.cursor = new SampleByFillValueRecordCursor(
@@ -82,7 +78,11 @@ public class SampleByFillNullRecordCursorFactory extends AbstractSampleByFillRec
                     recordFunctions,
                     createPlaceholderFunctions(recordFunctions, recordFunctionPositions),
                     timestampIndex,
-                    timestampSampler
+                    timestampSampler,
+                    timezoneNameFunc,
+                    timezoneNameFuncPos,
+                    offsetFunc,
+                    offsetFuncPos
             );
         } catch (Throwable e) {
             Misc.freeObjList(recordFunctions);

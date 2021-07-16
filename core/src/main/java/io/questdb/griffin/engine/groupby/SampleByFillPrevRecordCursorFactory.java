@@ -32,7 +32,6 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.std.BytecodeAssembler;
-import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
@@ -66,11 +65,7 @@ public class SampleByFillPrevRecordCursorFactory extends AbstractSampleByFillRec
                 valueTypes,
                 groupByMetadata,
                 groupByFunctions,
-                recordFunctions,
-                timezoneNameFunc,
-                timezoneNameFuncPos,
-                offsetFunc,
-                offsetFuncPos
+                recordFunctions
         );
         this.cursor = new SampleByFillPrevRecordCursor(
                 map,
@@ -78,7 +73,11 @@ public class SampleByFillPrevRecordCursorFactory extends AbstractSampleByFillRec
                 groupByFunctions,
                 recordFunctions,
                 timestampIndex,
-                timestampSampler
+                timestampSampler,
+                timezoneNameFunc,
+                timezoneNameFuncPos,
+                offsetFunc,
+                offsetFuncPos
         );
     }
 

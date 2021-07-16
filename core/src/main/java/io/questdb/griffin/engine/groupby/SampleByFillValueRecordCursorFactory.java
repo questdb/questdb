@@ -69,11 +69,7 @@ public class SampleByFillValueRecordCursorFactory extends AbstractSampleByFillRe
                 valueTypes,
                 groupByMetadata,
                 groupByFunctions,
-                recordFunctions,
-                timezoneNameFunc,
-                timezoneNameFuncPos,
-                offsetFunc,
-                offsetFuncPos
+                recordFunctions
         );
         try {
             final ObjList<Function> placeholderFunctions = createPlaceholderFunctions(
@@ -88,7 +84,11 @@ public class SampleByFillValueRecordCursorFactory extends AbstractSampleByFillRe
                     recordFunctions,
                     placeholderFunctions,
                     timestampIndex,
-                    timestampSampler
+                    timestampSampler,
+                    timezoneNameFunc,
+                    timezoneNameFuncPos,
+                    offsetFunc,
+                    offsetFuncPos
             );
         } catch (Throwable e) {
             Misc.freeObjList(recordFunctions);
@@ -113,9 +113,7 @@ public class SampleByFillValueRecordCursorFactory extends AbstractSampleByFillRe
                 if (fillIndex == fillValueCount) {
                     throw SqlException.position(0).put("not enough values");
                 }
-
                 ExpressionNode fillNode = fillValues.getQuick(fillIndex++);
-
                 try {
                     switch (function.getType()) {
                         case ColumnType.INT:
