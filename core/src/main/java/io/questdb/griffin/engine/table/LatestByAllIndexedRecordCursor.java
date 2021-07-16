@@ -28,6 +28,7 @@ import io.questdb.MessageBus;
 import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.DataFrame;
+import io.questdb.griffin.SqlException;
 import io.questdb.cairo.vm.ReadOnlyVirtualMemory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.geohash.GeoHashNative;
@@ -85,7 +86,7 @@ class LatestByAllIndexedRecordCursor extends AbstractRecordListCursor {
     }
 
     @Override
-    protected void buildTreeMap(SqlExecutionContext executionContext) {
+    protected void buildTreeMap(SqlExecutionContext executionContext) throws SqlException  {
         final MessageBus bus = executionContext.getMessageBus();
         assert bus != null;
 

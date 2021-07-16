@@ -75,12 +75,12 @@ public class InsertStatementImpl implements InsertStatement {
     }
 
     @Override
-    public InsertMethod createMethod(SqlExecutionContext executionContext) {
+    public InsertMethod createMethod(SqlExecutionContext executionContext) throws SqlException {
         return createMethod(executionContext, engine);
     }
 
     @Override
-    public InsertMethod createMethod(SqlExecutionContext executionContext, WriterSource writerSource) {
+    public InsertMethod createMethod(SqlExecutionContext executionContext, WriterSource writerSource) throws SqlException {
         initContext(executionContext);
         if (insertMethod.writer == null) {
             final TableWriter writer = writerSource.getWriter(executionContext.getCairoSecurityContext(), tableName, "insert");
@@ -127,7 +127,7 @@ public class InsertStatementImpl implements InsertStatement {
         return tableWriter.newRow();
     }
 
-    private void initContext(SqlExecutionContext executionContext) {
+    private void initContext(SqlExecutionContext executionContext) throws SqlException {
         final ObjList<? extends Function> functions = virtualRecord.getFunctions();
         Function.init(functions, null, executionContext);
         if (timestampFunction != null) {

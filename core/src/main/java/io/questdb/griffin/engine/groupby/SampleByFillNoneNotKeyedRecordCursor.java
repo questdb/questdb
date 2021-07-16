@@ -36,46 +36,29 @@ class SampleByFillNoneNotKeyedRecordCursor extends AbstractVirtualRecordSampleBy
             ObjList<GroupByFunction> groupByFunctions,
             ObjList<Function> recordFunctions,
             int timestampIndex, // index of timestamp column in base cursor
-            TimestampSampler timestampSampler
+            TimestampSampler timestampSampler,
+            Function timezoneNameFunc,
+            int timezoneNameFuncPos,
+            Function offsetFunc,
+            int offsetFuncPos
     ) {
-        super(recordFunctions, timestampIndex, timestampSampler, groupByFunctions);
+        super(
+                recordFunctions,
+                timestampIndex,
+                timestampSampler,
+                groupByFunctions,
+                timezoneNameFunc,
+                timezoneNameFuncPos,
+                offsetFunc,
+                offsetFuncPos
+        );
         this.simpleMapValue = simpleMapValue;
         this.record.of(simpleMapValue);
     }
 
     @Override
     public boolean hasNext() {
-        if (baseRecord == null) {
-            return false;
-        }
-
-        this.lastTimestamp = this.nextTimestamp;
-
-        // looks like we need to populate key map
-        // at the start of this loop 'lastTimestamp' will be set to timestamp
-        // of first record in base cursor
-        int n = groupByFunctions.size();
-        GroupByUtils.updateNew(groupByFunctions, n, simpleMapValue, baseRecord);
-
-        while (base.hasNext()) {
-            final long timestamp = getBaseRecordTimestamp();
-            if (lastTimestamp == timestamp) {
-                GroupByUtils.updateExisting(groupByFunctions, n, simpleMapValue, baseRecord);
-            } else {
-                // timestamp changed, make sure we keep the value of 'lastTimestamp'
-                // unchanged. Timestamp columns uses this variable
-                // When map is exhausted we would assign 'nextTimestamp' to 'lastTimestamp'
-                // and build another map
-                this.nextTimestamp = timestamp;
-                GroupByUtils.toTop(groupByFunctions);
-                return true;
-            }
-            interruptor.checkInterrupted();
-        }
-
-        // opportunity, after we stream map that is.
-        baseRecord = null;
-        return true;
+        return baseRecord != null && notKeyedLoop(simpleMapValue);
     }
 
     @Override
@@ -83,8 +66,6 @@ class SampleByFillNoneNotKeyedRecordCursor extends AbstractVirtualRecordSampleBy
         super.toTop();
         if (base.hasNext()) {
             baseRecord = base.getRecord();
-            this.nextTimestamp = timestampSampler.round(baseRecord.getTimestamp(timestampIndex));
-            this.lastTimestamp = this.nextTimestamp;
         }
     }
 }

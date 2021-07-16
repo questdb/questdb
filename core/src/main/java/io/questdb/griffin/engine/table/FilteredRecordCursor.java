@@ -28,6 +28,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 
 class FilteredRecordCursor implements RecordCursor {
@@ -97,7 +98,7 @@ class FilteredRecordCursor implements RecordCursor {
         filter.toTop();
     }
 
-    void of(RecordCursor base, SqlExecutionContext executionContext) {
+    void of(RecordCursor base, SqlExecutionContext executionContext) throws SqlException {
         this.base = base;
         this.record = base.getRecord();
         filter.init(this, executionContext);

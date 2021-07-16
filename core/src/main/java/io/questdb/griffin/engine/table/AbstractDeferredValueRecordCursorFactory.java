@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.sql.*;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.EmptyTableRandomRecordCursor;
 import io.questdb.griffin.engine.EmptyTableRecordCursor;
@@ -65,7 +66,7 @@ abstract class AbstractDeferredValueRecordCursorFactory extends AbstractDataFram
     protected RecordCursor getCursorInstance(
             DataFrameCursor dataFrameCursor,
             SqlExecutionContext executionContext
-    ) {
+    ) throws SqlException {
         if (cursor == null && lookupDeferredSymbol(dataFrameCursor)) {
             if (recordCursorSupportsRandomAccess()) {
                 return EmptyTableRandomRecordCursor.INSTANCE;

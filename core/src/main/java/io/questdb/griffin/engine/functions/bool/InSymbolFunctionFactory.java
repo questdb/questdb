@@ -111,7 +111,7 @@ public class InSymbolFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             arg.init(symbolTableSource, executionContext);
             final StaticSymbolTable symbolTable = arg.getStaticSymbolTable();
             if (symbolTable != null) {

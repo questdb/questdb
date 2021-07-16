@@ -24,14 +24,10 @@
 
 package io.questdb.griffin.engine.groupby;
 
-import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.EmptyTableNoSizeRecordCursor;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
@@ -39,12 +35,9 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 
-public class SampleByFillNullNotKeyedRecordCursorFactory implements RecordCursorFactory {
+public class SampleByFillNullNotKeyedRecordCursorFactory extends AbstractSampleByNotKeyedRecordCursorFactory {
 
-    protected final RecordCursorFactory base;
     private final SampleByFillValueNotKeyedRecordCursor cursor;
-    private final ObjList<Function> recordFunctions;
-    private final RecordMetadata metadata;
 
     public SampleByFillNullNotKeyedRecordCursorFactory(
             RecordCursorFactory base,
@@ -54,12 +47,14 @@ public class SampleByFillNullNotKeyedRecordCursorFactory implements RecordCursor
             ObjList<Function> recordFunctions,
             @Transient @NotNull IntList recordFunctionPositions,
             int valueCount,
-            int timestampIndex
+            int timestampIndex,
+            Function timezoneNameFunc,
+            int timezoneNameFuncPos,
+            Function offsetFunc,
+            int offsetFuncPos
     ) throws SqlException {
+        super(base, groupByMetadata, recordFunctions);
         try {
-            this.base = base;
-            this.metadata = groupByMetadata;
-            this.recordFunctions = recordFunctions;
             final SimpleMapValue simpleMapValue = new SimpleMapValue(valueCount);
             this.cursor = new SampleByFillValueNotKeyedRecordCursor(
                     groupByFunctions,
@@ -67,45 +62,19 @@ public class SampleByFillNullNotKeyedRecordCursorFactory implements RecordCursor
                     SampleByFillNullRecordCursorFactory.createPlaceholderFunctions(recordFunctions, recordFunctionPositions),
                     timestampIndex,
                     timestampSampler,
-                    simpleMapValue
+                    simpleMapValue,
+                    timezoneNameFunc,
+                    timezoneNameFuncPos,
+                    offsetFunc,
+                    offsetFuncPos
             );
-        } catch (SqlException | CairoException e) {
+        } catch (Throwable e) {
             Misc.freeObjList(recordFunctions);
             throw e;
         }
     }
 
-    @Override
-    public void close() {
-        Misc.freeObjList(recordFunctions);
-        Misc.free(base);
-    }
-
-    @Override
-    public RecordCursor getCursor(SqlExecutionContext executionContext) {
-        final RecordCursor baseCursor = base.getCursor(executionContext);
-        if (baseCursor.hasNext()) {
-            return initFunctionsAndCursor(executionContext, baseCursor);
-        }
-        Misc.free(baseCursor);
-        return EmptyTableNoSizeRecordCursor.INSTANCE;
-    }
-
-    @Override
-    public RecordMetadata getMetadata() {
-        return metadata;
-    }
-
-    @Override
-    public boolean recordCursorSupportsRandomAccess() {
-        return false;
-    }
-
-    @NotNull
-    protected RecordCursor initFunctionsAndCursor(SqlExecutionContext executionContext, RecordCursor baseCursor) {
-        cursor.of(baseCursor, executionContext);
-        // init all record function for this cursor, in case functions require metadata and/or symbol tables
-        Function.init(recordFunctions, baseCursor, executionContext);
+    protected AbstractNoRecordSampleByCursor getRawCursor() {
         return cursor;
     }
 }

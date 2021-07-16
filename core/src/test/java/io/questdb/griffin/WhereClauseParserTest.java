@@ -1706,7 +1706,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         TestUtils.assertEquals(expected, toRpn(m.filter));
     }
 
-    private CharSequence intervalToString(IntrinsicModel model) {
+    private CharSequence intervalToString(IntrinsicModel model) throws SqlException {
         if (!model.hasIntervalFilters()) return "";
         RuntimeIntrinsicIntervalModel sm = model.buildIntervalModel();
         return GriffinParserTestUtils.intervalToString(sm.calculateIntervals(sqlExecutionContext));

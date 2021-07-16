@@ -192,17 +192,15 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
 
     @Override
     public void close() {
-        for (int i = 0, n = recordFunctions.size(); i < n; i++) {
-            recordFunctions.getQuick(i).close();
-        }
-        recordKeyMap.close();
-        dataMap.close();
+        Misc.freeObjList(recordFunctions);
+        Misc.free(recordKeyMap);
+        Misc.free(dataMap);
         freeYData();
-        base.close();
+        Misc.free(base);
     }
 
     @Override
-    public RecordCursor getCursor(SqlExecutionContext executionContext) {
+    public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         recordKeyMap.clear();
         dataMap.clear();
         final RecordCursor baseCursor = base.getCursor(executionContext);
@@ -242,7 +240,10 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
             // we have data in cursor, so we can grab first value
             final boolean good = baseCursor.hasNext();
             assert good;
-            long prevSample = sampler.round(baseRecord.getTimestamp(timestampIndex));
+            long timestamp = baseRecord.getTimestamp(timestampIndex);
+            sampler.setStart(timestamp);
+
+            long prevSample = sampler.round(timestamp);
             long loSample = prevSample; // the lowest timestamp value
             long hiSample;
 
@@ -481,7 +482,7 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
             SqlExecutionContext executionContext,
             RecordCursor mapCursor,
             RecordCursor baseCursor
-    ) {
+    ) throws SqlException {
         cursor.of(baseCursor, mapCursor);
         // init all record function for this cursor, in case functions require metadata and/or symbol tables
         Function.init(recordFunctions, baseCursor, executionContext);

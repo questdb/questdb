@@ -84,6 +84,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private final ObjList<ExpressionNode> joinColumns = new ObjList<>(4);
     private final LowerCaseCharSequenceObjHashMap<WithClauseModel> withClauses = new LowerCaseCharSequenceObjHashMap<>();
     private final ObjList<ExpressionNode> sampleByFill = new ObjList<>();
+    private ExpressionNode sampleByTimezoneName = null;
+    private ExpressionNode sampleByOffset = null;
     private final ObjList<ExpressionNode> latestBy = new ObjList<>();
     private final ObjList<ExpressionNode> orderByAdvice = new ObjList<>();
     private final IntList orderByDirectionAdvice = new IntList();
@@ -251,6 +253,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     public void clearSampleBy() {
         sampleBy = null;
         sampleByFill.clear();
+        sampleByTimezoneName = null;
+        sampleByOffset = null;
     }
 
     public void copyColumnsFrom(
@@ -514,6 +518,22 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         this.sampleBy = sampleBy;
     }
 
+    public ExpressionNode getSampleByTimezoneName() {
+        return sampleByTimezoneName;
+    }
+
+    public void setSampleByTimezoneName(ExpressionNode sampleByTimezoneName) {
+        this.sampleByTimezoneName = sampleByTimezoneName;
+    }
+
+    public ExpressionNode getSampleByOffset() {
+        return sampleByOffset;
+    }
+
+    public void setSampleByOffset(ExpressionNode sampleByOffset) {
+        this.sampleByOffset = sampleByOffset;
+    }
+
     public ObjList<ExpressionNode> getSampleByFill() {
         return sampleByFill;
     }
@@ -630,6 +650,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         this.sampleBy = model.sampleBy;
         this.sampleByFill.clear();
         this.sampleByFill.addAll(model.sampleByFill);
+        this.sampleByTimezoneName = model.sampleByTimezoneName;
+        this.sampleByOffset = model.sampleByOffset;
 
         // clear the source
         model.clearSampleBy();
@@ -907,6 +929,19 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                     }
                 }
                 sink.put(')');
+            }
+
+            if (sampleByTimezoneName != null || sampleByOffset != null) {
+                sink.put(" align to calendar");
+                if (sampleByTimezoneName != null) {
+                    sink.put(" time zone ");
+                    sink.put(sampleByTimezoneName);
+                }
+
+                if(sampleByOffset != null) {
+                    sink.put(" with offset ");
+                    sink.put(sampleByOffset);
+                }
             }
         }
 

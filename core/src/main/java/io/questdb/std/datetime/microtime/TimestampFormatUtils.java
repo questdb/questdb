@@ -46,8 +46,6 @@ public class TimestampFormatUtils {
     public static final DateFormat PG_TIMESTAMP_MILLI_TIME_Z_FORMAT;
     public static final DateFormat PG_TIMESTAMP_TIME_Z_FORMAT;
     public static final DateFormat NANOS_UTC_FORMAT;
-
-
     public static final String UTC_PATTERN = "yyyy-MM-ddTHH:mm:ss.SSSz";
     public static final DateLocale enLocale = DateLocaleFactory.INSTANCE.getLocale("en");
     public static final int TIMESTAMP_FORMAT_MIN_LENGTH;

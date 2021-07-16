@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.sql.Function;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntList;
@@ -55,7 +56,7 @@ class LatestByAllIndexedFilteredRecordCursor extends LatestByAllIndexedRecordCur
     }
 
     @Override
-    protected void buildTreeMap(SqlExecutionContext executionContext) {
+    protected void buildTreeMap(SqlExecutionContext executionContext) throws SqlException {
         filter.init(this, executionContext);
         super.buildTreeMap(executionContext);
     }

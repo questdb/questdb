@@ -27,6 +27,7 @@ package io.questdb.cairo;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
@@ -68,7 +69,7 @@ public class TableReaderRecordCursorFactory extends AbstractRecordCursorFactory 
     }
 
     @Override
-    public RecordCursor getCursor(SqlExecutionContext executionContext) {
+    public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         cursor.of(engine.getReader(executionContext.getCairoSecurityContext(), tableName, tableVersion));
         return cursor;
     }

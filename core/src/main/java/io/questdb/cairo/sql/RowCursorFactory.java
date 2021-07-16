@@ -25,11 +25,16 @@
 package io.questdb.cairo.sql;
 
 import io.questdb.cairo.TableReader;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.ObjList;
 
 public interface RowCursorFactory {
-    static void prepareCursor(ObjList<? extends RowCursorFactory> factories, TableReader tableReader, SqlExecutionContext sqlExecutionContext) {
+    static void prepareCursor(
+            ObjList<? extends RowCursorFactory> factories,
+            TableReader tableReader,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
         for (int i = 0, n = factories.size(); i < n; i++) {
             factories.getQuick(i).prepareCursor(tableReader, sqlExecutionContext);
         }
@@ -37,7 +42,7 @@ public interface RowCursorFactory {
 
     RowCursor getCursor(DataFrame dataFrame);
 
-    default void prepareCursor(TableReader tableReader, SqlExecutionContext sqlExecutionContext) {
+    default void prepareCursor(TableReader tableReader, SqlExecutionContext sqlExecutionContext) throws SqlException {
     }
 
     boolean isEntity();
