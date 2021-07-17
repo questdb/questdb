@@ -53,6 +53,7 @@ import { color } from "utils"
 import * as QuestDB from "utils/questdb"
 
 import Table from "./Table"
+import LazyScroller from "./LazyScroller"
 
 type Props = Readonly<{
   hideMenu?: boolean
@@ -134,6 +135,18 @@ const Schema = ({
   useEffect(() => {
     void fetchTables()
   }, [fetchTables])
+  let tablesElements: JSX.Element[] = []
+  if (tables && !loading) {
+    tablesElements = tables.map(({ table }) => (
+      <Table
+        expanded={table === opened}
+        key={table}
+        onChange={handleChange}
+        refresh={refresh}
+        table={table}
+      />
+    ))
+  }
 
   return (
     <Wrapper ref={innerRef} {...rest}>
@@ -160,17 +173,7 @@ const Schema = ({
 
       <Content _loading={loading}>
         {loading && <Loader size="48px" />}
-        {!loading &&
-          tables &&
-          tables.map(({ table }) => (
-            <Table
-              expanded={table === opened}
-              key={table}
-              onChange={handleChange}
-              refresh={refresh}
-              table={table}
-            />
-          ))}
+        <LazyScroller>{tablesElements}</LazyScroller>
         {!loading && <FlexSpacer />}
       </Content>
     </Wrapper>
