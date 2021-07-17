@@ -30,11 +30,13 @@ import io.questdb.std.str.CharSink;
 public abstract class AbstractDataFrameCursorFactory implements DataFrameCursorFactory {
     private final CairoEngine engine;
     private final String tableName;
+    private final int tableId;
     private final long tableVersion;
 
-    public AbstractDataFrameCursorFactory(CairoEngine engine, String tableName, long tableVersion) {
+    public AbstractDataFrameCursorFactory(CairoEngine engine, String tableName, int tableId, long tableVersion) {
         this.engine = engine;
         this.tableName = tableName;
+        this.tableId = tableId;
         this.tableVersion = tableVersion;
     }
 
@@ -47,6 +49,7 @@ public abstract class AbstractDataFrameCursorFactory implements DataFrameCursorF
         return engine.getReader(
                 sqlContext,
                 tableName,
+                tableId,
                 tableVersion
         );
     }

@@ -31,11 +31,11 @@ import org.junit.Test;
 public class OffsetParserTest {
 
     private static void assertError(String offset) {
-        Assert.assertEquals(Long.MIN_VALUE, Timestamps.parseOffset(offset, 0, offset.length()));
+        Assert.assertEquals(Long.MIN_VALUE, Timestamps.parseOffset(offset));
     }
 
     private static void assertThat(int expected, String offset) {
-        long r = Timestamps.parseOffset(offset, 0, offset.length());
+        long r = Timestamps.parseOffset(offset);
         Assert.assertEquals(expected, Numbers.decodeLowInt(r));
     }
 

@@ -26,31 +26,84 @@ package io.questdb.griffin.engine.groupby;
 
 import io.questdb.std.datetime.microtime.Timestamps;
 
-class MonthTimestampSampler implements TimestampSampler {
-    private final int bucket;
+import static io.questdb.std.datetime.microtime.Timestamps.toMicros;
 
-    MonthTimestampSampler(int bucket) {
-        this.bucket = bucket;
+class MonthTimestampSampler implements TimestampSampler {
+    private final int monthCount;
+    private int startDay;
+    private int startHour;
+    private int startMin;
+    private int startSec;
+    private int startMillis;
+    private int startMicros;
+
+    MonthTimestampSampler(int monthCount) {
+        this.monthCount = monthCount;
     }
 
     @Override
     public long nextTimestamp(long timestamp) {
-        return Timestamps.addMonths(timestamp, bucket);
+        return addMonth(timestamp, monthCount);
     }
 
     @Override
     public long previousTimestamp(long timestamp) {
-        return Timestamps.addMonths(timestamp, -bucket);
+        return addMonth(timestamp, -monthCount);
     }
 
     @Override
     public long round(long value) {
         int y = Timestamps.getYear(value);
-        boolean l = Timestamps.isLeapYear(y);
-        int m = Timestamps.getMonthOfYear(value, y, l);
+        final boolean leap = Timestamps.isLeapYear(y);
+        int m = Timestamps.getMonthOfYear(value, y, leap);
         // target month
-        int n = ((m - 1) / bucket) * bucket + 1;
-        return Timestamps.yearMicros(y, l) +
-                Timestamps.monthOfYearMicros(n, l);
+        int nextMonth = ((m - 1) / monthCount) * monthCount + 1;
+        return toMicros(y, leap, startDay, nextMonth, startHour, startMin, startSec, startMillis, startMicros);
+    }
+
+    @Override
+    public void setStart(long timestamp) {
+        final int y = Timestamps.getYear(timestamp);
+        final boolean leap = Timestamps.isLeapYear(y);
+        this.startDay = Timestamps.getDayOfMonth(timestamp, y, Timestamps.getMonthOfYear(timestamp, y, leap), leap);
+        this.startHour = Timestamps.getHourOfDay(timestamp);
+        this.startMin = Timestamps.getMinuteOfHour(timestamp);
+        this.startSec = Timestamps.getSecondOfMinute(timestamp);
+        this.startMillis = Timestamps.getMillisOfSecond(timestamp);
+        this.startMicros = Timestamps.getMicrosOfSecond(timestamp);
+    }
+
+    private long addMonth(long timestamp, int monthCount) {
+        int y = Timestamps.getYear(timestamp);
+        final boolean leap = Timestamps.isLeapYear(y);
+        int m = Timestamps.getMonthOfYear(timestamp, y, leap);
+
+        int _y;
+        int _m = m - 1 + monthCount;
+        if (_m > -1) {
+            _y = y + _m / 12;
+            _m = (_m % 12) + 1;
+        } else {
+            _y = y + _m / 12 - 1;
+            _m = -_m % 12;
+            if (_m == 0) {
+                _m = 12;
+            }
+            _m = 12 - _m + 1;
+            if (_m == 1) {
+                _y += 1;
+            }
+        }
+        int _d = startDay;
+        int maxDay = Timestamps.getDaysPerMonth(_m, Timestamps.isLeapYear(_y));
+        if (_d > maxDay) {
+            _d = maxDay;
+        }
+        return Timestamps.toMicros(_y, _m, _d) +
+                +startHour * Timestamps.HOUR_MICROS
+                + startMin * Timestamps.MINUTE_MICROS
+                + startSec * Timestamps.SECOND_MICROS
+                + startMillis * Timestamps.MILLI_MICROS
+                + startMicros;
     }
 }

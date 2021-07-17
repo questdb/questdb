@@ -354,7 +354,7 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
                         try (SqlCompiler compiler = new SqlCompiler(engine)) {
                             Assert.assertEquals(ALTER, compiler.compile("alter table x add column meh symbol cache", sqlExecutionContext).getType());
 
-                            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_VERSION)) {
+                            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION)) {
                                 SymbolMapReader smr = reader.getSymbolMapReader(16);
                                 Assert.assertNotNull(smr);
                                 Assert.assertEquals(configuration.getDefaultSymbolCapacity(), smr.getSymbolCapacity());
@@ -379,7 +379,7 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
 
                     Assert.assertEquals(ALTER, compiler.compile("alter table x add column meh symbol capacity 2048", sqlExecutionContext).getType());
 
-                    try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_VERSION)) {
+                    try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION)) {
                         SymbolMapReader smr = reader.getSymbolMapReader(16);
                         Assert.assertNotNull(smr);
                         Assert.assertEquals(2048, smr.getSymbolCapacity());
@@ -435,7 +435,7 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
 
                     Assert.assertEquals(ALTER, compiler.compile("alter table x add column meh symbol index", sqlExecutionContext).getType());
 
-                    try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_VERSION)) {
+                    try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION)) {
                         SymbolMapReader smr = reader.getSymbolMapReader(16);
                         Assert.assertNotNull(smr);
                         Assert.assertEquals(configuration.getDefaultSymbolCapacity(), smr.getSymbolCapacity());
@@ -455,7 +455,7 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
 
                     Assert.assertEquals(ALTER, compiler.compile("alter table x add column meh symbol index capacity 9000", sqlExecutionContext).getType());
 
-                    try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_VERSION)) {
+                    try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION)) {
                         SymbolMapReader smr = reader.getSymbolMapReader(16);
                         Assert.assertNotNull(smr);
                         Assert.assertEquals(configuration.getDefaultSymbolCapacity(), smr.getSymbolCapacity());
@@ -481,7 +481,7 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
 
                     Assert.assertEquals(ALTER, compiler.compile("alter table x add column meh symbol nocache", sqlExecutionContext).getType());
 
-                    try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_VERSION)) {
+                    try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION)) {
                         SymbolMapReader smr = reader.getSymbolMapReader(16);
                         Assert.assertNotNull(smr);
                         Assert.assertEquals(configuration.getDefaultSymbolCapacity(), smr.getSymbolCapacity());
@@ -512,7 +512,7 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
                         try (SqlCompiler compiler = new SqlCompiler(engine)) {
                             Assert.assertEquals(ALTER, compiler.compile("alter table x add column meh symbol", sqlExecutionContext).getType());
 
-                            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_VERSION)) {
+                            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION)) {
                                 SymbolMapReader smr = reader.getSymbolMapReader(16);
                                 Assert.assertNotNull(smr);
                                 Assert.assertEquals(configuration.getDefaultSymbolCapacity(), smr.getSymbolCapacity());
@@ -550,7 +550,7 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
                         try (SqlCompiler compiler = new SqlCompiler(engine)) {
                             Assert.assertEquals(ALTER, compiler.compile("alter table x add column meh symbol", sqlExecutionContext).getType());
 
-                            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_VERSION)) {
+                            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION)) {
                                 SymbolMapReader smr = reader.getSymbolMapReader(16);
                                 Assert.assertNotNull(smr);
                                 Assert.assertEquals(configuration.getDefaultSymbolCapacity(), smr.getSymbolCapacity());

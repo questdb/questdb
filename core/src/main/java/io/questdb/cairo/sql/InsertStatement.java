@@ -25,6 +25,7 @@
 package io.questdb.cairo.sql;
 
 import io.questdb.cairo.pool.WriterSource;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 
 import java.io.Closeable;
@@ -33,9 +34,9 @@ public interface InsertStatement extends Closeable {
     @Override
     void close();
 
-    InsertMethod createMethod(SqlExecutionContext executionContext);
+    InsertMethod createMethod(SqlExecutionContext executionContext) throws SqlException;
 
-    InsertMethod createMethod(SqlExecutionContext executionContext, WriterSource writerSource);
+    InsertMethod createMethod(SqlExecutionContext executionContext, WriterSource writerSource) throws SqlException;
 
     long getStructureVersion();
 

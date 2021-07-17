@@ -27,6 +27,7 @@ package io.questdb.std.datetime.millitime;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
@@ -51,16 +52,13 @@ public class TimeZoneRulesMillisTest {
             zoneRules.add(new TimeZoneRulesMillis(zone.getRules()));
         }
 
-        long micros = Dates.toMillis(1900, 1, 1, 0, 0);
-        long deadline = Dates.toMillis(2115, 12, 31, 0, 0);
+        long epoch = Dates.toMillis(1900, 1, 1, 0, 0);
+        long epochDeadline = Dates.toMillis(2115, 12, 31, 0, 0);
 
-        while (micros < deadline) {
-            int y = Dates.getYear(micros);
+        while (epoch < epochDeadline) {
+            int y = Dates.getYear(epoch);
             boolean leap = Dates.isLeapYear(y);
-            int m = Dates.getMonthOfYear(micros, y, leap);
-            int d = Dates.getDayOfMonth(micros, y, m, leap);
-
-            LocalDateTime dt = LocalDateTime.of(y, m, d, 0, 0);
+            Instant dt = Instant.ofEpochMilli(epoch);
 
             for (int i = 0, n = zones.size(); i < n; i++) {
                 ZoneId zone = zones.get(i);
@@ -70,23 +68,19 @@ public class TimeZoneRulesMillisTest {
 
                 long expected = zdt.getOffset().getTotalSeconds();
                 // find out how much algo added to datetime itself
-                long changed = Dates.toMillis(zdt.getYear(), zdt.getMonthValue(), zdt.getDayOfMonth(), zdt.getHour(), zdt.getMinute()) + zdt.getSecond() * Dates.SECOND_MILLIS;
-                // add any extra time
-                expected += (changed - micros) / Dates.SECOND_MILLIS;
-
-                long offset = rules.getOffset(micros, y, leap);
+                long offset = rules.getOffset(epoch, y, leap);
 
                 try {
                     Assert.assertEquals(expected, offset / Dates.SECOND_MILLIS);
                 } catch (Throwable e) {
-                    System.out.println(zone.getId() + "; " + zdt + "; " + Dates.toString(micros + offset));
+                    System.out.println(zone.getId() + "; " + zdt + "; " + Dates.toString(epoch + offset));
                     System.out.println("e: " + expected + "; a: " + offset);
                     System.out.println(dt);
-                    System.out.println(Dates.toString(micros));
+                    System.out.println(Dates.toString(epoch));
                     throw e;
                 }
             }
-            micros += Dates.DAY_MILLIS;
+            epoch += Dates.DAY_MILLIS;
         }
     }
 
@@ -109,7 +103,12 @@ public class TimeZoneRulesMillisTest {
 
         while (millis < deadline) {
             for (int i = 0, n = zones.size(); i < n; i++) {
-                zoneRules.get(i).getOffset(millis);
+                try {
+                    zoneRules.get(i).getOffset(millis);
+                } catch (Throwable e) {
+                    e.printStackTrace();
+                    throw e;
+                }
             }
             millis += Dates.DAY_MILLIS;
         }

@@ -541,105 +541,6 @@ public class SampleByTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testIndexSampleByWithArithmetics() throws Exception {
-        assertQuery("k\ts\tlat\tlon\tconst\n" +
-                        "1970-01-04T00:26:40.000000Z\ta\t71.00560222114518\t336.09942524982637\t1\n" +
-                        "1970-01-04T01:26:40.000000Z\ta\t7.612327943200507\t302.609357768427\t1\n" +
-                        "1970-01-04T02:26:40.000000Z\ta\t118.11888283070247\tNaN\t1\n" +
-                        "1970-01-04T03:26:40.000000Z\ta\t100.02039650915859\t256.84202790934114\t1\n",
-                "select k, s, first(lat) + 1 lat, last(lon) * 2 lon, 1 as const " +
-                        "from x " +
-                        "where k > '1970-01-04' and s in ('a') " +
-                        "sample by 1h",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        "   rnd_double(1)*180 lat," +
-                        "   rnd_double(1)*180 lon," +
-                        "   rnd_symbol('a','b',null) s," +
-                        "   timestamp_sequence(172800000000, 1000000000) k" +
-                        "   from" +
-                        "   long_sequence(100)" +
-                        "), index(s capacity 10) timestamp(k) partition by DAY",
-                "k",
-                false);
-    }
-
-    @Test
-    public void testIndexSampleByWithInvalidFunctionArgs() throws Exception {
-        assertSampleByIndexQuery("k\ts\tlat\tlon\n" +
-                        "1970-01-04T00:26:40.000000Z\ta\t71.00560222114518\t336.09942524982637\n" +
-                        "1970-01-04T01:26:40.000000Z\ta\t7.612327943200507\t302.609357768427\n" +
-                        "1970-01-04T02:26:40.000000Z\ta\t118.11888283070247\tNaN\n" +
-                        "1970-01-04T03:26:40.000000Z\ta\t100.02039650915859\t256.84202790934114\n",
-                "select k, s, first(lat + 1) lat, last(lon * 2) lon " +
-                        "from x " +
-                        "where k > '1970-01-04' and s in ('a') " +
-                        "sample by 1h",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        "   rnd_double(1)*180 lat," +
-                        "   rnd_double(1)*180 lon," +
-                        "   rnd_symbol('a','b',null) s," +
-                        "   timestamp_sequence(172800000000, 1000000000) k" +
-                        "   from" +
-                        "   long_sequence(100)" +
-                        "), index(s capacity 10) timestamp(k) partition by DAY",
-                false);
-    }
-
-    @Test
-    public void testIndexSampleByWithInvalidFunctionArgs2() throws Exception {
-        assertSampleByIndexQuery("k\ts\tlat\tlon\n" +
-                        "1970-01-04T00:26:40.000000Z\ta\t70.00560222114518\t1\n" +
-                        "1970-01-04T01:26:40.000000Z\ta\t6.612327943200507\t1\n" +
-                        "1970-01-04T02:26:40.000000Z\ta\t117.11888283070247\t1\n" +
-                        "1970-01-04T03:26:40.000000Z\ta\t99.02039650915859\t1\n",
-                "select k, s, first(lat) lat, last(1) lon " +
-                        "from x " +
-                        "where k > '1970-01-04' and s in ('a') " +
-                        "sample by 1h",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        "   rnd_double(1)*180 lat," +
-                        "   rnd_double(1)*180 lon," +
-                        "   rnd_symbol('a','b',null) s," +
-                        "   timestamp_sequence(172800000000, 1000000000) k" +
-                        "   from" +
-                        "   long_sequence(100)" +
-                        "), index(s capacity 10) timestamp(k) partition by DAY",
-                false);
-    }
-
-    @Test
-    public void testIndexSampleBySameTimePoints() throws Exception {
-        assertQuery("k\ts\tlat\tlon\n" +
-                        "1970-01-01T00:00:00.000000Z\ta\t1\t58\n" +
-                        "1970-01-01T01:00:00.000000Z\ta\t63\t116\n" +
-                        "1970-01-01T02:00:00.000000Z\ta\t126\t178\n" +
-                        "1970-01-01T03:00:00.000000Z\ta\t184\t238\n" +
-                        "1970-01-01T04:00:00.000000Z\ta\t240\t299\n",
-                "select k, s, first(lat) lat, last(lat) lon " +
-                        "from x " +
-                        "where k between '1970-01-01' and '1970-01-01T04:00' and s in ('a') " +
-                        "sample by 1h",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        "   x lat," +
-                        "   x lon," +
-                        "   rnd_symbol('a','b',null) s," +
-                        "   cast(((x / 60L) * 1000000L * 60L * 60L) as timestamp) k" +
-                        "   from" +
-                        "   long_sequence(25*60)" +
-                        "), index(s) timestamp(k) partition by DAY",
-                "k",
-                false);
-    }
-
-    @Test
     public void testIndexSampleBy2() throws Exception {
         assertQuery("k\ts\tlat\tlon\n",
                 "select k, s, first(lat) lat, last(lon) lon " +
@@ -756,6 +657,505 @@ public class SampleByTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testIndexSampleByAlignToCalendar() throws Exception {
+        assertSampleByIndexQuery("k\ts\tlat\tlon\n" +
+                        "2021-03-27T23:00:00.000000Z\ta\t142.30215575416736\t165.69007104574442\n" +
+                        "2021-03-28T00:00:00.000000Z\ta\t106.0418967098362\tNaN\n" +
+                        "2021-03-28T01:00:00.000000Z\ta\t79.9245166429184\t168.04971262491318\n" +
+                        "2021-03-28T02:00:00.000000Z\ta\t6.612327943200507\t128.42101395467057\n",
+                "select k, s, first(lat) lat, last(lon) lon " +
+                        "from x " +
+                        "where s in ('a') " +
+                        "sample by 1h align to calendar",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        "   rnd_double(1)*180 lat," +
+                        "   rnd_double(1)*180 lon," +
+                        "   rnd_symbol('a','b',null) s," +
+                        "   timestamp_sequence('2021-03-27T23:30:00.00000Z', 100000000) k" +
+                        "   from" +
+                        "   long_sequence(100)" +
+                        "),index(s) timestamp(k) partition by DAY");
+    }
+
+    @Test
+    public void testIndexSampleByAlignToCalendarBindVariables() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile(
+                    "create table x as " +
+                            "(" +
+                            "select" +
+                            "   rnd_double(1)*180 lat," +
+                            "   rnd_double(1)*180 lon," +
+                            "   rnd_symbol('a') s," +
+                            "   timestamp_sequence('2021-03-28T00:59:00.00000Z', 60*1000000L) k" +
+                            "   from" +
+                            "   long_sequence(100)" +
+                            "), index(s) timestamp(k) partition by DAY",
+                    sqlExecutionContext
+            );
+
+            try (
+                    RecordCursorFactory factory = compiler.compile(
+                            "select k, s, first(lat) lat, last(lon) lon " +
+                                    "from x " +
+                                    "where s in ('a') " +
+                                    "sample by 1h align to calendar time zone $1 with offset $2",
+                            sqlExecutionContext
+                    ).getRecordCursorFactory()
+            ) {
+
+                String expectedMoscow = "k\ts\tlat\tlon\n" +
+                        "2021-03-28T00:15:00.000000Z\ta\t144.77803379943109\tNaN\n" +
+                        "2021-03-28T01:15:00.000000Z\ta\t31.267026583720984\tNaN\n" +
+                        "2021-03-28T02:15:00.000000Z\ta\t103.7167928478985\t128.42101395467057\n";
+
+                String expectedPrague = "k\ts\tlat\tlon\n" +
+                        "2021-03-28T00:10:00.000000Z\ta\t144.77803379943109\tNaN\n" +
+                        "2021-03-28T01:10:00.000000Z\ta\t137.95662156473048\tNaN\n" +
+                        "2021-03-28T02:10:00.000000Z\ta\tNaN\t128.42101395467057\n";
+
+                sqlExecutionContext.getBindVariableService().setStr(0, "Europe/Moscow");
+                sqlExecutionContext.getBindVariableService().setStr(1, "00:15");
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    assertCursor(
+                            expectedMoscow,
+                            cursor,
+                            factory.getMetadata(),
+                            true
+                    );
+                }
+
+                // invalid timezone
+                sqlExecutionContext.getBindVariableService().setStr(0, "Oopsie");
+                sqlExecutionContext.getBindVariableService().setStr(1, "00:15");
+                try {
+                    factory.getCursor(sqlExecutionContext);
+                    Assert.fail();
+                } catch (SqlException e) {
+                    Assert.assertEquals(108, e.getPosition());
+                    TestUtils.assertContains(e.getFlyweightMessage(), "invalid timezone: Oopsie");
+                }
+
+                sqlExecutionContext.getBindVariableService().setStr(0, "Europe/Prague");
+                sqlExecutionContext.getBindVariableService().setStr(1, "uggs");
+                try {
+                    factory.getCursor(sqlExecutionContext);
+                    Assert.fail();
+                } catch (SqlException e) {
+                    Assert.assertEquals(123, e.getPosition());
+                    TestUtils.assertContains(e.getFlyweightMessage(), "invalid offset: uggs");
+                }
+
+                sqlExecutionContext.getBindVariableService().setStr(0, "Europe/Prague");
+                sqlExecutionContext.getBindVariableService().setStr(1, "00:10");
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    assertCursor(
+                            expectedPrague,
+                            cursor,
+                            factory.getMetadata(),
+                            true
+                    );
+                }
+
+                sqlExecutionContext.getBindVariableService().setStr(0, null);
+                sqlExecutionContext.getBindVariableService().setStr(1, "00:10");
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    assertCursor(
+                            expectedPrague,
+                            cursor,
+                            factory.getMetadata(),
+                            true
+                    );
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testIndexSampleByAlignToCalendarDSTForwardEdge() throws Exception {
+        assertQuery("k\ts\tlat\tlon\n" +
+                        "2021-03-28T01:00:00.000000Z\ta\t144.77803379943109\t15.276535618609202\n" +
+                        "2021-03-28T03:00:00.000000Z\ta\tNaN\t127.43011035722469\n" +
+                        "2021-03-28T04:00:00.000000Z\ta\t60.30746433578906\t128.42101395467057\n",
+                "select to_timezone(k, 'Europe/Berlin') k, s, lat, lon from (select k, s, first(lat) lat, last(lon) lon " +
+                        "from x " +
+                        "where s in ('a') " +
+                        "sample by 1h align to calendar time zone 'Europe/Berlin')",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        "   rnd_double(1)*180 lat," +
+                        "   rnd_double(1)*180 lon," +
+                        "   rnd_symbol('a') s," +
+                        "   timestamp_sequence('2021-03-28T00:59:00.00000Z', 60*1000000L) k" +
+                        "   from" +
+                        "   long_sequence(100)" +
+                        "), index(s) timestamp(k) partition by DAY",
+                null,
+                false
+        );
+    }
+
+    @Test
+    public void testIndexSampleByAlignToCalendarDSTForwardEdge2() throws Exception {
+        assertQuery("k\ts\tlat\tlon\n" +
+                        "2021-03-28T03:00:00.000000Z\ta\t144.77803379943109\tNaN\n" +
+                        "2021-03-28T04:00:00.000000Z\ta\t98.27279585461298\t128.42101395467057\n",
+                "select to_timezone(k, 'Europe/Berlin') k, s, lat, lon from (select k, s, first(lat) lat, last(lon) lon " +
+                        "from x " +
+                        "where s in ('a') " +
+                        "sample by 1h align to calendar time zone 'Europe/Berlin')",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        "   rnd_double(1)*180 lat," +
+                        "   rnd_double(1)*180 lon," +
+                        "   rnd_symbol('a') s," +
+                        "   timestamp_sequence('2021-03-28T01:00:00.00000Z', 60*1000000L) k" +
+                        "   from" +
+                        "   long_sequence(100)" +
+                        "), index(s) timestamp(k) partition by DAY",
+                null,
+                false
+        );
+    }
+
+    @Test
+    public void testIndexSampleByAlignToCalendarDSTForwardEdge3() throws Exception {
+        assertQuery("k\ts\tlat\tlon\n" +
+                        "2021-03-28T03:00:00.000000Z\ta\t144.77803379943109\t15.276535618609202\n" +
+                        "2021-03-28T04:00:00.000000Z\ta\tNaN\t127.43011035722469\n" +
+                        "2021-03-28T05:00:00.000000Z\ta\t60.30746433578906\t128.42101395467057\n",
+                "select to_timezone(k, 'Europe/Berlin') k, s, lat, lon from (select k, s, first(lat) lat, last(lon) lon " +
+                        "from x " +
+                        "where s in ('a') " +
+                        "sample by 1h align to calendar time zone 'Europe/Berlin')",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        "   rnd_double(1)*180 lat," +
+                        "   rnd_double(1)*180 lon," +
+                        "   rnd_symbol('a') s," +
+                        "   timestamp_sequence('2021-03-28T01:59:00.00000Z', 60*1000000L) k" +
+                        "   from" +
+                        "   long_sequence(100)" +
+                        "), index(s) timestamp(k) partition by DAY",
+                null,
+                false
+        );
+    }
+
+    @Test
+    public void testIndexSampleByAlignToCalendarDSTForwardLocalMidnight() throws Exception {
+        assertQuery("k\ts\tlat\tlon\n" +
+                        "2021-03-28T00:00:00.000000Z\ta\t142.30215575416736\t167.4566019970139\n" +
+                        "2021-03-28T01:00:00.000000Z\ta\t33.45558404694713\t128.42101395467057\n",
+                "select to_timezone(k, 'Europe/Berlin') k, s, lat, lon from (select k, s, first(lat) lat, last(lon) lon " +
+                        "from x " +
+                        "where s in ('a') " +
+                        "sample by 1h align to calendar time zone 'Europe/Berlin')",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        "   rnd_double(1)*180 lat," +
+                        "   rnd_double(1)*180 lon," +
+                        "   rnd_symbol('a','b',null) s," +
+                        "   timestamp_sequence('2021-03-27T23:01:00.00000Z', 60*1000000L) k" +
+                        "   from" +
+                        "   long_sequence(100)" +
+                        "), index(s) timestamp(k) partition by DAY",
+                null,
+                false
+        );
+    }
+
+    @Test
+    public void testIndexSampleByAlignToCalendarWithTimezoneBerlinShiftBack() throws Exception {
+        assertSampleByIndexQuery("to_timezone\tk\ts\tlat\tlon\n" +
+                        "2020-10-24T00:00:00.000000Z\t2020-10-23T22:00:00.000000Z\ta\t142.30215575416736\t2020-10-24T19:50:00.000000Z\n" +
+                        "2020-10-25T00:00:00.000000Z\t2020-10-24T22:00:00.000000Z\ta\tNaN\t2020-10-25T20:00:00.000000Z\n" +
+                        "2020-10-26T00:00:00.000000Z\t2020-10-25T23:00:00.000000Z\ta\t33.45558404694713\t2020-10-26T21:50:00.000000Z\n" +
+                        "2020-10-27T00:00:00.000000Z\t2020-10-26T23:00:00.000000Z\ta\t6.612327943200507\t2020-10-27T22:00:00.000000Z\n" +
+                        "2020-10-28T00:00:00.000000Z\t2020-10-27T23:00:00.000000Z\ta\tNaN\t2020-10-27T23:40:00.000000Z\n",
+                "select to_timezone(k, 'Europe/Berlin'), k, s, lat, lon from (" +
+                        "select k, s, first(lat) lat, last(k) lon " +
+                        "from x " +
+                        "where s in ('a') " +
+                        "sample by 1d align to calendar time zone 'Europe/Berlin'" +
+                        ")",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        "   rnd_double(1)*180 lat," +
+                        "   rnd_double(1)*180 lon," +
+                        "   rnd_symbol('a','b',null) s," +
+                        "   timestamp_sequence('2020-10-23T20:30:00.00000Z', 50 * 60 * 1000000L) k" +
+                        "   from" +
+                        "   long_sequence(120)" +
+                        "),index(s) timestamp(k)");
+    }
+
+    @Test
+    public void testIndexSampleByAlignToCalendarWithTimezoneBerlinShiftBackHourly() throws Exception {
+        assertSampleByIndexQuery("to_timezone\tk\ts\tlat\tlon\n" +
+                        "2021-03-27T22:00:00.000000Z\t2021-03-27T21:00:00.000000Z\ta\t132.09083798490755\t2021-03-27T21:51:00.000000Z\n" +
+                        "2021-03-27T23:00:00.000000Z\t2021-03-27T22:00:00.000000Z\ta\t77.68770182183965\t2021-03-27T22:56:00.000000Z\n" +
+                        "2021-03-28T00:00:00.000000Z\t2021-03-27T23:00:00.000000Z\ta\tNaN\t2021-03-27T23:48:00.000000Z\n" +
+                        "2021-03-28T01:00:00.000000Z\t2021-03-28T00:00:00.000000Z\ta\t3.6703591550328163\t2021-03-28T00:27:00.000000Z\n" +
+                        "2021-03-28T03:00:00.000000Z\t2021-03-28T01:00:00.000000Z\ta\t94.70222369149758\t2021-03-28T01:45:00.000000Z\n" +
+                        "2021-03-28T04:00:00.000000Z\t2021-03-28T02:00:00.000000Z\ta\t109.23418649425325\t2021-03-28T02:37:00.000000Z\n" +
+                        "2021-03-28T05:00:00.000000Z\t2021-03-28T03:00:00.000000Z\ta\t38.20430552091481\t2021-03-28T03:16:00.000000Z\n",
+                "select to_timezone(k, 'Europe/Berlin'), k, s, lat, lon from (" +
+                        "select k, s, first(lat) lat, last(k) lon " +
+                        "from x " +
+                        "where s in ('a') and k between '2021-03-27 21:00' and  '2021-03-28 04:00'" +
+                        "sample by 1h align to calendar time zone 'Europe/Berlin'" +
+                        ")",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        "   rnd_double(1)*180 lat," +
+                        "   rnd_double(1)*180 lon," +
+                        "   rnd_symbol('a','b') s," +
+                        "   timestamp_sequence('2021-03-26T20:30:00.00000Z', 13 * 60 * 1000000L) k" +
+                        "   from" +
+                        "   long_sequence(1000)" +
+                        "),index(s) timestamp(k)");
+    }
+
+    @Test
+    public void testIndexSampleByAlignToCalendarWithTimezoneBerlinShiftBackHourlyWithOffst() throws Exception {
+        assertSampleByIndexQuery("to_timezone\tk\ts\tlat\tlon\n" +
+                        "2021-03-27T21:15:00.000000Z\t2021-03-27T20:15:00.000000Z\ta\t132.09083798490755\t2021-03-27T21:12:00.000000Z\n" +
+                        "2021-03-27T22:15:00.000000Z\t2021-03-27T21:15:00.000000Z\ta\t179.5841357536068\t2021-03-27T21:51:00.000000Z\n" +
+                        "2021-03-27T23:15:00.000000Z\t2021-03-27T22:15:00.000000Z\ta\t77.68770182183965\t2021-03-27T22:56:00.000000Z\n" +
+                        "2021-03-28T00:15:00.000000Z\t2021-03-27T23:15:00.000000Z\ta\tNaN\t2021-03-27T23:48:00.000000Z\n" +
+                        "2021-03-28T01:15:00.000000Z\t2021-03-28T00:15:00.000000Z\ta\t3.6703591550328163\t2021-03-28T01:06:00.000000Z\n" +
+                        "2021-03-28T03:15:00.000000Z\t2021-03-28T01:15:00.000000Z\ta\tNaN\t2021-03-28T02:11:00.000000Z\n" +
+                        "2021-03-28T04:15:00.000000Z\t2021-03-28T02:15:00.000000Z\ta\tNaN\t2021-03-28T02:37:00.000000Z\n" +
+                        "2021-03-28T05:15:00.000000Z\t2021-03-28T03:15:00.000000Z\ta\t38.20430552091481\t2021-03-28T03:16:00.000000Z\n",
+                "select to_timezone(k, 'Europe/Berlin'), k, s, lat, lon from (" +
+                        "select k, s, first(lat) lat, last(k) lon " +
+                        "from x " +
+                        "where s in ('a') and k between '2021-03-27 21:00' and  '2021-03-28 04:00'" +
+                        "sample by 1h align to calendar time zone 'Europe/Berlin' with offset '00:15'" +
+                        ")",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        "   rnd_double(1)*180 lat," +
+                        "   rnd_double(1)*180 lon," +
+                        "   rnd_symbol('a','b') s," +
+                        "   timestamp_sequence('2021-03-26T20:30:00.00000Z', 13 * 60 * 1000000L) k" +
+                        "   from" +
+                        "   long_sequence(1000)" +
+                        "),index(s) timestamp(k)");
+    }
+
+    @Test
+    public void testIndexSampleByAlignToCalendarWithTimezoneBerlinShiftForward() throws Exception {
+        assertSampleByIndexQuery("to_timezone\tk\ts\tlat\tlon\n" +
+                        "2021-03-26T00:00:00.000000Z\t2021-03-25T23:00:00.000000Z\ta\t142.30215575416736\t2021-03-26T22:50:00.000000Z\n" +
+                        "2021-03-27T00:00:00.000000Z\t2021-03-26T23:00:00.000000Z\ta\tNaN\t2021-03-27T22:10:00.000000Z\n" +
+                        "2021-03-28T00:00:00.000000Z\t2021-03-27T23:00:00.000000Z\ta\t109.94209864193589\t2021-03-28T20:40:00.000000Z\n" +
+                        "2021-03-29T00:00:00.000000Z\t2021-03-28T22:00:00.000000Z\ta\t70.00560222114518\t2021-03-29T16:40:00.000000Z\n" +
+                        "2021-03-30T00:00:00.000000Z\t2021-03-29T22:00:00.000000Z\ta\t13.290235514836048\t2021-03-30T02:40:00.000000Z\n",
+                "select to_timezone(k, 'Europe/Berlin'), k, s, lat, lon from (" +
+                        "select k, s, first(lat) lat, last(k) lon " +
+                        "from x " +
+                        "where s in ('a') " +
+                        "sample by 1d align to calendar time zone 'Europe/Berlin'" +
+                        ")",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        "   rnd_double(1)*180 lat," +
+                        "   rnd_double(1)*180 lon," +
+                        "   rnd_symbol('a','b',null) s," +
+                        "   timestamp_sequence('2021-03-25T23:30:00.00000Z', 50 * 60 * 1000000L) k" +
+                        "   from" +
+                        "   long_sequence(120)" +
+                        "),index(s) timestamp(k)");
+    }
+
+    @Test
+    public void testIndexSampleByAlignToCalendarWithTimezoneLondon365Days() throws Exception {
+        assertSampleByIndexQuery("to_timezone\tk\ts\tlat\tlon\n" +
+                        "2020-01-02T00:00:00.000000Z\t2020-01-02T00:00:00.000000Z\ta\t142.30215575416736\t2020-01-02T03:23:00.000000Z\n" +
+                        "2020-02-15T00:00:00.000000Z\t2020-02-15T00:00:00.000000Z\ta\t135.8378128727785\t2020-02-15T17:44:30.000000Z\n" +
+                        "2020-02-16T00:00:00.000000Z\t2020-02-16T00:00:00.000000Z\ta\t149.54213547651923\t2020-02-16T17:50:00.000000Z\n" +
+                        "2020-03-31T00:00:00.000000Z\t2020-03-30T23:00:00.000000Z\ta\tNaN\t2020-03-31T21:52:00.000000Z\n" +
+                        "2020-04-01T00:00:00.000000Z\t2020-03-31T23:00:00.000000Z\ta\t136.72774150518887\t2020-04-01T04:45:00.000000Z\n" +
+                        "2020-05-15T00:00:00.000000Z\t2020-05-14T23:00:00.000000Z\ta\t7.639734467015391\t2020-05-15T22:33:00.000000Z\n" +
+                        "2020-05-16T00:00:00.000000Z\t2020-05-15T23:00:00.000000Z\ta\t140.2722640805293\t2020-05-16T22:38:30.000000Z\n" +
+                        "2020-06-29T00:00:00.000000Z\t2020-06-28T23:00:00.000000Z\ta\tNaN\t2020-06-29T19:47:30.000000Z\n" +
+                        "2020-06-30T00:00:00.000000Z\t2020-06-29T23:00:00.000000Z\ta\t176.93009129230163\t2020-06-30T16:26:30.000000Z\n" +
+                        "2020-09-27T00:00:00.000000Z\t2020-09-26T23:00:00.000000Z\ta\tNaN\t2020-09-27T21:09:30.000000Z\n" +
+                        "2020-09-28T00:00:00.000000Z\t2020-09-27T23:00:00.000000Z\ta\t80.7879827891636\t2020-09-28T21:15:00.000000Z\n" +
+                        "2020-11-11T00:00:00.000000Z\t2020-11-11T00:00:00.000000Z\ta\t42.602417804870136\t2020-11-11T14:57:30.000000Z\n" +
+                        "2020-11-12T00:00:00.000000Z\t2020-11-12T00:00:00.000000Z\ta\t105.23048053435602\t2020-11-12T21:56:00.000000Z\n" +
+                        "2020-12-26T00:00:00.000000Z\t2020-12-26T00:00:00.000000Z\ta\t94.59407457021454\t2020-12-26T08:45:30.000000Z\n" +
+                        "2020-12-27T00:00:00.000000Z\t2020-12-27T00:00:00.000000Z\ta\tNaN\t2020-12-27T22:37:00.000000Z\n",
+                "select to_timezone(k, 'Europe/London'), k, s, lat, lon from (select k, s, first(lat) lat, last(k) lon " +
+                        "from x " +
+                        "where s in ('a') and k in '2020-01-01T00:00:00.000000Z;2d;45d;48'" +
+                        "sample by 1d align to calendar time zone 'Europe/London')",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        "   rnd_double(1)*180 lat," +
+                        "   rnd_double(1)*180 lon," +
+                        "   rnd_symbol('a','b',null) s," +
+                        "   timestamp_sequence('2020-01-01T20:30:00.00000Z', 35 * 6 * 59 * 1000000L) k" + // ~3.5 hour interval
+                        "   from" +
+                        "   long_sequence(365 * 7)" +
+                        "),index(s) timestamp(k)");
+    }
+
+    @Test
+    public void testIndexSampleByAlignToCalendarWithTimezoneLondon365DaysWithOffset() throws Exception {
+        assertSampleByIndexQuery("to_timezone\tk\ts\tlat\tlon\n" +
+                        "2019-12-31T00:51:00.000000Z\t2019-12-31T00:51:00.000000Z\ta\t144.77803379943109\t2020-01-01T00:30:00.000000Z\n" +
+                        "2020-01-01T00:51:00.000000Z\t2020-01-01T00:51:00.000000Z\ta\t145.3027002009222\t2020-01-01T03:56:30.000000Z\n" +
+                        "2020-01-02T00:51:00.000000Z\t2020-01-02T00:51:00.000000Z\ta\t0.19935649945118428\t2020-01-02T04:02:00.000000Z\n" +
+                        "2020-02-15T00:51:00.000000Z\t2020-02-15T00:51:00.000000Z\ta\t141.00630662059504\t2020-02-15T01:11:00.000000Z\n" +
+                        "2020-02-16T00:51:00.000000Z\t2020-02-16T00:51:00.000000Z\ta\tNaN\t2020-02-16T01:16:30.000000Z\n" +
+                        "2020-03-31T00:51:00.000000Z\t2020-03-30T23:51:00.000000Z\ta\t14.62408950019094\t2020-03-31T05:18:30.000000Z\n" +
+                        "2020-04-01T00:51:00.000000Z\t2020-03-31T23:51:00.000000Z\ta\tNaN\t2020-04-01T15:43:30.000000Z\n" +
+                        "2020-05-15T00:51:00.000000Z\t2020-05-14T23:51:00.000000Z\ta\tNaN\t2020-05-15T05:59:30.000000Z\n" +
+                        "2020-05-16T00:51:00.000000Z\t2020-05-15T23:51:00.000000Z\ta\t34.633477019382326\t2020-05-16T06:05:00.000000Z\n" +
+                        "2020-08-13T00:51:00.000000Z\t2020-08-12T23:51:00.000000Z\ta\t31.702592206104786\t2020-08-13T07:21:30.000000Z\n" +
+                        "2020-08-14T00:51:00.000000Z\t2020-08-13T23:51:00.000000Z\ta\t52.249166457268934\t2020-08-14T00:34:00.000000Z\n" +
+                        "2020-09-27T00:51:00.000000Z\t2020-09-26T23:51:00.000000Z\ta\tNaN\t2020-09-27T11:29:00.000000Z\n" +
+                        "2020-09-28T00:51:00.000000Z\t2020-09-27T23:51:00.000000Z\ta\t2.1077228537622417\t2020-09-28T08:08:00.000000Z\n" +
+                        "2020-11-11T00:51:00.000000Z\t2020-11-11T00:51:00.000000Z\ta\t51.18874172128277\t2020-11-11T01:50:30.000000Z\n" +
+                        "2020-11-12T00:51:00.000000Z\t2020-11-12T00:51:00.000000Z\ta\t42.73330159184082\t2020-11-12T08:49:00.000000Z\n" +
+                        "2020-12-26T00:51:00.000000Z\t2020-12-26T00:51:00.000000Z\ta\t126.10430361638399\t2020-12-26T23:10:30.000000Z\n" +
+                        "2020-12-27T00:51:00.000000Z\t2020-12-27T00:51:00.000000Z\ta\tNaN\t2020-12-27T06:03:30.000000Z\n",
+                "select to_timezone(k, 'Europe/London'), k, s, lat, lon from (select k, s, last(lat) lat, first(k) lon " +
+                        "from x " +
+                        "where s in ('a') and k in '2020-01-01T00:00:00.000000Z;2d;45d;48'" +
+                        "sample by 1d align to calendar time zone 'Europe/London' with offset '00:51')",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        "   rnd_double(1)*180 lat," +
+                        "   rnd_double(1)*180 lon," +
+                        "   rnd_symbol('b',null,'a') s," +
+                        "   timestamp_sequence('2020-01-01 00:30:00', 35 * 6 * 59 * 1000000L) k" + // ~3.5 hour interval
+                        "   from" +
+                        "   long_sequence(365 * 7)" +
+                        "),index(s) timestamp(k)");
+    }
+
+    @Test
+    public void testIndexSampleByAlignToCalendarWithTimezoneLondonShiftBack() throws Exception {
+        assertSampleByIndexQuery("to_timezone\tk\ts\tlat\tlon\n" +
+                        "2021-03-26T00:00:00.000000Z\t2021-03-26T00:00:00.000000Z\ta\t142.30215575416736\t2021-03-26T22:50:00.000000Z\n" +
+                        "2021-03-27T00:00:00.000000Z\t2021-03-27T00:00:00.000000Z\ta\tNaN\t2021-03-27T23:00:00.000000Z\n" +
+                        "2021-03-28T00:00:00.000000Z\t2021-03-28T00:00:00.000000Z\ta\t33.45558404694713\t2021-03-28T20:40:00.000000Z\n" +
+                        "2021-03-29T00:00:00.000000Z\t2021-03-28T23:00:00.000000Z\ta\t70.00560222114518\t2021-03-29T16:40:00.000000Z\n" +
+                        "2021-03-30T00:00:00.000000Z\t2021-03-29T23:00:00.000000Z\ta\t13.290235514836048\t2021-03-30T02:40:00.000000Z\n",
+                "select to_timezone(k, 'Europe/London'), k, s, lat, lon from (select k, s, first(lat) lat, last(k) lon " +
+                        "from x " +
+                        "where s in ('a') " +
+                        "sample by 1d align to calendar time zone 'Europe/London')",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        "   rnd_double(1)*180 lat," +
+                        "   rnd_double(1)*180 lon," +
+                        "   rnd_symbol('a','b',null) s," +
+                        "   timestamp_sequence('2021-03-25T23:30:00.00000Z', 50 * 60 * 1000000L) k" +
+                        "   from" +
+                        "   long_sequence(120)" +
+                        "),index(s) timestamp(k)");
+    }
+
+    @Test
+    public void testIndexSampleByAlignToCalendarWithTimezoneLondonShiftBackwardHourly() throws Exception {
+        assertSampleByIndexQuery("to_timezone\tk\ts\tlat\tlastk\n" +
+                        "2021-03-27T21:00:00.000000Z\t2021-03-27T21:00:00.000000Z\ta\t132.09083798490755\t2021-03-27T21:51:00.000000Z\n" +
+                        "2021-03-27T22:00:00.000000Z\t2021-03-27T22:00:00.000000Z\ta\t77.68770182183965\t2021-03-27T22:56:00.000000Z\n" +
+                        "2021-03-27T23:00:00.000000Z\t2021-03-27T23:00:00.000000Z\ta\tNaN\t2021-03-27T23:48:00.000000Z\n" +
+                        "2021-03-28T00:00:00.000000Z\t2021-03-28T00:00:00.000000Z\ta\t3.6703591550328163\t2021-03-28T00:27:00.000000Z\n" +
+                        "2021-03-28T02:00:00.000000Z\t2021-03-28T01:00:00.000000Z\ta\t94.70222369149758\t2021-03-28T01:45:00.000000Z\n" +
+                        "2021-03-28T03:00:00.000000Z\t2021-03-28T02:00:00.000000Z\ta\t109.23418649425325\t2021-03-28T02:37:00.000000Z\n" +
+                        "2021-03-28T04:00:00.000000Z\t2021-03-28T03:00:00.000000Z\ta\t38.20430552091481\t2021-03-28T03:16:00.000000Z\n",
+                "select to_timezone(k, 'Europe/London'), k, s, lat, lastk from (" +
+                        "select k, s, first(lat) lat, last(k) lastk " +
+                        "from x " +
+                        "where s in ('a') and k between '2021-03-27 21:00' and '2021-03-28 04:00'" +
+                        "sample by 1h align to calendar time zone 'Europe/London'" +
+                        ")",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        "   rnd_double(1)*180 lat," +
+                        "   rnd_double(1)*180 lon," +
+                        "   rnd_symbol('a','b') s," +
+                        "   timestamp_sequence('2021-03-26T20:30:00.00000Z', 13 * 60 * 1000000L) k" +
+                        "   from" +
+                        "   long_sequence(1000)" +
+                        "),index(s) timestamp(k)");
+    }
+
+    @Test
+    public void testIndexSampleByAlignToCalendarWithTimezoneLondonShiftForward() throws Exception {
+        assertSampleByIndexQuery("to_timezone\tk\ts\tlat\tlon\n" +
+                        "2020-10-23T00:00:00.000000Z\t2020-10-22T23:00:00.000000Z\ta\t142.30215575416736\t2020-10-23T22:10:00.000000Z\n" +
+                        "2020-10-24T00:00:00.000000Z\t2020-10-23T23:00:00.000000Z\ta\t7.457062446418488\t2020-10-24T22:20:00.000000Z\n" +
+                        "2020-10-25T00:00:00.000000Z\t2020-10-24T23:00:00.000000Z\ta\tNaN\t2020-10-25T20:00:00.000000Z\n" +
+                        "2020-10-26T00:00:00.000000Z\t2020-10-26T00:00:00.000000Z\ta\t33.45558404694713\t2020-10-26T21:50:00.000000Z\n" +
+                        "2020-10-27T00:00:00.000000Z\t2020-10-27T00:00:00.000000Z\ta\t6.612327943200507\t2020-10-27T23:40:00.000000Z\n",
+                "select to_timezone(k, 'Europe/London'), k, s, lat, lon from (select k, s, first(lat) lat, last(k) lon " +
+                        "from x " +
+                        "where s in ('a') " +
+                        "sample by 1d align to calendar time zone 'Europe/London')",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        "   rnd_double(1)*180 lat," +
+                        "   rnd_double(1)*180 lon," +
+                        "   rnd_symbol('a','b',null) s," +
+                        "   timestamp_sequence('2020-10-23T20:30:00.00000Z', 50 * 60 * 1000000L) k" +
+                        "   from" +
+                        "   long_sequence(120)" +
+                        "),index(s) timestamp(k)"
+        );
+    }
+
+    @Test
+    public void testIndexSampleByAlignToCalendarWithTimezoneLondonShiftForwardHourly() throws Exception {
+        assertSampleByIndexQuery("to_timezone\tk\ts\tlat\tlastk\n" +
+                        "2020-10-24T22:00:00.000000Z\t2020-10-24T21:00:00.000000Z\ta\t154.93777586404912\t2020-10-24T21:49:28.000000Z\n" +
+                        "2020-10-24T23:00:00.000000Z\t2020-10-24T22:00:00.000000Z\ta\t43.799859246867385\t2020-10-24T22:54:13.000000Z\n" +
+                        "2020-10-25T00:00:00.000000Z\t2020-10-24T23:00:00.000000Z\ta\t38.34194069380561\t2020-10-24T23:41:42.000000Z\n" +
+                        "2020-10-25T01:00:00.000000Z\t2020-10-25T00:00:00.000000Z\ta\t4.158342987512034\t2020-10-25T01:51:12.000000Z\n" +
+                        "2020-10-25T02:00:00.000000Z\t2020-10-25T02:00:00.000000Z\ta\t95.73868763606973\t2020-10-25T02:47:19.000000Z\n" +
+                        "2020-10-25T03:00:00.000000Z\t2020-10-25T03:00:00.000000Z\ta\tNaN\t2020-10-25T03:43:26.000000Z\n" +
+                        "2020-10-25T04:00:00.000000Z\t2020-10-25T04:00:00.000000Z\ta\t34.49948946607576\t2020-10-25T04:56:49.000000Z\n",
+                "select to_timezone(k, 'Europe/London'), k, s, lat, lastk from (" +
+                        "select k, s, first(lat) lat, last(k) lastk " +
+                        "from x " +
+                        "where s in ('a') and k between '2020-10-24 21:00:00' and '2020-10-25 05:00:00'" +
+                        "sample by 1h align to calendar time zone 'Europe/London'" +
+                        ")",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        "   rnd_double(1)*180 lat," +
+                        "   rnd_double(1)*180 lon," +
+                        "   rnd_symbol('a','b') s," +
+                        "   timestamp_sequence('2020-10-23 20:30:00.00000Z', 259 * 1000000L) k" +
+                        "   from" +
+                        "   long_sequence(1000)" +
+                        "),index(s) timestamp(k)");
+    }
+
+    @Test
     public void testIndexSampleByBufferExceeded() throws Exception {
         sampleByIndexSearchPageSize = 16;
 
@@ -840,7 +1240,8 @@ public class SampleByTest extends AbstractGriffinTest {
 
     @Test
     public void testIndexSampleByFirstAndLast() throws Exception {
-        assertQuery("k\ts\tlat\tlon\n",
+        assertQuery(
+                "k\ts\tlat\tlon\n",
                 "select k, s, first(lat) lat, last(lon) lon " +
                         "from xx " +
                         "where k in '1970-02' and s in ('b')" +
@@ -850,7 +1251,8 @@ public class SampleByTest extends AbstractGriffinTest {
                 "k",
                 false,
                 false,
-                true);
+                true
+        );
 
         assertSampleByIndexQuery("k\ts\tlat\tlon\n" +
                         "1970-02-01T00:00:00.000000Z\tb\t-745.0\t767.0\n" +
@@ -1228,6 +1630,32 @@ public class SampleByTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testIndexSampleBySameTimePoints() throws Exception {
+        assertQuery("k\ts\tlat\tlon\n" +
+                        "1970-01-01T00:00:00.000000Z\ta\t1\t58\n" +
+                        "1970-01-01T01:00:00.000000Z\ta\t63\t116\n" +
+                        "1970-01-01T02:00:00.000000Z\ta\t126\t178\n" +
+                        "1970-01-01T03:00:00.000000Z\ta\t184\t238\n" +
+                        "1970-01-01T04:00:00.000000Z\ta\t240\t299\n",
+                "select k, s, first(lat) lat, last(lat) lon " +
+                        "from x " +
+                        "where k between '1970-01-01' and '1970-01-01T04:00' and s in ('a') " +
+                        "sample by 1h",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        "   x lat," +
+                        "   x lon," +
+                        "   rnd_symbol('a','b',null) s," +
+                        "   cast(((x / 60L) * 1000000L * 60L * 60L) as timestamp) k" +
+                        "   from" +
+                        "   long_sequence(25*60)" +
+                        "), index(s) timestamp(k) partition by DAY",
+                "k",
+                false);
+    }
+
+    @Test
     public void testIndexSampleByVeryFewRowsPerInterval() throws Exception {
         assertQuery("k\ts\tlat\tlon\n",
                 "select k, s, first(lat) lat, last(lon) lon " +
@@ -1269,6 +1697,31 @@ public class SampleByTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testIndexSampleByWithArithmetics() throws Exception {
+        assertQuery("k\ts\tlat\tlon\tconst\n" +
+                        "1970-01-04T00:26:40.000000Z\ta\t71.00560222114518\t336.09942524982637\t1\n" +
+                        "1970-01-04T01:26:40.000000Z\ta\t7.612327943200507\t302.609357768427\t1\n" +
+                        "1970-01-04T02:26:40.000000Z\ta\t118.11888283070247\tNaN\t1\n" +
+                        "1970-01-04T03:26:40.000000Z\ta\t100.02039650915859\t256.84202790934114\t1\n",
+                "select k, s, first(lat) + 1 lat, last(lon) * 2 lon, 1 as const " +
+                        "from x " +
+                        "where k > '1970-01-04' and s in ('a') " +
+                        "sample by 1h",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        "   rnd_double(1)*180 lat," +
+                        "   rnd_double(1)*180 lon," +
+                        "   rnd_symbol('a','b',null) s," +
+                        "   timestamp_sequence(172800000000, 1000000000) k" +
+                        "   from" +
+                        "   long_sequence(100)" +
+                        "), index(s capacity 10) timestamp(k) partition by DAY",
+                "k",
+                false);
+    }
+
+    @Test
     public void testIndexSampleByWithEmptyIndexPage() throws Exception {
         assertQuery("k\ts\tlat\tlon\n",
                 "select k, s, first(lat) lat, first(lon) lon " +
@@ -1301,6 +1754,54 @@ public class SampleByTest extends AbstractGriffinTest {
                         "timestamp_sequence(0, 24 * 60 * 60 * 1000000L) k\n" + // 60 mins
                         "from\n" +
                         "long_sequence(365)\n");
+    }
+
+    @Test
+    public void testIndexSampleByWithInvalidFunctionArgs() throws Exception {
+        assertSampleByIndexQuery("k\ts\tlat\tlon\n" +
+                        "1970-01-04T00:26:40.000000Z\ta\t71.00560222114518\t336.09942524982637\n" +
+                        "1970-01-04T01:26:40.000000Z\ta\t7.612327943200507\t302.609357768427\n" +
+                        "1970-01-04T02:26:40.000000Z\ta\t118.11888283070247\tNaN\n" +
+                        "1970-01-04T03:26:40.000000Z\ta\t100.02039650915859\t256.84202790934114\n",
+                "select k, s, first(lat + 1) lat, last(lon * 2) lon " +
+                        "from x " +
+                        "where k > '1970-01-04' and s in ('a') " +
+                        "sample by 1h",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        "   rnd_double(1)*180 lat," +
+                        "   rnd_double(1)*180 lon," +
+                        "   rnd_symbol('a','b',null) s," +
+                        "   timestamp_sequence(172800000000, 1000000000) k" +
+                        "   from" +
+                        "   long_sequence(100)" +
+                        "), index(s capacity 10) timestamp(k) partition by DAY",
+                false);
+    }
+
+    @Test
+    public void testIndexSampleByWithInvalidFunctionArgs2() throws Exception {
+        assertSampleByIndexQuery("k\ts\tlat\tlon\n" +
+                        "1970-01-04T00:26:40.000000Z\ta\t70.00560222114518\t1\n" +
+                        "1970-01-04T01:26:40.000000Z\ta\t6.612327943200507\t1\n" +
+                        "1970-01-04T02:26:40.000000Z\ta\t117.11888283070247\t1\n" +
+                        "1970-01-04T03:26:40.000000Z\ta\t99.02039650915859\t1\n",
+                "select k, s, first(lat) lat, last(1) lon " +
+                        "from x " +
+                        "where k > '1970-01-04' and s in ('a') " +
+                        "sample by 1h",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        "   rnd_double(1)*180 lat," +
+                        "   rnd_double(1)*180 lon," +
+                        "   rnd_symbol('a','b',null) s," +
+                        "   timestamp_sequence(172800000000, 1000000000) k" +
+                        "   from" +
+                        "   long_sequence(100)" +
+                        "), index(s capacity 10) timestamp(k) partition by DAY",
+                false);
     }
 
     @Test
@@ -1472,66 +1973,6 @@ public class SampleByTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testSampleByFirstLastRecordCursorFactoryInvalidColumns() {
-        try {
-            GenericRecordMetadata groupByMeta = new GenericRecordMetadata();
-            groupByMeta.add(new TableColumnMetadata("col1", ColumnType.STRING, false, 0, false, EmptyRecordMetadata.INSTANCE));
-
-            GenericRecordMetadata meta = new GenericRecordMetadata();
-            meta.add(new TableColumnMetadata("col1", ColumnType.LONG, false, 0, false, EmptyRecordMetadata.INSTANCE));
-
-            ObjList<QueryColumn> columns = new ObjList<>();
-            ExpressionNode first = ExpressionNode.FACTORY.newInstance().of(ColumnType.LONG, "first", 0, 0);
-            first.rhs = ExpressionNode.FACTORY.newInstance().of(ColumnType.LONG, "col1", 0, 0);
-            QueryColumn col = QueryColumn.FACTORY.newInstance().of("col1", first);
-            columns.add(col);
-
-            new SampleByFirstLastRecordCursorFactory(null, new MicroTimestampSampler(100L), groupByMeta, columns, meta, 0, getSymbolFilter(), -1);
-            Assert.fail();
-        } catch (SqlException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "first(), last() is not supported on data type");
-        }
-    }
-
-    @Test
-    public void testSampleByFirstLastRecordCursorFactoryInvalidNotFirstLast() {
-        try {
-            GenericRecordMetadata groupByMeta = new GenericRecordMetadata();
-            TableColumnMetadata column = new TableColumnMetadata("col1", ColumnType.LONG, false, 0, false, EmptyRecordMetadata.INSTANCE);
-            groupByMeta.add(column);
-
-            GenericRecordMetadata meta = new GenericRecordMetadata();
-            meta.add(column);
-
-            ObjList<QueryColumn> columns = new ObjList<>();
-            ExpressionNode first = ExpressionNode.FACTORY.newInstance().of(ColumnType.LONG, "min", 0, 0);
-            first.rhs = ExpressionNode.FACTORY.newInstance().of(ColumnType.LONG, "col1", 0, 0);
-            QueryColumn col = QueryColumn.FACTORY.newInstance().of("col1", first);
-            columns.add(col);
-
-            new SampleByFirstLastRecordCursorFactory(null, new MicroTimestampSampler(100L), groupByMeta, columns, meta, 0, getSymbolFilter(), -1);
-            Assert.fail();
-        } catch (SqlException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "expected first() or last() functions but got min");
-        }
-    }
-
-    @NotNull
-    private SingleSymbolFilter getSymbolFilter() {
-        return new SingleSymbolFilter() {
-            @Override
-            public int getColumnIndex() {
-                return 0;
-            }
-
-            @Override
-            public int getSymbolFilterKey() {
-                return 0;
-            }
-        };
-    }
-
-    @Test
     public void testNoSampleByWithDeferredSingleSymbolFilterDataFrameRecordCursorFactory() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table xx (k timestamp, d DOUBLE, s SYMBOL)" +
@@ -1680,6 +2121,197 @@ public class SampleByTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testSampleByCountWithNoTsColSelected() throws Exception {
+        assertQuery("count\n" +
+                        "300\n" +
+                        "300\n" +
+                        "300\n" +
+                        "100\n",
+                "select count() from x sample by 1h",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " timestamp_sequence(172800000000, 12000000) k" +
+                        " from" +
+                        " long_sequence(1000)" +
+                        ") timestamp(k) partition by NONE",
+                null,
+                false);
+    }
+
+    @Test
+    public void testSampleByDayNoFillAlignToCalendarWithTimezoneLondon() throws Exception {
+        assertQuery("to_timezone\ts\tlat\tlon\n" +
+                        "2021-03-26T00:00:00.000000Z\ta\t142.30215575416736\t2021-03-26T22:50:00.000000Z\n" +
+                        "2021-03-27T00:00:00.000000Z\ta\tNaN\t2021-03-27T23:00:00.000000Z\n" +
+                        "2021-03-28T00:00:00.000000Z\ta\t33.45558404694713\t2021-03-28T20:40:00.000000Z\n" +
+                        "2021-03-29T00:00:00.000000Z\ta\t70.00560222114518\t2021-03-29T16:40:00.000000Z\n" +
+                        "2021-03-30T00:00:00.000000Z\ta\t13.290235514836048\t2021-03-30T02:40:00.000000Z\n",
+                "select to_timezone(k, 'Europe/London'), s, lat, lon from (select k, s, first(lat) lat, last(k) lon " +
+                        "from x " +
+                        "where s in ('a') " +
+                        "sample by 1d align to calendar time zone 'Europe/London')",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        "   rnd_double(1)*180 lat," +
+                        "   rnd_double(1)*180 lon," +
+                        "   rnd_symbol('a','b',null) s," +
+                        "   timestamp_sequence('2021-03-25T23:30:00.00000Z', 50 * 60 * 1000000L) k" +
+                        "   from" +
+                        "   long_sequence(120)" +
+                        ") timestamp(k)", null, false);
+    }
+
+    @Test
+    public void testSampleByDayNoFillNotKeyedAlignToCalendarTimezone() throws Exception {
+        assertQuery(
+                "k\tc\ta\tlk\n" +
+                        "2021-03-27T00:00:00.000000Z\t218\t78.61254708288084\t2021-03-27T21:57:00.000000Z\n" +
+                        "2021-03-28T00:00:00.000000Z\t230\t16.41641076342043\t2021-03-28T20:57:00.000000Z\n" +
+                        "2021-03-29T00:00:00.000000Z\t240\t10.130283315402789\t2021-03-29T20:57:00.000000Z\n" +
+                        "2021-03-30T00:00:00.000000Z\t240\t22.52165473191222\t2021-03-30T20:57:00.000000Z\n" +
+                        "2021-03-31T00:00:00.000000Z\t72\t45.38592869415369\t2021-03-31T04:09:00.000000Z\n",
+                "select to_timezone(k, 'Europe/Riga') k, c, a, lk from (select k, count() c, last(a) a, last(k) lk from x sample by 1d align to calendar time zone 'Europe/Riga')",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(cast('2021-03-27T00:15:00.000000Z' as timestamp), 6*60000000) k" +
+                        " from" +
+                        " long_sequence(1000)" +
+                        ") timestamp(k) partition by NONE",
+                null,
+                false,
+                true,
+                false
+        );
+    }
+
+    @Test
+    public void testSampleByDayNoFillNotKeyedAlignToCalendarTimezoneOct() throws Exception {
+        // We are going over spring time change. Because time is "expanding" we dont have
+        // to do anything special. Our UTC timestamps will show "gap" and data doesn't
+        // have to change
+        assertQuery(
+                "k\tc\n" +
+                        "2021-10-30T00:00:00.000000Z\t218\n" +
+                        "2021-10-31T00:00:00.000000Z\t250\n" +
+                        "2021-11-01T00:00:00.000000Z\t132\n",
+                "select to_timezone(k, 'Europe/Berlin') k, c from (select k, count() c from x sample by 1d align to calendar time zone 'Europe/Berlin')",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(cast('2021-10-30T00:15:00.000000Z' as timestamp), 6*60000000) k" +
+                        " from" +
+                        " long_sequence(600)" +
+                        ") timestamp(k) partition by NONE",
+                null,
+                false,
+                true,
+                false
+        );
+    }
+
+    @Test
+    public void testSampleByDayNoFillNotKeyedAlignToCalendarWithTimezoneLondon() throws Exception {
+        assertQuery("to_timezone\tlat\tlon\n" +
+                        "2021-03-26T00:00:00.000000Z\t142.30215575416736\t2021-03-26T22:50:00.000000Z\n" +
+                        "2021-03-27T00:00:00.000000Z\tNaN\t2021-03-27T23:00:00.000000Z\n" +
+                        "2021-03-28T00:00:00.000000Z\t33.45558404694713\t2021-03-28T20:40:00.000000Z\n" +
+                        "2021-03-29T00:00:00.000000Z\t70.00560222114518\t2021-03-29T16:40:00.000000Z\n" +
+                        "2021-03-30T00:00:00.000000Z\t13.290235514836048\t2021-03-30T02:40:00.000000Z\n",
+                "select to_timezone(k, 'Europe/London'), lat, lon from (select k, first(lat) lat, last(k) lon " +
+                        "from x " +
+                        "where s in ('a') " +
+                        "sample by 1d align to calendar time zone 'Europe/London')",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        "   rnd_double(1)*180 lat," +
+                        "   rnd_double(1)*180 lon," +
+                        "   rnd_symbol('a','b',null) s," +
+                        "   timestamp_sequence('2021-03-25T23:30:00.00000Z', 50 * 60 * 1000000L) k" +
+                        "   from" +
+                        "   long_sequence(120)" +
+                        ") timestamp(k)", null, false);
+    }
+
+    @Test
+    public void testSampleByFirstLastRecordCursorFactoryInvalidColumns() {
+        try {
+            GenericRecordMetadata groupByMeta = new GenericRecordMetadata();
+            groupByMeta.add(new TableColumnMetadata("col1", ColumnType.STRING, false, 0, false, EmptyRecordMetadata.INSTANCE));
+
+            GenericRecordMetadata meta = new GenericRecordMetadata();
+            meta.add(new TableColumnMetadata("col1", ColumnType.LONG, false, 0, false, EmptyRecordMetadata.INSTANCE));
+
+            ObjList<QueryColumn> columns = new ObjList<>();
+            ExpressionNode first = ExpressionNode.FACTORY.newInstance().of(ColumnType.LONG, "first", 0, 0);
+            first.rhs = ExpressionNode.FACTORY.newInstance().of(ColumnType.LONG, "col1", 0, 0);
+            QueryColumn col = QueryColumn.FACTORY.newInstance().of("col1", first);
+            columns.add(col);
+
+            new SampleByFirstLastRecordCursorFactory(
+                    null,
+                    new MicroTimestampSampler(100L),
+                    groupByMeta,
+                    columns,
+                    meta,
+                    null,
+                    0,
+                    null,
+                    0,
+                    0,
+                    getSymbolFilter(),
+                    -1
+            );
+            Assert.fail();
+        } catch (SqlException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "first(), last() is not supported on data type");
+        }
+    }
+
+    @Test
+    public void testSampleByFirstLastRecordCursorFactoryInvalidNotFirstLast() {
+        try {
+            GenericRecordMetadata groupByMeta = new GenericRecordMetadata();
+            TableColumnMetadata column = new TableColumnMetadata("col1", ColumnType.LONG, false, 0, false, EmptyRecordMetadata.INSTANCE);
+            groupByMeta.add(column);
+
+            GenericRecordMetadata meta = new GenericRecordMetadata();
+            meta.add(column);
+
+            ObjList<QueryColumn> columns = new ObjList<>();
+            ExpressionNode first = ExpressionNode.FACTORY.newInstance().of(ColumnType.LONG, "min", 0, 0);
+            first.rhs = ExpressionNode.FACTORY.newInstance().of(ColumnType.LONG, "col1", 0, 0);
+            QueryColumn col = QueryColumn.FACTORY.newInstance().of("col1", first);
+            columns.add(col);
+
+            new SampleByFirstLastRecordCursorFactory(
+                    null,
+                    new MicroTimestampSampler(100L),
+                    groupByMeta,
+                    columns,
+                    meta,
+                    null,
+                    0,
+                    null,
+                    0,
+                    0,
+                    getSymbolFilter(),
+                    -1
+            );
+            Assert.fail();
+        } catch (SqlException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "expected first() or last() functions but got min");
+        }
+    }
+
+    @Test
     public void testSampleByMillisFillNoneNotKeyedEmpty() throws Exception {
         assertQuery("sum\tk\n",
                 "select sum(a), k from x sample by 100T fill(none)",
@@ -1736,32 +2368,398 @@ public class SampleByTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testSampleByNoFillAlignToCalendarTimezoneOffset() throws Exception {
+        assertQuery(
+                "k\tb\tc\n" +
+                        "1970-01-02T14:42:00.000000Z\t\t2\n" +
+                        "1970-01-02T14:42:00.000000Z\tVTJW\t1\n" +
+                        "1970-01-02T14:42:00.000000Z\tRXGZ\t1\n" +
+                        "1970-01-02T14:42:00.000000Z\tPEHN\t1\n" +
+                        "1970-01-02T16:42:00.000000Z\t\t12\n" +
+                        "1970-01-02T16:42:00.000000Z\tHYRX\t3\n" +
+                        "1970-01-02T16:42:00.000000Z\tPEHN\t4\n" +
+                        "1970-01-02T16:42:00.000000Z\tVTJW\t2\n" +
+                        "1970-01-02T16:42:00.000000Z\tRXGZ\t1\n" +
+                        "1970-01-02T16:42:00.000000Z\tCPSW\t2\n" +
+                        "1970-01-02T18:42:00.000000Z\t\t12\n" +
+                        "1970-01-02T18:42:00.000000Z\tVTJW\t4\n" +
+                        "1970-01-02T18:42:00.000000Z\tCPSW\t4\n" +
+                        "1970-01-02T18:42:00.000000Z\tHYRX\t2\n" +
+                        "1970-01-02T18:42:00.000000Z\tRXGZ\t1\n" +
+                        "1970-01-02T18:42:00.000000Z\tPEHN\t1\n" +
+                        "1970-01-02T20:42:00.000000Z\t\t13\n" +
+                        "1970-01-02T20:42:00.000000Z\tCPSW\t1\n" +
+                        "1970-01-02T20:42:00.000000Z\tHYRX\t4\n" +
+                        "1970-01-02T20:42:00.000000Z\tRXGZ\t2\n" +
+                        "1970-01-02T20:42:00.000000Z\tVTJW\t3\n" +
+                        "1970-01-02T20:42:00.000000Z\tPEHN\t1\n" +
+                        "1970-01-02T22:42:00.000000Z\tRXGZ\t6\n" +
+                        "1970-01-02T22:42:00.000000Z\t\t11\n" +
+                        "1970-01-02T22:42:00.000000Z\tPEHN\t1\n" +
+                        "1970-01-02T22:42:00.000000Z\tHYRX\t1\n" +
+                        "1970-01-02T22:42:00.000000Z\tVTJW\t4\n",
+
+                // correct timestamp values are 18 and 48 because 'PST' offset is negative and static offset is positive
+                "select to_timezone(k, 'PST') k, b, c from (select k, b, count() c from x sample by 2h align to calendar time zone 'PST' with offset '00:42')",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(cast('1970-01-03T00:20:00.000000Z' as timestamp), 300000000) k" +
+                        " from" +
+                        " long_sequence(100)" +
+                        ") timestamp(k) partition by NONE",
+                null,
+                false,
+                true,
+                false
+        );
+    }
+
+    @Test
+    public void testSampleByNoFillNotKeyedAlignToCalendarMisalignedTimezone() throws Exception {
+
+        // IRAN timezone is +4:30, which doesn't align well with 1hr sample
+
+        assertQuery(
+                "k\tc\n" +
+                        "2021-03-28T04:00:00.000000Z\t3\n" +
+                        "2021-03-28T05:00:00.000000Z\t10\n" +
+                        "2021-03-28T06:00:00.000000Z\t10\n" +
+                        "2021-03-28T07:00:00.000000Z\t10\n" +
+                        "2021-03-28T08:00:00.000000Z\t10\n" +
+                        "2021-03-28T09:00:00.000000Z\t10\n" +
+                        "2021-03-28T10:00:00.000000Z\t10\n" +
+                        "2021-03-28T11:00:00.000000Z\t10\n" +
+                        "2021-03-28T12:00:00.000000Z\t10\n" +
+                        "2021-03-28T13:00:00.000000Z\t10\n" +
+                        "2021-03-28T14:00:00.000000Z\t7\n",
+
+                "select to_timezone(k, 'Iran') k, c from (select k, count() c from x sample by 1h align to calendar time zone 'Iran')",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(cast('2021-03-28T00:15:00.000000Z' as timestamp), 6*60000000) k" +
+                        " from" +
+                        " long_sequence(100)" +
+                        ") timestamp(k) partition by NONE",
+                null,
+                false,
+                true,
+                false
+        );
+    }
+
+    @Test
+    public void testSampleByNoFillNotKeyedAlignToCalendarTimezone() throws Exception {
+        // We are going over spring time change. Because time is "expanding" we dont have
+        // to do anything special. Our UTC timestamps will show "gap" and data doesn't
+        // have to change
+        assertQuery(
+                "k\tc\n" +
+                        "2021-03-28T01:00:00.000000Z\t8\n" +
+                        "2021-03-28T03:00:00.000000Z\t10\n" +
+                        "2021-03-28T04:00:00.000000Z\t10\n" +
+                        "2021-03-28T05:00:00.000000Z\t10\n" +
+                        "2021-03-28T06:00:00.000000Z\t10\n" +
+                        "2021-03-28T07:00:00.000000Z\t10\n" +
+                        "2021-03-28T08:00:00.000000Z\t10\n" +
+                        "2021-03-28T09:00:00.000000Z\t10\n" +
+                        "2021-03-28T10:00:00.000000Z\t10\n" +
+                        "2021-03-28T11:00:00.000000Z\t10\n" +
+                        "2021-03-28T12:00:00.000000Z\t2\n",
+                "select to_timezone(k, 'Europe/Berlin') k, c from (select k, count() c from x sample by 1h align to calendar time zone 'Europe/Berlin')",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(cast('2021-03-28T00:15:00.000000Z' as timestamp), 6*60000000) k" +
+                        " from" +
+                        " long_sequence(100)" +
+                        ") timestamp(k) partition by NONE",
+                null,
+                false,
+                true,
+                false
+        );
+    }
+
+    @Test
+    public void testSampleByNoFillNotKeyedAlignToCalendarTimezoneOct() throws Exception {
+        // We are going over spring time change. Because time is "expanding" we dont have
+        // to do anything special. Our UTC timestamps will show "gap" and data doesn't
+        // have to change
+        assertQuery(
+                "k\tc\n" +
+                        "2021-10-31T02:00:00.000000Z\t18\n" +
+                        "2021-10-31T03:00:00.000000Z\t10\n" +
+                        "2021-10-31T04:00:00.000000Z\t10\n" +
+                        "2021-10-31T05:00:00.000000Z\t10\n" +
+                        "2021-10-31T06:00:00.000000Z\t10\n" +
+                        "2021-10-31T07:00:00.000000Z\t10\n" +
+                        "2021-10-31T08:00:00.000000Z\t10\n" +
+                        "2021-10-31T09:00:00.000000Z\t10\n" +
+                        "2021-10-31T10:00:00.000000Z\t10\n" +
+                        "2021-10-31T11:00:00.000000Z\t2\n",
+                "select to_timezone(k, 'Europe/Berlin') k, c from (select k, count() c from x sample by 1h align to calendar time zone 'Europe/Berlin')",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(cast('2021-10-31T00:15:00.000000Z' as timestamp), 6*60000000) k" +
+                        " from" +
+                        " long_sequence(100)" +
+                        ") timestamp(k) partition by NONE",
+                null,
+                false,
+                true,
+                false
+        );
+    }
+
+    @Test
+    public void testSampleByNoFillNotKeyedAlignToCalendarTimezoneOctMin() throws Exception {
+        // We are going over spring time change. Because time is "expanding" we dont have
+        // to do anything special. Our UTC timestamps will show "gap" and data doesn't
+        // have to change
+        assertQuery(
+                "k\tc\n" +
+                        "2021-10-31T02:00:00.000000Z\t3\n" +
+                        "2021-10-31T02:30:00.000000Z\t15\n" +
+                        "2021-10-31T03:00:00.000000Z\t5\n" +
+                        "2021-10-31T03:30:00.000000Z\t5\n" +
+                        "2021-10-31T04:00:00.000000Z\t5\n" +
+                        "2021-10-31T04:30:00.000000Z\t5\n" +
+                        "2021-10-31T05:00:00.000000Z\t5\n" +
+                        "2021-10-31T05:30:00.000000Z\t5\n" +
+                        "2021-10-31T06:00:00.000000Z\t5\n" +
+                        "2021-10-31T06:30:00.000000Z\t5\n" +
+                        "2021-10-31T07:00:00.000000Z\t5\n" +
+                        "2021-10-31T07:30:00.000000Z\t5\n" +
+                        "2021-10-31T08:00:00.000000Z\t5\n" +
+                        "2021-10-31T08:30:00.000000Z\t5\n" +
+                        "2021-10-31T09:00:00.000000Z\t5\n" +
+                        "2021-10-31T09:30:00.000000Z\t5\n" +
+                        "2021-10-31T10:00:00.000000Z\t5\n" +
+                        "2021-10-31T10:30:00.000000Z\t5\n" +
+                        "2021-10-31T11:00:00.000000Z\t2\n",
+                "select to_timezone(k, 'Europe/Berlin') k, c from (select k, count() c from x sample by 30m align to calendar time zone 'Europe/Berlin')",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(cast('2021-10-31T00:15:00.000000Z' as timestamp), 6*60000000) k" +
+                        " from" +
+                        " long_sequence(100)" +
+                        ") timestamp(k) partition by NONE",
+                null,
+                false,
+                true,
+                false
+        );
+    }
+
+    @Test
+    public void testSampleByNoFillNotKeyedAlignToCalendarTimezoneOffset() throws Exception {
+        assertQuery(
+                "k\tc\n" +
+                        "1970-01-02T15:42:00.000000Z\t15\n" +
+                        "1970-01-02T17:12:00.000000Z\t18\n" +
+                        "1970-01-02T18:42:00.000000Z\t18\n" +
+                        "1970-01-02T20:12:00.000000Z\t18\n" +
+                        "1970-01-02T21:42:00.000000Z\t18\n" +
+                        "1970-01-02T23:12:00.000000Z\t13\n",
+
+                "select to_timezone(k, 'PST') k, c from (select k, count() c from x sample by 90m align to calendar time zone 'PST' with offset '00:42')",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(172800000000, 300000000) k" +
+                        " from" +
+                        " long_sequence(100)" +
+                        ") timestamp(k) partition by NONE",
+                null,
+                false,
+                true,
+                false
+        );
+    }
+
+    @Test
+    public void testSampleByNoFillNotKeyedAlignToCalendarTimezoneVariable() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile(
+                    "create table x as " +
+                            "(" +
+                            "select" +
+                            " rnd_double(0)*100 a," +
+                            " rnd_symbol(5,4,4,1) b," +
+                            " timestamp_sequence(172800000000, 300000000) k" +
+                            " from" +
+                            " long_sequence(100)" +
+                            ") timestamp(k) partition by NONE",
+                    sqlExecutionContext
+            );
+
+            RecordCursorFactory factory = compiler.compile(
+                    "select k, count() from x sample by 90m align to calendar time zone $1 with offset $2",
+                    sqlExecutionContext
+            ).getRecordCursorFactory();
+
+            String expectedMoscow = "k\tcount\n" +
+                    "1970-01-02T22:45:00.000000Z\t3\n" +
+                    "1970-01-03T00:15:00.000000Z\t18\n" +
+                    "1970-01-03T01:45:00.000000Z\t18\n" +
+                    "1970-01-03T03:15:00.000000Z\t18\n" +
+                    "1970-01-03T04:45:00.000000Z\t18\n" +
+                    "1970-01-03T06:15:00.000000Z\t18\n" +
+                    "1970-01-03T07:45:00.000000Z\t7\n";
+
+            String expectedPrague = "k\tcount\n" +
+                    "1970-01-02T23:10:00.000000Z\t8\n" +
+                    "1970-01-03T00:40:00.000000Z\t18\n" +
+                    "1970-01-03T02:10:00.000000Z\t18\n" +
+                    "1970-01-03T03:40:00.000000Z\t18\n" +
+                    "1970-01-03T05:10:00.000000Z\t18\n" +
+                    "1970-01-03T06:40:00.000000Z\t18\n" +
+                    "1970-01-03T08:10:00.000000Z\t2\n";
+
+            sqlExecutionContext.getBindVariableService().setStr(0, "Europe/Moscow");
+            sqlExecutionContext.getBindVariableService().setStr(1, "00:15");
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                assertCursor(
+                        expectedMoscow,
+                        cursor,
+                        factory.getMetadata(),
+                        true
+                );
+            }
+
+            // invalid timezone
+            sqlExecutionContext.getBindVariableService().setStr(0, "Oopsie");
+            sqlExecutionContext.getBindVariableService().setStr(1, "00:15");
+            try {
+                factory.getCursor(sqlExecutionContext);
+                Assert.fail();
+            } catch (SqlException e) {
+                Assert.assertEquals(67, e.getPosition());
+                TestUtils.assertContains(e.getFlyweightMessage(), "invalid timezone: Oopsie");
+            }
+
+            sqlExecutionContext.getBindVariableService().setStr(0, "Europe/Prague");
+            sqlExecutionContext.getBindVariableService().setStr(1, "uggs");
+            try {
+                factory.getCursor(sqlExecutionContext);
+                Assert.fail();
+            } catch (SqlException e) {
+                Assert.assertEquals(82, e.getPosition());
+                TestUtils.assertContains(e.getFlyweightMessage(), "invalid offset: uggs");
+            }
+
+            sqlExecutionContext.getBindVariableService().setStr(0, "Europe/Prague");
+            sqlExecutionContext.getBindVariableService().setStr(1, "00:10");
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                assertCursor(
+                        expectedPrague,
+                        cursor,
+                        factory.getMetadata(),
+                        true
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testSampleByNoFillNotKeyedAlignToCalendarUTC() throws Exception {
+        assertQuery(
+                "k\tcount\n" +
+                        "1970-01-03T00:00:00.000000Z\t18\n" +
+                        "1970-01-03T01:30:00.000000Z\t18\n" +
+                        "1970-01-03T03:00:00.000000Z\t18\n" +
+                        "1970-01-03T04:30:00.000000Z\t18\n" +
+                        "1970-01-03T06:00:00.000000Z\t18\n" +
+                        "1970-01-03T07:30:00.000000Z\t10\n",
+
+                "select k, count() from x sample by 90m align to calendar",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(172800000000, 300000000) k" +
+                        " from" +
+                        " long_sequence(100)" +
+                        ") timestamp(k) partition by NONE",
+                "k",
+                false,
+                true,
+                false
+        );
+    }
+
+    @Test
+    public void testSampleByNoFillNotKeyedAlignToCalendarUTCOffset() throws Exception {
+        assertQuery(
+                "k\tcount\n" +
+                        "1970-01-02T23:12:00.000000Z\t9\n" +
+                        "1970-01-03T00:42:00.000000Z\t18\n" +
+                        "1970-01-03T02:12:00.000000Z\t18\n" +
+                        "1970-01-03T03:42:00.000000Z\t18\n" +
+                        "1970-01-03T05:12:00.000000Z\t18\n" +
+                        "1970-01-03T06:42:00.000000Z\t18\n" +
+                        "1970-01-03T08:12:00.000000Z\t1\n",
+                "select k, count() from x sample by 90m align to calendar with offset '00:42'",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(cast('1970-01-03T00:01:00.00000Z' as timestamp), 300000000) k" +
+                        " from" +
+                        " long_sequence(100)" +
+                        ") timestamp(k) partition by NONE",
+                "k",
+                false,
+                true,
+                false
+        );
+    }
+
+    @Test
     public void testSampleCountFillLinear() throws Exception {
         assertQuery("b\tcount\tk\n" +
-                        "\t15\t1970-01-03T00:00:00.000000Z\n" +
-                        "VTJW\t3\t1970-01-03T00:00:00.000000Z\n" +
-                        "RXGZ\t2\t1970-01-03T00:00:00.000000Z\n" +
-                        "PEHN\t5\t1970-01-03T00:00:00.000000Z\n" +
-                        "HYRX\t3\t1970-01-03T00:00:00.000000Z\n" +
-                        "CPSW\t2\t1970-01-03T00:00:00.000000Z\n" +
-                        "\t14\t1970-01-03T03:00:00.000000Z\n" +
-                        "VTJW\t4\t1970-01-03T03:00:00.000000Z\n" +
-                        "CPSW\t5\t1970-01-03T03:00:00.000000Z\n" +
-                        "HYRX\t4\t1970-01-03T03:00:00.000000Z\n" +
-                        "RXGZ\t2\t1970-01-03T03:00:00.000000Z\n" +
-                        "PEHN\t1\t1970-01-03T03:00:00.000000Z\n" +
-                        "\t17\t1970-01-03T06:00:00.000000Z\n" +
-                        "VTJW\t4\t1970-01-03T06:00:00.000000Z\n" +
-                        "HYRX\t3\t1970-01-03T06:00:00.000000Z\n" +
-                        "RXGZ\t4\t1970-01-03T06:00:00.000000Z\n" +
-                        "PEHN\t2\t1970-01-03T06:00:00.000000Z\n" +
-                        "CPSW\t8\t1970-01-03T06:00:00.000000Z\n" +
-                        "\t4\t1970-01-03T09:00:00.000000Z\n" +
-                        "RXGZ\t3\t1970-01-03T09:00:00.000000Z\n" +
-                        "VTJW\t3\t1970-01-03T09:00:00.000000Z\n" +
-                        "PEHN\t3\t1970-01-03T09:00:00.000000Z\n" +
-                        "HYRX\t2\t1970-01-03T09:00:00.000000Z\n" +
-                        "CPSW\t11\t1970-01-03T09:00:00.000000Z\n",
+                        "\t15\t1970-01-03T02:00:00.000000Z\n" +
+                        "VTJW\t3\t1970-01-03T02:00:00.000000Z\n" +
+                        "RXGZ\t2\t1970-01-03T02:00:00.000000Z\n" +
+                        "PEHN\t5\t1970-01-03T02:00:00.000000Z\n" +
+                        "HYRX\t3\t1970-01-03T02:00:00.000000Z\n" +
+                        "CPSW\t2\t1970-01-03T02:00:00.000000Z\n" +
+                        "\t14\t1970-01-03T05:00:00.000000Z\n" +
+                        "VTJW\t4\t1970-01-03T05:00:00.000000Z\n" +
+                        "CPSW\t5\t1970-01-03T05:00:00.000000Z\n" +
+                        "HYRX\t4\t1970-01-03T05:00:00.000000Z\n" +
+                        "RXGZ\t2\t1970-01-03T05:00:00.000000Z\n" +
+                        "PEHN\t1\t1970-01-03T05:00:00.000000Z\n" +
+                        "\t17\t1970-01-03T08:00:00.000000Z\n" +
+                        "VTJW\t4\t1970-01-03T08:00:00.000000Z\n" +
+                        "HYRX\t3\t1970-01-03T08:00:00.000000Z\n" +
+                        "RXGZ\t4\t1970-01-03T08:00:00.000000Z\n" +
+                        "PEHN\t2\t1970-01-03T08:00:00.000000Z\n" +
+                        "CPSW\t8\t1970-01-03T08:00:00.000000Z\n" +
+                        "\t4\t1970-01-03T11:00:00.000000Z\n" +
+                        "RXGZ\t3\t1970-01-03T11:00:00.000000Z\n" +
+                        "VTJW\t3\t1970-01-03T11:00:00.000000Z\n" +
+                        "PEHN\t3\t1970-01-03T11:00:00.000000Z\n" +
+                        "HYRX\t2\t1970-01-03T11:00:00.000000Z\n" +
+                        "CPSW\t11\t1970-01-03T11:00:00.000000Z\n",
 
                 "select b, count(), k from x sample by 3h fill(linear)",
                 "create table x as " +
@@ -1769,7 +2767,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(172800000000, 360000000) k" +
+                        " timestamp_sequence(cast('1970-01-03T02:00:00.000000Z' as timestamp), 360000000) k" +
                         " from" +
                         " long_sequence(100)" +
                         ") timestamp(k) partition by NONE",
@@ -1778,132 +2776,66 @@ public class SampleByTest extends AbstractGriffinTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(277200000000, 360000000) k" +
+                        " timestamp_sequence(CAST('1970-01-03T13:10:00.000000Z' as timestamp), 360000000) k" +
                         " from" +
                         " long_sequence(35)" +
                         ") timestamp(k)",
                 "b\tcount\tk\n" +
-                        "\t15\t1970-01-03T00:00:00.000000Z\n" +
-                        "VTJW\t3\t1970-01-03T00:00:00.000000Z\n" +
-                        "RXGZ\t2\t1970-01-03T00:00:00.000000Z\n" +
-                        "PEHN\t5\t1970-01-03T00:00:00.000000Z\n" +
-                        "HYRX\t3\t1970-01-03T00:00:00.000000Z\n" +
-                        "CPSW\t2\t1970-01-03T00:00:00.000000Z\n" +
-                        "CGFN\t-8\t1970-01-03T00:00:00.000000Z\n" +
-                        "NPIW\t1\t1970-01-03T00:00:00.000000Z\n" +
-                        "PEVM\t-8\t1970-01-03T00:00:00.000000Z\n" +
-                        "WGRM\tNaN\t1970-01-03T00:00:00.000000Z\n" +
-                        "ZNFK\tNaN\t1970-01-03T00:00:00.000000Z\n" +
-                        "\t14\t1970-01-03T03:00:00.000000Z\n" +
-                        "VTJW\t4\t1970-01-03T03:00:00.000000Z\n" +
-                        "CPSW\t5\t1970-01-03T03:00:00.000000Z\n" +
-                        "HYRX\t4\t1970-01-03T03:00:00.000000Z\n" +
-                        "RXGZ\t2\t1970-01-03T03:00:00.000000Z\n" +
-                        "PEHN\t1\t1970-01-03T03:00:00.000000Z\n" +
-                        "CGFN\t-7\t1970-01-03T03:00:00.000000Z\n" +
-                        "NPIW\t1\t1970-01-03T03:00:00.000000Z\n" +
-                        "PEVM\t-7\t1970-01-03T03:00:00.000000Z\n" +
-                        "WGRM\tNaN\t1970-01-03T03:00:00.000000Z\n" +
-                        "ZNFK\tNaN\t1970-01-03T03:00:00.000000Z\n" +
-                        "\t17\t1970-01-03T06:00:00.000000Z\n" +
-                        "VTJW\t4\t1970-01-03T06:00:00.000000Z\n" +
-                        "HYRX\t3\t1970-01-03T06:00:00.000000Z\n" +
-                        "RXGZ\t4\t1970-01-03T06:00:00.000000Z\n" +
-                        "PEHN\t2\t1970-01-03T06:00:00.000000Z\n" +
-                        "CPSW\t8\t1970-01-03T06:00:00.000000Z\n" +
-                        "CGFN\t-6\t1970-01-03T06:00:00.000000Z\n" +
-                        "NPIW\t1\t1970-01-03T06:00:00.000000Z\n" +
-                        "PEVM\t-6\t1970-01-03T06:00:00.000000Z\n" +
-                        "WGRM\tNaN\t1970-01-03T06:00:00.000000Z\n" +
-                        "ZNFK\tNaN\t1970-01-03T06:00:00.000000Z\n" +
-                        "\t4\t1970-01-03T09:00:00.000000Z\n" +
-                        "RXGZ\t3\t1970-01-03T09:00:00.000000Z\n" +
-                        "VTJW\t3\t1970-01-03T09:00:00.000000Z\n" +
-                        "PEHN\t3\t1970-01-03T09:00:00.000000Z\n" +
-                        "HYRX\t2\t1970-01-03T09:00:00.000000Z\n" +
-                        "CPSW\t11\t1970-01-03T09:00:00.000000Z\n" +
-                        "CGFN\t-5\t1970-01-03T09:00:00.000000Z\n" +
-                        "NPIW\t1\t1970-01-03T09:00:00.000000Z\n" +
-                        "PEVM\t-5\t1970-01-03T09:00:00.000000Z\n" +
-                        "WGRM\tNaN\t1970-01-03T09:00:00.000000Z\n" +
-                        "ZNFK\tNaN\t1970-01-03T09:00:00.000000Z\n" +
-                        "\t4\t1970-01-03T12:00:00.000000Z\n" +
-                        "VTJW\t2\t1970-01-03T12:00:00.000000Z\n" +
-                        "RXGZ\t2\t1970-01-03T12:00:00.000000Z\n" +
-                        "PEHN\t4\t1970-01-03T12:00:00.000000Z\n" +
-                        "HYRX\t1\t1970-01-03T12:00:00.000000Z\n" +
-                        "CPSW\t14\t1970-01-03T12:00:00.000000Z\n" +
-                        "CGFN\t-4\t1970-01-03T12:00:00.000000Z\n" +
-                        "NPIW\t1\t1970-01-03T12:00:00.000000Z\n" +
-                        "PEVM\t-4\t1970-01-03T12:00:00.000000Z\n" +
-                        "WGRM\tNaN\t1970-01-03T12:00:00.000000Z\n" +
-                        "ZNFK\tNaN\t1970-01-03T12:00:00.000000Z\n" +
-                        "\t5\t1970-01-03T15:00:00.000000Z\n" +
-                        "VTJW\t1\t1970-01-03T15:00:00.000000Z\n" +
-                        "RXGZ\t1\t1970-01-03T15:00:00.000000Z\n" +
-                        "PEHN\t5\t1970-01-03T15:00:00.000000Z\n" +
-                        "HYRX\t0\t1970-01-03T15:00:00.000000Z\n" +
-                        "CPSW\t17\t1970-01-03T15:00:00.000000Z\n" +
-                        "CGFN\t-3\t1970-01-03T15:00:00.000000Z\n" +
-                        "NPIW\t1\t1970-01-03T15:00:00.000000Z\n" +
-                        "PEVM\t-3\t1970-01-03T15:00:00.000000Z\n" +
-                        "WGRM\tNaN\t1970-01-03T15:00:00.000000Z\n" +
-                        "ZNFK\tNaN\t1970-01-03T15:00:00.000000Z\n" +
-                        "\t5\t1970-01-03T18:00:00.000000Z\n" +
-                        "VTJW\t0\t1970-01-03T18:00:00.000000Z\n" +
-                        "RXGZ\t0\t1970-01-03T18:00:00.000000Z\n" +
-                        "PEHN\t6\t1970-01-03T18:00:00.000000Z\n" +
-                        "HYRX\t-1\t1970-01-03T18:00:00.000000Z\n" +
-                        "CPSW\t20\t1970-01-03T18:00:00.000000Z\n" +
-                        "CGFN\t-2\t1970-01-03T18:00:00.000000Z\n" +
-                        "NPIW\t1\t1970-01-03T18:00:00.000000Z\n" +
-                        "PEVM\t-2\t1970-01-03T18:00:00.000000Z\n" +
-                        "WGRM\tNaN\t1970-01-03T18:00:00.000000Z\n" +
-                        "ZNFK\tNaN\t1970-01-03T18:00:00.000000Z\n" +
-                        "\t6\t1970-01-03T21:00:00.000000Z\n" +
-                        "VTJW\t-1\t1970-01-03T21:00:00.000000Z\n" +
-                        "RXGZ\t-1\t1970-01-03T21:00:00.000000Z\n" +
-                        "PEHN\t7\t1970-01-03T21:00:00.000000Z\n" +
-                        "HYRX\t-2\t1970-01-03T21:00:00.000000Z\n" +
-                        "CPSW\t23\t1970-01-03T21:00:00.000000Z\n" +
-                        "CGFN\t-1\t1970-01-03T21:00:00.000000Z\n" +
-                        "NPIW\t1\t1970-01-03T21:00:00.000000Z\n" +
-                        "PEVM\t-1\t1970-01-03T21:00:00.000000Z\n" +
-                        "WGRM\tNaN\t1970-01-03T21:00:00.000000Z\n" +
-                        "ZNFK\tNaN\t1970-01-03T21:00:00.000000Z\n" +
-                        "\t6\t1970-01-04T00:00:00.000000Z\n" +
-                        "VTJW\t-2\t1970-01-04T00:00:00.000000Z\n" +
-                        "RXGZ\t-2\t1970-01-04T00:00:00.000000Z\n" +
-                        "PEHN\t8\t1970-01-04T00:00:00.000000Z\n" +
-                        "HYRX\t-3\t1970-01-04T00:00:00.000000Z\n" +
-                        "CPSW\t26\t1970-01-04T00:00:00.000000Z\n" +
-                        "CGFN\t0\t1970-01-04T00:00:00.000000Z\n" +
-                        "NPIW\t1\t1970-01-04T00:00:00.000000Z\n" +
-                        "PEVM\t0\t1970-01-04T00:00:00.000000Z\n" +
-                        "WGRM\tNaN\t1970-01-04T00:00:00.000000Z\n" +
-                        "ZNFK\tNaN\t1970-01-04T00:00:00.000000Z\n" +
-                        "\t7\t1970-01-04T03:00:00.000000Z\n" +
-                        "CGFN\t1\t1970-01-04T03:00:00.000000Z\n" +
-                        "NPIW\t1\t1970-01-04T03:00:00.000000Z\n" +
-                        "PEVM\t1\t1970-01-04T03:00:00.000000Z\n" +
-                        "VTJW\t-3\t1970-01-04T03:00:00.000000Z\n" +
-                        "RXGZ\t-3\t1970-01-04T03:00:00.000000Z\n" +
-                        "PEHN\t9\t1970-01-04T03:00:00.000000Z\n" +
-                        "HYRX\t-4\t1970-01-04T03:00:00.000000Z\n" +
-                        "CPSW\t29\t1970-01-04T03:00:00.000000Z\n" +
-                        "WGRM\tNaN\t1970-01-04T03:00:00.000000Z\n" +
-                        "ZNFK\tNaN\t1970-01-04T03:00:00.000000Z\n" +
-                        "WGRM\t3\t1970-01-04T06:00:00.000000Z\n" +
-                        "CGFN\t2\t1970-01-04T06:00:00.000000Z\n" +
-                        "\t14\t1970-01-04T06:00:00.000000Z\n" +
-                        "PEVM\t2\t1970-01-04T06:00:00.000000Z\n" +
-                        "ZNFK\t3\t1970-01-04T06:00:00.000000Z\n" +
-                        "NPIW\t1\t1970-01-04T06:00:00.000000Z\n" +
-                        "VTJW\t-4\t1970-01-04T06:00:00.000000Z\n" +
-                        "RXGZ\t-4\t1970-01-04T06:00:00.000000Z\n" +
-                        "PEHN\t10\t1970-01-04T06:00:00.000000Z\n" +
-                        "HYRX\t-5\t1970-01-04T06:00:00.000000Z\n" +
-                        "CPSW\t32\t1970-01-04T06:00:00.000000Z\n",
+                        "\t15\t1970-01-03T02:00:00.000000Z\n" +
+                        "VTJW\t3\t1970-01-03T02:00:00.000000Z\n" +
+                        "RXGZ\t2\t1970-01-03T02:00:00.000000Z\n" +
+                        "PEHN\t5\t1970-01-03T02:00:00.000000Z\n" +
+                        "HYRX\t3\t1970-01-03T02:00:00.000000Z\n" +
+                        "CPSW\t2\t1970-01-03T02:00:00.000000Z\n" +
+                        "CGFN\t-2\t1970-01-03T02:00:00.000000Z\n" +
+                        "NPIW\t1\t1970-01-03T02:00:00.000000Z\n" +
+                        "PEVM\t-2\t1970-01-03T02:00:00.000000Z\n" +
+                        "WGRM\tNaN\t1970-01-03T02:00:00.000000Z\n" +
+                        "ZNFK\tNaN\t1970-01-03T02:00:00.000000Z\n" +
+                        "\t14\t1970-01-03T05:00:00.000000Z\n" +
+                        "VTJW\t4\t1970-01-03T05:00:00.000000Z\n" +
+                        "CPSW\t5\t1970-01-03T05:00:00.000000Z\n" +
+                        "HYRX\t4\t1970-01-03T05:00:00.000000Z\n" +
+                        "RXGZ\t2\t1970-01-03T05:00:00.000000Z\n" +
+                        "PEHN\t1\t1970-01-03T05:00:00.000000Z\n" +
+                        "CGFN\t-1\t1970-01-03T05:00:00.000000Z\n" +
+                        "NPIW\t1\t1970-01-03T05:00:00.000000Z\n" +
+                        "PEVM\t-1\t1970-01-03T05:00:00.000000Z\n" +
+                        "WGRM\tNaN\t1970-01-03T05:00:00.000000Z\n" +
+                        "ZNFK\tNaN\t1970-01-03T05:00:00.000000Z\n" +
+                        "\t17\t1970-01-03T08:00:00.000000Z\n" +
+                        "VTJW\t4\t1970-01-03T08:00:00.000000Z\n" +
+                        "HYRX\t3\t1970-01-03T08:00:00.000000Z\n" +
+                        "RXGZ\t4\t1970-01-03T08:00:00.000000Z\n" +
+                        "PEHN\t2\t1970-01-03T08:00:00.000000Z\n" +
+                        "CPSW\t8\t1970-01-03T08:00:00.000000Z\n" +
+                        "CGFN\t0\t1970-01-03T08:00:00.000000Z\n" +
+                        "NPIW\t1\t1970-01-03T08:00:00.000000Z\n" +
+                        "PEVM\t0\t1970-01-03T08:00:00.000000Z\n" +
+                        "WGRM\tNaN\t1970-01-03T08:00:00.000000Z\n" +
+                        "ZNFK\tNaN\t1970-01-03T08:00:00.000000Z\n" +
+                        "\t10\t1970-01-03T11:00:00.000000Z\n" +
+                        "RXGZ\t3\t1970-01-03T11:00:00.000000Z\n" +
+                        "VTJW\t3\t1970-01-03T11:00:00.000000Z\n" +
+                        "CGFN\t1\t1970-01-03T11:00:00.000000Z\n" +
+                        "NPIW\t1\t1970-01-03T11:00:00.000000Z\n" +
+                        "PEVM\t1\t1970-01-03T11:00:00.000000Z\n" +
+                        "PEHN\t3\t1970-01-03T11:00:00.000000Z\n" +
+                        "HYRX\t2\t1970-01-03T11:00:00.000000Z\n" +
+                        "CPSW\t11\t1970-01-03T11:00:00.000000Z\n" +
+                        "WGRM\tNaN\t1970-01-03T11:00:00.000000Z\n" +
+                        "ZNFK\tNaN\t1970-01-03T11:00:00.000000Z\n" +
+                        "\t15\t1970-01-03T14:00:00.000000Z\n" +
+                        "WGRM\t3\t1970-01-03T14:00:00.000000Z\n" +
+                        "CGFN\t2\t1970-01-03T14:00:00.000000Z\n" +
+                        "PEVM\t2\t1970-01-03T14:00:00.000000Z\n" +
+                        "ZNFK\t3\t1970-01-03T14:00:00.000000Z\n" +
+                        "NPIW\t1\t1970-01-03T14:00:00.000000Z\n" +
+                        "VTJW\t2\t1970-01-03T14:00:00.000000Z\n" +
+                        "RXGZ\t2\t1970-01-03T14:00:00.000000Z\n" +
+                        "PEHN\t4\t1970-01-03T14:00:00.000000Z\n" +
+                        "HYRX\t1\t1970-01-03T14:00:00.000000Z\n" +
+                        "CPSW\t14\t1970-01-03T14:00:00.000000Z\n",
                 true,
                 true,
                 true
@@ -1913,24 +2845,18 @@ public class SampleByTest extends AbstractGriffinTest {
     @Test
     public void testSampleCountFillLinearFromSubQuery() throws Exception {
         assertQuery("b\tcount\tk\n" +
-                        "CPSW\t1\t1970-01-03T03:00:00.000000Z\n" +
-                        "PEHN\tNaN\t1970-01-03T03:00:00.000000Z\n" +
-                        "HYRX\tNaN\t1970-01-03T03:00:00.000000Z\n" +
-                        "VTJW\tNaN\t1970-01-03T03:00:00.000000Z\n" +
-                        "RXGZ\tNaN\t1970-01-03T03:00:00.000000Z\n" +
-                        "\tNaN\t1970-01-03T03:00:00.000000Z\n" +
-                        "PEHN\t1\t1970-01-03T06:00:00.000000Z\n" +
-                        "HYRX\t1\t1970-01-03T06:00:00.000000Z\n" +
-                        "CPSW\tNaN\t1970-01-03T06:00:00.000000Z\n" +
-                        "VTJW\tNaN\t1970-01-03T06:00:00.000000Z\n" +
-                        "RXGZ\tNaN\t1970-01-03T06:00:00.000000Z\n" +
-                        "\tNaN\t1970-01-03T06:00:00.000000Z\n" +
-                        "VTJW\t1\t1970-01-03T09:00:00.000000Z\n" +
-                        "RXGZ\t1\t1970-01-03T09:00:00.000000Z\n" +
-                        "\t1\t1970-01-03T09:00:00.000000Z\n" +
-                        "CPSW\tNaN\t1970-01-03T09:00:00.000000Z\n" +
-                        "PEHN\tNaN\t1970-01-03T09:00:00.000000Z\n" +
-                        "HYRX\tNaN\t1970-01-03T09:00:00.000000Z\n",
+                        "CPSW\t1\t1970-01-03T05:24:00.000000Z\n" +
+                        "PEHN\t1\t1970-01-03T05:24:00.000000Z\n" +
+                        "HYRX\t1\t1970-01-03T05:24:00.000000Z\n" +
+                        "VTJW\tNaN\t1970-01-03T05:24:00.000000Z\n" +
+                        "RXGZ\tNaN\t1970-01-03T05:24:00.000000Z\n" +
+                        "\tNaN\t1970-01-03T05:24:00.000000Z\n" +
+                        "VTJW\t1\t1970-01-03T08:24:00.000000Z\n" +
+                        "RXGZ\t1\t1970-01-03T08:24:00.000000Z\n" +
+                        "\t1\t1970-01-03T08:24:00.000000Z\n" +
+                        "CPSW\tNaN\t1970-01-03T08:24:00.000000Z\n" +
+                        "PEHN\tNaN\t1970-01-03T08:24:00.000000Z\n" +
+                        "HYRX\tNaN\t1970-01-03T08:24:00.000000Z\n",
 
                 "select b, count(), k from (x latest by b) sample by 3h fill(linear)",
                 "create table x as " +
@@ -1952,116 +2878,116 @@ public class SampleByTest extends AbstractGriffinTest {
                         " long_sequence(35)" +
                         ") timestamp(k)",
                 "b\tcount\tk\n" +
-                        "CPSW\t1\t1970-01-03T03:00:00.000000Z\n" +
-                        "PEHN\tNaN\t1970-01-03T03:00:00.000000Z\n" +
-                        "HYRX\tNaN\t1970-01-03T03:00:00.000000Z\n" +
-                        "VTJW\tNaN\t1970-01-03T03:00:00.000000Z\n" +
-                        "RXGZ\tNaN\t1970-01-03T03:00:00.000000Z\n" +
-                        "WGRM\tNaN\t1970-01-03T03:00:00.000000Z\n" +
-                        "NPIW\tNaN\t1970-01-03T03:00:00.000000Z\n" +
-                        "CGFN\tNaN\t1970-01-03T03:00:00.000000Z\n" +
-                        "ZNFK\tNaN\t1970-01-03T03:00:00.000000Z\n" +
-                        "PEVM\tNaN\t1970-01-03T03:00:00.000000Z\n" +
-                        "\tNaN\t1970-01-03T03:00:00.000000Z\n" +
-                        "PEHN\t1\t1970-01-03T06:00:00.000000Z\n" +
-                        "HYRX\t1\t1970-01-03T06:00:00.000000Z\n" +
-                        "CPSW\tNaN\t1970-01-03T06:00:00.000000Z\n" +
-                        "VTJW\tNaN\t1970-01-03T06:00:00.000000Z\n" +
-                        "RXGZ\tNaN\t1970-01-03T06:00:00.000000Z\n" +
-                        "WGRM\tNaN\t1970-01-03T06:00:00.000000Z\n" +
-                        "NPIW\tNaN\t1970-01-03T06:00:00.000000Z\n" +
-                        "CGFN\tNaN\t1970-01-03T06:00:00.000000Z\n" +
-                        "ZNFK\tNaN\t1970-01-03T06:00:00.000000Z\n" +
-                        "PEVM\tNaN\t1970-01-03T06:00:00.000000Z\n" +
-                        "\tNaN\t1970-01-03T06:00:00.000000Z\n" +
-                        "VTJW\t1\t1970-01-03T09:00:00.000000Z\n" +
-                        "RXGZ\t1\t1970-01-03T09:00:00.000000Z\n" +
-                        "CPSW\tNaN\t1970-01-03T09:00:00.000000Z\n" +
-                        "PEHN\tNaN\t1970-01-03T09:00:00.000000Z\n" +
-                        "HYRX\tNaN\t1970-01-03T09:00:00.000000Z\n" +
-                        "WGRM\tNaN\t1970-01-03T09:00:00.000000Z\n" +
-                        "NPIW\tNaN\t1970-01-03T09:00:00.000000Z\n" +
-                        "CGFN\tNaN\t1970-01-03T09:00:00.000000Z\n" +
-                        "ZNFK\tNaN\t1970-01-03T09:00:00.000000Z\n" +
-                        "PEVM\tNaN\t1970-01-03T09:00:00.000000Z\n" +
-                        "\tNaN\t1970-01-03T09:00:00.000000Z\n" +
-                        "CPSW\tNaN\t1970-01-03T12:00:00.000000Z\n" +
-                        "PEHN\tNaN\t1970-01-03T12:00:00.000000Z\n" +
-                        "HYRX\tNaN\t1970-01-03T12:00:00.000000Z\n" +
-                        "VTJW\tNaN\t1970-01-03T12:00:00.000000Z\n" +
-                        "RXGZ\tNaN\t1970-01-03T12:00:00.000000Z\n" +
-                        "WGRM\tNaN\t1970-01-03T12:00:00.000000Z\n" +
-                        "NPIW\tNaN\t1970-01-03T12:00:00.000000Z\n" +
-                        "CGFN\tNaN\t1970-01-03T12:00:00.000000Z\n" +
-                        "ZNFK\tNaN\t1970-01-03T12:00:00.000000Z\n" +
-                        "PEVM\tNaN\t1970-01-03T12:00:00.000000Z\n" +
-                        "\tNaN\t1970-01-03T12:00:00.000000Z\n" +
-                        "CPSW\tNaN\t1970-01-03T15:00:00.000000Z\n" +
-                        "PEHN\tNaN\t1970-01-03T15:00:00.000000Z\n" +
-                        "HYRX\tNaN\t1970-01-03T15:00:00.000000Z\n" +
-                        "VTJW\tNaN\t1970-01-03T15:00:00.000000Z\n" +
-                        "RXGZ\tNaN\t1970-01-03T15:00:00.000000Z\n" +
-                        "WGRM\tNaN\t1970-01-03T15:00:00.000000Z\n" +
-                        "NPIW\tNaN\t1970-01-03T15:00:00.000000Z\n" +
-                        "CGFN\tNaN\t1970-01-03T15:00:00.000000Z\n" +
-                        "ZNFK\tNaN\t1970-01-03T15:00:00.000000Z\n" +
-                        "PEVM\tNaN\t1970-01-03T15:00:00.000000Z\n" +
-                        "\tNaN\t1970-01-03T15:00:00.000000Z\n" +
-                        "CPSW\tNaN\t1970-01-03T18:00:00.000000Z\n" +
-                        "PEHN\tNaN\t1970-01-03T18:00:00.000000Z\n" +
-                        "HYRX\tNaN\t1970-01-03T18:00:00.000000Z\n" +
-                        "VTJW\tNaN\t1970-01-03T18:00:00.000000Z\n" +
-                        "RXGZ\tNaN\t1970-01-03T18:00:00.000000Z\n" +
-                        "WGRM\tNaN\t1970-01-03T18:00:00.000000Z\n" +
-                        "NPIW\tNaN\t1970-01-03T18:00:00.000000Z\n" +
-                        "CGFN\tNaN\t1970-01-03T18:00:00.000000Z\n" +
-                        "ZNFK\tNaN\t1970-01-03T18:00:00.000000Z\n" +
-                        "PEVM\tNaN\t1970-01-03T18:00:00.000000Z\n" +
-                        "\tNaN\t1970-01-03T18:00:00.000000Z\n" +
-                        "CPSW\tNaN\t1970-01-03T21:00:00.000000Z\n" +
-                        "PEHN\tNaN\t1970-01-03T21:00:00.000000Z\n" +
-                        "HYRX\tNaN\t1970-01-03T21:00:00.000000Z\n" +
-                        "VTJW\tNaN\t1970-01-03T21:00:00.000000Z\n" +
-                        "RXGZ\tNaN\t1970-01-03T21:00:00.000000Z\n" +
-                        "WGRM\tNaN\t1970-01-03T21:00:00.000000Z\n" +
-                        "NPIW\tNaN\t1970-01-03T21:00:00.000000Z\n" +
-                        "CGFN\tNaN\t1970-01-03T21:00:00.000000Z\n" +
-                        "ZNFK\tNaN\t1970-01-03T21:00:00.000000Z\n" +
-                        "PEVM\tNaN\t1970-01-03T21:00:00.000000Z\n" +
-                        "\tNaN\t1970-01-03T21:00:00.000000Z\n" +
-                        "CPSW\tNaN\t1970-01-04T00:00:00.000000Z\n" +
-                        "PEHN\tNaN\t1970-01-04T00:00:00.000000Z\n" +
-                        "HYRX\tNaN\t1970-01-04T00:00:00.000000Z\n" +
-                        "VTJW\tNaN\t1970-01-04T00:00:00.000000Z\n" +
-                        "RXGZ\tNaN\t1970-01-04T00:00:00.000000Z\n" +
-                        "WGRM\tNaN\t1970-01-04T00:00:00.000000Z\n" +
-                        "NPIW\tNaN\t1970-01-04T00:00:00.000000Z\n" +
-                        "CGFN\tNaN\t1970-01-04T00:00:00.000000Z\n" +
-                        "ZNFK\tNaN\t1970-01-04T00:00:00.000000Z\n" +
-                        "PEVM\tNaN\t1970-01-04T00:00:00.000000Z\n" +
-                        "\tNaN\t1970-01-04T00:00:00.000000Z\n" +
-                        "CPSW\tNaN\t1970-01-04T03:00:00.000000Z\n" +
-                        "PEHN\tNaN\t1970-01-04T03:00:00.000000Z\n" +
-                        "HYRX\tNaN\t1970-01-04T03:00:00.000000Z\n" +
-                        "VTJW\tNaN\t1970-01-04T03:00:00.000000Z\n" +
-                        "RXGZ\tNaN\t1970-01-04T03:00:00.000000Z\n" +
-                        "WGRM\tNaN\t1970-01-04T03:00:00.000000Z\n" +
-                        "NPIW\tNaN\t1970-01-04T03:00:00.000000Z\n" +
-                        "CGFN\tNaN\t1970-01-04T03:00:00.000000Z\n" +
-                        "ZNFK\tNaN\t1970-01-04T03:00:00.000000Z\n" +
-                        "PEVM\tNaN\t1970-01-04T03:00:00.000000Z\n" +
-                        "\tNaN\t1970-01-04T03:00:00.000000Z\n" +
-                        "WGRM\t1\t1970-01-04T06:00:00.000000Z\n" +
-                        "NPIW\t1\t1970-01-04T06:00:00.000000Z\n" +
-                        "CGFN\t1\t1970-01-04T06:00:00.000000Z\n" +
-                        "ZNFK\t1\t1970-01-04T06:00:00.000000Z\n" +
-                        "PEVM\t1\t1970-01-04T06:00:00.000000Z\n" +
-                        "\t1\t1970-01-04T06:00:00.000000Z\n" +
-                        "CPSW\tNaN\t1970-01-04T06:00:00.000000Z\n" +
-                        "PEHN\tNaN\t1970-01-04T06:00:00.000000Z\n" +
-                        "HYRX\tNaN\t1970-01-04T06:00:00.000000Z\n" +
-                        "VTJW\tNaN\t1970-01-04T06:00:00.000000Z\n" +
-                        "RXGZ\tNaN\t1970-01-04T06:00:00.000000Z\n",
+                        "CPSW\t1\t1970-01-03T05:24:00.000000Z\n" +
+                        "PEHN\t1\t1970-01-03T05:24:00.000000Z\n" +
+                        "HYRX\t1\t1970-01-03T05:24:00.000000Z\n" +
+                        "VTJW\tNaN\t1970-01-03T05:24:00.000000Z\n" +
+                        "RXGZ\tNaN\t1970-01-03T05:24:00.000000Z\n" +
+                        "WGRM\tNaN\t1970-01-03T05:24:00.000000Z\n" +
+                        "NPIW\tNaN\t1970-01-03T05:24:00.000000Z\n" +
+                        "CGFN\tNaN\t1970-01-03T05:24:00.000000Z\n" +
+                        "ZNFK\tNaN\t1970-01-03T05:24:00.000000Z\n" +
+                        "PEVM\tNaN\t1970-01-03T05:24:00.000000Z\n" +
+                        "\tNaN\t1970-01-03T05:24:00.000000Z\n" +
+                        "VTJW\t1\t1970-01-03T08:24:00.000000Z\n" +
+                        "RXGZ\t1\t1970-01-03T08:24:00.000000Z\n" +
+                        "CPSW\tNaN\t1970-01-03T08:24:00.000000Z\n" +
+                        "PEHN\tNaN\t1970-01-03T08:24:00.000000Z\n" +
+                        "HYRX\tNaN\t1970-01-03T08:24:00.000000Z\n" +
+                        "WGRM\tNaN\t1970-01-03T08:24:00.000000Z\n" +
+                        "NPIW\tNaN\t1970-01-03T08:24:00.000000Z\n" +
+                        "CGFN\tNaN\t1970-01-03T08:24:00.000000Z\n" +
+                        "ZNFK\tNaN\t1970-01-03T08:24:00.000000Z\n" +
+                        "PEVM\tNaN\t1970-01-03T08:24:00.000000Z\n" +
+                        "\tNaN\t1970-01-03T08:24:00.000000Z\n" +
+                        "CPSW\tNaN\t1970-01-03T11:24:00.000000Z\n" +
+                        "PEHN\tNaN\t1970-01-03T11:24:00.000000Z\n" +
+                        "HYRX\tNaN\t1970-01-03T11:24:00.000000Z\n" +
+                        "VTJW\tNaN\t1970-01-03T11:24:00.000000Z\n" +
+                        "RXGZ\tNaN\t1970-01-03T11:24:00.000000Z\n" +
+                        "WGRM\tNaN\t1970-01-03T11:24:00.000000Z\n" +
+                        "NPIW\tNaN\t1970-01-03T11:24:00.000000Z\n" +
+                        "CGFN\tNaN\t1970-01-03T11:24:00.000000Z\n" +
+                        "ZNFK\tNaN\t1970-01-03T11:24:00.000000Z\n" +
+                        "PEVM\tNaN\t1970-01-03T11:24:00.000000Z\n" +
+                        "\tNaN\t1970-01-03T11:24:00.000000Z\n" +
+                        "CPSW\tNaN\t1970-01-03T14:24:00.000000Z\n" +
+                        "PEHN\tNaN\t1970-01-03T14:24:00.000000Z\n" +
+                        "HYRX\tNaN\t1970-01-03T14:24:00.000000Z\n" +
+                        "VTJW\tNaN\t1970-01-03T14:24:00.000000Z\n" +
+                        "RXGZ\tNaN\t1970-01-03T14:24:00.000000Z\n" +
+                        "WGRM\tNaN\t1970-01-03T14:24:00.000000Z\n" +
+                        "NPIW\tNaN\t1970-01-03T14:24:00.000000Z\n" +
+                        "CGFN\tNaN\t1970-01-03T14:24:00.000000Z\n" +
+                        "ZNFK\tNaN\t1970-01-03T14:24:00.000000Z\n" +
+                        "PEVM\tNaN\t1970-01-03T14:24:00.000000Z\n" +
+                        "\tNaN\t1970-01-03T14:24:00.000000Z\n" +
+                        "CPSW\tNaN\t1970-01-03T17:24:00.000000Z\n" +
+                        "PEHN\tNaN\t1970-01-03T17:24:00.000000Z\n" +
+                        "HYRX\tNaN\t1970-01-03T17:24:00.000000Z\n" +
+                        "VTJW\tNaN\t1970-01-03T17:24:00.000000Z\n" +
+                        "RXGZ\tNaN\t1970-01-03T17:24:00.000000Z\n" +
+                        "WGRM\tNaN\t1970-01-03T17:24:00.000000Z\n" +
+                        "NPIW\tNaN\t1970-01-03T17:24:00.000000Z\n" +
+                        "CGFN\tNaN\t1970-01-03T17:24:00.000000Z\n" +
+                        "ZNFK\tNaN\t1970-01-03T17:24:00.000000Z\n" +
+                        "PEVM\tNaN\t1970-01-03T17:24:00.000000Z\n" +
+                        "\tNaN\t1970-01-03T17:24:00.000000Z\n" +
+                        "CPSW\tNaN\t1970-01-03T20:24:00.000000Z\n" +
+                        "PEHN\tNaN\t1970-01-03T20:24:00.000000Z\n" +
+                        "HYRX\tNaN\t1970-01-03T20:24:00.000000Z\n" +
+                        "VTJW\tNaN\t1970-01-03T20:24:00.000000Z\n" +
+                        "RXGZ\tNaN\t1970-01-03T20:24:00.000000Z\n" +
+                        "WGRM\tNaN\t1970-01-03T20:24:00.000000Z\n" +
+                        "NPIW\tNaN\t1970-01-03T20:24:00.000000Z\n" +
+                        "CGFN\tNaN\t1970-01-03T20:24:00.000000Z\n" +
+                        "ZNFK\tNaN\t1970-01-03T20:24:00.000000Z\n" +
+                        "PEVM\tNaN\t1970-01-03T20:24:00.000000Z\n" +
+                        "\tNaN\t1970-01-03T20:24:00.000000Z\n" +
+                        "CPSW\tNaN\t1970-01-03T23:24:00.000000Z\n" +
+                        "PEHN\tNaN\t1970-01-03T23:24:00.000000Z\n" +
+                        "HYRX\tNaN\t1970-01-03T23:24:00.000000Z\n" +
+                        "VTJW\tNaN\t1970-01-03T23:24:00.000000Z\n" +
+                        "RXGZ\tNaN\t1970-01-03T23:24:00.000000Z\n" +
+                        "WGRM\tNaN\t1970-01-03T23:24:00.000000Z\n" +
+                        "NPIW\tNaN\t1970-01-03T23:24:00.000000Z\n" +
+                        "CGFN\tNaN\t1970-01-03T23:24:00.000000Z\n" +
+                        "ZNFK\tNaN\t1970-01-03T23:24:00.000000Z\n" +
+                        "PEVM\tNaN\t1970-01-03T23:24:00.000000Z\n" +
+                        "\tNaN\t1970-01-03T23:24:00.000000Z\n" +
+                        "CPSW\tNaN\t1970-01-04T02:24:00.000000Z\n" +
+                        "PEHN\tNaN\t1970-01-04T02:24:00.000000Z\n" +
+                        "HYRX\tNaN\t1970-01-04T02:24:00.000000Z\n" +
+                        "VTJW\tNaN\t1970-01-04T02:24:00.000000Z\n" +
+                        "RXGZ\tNaN\t1970-01-04T02:24:00.000000Z\n" +
+                        "WGRM\tNaN\t1970-01-04T02:24:00.000000Z\n" +
+                        "NPIW\tNaN\t1970-01-04T02:24:00.000000Z\n" +
+                        "CGFN\tNaN\t1970-01-04T02:24:00.000000Z\n" +
+                        "ZNFK\tNaN\t1970-01-04T02:24:00.000000Z\n" +
+                        "PEVM\tNaN\t1970-01-04T02:24:00.000000Z\n" +
+                        "\tNaN\t1970-01-04T02:24:00.000000Z\n" +
+                        "WGRM\t1\t1970-01-04T05:24:00.000000Z\n" +
+                        "NPIW\t1\t1970-01-04T05:24:00.000000Z\n" +
+                        "CGFN\t1\t1970-01-04T05:24:00.000000Z\n" +
+                        "ZNFK\t1\t1970-01-04T05:24:00.000000Z\n" +
+                        "PEVM\t1\t1970-01-04T05:24:00.000000Z\n" +
+                        "CPSW\tNaN\t1970-01-04T05:24:00.000000Z\n" +
+                        "PEHN\tNaN\t1970-01-04T05:24:00.000000Z\n" +
+                        "HYRX\tNaN\t1970-01-04T05:24:00.000000Z\n" +
+                        "VTJW\tNaN\t1970-01-04T05:24:00.000000Z\n" +
+                        "RXGZ\tNaN\t1970-01-04T05:24:00.000000Z\n" +
+                        "\tNaN\t1970-01-04T05:24:00.000000Z\n" +
+                        "\t1\t1970-01-04T08:24:00.000000Z\n" +
+                        "CPSW\tNaN\t1970-01-04T08:24:00.000000Z\n" +
+                        "PEHN\tNaN\t1970-01-04T08:24:00.000000Z\n" +
+                        "HYRX\tNaN\t1970-01-04T08:24:00.000000Z\n" +
+                        "VTJW\tNaN\t1970-01-04T08:24:00.000000Z\n" +
+                        "RXGZ\tNaN\t1970-01-04T08:24:00.000000Z\n" +
+                        "WGRM\tNaN\t1970-01-04T08:24:00.000000Z\n" +
+                        "NPIW\tNaN\t1970-01-04T08:24:00.000000Z\n" +
+                        "CGFN\tNaN\t1970-01-04T08:24:00.000000Z\n" +
+                        "ZNFK\tNaN\t1970-01-04T08:24:00.000000Z\n" +
+                        "PEVM\tNaN\t1970-01-04T08:24:00.000000Z\n",
                 true,
                 true,
                 true
@@ -2280,20 +3206,17 @@ public class SampleByTest extends AbstractGriffinTest {
                         " rnd_byte(2, 50) e," +
                         " abs(rnd_short()) f," +
                         " abs(rnd_long()) g," +
-                        " timestamp_sequence(277200000000, 3600000000) k" +
+                        " timestamp_sequence(cast('1970-01-04T05:00:00.000000Z' as timestamp), 3600000000) k" +
                         " from" +
                         " long_sequence(5)" +
                         ") timestamp(k)",
                 "b\tsum_t\tsum\tsum1\tsum2\tsum3\tsum4\tk\n" +
-                        "\t0.3598332405090332\t32.881769076795045\t1253890363\t49\t27809\t7199909180655756830\t1970-01-04T03:00:00.000000Z\n" +
-                        "DEYY\t164.43474292755127\t117.53515866608913\t22049944\t64\t3136\t4552387273114894848\t1970-01-04T03:00:00.000000Z\n" +
-                        "SXUX\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-04T03:00:00.000000Z\n" +
-                        "\t24.808812141418457\t63.81607531178513\t461611463\t48\t514\t7709707078566863064\t1970-01-04T06:00:00.000000Z\n" +
-                        "DEYY\t96.8742311000824\t67.00476391801053\t44173540\t34\t3282\t6794405451419334859\t1970-01-04T06:00:00.000000Z\n" +
-                        "SXUX\t26.92210078239441\t52.98405941762054\t936627841\t16\t5741\t7153335833712179123\t1970-01-04T06:00:00.000000Z\n" +
-                        "DEYY\t29.313719272613525\t16.47436916993191\t66297136\t4\t3428\t9036423629723776443\t1970-01-04T09:00:00.000000Z\n" +
-                        "\t49.25779104232788\t94.75038154677522\t-330667436\t47\t-26781\t8219504976477969408\t1970-01-04T09:00:00.000000Z\n" +
-                        "SXUX\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-04T09:00:00.000000Z\n",
+                        "\t25.16864538192749\t96.69784438858017\t1715501826\t97\t28323\t-3537127814486931722\t1970-01-04T05:00:00.000000Z\n" +
+                        "DEYY\t96.8742311000824\t67.00476391801053\t44173540\t34\t3282\t6794405451419334859\t1970-01-04T05:00:00.000000Z\n" +
+                        "SXUX\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-04T05:00:00.000000Z\n" +
+                        "SXUX\t26.92210078239441\t52.98405941762054\t936627841\t16\t5741\t7153335833712179123\t1970-01-04T08:00:00.000000Z\n" +
+                        "DEYY\t29.313719272613525\t16.47436916993191\t66297136\t4\t3428\t9036423629723776443\t1970-01-04T08:00:00.000000Z\n" +
+                        "\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-04T08:00:00.000000Z\n",
                 true,
                 true,
                 true
@@ -2470,36 +3393,36 @@ public class SampleByTest extends AbstractGriffinTest {
     @Test
     public void testSampleFillLinearByMonth() throws Exception {
         assertQuery("b\tsum_t\tk\n" +
-                        "\t54112.40405938657\t1970-01-01T00:00:00.000000Z\n" +
-                        "VTJW\t11209.880434660998\t1970-01-01T00:00:00.000000Z\n" +
-                        "RXGZ\t9939.438287132381\t1970-01-01T00:00:00.000000Z\n" +
-                        "PEHN\t11042.882403279875\t1970-01-01T00:00:00.000000Z\n" +
-                        "HYRX\t11080.174817969955\t1970-01-01T00:00:00.000000Z\n" +
-                        "CPSW\t9310.397369439\t1970-01-01T00:00:00.000000Z\n" +
-                        "\t53936.039113863764\t1970-04-01T00:00:00.000000Z\n" +
-                        "HYRX\t10382.092656987053\t1970-04-01T00:00:00.000000Z\n" +
-                        "CPSW\t11677.451781387846\t1970-04-01T00:00:00.000000Z\n" +
-                        "RXGZ\t12082.97398092452\t1970-04-01T00:00:00.000000Z\n" +
-                        "VTJW\t11574.354700279142\t1970-04-01T00:00:00.000000Z\n" +
-                        "PEHN\t11225.427167029598\t1970-04-01T00:00:00.000000Z\n" +
-                        "\t53719.38559836983\t1970-07-01T00:00:00.000000Z\n" +
-                        "VTJW\t10645.216313875992\t1970-07-01T00:00:00.000000Z\n" +
-                        "RXGZ\t12441.881371617534\t1970-07-01T00:00:00.000000Z\n" +
-                        "HYRX\t10478.918039106036\t1970-07-01T00:00:00.000000Z\n" +
-                        "CPSW\t11215.534064219255\t1970-07-01T00:00:00.000000Z\n" +
-                        "PEHN\t12053.625707887684\t1970-07-01T00:00:00.000000Z\n" +
-                        "\t54106.362147164444\t1970-10-01T00:00:00.000000Z\n" +
-                        "HYRX\t11883.354138407445\t1970-10-01T00:00:00.000000Z\n" +
-                        "RXGZ\t11608.715762809448\t1970-10-01T00:00:00.000000Z\n" +
-                        "CPSW\t11623.362686708584\t1970-10-01T00:00:00.000000Z\n" +
-                        "PEHN\t11258.550294609915\t1970-10-01T00:00:00.000000Z\n" +
-                        "VTJW\t10865.136275604094\t1970-10-01T00:00:00.000000Z\n" +
-                        "\t33152.56289929654\t1971-01-01T00:00:00.000000Z\n" +
-                        "PEHN\t7219.25966062438\t1971-01-01T00:00:00.000000Z\n" +
-                        "CPSW\t6038.83487182006\t1971-01-01T00:00:00.000000Z\n" +
-                        "RXGZ\t5862.505042201944\t1971-01-01T00:00:00.000000Z\n" +
-                        "VTJW\t6677.581919995402\t1971-01-01T00:00:00.000000Z\n" +
-                        "HYRX\t5998.730211949621\t1971-01-01T00:00:00.000000Z\n",
+                        "\t54112.40405938657\t1970-01-03T00:00:00.000000Z\n" +
+                        "VTJW\t11209.880434660998\t1970-01-03T00:00:00.000000Z\n" +
+                        "RXGZ\t9939.438287132381\t1970-01-03T00:00:00.000000Z\n" +
+                        "PEHN\t11042.882403279875\t1970-01-03T00:00:00.000000Z\n" +
+                        "HYRX\t11080.174817969955\t1970-01-03T00:00:00.000000Z\n" +
+                        "CPSW\t9310.397369439\t1970-01-03T00:00:00.000000Z\n" +
+                        "\t53936.039113863764\t1970-04-03T00:00:00.000000Z\n" +
+                        "HYRX\t10382.092656987053\t1970-04-03T00:00:00.000000Z\n" +
+                        "CPSW\t11677.451781387846\t1970-04-03T00:00:00.000000Z\n" +
+                        "RXGZ\t12082.97398092452\t1970-04-03T00:00:00.000000Z\n" +
+                        "VTJW\t11574.354700279142\t1970-04-03T00:00:00.000000Z\n" +
+                        "PEHN\t11225.427167029598\t1970-04-03T00:00:00.000000Z\n" +
+                        "\t53719.38559836983\t1970-07-03T00:00:00.000000Z\n" +
+                        "VTJW\t10645.216313875992\t1970-07-03T00:00:00.000000Z\n" +
+                        "RXGZ\t12441.881371617534\t1970-07-03T00:00:00.000000Z\n" +
+                        "HYRX\t10478.918039106036\t1970-07-03T00:00:00.000000Z\n" +
+                        "CPSW\t11215.534064219255\t1970-07-03T00:00:00.000000Z\n" +
+                        "PEHN\t12053.625707887684\t1970-07-03T00:00:00.000000Z\n" +
+                        "\t54106.362147164444\t1970-10-03T00:00:00.000000Z\n" +
+                        "HYRX\t11883.354138407445\t1970-10-03T00:00:00.000000Z\n" +
+                        "RXGZ\t11608.715762809448\t1970-10-03T00:00:00.000000Z\n" +
+                        "CPSW\t11623.362686708584\t1970-10-03T00:00:00.000000Z\n" +
+                        "PEHN\t11258.550294609915\t1970-10-03T00:00:00.000000Z\n" +
+                        "VTJW\t10865.136275604094\t1970-10-03T00:00:00.000000Z\n" +
+                        "\t33152.56289929654\t1971-01-03T00:00:00.000000Z\n" +
+                        "PEHN\t7219.25966062438\t1971-01-03T00:00:00.000000Z\n" +
+                        "CPSW\t6038.83487182006\t1971-01-03T00:00:00.000000Z\n" +
+                        "RXGZ\t5862.505042201944\t1971-01-03T00:00:00.000000Z\n" +
+                        "VTJW\t6677.581919995402\t1971-01-03T00:00:00.000000Z\n" +
+                        "HYRX\t5998.730211949621\t1971-01-03T00:00:00.000000Z\n",
                 "select b, sum_t(a), k from x sample by 3M fill(linear)",
                 "create table x as " +
                         "(" +
@@ -2862,33 +3785,33 @@ public class SampleByTest extends AbstractGriffinTest {
     @Test
     public void testSampleFillNoneDataGaps() throws Exception {
         assertQuery("b\tsum\tk\n" +
-                        "\t11.427984775756228\t1970-01-03T00:00:00.000000Z\n" +
-                        "VTJW\t42.17768841969397\t1970-01-03T01:00:00.000000Z\n" +
-                        "RXGZ\t23.90529010846525\t1970-01-03T02:00:00.000000Z\n" +
-                        "PEHN\t70.94360487171201\t1970-01-03T03:00:00.000000Z\n" +
-                        "\t87.99634725391621\t1970-01-03T04:00:00.000000Z\n" +
-                        "\t32.881769076795045\t1970-01-03T05:00:00.000000Z\n" +
-                        "HYRX\t97.71103146051203\t1970-01-03T06:00:00.000000Z\n" +
-                        "PEHN\t81.46807944500559\t1970-01-03T07:00:00.000000Z\n" +
-                        "\t57.93466326862211\t1970-01-03T08:00:00.000000Z\n" +
-                        "HYRX\t12.026122412833129\t1970-01-03T09:00:00.000000Z\n" +
-                        "VTJW\t48.820511018586934\t1970-01-03T10:00:00.000000Z\n" +
-                        "\t26.922103479744898\t1970-01-03T11:00:00.000000Z\n" +
-                        "\t52.98405941762054\t1970-01-03T12:00:00.000000Z\n" +
-                        "PEHN\t84.45258177211063\t1970-01-03T13:00:00.000000Z\n" +
-                        "\t97.5019885372507\t1970-01-03T14:00:00.000000Z\n" +
-                        "PEHN\t49.00510449885239\t1970-01-03T15:00:00.000000Z\n" +
-                        "\t80.01121139739173\t1970-01-03T16:00:00.000000Z\n" +
-                        "\t92.050039469858\t1970-01-03T17:00:00.000000Z\n" +
-                        "\t45.6344569609078\t1970-01-03T18:00:00.000000Z\n" +
-                        "\t40.455469747939254\t1970-01-03T19:00:00.000000Z\n",
+                        "\t11.427984775756228\t1970-01-03T01:20:00.000000Z\n" +
+                        "VTJW\t42.17768841969397\t1970-01-03T01:50:00.000000Z\n" +
+                        "RXGZ\t23.90529010846525\t1970-01-03T02:50:00.000000Z\n" +
+                        "PEHN\t70.94360487171201\t1970-01-03T03:50:00.000000Z\n" +
+                        "\t87.99634725391621\t1970-01-03T04:20:00.000000Z\n" +
+                        "\t32.881769076795045\t1970-01-03T05:20:00.000000Z\n" +
+                        "HYRX\t97.71103146051203\t1970-01-03T06:20:00.000000Z\n" +
+                        "PEHN\t81.46807944500559\t1970-01-03T07:20:00.000000Z\n" +
+                        "\t57.93466326862211\t1970-01-03T07:50:00.000000Z\n" +
+                        "HYRX\t12.026122412833129\t1970-01-03T08:50:00.000000Z\n" +
+                        "VTJW\t48.820511018586934\t1970-01-03T09:50:00.000000Z\n" +
+                        "\t26.922103479744898\t1970-01-03T10:20:00.000000Z\n" +
+                        "\t52.98405941762054\t1970-01-03T11:20:00.000000Z\n" +
+                        "PEHN\t84.45258177211063\t1970-01-03T12:20:00.000000Z\n" +
+                        "\t97.5019885372507\t1970-01-03T13:20:00.000000Z\n" +
+                        "PEHN\t49.00510449885239\t1970-01-03T13:50:00.000000Z\n" +
+                        "\t80.01121139739173\t1970-01-03T14:50:00.000000Z\n" +
+                        "\t92.050039469858\t1970-01-03T15:50:00.000000Z\n" +
+                        "\t45.6344569609078\t1970-01-03T16:50:00.000000Z\n" +
+                        "\t40.455469747939254\t1970-01-03T17:20:00.000000Z\n",
                 "select b, sum(a), k from x sample by 30m fill(none)",
                 "create table x as " +
                         "(" +
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(172800000000, 3600000000) k" +
+                        " timestamp_sequence(cast('1970-01-03T01:20:00.000000Z' as timestamp), 3100000000) k" +
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
@@ -2897,37 +3820,148 @@ public class SampleByTest extends AbstractGriffinTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(277200000000, 3600000000) k" +
+                        " timestamp_sequence(cast('1970-01-04T05:00:00.000000Z' as timestamp), 3200000000) k" +
                         " from" +
                         " long_sequence(5)" +
                         ") timestamp(k)",
                 "b\tsum\tk\n" +
-                        "\t11.427984775756228\t1970-01-03T00:00:00.000000Z\n" +
-                        "VTJW\t42.17768841969397\t1970-01-03T01:00:00.000000Z\n" +
-                        "RXGZ\t23.90529010846525\t1970-01-03T02:00:00.000000Z\n" +
-                        "PEHN\t70.94360487171201\t1970-01-03T03:00:00.000000Z\n" +
-                        "\t87.99634725391621\t1970-01-03T04:00:00.000000Z\n" +
-                        "\t32.881769076795045\t1970-01-03T05:00:00.000000Z\n" +
-                        "HYRX\t97.71103146051203\t1970-01-03T06:00:00.000000Z\n" +
+                        "\t11.427984775756228\t1970-01-03T01:20:00.000000Z\n" +
+                        "VTJW\t42.17768841969397\t1970-01-03T01:50:00.000000Z\n" +
+                        "RXGZ\t23.90529010846525\t1970-01-03T02:50:00.000000Z\n" +
+                        "PEHN\t70.94360487171201\t1970-01-03T03:50:00.000000Z\n" +
+                        "\t87.99634725391621\t1970-01-03T04:20:00.000000Z\n" +
+                        "\t32.881769076795045\t1970-01-03T05:20:00.000000Z\n" +
+                        "HYRX\t97.71103146051203\t1970-01-03T06:20:00.000000Z\n" +
+                        "PEHN\t81.46807944500559\t1970-01-03T07:20:00.000000Z\n" +
+                        "\t57.93466326862211\t1970-01-03T07:50:00.000000Z\n" +
+                        "HYRX\t12.026122412833129\t1970-01-03T08:50:00.000000Z\n" +
+                        "VTJW\t48.820511018586934\t1970-01-03T09:50:00.000000Z\n" +
+                        "\t26.922103479744898\t1970-01-03T10:20:00.000000Z\n" +
+                        "\t52.98405941762054\t1970-01-03T11:20:00.000000Z\n" +
+                        "PEHN\t84.45258177211063\t1970-01-03T12:20:00.000000Z\n" +
+                        "\t97.5019885372507\t1970-01-03T13:20:00.000000Z\n" +
+                        "PEHN\t49.00510449885239\t1970-01-03T13:50:00.000000Z\n" +
+                        "\t80.01121139739173\t1970-01-03T14:50:00.000000Z\n" +
+                        "\t92.050039469858\t1970-01-03T15:50:00.000000Z\n" +
+                        "\t45.6344569609078\t1970-01-03T16:50:00.000000Z\n" +
+                        "\t40.455469747939254\t1970-01-03T17:20:00.000000Z\n" +
+                        "\t54.49155021518948\t1970-01-04T04:50:00.000000Z\n" +
+                        "\t76.9238189433781\t1970-01-04T05:50:00.000000Z\n" +
+                        "UVSD\t49.42890511958454\t1970-01-04T06:20:00.000000Z\n" +
+                        "\t58.912164838797885\t1970-01-04T07:20:00.000000Z\n" +
+                        "KGHV\t67.52509547112409\t1970-01-04T08:20:00.000000Z\n",
+                false
+        );
+    }
+
+    @Test
+    public void testSampleFillNoneDataGapsAlignToCalendar() throws Exception {
+        assertQuery("b\tsum\tk\n" +
+                        "\t11.427984775756228\t1970-01-03T01:00:00.000000Z\n" +
+                        "VTJW\t42.17768841969397\t1970-01-03T02:00:00.000000Z\n" +
+                        "RXGZ\t23.90529010846525\t1970-01-03T03:00:00.000000Z\n" +
+                        "PEHN\t70.94360487171201\t1970-01-03T03:30:00.000000Z\n" +
+                        "\t87.99634725391621\t1970-01-03T04:30:00.000000Z\n" +
+                        "\t32.881769076795045\t1970-01-03T05:30:00.000000Z\n" +
+                        "HYRX\t97.71103146051203\t1970-01-03T06:30:00.000000Z\n" +
                         "PEHN\t81.46807944500559\t1970-01-03T07:00:00.000000Z\n" +
                         "\t57.93466326862211\t1970-01-03T08:00:00.000000Z\n" +
                         "HYRX\t12.026122412833129\t1970-01-03T09:00:00.000000Z\n" +
-                        "VTJW\t48.820511018586934\t1970-01-03T10:00:00.000000Z\n" +
-                        "\t26.922103479744898\t1970-01-03T11:00:00.000000Z\n" +
-                        "\t52.98405941762054\t1970-01-03T12:00:00.000000Z\n" +
-                        "PEHN\t84.45258177211063\t1970-01-03T13:00:00.000000Z\n" +
-                        "\t97.5019885372507\t1970-01-03T14:00:00.000000Z\n" +
-                        "PEHN\t49.00510449885239\t1970-01-03T15:00:00.000000Z\n" +
-                        "\t80.01121139739173\t1970-01-03T16:00:00.000000Z\n" +
-                        "\t92.050039469858\t1970-01-03T17:00:00.000000Z\n" +
-                        "\t45.6344569609078\t1970-01-03T18:00:00.000000Z\n" +
-                        "\t40.455469747939254\t1970-01-03T19:00:00.000000Z\n" +
+                        "VTJW\t48.820511018586934\t1970-01-03T09:30:00.000000Z\n" +
+                        "\t26.922103479744898\t1970-01-03T10:30:00.000000Z\n" +
+                        "\t52.98405941762054\t1970-01-03T11:30:00.000000Z\n" +
+                        "PEHN\t84.45258177211063\t1970-01-03T12:30:00.000000Z\n" +
+                        "\t97.5019885372507\t1970-01-03T13:00:00.000000Z\n" +
+                        "PEHN\t49.00510449885239\t1970-01-03T14:00:00.000000Z\n" +
+                        "\t80.01121139739173\t1970-01-03T15:00:00.000000Z\n" +
+                        "\t92.050039469858\t1970-01-03T15:30:00.000000Z\n" +
+                        "\t45.6344569609078\t1970-01-03T16:30:00.000000Z\n" +
+                        "\t40.455469747939254\t1970-01-03T17:30:00.000000Z\n",
+                "select b, sum(a), k from x sample by 30m fill(none) align to calendar",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(cast('1970-01-03T01:20:00.000000Z' as timestamp), 3100000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        ") timestamp(k) partition by NONE",
+                "k",
+                "insert into x select * from (" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(cast('1970-01-04T05:00:00.000000Z' as timestamp), 3200000000) k" +
+                        " from" +
+                        " long_sequence(5)" +
+                        ") timestamp(k)",
+                "b\tsum\tk\n" +
+                        "\t11.427984775756228\t1970-01-03T01:00:00.000000Z\n" +
+                        "VTJW\t42.17768841969397\t1970-01-03T02:00:00.000000Z\n" +
+                        "RXGZ\t23.90529010846525\t1970-01-03T03:00:00.000000Z\n" +
+                        "PEHN\t70.94360487171201\t1970-01-03T03:30:00.000000Z\n" +
+                        "\t87.99634725391621\t1970-01-03T04:30:00.000000Z\n" +
+                        "\t32.881769076795045\t1970-01-03T05:30:00.000000Z\n" +
+                        "HYRX\t97.71103146051203\t1970-01-03T06:30:00.000000Z\n" +
+                        "PEHN\t81.46807944500559\t1970-01-03T07:00:00.000000Z\n" +
+                        "\t57.93466326862211\t1970-01-03T08:00:00.000000Z\n" +
+                        "HYRX\t12.026122412833129\t1970-01-03T09:00:00.000000Z\n" +
+                        "VTJW\t48.820511018586934\t1970-01-03T09:30:00.000000Z\n" +
+                        "\t26.922103479744898\t1970-01-03T10:30:00.000000Z\n" +
+                        "\t52.98405941762054\t1970-01-03T11:30:00.000000Z\n" +
+                        "PEHN\t84.45258177211063\t1970-01-03T12:30:00.000000Z\n" +
+                        "\t97.5019885372507\t1970-01-03T13:00:00.000000Z\n" +
+                        "PEHN\t49.00510449885239\t1970-01-03T14:00:00.000000Z\n" +
+                        "\t80.01121139739173\t1970-01-03T15:00:00.000000Z\n" +
+                        "\t92.050039469858\t1970-01-03T15:30:00.000000Z\n" +
+                        "\t45.6344569609078\t1970-01-03T16:30:00.000000Z\n" +
+                        "\t40.455469747939254\t1970-01-03T17:30:00.000000Z\n" +
                         "\t54.49155021518948\t1970-01-04T05:00:00.000000Z\n" +
-                        "\t76.9238189433781\t1970-01-04T06:00:00.000000Z\n" +
-                        "UVSD\t49.42890511958454\t1970-01-04T07:00:00.000000Z\n" +
-                        "\t58.912164838797885\t1970-01-04T08:00:00.000000Z\n" +
-                        "KGHV\t67.52509547112409\t1970-01-04T09:00:00.000000Z\n",
-                false);
+                        "\t76.9238189433781\t1970-01-04T05:30:00.000000Z\n" +
+                        "UVSD\t49.42890511958454\t1970-01-04T06:30:00.000000Z\n" +
+                        "\t58.912164838797885\t1970-01-04T07:30:00.000000Z\n" +
+                        "KGHV\t67.52509547112409\t1970-01-04T08:30:00.000000Z\n",
+                false
+        );
+    }
+
+    @Test
+    public void testSampleFillNoneDataGapsAlignToCalendarTimeZone() throws Exception {
+        assertQuery("b\ts\tk\n" +
+                        "\t11.427984775756228\t2021-03-28T01:00:00.000000Z\n" +
+                        "VTJW\t42.17768841969397\t2021-03-28T03:00:00.000000Z\n" +
+                        "RXGZ\t23.90529010846525\t2021-03-28T04:00:00.000000Z\n" +
+                        "PEHN\t70.94360487171201\t2021-03-28T04:30:00.000000Z\n" +
+                        "\t87.99634725391621\t2021-03-28T05:30:00.000000Z\n" +
+                        "\t32.881769076795045\t2021-03-28T06:30:00.000000Z\n" +
+                        "HYRX\t97.71103146051203\t2021-03-28T07:30:00.000000Z\n" +
+                        "PEHN\t81.46807944500559\t2021-03-28T08:00:00.000000Z\n" +
+                        "\t57.93466326862211\t2021-03-28T09:00:00.000000Z\n" +
+                        "HYRX\t12.026122412833129\t2021-03-28T10:00:00.000000Z\n" +
+                        "VTJW\t48.820511018586934\t2021-03-28T10:30:00.000000Z\n" +
+                        "\t26.922103479744898\t2021-03-28T11:30:00.000000Z\n" +
+                        "\t52.98405941762054\t2021-03-28T12:30:00.000000Z\n" +
+                        "PEHN\t84.45258177211063\t2021-03-28T13:30:00.000000Z\n" +
+                        "\t97.5019885372507\t2021-03-28T14:00:00.000000Z\n" +
+                        "PEHN\t49.00510449885239\t2021-03-28T15:00:00.000000Z\n" +
+                        "\t80.01121139739173\t2021-03-28T16:00:00.000000Z\n" +
+                        "\t92.050039469858\t2021-03-28T16:30:00.000000Z\n" +
+                        "\t45.6344569609078\t2021-03-28T17:30:00.000000Z\n" +
+                        "\t40.455469747939254\t2021-03-28T18:30:00.000000Z\n",
+                "select b, s, to_timezone(k, 'Europe/Madrid') k from (select b, sum(a) s, k from x sample by 30m fill(none) align to calendar time zone 'Europe/Madrid')",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(cast('2021-03-28T00:20:00.000000Z' as timestamp), 3100000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        ") timestamp(k) partition by NONE",
+                null,
+                false
+        );
     }
 
     @Test
@@ -3177,6 +4211,575 @@ public class SampleByTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testSampleFillNullAlignToCalendarTimeZone() throws Exception {
+        // EST timezone has clock go back on 7 Nov. From -4 UTC to -5 UTC
+        // at 6am UTC EST time is 2am (DTS), when clock goes back 7am also becomes 2am UTC
+        // hence 6am UTC is duplicate timestamp and is expected to be compounded
+        assertQuery("b\ts\tk\n" +
+                        "\t11.427984775756228\t2021-11-06T18:00:00.000000Z\n" +
+                        "VTJW\tNaN\t2021-11-06T18:00:00.000000Z\n" +
+                        "RXGZ\tNaN\t2021-11-06T18:00:00.000000Z\n" +
+                        "PEHN\tNaN\t2021-11-06T18:00:00.000000Z\n" +
+                        "HYRX\tNaN\t2021-11-06T18:00:00.000000Z\n" +
+                        "\tNaN\t2021-11-06T19:00:00.000000Z\n" +
+                        "VTJW\t42.17768841969397\t2021-11-06T19:00:00.000000Z\n" +
+                        "RXGZ\t23.90529010846525\t2021-11-06T19:00:00.000000Z\n" +
+                        "PEHN\tNaN\t2021-11-06T19:00:00.000000Z\n" +
+                        "HYRX\tNaN\t2021-11-06T19:00:00.000000Z\n" +
+                        "\tNaN\t2021-11-06T20:00:00.000000Z\n" +
+                        "VTJW\tNaN\t2021-11-06T20:00:00.000000Z\n" +
+                        "RXGZ\tNaN\t2021-11-06T20:00:00.000000Z\n" +
+                        "PEHN\t70.94360487171201\t2021-11-06T20:00:00.000000Z\n" +
+                        "HYRX\tNaN\t2021-11-06T20:00:00.000000Z\n" +
+                        "\t87.99634725391621\t2021-11-06T21:00:00.000000Z\n" +
+                        "VTJW\tNaN\t2021-11-06T21:00:00.000000Z\n" +
+                        "RXGZ\tNaN\t2021-11-06T21:00:00.000000Z\n" +
+                        "PEHN\tNaN\t2021-11-06T21:00:00.000000Z\n" +
+                        "HYRX\tNaN\t2021-11-06T21:00:00.000000Z\n" +
+                        "\t32.881769076795045\t2021-11-06T22:00:00.000000Z\n" +
+                        "VTJW\tNaN\t2021-11-06T22:00:00.000000Z\n" +
+                        "RXGZ\tNaN\t2021-11-06T22:00:00.000000Z\n" +
+                        "PEHN\tNaN\t2021-11-06T22:00:00.000000Z\n" +
+                        "HYRX\tNaN\t2021-11-06T22:00:00.000000Z\n" +
+                        "\tNaN\t2021-11-06T23:00:00.000000Z\n" +
+                        "VTJW\tNaN\t2021-11-06T23:00:00.000000Z\n" +
+                        "RXGZ\tNaN\t2021-11-06T23:00:00.000000Z\n" +
+                        "PEHN\tNaN\t2021-11-06T23:00:00.000000Z\n" +
+                        "HYRX\t97.71103146051203\t2021-11-06T23:00:00.000000Z\n" +
+                        "\tNaN\t2021-11-07T00:00:00.000000Z\n" +
+                        "VTJW\tNaN\t2021-11-07T00:00:00.000000Z\n" +
+                        "RXGZ\tNaN\t2021-11-07T00:00:00.000000Z\n" +
+                        "PEHN\t81.46807944500559\t2021-11-07T00:00:00.000000Z\n" +
+                        "HYRX\tNaN\t2021-11-07T00:00:00.000000Z\n" +
+                        "\tNaN\t2021-11-07T01:00:00.000000Z\n" +
+                        "VTJW\tNaN\t2021-11-07T01:00:00.000000Z\n" +
+                        "RXGZ\tNaN\t2021-11-07T01:00:00.000000Z\n" +
+                        "PEHN\t81.46807944500559\t2021-11-07T01:00:00.000000Z\n" +
+                        "HYRX\tNaN\t2021-11-07T01:00:00.000000Z\n" +
+                        "\t26.922103479744898\t2021-11-07T02:00:00.000000Z\n" +
+                        "VTJW\t48.820511018586934\t2021-11-07T02:00:00.000000Z\n" +
+                        "RXGZ\tNaN\t2021-11-07T02:00:00.000000Z\n" +
+                        "PEHN\tNaN\t2021-11-07T02:00:00.000000Z\n" +
+                        "HYRX\tNaN\t2021-11-07T02:00:00.000000Z\n" +
+                        "\t52.98405941762054\t2021-11-07T03:00:00.000000Z\n" +
+                        "VTJW\tNaN\t2021-11-07T03:00:00.000000Z\n" +
+                        "RXGZ\tNaN\t2021-11-07T03:00:00.000000Z\n" +
+                        "PEHN\tNaN\t2021-11-07T03:00:00.000000Z\n" +
+                        "HYRX\tNaN\t2021-11-07T03:00:00.000000Z\n" +
+                        "\tNaN\t2021-11-07T04:00:00.000000Z\n" +
+                        "VTJW\tNaN\t2021-11-07T04:00:00.000000Z\n" +
+                        "RXGZ\tNaN\t2021-11-07T04:00:00.000000Z\n" +
+                        "PEHN\t84.45258177211063\t2021-11-07T04:00:00.000000Z\n" +
+                        "HYRX\tNaN\t2021-11-07T04:00:00.000000Z\n" +
+                        "\t97.5019885372507\t2021-11-07T05:00:00.000000Z\n" +
+                        "VTJW\tNaN\t2021-11-07T05:00:00.000000Z\n" +
+                        "RXGZ\tNaN\t2021-11-07T05:00:00.000000Z\n" +
+                        "PEHN\tNaN\t2021-11-07T05:00:00.000000Z\n" +
+                        "HYRX\tNaN\t2021-11-07T05:00:00.000000Z\n" +
+                        "\t80.01121139739173\t2021-11-07T06:00:00.000000Z\n" +
+                        "VTJW\tNaN\t2021-11-07T06:00:00.000000Z\n" +
+                        "RXGZ\tNaN\t2021-11-07T06:00:00.000000Z\n" +
+                        "PEHN\t49.00510449885239\t2021-11-07T06:00:00.000000Z\n" +
+                        "HYRX\tNaN\t2021-11-07T06:00:00.000000Z\n" +
+                        "\t92.050039469858\t2021-11-07T07:00:00.000000Z\n" +
+                        "VTJW\tNaN\t2021-11-07T07:00:00.000000Z\n" +
+                        "RXGZ\tNaN\t2021-11-07T07:00:00.000000Z\n" +
+                        "PEHN\tNaN\t2021-11-07T07:00:00.000000Z\n" +
+                        "HYRX\tNaN\t2021-11-07T07:00:00.000000Z\n" +
+                        "\t45.6344569609078\t2021-11-07T08:00:00.000000Z\n" +
+                        "VTJW\tNaN\t2021-11-07T08:00:00.000000Z\n" +
+                        "RXGZ\tNaN\t2021-11-07T08:00:00.000000Z\n" +
+                        "PEHN\tNaN\t2021-11-07T08:00:00.000000Z\n" +
+                        "HYRX\tNaN\t2021-11-07T08:00:00.000000Z\n" +
+                        "\t40.455469747939254\t2021-11-07T09:00:00.000000Z\n" +
+                        "VTJW\tNaN\t2021-11-07T09:00:00.000000Z\n" +
+                        "RXGZ\tNaN\t2021-11-07T09:00:00.000000Z\n" +
+                        "PEHN\tNaN\t2021-11-07T09:00:00.000000Z\n" +
+                        "HYRX\tNaN\t2021-11-07T09:00:00.000000Z\n",
+                "select b, s, to_timezone(k, 'EST') k from (select b, sum(a) s, k from x sample by 1h fill(null) align to calendar time zone 'EST')",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(cast('2021-11-06T22:10:00.000000Z' as timestamp), 3100000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        ") timestamp(k) partition by NONE",
+                null,
+                false
+        );
+    }
+
+    @Test
+    public void testSampleFillNullAlignToCalendarTimeZoneByte() throws Exception {
+        // EST timezone has clock go back on 7 Nov. From -4 UTC to -5 UTC
+        // at 6am UTC EST time is 2am (DTS), when clock goes back 7am also becomes 2am UTC
+        // hence 6am UTC is duplicate timestamp and is expected to be compounded
+        assertQuery("b\ts\tk\n" +
+                        "\t77\t2021-11-06T18:00:00.000000Z\n" +
+                        "VTJW\t0\t2021-11-06T18:00:00.000000Z\n" +
+                        "RXGZ\t0\t2021-11-06T18:00:00.000000Z\n" +
+                        "PEHN\t0\t2021-11-06T18:00:00.000000Z\n" +
+                        "CPSW\t0\t2021-11-06T18:00:00.000000Z\n" +
+                        "HYRX\t0\t2021-11-06T18:00:00.000000Z\n" +
+                        "\t36\t2021-11-06T19:00:00.000000Z\n" +
+                        "VTJW\t101\t2021-11-06T19:00:00.000000Z\n" +
+                        "RXGZ\t0\t2021-11-06T19:00:00.000000Z\n" +
+                        "PEHN\t0\t2021-11-06T19:00:00.000000Z\n" +
+                        "CPSW\t0\t2021-11-06T19:00:00.000000Z\n" +
+                        "HYRX\t0\t2021-11-06T19:00:00.000000Z\n" +
+                        "\t60\t2021-11-06T20:00:00.000000Z\n" +
+                        "VTJW\t0\t2021-11-06T20:00:00.000000Z\n" +
+                        "RXGZ\t0\t2021-11-06T20:00:00.000000Z\n" +
+                        "PEHN\t0\t2021-11-06T20:00:00.000000Z\n" +
+                        "CPSW\t0\t2021-11-06T20:00:00.000000Z\n" +
+                        "HYRX\t0\t2021-11-06T20:00:00.000000Z\n" +
+                        "\t84\t2021-11-06T21:00:00.000000Z\n" +
+                        "VTJW\t0\t2021-11-06T21:00:00.000000Z\n" +
+                        "RXGZ\t0\t2021-11-06T21:00:00.000000Z\n" +
+                        "PEHN\t0\t2021-11-06T21:00:00.000000Z\n" +
+                        "CPSW\t0\t2021-11-06T21:00:00.000000Z\n" +
+                        "HYRX\t0\t2021-11-06T21:00:00.000000Z\n" +
+                        "\t0\t2021-11-06T22:00:00.000000Z\n" +
+                        "VTJW\t0\t2021-11-06T22:00:00.000000Z\n" +
+                        "RXGZ\t93\t2021-11-06T22:00:00.000000Z\n" +
+                        "PEHN\t0\t2021-11-06T22:00:00.000000Z\n" +
+                        "CPSW\t0\t2021-11-06T22:00:00.000000Z\n" +
+                        "HYRX\t0\t2021-11-06T22:00:00.000000Z\n" +
+                        "\t98\t2021-11-06T23:00:00.000000Z\n" +
+                        "VTJW\t0\t2021-11-06T23:00:00.000000Z\n" +
+                        "RXGZ\t0\t2021-11-06T23:00:00.000000Z\n" +
+                        "PEHN\t0\t2021-11-06T23:00:00.000000Z\n" +
+                        "CPSW\t0\t2021-11-06T23:00:00.000000Z\n" +
+                        "HYRX\t0\t2021-11-06T23:00:00.000000Z\n" +
+                        "\t0\t2021-11-07T00:00:00.000000Z\n" +
+                        "VTJW\t0\t2021-11-07T00:00:00.000000Z\n" +
+                        "RXGZ\t0\t2021-11-07T00:00:00.000000Z\n" +
+                        "PEHN\t117\t2021-11-07T00:00:00.000000Z\n" +
+                        "CPSW\t0\t2021-11-07T00:00:00.000000Z\n" +
+                        "HYRX\t0\t2021-11-07T00:00:00.000000Z\n" +
+                        "\t0\t2021-11-07T01:00:00.000000Z\n" +
+                        "VTJW\t0\t2021-11-07T01:00:00.000000Z\n" +
+                        "RXGZ\t0\t2021-11-07T01:00:00.000000Z\n" +
+                        "PEHN\t0\t2021-11-07T01:00:00.000000Z\n" +
+                        "CPSW\t0\t2021-11-07T01:00:00.000000Z\n" +
+                        "HYRX\t0\t2021-11-07T01:00:00.000000Z\n" +
+                        "\t26\t2021-11-07T02:00:00.000000Z\n" +
+                        "VTJW\t0\t2021-11-07T02:00:00.000000Z\n" +
+                        "RXGZ\t0\t2021-11-07T02:00:00.000000Z\n" +
+                        "PEHN\t0\t2021-11-07T02:00:00.000000Z\n" +
+                        "CPSW\t0\t2021-11-07T02:00:00.000000Z\n" +
+                        "HYRX\t0\t2021-11-07T02:00:00.000000Z\n" +
+                        "\t0\t2021-11-07T03:00:00.000000Z\n" +
+                        "VTJW\t0\t2021-11-07T03:00:00.000000Z\n" +
+                        "RXGZ\t0\t2021-11-07T03:00:00.000000Z\n" +
+                        "PEHN\t0\t2021-11-07T03:00:00.000000Z\n" +
+                        "CPSW\t0\t2021-11-07T03:00:00.000000Z\n" +
+                        "HYRX\t26\t2021-11-07T03:00:00.000000Z\n" +
+                        "\t0\t2021-11-07T04:00:00.000000Z\n" +
+                        "VTJW\t119\t2021-11-07T04:00:00.000000Z\n" +
+                        "RXGZ\t0\t2021-11-07T04:00:00.000000Z\n" +
+                        "PEHN\t0\t2021-11-07T04:00:00.000000Z\n" +
+                        "CPSW\t0\t2021-11-07T04:00:00.000000Z\n" +
+                        "HYRX\t0\t2021-11-07T04:00:00.000000Z\n" +
+                        "\t120\t2021-11-07T05:00:00.000000Z\n" +
+                        "VTJW\t0\t2021-11-07T05:00:00.000000Z\n" +
+                        "RXGZ\t0\t2021-11-07T05:00:00.000000Z\n" +
+                        "PEHN\t0\t2021-11-07T05:00:00.000000Z\n" +
+                        "CPSW\t0\t2021-11-07T05:00:00.000000Z\n" +
+                        "HYRX\t0\t2021-11-07T05:00:00.000000Z\n" +
+                        "\t0\t2021-11-07T06:00:00.000000Z\n" +
+                        "VTJW\t0\t2021-11-07T06:00:00.000000Z\n" +
+                        "RXGZ\t0\t2021-11-07T06:00:00.000000Z\n" +
+                        "PEHN\t103\t2021-11-07T06:00:00.000000Z\n" +
+                        "CPSW\t103\t2021-11-07T06:00:00.000000Z\n" +
+                        "HYRX\t0\t2021-11-07T06:00:00.000000Z\n" +
+                        "\t0\t2021-11-07T07:00:00.000000Z\n" +
+                        "VTJW\t0\t2021-11-07T07:00:00.000000Z\n" +
+                        "RXGZ\t0\t2021-11-07T07:00:00.000000Z\n" +
+                        "PEHN\t0\t2021-11-07T07:00:00.000000Z\n" +
+                        "CPSW\t0\t2021-11-07T07:00:00.000000Z\n" +
+                        "HYRX\t70\t2021-11-07T07:00:00.000000Z\n" +
+                        "\t0\t2021-11-07T08:00:00.000000Z\n" +
+                        "VTJW\t122\t2021-11-07T08:00:00.000000Z\n" +
+                        "RXGZ\t0\t2021-11-07T08:00:00.000000Z\n" +
+                        "PEHN\t0\t2021-11-07T08:00:00.000000Z\n" +
+                        "CPSW\t0\t2021-11-07T08:00:00.000000Z\n" +
+                        "HYRX\t0\t2021-11-07T08:00:00.000000Z\n" +
+                        "\t62\t2021-11-07T09:00:00.000000Z\n" +
+                        "VTJW\t0\t2021-11-07T09:00:00.000000Z\n" +
+                        "RXGZ\t0\t2021-11-07T09:00:00.000000Z\n" +
+                        "PEHN\t0\t2021-11-07T09:00:00.000000Z\n" +
+                        "CPSW\t0\t2021-11-07T09:00:00.000000Z\n" +
+                        "HYRX\t0\t2021-11-07T09:00:00.000000Z\n",
+                "select b, s, to_timezone(k, 'EST') k from (select b, first(a) s, k from x sample by 1h fill(null) align to calendar time zone 'EST')",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_byte() a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(cast('2021-11-06T22:10:00.000000Z' as timestamp), 3100000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        ") timestamp(k) partition by NONE",
+                null,
+                false
+        );
+    }
+
+    @Test
+    public void testSampleFillNullAlignToCalendarTimeZoneFloat() throws Exception {
+        // EST timezone has clock go back on 7 Nov. From -4 UTC to -5 UTC
+        // at 6am UTC EST time is 2am (DTS), when clock goes back 7am also becomes 2am UTC
+        // hence 6am UTC is duplicate timestamp and is expected to be compounded
+        assertQuery("b\ts\tk\n" +
+                        "\t0.6254\t2021-11-06T18:00:00.000000Z\n" +
+                        "VTJW\tNaN\t2021-11-06T18:00:00.000000Z\n" +
+                        "RXGZ\tNaN\t2021-11-06T18:00:00.000000Z\n" +
+                        "PEHN\tNaN\t2021-11-06T18:00:00.000000Z\n" +
+                        "CPSW\tNaN\t2021-11-06T18:00:00.000000Z\n" +
+                        "HYRX\tNaN\t2021-11-06T18:00:00.000000Z\n" +
+                        "\t0.7611\t2021-11-06T19:00:00.000000Z\n" +
+                        "VTJW\t0.5244\t2021-11-06T19:00:00.000000Z\n" +
+                        "RXGZ\tNaN\t2021-11-06T19:00:00.000000Z\n" +
+                        "PEHN\tNaN\t2021-11-06T19:00:00.000000Z\n" +
+                        "CPSW\tNaN\t2021-11-06T19:00:00.000000Z\n" +
+                        "HYRX\tNaN\t2021-11-06T19:00:00.000000Z\n" +
+                        "\t0.8072\t2021-11-06T20:00:00.000000Z\n" +
+                        "VTJW\tNaN\t2021-11-06T20:00:00.000000Z\n" +
+                        "RXGZ\tNaN\t2021-11-06T20:00:00.000000Z\n" +
+                        "PEHN\tNaN\t2021-11-06T20:00:00.000000Z\n" +
+                        "CPSW\tNaN\t2021-11-06T20:00:00.000000Z\n" +
+                        "HYRX\tNaN\t2021-11-06T20:00:00.000000Z\n" +
+                        "\t0.7261\t2021-11-06T21:00:00.000000Z\n" +
+                        "VTJW\tNaN\t2021-11-06T21:00:00.000000Z\n" +
+                        "RXGZ\tNaN\t2021-11-06T21:00:00.000000Z\n" +
+                        "PEHN\tNaN\t2021-11-06T21:00:00.000000Z\n" +
+                        "CPSW\tNaN\t2021-11-06T21:00:00.000000Z\n" +
+                        "HYRX\tNaN\t2021-11-06T21:00:00.000000Z\n" +
+                        "\tNaN\t2021-11-06T22:00:00.000000Z\n" +
+                        "VTJW\tNaN\t2021-11-06T22:00:00.000000Z\n" +
+                        "RXGZ\t0.6277\t2021-11-06T22:00:00.000000Z\n" +
+                        "PEHN\tNaN\t2021-11-06T22:00:00.000000Z\n" +
+                        "CPSW\tNaN\t2021-11-06T22:00:00.000000Z\n" +
+                        "HYRX\tNaN\t2021-11-06T22:00:00.000000Z\n" +
+                        "\t0.6779\t2021-11-06T23:00:00.000000Z\n" +
+                        "VTJW\tNaN\t2021-11-06T23:00:00.000000Z\n" +
+                        "RXGZ\tNaN\t2021-11-06T23:00:00.000000Z\n" +
+                        "PEHN\tNaN\t2021-11-06T23:00:00.000000Z\n" +
+                        "CPSW\tNaN\t2021-11-06T23:00:00.000000Z\n" +
+                        "HYRX\tNaN\t2021-11-06T23:00:00.000000Z\n" +
+                        "\tNaN\t2021-11-07T00:00:00.000000Z\n" +
+                        "VTJW\tNaN\t2021-11-07T00:00:00.000000Z\n" +
+                        "RXGZ\tNaN\t2021-11-07T00:00:00.000000Z\n" +
+                        "PEHN\t0.3101\t2021-11-07T00:00:00.000000Z\n" +
+                        "CPSW\tNaN\t2021-11-07T00:00:00.000000Z\n" +
+                        "HYRX\tNaN\t2021-11-07T00:00:00.000000Z\n" +
+                        "\tNaN\t2021-11-07T01:00:00.000000Z\n" +
+                        "VTJW\tNaN\t2021-11-07T01:00:00.000000Z\n" +
+                        "RXGZ\tNaN\t2021-11-07T01:00:00.000000Z\n" +
+                        "PEHN\tNaN\t2021-11-07T01:00:00.000000Z\n" +
+                        "CPSW\tNaN\t2021-11-07T01:00:00.000000Z\n" +
+                        "HYRX\tNaN\t2021-11-07T01:00:00.000000Z\n" +
+                        "\t0.6905\t2021-11-07T02:00:00.000000Z\n" +
+                        "VTJW\tNaN\t2021-11-07T02:00:00.000000Z\n" +
+                        "RXGZ\tNaN\t2021-11-07T02:00:00.000000Z\n" +
+                        "PEHN\tNaN\t2021-11-07T02:00:00.000000Z\n" +
+                        "CPSW\tNaN\t2021-11-07T02:00:00.000000Z\n" +
+                        "HYRX\tNaN\t2021-11-07T02:00:00.000000Z\n" +
+                        "\tNaN\t2021-11-07T03:00:00.000000Z\n" +
+                        "VTJW\tNaN\t2021-11-07T03:00:00.000000Z\n" +
+                        "RXGZ\tNaN\t2021-11-07T03:00:00.000000Z\n" +
+                        "PEHN\tNaN\t2021-11-07T03:00:00.000000Z\n" +
+                        "CPSW\tNaN\t2021-11-07T03:00:00.000000Z\n" +
+                        "HYRX\t0.2158\t2021-11-07T03:00:00.000000Z\n" +
+                        "\tNaN\t2021-11-07T04:00:00.000000Z\n" +
+                        "VTJW\t0.1579\t2021-11-07T04:00:00.000000Z\n" +
+                        "RXGZ\tNaN\t2021-11-07T04:00:00.000000Z\n" +
+                        "PEHN\tNaN\t2021-11-07T04:00:00.000000Z\n" +
+                        "CPSW\tNaN\t2021-11-07T04:00:00.000000Z\n" +
+                        "HYRX\tNaN\t2021-11-07T04:00:00.000000Z\n" +
+                        "\t0.1911\t2021-11-07T05:00:00.000000Z\n" +
+                        "VTJW\tNaN\t2021-11-07T05:00:00.000000Z\n" +
+                        "RXGZ\tNaN\t2021-11-07T05:00:00.000000Z\n" +
+                        "PEHN\tNaN\t2021-11-07T05:00:00.000000Z\n" +
+                        "CPSW\tNaN\t2021-11-07T05:00:00.000000Z\n" +
+                        "HYRX\tNaN\t2021-11-07T05:00:00.000000Z\n" +
+                        "\tNaN\t2021-11-07T06:00:00.000000Z\n" +
+                        "VTJW\tNaN\t2021-11-07T06:00:00.000000Z\n" +
+                        "RXGZ\tNaN\t2021-11-07T06:00:00.000000Z\n" +
+                        "PEHN\t0.1250\t2021-11-07T06:00:00.000000Z\n" +
+                        "CPSW\t0.9038\t2021-11-07T06:00:00.000000Z\n" +
+                        "HYRX\tNaN\t2021-11-07T06:00:00.000000Z\n" +
+                        "\tNaN\t2021-11-07T07:00:00.000000Z\n" +
+                        "VTJW\tNaN\t2021-11-07T07:00:00.000000Z\n" +
+                        "RXGZ\tNaN\t2021-11-07T07:00:00.000000Z\n" +
+                        "PEHN\tNaN\t2021-11-07T07:00:00.000000Z\n" +
+                        "CPSW\tNaN\t2021-11-07T07:00:00.000000Z\n" +
+                        "HYRX\t0.1345\t2021-11-07T07:00:00.000000Z\n" +
+                        "\tNaN\t2021-11-07T08:00:00.000000Z\n" +
+                        "VTJW\t0.8913\t2021-11-07T08:00:00.000000Z\n" +
+                        "RXGZ\tNaN\t2021-11-07T08:00:00.000000Z\n" +
+                        "PEHN\tNaN\t2021-11-07T08:00:00.000000Z\n" +
+                        "CPSW\tNaN\t2021-11-07T08:00:00.000000Z\n" +
+                        "HYRX\tNaN\t2021-11-07T08:00:00.000000Z\n" +
+                        "\t0.9755\t2021-11-07T09:00:00.000000Z\n" +
+                        "VTJW\tNaN\t2021-11-07T09:00:00.000000Z\n" +
+                        "RXGZ\tNaN\t2021-11-07T09:00:00.000000Z\n" +
+                        "PEHN\tNaN\t2021-11-07T09:00:00.000000Z\n" +
+                        "CPSW\tNaN\t2021-11-07T09:00:00.000000Z\n" +
+                        "HYRX\tNaN\t2021-11-07T09:00:00.000000Z\n",
+                "select b, s, to_timezone(k, 'EST') k from (select b, first(a) s, k from x sample by 1h fill(null) align to calendar time zone 'EST')",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_float() a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(cast('2021-11-06T22:10:00.000000Z' as timestamp), 3100000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        ") timestamp(k) partition by NONE",
+                null,
+                false
+        );
+    }
+
+    @Test
+    public void testSampleFillNullAlignToCalendarTimeZoneInt() throws Exception {
+        // EST timezone has clock go back on 7 Nov. From -4 UTC to -5 UTC
+        // at 6am UTC EST time is 2am (DTS), when clock goes back 7am also becomes 2am UTC
+        // hence 6am UTC is duplicate timestamp and is expected to be compounded
+        assertQuery("b\ts\tk\n" +
+                        "\t1530831067\t2021-11-06T18:00:00.000000Z\n" +
+                        "VTJW\tNaN\t2021-11-06T18:00:00.000000Z\n" +
+                        "RXGZ\tNaN\t2021-11-06T18:00:00.000000Z\n" +
+                        "PEHN\tNaN\t2021-11-06T18:00:00.000000Z\n" +
+                        "CPSW\tNaN\t2021-11-06T18:00:00.000000Z\n" +
+                        "HYRX\tNaN\t2021-11-06T18:00:00.000000Z\n" +
+                        "\t-1532328444\t2021-11-06T19:00:00.000000Z\n" +
+                        "VTJW\t1125579207\t2021-11-06T19:00:00.000000Z\n" +
+                        "RXGZ\tNaN\t2021-11-06T19:00:00.000000Z\n" +
+                        "PEHN\tNaN\t2021-11-06T19:00:00.000000Z\n" +
+                        "CPSW\tNaN\t2021-11-06T19:00:00.000000Z\n" +
+                        "HYRX\tNaN\t2021-11-06T19:00:00.000000Z\n" +
+                        "\t426455968\t2021-11-06T20:00:00.000000Z\n" +
+                        "VTJW\tNaN\t2021-11-06T20:00:00.000000Z\n" +
+                        "RXGZ\tNaN\t2021-11-06T20:00:00.000000Z\n" +
+                        "PEHN\tNaN\t2021-11-06T20:00:00.000000Z\n" +
+                        "CPSW\tNaN\t2021-11-06T20:00:00.000000Z\n" +
+                        "HYRX\tNaN\t2021-11-06T20:00:00.000000Z\n" +
+                        "\t-1792928964\t2021-11-06T21:00:00.000000Z\n" +
+                        "VTJW\tNaN\t2021-11-06T21:00:00.000000Z\n" +
+                        "RXGZ\tNaN\t2021-11-06T21:00:00.000000Z\n" +
+                        "PEHN\tNaN\t2021-11-06T21:00:00.000000Z\n" +
+                        "CPSW\tNaN\t2021-11-06T21:00:00.000000Z\n" +
+                        "HYRX\tNaN\t2021-11-06T21:00:00.000000Z\n" +
+                        "\tNaN\t2021-11-06T22:00:00.000000Z\n" +
+                        "VTJW\tNaN\t2021-11-06T22:00:00.000000Z\n" +
+                        "RXGZ\t-1520872171\t2021-11-06T22:00:00.000000Z\n" +
+                        "PEHN\tNaN\t2021-11-06T22:00:00.000000Z\n" +
+                        "CPSW\tNaN\t2021-11-06T22:00:00.000000Z\n" +
+                        "HYRX\tNaN\t2021-11-06T22:00:00.000000Z\n" +
+                        "\t1404198\t2021-11-06T23:00:00.000000Z\n" +
+                        "VTJW\tNaN\t2021-11-06T23:00:00.000000Z\n" +
+                        "RXGZ\tNaN\t2021-11-06T23:00:00.000000Z\n" +
+                        "PEHN\tNaN\t2021-11-06T23:00:00.000000Z\n" +
+                        "CPSW\tNaN\t2021-11-06T23:00:00.000000Z\n" +
+                        "HYRX\tNaN\t2021-11-06T23:00:00.000000Z\n" +
+                        "\tNaN\t2021-11-07T00:00:00.000000Z\n" +
+                        "VTJW\tNaN\t2021-11-07T00:00:00.000000Z\n" +
+                        "RXGZ\tNaN\t2021-11-07T00:00:00.000000Z\n" +
+                        "PEHN\t-1125169127\t2021-11-07T00:00:00.000000Z\n" +
+                        "CPSW\tNaN\t2021-11-07T00:00:00.000000Z\n" +
+                        "HYRX\tNaN\t2021-11-07T00:00:00.000000Z\n" +
+                        "\tNaN\t2021-11-07T01:00:00.000000Z\n" +
+                        "VTJW\tNaN\t2021-11-07T01:00:00.000000Z\n" +
+                        "RXGZ\tNaN\t2021-11-07T01:00:00.000000Z\n" +
+                        "PEHN\tNaN\t2021-11-07T01:00:00.000000Z\n" +
+                        "CPSW\tNaN\t2021-11-07T01:00:00.000000Z\n" +
+                        "HYRX\tNaN\t2021-11-07T01:00:00.000000Z\n" +
+                        "\t1110979454\t2021-11-07T02:00:00.000000Z\n" +
+                        "VTJW\tNaN\t2021-11-07T02:00:00.000000Z\n" +
+                        "RXGZ\tNaN\t2021-11-07T02:00:00.000000Z\n" +
+                        "PEHN\tNaN\t2021-11-07T02:00:00.000000Z\n" +
+                        "CPSW\tNaN\t2021-11-07T02:00:00.000000Z\n" +
+                        "HYRX\tNaN\t2021-11-07T02:00:00.000000Z\n" +
+                        "\tNaN\t2021-11-07T03:00:00.000000Z\n" +
+                        "VTJW\tNaN\t2021-11-07T03:00:00.000000Z\n" +
+                        "RXGZ\tNaN\t2021-11-07T03:00:00.000000Z\n" +
+                        "PEHN\tNaN\t2021-11-07T03:00:00.000000Z\n" +
+                        "CPSW\tNaN\t2021-11-07T03:00:00.000000Z\n" +
+                        "HYRX\t-938514914\t2021-11-07T03:00:00.000000Z\n" +
+                        "\tNaN\t2021-11-07T04:00:00.000000Z\n" +
+                        "VTJW\t-303295973\t2021-11-07T04:00:00.000000Z\n" +
+                        "RXGZ\tNaN\t2021-11-07T04:00:00.000000Z\n" +
+                        "PEHN\tNaN\t2021-11-07T04:00:00.000000Z\n" +
+                        "CPSW\tNaN\t2021-11-07T04:00:00.000000Z\n" +
+                        "HYRX\tNaN\t2021-11-07T04:00:00.000000Z\n" +
+                        "\t2006313928\t2021-11-07T05:00:00.000000Z\n" +
+                        "VTJW\tNaN\t2021-11-07T05:00:00.000000Z\n" +
+                        "RXGZ\tNaN\t2021-11-07T05:00:00.000000Z\n" +
+                        "PEHN\tNaN\t2021-11-07T05:00:00.000000Z\n" +
+                        "CPSW\tNaN\t2021-11-07T05:00:00.000000Z\n" +
+                        "HYRX\tNaN\t2021-11-07T05:00:00.000000Z\n" +
+                        "\tNaN\t2021-11-07T06:00:00.000000Z\n" +
+                        "VTJW\tNaN\t2021-11-07T06:00:00.000000Z\n" +
+                        "RXGZ\tNaN\t2021-11-07T06:00:00.000000Z\n" +
+                        "PEHN\t-27395319\t2021-11-07T06:00:00.000000Z\n" +
+                        "CPSW\t-483853667\t2021-11-07T06:00:00.000000Z\n" +
+                        "HYRX\tNaN\t2021-11-07T06:00:00.000000Z\n" +
+                        "\tNaN\t2021-11-07T07:00:00.000000Z\n" +
+                        "VTJW\tNaN\t2021-11-07T07:00:00.000000Z\n" +
+                        "RXGZ\tNaN\t2021-11-07T07:00:00.000000Z\n" +
+                        "PEHN\tNaN\t2021-11-07T07:00:00.000000Z\n" +
+                        "CPSW\tNaN\t2021-11-07T07:00:00.000000Z\n" +
+                        "HYRX\t-1272693194\t2021-11-07T07:00:00.000000Z\n" +
+                        "\tNaN\t2021-11-07T08:00:00.000000Z\n" +
+                        "VTJW\t-2002373666\t2021-11-07T08:00:00.000000Z\n" +
+                        "RXGZ\tNaN\t2021-11-07T08:00:00.000000Z\n" +
+                        "PEHN\tNaN\t2021-11-07T08:00:00.000000Z\n" +
+                        "CPSW\tNaN\t2021-11-07T08:00:00.000000Z\n" +
+                        "HYRX\tNaN\t2021-11-07T08:00:00.000000Z\n" +
+                        "\t410717394\t2021-11-07T09:00:00.000000Z\n" +
+                        "VTJW\tNaN\t2021-11-07T09:00:00.000000Z\n" +
+                        "RXGZ\tNaN\t2021-11-07T09:00:00.000000Z\n" +
+                        "PEHN\tNaN\t2021-11-07T09:00:00.000000Z\n" +
+                        "CPSW\tNaN\t2021-11-07T09:00:00.000000Z\n" +
+                        "HYRX\tNaN\t2021-11-07T09:00:00.000000Z\n",
+                "select b, s, to_timezone(k, 'EST') k from (select b, first(a) s, k from x sample by 1h fill(null) align to calendar time zone 'EST')",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_int() a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(cast('2021-11-06T22:10:00.000000Z' as timestamp), 3100000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        ") timestamp(k) partition by NONE",
+                null,
+                false
+        );
+    }
+
+    @Test
+    public void testSampleFillNullAlignToCalendarTimeZoneShort() throws Exception {
+        // EST timezone has clock go back on 7 Nov. From -4 UTC to -5 UTC
+        // at 6am UTC EST time is 2am (DTS), when clock goes back 7am also becomes 2am UTC
+        // hence 6am UTC is duplicate timestamp and is expected to be compounded
+        assertQuery("b\ts\tk\n" +
+                        "\t-24357\t2021-11-06T18:00:00.000000Z\n" +
+                        "VTJW\t0\t2021-11-06T18:00:00.000000Z\n" +
+                        "RXGZ\t0\t2021-11-06T18:00:00.000000Z\n" +
+                        "PEHN\t0\t2021-11-06T18:00:00.000000Z\n" +
+                        "CPSW\t0\t2021-11-06T18:00:00.000000Z\n" +
+                        "HYRX\t0\t2021-11-06T18:00:00.000000Z\n" +
+                        "\t-31228\t2021-11-06T19:00:00.000000Z\n" +
+                        "VTJW\t-1593\t2021-11-06T19:00:00.000000Z\n" +
+                        "RXGZ\t0\t2021-11-06T19:00:00.000000Z\n" +
+                        "PEHN\t0\t2021-11-06T19:00:00.000000Z\n" +
+                        "CPSW\t0\t2021-11-06T19:00:00.000000Z\n" +
+                        "HYRX\t0\t2021-11-06T19:00:00.000000Z\n" +
+                        "\t13216\t2021-11-06T20:00:00.000000Z\n" +
+                        "VTJW\t0\t2021-11-06T20:00:00.000000Z\n" +
+                        "RXGZ\t0\t2021-11-06T20:00:00.000000Z\n" +
+                        "PEHN\t0\t2021-11-06T20:00:00.000000Z\n" +
+                        "CPSW\t0\t2021-11-06T20:00:00.000000Z\n" +
+                        "HYRX\t0\t2021-11-06T20:00:00.000000Z\n" +
+                        "\t4924\t2021-11-06T21:00:00.000000Z\n" +
+                        "VTJW\t0\t2021-11-06T21:00:00.000000Z\n" +
+                        "RXGZ\t0\t2021-11-06T21:00:00.000000Z\n" +
+                        "PEHN\t0\t2021-11-06T21:00:00.000000Z\n" +
+                        "CPSW\t0\t2021-11-06T21:00:00.000000Z\n" +
+                        "HYRX\t0\t2021-11-06T21:00:00.000000Z\n" +
+                        "\t0\t2021-11-06T22:00:00.000000Z\n" +
+                        "VTJW\t0\t2021-11-06T22:00:00.000000Z\n" +
+                        "RXGZ\t21781\t2021-11-06T22:00:00.000000Z\n" +
+                        "PEHN\t0\t2021-11-06T22:00:00.000000Z\n" +
+                        "CPSW\t0\t2021-11-06T22:00:00.000000Z\n" +
+                        "HYRX\t0\t2021-11-06T22:00:00.000000Z\n" +
+                        "\t27942\t2021-11-06T23:00:00.000000Z\n" +
+                        "VTJW\t0\t2021-11-06T23:00:00.000000Z\n" +
+                        "RXGZ\t0\t2021-11-06T23:00:00.000000Z\n" +
+                        "PEHN\t0\t2021-11-06T23:00:00.000000Z\n" +
+                        "CPSW\t0\t2021-11-06T23:00:00.000000Z\n" +
+                        "HYRX\t0\t2021-11-06T23:00:00.000000Z\n" +
+                        "\t0\t2021-11-07T00:00:00.000000Z\n" +
+                        "VTJW\t0\t2021-11-07T00:00:00.000000Z\n" +
+                        "RXGZ\t0\t2021-11-07T00:00:00.000000Z\n" +
+                        "PEHN\t18457\t2021-11-07T00:00:00.000000Z\n" +
+                        "CPSW\t0\t2021-11-07T00:00:00.000000Z\n" +
+                        "HYRX\t0\t2021-11-07T00:00:00.000000Z\n" +
+                        "\t0\t2021-11-07T01:00:00.000000Z\n" +
+                        "VTJW\t0\t2021-11-07T01:00:00.000000Z\n" +
+                        "RXGZ\t0\t2021-11-07T01:00:00.000000Z\n" +
+                        "PEHN\t0\t2021-11-07T01:00:00.000000Z\n" +
+                        "CPSW\t0\t2021-11-07T01:00:00.000000Z\n" +
+                        "HYRX\t0\t2021-11-07T01:00:00.000000Z\n" +
+                        "\t13182\t2021-11-07T02:00:00.000000Z\n" +
+                        "VTJW\t0\t2021-11-07T02:00:00.000000Z\n" +
+                        "RXGZ\t0\t2021-11-07T02:00:00.000000Z\n" +
+                        "PEHN\t0\t2021-11-07T02:00:00.000000Z\n" +
+                        "CPSW\t0\t2021-11-07T02:00:00.000000Z\n" +
+                        "HYRX\t0\t2021-11-07T02:00:00.000000Z\n" +
+                        "\t0\t2021-11-07T03:00:00.000000Z\n" +
+                        "VTJW\t0\t2021-11-07T03:00:00.000000Z\n" +
+                        "RXGZ\t0\t2021-11-07T03:00:00.000000Z\n" +
+                        "PEHN\t0\t2021-11-07T03:00:00.000000Z\n" +
+                        "CPSW\t0\t2021-11-07T03:00:00.000000Z\n" +
+                        "HYRX\t26142\t2021-11-07T03:00:00.000000Z\n" +
+                        "\t0\t2021-11-07T04:00:00.000000Z\n" +
+                        "VTJW\t4635\t2021-11-07T04:00:00.000000Z\n" +
+                        "RXGZ\t0\t2021-11-07T04:00:00.000000Z\n" +
+                        "PEHN\t0\t2021-11-07T04:00:00.000000Z\n" +
+                        "CPSW\t0\t2021-11-07T04:00:00.000000Z\n" +
+                        "HYRX\t0\t2021-11-07T04:00:00.000000Z\n" +
+                        "\t-5176\t2021-11-07T05:00:00.000000Z\n" +
+                        "VTJW\t0\t2021-11-07T05:00:00.000000Z\n" +
+                        "RXGZ\t0\t2021-11-07T05:00:00.000000Z\n" +
+                        "PEHN\t0\t2021-11-07T05:00:00.000000Z\n" +
+                        "CPSW\t0\t2021-11-07T05:00:00.000000Z\n" +
+                        "HYRX\t0\t2021-11-07T05:00:00.000000Z\n" +
+                        "\t0\t2021-11-07T06:00:00.000000Z\n" +
+                        "VTJW\t0\t2021-11-07T06:00:00.000000Z\n" +
+                        "RXGZ\t0\t2021-11-07T06:00:00.000000Z\n" +
+                        "PEHN\t-1271\t2021-11-07T06:00:00.000000Z\n" +
+                        "CPSW\t-1379\t2021-11-07T06:00:00.000000Z\n" +
+                        "HYRX\t0\t2021-11-07T06:00:00.000000Z\n" +
+                        "\t0\t2021-11-07T07:00:00.000000Z\n" +
+                        "VTJW\t0\t2021-11-07T07:00:00.000000Z\n" +
+                        "RXGZ\t0\t2021-11-07T07:00:00.000000Z\n" +
+                        "PEHN\t0\t2021-11-07T07:00:00.000000Z\n" +
+                        "CPSW\t0\t2021-11-07T07:00:00.000000Z\n" +
+                        "HYRX\t15926\t2021-11-07T07:00:00.000000Z\n" +
+                        "\t0\t2021-11-07T08:00:00.000000Z\n" +
+                        "VTJW\t13278\t2021-11-07T08:00:00.000000Z\n" +
+                        "RXGZ\t0\t2021-11-07T08:00:00.000000Z\n" +
+                        "PEHN\t0\t2021-11-07T08:00:00.000000Z\n" +
+                        "CPSW\t0\t2021-11-07T08:00:00.000000Z\n" +
+                        "HYRX\t0\t2021-11-07T08:00:00.000000Z\n" +
+                        "\t3282\t2021-11-07T09:00:00.000000Z\n" +
+                        "VTJW\t0\t2021-11-07T09:00:00.000000Z\n" +
+                        "RXGZ\t0\t2021-11-07T09:00:00.000000Z\n" +
+                        "PEHN\t0\t2021-11-07T09:00:00.000000Z\n" +
+                        "CPSW\t0\t2021-11-07T09:00:00.000000Z\n" +
+                        "HYRX\t0\t2021-11-07T09:00:00.000000Z\n",
+                "select b, s, to_timezone(k, 'EST') k from (select b, first(a) s, k from x sample by 1h fill(null) align to calendar time zone 'EST')",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_short() a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(cast('2021-11-06T22:10:00.000000Z' as timestamp), 3100000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        ") timestamp(k) partition by NONE",
+                null,
+                false
+        );
+    }
+
+    @Test
     public void testSampleFillNullBadType() throws Exception {
         assertFailure(
                 "select b, sum_t(b), k from x sample by 3h fill(null)",
@@ -3302,29 +4905,160 @@ public class SampleByTest extends AbstractGriffinTest {
     public void testSampleFillNullMonth() throws Exception {
         assertQuery(
                 "b\tsum\tk\n" +
-                        "\t55342.35808049189\t1970-01-03T00:00:00.000000Z\n" +
-                        "VTJW\t11567.037431069954\t1970-01-03T00:00:00.000000Z\n" +
-                        "RXGZ\t10201.524212064816\t1970-01-03T00:00:00.000000Z\n" +
-                        "PEHN\t11202.70624166601\t1970-01-03T00:00:00.000000Z\n" +
-                        "HYRX\t11272.942252172881\t1970-01-03T00:00:00.000000Z\n" +
-                        "CPSW\t9549.728356483236\t1970-01-03T00:00:00.000000Z\n" +
-                        "\t800.2014170461989\t1970-04-03T00:00:00.000000Z\n" +
-                        "VTJW\t323.2593477270021\t1970-04-03T00:00:00.000000Z\n" +
-                        "RXGZ\t272.6474603488786\t1970-04-03T00:00:00.000000Z\n" +
-                        "PEHN\t200.0681408130791\t1970-04-03T00:00:00.000000Z\n" +
-                        "HYRX\t294.5937385165431\t1970-04-03T00:00:00.000000Z\n" +
-                        "CPSW\t205.63949754449527\t1970-04-03T00:00:00.000000Z\n",
-                "select b, sum(a), k from x sample by 3M fill(null)",
+                        "\t21134.785865526985\t2020-01-31T00:15:00.000000Z\n" +
+                        "VTJW\t4107.88003812462\t2020-01-31T00:15:00.000000Z\n" +
+                        "RXGZ\t3878.5796128414113\t2020-01-31T00:15:00.000000Z\n" +
+                        "PEHN\t3830.3214041454585\t2020-01-31T00:15:00.000000Z\n" +
+                        "HYRX\t4022.090049039533\t2020-01-31T00:15:00.000000Z\n" +
+                        "CPSW\t3809.0167417062717\t2020-01-31T00:15:00.000000Z\n" +
+                        "\t21992.40312469368\t2020-02-29T00:15:00.000000Z\n" +
+                        "VTJW\t4269.876322655899\t2020-02-29T00:15:00.000000Z\n" +
+                        "RXGZ\t3873.962076571017\t2020-02-29T00:15:00.000000Z\n" +
+                        "PEHN\t5188.519914927756\t2020-02-29T00:15:00.000000Z\n" +
+                        "HYRX\t4827.485503185921\t2020-02-29T00:15:00.000000Z\n" +
+                        "CPSW\t3649.9322065714528\t2020-02-29T00:15:00.000000Z\n" +
+                        "\t13015.370507317415\t2020-03-31T00:15:00.000000Z\n" +
+                        "VTJW\t3512.540418016438\t2020-03-31T00:15:00.000000Z\n" +
+                        "RXGZ\t2721.6299830012695\t2020-03-31T00:15:00.000000Z\n" +
+                        "PEHN\t2383.9330634058742\t2020-03-31T00:15:00.000000Z\n" +
+                        "HYRX\t2717.9604384639747\t2020-03-31T00:15:00.000000Z\n" +
+                        "CPSW\t2296.4189057500093\t2020-03-31T00:15:00.000000Z\n",
+                "select b, sum(a), k from x sample by 1M fill(null)",
                 "create table x as " +
                         "(" +
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(172800000000, 3600000000) k" +
+                        " timestamp_sequence(cast('2020-01-31T00:15:00.000000Z' as timestamp), 3100000000) k" +
                         " from" +
                         " long_sequence(2200)" +
                         ") timestamp(k) partition by NONE",
                 "k",
+                false
+        );
+    }
+
+    @Test
+    public void testSampleFillNullMonthAlignToCalendar() throws Exception {
+        assertQuery(
+                "b\tsum\tk\n" +
+                        "\t752.2523117908589\t2020-01-01T00:00:00.000000Z\n" +
+                        "VTJW\t177.84974249247676\t2020-01-01T00:00:00.000000Z\n" +
+                        "RXGZ\t80.49958150707765\t2020-01-01T00:00:00.000000Z\n" +
+                        "PEHN\t297.9750008612368\t2020-01-01T00:00:00.000000Z\n" +
+                        "HYRX\t159.16605899292972\t2020-01-01T00:00:00.000000Z\n" +
+                        "CPSW\t12.02416087573498\t2020-01-01T00:00:00.000000Z\n" +
+                        "\t20982.992943772188\t2020-02-01T00:00:00.000000Z\n" +
+                        "VTJW\t4052.7570641301963\t2020-02-01T00:00:00.000000Z\n" +
+                        "RXGZ\t4063.6346983106814\t2020-02-01T00:00:00.000000Z\n" +
+                        "PEHN\t3822.787218703387\t2020-02-01T00:00:00.000000Z\n" +
+                        "HYRX\t4024.0173141255395\t2020-02-01T00:00:00.000000Z\n" +
+                        "CPSW\t3857.95047972562\t2020-02-01T00:00:00.000000Z\n" +
+                        "\t22044.41664067389\t2020-03-01T00:00:00.000000Z\n" +
+                        "VTJW\t4217.430402136565\t2020-03-01T00:00:00.000000Z\n" +
+                        "RXGZ\t3810.211911971742\t2020-03-01T00:00:00.000000Z\n" +
+                        "PEHN\t4978.97740950064\t2020-03-01T00:00:00.000000Z\n" +
+                        "HYRX\t4829.549935728278\t2020-03-01T00:00:00.000000Z\n" +
+                        "CPSW\t3600.963491125638\t2020-03-01T00:00:00.000000Z\n" +
+                        "\t12362.897601301143\t2020-04-01T00:00:00.000000Z\n" +
+                        "VTJW\t3442.2595700377174\t2020-04-01T00:00:00.000000Z\n" +
+                        "RXGZ\t2519.8254806241976\t2020-04-01T00:00:00.000000Z\n" +
+                        "PEHN\t2303.0347534138255\t2020-04-01T00:00:00.000000Z\n" +
+                        "HYRX\t2554.8026818426815\t2020-04-01T00:00:00.000000Z\n" +
+                        "CPSW\t2284.4297223007393\t2020-04-01T00:00:00.000000Z\n",
+                "select b, sum(a), k from x sample by 1M fill(null) align to calendar",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(cast('2020-01-31T00:15:00.000000Z' as timestamp), 3100000000) k" +
+                        " from" +
+                        " long_sequence(2200)" +
+                        ") timestamp(k) partition by NONE",
+                "k",
+                false
+        );
+    }
+
+    @Test
+    public void testSampleFillNullNotKeyedAlignToCalendar() throws Exception {
+        assertQuery("s\tk\n" +
+                        "0.15786635599554755\t2021-10-31T02:00:00.000000Z\n" +
+                        "0.7166790794135658\t2021-10-31T02:30:00.000000Z\n" +
+                        "NaN\t2021-10-31T03:30:00.000000Z\n" +
+                        "NaN\t2021-10-31T04:00:00.000000Z\n" +
+                        "0.22631523434159562\t2021-10-31T04:30:00.000000Z\n" +
+                        "NaN\t2021-10-31T05:00:00.000000Z\n" +
+                        "0.6940904779678791\t2021-10-31T05:30:00.000000Z\n" +
+                        "NaN\t2021-10-31T06:00:00.000000Z\n" +
+                        "0.5913874468544745\t2021-10-31T06:30:00.000000Z\n" +
+                        "NaN\t2021-10-31T07:00:00.000000Z\n" +
+                        "0.04001697462715281\t2021-10-31T07:30:00.000000Z\n" +
+                        "NaN\t2021-10-31T08:00:00.000000Z\n" +
+                        "0.07828020681514525\t2021-10-31T08:30:00.000000Z\n" +
+                        "NaN\t2021-10-31T09:00:00.000000Z\n" +
+                        "NaN\t2021-10-31T09:30:00.000000Z\n" +
+                        "0.7431472218131966\t2021-10-31T10:00:00.000000Z\n" +
+                        "NaN\t2021-10-31T10:30:00.000000Z\n" +
+                        "0.13312214396754163\t2021-10-31T11:00:00.000000Z\n" +
+                        "NaN\t2021-10-31T11:30:00.000000Z\n" +
+                        "NaN\t2021-10-31T12:00:00.000000Z\n" +
+                        "NaN\t2021-10-31T12:30:00.000000Z\n" +
+                        "0.2325041018786207\t2021-10-31T13:00:00.000000Z\n" +
+                        "NaN\t2021-10-31T13:30:00.000000Z\n" +
+                        "0.8853675629694284\t2021-10-31T14:00:00.000000Z\n" +
+                        "NaN\t2021-10-31T14:30:00.000000Z\n" +
+                        "0.6940917925148332\t2021-10-31T15:00:00.000000Z\n" +
+                        "NaN\t2021-10-31T15:30:00.000000Z\n" +
+                        "0.4031733414086601\t2021-10-31T16:00:00.000000Z\n" +
+                        "NaN\t2021-10-31T16:30:00.000000Z\n" +
+                        "0.27755720049807464\t2021-10-31T17:00:00.000000Z\n" +
+                        "NaN\t2021-10-31T17:30:00.000000Z\n" +
+                        "0.6361737673041902\t2021-10-31T18:00:00.000000Z\n" +
+                        "0.5965069739835686\t2021-10-31T18:30:00.000000Z\n" +
+                        "NaN\t2021-10-31T19:00:00.000000Z\n" +
+                        "NaN\t2021-10-31T19:30:00.000000Z\n" +
+                        "NaN\t2021-10-31T20:00:00.000000Z\n" +
+                        "NaN\t2021-10-31T20:30:00.000000Z\n" +
+                        "NaN\t2021-10-31T21:00:00.000000Z\n" +
+                        "0.5785645380474713\t2021-10-31T21:30:00.000000Z\n" +
+                        "NaN\t2021-10-31T22:00:00.000000Z\n" +
+                        "0.7291265477629812\t2021-10-31T22:30:00.000000Z\n" +
+                        "NaN\t2021-10-31T23:00:00.000000Z\n" +
+                        "0.8642800031609658\t2021-10-31T23:30:00.000000Z\n" +
+                        "NaN\t2021-11-01T00:00:00.000000Z\n" +
+                        "NaN\t2021-11-01T00:30:00.000000Z\n" +
+                        "NaN\t2021-11-01T01:00:00.000000Z\n" +
+                        "0.8925004728084927\t2021-11-01T01:30:00.000000Z\n" +
+                        "NaN\t2021-11-01T02:00:00.000000Z\n" +
+                        "0.5522442336842381\t2021-11-01T02:30:00.000000Z\n" +
+                        "NaN\t2021-11-01T03:00:00.000000Z\n" +
+                        "NaN\t2021-11-01T03:30:00.000000Z\n" +
+                        "0.7504512900310369\t2021-11-01T04:00:00.000000Z\n",
+                "select s, to_timezone(k, 'Europe/Berlin') k from (select sum(o) s, k from x sample by 30m fill(null) align to calendar time zone 'Europe/Berlin')",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_int() a," +
+                        " rnd_boolean() b," +
+                        " rnd_str(1,1,2) c," +
+                        " rnd_double(2) d," +
+                        " rnd_float(2) e," +
+                        " rnd_short(10,1024) f," +
+                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                        " rnd_symbol(4,4,4,2) i," +
+                        " rnd_long() j," +
+                        " rnd_byte(2,50) l," +
+                        " rnd_bin(10, 20, 2) m," +
+                        " rnd_str(5,16,2) n," +
+                        " rnd_double(2) o," +
+                        " timestamp_sequence(cast('2020-03-28T03:20:00.000000Z' as timestamp), 3600000000) p," +
+                        " timestamp_sequence(cast('2021-10-31T00:00:00.000000Z' as timestamp), 3400000000) k" +
+                        " from" +
+                        " long_sequence(30)" +
+                        ") timestamp(k) partition by NONE",
+                null,
                 false
         );
     }
@@ -3358,28 +5092,168 @@ public class SampleByTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testSampleFillNullNotKeyedInvalid() throws Exception {
+        assertFailure(
+                "select last(z) s from x sample by 30m fill(null)",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_int() a," +
+                        " rnd_boolean() b," +
+                        " rnd_str(1,1,2) c," +
+                        " rnd_double(2) d," +
+                        " rnd_float(2) e," +
+                        " rnd_short(10,1024) f," +
+                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                        " rnd_symbol(4,4,4,2) i," +
+                        " rnd_long() j," +
+                        " rnd_byte(2,50) l," +
+                        " rnd_bin(10, 20, 2) m," +
+                        " rnd_str(5,16,2) n," +
+                        " rnd_double(2) o," +
+                        " rnd_char() z," +
+                        " timestamp_sequence(cast('2020-03-28T03:20:00.000000Z' as timestamp), 3600000000) p," +
+                        " timestamp_sequence(cast('2021-10-31T00:00:00.000000Z' as timestamp), 3400000000) k" +
+                        " from" +
+                        " long_sequence(30)" +
+                        ") timestamp(k) partition by NONE",
+                7,
+                "Unsupported type: CHAR"
+        );
+    }
+
+    @Test
     public void testSampleFillNullYear() throws Exception {
         assertQuery(
                 "b\tsum\tk\n" +
-                        "\t434760.12538229994\t1970-01-03T00:00:00.000000Z\n" +
-                        "VTJW\t87709.77375105419\t1970-01-03T00:00:00.000000Z\n" +
-                        "RXGZ\t88905.80881686346\t1970-01-03T00:00:00.000000Z\n" +
-                        "PEHN\t91380.17439538923\t1970-01-03T00:00:00.000000Z\n" +
-                        "HYRX\t87322.92024549567\t1970-01-03T00:00:00.000000Z\n" +
-                        "CPSW\t87815.15120829944\t1970-01-03T00:00:00.000000Z\n" +
-                        "\t313710.2720747207\t1972-01-03T00:00:00.000000Z\n" +
-                        "VTJW\t60726.582461611106\t1972-01-03T00:00:00.000000Z\n" +
-                        "RXGZ\t63630.846278341654\t1972-01-03T00:00:00.000000Z\n" +
-                        "PEHN\t64225.437480744265\t1972-01-03T00:00:00.000000Z\n" +
-                        "HYRX\t64384.17131854287\t1972-01-03T00:00:00.000000Z\n" +
-                        "CPSW\t60762.09297190822\t1972-01-03T00:00:00.000000Z\n",
-                "select b, sum(a), k from x sample by 2y fill(null)",
+                        "\t230471.6324115649\t2020-02-29T00:15:00.000000Z\n" +
+                        "VTJW\t46973.91444645728\t2020-02-29T00:15:00.000000Z\n" +
+                        "RXGZ\t48910.17324550927\t2020-02-29T00:15:00.000000Z\n" +
+                        "PEHN\t48583.20070970916\t2020-02-29T00:15:00.000000Z\n" +
+                        "HYRX\t46537.917653652206\t2020-02-29T00:15:00.000000Z\n" +
+                        "CPSW\t46524.67428412209\t2020-02-29T00:15:00.000000Z\n" +
+                        "\t231249.76682044208\t2021-02-28T00:15:00.000000Z\n" +
+                        "VTJW\t45621.42143778673\t2021-02-28T00:15:00.000000Z\n" +
+                        "RXGZ\t45567.34528840918\t2021-02-28T00:15:00.000000Z\n" +
+                        "PEHN\t47861.85423999244\t2021-02-28T00:15:00.000000Z\n" +
+                        "HYRX\t46594.345442832084\t2021-02-28T00:15:00.000000Z\n" +
+                        "CPSW\t46438.25199411636\t2021-02-28T00:15:00.000000Z\n" +
+                        "\t232812.52161013582\t2022-02-28T00:15:00.000000Z\n" +
+                        "VTJW\t46811.48077873179\t2022-02-28T00:15:00.000000Z\n" +
+                        "RXGZ\t45621.374911602004\t2022-02-28T00:15:00.000000Z\n" +
+                        "PEHN\t48082.53111438876\t2022-02-28T00:15:00.000000Z\n" +
+                        "HYRX\t46863.153171237995\t2022-02-28T00:15:00.000000Z\n" +
+                        "CPSW\t44593.48699070174\t2022-02-28T00:15:00.000000Z\n" +
+                        "\t233215.37587268485\t2023-02-28T00:15:00.000000Z\n" +
+                        "VTJW\t44204.09263507446\t2023-02-28T00:15:00.000000Z\n" +
+                        "RXGZ\t50308.62007020325\t2023-02-28T00:15:00.000000Z\n" +
+                        "PEHN\t49181.81093939917\t2023-02-28T00:15:00.000000Z\n" +
+                        "HYRX\t45520.372793862916\t2023-02-28T00:15:00.000000Z\n" +
+                        "CPSW\t46341.68837957697\t2023-02-28T00:15:00.000000Z\n" +
+                        "\t233714.05097628923\t2024-02-29T00:15:00.000000Z\n" +
+                        "VTJW\t45484.161487529505\t2024-02-29T00:15:00.000000Z\n" +
+                        "RXGZ\t46259.36048949232\t2024-02-29T00:15:00.000000Z\n" +
+                        "PEHN\t46788.82589169763\t2024-02-29T00:15:00.000000Z\n" +
+                        "HYRX\t41880.23420937183\t2024-02-29T00:15:00.000000Z\n" +
+                        "CPSW\t47922.072692300695\t2024-02-29T00:15:00.000000Z\n" +
+                        "\t236927.6092092266\t2025-02-28T00:15:00.000000Z\n" +
+                        "VTJW\t42633.66068991962\t2025-02-28T00:15:00.000000Z\n" +
+                        "RXGZ\t46016.35170858719\t2025-02-28T00:15:00.000000Z\n" +
+                        "PEHN\t47202.74603066283\t2025-02-28T00:15:00.000000Z\n" +
+                        "HYRX\t42400.67950374062\t2025-02-28T00:15:00.000000Z\n" +
+                        "CPSW\t45738.53724930489\t2025-02-28T00:15:00.000000Z\n" +
+                        "\t237442.88497528585\t2026-02-28T00:15:00.000000Z\n" +
+                        "VTJW\t43843.95040100638\t2026-02-28T00:15:00.000000Z\n" +
+                        "RXGZ\t45239.271502515905\t2026-02-28T00:15:00.000000Z\n" +
+                        "PEHN\t45607.78533946278\t2026-02-28T00:15:00.000000Z\n" +
+                        "HYRX\t45142.96124768768\t2026-02-28T00:15:00.000000Z\n" +
+                        "CPSW\t46990.10882605937\t2026-02-28T00:15:00.000000Z\n" +
+                        "\t232826.0235356171\t2027-02-28T00:15:00.000000Z\n" +
+                        "VTJW\t48668.669793590445\t2027-02-28T00:15:00.000000Z\n" +
+                        "RXGZ\t46448.54185201239\t2027-02-28T00:15:00.000000Z\n" +
+                        "PEHN\t42943.08402190233\t2027-02-28T00:15:00.000000Z\n" +
+                        "HYRX\t46537.48255775716\t2027-02-28T00:15:00.000000Z\n" +
+                        "CPSW\t45187.64036972609\t2027-02-28T00:15:00.000000Z\n" +
+                        "\t234645.69691210115\t2028-02-29T00:15:00.000000Z\n" +
+                        "VTJW\t42705.103178018166\t2028-02-29T00:15:00.000000Z\n" +
+                        "RXGZ\t46022.75968121836\t2028-02-29T00:15:00.000000Z\n" +
+                        "PEHN\t45641.53300759042\t2028-02-29T00:15:00.000000Z\n" +
+                        "HYRX\t48994.94088725773\t2028-02-29T00:15:00.000000Z\n" +
+                        "CPSW\t45298.613588201646\t2028-02-29T00:15:00.000000Z\n" +
+                        "\t232034.32216957968\t2029-02-28T00:15:00.000000Z\n" +
+                        "VTJW\t46805.21601286143\t2029-02-28T00:15:00.000000Z\n" +
+                        "RXGZ\t42698.200674677464\t2029-02-28T00:15:00.000000Z\n" +
+                        "PEHN\t47587.847710706155\t2029-02-28T00:15:00.000000Z\n" +
+                        "HYRX\t48486.786734451525\t2029-02-28T00:15:00.000000Z\n" +
+                        "CPSW\t46641.65417643289\t2029-02-28T00:15:00.000000Z\n" +
+                        "\t231387.5012794455\t2030-02-28T00:15:00.000000Z\n" +
+                        "VTJW\t44880.62331960856\t2030-02-28T00:15:00.000000Z\n" +
+                        "RXGZ\t46543.914680140944\t2030-02-28T00:15:00.000000Z\n" +
+                        "PEHN\t46209.487707690656\t2030-02-28T00:15:00.000000Z\n" +
+                        "HYRX\t46795.629082771455\t2030-02-28T00:15:00.000000Z\n" +
+                        "CPSW\t45491.73475954181\t2030-02-28T00:15:00.000000Z\n" +
+                        "\t230437.67702762267\t2031-02-28T00:15:00.000000Z\n" +
+                        "VTJW\t45641.12803989703\t2031-02-28T00:15:00.000000Z\n" +
+                        "RXGZ\t46155.449451226574\t2031-02-28T00:15:00.000000Z\n" +
+                        "PEHN\t48440.42784098585\t2031-02-28T00:15:00.000000Z\n" +
+                        "HYRX\t44731.96784133683\t2031-02-28T00:15:00.000000Z\n" +
+                        "CPSW\t44578.15877938773\t2031-02-28T00:15:00.000000Z\n" +
+                        "\t212388.96018111694\t2032-02-29T00:15:00.000000Z\n" +
+                        "VTJW\t43724.97766236034\t2032-02-29T00:15:00.000000Z\n" +
+                        "RXGZ\t45487.68898083253\t2032-02-29T00:15:00.000000Z\n" +
+                        "PEHN\t45546.76730599092\t2032-02-29T00:15:00.000000Z\n" +
+                        "HYRX\t43280.419728026056\t2032-02-29T00:15:00.000000Z\n" +
+                        "CPSW\t39831.67609134073\t2032-02-29T00:15:00.000000Z\n",
+                "select b, sum(a), k from x sample by 1y fill(null)",
                 "create table x as " +
                         "(" +
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(172800000000, 3600000000) k" +
+                        " timestamp_sequence(cast('2020-02-29T00:15:00.000000Z' as timestamp), 3400000000) k" +
+                        " from" +
+                        " long_sequence(120000)" +
+                        ") timestamp(k) partition by NONE",
+                "k",
+                false
+        );
+    }
+
+    @Test
+    public void testSampleFillNullYearAlignToCalendar() throws Exception {
+        assertQuery(
+                "b\tsum\tk\n" +
+                        "\t192977.39674906916\t2020-01-01T00:00:00.000000Z\n" +
+                        "VTJW\t38819.17900889909\t2020-01-01T00:00:00.000000Z\n" +
+                        "RXGZ\t41231.89396856814\t2020-01-01T00:00:00.000000Z\n" +
+                        "PEHN\t41154.26693020971\t2020-01-01T00:00:00.000000Z\n" +
+                        "HYRX\t38585.79005800996\t2020-01-01T00:00:00.000000Z\n" +
+                        "CPSW\t39995.23576507835\t2020-01-01T00:00:00.000000Z\n" +
+                        "\t230201.98037264214\t2021-01-01T00:00:00.000000Z\n" +
+                        "VTJW\t46031.90714575466\t2021-01-01T00:00:00.000000Z\n" +
+                        "RXGZ\t45630.841778811395\t2021-01-01T00:00:00.000000Z\n" +
+                        "PEHN\t48339.24529983588\t2021-01-01T00:00:00.000000Z\n" +
+                        "HYRX\t45639.52581429897\t2021-01-01T00:00:00.000000Z\n" +
+                        "CPSW\t46157.93033664501\t2021-01-01T00:00:00.000000Z\n" +
+                        "\t232716.0885252789\t2022-01-01T00:00:00.000000Z\n" +
+                        "VTJW\t47672.22031275194\t2022-01-01T00:00:00.000000Z\n" +
+                        "RXGZ\t46381.871992904176\t2022-01-01T00:00:00.000000Z\n" +
+                        "PEHN\t47004.12204168089\t2022-01-01T00:00:00.000000Z\n" +
+                        "HYRX\t47593.89994935438\t2022-01-01T00:00:00.000000Z\n" +
+                        "CPSW\t44254.55436645622\t2022-01-01T00:00:00.000000Z\n" +
+                        "\t92574.9318100312\t2023-01-01T00:00:00.000000Z\n" +
+                        "VTJW\t15913.049745259726\t2023-01-01T00:00:00.000000Z\n" +
+                        "RXGZ\t19292.04735492167\t2023-01-01T00:00:00.000000Z\n" +
+                        "PEHN\t19107.977604407188\t2023-01-01T00:00:00.000000Z\n" +
+                        "HYRX\t19887.875742375127\t2023-01-01T00:00:00.000000Z\n" +
+                        "CPSW\t18169.52371202805\t2023-01-01T00:00:00.000000Z\n",
+                "select b, sum(a), k from x sample by 1y fill(null) align to calendar",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(cast('2020-02-29T00:15:00.000000Z' as timestamp), 3400000000) k" +
                         " from" +
                         " long_sequence(30000)" +
                         ") timestamp(k) partition by NONE",
@@ -3531,6 +5405,240 @@ public class SampleByTest extends AbstractGriffinTest {
                         "UVSD\t49.42890511958454\t1970-01-04T09:00:00.000000Z\n" +
                         "KGHV\t67.52509547112409\t1970-01-04T09:00:00.000000Z\n",
                 false);
+    }
+
+    @Test
+    public void testSampleFillPrevAlignToCalendar() throws Exception {
+        assertQuery("b\tsum\tk\n" +
+                        "\t11.427984775756228\t1970-01-03T00:00:00.000000Z\n" +
+                        "VTJW\t42.17768841969397\t1970-01-03T00:00:00.000000Z\n" +
+                        "RXGZ\t23.90529010846525\t1970-01-03T00:00:00.000000Z\n" +
+                        "PEHN\t70.94360487171201\t1970-01-03T00:00:00.000000Z\n" +
+                        "HYRX\tNaN\t1970-01-03T00:00:00.000000Z\n" +
+                        "\t120.87811633071126\t1970-01-03T03:00:00.000000Z\n" +
+                        "VTJW\t42.17768841969397\t1970-01-03T03:00:00.000000Z\n" +
+                        "RXGZ\t23.90529010846525\t1970-01-03T03:00:00.000000Z\n" +
+                        "PEHN\t70.94360487171201\t1970-01-03T03:00:00.000000Z\n" +
+                        "HYRX\t97.71103146051203\t1970-01-03T03:00:00.000000Z\n" +
+                        "\t57.93466326862211\t1970-01-03T06:00:00.000000Z\n" +
+                        "VTJW\t48.820511018586934\t1970-01-03T06:00:00.000000Z\n" +
+                        "RXGZ\t23.90529010846525\t1970-01-03T06:00:00.000000Z\n" +
+                        "PEHN\t81.46807944500559\t1970-01-03T06:00:00.000000Z\n" +
+                        "HYRX\t12.026122412833129\t1970-01-03T06:00:00.000000Z\n" +
+                        "\t79.90616289736545\t1970-01-03T09:00:00.000000Z\n" +
+                        "VTJW\t48.820511018586934\t1970-01-03T09:00:00.000000Z\n" +
+                        "RXGZ\t23.90529010846525\t1970-01-03T09:00:00.000000Z\n" +
+                        "PEHN\t84.45258177211063\t1970-01-03T09:00:00.000000Z\n" +
+                        "HYRX\t12.026122412833129\t1970-01-03T09:00:00.000000Z\n" +
+                        "\t269.56323940450045\t1970-01-03T12:00:00.000000Z\n" +
+                        "VTJW\t48.820511018586934\t1970-01-03T12:00:00.000000Z\n" +
+                        "RXGZ\t23.90529010846525\t1970-01-03T12:00:00.000000Z\n" +
+                        "PEHN\t49.00510449885239\t1970-01-03T12:00:00.000000Z\n" +
+                        "HYRX\t12.026122412833129\t1970-01-03T12:00:00.000000Z\n" +
+                        "\t86.08992670884706\t1970-01-03T15:00:00.000000Z\n" +
+                        "VTJW\t48.820511018586934\t1970-01-03T15:00:00.000000Z\n" +
+                        "RXGZ\t23.90529010846525\t1970-01-03T15:00:00.000000Z\n" +
+                        "PEHN\t49.00510449885239\t1970-01-03T15:00:00.000000Z\n" +
+                        "HYRX\t12.026122412833129\t1970-01-03T15:00:00.000000Z\n",
+                "select b, sum(a), k from x sample by 3h fill(prev) align to calendar",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(172800000000, 3100000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        ") timestamp(k) partition by NONE",
+                "k",
+                "insert into x select * from (" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(277200000000, 3200000000) k" +
+                        " from" +
+                        " long_sequence(5)" +
+                        ") timestamp(k)",
+                "b\tsum\tk\n" +
+                        "\t11.427984775756228\t1970-01-03T00:00:00.000000Z\n" +
+                        "VTJW\t42.17768841969397\t1970-01-03T00:00:00.000000Z\n" +
+                        "RXGZ\t23.90529010846525\t1970-01-03T00:00:00.000000Z\n" +
+                        "PEHN\t70.94360487171201\t1970-01-03T00:00:00.000000Z\n" +
+                        "HYRX\tNaN\t1970-01-03T00:00:00.000000Z\n" +
+                        "UVSD\tNaN\t1970-01-03T00:00:00.000000Z\n" +
+                        "KGHV\tNaN\t1970-01-03T00:00:00.000000Z\n" +
+                        "\t120.87811633071126\t1970-01-03T03:00:00.000000Z\n" +
+                        "VTJW\t42.17768841969397\t1970-01-03T03:00:00.000000Z\n" +
+                        "RXGZ\t23.90529010846525\t1970-01-03T03:00:00.000000Z\n" +
+                        "PEHN\t70.94360487171201\t1970-01-03T03:00:00.000000Z\n" +
+                        "HYRX\t97.71103146051203\t1970-01-03T03:00:00.000000Z\n" +
+                        "UVSD\tNaN\t1970-01-03T03:00:00.000000Z\n" +
+                        "KGHV\tNaN\t1970-01-03T03:00:00.000000Z\n" +
+                        "\t57.93466326862211\t1970-01-03T06:00:00.000000Z\n" +
+                        "VTJW\t48.820511018586934\t1970-01-03T06:00:00.000000Z\n" +
+                        "RXGZ\t23.90529010846525\t1970-01-03T06:00:00.000000Z\n" +
+                        "PEHN\t81.46807944500559\t1970-01-03T06:00:00.000000Z\n" +
+                        "HYRX\t12.026122412833129\t1970-01-03T06:00:00.000000Z\n" +
+                        "UVSD\tNaN\t1970-01-03T06:00:00.000000Z\n" +
+                        "KGHV\tNaN\t1970-01-03T06:00:00.000000Z\n" +
+                        "\t79.90616289736545\t1970-01-03T09:00:00.000000Z\n" +
+                        "VTJW\t48.820511018586934\t1970-01-03T09:00:00.000000Z\n" +
+                        "RXGZ\t23.90529010846525\t1970-01-03T09:00:00.000000Z\n" +
+                        "PEHN\t84.45258177211063\t1970-01-03T09:00:00.000000Z\n" +
+                        "HYRX\t12.026122412833129\t1970-01-03T09:00:00.000000Z\n" +
+                        "UVSD\tNaN\t1970-01-03T09:00:00.000000Z\n" +
+                        "KGHV\tNaN\t1970-01-03T09:00:00.000000Z\n" +
+                        "\t269.56323940450045\t1970-01-03T12:00:00.000000Z\n" +
+                        "VTJW\t48.820511018586934\t1970-01-03T12:00:00.000000Z\n" +
+                        "RXGZ\t23.90529010846525\t1970-01-03T12:00:00.000000Z\n" +
+                        "PEHN\t49.00510449885239\t1970-01-03T12:00:00.000000Z\n" +
+                        "HYRX\t12.026122412833129\t1970-01-03T12:00:00.000000Z\n" +
+                        "UVSD\tNaN\t1970-01-03T12:00:00.000000Z\n" +
+                        "KGHV\tNaN\t1970-01-03T12:00:00.000000Z\n" +
+                        "\t86.08992670884706\t1970-01-03T15:00:00.000000Z\n" +
+                        "VTJW\t48.820511018586934\t1970-01-03T15:00:00.000000Z\n" +
+                        "RXGZ\t23.90529010846525\t1970-01-03T15:00:00.000000Z\n" +
+                        "PEHN\t49.00510449885239\t1970-01-03T15:00:00.000000Z\n" +
+                        "HYRX\t12.026122412833129\t1970-01-03T15:00:00.000000Z\n" +
+                        "UVSD\tNaN\t1970-01-03T15:00:00.000000Z\n" +
+                        "KGHV\tNaN\t1970-01-03T15:00:00.000000Z\n" +
+                        "\t86.08992670884706\t1970-01-03T18:00:00.000000Z\n" +
+                        "VTJW\t48.820511018586934\t1970-01-03T18:00:00.000000Z\n" +
+                        "RXGZ\t23.90529010846525\t1970-01-03T18:00:00.000000Z\n" +
+                        "PEHN\t49.00510449885239\t1970-01-03T18:00:00.000000Z\n" +
+                        "HYRX\t12.026122412833129\t1970-01-03T18:00:00.000000Z\n" +
+                        "UVSD\tNaN\t1970-01-03T18:00:00.000000Z\n" +
+                        "KGHV\tNaN\t1970-01-03T18:00:00.000000Z\n" +
+                        "\t86.08992670884706\t1970-01-03T21:00:00.000000Z\n" +
+                        "VTJW\t48.820511018586934\t1970-01-03T21:00:00.000000Z\n" +
+                        "RXGZ\t23.90529010846525\t1970-01-03T21:00:00.000000Z\n" +
+                        "PEHN\t49.00510449885239\t1970-01-03T21:00:00.000000Z\n" +
+                        "HYRX\t12.026122412833129\t1970-01-03T21:00:00.000000Z\n" +
+                        "UVSD\tNaN\t1970-01-03T21:00:00.000000Z\n" +
+                        "KGHV\tNaN\t1970-01-03T21:00:00.000000Z\n" +
+                        "\t86.08992670884706\t1970-01-04T00:00:00.000000Z\n" +
+                        "VTJW\t48.820511018586934\t1970-01-04T00:00:00.000000Z\n" +
+                        "RXGZ\t23.90529010846525\t1970-01-04T00:00:00.000000Z\n" +
+                        "PEHN\t49.00510449885239\t1970-01-04T00:00:00.000000Z\n" +
+                        "HYRX\t12.026122412833129\t1970-01-04T00:00:00.000000Z\n" +
+                        "UVSD\tNaN\t1970-01-04T00:00:00.000000Z\n" +
+                        "KGHV\tNaN\t1970-01-04T00:00:00.000000Z\n" +
+                        "\t131.41536915856756\t1970-01-04T03:00:00.000000Z\n" +
+                        "VTJW\t48.820511018586934\t1970-01-04T03:00:00.000000Z\n" +
+                        "RXGZ\t23.90529010846525\t1970-01-04T03:00:00.000000Z\n" +
+                        "PEHN\t49.00510449885239\t1970-01-04T03:00:00.000000Z\n" +
+                        "HYRX\t12.026122412833129\t1970-01-04T03:00:00.000000Z\n" +
+                        "UVSD\tNaN\t1970-01-04T03:00:00.000000Z\n" +
+                        "KGHV\tNaN\t1970-01-04T03:00:00.000000Z\n" +
+                        "\t58.912164838797885\t1970-01-04T06:00:00.000000Z\n" +
+                        "VTJW\t48.820511018586934\t1970-01-04T06:00:00.000000Z\n" +
+                        "RXGZ\t23.90529010846525\t1970-01-04T06:00:00.000000Z\n" +
+                        "PEHN\t49.00510449885239\t1970-01-04T06:00:00.000000Z\n" +
+                        "HYRX\t12.026122412833129\t1970-01-04T06:00:00.000000Z\n" +
+                        "UVSD\t49.42890511958454\t1970-01-04T06:00:00.000000Z\n" +
+                        "KGHV\t67.52509547112409\t1970-01-04T06:00:00.000000Z\n",
+                false);
+    }
+
+    @Test
+    public void testSampleFillPrevAlignToCalendarTimeZone() throws Exception {
+        // EST timezone has clock go back on 7 Nov. From -4 UTC to -5 UTC
+        // at 6am UTC EST time is 2am (DTS), when clock goes back 7am also becomes 2am UTC
+        // hence 6am UTC is duplicate timestamp and is expected to be compounded
+        assertQuery("b\ts\tk\n" +
+                        "\t11.427984775756228\t2021-11-06T18:00:00.000000Z\n" +
+                        "VTJW\tNaN\t2021-11-06T18:00:00.000000Z\n" +
+                        "RXGZ\tNaN\t2021-11-06T18:00:00.000000Z\n" +
+                        "PEHN\tNaN\t2021-11-06T18:00:00.000000Z\n" +
+                        "HYRX\tNaN\t2021-11-06T18:00:00.000000Z\n" +
+                        "\t11.427984775756228\t2021-11-06T19:00:00.000000Z\n" +
+                        "VTJW\t42.17768841969397\t2021-11-06T19:00:00.000000Z\n" +
+                        "RXGZ\t23.90529010846525\t2021-11-06T19:00:00.000000Z\n" +
+                        "PEHN\tNaN\t2021-11-06T19:00:00.000000Z\n" +
+                        "HYRX\tNaN\t2021-11-06T19:00:00.000000Z\n" +
+                        "\t11.427984775756228\t2021-11-06T20:00:00.000000Z\n" +
+                        "VTJW\t42.17768841969397\t2021-11-06T20:00:00.000000Z\n" +
+                        "RXGZ\t23.90529010846525\t2021-11-06T20:00:00.000000Z\n" +
+                        "PEHN\t70.94360487171201\t2021-11-06T20:00:00.000000Z\n" +
+                        "HYRX\tNaN\t2021-11-06T20:00:00.000000Z\n" +
+                        "\t87.99634725391621\t2021-11-06T21:00:00.000000Z\n" +
+                        "VTJW\t42.17768841969397\t2021-11-06T21:00:00.000000Z\n" +
+                        "RXGZ\t23.90529010846525\t2021-11-06T21:00:00.000000Z\n" +
+                        "PEHN\t70.94360487171201\t2021-11-06T21:00:00.000000Z\n" +
+                        "HYRX\tNaN\t2021-11-06T21:00:00.000000Z\n" +
+                        "\t32.881769076795045\t2021-11-06T22:00:00.000000Z\n" +
+                        "VTJW\t42.17768841969397\t2021-11-06T22:00:00.000000Z\n" +
+                        "RXGZ\t23.90529010846525\t2021-11-06T22:00:00.000000Z\n" +
+                        "PEHN\t70.94360487171201\t2021-11-06T22:00:00.000000Z\n" +
+                        "HYRX\tNaN\t2021-11-06T22:00:00.000000Z\n" +
+                        "\t32.881769076795045\t2021-11-06T23:00:00.000000Z\n" +
+                        "VTJW\t42.17768841969397\t2021-11-06T23:00:00.000000Z\n" +
+                        "RXGZ\t23.90529010846525\t2021-11-06T23:00:00.000000Z\n" +
+                        "PEHN\t70.94360487171201\t2021-11-06T23:00:00.000000Z\n" +
+                        "HYRX\t97.71103146051203\t2021-11-06T23:00:00.000000Z\n" +
+                        "\t32.881769076795045\t2021-11-07T00:00:00.000000Z\n" +
+                        "VTJW\t42.17768841969397\t2021-11-07T00:00:00.000000Z\n" +
+                        "RXGZ\t23.90529010846525\t2021-11-07T00:00:00.000000Z\n" +
+                        "PEHN\t81.46807944500559\t2021-11-07T00:00:00.000000Z\n" +
+                        "HYRX\t97.71103146051203\t2021-11-07T00:00:00.000000Z\n" +
+                        "\t57.93466326862211\t2021-11-07T01:00:00.000000Z\n" +
+                        "VTJW\t90.9981994382809\t2021-11-07T01:00:00.000000Z\n" +
+                        "RXGZ\t23.90529010846525\t2021-11-07T01:00:00.000000Z\n" +
+                        "PEHN\t81.46807944500559\t2021-11-07T01:00:00.000000Z\n" +
+                        "HYRX\t12.026122412833129\t2021-11-07T01:00:00.000000Z\n" +
+                        "\t26.922103479744898\t2021-11-07T02:00:00.000000Z\n" +
+                        "VTJW\t48.820511018586934\t2021-11-07T02:00:00.000000Z\n" +
+                        "RXGZ\t23.90529010846525\t2021-11-07T02:00:00.000000Z\n" +
+                        "PEHN\t81.46807944500559\t2021-11-07T02:00:00.000000Z\n" +
+                        "HYRX\t12.026122412833129\t2021-11-07T02:00:00.000000Z\n" +
+                        "\t52.98405941762054\t2021-11-07T03:00:00.000000Z\n" +
+                        "VTJW\t48.820511018586934\t2021-11-07T03:00:00.000000Z\n" +
+                        "RXGZ\t23.90529010846525\t2021-11-07T03:00:00.000000Z\n" +
+                        "PEHN\t81.46807944500559\t2021-11-07T03:00:00.000000Z\n" +
+                        "HYRX\t12.026122412833129\t2021-11-07T03:00:00.000000Z\n" +
+                        "\t52.98405941762054\t2021-11-07T04:00:00.000000Z\n" +
+                        "VTJW\t48.820511018586934\t2021-11-07T04:00:00.000000Z\n" +
+                        "RXGZ\t23.90529010846525\t2021-11-07T04:00:00.000000Z\n" +
+                        "PEHN\t84.45258177211063\t2021-11-07T04:00:00.000000Z\n" +
+                        "HYRX\t12.026122412833129\t2021-11-07T04:00:00.000000Z\n" +
+                        "\t97.5019885372507\t2021-11-07T05:00:00.000000Z\n" +
+                        "VTJW\t48.820511018586934\t2021-11-07T05:00:00.000000Z\n" +
+                        "RXGZ\t23.90529010846525\t2021-11-07T05:00:00.000000Z\n" +
+                        "PEHN\t84.45258177211063\t2021-11-07T05:00:00.000000Z\n" +
+                        "HYRX\t12.026122412833129\t2021-11-07T05:00:00.000000Z\n" +
+                        "\t80.01121139739173\t2021-11-07T06:00:00.000000Z\n" +
+                        "VTJW\t48.820511018586934\t2021-11-07T06:00:00.000000Z\n" +
+                        "RXGZ\t23.90529010846525\t2021-11-07T06:00:00.000000Z\n" +
+                        "PEHN\t49.00510449885239\t2021-11-07T06:00:00.000000Z\n" +
+                        "HYRX\t12.026122412833129\t2021-11-07T06:00:00.000000Z\n" +
+                        "\t92.050039469858\t2021-11-07T07:00:00.000000Z\n" +
+                        "VTJW\t48.820511018586934\t2021-11-07T07:00:00.000000Z\n" +
+                        "RXGZ\t23.90529010846525\t2021-11-07T07:00:00.000000Z\n" +
+                        "PEHN\t49.00510449885239\t2021-11-07T07:00:00.000000Z\n" +
+                        "HYRX\t12.026122412833129\t2021-11-07T07:00:00.000000Z\n" +
+                        "\t45.6344569609078\t2021-11-07T08:00:00.000000Z\n" +
+                        "VTJW\t48.820511018586934\t2021-11-07T08:00:00.000000Z\n" +
+                        "RXGZ\t23.90529010846525\t2021-11-07T08:00:00.000000Z\n" +
+                        "PEHN\t49.00510449885239\t2021-11-07T08:00:00.000000Z\n" +
+                        "HYRX\t12.026122412833129\t2021-11-07T08:00:00.000000Z\n" +
+                        "\t40.455469747939254\t2021-11-07T09:00:00.000000Z\n" +
+                        "VTJW\t48.820511018586934\t2021-11-07T09:00:00.000000Z\n" +
+                        "RXGZ\t23.90529010846525\t2021-11-07T09:00:00.000000Z\n" +
+                        "PEHN\t49.00510449885239\t2021-11-07T09:00:00.000000Z\n" +
+                        "HYRX\t12.026122412833129\t2021-11-07T09:00:00.000000Z\n",
+                "select b, s, to_timezone(k, 'EST') k from (select b, sum(a) s, k from x sample by 1h fill(prev) align to calendar time zone 'EST')",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(cast('2021-11-06T22:10:00.000000Z' as timestamp), 3100000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        ") timestamp(k) partition by NONE",
+                null,
+                false
+        );
     }
 
     @Test
@@ -4718,6 +6826,371 @@ public class SampleByTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testSampleFillPrevNotKeyedAlignToCalendar() throws Exception {
+        assertQuery("sum\tk\n" +
+                        "0.15786635599554755\t2021-10-31T00:00:00.000000Z\n" +
+                        "0.04142812470232493\t2021-10-31T00:30:00.000000Z\n" +
+                        "0.04142812470232493\t2021-10-31T01:00:00.000000Z\n" +
+                        "0.6752509547112409\t2021-10-31T01:30:00.000000Z\n" +
+                        "0.6752509547112409\t2021-10-31T02:00:00.000000Z\n" +
+                        "NaN\t2021-10-31T02:30:00.000000Z\n" +
+                        "NaN\t2021-10-31T03:00:00.000000Z\n" +
+                        "0.22631523434159562\t2021-10-31T03:30:00.000000Z\n" +
+                        "0.22631523434159562\t2021-10-31T04:00:00.000000Z\n" +
+                        "0.6940904779678791\t2021-10-31T04:30:00.000000Z\n" +
+                        "0.6940904779678791\t2021-10-31T05:00:00.000000Z\n" +
+                        "0.5913874468544745\t2021-10-31T05:30:00.000000Z\n" +
+                        "0.5913874468544745\t2021-10-31T06:00:00.000000Z\n" +
+                        "0.04001697462715281\t2021-10-31T06:30:00.000000Z\n" +
+                        "0.04001697462715281\t2021-10-31T07:00:00.000000Z\n" +
+                        "0.07828020681514525\t2021-10-31T07:30:00.000000Z\n" +
+                        "0.07828020681514525\t2021-10-31T08:00:00.000000Z\n" +
+                        "NaN\t2021-10-31T08:30:00.000000Z\n" +
+                        "0.7431472218131966\t2021-10-31T09:00:00.000000Z\n" +
+                        "0.7431472218131966\t2021-10-31T09:30:00.000000Z\n" +
+                        "0.13312214396754163\t2021-10-31T10:00:00.000000Z\n" +
+                        "0.13312214396754163\t2021-10-31T10:30:00.000000Z\n" +
+                        "NaN\t2021-10-31T11:00:00.000000Z\n" +
+                        "NaN\t2021-10-31T11:30:00.000000Z\n" +
+                        "0.2325041018786207\t2021-10-31T12:00:00.000000Z\n" +
+                        "0.2325041018786207\t2021-10-31T12:30:00.000000Z\n" +
+                        "0.8853675629694284\t2021-10-31T13:00:00.000000Z\n" +
+                        "0.8853675629694284\t2021-10-31T13:30:00.000000Z\n" +
+                        "0.6940917925148332\t2021-10-31T14:00:00.000000Z\n" +
+                        "0.6940917925148332\t2021-10-31T14:30:00.000000Z\n" +
+                        "0.4031733414086601\t2021-10-31T15:00:00.000000Z\n" +
+                        "0.4031733414086601\t2021-10-31T15:30:00.000000Z\n" +
+                        "0.27755720049807464\t2021-10-31T16:00:00.000000Z\n" +
+                        "0.27755720049807464\t2021-10-31T16:30:00.000000Z\n" +
+                        "0.6361737673041902\t2021-10-31T17:00:00.000000Z\n" +
+                        "0.5965069739835686\t2021-10-31T17:30:00.000000Z\n" +
+                        "0.5965069739835686\t2021-10-31T18:00:00.000000Z\n" +
+                        "NaN\t2021-10-31T18:30:00.000000Z\n" +
+                        "NaN\t2021-10-31T19:00:00.000000Z\n" +
+                        "NaN\t2021-10-31T19:30:00.000000Z\n" +
+                        "NaN\t2021-10-31T20:00:00.000000Z\n" +
+                        "0.5785645380474713\t2021-10-31T20:30:00.000000Z\n" +
+                        "0.5785645380474713\t2021-10-31T21:00:00.000000Z\n" +
+                        "0.7291265477629812\t2021-10-31T21:30:00.000000Z\n" +
+                        "0.7291265477629812\t2021-10-31T22:00:00.000000Z\n" +
+                        "0.8642800031609658\t2021-10-31T22:30:00.000000Z\n" +
+                        "0.8642800031609658\t2021-10-31T23:00:00.000000Z\n" +
+                        "NaN\t2021-10-31T23:30:00.000000Z\n" +
+                        "NaN\t2021-11-01T00:00:00.000000Z\n" +
+                        "0.8925004728084927\t2021-11-01T00:30:00.000000Z\n" +
+                        "0.8925004728084927\t2021-11-01T01:00:00.000000Z\n" +
+                        "0.5522442336842381\t2021-11-01T01:30:00.000000Z\n" +
+                        "NaN\t2021-11-01T02:00:00.000000Z\n" +
+                        "NaN\t2021-11-01T02:30:00.000000Z\n" +
+                        "0.7504512900310369\t2021-11-01T03:00:00.000000Z\n",
+                "select sum(o), k from x sample by 30m fill(prev) align to calendar time zone '+00:30'",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_int() a," +
+                        " rnd_boolean() b," +
+                        " rnd_str(1,1,2) c," +
+                        " rnd_double(2) d," +
+                        " rnd_float(2) e," +
+                        " rnd_short(10,1024) f," +
+                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                        " rnd_symbol(4,4,4,2) i," +
+                        " rnd_long() j," +
+                        " rnd_byte(2,50) l," +
+                        " rnd_bin(10, 20, 2) m," +
+                        " rnd_str(5,16,2) n," +
+                        " rnd_double(2) o," +
+                        " timestamp_sequence(cast('2020-03-28T03:20:00.000000Z' as timestamp), 3600000000) p," +
+                        " timestamp_sequence(cast('2021-10-31T00:00:00.000000Z' as timestamp), 3400000000) k" +
+                        " from" +
+                        " long_sequence(30)" +
+                        ") timestamp(k) partition by NONE",
+                "k",
+                false
+        );
+    }
+
+    @Test
+    public void testSampleFillPrevNotKeyedAlignToCalendarTimeZone() throws Exception {
+        // this test verifies transition from Summer to Winter time and
+        // clock going backwards. An hour of time should drop out of the result set
+        // without the logic trying to back fill things
+        assertQuery("s\tto_timezone\n" +
+                        "11.427984775756228\t2021-10-31T03:00:00.000000Z\n" +
+                        "66.08297852815922\t2021-10-31T03:30:00.000000Z\n" +
+                        "70.94360487171201\t2021-10-31T04:30:00.000000Z\n" +
+                        "70.94360487171201\t2021-10-31T05:00:00.000000Z\n" +
+                        "87.99634725391621\t2021-10-31T05:30:00.000000Z\n" +
+                        "87.99634725391621\t2021-10-31T06:00:00.000000Z\n" +
+                        "32.881769076795045\t2021-10-31T06:30:00.000000Z\n" +
+                        "32.881769076795045\t2021-10-31T07:00:00.000000Z\n" +
+                        "97.71103146051203\t2021-10-31T07:30:00.000000Z\n" +
+                        "97.71103146051203\t2021-10-31T08:00:00.000000Z\n" +
+                        "81.46807944500559\t2021-10-31T08:30:00.000000Z\n" +
+                        "81.46807944500559\t2021-10-31T09:00:00.000000Z\n" +
+                        "57.93466326862211\t2021-10-31T09:30:00.000000Z\n" +
+                        "57.93466326862211\t2021-10-31T10:00:00.000000Z\n" +
+                        "12.026122412833129\t2021-10-31T10:30:00.000000Z\n" +
+                        "48.820511018586934\t2021-10-31T11:00:00.000000Z\n" +
+                        "48.820511018586934\t2021-10-31T11:30:00.000000Z\n" +
+                        "26.922103479744898\t2021-10-31T12:00:00.000000Z\n" +
+                        "26.922103479744898\t2021-10-31T12:30:00.000000Z\n" +
+                        "52.98405941762054\t2021-10-31T13:00:00.000000Z\n" +
+                        "52.98405941762054\t2021-10-31T13:30:00.000000Z\n" +
+                        "84.45258177211063\t2021-10-31T14:00:00.000000Z\n" +
+                        "84.45258177211063\t2021-10-31T14:30:00.000000Z\n" +
+                        "97.5019885372507\t2021-10-31T15:00:00.000000Z\n" +
+                        "97.5019885372507\t2021-10-31T15:30:00.000000Z\n" +
+                        "49.00510449885239\t2021-10-31T16:00:00.000000Z\n" +
+                        "49.00510449885239\t2021-10-31T16:30:00.000000Z\n" +
+                        "80.01121139739173\t2021-10-31T17:00:00.000000Z\n" +
+                        "80.01121139739173\t2021-10-31T17:30:00.000000Z\n" +
+                        "92.050039469858\t2021-10-31T18:00:00.000000Z\n" +
+                        "92.050039469858\t2021-10-31T18:30:00.000000Z\n" +
+                        "45.6344569609078\t2021-10-31T19:00:00.000000Z\n" +
+                        "40.455469747939254\t2021-10-31T19:30:00.000000Z\n" +
+                        "40.455469747939254\t2021-10-31T20:00:00.000000Z\n" +
+                        "56.594291398612405\t2021-10-31T20:30:00.000000Z\n" +
+                        "56.594291398612405\t2021-10-31T21:00:00.000000Z\n" +
+                        "9.750574414434398\t2021-10-31T21:30:00.000000Z\n" +
+                        "9.750574414434398\t2021-10-31T22:00:00.000000Z\n" +
+                        "12.105630273556178\t2021-10-31T22:30:00.000000Z\n" +
+                        "12.105630273556178\t2021-10-31T23:00:00.000000Z\n" +
+                        "57.78947915182423\t2021-10-31T23:30:00.000000Z\n" +
+                        "57.78947915182423\t2021-11-01T00:00:00.000000Z\n" +
+                        "86.85154305419587\t2021-11-01T00:30:00.000000Z\n" +
+                        "86.85154305419587\t2021-11-01T01:00:00.000000Z\n" +
+                        "12.02416087573498\t2021-11-01T01:30:00.000000Z\n" +
+                        "12.02416087573498\t2021-11-01T02:00:00.000000Z\n" +
+                        "49.42890511958454\t2021-11-01T02:30:00.000000Z\n" +
+                        "49.42890511958454\t2021-11-01T03:00:00.000000Z\n" +
+                        "58.912164838797885\t2021-11-01T03:30:00.000000Z\n" +
+                        "67.52509547112409\t2021-11-01T04:00:00.000000Z\n" +
+                        "67.52509547112409\t2021-11-01T04:30:00.000000Z\n" +
+                        "44.80468966861358\t2021-11-01T05:00:00.000000Z\n" +
+                        "44.80468966861358\t2021-11-01T05:30:00.000000Z\n" +
+                        "89.40917126581896\t2021-11-01T06:00:00.000000Z\n" +
+                        "89.40917126581896\t2021-11-01T06:30:00.000000Z\n" +
+                        "94.41658975532606\t2021-11-01T07:00:00.000000Z\n" +
+                        "94.41658975532606\t2021-11-01T07:30:00.000000Z\n" +
+                        "62.5966045857722\t2021-11-01T08:00:00.000000Z\n" +
+                        "62.5966045857722\t2021-11-01T08:30:00.000000Z\n" +
+                        "94.55893004802432\t2021-11-01T09:00:00.000000Z\n" +
+                        "94.55893004802432\t2021-11-01T09:30:00.000000Z\n" +
+                        "21.85865835029681\t2021-11-01T10:00:00.000000Z\n" +
+                        "21.85865835029681\t2021-11-01T10:30:00.000000Z\n" +
+                        "3.993124821273464\t2021-11-01T11:00:00.000000Z\n" +
+                        "3.993124821273464\t2021-11-01T11:30:00.000000Z\n" +
+                        "84.3845956391477\t2021-11-01T12:00:00.000000Z\n" +
+                        "48.92743433711657\t2021-11-01T12:30:00.000000Z\n" +
+                        "48.92743433711657\t2021-11-01T13:00:00.000000Z\n" +
+                        "66.97969295620055\t2021-11-01T13:30:00.000000Z\n" +
+                        "66.97969295620055\t2021-11-01T14:00:00.000000Z\n" +
+                        "58.93398488053903\t2021-11-01T14:30:00.000000Z\n",
+                "select s, to_timezone(k, 'Europe/Riga') from (select sum(a) s, k from x sample by 30m fill(prev) align to calendar time zone 'Europe/Riga')",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(cast('2021-10-31T00:00:00.000000Z' as timestamp), 3400000000) k" +
+                        " from" +
+                        " long_sequence(40)" +
+                        ") timestamp(k) partition by NONE",
+                null,
+                false
+        );
+    }
+
+    @Test
+    public void testSampleFillPrevNotKeyedAlignToCalendarTimeZone2() throws Exception {
+        // this test verifies transition from Summer to Winter time and
+        // clock going backwards. An hour of time should drop out of the result set
+        // without the logic trying to back fill things
+        assertQuery("sum\tk\n" +
+                        "11.427984775756228\t2021-03-28T00:00:00.000000Z\n" +
+                        "42.17768841969397\t2021-03-28T00:30:00.000000Z\n" +
+                        "42.17768841969397\t2021-03-28T01:00:00.000000Z\n" +
+                        "23.90529010846525\t2021-03-28T01:30:00.000000Z\n" +
+                        "23.90529010846525\t2021-03-28T02:00:00.000000Z\n" +
+                        "70.94360487171201\t2021-03-28T02:30:00.000000Z\n" +
+                        "70.94360487171201\t2021-03-28T03:00:00.000000Z\n" +
+                        "87.99634725391621\t2021-03-28T03:30:00.000000Z\n" +
+                        "87.99634725391621\t2021-03-28T04:00:00.000000Z\n" +
+                        "32.881769076795045\t2021-03-28T04:30:00.000000Z\n" +
+                        "32.881769076795045\t2021-03-28T05:00:00.000000Z\n" +
+                        "97.71103146051203\t2021-03-28T05:30:00.000000Z\n" +
+                        "97.71103146051203\t2021-03-28T06:00:00.000000Z\n" +
+                        "81.46807944500559\t2021-03-28T06:30:00.000000Z\n" +
+                        "81.46807944500559\t2021-03-28T07:00:00.000000Z\n" +
+                        "57.93466326862211\t2021-03-28T07:30:00.000000Z\n" +
+                        "57.93466326862211\t2021-03-28T08:00:00.000000Z\n" +
+                        "12.026122412833129\t2021-03-28T08:30:00.000000Z\n" +
+                        "48.820511018586934\t2021-03-28T09:00:00.000000Z\n" +
+                        "48.820511018586934\t2021-03-28T09:30:00.000000Z\n" +
+                        "26.922103479744898\t2021-03-28T10:00:00.000000Z\n" +
+                        "26.922103479744898\t2021-03-28T10:30:00.000000Z\n" +
+                        "52.98405941762054\t2021-03-28T11:00:00.000000Z\n" +
+                        "52.98405941762054\t2021-03-28T11:30:00.000000Z\n" +
+                        "84.45258177211063\t2021-03-28T12:00:00.000000Z\n" +
+                        "84.45258177211063\t2021-03-28T12:30:00.000000Z\n" +
+                        "97.5019885372507\t2021-03-28T13:00:00.000000Z\n" +
+                        "97.5019885372507\t2021-03-28T13:30:00.000000Z\n" +
+                        "49.00510449885239\t2021-03-28T14:00:00.000000Z\n" +
+                        "49.00510449885239\t2021-03-28T14:30:00.000000Z\n" +
+                        "80.01121139739173\t2021-03-28T15:00:00.000000Z\n" +
+                        "80.01121139739173\t2021-03-28T15:30:00.000000Z\n" +
+                        "92.050039469858\t2021-03-28T16:00:00.000000Z\n" +
+                        "92.050039469858\t2021-03-28T16:30:00.000000Z\n" +
+                        "45.6344569609078\t2021-03-28T17:00:00.000000Z\n" +
+                        "40.455469747939254\t2021-03-28T17:30:00.000000Z\n" +
+                        "40.455469747939254\t2021-03-28T18:00:00.000000Z\n" +
+                        "56.594291398612405\t2021-03-28T18:30:00.000000Z\n" +
+                        "56.594291398612405\t2021-03-28T19:00:00.000000Z\n" +
+                        "9.750574414434398\t2021-03-28T19:30:00.000000Z\n" +
+                        "9.750574414434398\t2021-03-28T20:00:00.000000Z\n" +
+                        "12.105630273556178\t2021-03-28T20:30:00.000000Z\n" +
+                        "12.105630273556178\t2021-03-28T21:00:00.000000Z\n" +
+                        "57.78947915182423\t2021-03-28T21:30:00.000000Z\n" +
+                        "57.78947915182423\t2021-03-28T22:00:00.000000Z\n" +
+                        "86.85154305419587\t2021-03-28T22:30:00.000000Z\n" +
+                        "86.85154305419587\t2021-03-28T23:00:00.000000Z\n" +
+                        "12.02416087573498\t2021-03-28T23:30:00.000000Z\n" +
+                        "12.02416087573498\t2021-03-29T00:00:00.000000Z\n" +
+                        "49.42890511958454\t2021-03-29T00:30:00.000000Z\n" +
+                        "49.42890511958454\t2021-03-29T01:00:00.000000Z\n" +
+                        "58.912164838797885\t2021-03-29T01:30:00.000000Z\n" +
+                        "67.52509547112409\t2021-03-29T02:00:00.000000Z\n" +
+                        "67.52509547112409\t2021-03-29T02:30:00.000000Z\n" +
+                        "44.80468966861358\t2021-03-29T03:00:00.000000Z\n" +
+                        "44.80468966861358\t2021-03-29T03:30:00.000000Z\n" +
+                        "89.40917126581896\t2021-03-29T04:00:00.000000Z\n" +
+                        "89.40917126581896\t2021-03-29T04:30:00.000000Z\n" +
+                        "94.41658975532606\t2021-03-29T05:00:00.000000Z\n" +
+                        "94.41658975532606\t2021-03-29T05:30:00.000000Z\n" +
+                        "62.5966045857722\t2021-03-29T06:00:00.000000Z\n" +
+                        "62.5966045857722\t2021-03-29T06:30:00.000000Z\n" +
+                        "94.55893004802432\t2021-03-29T07:00:00.000000Z\n" +
+                        "94.55893004802432\t2021-03-29T07:30:00.000000Z\n" +
+                        "21.85865835029681\t2021-03-29T08:00:00.000000Z\n" +
+                        "21.85865835029681\t2021-03-29T08:30:00.000000Z\n" +
+                        "3.993124821273464\t2021-03-29T09:00:00.000000Z\n" +
+                        "3.993124821273464\t2021-03-29T09:30:00.000000Z\n" +
+                        "84.3845956391477\t2021-03-29T10:00:00.000000Z\n" +
+                        "48.92743433711657\t2021-03-29T10:30:00.000000Z\n" +
+                        "48.92743433711657\t2021-03-29T11:00:00.000000Z\n" +
+                        "66.97969295620055\t2021-03-29T11:30:00.000000Z\n" +
+                        "66.97969295620055\t2021-03-29T12:00:00.000000Z\n" +
+                        "58.93398488053903\t2021-03-29T12:30:00.000000Z\n",
+                "select sum(a), k from x sample by 30m fill(prev) align to calendar time zone 'Europe/Riga'",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(cast('2021-03-28T00:00:00.000000Z' as timestamp), 3400000000) k" +
+                        " from" +
+                        " long_sequence(40)" +
+                        ") timestamp(k) partition by NONE",
+                "k",
+                false
+        );
+    }
+
+    @Test
+    public void testSampleFillPrevNotKeyedAlignToCalendarTimeZoneOffset() throws Exception {
+        // this test verifies transition from Summer to Winter time and
+        // clock going backwards. An hour of time should drop out of the result set
+        // without the logic trying to back fill things
+        assertQuery("sum\tk\n" +
+                        "11.427984775756228\t2021-10-30T23:40:00.000000Z\n" +
+                        "11.427984775756228\t2021-10-31T00:10:00.000000Z\n" +
+                        "66.08297852815922\t2021-10-31T00:40:00.000000Z\n" +
+                        "70.94360487171201\t2021-10-31T02:40:00.000000Z\n" +
+                        "70.94360487171201\t2021-10-31T03:10:00.000000Z\n" +
+                        "87.99634725391621\t2021-10-31T03:40:00.000000Z\n" +
+                        "87.99634725391621\t2021-10-31T04:10:00.000000Z\n" +
+                        "32.881769076795045\t2021-10-31T04:40:00.000000Z\n" +
+                        "32.881769076795045\t2021-10-31T05:10:00.000000Z\n" +
+                        "97.71103146051203\t2021-10-31T05:40:00.000000Z\n" +
+                        "81.46807944500559\t2021-10-31T06:10:00.000000Z\n" +
+                        "81.46807944500559\t2021-10-31T06:40:00.000000Z\n" +
+                        "57.93466326862211\t2021-10-31T07:10:00.000000Z\n" +
+                        "57.93466326862211\t2021-10-31T07:40:00.000000Z\n" +
+                        "12.026122412833129\t2021-10-31T08:10:00.000000Z\n" +
+                        "12.026122412833129\t2021-10-31T08:40:00.000000Z\n" +
+                        "48.820511018586934\t2021-10-31T09:10:00.000000Z\n" +
+                        "48.820511018586934\t2021-10-31T09:40:00.000000Z\n" +
+                        "26.922103479744898\t2021-10-31T10:10:00.000000Z\n" +
+                        "26.922103479744898\t2021-10-31T10:40:00.000000Z\n" +
+                        "52.98405941762054\t2021-10-31T11:10:00.000000Z\n" +
+                        "52.98405941762054\t2021-10-31T11:40:00.000000Z\n" +
+                        "84.45258177211063\t2021-10-31T12:10:00.000000Z\n" +
+                        "84.45258177211063\t2021-10-31T12:40:00.000000Z\n" +
+                        "97.5019885372507\t2021-10-31T13:10:00.000000Z\n" +
+                        "97.5019885372507\t2021-10-31T13:40:00.000000Z\n" +
+                        "49.00510449885239\t2021-10-31T14:10:00.000000Z\n" +
+                        "80.01121139739173\t2021-10-31T14:40:00.000000Z\n" +
+                        "80.01121139739173\t2021-10-31T15:10:00.000000Z\n" +
+                        "92.050039469858\t2021-10-31T15:40:00.000000Z\n" +
+                        "92.050039469858\t2021-10-31T16:10:00.000000Z\n" +
+                        "45.6344569609078\t2021-10-31T16:40:00.000000Z\n" +
+                        "45.6344569609078\t2021-10-31T17:10:00.000000Z\n" +
+                        "40.455469747939254\t2021-10-31T17:40:00.000000Z\n" +
+                        "40.455469747939254\t2021-10-31T18:10:00.000000Z\n" +
+                        "56.594291398612405\t2021-10-31T18:40:00.000000Z\n" +
+                        "56.594291398612405\t2021-10-31T19:10:00.000000Z\n" +
+                        "9.750574414434398\t2021-10-31T19:40:00.000000Z\n" +
+                        "9.750574414434398\t2021-10-31T20:10:00.000000Z\n" +
+                        "12.105630273556178\t2021-10-31T20:40:00.000000Z\n" +
+                        "12.105630273556178\t2021-10-31T21:10:00.000000Z\n" +
+                        "57.78947915182423\t2021-10-31T21:40:00.000000Z\n" +
+                        "57.78947915182423\t2021-10-31T22:10:00.000000Z\n" +
+                        "86.85154305419587\t2021-10-31T22:40:00.000000Z\n" +
+                        "12.02416087573498\t2021-10-31T23:10:00.000000Z\n" +
+                        "12.02416087573498\t2021-10-31T23:40:00.000000Z\n" +
+                        "49.42890511958454\t2021-11-01T00:10:00.000000Z\n" +
+                        "49.42890511958454\t2021-11-01T00:40:00.000000Z\n" +
+                        "58.912164838797885\t2021-11-01T01:10:00.000000Z\n" +
+                        "58.912164838797885\t2021-11-01T01:40:00.000000Z\n" +
+                        "67.52509547112409\t2021-11-01T02:10:00.000000Z\n" +
+                        "67.52509547112409\t2021-11-01T02:40:00.000000Z\n" +
+                        "44.80468966861358\t2021-11-01T03:10:00.000000Z\n" +
+                        "44.80468966861358\t2021-11-01T03:40:00.000000Z\n" +
+                        "89.40917126581896\t2021-11-01T04:10:00.000000Z\n" +
+                        "89.40917126581896\t2021-11-01T04:40:00.000000Z\n" +
+                        "94.41658975532606\t2021-11-01T05:10:00.000000Z\n" +
+                        "94.41658975532606\t2021-11-01T05:40:00.000000Z\n" +
+                        "62.5966045857722\t2021-11-01T06:10:00.000000Z\n" +
+                        "62.5966045857722\t2021-11-01T06:40:00.000000Z\n" +
+                        "94.55893004802432\t2021-11-01T07:10:00.000000Z\n" +
+                        "21.85865835029681\t2021-11-01T07:40:00.000000Z\n" +
+                        "21.85865835029681\t2021-11-01T08:10:00.000000Z\n" +
+                        "3.993124821273464\t2021-11-01T08:40:00.000000Z\n" +
+                        "3.993124821273464\t2021-11-01T09:10:00.000000Z\n" +
+                        "84.3845956391477\t2021-11-01T09:40:00.000000Z\n" +
+                        "84.3845956391477\t2021-11-01T10:10:00.000000Z\n" +
+                        "48.92743433711657\t2021-11-01T10:40:00.000000Z\n" +
+                        "48.92743433711657\t2021-11-01T11:10:00.000000Z\n" +
+                        "66.97969295620055\t2021-11-01T11:40:00.000000Z\n" +
+                        "66.97969295620055\t2021-11-01T12:10:00.000000Z\n" +
+                        "58.93398488053903\t2021-11-01T12:40:00.000000Z\n",
+                "select sum(a), k from x sample by 30m fill(prev) align to calendar time zone 'Europe/Riga' with offset '00:40'",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(cast('2021-10-31T00:00:00.000000Z' as timestamp), 3400000000) k" +
+                        " from" +
+                        " long_sequence(40)" +
+                        ") timestamp(k) partition by NONE",
+                "k",
+                false
+        );
+    }
+
+    @Test
     public void testSampleFillPrevNotKeyedEmpty() throws Exception {
         assertQuery("sum\tk\n",
                 "select sum(o), k from x sample by 3h fill(prev)",
@@ -4917,6 +7390,106 @@ public class SampleByTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testSampleFillValueAlignToCalendarTimeZone() throws Exception {
+        // EST timezone has clock go back on 7 Nov. From -4 UTC to -5 UTC
+        // at 6am UTC EST time is 2am (DTS), when clock goes back 7am also becomes 2am UTC
+        // hence 6am UTC is duplicate timestamp and is expected to be compounded
+        assertQuery("b\tsum\tk\n" +
+                        "\t11.427984775756228\t2021-11-06T22:00:00.000000Z\n" +
+                        "VTJW\t101.2\t2021-11-06T22:00:00.000000Z\n" +
+                        "RXGZ\t101.2\t2021-11-06T22:00:00.000000Z\n" +
+                        "PEHN\t101.2\t2021-11-06T22:00:00.000000Z\n" +
+                        "HYRX\t101.2\t2021-11-06T22:00:00.000000Z\n" +
+                        "\t101.2\t2021-11-06T23:00:00.000000Z\n" +
+                        "VTJW\t42.17768841969397\t2021-11-06T23:00:00.000000Z\n" +
+                        "RXGZ\t23.90529010846525\t2021-11-06T23:00:00.000000Z\n" +
+                        "PEHN\t101.2\t2021-11-06T23:00:00.000000Z\n" +
+                        "HYRX\t101.2\t2021-11-06T23:00:00.000000Z\n" +
+                        "\t101.2\t2021-11-07T00:00:00.000000Z\n" +
+                        "VTJW\t101.2\t2021-11-07T00:00:00.000000Z\n" +
+                        "RXGZ\t101.2\t2021-11-07T00:00:00.000000Z\n" +
+                        "PEHN\t70.94360487171201\t2021-11-07T00:00:00.000000Z\n" +
+                        "HYRX\t101.2\t2021-11-07T00:00:00.000000Z\n" +
+                        "\t87.99634725391621\t2021-11-07T01:00:00.000000Z\n" +
+                        "VTJW\t101.2\t2021-11-07T01:00:00.000000Z\n" +
+                        "RXGZ\t101.2\t2021-11-07T01:00:00.000000Z\n" +
+                        "PEHN\t101.2\t2021-11-07T01:00:00.000000Z\n" +
+                        "HYRX\t101.2\t2021-11-07T01:00:00.000000Z\n" +
+                        "\t32.881769076795045\t2021-11-07T02:00:00.000000Z\n" +
+                        "VTJW\t101.2\t2021-11-07T02:00:00.000000Z\n" +
+                        "RXGZ\t101.2\t2021-11-07T02:00:00.000000Z\n" +
+                        "PEHN\t101.2\t2021-11-07T02:00:00.000000Z\n" +
+                        "HYRX\t101.2\t2021-11-07T02:00:00.000000Z\n" +
+                        "\t101.2\t2021-11-07T03:00:00.000000Z\n" +
+                        "VTJW\t101.2\t2021-11-07T03:00:00.000000Z\n" +
+                        "RXGZ\t101.2\t2021-11-07T03:00:00.000000Z\n" +
+                        "PEHN\t101.2\t2021-11-07T03:00:00.000000Z\n" +
+                        "HYRX\t97.71103146051203\t2021-11-07T03:00:00.000000Z\n" +
+                        "\t101.2\t2021-11-07T04:00:00.000000Z\n" +
+                        "VTJW\t101.2\t2021-11-07T04:00:00.000000Z\n" +
+                        "RXGZ\t101.2\t2021-11-07T04:00:00.000000Z\n" +
+                        "PEHN\t81.46807944500559\t2021-11-07T04:00:00.000000Z\n" +
+                        "HYRX\t101.2\t2021-11-07T04:00:00.000000Z\n" +
+                        "\t101.2\t2021-11-07T05:00:00.000000Z\n" +
+                        "VTJW\t101.2\t2021-11-07T05:00:00.000000Z\n" +
+                        "RXGZ\t101.2\t2021-11-07T05:00:00.000000Z\n" +
+                        "PEHN\t81.46807944500559\t2021-11-07T05:00:00.000000Z\n" +
+                        "HYRX\t101.2\t2021-11-07T05:00:00.000000Z\n" +
+                        "\t26.922103479744898\t2021-11-07T07:00:00.000000Z\n" +
+                        "VTJW\t48.820511018586934\t2021-11-07T07:00:00.000000Z\n" +
+                        "RXGZ\t101.2\t2021-11-07T07:00:00.000000Z\n" +
+                        "PEHN\t101.2\t2021-11-07T07:00:00.000000Z\n" +
+                        "HYRX\t101.2\t2021-11-07T07:00:00.000000Z\n" +
+                        "\t52.98405941762054\t2021-11-07T08:00:00.000000Z\n" +
+                        "VTJW\t101.2\t2021-11-07T08:00:00.000000Z\n" +
+                        "RXGZ\t101.2\t2021-11-07T08:00:00.000000Z\n" +
+                        "PEHN\t101.2\t2021-11-07T08:00:00.000000Z\n" +
+                        "HYRX\t101.2\t2021-11-07T08:00:00.000000Z\n" +
+                        "\t101.2\t2021-11-07T09:00:00.000000Z\n" +
+                        "VTJW\t101.2\t2021-11-07T09:00:00.000000Z\n" +
+                        "RXGZ\t101.2\t2021-11-07T09:00:00.000000Z\n" +
+                        "PEHN\t84.45258177211063\t2021-11-07T09:00:00.000000Z\n" +
+                        "HYRX\t101.2\t2021-11-07T09:00:00.000000Z\n" +
+                        "\t97.5019885372507\t2021-11-07T10:00:00.000000Z\n" +
+                        "VTJW\t101.2\t2021-11-07T10:00:00.000000Z\n" +
+                        "RXGZ\t101.2\t2021-11-07T10:00:00.000000Z\n" +
+                        "PEHN\t101.2\t2021-11-07T10:00:00.000000Z\n" +
+                        "HYRX\t101.2\t2021-11-07T10:00:00.000000Z\n" +
+                        "\t80.01121139739173\t2021-11-07T11:00:00.000000Z\n" +
+                        "VTJW\t101.2\t2021-11-07T11:00:00.000000Z\n" +
+                        "RXGZ\t101.2\t2021-11-07T11:00:00.000000Z\n" +
+                        "PEHN\t49.00510449885239\t2021-11-07T11:00:00.000000Z\n" +
+                        "HYRX\t101.2\t2021-11-07T11:00:00.000000Z\n" +
+                        "\t92.050039469858\t2021-11-07T12:00:00.000000Z\n" +
+                        "VTJW\t101.2\t2021-11-07T12:00:00.000000Z\n" +
+                        "RXGZ\t101.2\t2021-11-07T12:00:00.000000Z\n" +
+                        "PEHN\t101.2\t2021-11-07T12:00:00.000000Z\n" +
+                        "HYRX\t101.2\t2021-11-07T12:00:00.000000Z\n" +
+                        "\t45.6344569609078\t2021-11-07T13:00:00.000000Z\n" +
+                        "VTJW\t101.2\t2021-11-07T13:00:00.000000Z\n" +
+                        "RXGZ\t101.2\t2021-11-07T13:00:00.000000Z\n" +
+                        "PEHN\t101.2\t2021-11-07T13:00:00.000000Z\n" +
+                        "HYRX\t101.2\t2021-11-07T13:00:00.000000Z\n" +
+                        "\t40.455469747939254\t2021-11-07T14:00:00.000000Z\n" +
+                        "VTJW\t101.2\t2021-11-07T14:00:00.000000Z\n" +
+                        "RXGZ\t101.2\t2021-11-07T14:00:00.000000Z\n" +
+                        "PEHN\t101.2\t2021-11-07T14:00:00.000000Z\n" +
+                        "HYRX\t101.2\t2021-11-07T14:00:00.000000Z\n",
+                "select b, sum(a), k from x sample by 1h fill(101.2) align to calendar time zone 'EST'",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(cast('2021-11-06T22:10:00.000000Z' as timestamp), 3100000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        ") timestamp(k) partition by NONE",
+                "k",
+                false);
+    }
+
+    @Test
     public void testSampleFillValueAllKeyTypes() throws Exception {
         assertQuery("b\th\ti\tj\tl\tsum\tsum1\tsum2\tsum3\tsum4\tsum5\tk\n" +
                         "\tFFYUDEYY\t00000000 49 b4 59 7e 3b 08 a1 1e 38 8d 1b 9e f4 c8 39 09\t2015-09-16T21:59:49.857Z\tfalse\t11.427984775756228\t42.17768311500549\t1432278050\t13216\t4\t5539350449504785212\t1970-01-03T00:00:00.000000Z\n" +
@@ -4984,8 +7557,9 @@ public class SampleByTest extends AbstractGriffinTest {
 
     @Test
     public void testSampleFillValueAllTypes() throws Exception {
-        assertQuery("b\tsum\tsum1\tsum2\tsum3\tsum4\tsum5\tk\n" +
-                        "\t74.19752505948932\t113.1212830543518\t2557447177\t868\t12\t-6307312481136788016\t1970-01-03T00:00:00.000000Z\n" +
+        assertQuery(
+                "b\tlast\tlast1\tlast2\tlast3\tlast4\tlast5\tk\n" +
+                        "\t62.76954028373309\t70.94359993934631\t1125169127\t-12348\t8\t6600081143067978388\t1970-01-03T00:00:00.000000Z\n" +
                         "CPSW\t0.35983672154330515\t76.75672769546509\t113506296\t27809\t9\t-8889930662239044040\t1970-01-03T00:00:00.000000Z\n" +
                         "PEHN\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T00:00:00.000000Z\n" +
                         "RXGZ\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T00:00:00.000000Z\n" +
@@ -4995,32 +7569,32 @@ public class SampleByTest extends AbstractGriffinTest {
                         "PEHN\t15.786635599554755\t12.503039836883545\t264240638\t-7976\t6\t-8480005421611953360\t1970-01-03T03:00:00.000000Z\n" +
                         "RXGZ\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T03:00:00.000000Z\n" +
                         "HYRX\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T03:00:00.000000Z\n" +
-                        "\t85.05940141744613\t92.16078519821167\t301655269\t-14676\t12\t-2937111954994403426\t1970-01-03T06:00:00.000000Z\n" +
+                        "\t80.01121139739173\t92.05003380775452\t235358133\t-9039\t5\t6473208488991371747\t1970-01-03T06:00:00.000000Z\n" +
                         "CPSW\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T06:00:00.000000Z\n" +
                         "PEHN\t86.64158914718531\t88.37421536445618\t1566901076\t-3017\t3\t-5028301966399563827\t1970-01-03T06:00:00.000000Z\n" +
                         "RXGZ\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T06:00:00.000000Z\n" +
                         "HYRX\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T06:00:00.000000Z\n" +
-                        "\t106.78118249687527\t103.11979651451111\t3029605432\t-2372\t12\t-1162868573414266742\t1970-01-03T09:00:00.000000Z\n" +
+                        "\t97.03060808244088\t91.01417064666748\t1794809330\t10028\t4\t-5512653573876168745\t1970-01-03T09:00:00.000000Z\n" +
                         "CPSW\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T09:00:00.000000Z\n" +
                         "PEHN\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T09:00:00.000000Z\n" +
                         "RXGZ\t3.831785863680992\t42.020440101623535\t1254404167\t1756\t5\t8702525427024484485\t1970-01-03T09:00:00.000000Z\n" +
                         "HYRX\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T09:00:00.000000Z\n" +
-                        "\t117.60937843256664\t189.81727361679077\t3717804370\t-27064\t17\t2215137494070785317\t1970-01-03T12:00:00.000000Z\n" +
+                        "\t89.40917126581896\t94.41658854484558\t2124174232\t2508\t9\t-7103100524321179064\t1970-01-03T12:00:00.000000Z\n" +
                         "CPSW\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T12:00:00.000000Z\n" +
                         "PEHN\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T12:00:00.000000Z\n" +
                         "RXGZ\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T12:00:00.000000Z\n" +
                         "HYRX\t24.008362859107102\t76.57837271690369\t2111250190\t-13252\t8\t7973684666911773753\t1970-01-03T12:00:00.000000Z\n" +
-                        "\t28.087836621126815\t139.30693864822388\t2587989045\t11751\t17\t-8594661640328306402\t1970-01-03T15:00:00.000000Z\n" +
+                        "\t26.369335635512837\t56.994444131851196\t2011884585\t9054\t10\t-5315599072928175674\t1970-01-03T15:00:00.000000Z\n" +
                         "CPSW\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T15:00:00.000000Z\n" +
                         "PEHN\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T15:00:00.000000Z\n" +
                         "RXGZ\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T15:00:00.000000Z\n" +
                         "HYRX\t2.6836863013701473\t10.643041133880615\t502711083\t-8221\t9\t-7709579215942154242\t1970-01-03T15:00:00.000000Z\n" +
-                        "\t75.17160551750754\t120.51888704299927\t2362241402\t514\t11\t-2863260545700031392\t1970-01-03T18:00:00.000000Z\n" +
+                        "\t42.74704286353759\t33.74707102775574\t684778036\t11524\t6\t7574443524652611981\t1970-01-03T18:00:00.000000Z\n" +
                         "CPSW\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T18:00:00.000000Z\n" +
                         "PEHN\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T18:00:00.000000Z\n" +
                         "RXGZ\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T18:00:00.000000Z\n" +
                         "HYRX\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T18:00:00.000000Z\n",
-                "select b, sum(a), sum(c), sum(d), sum(e), sum(f), sum(g), k from x sample by 3h fill(20.56, 0, 0, 0, 0, 0)",
+                "select b, last(a), last(c), last(d), last(e), last(f), last(g), k from x sample by 3h fill(20.56, 0, 0, 0, 0, 0)",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -5049,8 +7623,8 @@ public class SampleByTest extends AbstractGriffinTest {
                         " from" +
                         " long_sequence(5)" +
                         ") timestamp(k)",
-                "b\tsum\tsum1\tsum2\tsum3\tsum4\tsum5\tk\n" +
-                        "\t74.19752505948932\t113.1212830543518\t2557447177\t868\t12\t-6307312481136788016\t1970-01-03T00:00:00.000000Z\n" +
+                "b\tlast\tlast1\tlast2\tlast3\tlast4\tlast5\tk\n" +
+                        "\t62.76954028373309\t70.94359993934631\t1125169127\t-12348\t8\t6600081143067978388\t1970-01-03T00:00:00.000000Z\n" +
                         "CPSW\t0.35983672154330515\t76.75672769546509\t113506296\t27809\t9\t-8889930662239044040\t1970-01-03T00:00:00.000000Z\n" +
                         "PEHN\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T00:00:00.000000Z\n" +
                         "RXGZ\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T00:00:00.000000Z\n" +
@@ -5068,7 +7642,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         "FLOP\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T03:00:00.000000Z\n" +
                         "WVDK\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T03:00:00.000000Z\n" +
                         "JOXP\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T03:00:00.000000Z\n" +
-                        "\t85.05940141744613\t92.16078519821167\t301655269\t-14676\t12\t-2937111954994403426\t1970-01-03T06:00:00.000000Z\n" +
+                        "\t80.01121139739173\t92.05003380775452\t235358133\t-9039\t5\t6473208488991371747\t1970-01-03T06:00:00.000000Z\n" +
                         "CPSW\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T06:00:00.000000Z\n" +
                         "PEHN\t86.64158914718531\t88.37421536445618\t1566901076\t-3017\t3\t-5028301966399563827\t1970-01-03T06:00:00.000000Z\n" +
                         "RXGZ\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T06:00:00.000000Z\n" +
@@ -5077,7 +7651,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         "FLOP\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T06:00:00.000000Z\n" +
                         "WVDK\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T06:00:00.000000Z\n" +
                         "JOXP\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T06:00:00.000000Z\n" +
-                        "\t106.78118249687527\t103.11979651451111\t3029605432\t-2372\t12\t-1162868573414266742\t1970-01-03T09:00:00.000000Z\n" +
+                        "\t97.03060808244088\t91.01417064666748\t1794809330\t10028\t4\t-5512653573876168745\t1970-01-03T09:00:00.000000Z\n" +
                         "CPSW\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T09:00:00.000000Z\n" +
                         "PEHN\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T09:00:00.000000Z\n" +
                         "RXGZ\t3.831785863680992\t42.020440101623535\t1254404167\t1756\t5\t8702525427024484485\t1970-01-03T09:00:00.000000Z\n" +
@@ -5086,7 +7660,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         "FLOP\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T09:00:00.000000Z\n" +
                         "WVDK\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T09:00:00.000000Z\n" +
                         "JOXP\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T09:00:00.000000Z\n" +
-                        "\t117.60937843256664\t189.81727361679077\t3717804370\t-27064\t17\t2215137494070785317\t1970-01-03T12:00:00.000000Z\n" +
+                        "\t89.40917126581896\t94.41658854484558\t2124174232\t2508\t9\t-7103100524321179064\t1970-01-03T12:00:00.000000Z\n" +
                         "CPSW\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T12:00:00.000000Z\n" +
                         "PEHN\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T12:00:00.000000Z\n" +
                         "RXGZ\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T12:00:00.000000Z\n" +
@@ -5095,7 +7669,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         "FLOP\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T12:00:00.000000Z\n" +
                         "WVDK\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T12:00:00.000000Z\n" +
                         "JOXP\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T12:00:00.000000Z\n" +
-                        "\t28.087836621126815\t139.30693864822388\t2587989045\t11751\t17\t-8594661640328306402\t1970-01-03T15:00:00.000000Z\n" +
+                        "\t26.369335635512837\t56.994444131851196\t2011884585\t9054\t10\t-5315599072928175674\t1970-01-03T15:00:00.000000Z\n" +
                         "CPSW\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T15:00:00.000000Z\n" +
                         "PEHN\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T15:00:00.000000Z\n" +
                         "RXGZ\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T15:00:00.000000Z\n" +
@@ -5104,7 +7678,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         "FLOP\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T15:00:00.000000Z\n" +
                         "WVDK\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T15:00:00.000000Z\n" +
                         "JOXP\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T15:00:00.000000Z\n" +
-                        "\t75.17160551750754\t120.51888704299927\t2362241402\t514\t11\t-2863260545700031392\t1970-01-03T18:00:00.000000Z\n" +
+                        "\t42.74704286353759\t33.74707102775574\t684778036\t11524\t6\t7574443524652611981\t1970-01-03T18:00:00.000000Z\n" +
                         "CPSW\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T18:00:00.000000Z\n" +
                         "PEHN\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T18:00:00.000000Z\n" +
                         "RXGZ\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T18:00:00.000000Z\n" +
@@ -5306,6 +7880,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         "PEHN\t20.56\t1970-01-03T17:00:00.000000Z\n" +
                         "\t40.455469747939254\t1970-01-03T17:00:00.000000Z\n",
                 "select b, sum(a), k from (x latest by b) sample by 3h fill(20.56)",
+//                "(x latest by b)",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -5488,6 +8063,471 @@ public class SampleByTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testSampleFillValueNotKeyedAlignToCalendar() throws Exception {
+        assertQuery("sum\tk\n" +
+                        "11.427984775756228\t1970-01-03T00:00:00.000000Z\n" +
+                        "42.17768841969397\t1970-01-03T00:30:00.000000Z\n" +
+                        "20.56\t1970-01-03T01:00:00.000000Z\n" +
+                        "23.90529010846525\t1970-01-03T01:30:00.000000Z\n" +
+                        "20.56\t1970-01-03T02:00:00.000000Z\n" +
+                        "70.94360487171201\t1970-01-03T02:30:00.000000Z\n" +
+                        "20.56\t1970-01-03T03:00:00.000000Z\n" +
+                        "87.99634725391621\t1970-01-03T03:30:00.000000Z\n" +
+                        "20.56\t1970-01-03T04:00:00.000000Z\n" +
+                        "32.881769076795045\t1970-01-03T04:30:00.000000Z\n" +
+                        "20.56\t1970-01-03T05:00:00.000000Z\n" +
+                        "97.71103146051203\t1970-01-03T05:30:00.000000Z\n" +
+                        "20.56\t1970-01-03T06:00:00.000000Z\n" +
+                        "81.46807944500559\t1970-01-03T06:30:00.000000Z\n" +
+                        "20.56\t1970-01-03T07:00:00.000000Z\n" +
+                        "57.93466326862211\t1970-01-03T07:30:00.000000Z\n" +
+                        "20.56\t1970-01-03T08:00:00.000000Z\n" +
+                        "12.026122412833129\t1970-01-03T08:30:00.000000Z\n" +
+                        "48.820511018586934\t1970-01-03T09:00:00.000000Z\n" +
+                        "20.56\t1970-01-03T09:30:00.000000Z\n" +
+                        "26.922103479744898\t1970-01-03T10:00:00.000000Z\n" +
+                        "20.56\t1970-01-03T10:30:00.000000Z\n" +
+                        "52.98405941762054\t1970-01-03T11:00:00.000000Z\n" +
+                        "20.56\t1970-01-03T11:30:00.000000Z\n" +
+                        "84.45258177211063\t1970-01-03T12:00:00.000000Z\n" +
+                        "20.56\t1970-01-03T12:30:00.000000Z\n" +
+                        "97.5019885372507\t1970-01-03T13:00:00.000000Z\n" +
+                        "20.56\t1970-01-03T13:30:00.000000Z\n" +
+                        "49.00510449885239\t1970-01-03T14:00:00.000000Z\n" +
+                        "20.56\t1970-01-03T14:30:00.000000Z\n" +
+                        "80.01121139739173\t1970-01-03T15:00:00.000000Z\n" +
+                        "20.56\t1970-01-03T15:30:00.000000Z\n" +
+                        "92.050039469858\t1970-01-03T16:00:00.000000Z\n" +
+                        "20.56\t1970-01-03T16:30:00.000000Z\n" +
+                        "45.6344569609078\t1970-01-03T17:00:00.000000Z\n" +
+                        "40.455469747939254\t1970-01-03T17:30:00.000000Z\n" +
+                        "20.56\t1970-01-03T18:00:00.000000Z\n" +
+                        "56.594291398612405\t1970-01-03T18:30:00.000000Z\n" +
+                        "20.56\t1970-01-03T19:00:00.000000Z\n" +
+                        "9.750574414434398\t1970-01-03T19:30:00.000000Z\n" +
+                        "20.56\t1970-01-03T20:00:00.000000Z\n" +
+                        "12.105630273556178\t1970-01-03T20:30:00.000000Z\n" +
+                        "20.56\t1970-01-03T21:00:00.000000Z\n" +
+                        "57.78947915182423\t1970-01-03T21:30:00.000000Z\n" +
+                        "20.56\t1970-01-03T22:00:00.000000Z\n" +
+                        "86.85154305419587\t1970-01-03T22:30:00.000000Z\n" +
+                        "20.56\t1970-01-03T23:00:00.000000Z\n" +
+                        "12.02416087573498\t1970-01-03T23:30:00.000000Z\n" +
+                        "20.56\t1970-01-04T00:00:00.000000Z\n" +
+                        "49.42890511958454\t1970-01-04T00:30:00.000000Z\n" +
+                        "20.56\t1970-01-04T01:00:00.000000Z\n" +
+                        "58.912164838797885\t1970-01-04T01:30:00.000000Z\n" +
+                        "67.52509547112409\t1970-01-04T02:00:00.000000Z\n" +
+                        "20.56\t1970-01-04T02:30:00.000000Z\n" +
+                        "44.80468966861358\t1970-01-04T03:00:00.000000Z\n" +
+                        "20.56\t1970-01-04T03:30:00.000000Z\n" +
+                        "89.40917126581896\t1970-01-04T04:00:00.000000Z\n" +
+                        "20.56\t1970-01-04T04:30:00.000000Z\n" +
+                        "94.41658975532606\t1970-01-04T05:00:00.000000Z\n" +
+                        "20.56\t1970-01-04T05:30:00.000000Z\n" +
+                        "62.5966045857722\t1970-01-04T06:00:00.000000Z\n" +
+                        "20.56\t1970-01-04T06:30:00.000000Z\n" +
+                        "94.55893004802432\t1970-01-04T07:00:00.000000Z\n" +
+                        "20.56\t1970-01-04T07:30:00.000000Z\n" +
+                        "21.85865835029681\t1970-01-04T08:00:00.000000Z\n" +
+                        "20.56\t1970-01-04T08:30:00.000000Z\n" +
+                        "3.993124821273464\t1970-01-04T09:00:00.000000Z\n" +
+                        "20.56\t1970-01-04T09:30:00.000000Z\n" +
+                        "84.3845956391477\t1970-01-04T10:00:00.000000Z\n" +
+                        "48.92743433711657\t1970-01-04T10:30:00.000000Z\n" +
+                        "20.56\t1970-01-04T11:00:00.000000Z\n" +
+                        "66.97969295620055\t1970-01-04T11:30:00.000000Z\n" +
+                        "20.56\t1970-01-04T12:00:00.000000Z\n" +
+                        "58.93398488053903\t1970-01-04T12:30:00.000000Z\n",
+                "select sum(a), k from x sample by 30m fill(20.56) align to calendar",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(172866000000, 3400000000) k" +
+                        " from" +
+                        " long_sequence(40)" +
+                        ") timestamp(k) partition by NONE",
+                "k",
+                false
+        );
+    }
+
+    @Test
+    public void testSampleFillValueNotKeyedAlignToCalendarOffset() throws Exception {
+        // this test verifies transition from Summer to Winter time and
+        // clock going backwards. An hour of time should drop out of the result set
+        // without the logic trying to back fill things
+        assertQuery("sum\tk\n" +
+                        "11.427984775756228\t2021-10-30T23:40:00.000000Z\n" +
+                        "20.56\t2021-10-31T00:10:00.000000Z\n" +
+                        "42.17768841969397\t2021-10-31T00:40:00.000000Z\n" +
+                        "20.56\t2021-10-31T01:10:00.000000Z\n" +
+                        "23.90529010846525\t2021-10-31T01:40:00.000000Z\n" +
+                        "20.56\t2021-10-31T02:10:00.000000Z\n" +
+                        "70.94360487171201\t2021-10-31T02:40:00.000000Z\n" +
+                        "20.56\t2021-10-31T03:10:00.000000Z\n" +
+                        "87.99634725391621\t2021-10-31T03:40:00.000000Z\n" +
+                        "20.56\t2021-10-31T04:10:00.000000Z\n" +
+                        "32.881769076795045\t2021-10-31T04:40:00.000000Z\n" +
+                        "20.56\t2021-10-31T05:10:00.000000Z\n" +
+                        "97.71103146051203\t2021-10-31T05:40:00.000000Z\n" +
+                        "81.46807944500559\t2021-10-31T06:10:00.000000Z\n" +
+                        "20.56\t2021-10-31T06:40:00.000000Z\n" +
+                        "57.93466326862211\t2021-10-31T07:10:00.000000Z\n" +
+                        "20.56\t2021-10-31T07:40:00.000000Z\n" +
+                        "12.026122412833129\t2021-10-31T08:10:00.000000Z\n" +
+                        "20.56\t2021-10-31T08:40:00.000000Z\n" +
+                        "48.820511018586934\t2021-10-31T09:10:00.000000Z\n" +
+                        "20.56\t2021-10-31T09:40:00.000000Z\n" +
+                        "26.922103479744898\t2021-10-31T10:10:00.000000Z\n" +
+                        "20.56\t2021-10-31T10:40:00.000000Z\n" +
+                        "52.98405941762054\t2021-10-31T11:10:00.000000Z\n" +
+                        "20.56\t2021-10-31T11:40:00.000000Z\n" +
+                        "84.45258177211063\t2021-10-31T12:10:00.000000Z\n" +
+                        "20.56\t2021-10-31T12:40:00.000000Z\n" +
+                        "97.5019885372507\t2021-10-31T13:10:00.000000Z\n" +
+                        "20.56\t2021-10-31T13:40:00.000000Z\n" +
+                        "49.00510449885239\t2021-10-31T14:10:00.000000Z\n" +
+                        "80.01121139739173\t2021-10-31T14:40:00.000000Z\n" +
+                        "20.56\t2021-10-31T15:10:00.000000Z\n" +
+                        "92.050039469858\t2021-10-31T15:40:00.000000Z\n" +
+                        "20.56\t2021-10-31T16:10:00.000000Z\n" +
+                        "45.6344569609078\t2021-10-31T16:40:00.000000Z\n" +
+                        "20.56\t2021-10-31T17:10:00.000000Z\n" +
+                        "40.455469747939254\t2021-10-31T17:40:00.000000Z\n" +
+                        "20.56\t2021-10-31T18:10:00.000000Z\n" +
+                        "56.594291398612405\t2021-10-31T18:40:00.000000Z\n" +
+                        "20.56\t2021-10-31T19:10:00.000000Z\n" +
+                        "9.750574414434398\t2021-10-31T19:40:00.000000Z\n" +
+                        "20.56\t2021-10-31T20:10:00.000000Z\n" +
+                        "12.105630273556178\t2021-10-31T20:40:00.000000Z\n" +
+                        "20.56\t2021-10-31T21:10:00.000000Z\n" +
+                        "57.78947915182423\t2021-10-31T21:40:00.000000Z\n" +
+                        "20.56\t2021-10-31T22:10:00.000000Z\n" +
+                        "86.85154305419587\t2021-10-31T22:40:00.000000Z\n" +
+                        "12.02416087573498\t2021-10-31T23:10:00.000000Z\n" +
+                        "20.56\t2021-10-31T23:40:00.000000Z\n" +
+                        "49.42890511958454\t2021-11-01T00:10:00.000000Z\n" +
+                        "20.56\t2021-11-01T00:40:00.000000Z\n" +
+                        "58.912164838797885\t2021-11-01T01:10:00.000000Z\n" +
+                        "20.56\t2021-11-01T01:40:00.000000Z\n" +
+                        "67.52509547112409\t2021-11-01T02:10:00.000000Z\n" +
+                        "20.56\t2021-11-01T02:40:00.000000Z\n" +
+                        "44.80468966861358\t2021-11-01T03:10:00.000000Z\n" +
+                        "20.56\t2021-11-01T03:40:00.000000Z\n" +
+                        "89.40917126581896\t2021-11-01T04:10:00.000000Z\n" +
+                        "20.56\t2021-11-01T04:40:00.000000Z\n" +
+                        "94.41658975532606\t2021-11-01T05:10:00.000000Z\n" +
+                        "20.56\t2021-11-01T05:40:00.000000Z\n" +
+                        "62.5966045857722\t2021-11-01T06:10:00.000000Z\n" +
+                        "20.56\t2021-11-01T06:40:00.000000Z\n" +
+                        "94.55893004802432\t2021-11-01T07:10:00.000000Z\n" +
+                        "21.85865835029681\t2021-11-01T07:40:00.000000Z\n" +
+                        "20.56\t2021-11-01T08:10:00.000000Z\n" +
+                        "3.993124821273464\t2021-11-01T08:40:00.000000Z\n" +
+                        "20.56\t2021-11-01T09:10:00.000000Z\n" +
+                        "84.3845956391477\t2021-11-01T09:40:00.000000Z\n" +
+                        "20.56\t2021-11-01T10:10:00.000000Z\n" +
+                        "48.92743433711657\t2021-11-01T10:40:00.000000Z\n" +
+                        "20.56\t2021-11-01T11:10:00.000000Z\n" +
+                        "66.97969295620055\t2021-11-01T11:40:00.000000Z\n" +
+                        "20.56\t2021-11-01T12:10:00.000000Z\n" +
+                        "58.93398488053903\t2021-11-01T12:40:00.000000Z\n",
+                "select sum(a), k from x sample by 30m fill(20.56) align to calendar with offset '00:40'",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(cast('2021-10-31T00:00:00.000000Z' as timestamp), 3400000000) k" +
+                        " from" +
+                        " long_sequence(40)" +
+                        ") timestamp(k) partition by NONE",
+                "k",
+                false
+        );
+    }
+
+    @Test
+    public void testSampleFillValueNotKeyedAlignToCalendarTimeZone() throws Exception {
+        assertQuery("sum\tk\n" +
+                        "11.427984775756228\t2021-03-28T00:00:00.000000Z\n" +
+                        "42.17768841969397\t2021-03-28T00:30:00.000000Z\n" +
+                        "20.56\t2021-03-28T01:00:00.000000Z\n" +
+                        "23.90529010846525\t2021-03-28T01:30:00.000000Z\n" +
+                        "20.56\t2021-03-28T02:00:00.000000Z\n" +
+                        "70.94360487171201\t2021-03-28T02:30:00.000000Z\n" +
+                        "20.56\t2021-03-28T03:00:00.000000Z\n" +
+                        "87.99634725391621\t2021-03-28T03:30:00.000000Z\n" +
+                        "20.56\t2021-03-28T04:00:00.000000Z\n" +
+                        "32.881769076795045\t2021-03-28T04:30:00.000000Z\n" +
+                        "20.56\t2021-03-28T05:00:00.000000Z\n" +
+                        "97.71103146051203\t2021-03-28T05:30:00.000000Z\n" +
+                        "20.56\t2021-03-28T06:00:00.000000Z\n" +
+                        "81.46807944500559\t2021-03-28T06:30:00.000000Z\n" +
+                        "20.56\t2021-03-28T07:00:00.000000Z\n" +
+                        "57.93466326862211\t2021-03-28T07:30:00.000000Z\n" +
+                        "20.56\t2021-03-28T08:00:00.000000Z\n" +
+                        "12.026122412833129\t2021-03-28T08:30:00.000000Z\n" +
+                        "48.820511018586934\t2021-03-28T09:00:00.000000Z\n" +
+                        "20.56\t2021-03-28T09:30:00.000000Z\n" +
+                        "26.922103479744898\t2021-03-28T10:00:00.000000Z\n" +
+                        "20.56\t2021-03-28T10:30:00.000000Z\n" +
+                        "52.98405941762054\t2021-03-28T11:00:00.000000Z\n" +
+                        "20.56\t2021-03-28T11:30:00.000000Z\n" +
+                        "84.45258177211063\t2021-03-28T12:00:00.000000Z\n" +
+                        "20.56\t2021-03-28T12:30:00.000000Z\n" +
+                        "97.5019885372507\t2021-03-28T13:00:00.000000Z\n" +
+                        "20.56\t2021-03-28T13:30:00.000000Z\n" +
+                        "49.00510449885239\t2021-03-28T14:00:00.000000Z\n" +
+                        "20.56\t2021-03-28T14:30:00.000000Z\n" +
+                        "80.01121139739173\t2021-03-28T15:00:00.000000Z\n" +
+                        "20.56\t2021-03-28T15:30:00.000000Z\n" +
+                        "92.050039469858\t2021-03-28T16:00:00.000000Z\n" +
+                        "20.56\t2021-03-28T16:30:00.000000Z\n" +
+                        "45.6344569609078\t2021-03-28T17:00:00.000000Z\n" +
+                        "40.455469747939254\t2021-03-28T17:30:00.000000Z\n" +
+                        "20.56\t2021-03-28T18:00:00.000000Z\n" +
+                        "56.594291398612405\t2021-03-28T18:30:00.000000Z\n" +
+                        "20.56\t2021-03-28T19:00:00.000000Z\n" +
+                        "9.750574414434398\t2021-03-28T19:30:00.000000Z\n" +
+                        "20.56\t2021-03-28T20:00:00.000000Z\n" +
+                        "12.105630273556178\t2021-03-28T20:30:00.000000Z\n" +
+                        "20.56\t2021-03-28T21:00:00.000000Z\n" +
+                        "57.78947915182423\t2021-03-28T21:30:00.000000Z\n" +
+                        "20.56\t2021-03-28T22:00:00.000000Z\n" +
+                        "86.85154305419587\t2021-03-28T22:30:00.000000Z\n" +
+                        "20.56\t2021-03-28T23:00:00.000000Z\n" +
+                        "12.02416087573498\t2021-03-28T23:30:00.000000Z\n" +
+                        "20.56\t2021-03-29T00:00:00.000000Z\n" +
+                        "49.42890511958454\t2021-03-29T00:30:00.000000Z\n" +
+                        "20.56\t2021-03-29T01:00:00.000000Z\n" +
+                        "58.912164838797885\t2021-03-29T01:30:00.000000Z\n" +
+                        "67.52509547112409\t2021-03-29T02:00:00.000000Z\n" +
+                        "20.56\t2021-03-29T02:30:00.000000Z\n" +
+                        "44.80468966861358\t2021-03-29T03:00:00.000000Z\n" +
+                        "20.56\t2021-03-29T03:30:00.000000Z\n" +
+                        "89.40917126581896\t2021-03-29T04:00:00.000000Z\n" +
+                        "20.56\t2021-03-29T04:30:00.000000Z\n" +
+                        "94.41658975532606\t2021-03-29T05:00:00.000000Z\n" +
+                        "20.56\t2021-03-29T05:30:00.000000Z\n" +
+                        "62.5966045857722\t2021-03-29T06:00:00.000000Z\n" +
+                        "20.56\t2021-03-29T06:30:00.000000Z\n" +
+                        "94.55893004802432\t2021-03-29T07:00:00.000000Z\n" +
+                        "20.56\t2021-03-29T07:30:00.000000Z\n" +
+                        "21.85865835029681\t2021-03-29T08:00:00.000000Z\n" +
+                        "20.56\t2021-03-29T08:30:00.000000Z\n" +
+                        "3.993124821273464\t2021-03-29T09:00:00.000000Z\n" +
+                        "20.56\t2021-03-29T09:30:00.000000Z\n" +
+                        "84.3845956391477\t2021-03-29T10:00:00.000000Z\n" +
+                        "48.92743433711657\t2021-03-29T10:30:00.000000Z\n" +
+                        "20.56\t2021-03-29T11:00:00.000000Z\n" +
+                        "66.97969295620055\t2021-03-29T11:30:00.000000Z\n" +
+                        "20.56\t2021-03-29T12:00:00.000000Z\n" +
+                        "58.93398488053903\t2021-03-29T12:30:00.000000Z\n",
+                "select sum(a), k from x sample by 30m fill(20.56) align to calendar time zone 'Europe/Berlin'",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(cast('2021-03-28T00:00:00.000000Z' as timestamp), 3400000000) k" +
+                        " from" +
+                        " long_sequence(40)" +
+                        ") timestamp(k) partition by NONE",
+                "k",
+                false
+        );
+    }
+
+    @Test
+    public void testSampleFillValueNotKeyedAlignToCalendarTimeZone2() throws Exception {
+        // this test verifies transition from Summer to Winter time and
+        // clock going backwards. An hour of time should drop out of the result set
+        // without the logic trying to back fill things
+        assertQuery("sum\tk\n" +
+                        "11.427984775756228\t2021-10-31T00:00:00.000000Z\n" +
+                        "66.08297852815922\t2021-10-31T00:30:00.000000Z\n" +
+                        "70.94360487171201\t2021-10-31T02:30:00.000000Z\n" +
+                        "20.56\t2021-10-31T03:00:00.000000Z\n" +
+                        "87.99634725391621\t2021-10-31T03:30:00.000000Z\n" +
+                        "20.56\t2021-10-31T04:00:00.000000Z\n" +
+                        "32.881769076795045\t2021-10-31T04:30:00.000000Z\n" +
+                        "20.56\t2021-10-31T05:00:00.000000Z\n" +
+                        "97.71103146051203\t2021-10-31T05:30:00.000000Z\n" +
+                        "20.56\t2021-10-31T06:00:00.000000Z\n" +
+                        "81.46807944500559\t2021-10-31T06:30:00.000000Z\n" +
+                        "20.56\t2021-10-31T07:00:00.000000Z\n" +
+                        "57.93466326862211\t2021-10-31T07:30:00.000000Z\n" +
+                        "20.56\t2021-10-31T08:00:00.000000Z\n" +
+                        "12.026122412833129\t2021-10-31T08:30:00.000000Z\n" +
+                        "48.820511018586934\t2021-10-31T09:00:00.000000Z\n" +
+                        "20.56\t2021-10-31T09:30:00.000000Z\n" +
+                        "26.922103479744898\t2021-10-31T10:00:00.000000Z\n" +
+                        "20.56\t2021-10-31T10:30:00.000000Z\n" +
+                        "52.98405941762054\t2021-10-31T11:00:00.000000Z\n" +
+                        "20.56\t2021-10-31T11:30:00.000000Z\n" +
+                        "84.45258177211063\t2021-10-31T12:00:00.000000Z\n" +
+                        "20.56\t2021-10-31T12:30:00.000000Z\n" +
+                        "97.5019885372507\t2021-10-31T13:00:00.000000Z\n" +
+                        "20.56\t2021-10-31T13:30:00.000000Z\n" +
+                        "49.00510449885239\t2021-10-31T14:00:00.000000Z\n" +
+                        "20.56\t2021-10-31T14:30:00.000000Z\n" +
+                        "80.01121139739173\t2021-10-31T15:00:00.000000Z\n" +
+                        "20.56\t2021-10-31T15:30:00.000000Z\n" +
+                        "92.050039469858\t2021-10-31T16:00:00.000000Z\n" +
+                        "20.56\t2021-10-31T16:30:00.000000Z\n" +
+                        "45.6344569609078\t2021-10-31T17:00:00.000000Z\n" +
+                        "40.455469747939254\t2021-10-31T17:30:00.000000Z\n" +
+                        "20.56\t2021-10-31T18:00:00.000000Z\n" +
+                        "56.594291398612405\t2021-10-31T18:30:00.000000Z\n" +
+                        "20.56\t2021-10-31T19:00:00.000000Z\n" +
+                        "9.750574414434398\t2021-10-31T19:30:00.000000Z\n" +
+                        "20.56\t2021-10-31T20:00:00.000000Z\n" +
+                        "12.105630273556178\t2021-10-31T20:30:00.000000Z\n" +
+                        "20.56\t2021-10-31T21:00:00.000000Z\n" +
+                        "57.78947915182423\t2021-10-31T21:30:00.000000Z\n" +
+                        "20.56\t2021-10-31T22:00:00.000000Z\n" +
+                        "86.85154305419587\t2021-10-31T22:30:00.000000Z\n" +
+                        "20.56\t2021-10-31T23:00:00.000000Z\n" +
+                        "12.02416087573498\t2021-10-31T23:30:00.000000Z\n" +
+                        "20.56\t2021-11-01T00:00:00.000000Z\n" +
+                        "49.42890511958454\t2021-11-01T00:30:00.000000Z\n" +
+                        "20.56\t2021-11-01T01:00:00.000000Z\n" +
+                        "58.912164838797885\t2021-11-01T01:30:00.000000Z\n" +
+                        "67.52509547112409\t2021-11-01T02:00:00.000000Z\n" +
+                        "20.56\t2021-11-01T02:30:00.000000Z\n" +
+                        "44.80468966861358\t2021-11-01T03:00:00.000000Z\n" +
+                        "20.56\t2021-11-01T03:30:00.000000Z\n" +
+                        "89.40917126581896\t2021-11-01T04:00:00.000000Z\n" +
+                        "20.56\t2021-11-01T04:30:00.000000Z\n" +
+                        "94.41658975532606\t2021-11-01T05:00:00.000000Z\n" +
+                        "20.56\t2021-11-01T05:30:00.000000Z\n" +
+                        "62.5966045857722\t2021-11-01T06:00:00.000000Z\n" +
+                        "20.56\t2021-11-01T06:30:00.000000Z\n" +
+                        "94.55893004802432\t2021-11-01T07:00:00.000000Z\n" +
+                        "20.56\t2021-11-01T07:30:00.000000Z\n" +
+                        "21.85865835029681\t2021-11-01T08:00:00.000000Z\n" +
+                        "20.56\t2021-11-01T08:30:00.000000Z\n" +
+                        "3.993124821273464\t2021-11-01T09:00:00.000000Z\n" +
+                        "20.56\t2021-11-01T09:30:00.000000Z\n" +
+                        "84.3845956391477\t2021-11-01T10:00:00.000000Z\n" +
+                        "48.92743433711657\t2021-11-01T10:30:00.000000Z\n" +
+                        "20.56\t2021-11-01T11:00:00.000000Z\n" +
+                        "66.97969295620055\t2021-11-01T11:30:00.000000Z\n" +
+                        "20.56\t2021-11-01T12:00:00.000000Z\n" +
+                        "58.93398488053903\t2021-11-01T12:30:00.000000Z\n",
+                "select sum(a), k from x sample by 30m fill(20.56) align to calendar time zone 'Europe/Berlin'",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(cast('2021-10-31T00:00:00.000000Z' as timestamp), 3400000000) k" +
+                        " from" +
+                        " long_sequence(40)" +
+                        ") timestamp(k) partition by NONE",
+                "k",
+                false
+        );
+    }
+
+    @Test
+    public void testSampleFillValueNotKeyedAlignToCalendarTimeZoneOffset() throws Exception {
+        // this test verifies transition from Summer to Winter time and
+        // clock going backwards. An hour of time should drop out of the result set
+        // without the logic trying to back fill things
+        assertQuery("s\tkz\n" +
+                        "2\t2021-10-31T03:10:00.000000Z\n" +
+                        "1\t2021-10-31T04:10:00.000000Z\n" +
+                        "9999\t2021-10-31T04:40:00.000000Z\n" +
+                        "1\t2021-10-31T05:10:00.000000Z\n" +
+                        "1\t2021-10-31T05:40:00.000000Z\n" +
+                        "9999\t2021-10-31T06:10:00.000000Z\n" +
+                        "1\t2021-10-31T06:40:00.000000Z\n" +
+                        "9999\t2021-10-31T07:10:00.000000Z\n" +
+                        "1\t2021-10-31T07:40:00.000000Z\n" +
+                        "9999\t2021-10-31T08:10:00.000000Z\n" +
+                        "1\t2021-10-31T08:40:00.000000Z\n" +
+                        "9999\t2021-10-31T09:10:00.000000Z\n" +
+                        "1\t2021-10-31T09:40:00.000000Z\n" +
+                        "9999\t2021-10-31T10:10:00.000000Z\n" +
+                        "1\t2021-10-31T10:40:00.000000Z\n" +
+                        "9999\t2021-10-31T11:10:00.000000Z\n" +
+                        "1\t2021-10-31T11:40:00.000000Z\n" +
+                        "9999\t2021-10-31T12:10:00.000000Z\n" +
+                        "1\t2021-10-31T12:40:00.000000Z\n" +
+                        "9999\t2021-10-31T13:10:00.000000Z\n" +
+                        "1\t2021-10-31T13:40:00.000000Z\n" +
+                        "1\t2021-10-31T14:10:00.000000Z\n" +
+                        "9999\t2021-10-31T14:40:00.000000Z\n" +
+                        "1\t2021-10-31T15:10:00.000000Z\n" +
+                        "9999\t2021-10-31T15:40:00.000000Z\n" +
+                        "1\t2021-10-31T16:10:00.000000Z\n" +
+                        "9999\t2021-10-31T16:40:00.000000Z\n" +
+                        "1\t2021-10-31T17:10:00.000000Z\n" +
+                        "9999\t2021-10-31T17:40:00.000000Z\n" +
+                        "1\t2021-10-31T18:10:00.000000Z\n" +
+                        "9999\t2021-10-31T18:40:00.000000Z\n" +
+                        "1\t2021-10-31T19:10:00.000000Z\n" +
+                        "9999\t2021-10-31T19:40:00.000000Z\n" +
+                        "1\t2021-10-31T20:10:00.000000Z\n" +
+                        "9999\t2021-10-31T20:40:00.000000Z\n" +
+                        "1\t2021-10-31T21:10:00.000000Z\n" +
+                        "9999\t2021-10-31T21:40:00.000000Z\n" +
+                        "1\t2021-10-31T22:10:00.000000Z\n" +
+                        "1\t2021-10-31T22:40:00.000000Z\n" +
+                        "9999\t2021-10-31T23:10:00.000000Z\n" +
+                        "1\t2021-10-31T23:40:00.000000Z\n" +
+                        "9999\t2021-11-01T00:10:00.000000Z\n" +
+                        "1\t2021-11-01T00:40:00.000000Z\n" +
+                        "9999\t2021-11-01T01:10:00.000000Z\n" +
+                        "1\t2021-11-01T01:40:00.000000Z\n" +
+                        "9999\t2021-11-01T02:10:00.000000Z\n" +
+                        "1\t2021-11-01T02:40:00.000000Z\n" +
+                        "9999\t2021-11-01T03:10:00.000000Z\n" +
+                        "1\t2021-11-01T03:40:00.000000Z\n" +
+                        "9999\t2021-11-01T04:10:00.000000Z\n" +
+                        "1\t2021-11-01T04:40:00.000000Z\n" +
+                        "9999\t2021-11-01T05:10:00.000000Z\n" +
+                        "1\t2021-11-01T05:40:00.000000Z\n" +
+                        "9999\t2021-11-01T06:10:00.000000Z\n" +
+                        "1\t2021-11-01T06:40:00.000000Z\n" +
+                        "1\t2021-11-01T07:10:00.000000Z\n" +
+                        "9999\t2021-11-01T07:40:00.000000Z\n" +
+                        "1\t2021-11-01T08:10:00.000000Z\n" +
+                        "9999\t2021-11-01T08:40:00.000000Z\n" +
+                        "1\t2021-11-01T09:10:00.000000Z\n" +
+                        "9999\t2021-11-01T09:40:00.000000Z\n" +
+                        "1\t2021-11-01T10:10:00.000000Z\n" +
+                        "9999\t2021-11-01T10:40:00.000000Z\n" +
+                        "1\t2021-11-01T11:10:00.000000Z\n" +
+                        "9999\t2021-11-01T11:40:00.000000Z\n" +
+                        "1\t2021-11-01T12:10:00.000000Z\n" +
+                        "9999\t2021-11-01T12:40:00.000000Z\n" +
+                        "1\t2021-11-01T13:10:00.000000Z\n" +
+                        "9999\t2021-11-01T13:40:00.000000Z\n" +
+                        "1\t2021-11-01T14:10:00.000000Z\n" +
+                        "9999\t2021-11-01T14:40:00.000000Z\n" +
+                        "1\t2021-11-01T15:10:00.000000Z\n",
+                "select s, to_timezone(k, 'Europe/Riga') kz from (select count() s, k from x sample by 30m fill(9999) align to calendar time zone 'Europe/Riga' with offset '00:40')",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(cast('2021-10-31T00:22:00.000000Z' as timestamp), 3400000000) k" +
+                        " from" +
+                        " long_sequence(40)" +
+                        ") timestamp(k) partition by NONE",
+                null,
+                false
+        );
+    }
+
+    @Test
     public void testSampleFillValueNotKeyedEmpty() throws Exception {
         assertQuery("sum\tk\n",
                 "select sum(a), k from x sample by 30m fill(20.56)",
@@ -5506,31 +8546,48 @@ public class SampleByTest extends AbstractGriffinTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(172800000000, 3600000000) k" +
+                        " timestamp_sequence(172866000000, 3400000000) k" +
                         " from" +
                         " long_sequence(10)" +
                         ") timestamp(k)",
                 "sum\tk\n" +
-                        "0.35983672154330515\t1970-01-03T00:00:00.000000Z\n" +
-                        "20.56\t1970-01-03T00:30:00.000000Z\n" +
-                        "76.75673070796104\t1970-01-03T01:00:00.000000Z\n" +
-                        "20.56\t1970-01-03T01:30:00.000000Z\n" +
-                        "62.173267078530984\t1970-01-03T02:00:00.000000Z\n" +
-                        "20.56\t1970-01-03T02:30:00.000000Z\n" +
-                        "63.81607531178513\t1970-01-03T03:00:00.000000Z\n" +
-                        "20.56\t1970-01-03T03:30:00.000000Z\n" +
-                        "57.93466326862211\t1970-01-03T04:00:00.000000Z\n" +
-                        "20.56\t1970-01-03T04:30:00.000000Z\n" +
-                        "12.026122412833129\t1970-01-03T05:00:00.000000Z\n" +
-                        "20.56\t1970-01-03T05:30:00.000000Z\n" +
-                        "48.820511018586934\t1970-01-03T06:00:00.000000Z\n" +
-                        "20.56\t1970-01-03T06:30:00.000000Z\n" +
-                        "26.922103479744898\t1970-01-03T07:00:00.000000Z\n" +
-                        "20.56\t1970-01-03T07:30:00.000000Z\n" +
-                        "52.98405941762054\t1970-01-03T08:00:00.000000Z\n" +
-                        "20.56\t1970-01-03T08:30:00.000000Z\n" +
-                        "84.45258177211063\t1970-01-03T09:00:00.000000Z\n",
+                        "0.35983672154330515\t1970-01-03T00:01:06.000000Z\n" +
+                        "76.75673070796104\t1970-01-03T00:31:06.000000Z\n" +
+                        "20.56\t1970-01-03T01:01:06.000000Z\n" +
+                        "62.173267078530984\t1970-01-03T01:31:06.000000Z\n" +
+                        "20.56\t1970-01-03T02:01:06.000000Z\n" +
+                        "63.81607531178513\t1970-01-03T02:31:06.000000Z\n" +
+                        "20.56\t1970-01-03T03:01:06.000000Z\n" +
+                        "57.93466326862211\t1970-01-03T03:31:06.000000Z\n" +
+                        "20.56\t1970-01-03T04:01:06.000000Z\n" +
+                        "12.026122412833129\t1970-01-03T04:31:06.000000Z\n" +
+                        "20.56\t1970-01-03T05:01:06.000000Z\n" +
+                        "48.820511018586934\t1970-01-03T05:31:06.000000Z\n" +
+                        "20.56\t1970-01-03T06:01:06.000000Z\n" +
+                        "26.922103479744898\t1970-01-03T06:31:06.000000Z\n" +
+                        "20.56\t1970-01-03T07:01:06.000000Z\n" +
+                        "52.98405941762054\t1970-01-03T07:31:06.000000Z\n" +
+                        "20.56\t1970-01-03T08:01:06.000000Z\n" +
+                        "84.45258177211063\t1970-01-03T08:31:06.000000Z\n",
                 false);
+    }
+
+    @Test
+    public void testSampleFillValueNotKeyedInvalid() throws Exception {
+        assertFailure(
+                "select sum(a), k from x sample by 30m fill(zz)",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(cast('2021-03-28T00:00:00.000000Z' as timestamp), 3400000000) k" +
+                        " from" +
+                        " long_sequence(40)" +
+                        ") timestamp(k) partition by NONE",
+                43,
+                "invalid number: zz"
+        );
     }
 
     private void assertSampleByIndexQuery(String expected, String query, String insert) throws Exception {
@@ -5578,22 +8635,18 @@ public class SampleByTest extends AbstractGriffinTest {
                 false);
     }
 
-    @Test
-    public void testSampleByCountWithNoTsColSelected() throws Exception {
-        assertQuery("count\n" +
-                        "300\n" +
-                        "300\n" +
-                        "300\n" +
-                        "100\n",
-                "select count() from x sample by 1h",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " timestamp_sequence(172800000000, 12000000) k" +
-                        " from" +
-                        " long_sequence(1000)" +
-                        ") timestamp(k) partition by NONE",
-                null,
-                false);
+    @NotNull
+    private SingleSymbolFilter getSymbolFilter() {
+        return new SingleSymbolFilter() {
+            @Override
+            public int getColumnIndex() {
+                return 0;
+            }
+
+            @Override
+            public int getSymbolFilterKey() {
+                return 0;
+            }
+        };
     }
 }

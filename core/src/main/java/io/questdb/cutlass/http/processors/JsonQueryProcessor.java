@@ -140,6 +140,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
                             factory,
                             configuration.getKeepAliveHeader());
                 } catch (ReaderOutOfDateException e) {
+                    LOG.info().$(e.getFlyweightMessage()).$();
                     Misc.free(factory);
                     compileQuery(state);
                 }
@@ -320,7 +321,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             JsonQueryProcessorState state,
             RecordCursorFactory factory,
             CharSequence keepAliveHeader
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException {
         state.setCompilerNanos(0);
         state.logExecuteCached();
         executeSelect(state, factory, keepAliveHeader);
@@ -347,7 +348,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             JsonQueryProcessorState state,
             CompiledQuery cc,
             CharSequence keepAliveHeader
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException {
         final InsertStatement insertStatement = cc.getInsertStatement();
         try (InsertMethod insertMethod = insertStatement.createMethod(sqlExecutionContext)) {
             insertMethod.execute();
@@ -360,7 +361,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             JsonQueryProcessorState state,
             CompiledQuery cc,
             CharSequence keepAliveHeader
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException {
         state.logExecuteNew();
         final RecordCursorFactory factory = cc.getRecordCursorFactory();
         executeSelect(
@@ -373,7 +374,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             JsonQueryProcessorState state,
             RecordCursorFactory factory,
             CharSequence keepAliveHeader
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException {
         final HttpConnectionContext context = state.getHttpConnectionContext();
         try {
             if (state.of(factory, sqlExecutionContext)) {

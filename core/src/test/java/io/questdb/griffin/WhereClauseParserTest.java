@@ -219,7 +219,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testTimestampFollowedByIntrinsicOperatorWithNull() throws SqlException{
+    public void testTimestampFollowedByIntrinsicOperatorWithNull() throws SqlException {
         modelOf("timestamp = null");
         modelOf("timestamp != null");
         modelOf("timestamp in (null)");
@@ -1706,7 +1706,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         TestUtils.assertEquals(expected, toRpn(m.filter));
     }
 
-    private CharSequence intervalToString(IntrinsicModel model) {
+    private CharSequence intervalToString(IntrinsicModel model) throws SqlException {
         if (!model.hasIntervalFilters()) return "";
         RuntimeIntrinsicIntervalModel sm = model.buildIntervalModel();
         return GriffinParserTestUtils.intervalToString(sm.calculateIntervals(sqlExecutionContext));

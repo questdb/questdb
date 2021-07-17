@@ -161,7 +161,7 @@ public class IndexedParameterLinkFunction implements ScalarFunction {
     }
 
     @Override
-    public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
+    public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
         base = executionContext.getBindVariableService().getFunction(variableIndex);
         if (base == null) {
             throw CairoException.instance(0).put("undefined bind variable: ").put(variableIndex);

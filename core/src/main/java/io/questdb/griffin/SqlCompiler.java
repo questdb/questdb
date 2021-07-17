@@ -1090,7 +1090,8 @@ public class SqlCompiler implements Closeable {
         } while (true);
     }
 
-    private void alterTableDropOrAttachPartition(TableWriter writer, int action, SqlExecutionContext executionContext) throws SqlException {
+    private void alterTableDropOrAttachPartition(TableWriter writer, int action, SqlExecutionContext executionContext)
+            throws SqlException {
         final int pos = lexer.lastTokenPosition();
         final CharSequence tok = expectToken(lexer, "'list' or 'where'");
         if (SqlKeywords.isListKeyword(tok)) {
@@ -1705,7 +1706,12 @@ public class SqlCompiler implements Closeable {
         tableExistsOrFail(name.position, name.token, executionContext);
 
         ObjList<Function> valueFunctions = null;
-        try (TableReader reader = engine.getReader(executionContext.getCairoSecurityContext(), name.token, TableUtils.ANY_TABLE_VERSION)) {
+        try (TableReader reader = engine.getReader(
+                executionContext.getCairoSecurityContext(),
+                name.token,
+                TableUtils.ANY_TABLE_ID,
+                TableUtils.ANY_TABLE_VERSION
+        )) {
             final long structureVersion = reader.getVersion();
             final RecordMetadata metadata = reader.getMetadata();
             final int writerTimestampIndex = metadata.getTimestampIndex();
@@ -1806,25 +1812,10 @@ public class SqlCompiler implements Closeable {
             final int cursorTimestampIndex = cursorMetadata.getTimestampIndex();
             final int cursorColumnCount = cursorMetadata.getColumnCount();
 
-            // fail when target table requires chronological data and cursor cannot provide it
-            if (writerTimestampIndex > -1 && cursorTimestampIndex == -1) {
-                if (cursorColumnCount <= writerTimestampIndex) {
-                    throw SqlException.$(name.position, "select clause must provide timestamp column");
-                } else {
-                    int columnType = cursorMetadata.getColumnType(writerTimestampIndex);
-                    if (columnType != ColumnType.TIMESTAMP && columnType != ColumnType.STRING && columnType != ColumnType.NULL) {
-                        throw SqlException.$(name.position, "expected timestamp column but type is ").put(ColumnType.nameOf(columnType));
-                    }
-                }
-            }
-
-            if (writerTimestampIndex > -1 && cursorTimestampIndex > -1 && writerTimestampIndex != cursorTimestampIndex) {
-                throw SqlException.$(name.position, "nominated column of existing table (").put(writerTimestampIndex).put(") does not match nominated column in select query (").put(cursorTimestampIndex).put(')');
-            }
-
             final RecordToRowCopier copier;
             CharSequenceHashSet columnSet = model.getColumnSet();
             final int columnSetSize = columnSet.size();
+            int timestampIndexFound = -1;
             if (columnSetSize > 0) {
                 // validate type cast
 
@@ -1851,10 +1842,38 @@ public class SqlCompiler implements Closeable {
                                 writerMetadata.getColumnName(i)
                         );
                     }
+
+                    if (index == writerTimestampIndex) {
+                        timestampIndexFound = i;
+                        if (fromType != ColumnType.TIMESTAMP && fromType != ColumnType.STRING) {
+                            throw SqlException.$(name.position, "expected timestamp column but type is ").put(ColumnType.nameOf(fromType));
+                        }
+                    }
+                }
+
+                // fail when target table requires chronological data and cursor cannot provide it
+                if (timestampIndexFound < 0 && writerTimestampIndex >= 0) {
+                    throw SqlException.$(name.position, "select clause must provide timestamp column");
                 }
 
                 copier = assembleRecordToRowCopier(asm, cursorMetadata, writerMetadata, listColumnFilter);
             } else {
+                // fail when target table requires chronological data and cursor cannot provide it
+                if (writerTimestampIndex > -1 && cursorTimestampIndex == -1) {
+                    if (cursorColumnCount <= writerTimestampIndex) {
+                        throw SqlException.$(name.position, "select clause must provide timestamp column");
+                    } else {
+                        int columnType = cursorMetadata.getColumnType(writerTimestampIndex);
+                        if (columnType != ColumnType.TIMESTAMP && columnType != ColumnType.STRING && columnType != ColumnType.NULL) {
+                            throw SqlException.$(name.position, "expected timestamp column but type is ").put(ColumnType.nameOf(columnType));
+                        }
+                    }
+                }
+
+                if (writerTimestampIndex > -1 && cursorTimestampIndex > -1 && writerTimestampIndex != cursorTimestampIndex) {
+                    throw SqlException.$(name.position, "nominated column of existing table (").put(writerTimestampIndex).put(") does not match nominated column in select query (").put(cursorTimestampIndex).put(')');
+                }
+                timestampIndexFound = writerTimestampIndex;
 
                 final int n = writerMetadata.getColumnCount();
                 if (n > cursorMetadata.getColumnCount()) {
@@ -1902,7 +1921,7 @@ public class SqlCompiler implements Closeable {
                                     model.getCommitLag()
                             );
                         } else {
-                            copyOrdered(writer, factory.getMetadata(), cursor, copier, writerTimestampIndex);
+                            copyOrdered(writer, factory.getMetadata(), cursor, copier, timestampIndexFound);
                         }
                     }
                 } catch (Throwable e) {
@@ -2065,6 +2084,7 @@ public class SqlCompiler implements Closeable {
                 if (tok != null && SqlKeywords.isZoneKeyword(tok)) {
                     return compiledQuery.of(new ShowTimeZoneFactory());
                 }
+                // todo: what if or rather what else?!
             }
         }
 

@@ -36,6 +36,7 @@ import io.questdb.griffin.engine.analytic.CachedAnalyticRecordCursorFactory;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.constants.LongConstant;
+import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.griffin.engine.groupby.*;
 import io.questdb.griffin.engine.groupby.vect.GroupByRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.vect.*;
@@ -163,6 +164,28 @@ public class SqlCodeGenerator implements Mutable {
             return 0;
         }
         return model.getOrderByDirectionAdvice().getQuick(index);
+    }
+
+    private static boolean allGroupsFirstLastWithSingleSymbolFilter(QueryModel model, RecordMetadata metadata) {
+        final ObjList<QueryColumn> columns = model.getColumns();
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            final QueryColumn column = columns.getQuick(i);
+            final ExpressionNode node = column.getAst();
+
+            if (node.type != ExpressionNode.LITERAL) {
+                ExpressionNode columnAst = column.getAst();
+                CharSequence token = columnAst.token;
+                if (!SqlKeywords.isFirstFunction(token) && !SqlKeywords.isLastFunction(token)) {
+                    return false;
+                }
+
+                if (columnAst.rhs.type != ExpressionNode.LITERAL || metadata.getColumnIndex(columnAst.rhs.token) < 0) {
+                    return false;
+                }
+            }
+        }
+
+        return true;
     }
 
     private VectorAggregateFunctionConstructor assembleFunctionReference(RecordMetadata metadata, ExpressionNode ast) {
@@ -907,9 +930,9 @@ public class SqlCodeGenerator implements Mutable {
     ) throws SqlException {
         final DataFrameCursorFactory dataFrameCursorFactory;
         if (intrinsicModel.hasIntervalFilters()) {
-            dataFrameCursorFactory = new IntervalBwdDataFrameCursorFactory(engine, tableName, model.getTableVersion(), intrinsicModel.buildIntervalModel(), timestampIndex);
+            dataFrameCursorFactory = new IntervalBwdDataFrameCursorFactory(engine, tableName, model.getTableId(), model.getTableVersion(), intrinsicModel.buildIntervalModel(), timestampIndex);
         } else {
-            dataFrameCursorFactory = new FullBwdDataFrameCursorFactory(engine, tableName, model.getTableVersion());
+            dataFrameCursorFactory = new FullBwdDataFrameCursorFactory(engine, tableName, model.getTableId(), model.getTableVersion());
         }
 
         // 'latest by' clause takes over the filter
@@ -1247,9 +1270,44 @@ public class SqlCodeGenerator implements Mutable {
     }
 
     @NotNull
-    private RecordCursorFactory generateSampleBy(QueryModel model, SqlExecutionContext executionContext, ExpressionNode sampleByNode) throws SqlException {
+    private RecordCursorFactory generateSampleBy(
+            QueryModel model,
+            SqlExecutionContext executionContext,
+            ExpressionNode sampleByNode
+    ) throws SqlException {
         executionContext.pushTimestampRequiredFlag(true);
         try {
+            final ExpressionNode timezoneName = model.getSampleByTimezoneName();
+            final Function timezoneNameFunc;
+            final int timezoneNameFuncPos;
+            final ExpressionNode offset = model.getSampleByOffset();
+            final Function offsetFunc;
+            final int offsetFuncPos;
+
+            if (timezoneName != null) {
+                timezoneNameFunc = functionParser.parseFunction(
+                        timezoneName,
+                        EmptyRecordMetadata.INSTANCE,
+                        executionContext
+                );
+                timezoneNameFuncPos = timezoneName.position;
+            } else {
+                timezoneNameFunc = StrConstant.NULL;
+                timezoneNameFuncPos = 0;
+            }
+
+            if (offset != null) {
+                offsetFunc = functionParser.parseFunction(
+                        offset,
+                        EmptyRecordMetadata.INSTANCE,
+                        executionContext
+                );
+                offsetFuncPos = offset.position;
+            } else {
+                offsetFunc = StrConstant.NULL;
+                offsetFuncPos = 0;
+            }
+
             final RecordCursorFactory factory = generateSubQuery(model, executionContext);
 
             // we require timestamp
@@ -1332,6 +1390,10 @@ public class SqlCodeGenerator implements Mutable {
                                 groupByMetadata,
                                 model.getColumns(),
                                 metadata,
+                                timezoneNameFunc,
+                                timezoneNameFuncPos,
+                                offsetFunc,
+                                offsetFuncPos,
                                 timestampIndex,
                                 symbolFilter,
                                 configuration.getSampleByIndexSearchPageSize()
@@ -1348,7 +1410,11 @@ public class SqlCodeGenerator implements Mutable {
                                 groupByFunctions,
                                 recordFunctions,
                                 timestampIndex,
-                                valueTypes.getColumnCount()
+                                valueTypes.getColumnCount(),
+                                timezoneNameFunc,
+                                timezoneNameFuncPos,
+                                offsetFunc,
+                                offsetFuncPos
                         );
                     }
 
@@ -1363,7 +1429,11 @@ public class SqlCodeGenerator implements Mutable {
                             groupByMetadata,
                             groupByFunctions,
                             recordFunctions,
-                            timestampIndex
+                            timestampIndex,
+                            timezoneNameFunc,
+                            timezoneNameFuncPos,
+                            offsetFunc,
+                            offsetFuncPos
                     );
                 }
 
@@ -1378,7 +1448,11 @@ public class SqlCodeGenerator implements Mutable {
                                 groupByFunctions,
                                 recordFunctions,
                                 valueTypes.getColumnCount(),
-                                timestampIndex
+                                timestampIndex,
+                                timezoneNameFunc,
+                                timezoneNameFuncPos,
+                                offsetFunc,
+                                offsetFuncPos
                         );
                     }
 
@@ -1393,7 +1467,11 @@ public class SqlCodeGenerator implements Mutable {
                             asm,
                             keyTypes,
                             valueTypes,
-                            timestampIndex
+                            timestampIndex,
+                            timezoneNameFunc,
+                            timezoneNameFuncPos,
+                            offsetFunc,
+                            offsetFuncPos
                     );
                 }
 
@@ -1407,7 +1485,11 @@ public class SqlCodeGenerator implements Mutable {
                                 recordFunctions,
                                 recordFunctionPositions,
                                 valueTypes.getColumnCount(),
-                                timestampIndex
+                                timestampIndex,
+                                timezoneNameFunc,
+                                timezoneNameFuncPos,
+                                offsetFunc,
+                                offsetFuncPos
                         );
                     }
 
@@ -1423,7 +1505,11 @@ public class SqlCodeGenerator implements Mutable {
                             groupByFunctions,
                             recordFunctions,
                             recordFunctionPositions,
-                            timestampIndex
+                            timestampIndex,
+                            timezoneNameFunc,
+                            timezoneNameFuncPos,
+                            offsetFunc,
+                            offsetFuncPos
                     );
                 }
 
@@ -1439,7 +1525,11 @@ public class SqlCodeGenerator implements Mutable {
                             recordFunctions,
                             recordFunctionPositions,
                             valueTypes.getColumnCount(),
-                            timestampIndex
+                            timestampIndex,
+                            timezoneNameFunc,
+                            timezoneNameFuncPos,
+                            offsetFunc,
+                            offsetFuncPos
                     );
                 }
 
@@ -1456,37 +1546,19 @@ public class SqlCodeGenerator implements Mutable {
                         groupByFunctions,
                         recordFunctions,
                         recordFunctionPositions,
-                        timestampIndex
+                        timestampIndex,
+                        timezoneNameFunc,
+                        timezoneNameFuncPos,
+                        offsetFunc,
+                        offsetFuncPos
                 );
-            } catch (SqlException | CairoException e) {
+            } catch (Throwable e) {
                 factory.close();
                 throw e;
             }
         } finally {
             executionContext.popTimestampRequiredFlag();
         }
-    }
-
-    private static boolean allGroupsFirstLastWithSingleSymbolFilter(QueryModel model, RecordMetadata metadata) {
-        final ObjList<QueryColumn> columns = model.getColumns();
-        for (int i = 0, n = columns.size(); i < n; i++) {
-            final QueryColumn column = columns.getQuick(i);
-            final ExpressionNode node = column.getAst();
-
-            if (node.type != ExpressionNode.LITERAL) {
-                ExpressionNode columnAst = column.getAst();
-                CharSequence token = columnAst.token;
-                if (!SqlKeywords.isFirstFunction(token) && !SqlKeywords.isLastFunction(token)) {
-                    return false;
-                }
-
-                if (columnAst.rhs.type != ExpressionNode.LITERAL || metadata.getColumnIndex(columnAst.rhs.token) < 0) {
-                    return false;
-                }
-            }
-        }
-
-        return true;
     }
 
     private RecordCursorFactory generateSelect(
@@ -1832,6 +1904,7 @@ public class SqlCodeGenerator implements Mutable {
                             distinctSymbolMetadata,
                             Chars.toString(tableName),
                             columnIndex,
+                            reader.getMetadata().getId(),
                             reader.getVersion()
                     );
                 }
@@ -2241,6 +2314,7 @@ public class SqlCodeGenerator implements Mutable {
         try (TableReader reader = engine.getReader(
                 executionContext.getCairoSecurityContext(),
                 model.getTableName().token,
+                model.getTableId(),
                 model.getTableVersion())
         ) {
             final RecordMetadata readerMeta = reader.getMetadata();
@@ -2423,10 +2497,10 @@ public class SqlCodeGenerator implements Mutable {
                 final boolean intervalHitsOnlyOnePartition;
                 if (intrinsicModel.hasIntervalFilters()) {
                     RuntimeIntrinsicIntervalModel intervalModel = intrinsicModel.buildIntervalModel();
-                    dfcFactory = new IntervalFwdDataFrameCursorFactory(engine, tableName, model.getTableVersion(), intervalModel, readerTimestampIndex);
+                    dfcFactory = new IntervalFwdDataFrameCursorFactory(engine, tableName, model.getTableId(), model.getTableVersion(),  intervalModel, readerTimestampIndex);
                     intervalHitsOnlyOnePartition = intervalModel.allIntervalsHitOnePartition(reader.getPartitionedBy());
                 } else {
-                    dfcFactory = new FullFwdDataFrameCursorFactory(engine, tableName, model.getTableVersion());
+                    dfcFactory = new FullFwdDataFrameCursorFactory(engine, tableName, model.getTableId(), model.getTableVersion());
                     intervalHitsOnlyOnePartition = false;
                 }
 
@@ -2530,11 +2604,20 @@ public class SqlCodeGenerator implements Mutable {
                                         myMeta,
                                         dfcFactory,
                                         orderByKeyColumn,
-                                        f,
                                         columnIndexes,
-                                        columnSizes);
+                                        columnSizes
+                                );
                             }
-                            return new DataFrameRecordCursorFactory(myMeta, dfcFactory, rcf, orderByKeyColumn, f, false, columnIndexes, columnSizes);
+                            return new DataFrameRecordCursorFactory(
+                                    myMeta,
+                                    dfcFactory,
+                                    rcf,
+                                    orderByKeyColumn,
+                                    f,
+                                    false,
+                                    columnIndexes,
+                                    columnSizes
+                            );
                         }
 
                         symbolValueList.clear();
@@ -2647,6 +2730,7 @@ public class SqlCodeGenerator implements Mutable {
                         myMeta,
                         engine,
                         tableName,
+                        model.getTableId(),
                         model.getTableVersion(),
                         columnIndexes,
                         columnSizes,
@@ -2658,7 +2742,7 @@ public class SqlCodeGenerator implements Mutable {
                 return new LatestByAllIndexedFilteredRecordCursorFactory(
                         configuration,
                         myMeta,
-                        new FullBwdDataFrameCursorFactory(engine, tableName, model.getTableVersion()),
+                        new FullBwdDataFrameCursorFactory(engine, tableName, model.getTableId(), model.getTableVersion()),
                         listColumnFilterA.getColumnIndexFactored(0),
                         hashColumnIndex,
                         null,
@@ -2670,7 +2754,7 @@ public class SqlCodeGenerator implements Mutable {
             return new LatestByAllFilteredRecordCursorFactory(
                     myMeta,
                     configuration,
-                    new FullBwdDataFrameCursorFactory(engine, tableName, model.getTableVersion()),
+                    new FullBwdDataFrameCursorFactory(engine, tableName, model.getTableId(), model.getTableVersion()),
                     RecordSinkFactory.getInstance(asm, myMeta, listColumnFilterA, false),
                     keyTypes,
                     null,

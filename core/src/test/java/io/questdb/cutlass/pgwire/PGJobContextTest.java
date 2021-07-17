@@ -68,6 +68,7 @@ import java.util.stream.Stream;
 import static io.questdb.std.Numbers.hexDigits;
 import static org.junit.Assert.*;
 
+@SuppressWarnings("SqlNoDataSourceInspection")
 public class PGJobContextTest extends AbstractGriffinTest {
 
     private static final Log LOG = LogFactory.getLog(PGJobContextTest.class);
@@ -3743,6 +3744,63 @@ nodejs code:
                 "rnd_double(4) расход, ",
                 "s[VARCHAR],i[INTEGER],расход[DOUBLE],t[TIMESTAMP],f[REAL],_short[SMALLINT],l[BIGINT],ts2[TIMESTAMP],bb[SMALLINT],b[BIT],rnd_symbol[VARCHAR],rnd_date[TIMESTAMP],rnd_bin[BINARY],rnd_char[CHAR],rnd_long256[NUMERIC]\n"
         );
+    }
+
+    @Test
+    public void testStaleQueryCacheOnTableDroppedSimple() throws Exception {
+        testStaleQueryCacheOnTableDropped(true);
+    }
+
+    @Test
+    public void testStaleQueryCacheOnTableDroppedNonSimple() throws Exception {
+        testStaleQueryCacheOnTableDropped(false);
+    }
+
+    public void testStaleQueryCacheOnTableDropped(boolean simple) throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    final PGWireServer ignored = createPGServer(2);
+                    final Connection connection = getConnection(simple, true)
+            ) {
+                try(CallableStatement st1 = connection.prepareCall("create table y as (" +
+                        "select timestamp_sequence(0, 1000000000) timestamp," +
+                        " rnd_symbol('a','b',null) symbol1 " +
+                        " from long_sequence(10)" +
+                        ") timestamp (timestamp)")) {
+                    st1.execute();
+                }
+
+                try (PreparedStatement select = connection.prepareStatement("select timestamp, symbol1 from y")) {
+                    ResultSet rs0 = select.executeQuery();
+                    rs0.close();
+
+                    connection.prepareStatement("drop table y").execute();
+                    connection.prepareStatement("create table y as ( " +
+                            " select " +
+                            " timestamp_sequence('1970-01-01T02:30:00.000000Z', 1000000000L) timestamp " +
+                            " ,rnd_str('a','b','c', 'd', 'e', 'f',null) symbol2" +
+                            " ,rnd_str('a','b',null) symbol1" +
+                            " from long_sequence(10)" +
+                            ")").execute();
+
+                    ResultSet rs1 = select.executeQuery();
+                    sink.clear();
+                    assertResultSet("timestamp[TIMESTAMP],symbol1[VARCHAR]\n" +
+                            "1970-01-01 02:30:00.0,null\n" +
+                            "1970-01-01 02:46:40.0,b\n" +
+                            "1970-01-01 03:03:20.0,a\n" +
+                            "1970-01-01 03:20:00.0,b\n" +
+                            "1970-01-01 03:36:40.0,b\n" +
+                            "1970-01-01 03:53:20.0,a\n" +
+                            "1970-01-01 04:10:00.0,null\n" +
+                            "1970-01-01 04:26:40.0,b\n" +
+                            "1970-01-01 04:43:20.0,b\n" +
+                            "1970-01-01 05:00:00.0,a\n", sink, rs1);
+
+                    rs1.close();
+                }
+            }
+        });
     }
 
     private static void toSink(InputStream is, CharSink sink) throws IOException {

@@ -85,7 +85,7 @@ public class FullBwdDataFrameCursorTest extends AbstractCairoTest {
                 w.commit();
                 Assert.assertEquals(N, w.size());
 
-                FullBwdDataFrameCursorFactory factory = new FullBwdDataFrameCursorFactory(engine, "x", 0);
+                FullBwdDataFrameCursorFactory factory = new FullBwdDataFrameCursorFactory(engine, "x", TableUtils.ANY_TABLE_ID,0);
                 final TableReaderRecord record = new TableReaderRecord();
 
                 try (final DataFrameCursor cursor = factory.getCursor(AllowAllSqlSecurityContext.INSTANCE)) {

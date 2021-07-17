@@ -24,9 +24,13 @@
 
 package io.questdb.cutlass.http;
 
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
@@ -69,6 +73,10 @@ public class ImportIODispatcherTest {
             "    \"name\": \"Pickup_DateTime\",\r\n" +
             "    \"type\": \"TIMESTAMP\",\r\n" +
             "    \"pattern\": \"yyyy-MM-dd HH:mm:ss\"\r\n" +
+            "  },\r\n" +
+            "  {\r\n" +
+            "    \"name\": \"DropOff_datetime\",\r\n" +
+            "    \"type\": \"STRING\"\r\n" +
             "  }\r\n" +
             "]\r\n" +
             "\r\n" +
@@ -145,7 +153,7 @@ public class ImportIODispatcherTest {
             "Content-Disposition: form-data; name=\"data\"; filename=\"table2.csv\"\r\n" +
             "Content-Type: application/octet-stream\r\n" +
             "\r\n" +
-            "Co1,Col2,Col3,Col4,Pickup_DateTime\r\n";
+            "Col1,Col2,Col3,Col4,Pickup_DateTime\r\n";
 
     private static final String ValidImportRequest2 = Request2Header +
             "B00008,,,,2017-02-01 00:30:00\r\n" +
@@ -270,6 +278,9 @@ public class ImportIODispatcherTest {
 
     private final String DdlCols1 = "(Col1+STRING,Pickup_DateTime+TIMESTAMP,DropOff_datetime+STRING)";
     private final String DdlCols2 = "(Col1+STRING,Col2+STRING,Col3+STRING,Col4+STRING,Pickup_DateTime+TIMESTAMP)+timestamp(Pickup_DateTime)";
+    private SqlCompiler compiler;
+    private BindVariableServiceImpl bindVariableService;
+    private SqlExecutionContextImpl sqlExecutionContext;
 
     @Test
     public void testImportWithWrongTimestampSpecifiedLoop() throws Exception {
@@ -533,6 +544,152 @@ public class ImportIODispatcherTest {
 
                     new SendAndReceiveRequestBuilder().execute(request, WarningValidImportResponse1Json);
                 });
+    }
+
+    @Test
+    public void testImportDropReimportDifferentSchema() throws Exception {
+        new HttpQueryTestBuilder()
+                .withTempFolder(temp)
+                .withWorkerCount(1)
+                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+                .withTelemetry(false)
+                .run((engine) -> {
+                    new SendAndReceiveRequestBuilder().execute(
+                            ValidImportRequest1.replace("STRING", "SYMBOL"),
+                            ValidImportResponse1.replace("STRING", "SYMBOL")
+                    );
+
+                    new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
+                            "GET /query?query=select+*+from+trips HTTP/1.1\r\n",
+                            "050c\r\n" +
+                                    "{\"query\":\"select * from trips\",\"columns\":[{\"name\":\"Col1\",\"type\":\"SYMBOL\"},{\"name\":\"Pickup_DateTime\",\"type\":\"TIMESTAMP\"},{\"name\":\"DropOff_datetime\",\"type\":\"SYMBOL\"}],\"dataset\":[[\"B00008\",\"2017-02-01T00:30:00.000000Z\",null],[\"B00008\",\"2017-02-01T00:40:00.000000Z\",null],[\"B00009\",\"2017-02-01T00:50:00.000000Z\",null],[\"B00013\",\"2017-02-01T00:51:00.000000Z\",null],[\"B00013\",\"2017-02-01T01:41:00.000000Z\",null],[\"B00013\",\"2017-02-01T02:00:00.000000Z\",null],[\"B00013\",\"2017-02-01T03:53:00.000000Z\",null],[\"B00013\",\"2017-02-01T04:44:00.000000Z\",null],[\"B00013\",\"2017-02-01T05:05:00.000000Z\",null],[\"B00013\",\"2017-02-01T06:54:00.000000Z\",null],[\"B00014\",\"2017-02-01T07:45:00.000000Z\",null],[\"B00014\",\"2017-02-01T08:45:00.000000Z\",null],[\"B00014\",\"2017-02-01T09:46:00.000000Z\",null],[\"B00014\",\"2017-02-01T10:54:00.000000Z\",null],[\"B00014\",\"2017-02-01T11:45:00.000000Z\",null],[\"B00014\",\"2017-02-01T11:45:00.000000Z\",null],[\"B00014\",\"2017-02-01T11:45:00.000000Z\",null],[\"B00014\",\"2017-02-01T12:26:00.000000Z\",null],[\"B00014\",\"2017-02-01T12:55:00.000000Z\",null],[\"B00014\",\"2017-02-01T13:47:00.000000Z\",null],[\"B00014\",\"2017-02-01T14:05:00.000000Z\",null],[\"B00014\",\"2017-02-01T14:58:00.000000Z\",null],[\"B00014\",\"2017-02-01T15:33:00.000000Z\",null],[\"B00014\",\"2017-02-01T15:45:00.000000Z\",null]],\"count\":24}\r\n" +
+                                    "00\r\n" +
+                                    "\r\n"
+                    );
+
+                    setupSql(engine);
+                    compiler.compile("drop table trips", sqlExecutionContext);
+
+                    String request2 = ValidImportRequest2
+                            .replace("POST /upload?name=trips HTTP", "POST /upload?name=trips&timestamp=Pickup_DateTime&overwrite=true HTTP");
+                    new SendAndReceiveRequestBuilder().execute(request2, ValidImportResponse2);
+
+                    // This will try to hit same execution plan as the first SELECT query
+                    // but because table metadata changes, old query plan is not valid anymore
+                    // and produces NPE if used
+                    new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
+                            "GET /query?query=select+*+from+trips HTTP/1.1\r\n",
+                            "0630\r\n" +
+                                    "{\"query\":\"select * from trips\",\"columns\":[{\"name\":\"Col1\",\"type\":\"STRING\"},{\"name\":\"Col2\",\"type\":\"STRING\"},{\"name\":\"Col3\",\"type\":\"STRING\"},{\"name\":\"Col4\",\"type\":\"STRING\"},{\"name\":\"Pickup_DateTime\",\"type\":\"TIMESTAMP\"}],\"dataset\":[[\"B00008\",null,null,null,\"2017-02-01T00:30:00.000000Z\"],[\"B00008\",null,null,null,\"2017-02-01T00:40:00.000000Z\"],[\"B00009\",null,null,null,\"2017-02-01T00:50:00.000000Z\"],[\"B00013\",null,null,null,\"2017-02-01T00:51:00.000000Z\"],[\"B00013\",null,null,null,\"2017-02-01T01:41:00.000000Z\"],[\"B00013\",null,null,null,\"2017-02-01T02:00:00.000000Z\"],[\"B00013\",null,null,null,\"2017-02-01T03:53:00.000000Z\"],[\"B00013\",null,null,null,\"2017-02-01T04:44:00.000000Z\"],[\"B00013\",null,null,null,\"2017-02-01T05:05:00.000000Z\"],[\"B00013\",null,null,null,\"2017-02-01T06:54:00.000000Z\"],[\"B00014\",null,null,null,\"2017-02-01T07:45:00.000000Z\"],[\"B00014\",null,null,null,\"2017-02-01T08:45:00.000000Z\"],[\"B00014\",null,null,null,\"2017-02-01T09:46:00.000000Z\"],[\"B00014\",null,null,null,\"2017-02-01T10:54:00.000000Z\"],[\"B00014\",null,null,null,\"2017-02-01T11:45:00.000000Z\"],[\"B00014\",null,null,null,\"2017-02-01T11:45:00.000000Z\"],[\"B00014\",null,null,null,\"2017-02-01T11:45:00.000000Z\"],[\"B00014\",null,null,null,\"2017-02-01T12:26:00.000000Z\"],[\"B00014\",null,null,null,\"2017-02-01T12:55:00.000000Z\"],[\"B00014\",null,null,null,\"2017-02-01T13:47:00.000000Z\"],[\"B00014\",null,null,null,\"2017-02-01T14:05:00.000000Z\"],[\"B00014\",null,null,null,\"2017-02-01T14:58:00.000000Z\"],[\"B00014\",null,null,null,\"2017-02-01T15:33:00.000000Z\"],[\"B00014\",null,null,null,\"2017-02-01T15:45:00.000000Z\"]],\"count\":24}\r\n" +
+                                    "00\r\n" +
+                                    "\r\n"
+                    );
+
+                    compiler.close();
+                });
+    }
+
+    @Test
+    public void testImportDropReimportDifferentSchemaTextQuery() throws Exception {
+        new HttpQueryTestBuilder()
+                .withTempFolder(temp)
+                .withWorkerCount(1)
+                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+                .withTelemetry(false)
+                .run((engine) -> {
+                    setupSql(engine);
+                    compiler.compile("create table trips as (" +
+                            "select cast('b' as SYMBOL) Col1, " +
+                            "timestamp_sequence(0, 100000L) Pickup_DateTime," +
+                            "timestamp_sequence(100000000L, 10000L)" +
+                            "from long_sequence(1)" +
+                            ")", sqlExecutionContext);
+
+                    new SendAndReceiveRequestBuilder().execute(
+                            "GET /exp?query=select+*+from+trips HTTP/1.1\r\n"
+                                    + SendAndReceiveRequestBuilder.RequestHeaders ,
+                            "HTTP/1.1 200 OK\r\n" +
+                                    "Server: questDB/1.0\r\n" +
+                                    "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                                    "Transfer-Encoding: chunked\r\n" +
+                                    "Content-Type: text/csv; charset=utf-8\r\n" +
+                                    "Content-Disposition: attachment; filename=\"questdb-query-0.csv\"\r\n" +
+                                    "Keep-Alive: timeout=5, max=10000\r\n" +
+                                    "\r\n" +
+                                    "70\r\n" +
+                                    "\"Col1\",\"Pickup_DateTime\",\"timestamp_sequence\"\r\n" +
+                                    "\"b\",\"1970-01-01T00:00:00.000000Z\",\"1970-01-01T00:01:40.000000Z\"\r\n" +
+                                    "\r\n" +
+                                    "00\r\n" +
+                                    "\r\n"
+                    );
+                    compiler.compile("drop table trips", sqlExecutionContext);
+
+                    String request2 = ValidImportRequest2
+                            .replace("POST /upload?name=trips HTTP", "POST /upload?name=trips&timestamp=Pickup_DateTime&overwrite=true HTTP");
+                    new SendAndReceiveRequestBuilder().execute(request2, ValidImportResponse2);
+
+                    // This will try to hit same execution plan as the first SELECT query
+                    // but because table metadata changes, old query plan is not valid anymore
+                    // and produces NPE if used
+                    new SendAndReceiveRequestBuilder().execute(
+                            "GET /exp?query=select+*+from+trips HTTP/1.1\r\n"
+                                    + SendAndReceiveRequestBuilder.RequestHeaders ,
+                            "HTTP/1.1 200 OK\r\n" +
+                                    "Server: questDB/1.0\r\n" +
+                                    "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                                    "Transfer-Encoding: chunked\r\n" +
+                                    "Content-Type: text/csv; charset=utf-8\r\n" +
+                                    "Content-Disposition: attachment; filename=\"questdb-query-0.csv\"\r\n" +
+                                    "Keep-Alive: timeout=5, max=10000\r\n" +
+                                    "\r\n" +
+                                    "0437\r\n" +
+                                    "\"Col1\",\"Col2\",\"Col3\",\"Col4\",\"Pickup_DateTime\"\r\n" +
+                                    "\"B00008\",,,,\"2017-02-01T00:30:00.000000Z\"\r\n" +
+                                    "\"B00008\",,,,\"2017-02-01T00:40:00.000000Z\"\r\n" +
+                                    "\"B00009\",,,,\"2017-02-01T00:50:00.000000Z\"\r\n" +
+                                    "\"B00013\",,,,\"2017-02-01T00:51:00.000000Z\"\r\n" +
+                                    "\"B00013\",,,,\"2017-02-01T01:41:00.000000Z\"\r\n" +
+                                    "\"B00013\",,,,\"2017-02-01T02:00:00.000000Z\"\r\n" +
+                                    "\"B00013\",,,,\"2017-02-01T03:53:00.000000Z\"\r\n" +
+                                    "\"B00013\",,,,\"2017-02-01T04:44:00.000000Z\"\r\n" +
+                                    "\"B00013\",,,,\"2017-02-01T05:05:00.000000Z\"\r\n" +
+                                    "\"B00013\",,,,\"2017-02-01T06:54:00.000000Z\"\r\n" +
+                                    "\"B00014\",,,,\"2017-02-01T07:45:00.000000Z\"\r\n" +
+                                    "\"B00014\",,,,\"2017-02-01T08:45:00.000000Z\"\r\n" +
+                                    "\"B00014\",,,,\"2017-02-01T09:46:00.000000Z\"\r\n" +
+                                    "\"B00014\",,,,\"2017-02-01T10:54:00.000000Z\"\r\n" +
+                                    "\"B00014\",,,,\"2017-02-01T11:45:00.000000Z\"\r\n" +
+                                    "\"B00014\",,,,\"2017-02-01T11:45:00.000000Z\"\r\n" +
+                                    "\"B00014\",,,,\"2017-02-01T11:45:00.000000Z\"\r\n" +
+                                    "\"B00014\",,,,\"2017-02-01T12:26:00.000000Z\"\r\n" +
+                                    "\"B00014\",,,,\"2017-02-01T12:55:00.000000Z\"\r\n" +
+                                    "\"B00014\",,,,\"2017-02-01T13:47:00.000000Z\"\r\n" +
+                                    "\"B00014\",,,,\"2017-02-01T14:05:00.000000Z\"\r\n" +
+                                    "\"B00014\",,,,\"2017-02-01T14:58:00.000000Z\"\r\n" +
+                                    "\"B00014\",,,,\"2017-02-01T15:33:00.000000Z\"\r\n" +
+                                    "\"B00014\",,,,\"2017-02-01T15:45:00.000000Z\"\r\n" +
+                                    "\r\n" +
+                                    "00\r\n" +
+                                    "\r\n"
+                    );
+
+                    compiler.close();
+                });
+    }
+
+    public void setupSql(CairoEngine engine) {
+        compiler = new SqlCompiler(engine);
+        bindVariableService = new BindVariableServiceImpl(engine.getConfiguration());
+        sqlExecutionContext = new SqlExecutionContextImpl(
+                engine, 1, engine.getMessageBus())
+                .with(
+                        AllowAllCairoSecurityContext.INSTANCE,
+                        bindVariableService,
+                        null,
+                        -1,
+                        null);
+        bindVariableService.clear();
     }
 
     private static int stringLen(int number) {

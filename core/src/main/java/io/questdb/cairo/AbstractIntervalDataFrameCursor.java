@@ -27,6 +27,7 @@ package io.questdb.cairo;
 import io.questdb.cairo.sql.DataFrame;
 import io.questdb.cairo.sql.DataFrameCursor;
 import io.questdb.cairo.vm.ReadOnlyVirtualMemory;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
 import io.questdb.std.LongList;
@@ -101,7 +102,7 @@ public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor
         return reader.getSymbolMapReader(columnIndex);
     }
 
-    public void of(TableReader reader, SqlExecutionContext sqlContext) {
+    public void of(TableReader reader, SqlExecutionContext sqlContext) throws SqlException {
         this.reader = reader;
         this.intervals = this.intervalsModel.calculateIntervals(sqlContext);
         calculateRanges(intervals);

@@ -82,7 +82,7 @@ public class TableReaderRecordCursorFactoryTest extends AbstractCairoTest {
                 writer.commit();
             }
             final RecordMetadata metadata;
-            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", -1)) {
+            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_ID, -1)) {
                 metadata = GenericRecordMetadata.copyOf(reader.getMetadata());
             }
 
@@ -97,6 +97,7 @@ public class TableReaderRecordCursorFactoryTest extends AbstractCairoTest {
                     metadata,
                     engine,
                     "x",
+                    TableUtils.ANY_TABLE_ID,
                     TableUtils.ANY_TABLE_VERSION,
                     columnIndexes,
                     columnSizes,

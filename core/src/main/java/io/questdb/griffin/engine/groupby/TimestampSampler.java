@@ -26,13 +26,15 @@ package io.questdb.griffin.engine.groupby;
 
 public interface TimestampSampler {
 
+    default long getBucketSize() {
+        throw new UnsupportedOperationException();
+    }
+
     long nextTimestamp(long timestamp);
 
     long previousTimestamp(long timestamp);
 
     long round(long timestamp);
 
-    default long getBucketSize() {
-        throw new UnsupportedOperationException();
-    }
+    void setStart(long timestamp);
 }

@@ -30,6 +30,7 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.sql.ReaderOutOfDateException;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cutlass.http.*;
 import io.questdb.cutlass.text.TextUtil;
@@ -126,7 +127,18 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
 
             if (state.recordCursorFactory != null) {
                 try {
-                    state.cursor = state.recordCursorFactory.getCursor(sqlExecutionContext);
+                    boolean runQuery = true;
+                    do {
+                        try {
+                            state.cursor = state.recordCursorFactory.getCursor(sqlExecutionContext);
+                            runQuery = false;
+                        } catch (ReaderOutOfDateException e) {
+                            info(state).$(e.getFlyweightMessage()).$();
+                            state.recordCursorFactory = Misc.free(state.recordCursorFactory);
+                            final CompiledQuery cc = compiler.compile(state.query, sqlExecutionContext);
+                            state.recordCursorFactory = cc.getRecordCursorFactory();
+                        }
+                    } while (runQuery);
                     state.metadata = state.recordCursorFactory.getMetadata();
                     header(context.getChunkedResponseSocket(), state);
                     resumeSend(context);

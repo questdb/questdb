@@ -70,7 +70,6 @@ public class ToUTCTimestampFunctionFactory implements FunctionFactory {
             final int hi = tz.length();
             final long l = Timestamps.parseOffset(tz, 0, hi);
             if (l == Long.MIN_VALUE) {
-
                 try {
                     return new OffsetTimestampFunctionFromRules(
                             timestamp,
@@ -83,9 +82,7 @@ public class ToUTCTimestampFunctionFactory implements FunctionFactory {
                     Misc.free(timestamp);
                     throw SqlException.$(argPositions.getQuick(1), "invalid timezone name");
                 }
-
             } else {
-
                 return new OffsetTimestampFunctionFromOffset(
                         timestamp,
                         multiplier * Numbers.decodeLowInt(l) * Timestamps.MINUTE_MICROS

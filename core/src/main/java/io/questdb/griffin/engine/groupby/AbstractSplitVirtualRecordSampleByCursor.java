@@ -37,9 +37,22 @@ public abstract class AbstractSplitVirtualRecordSampleByCursor extends AbstractN
             int timestampIndex, // index of timestamp column in base cursor
             TimestampSampler timestampSampler,
             ObjList<GroupByFunction> groupByFunctions,
-            ObjList<Function> placeholderFunctions
+            ObjList<Function> placeholderFunctions,
+            Function timezoneNameFunc,
+            int timezoneNameFuncPos,
+            Function offsetFunc,
+            int offsetFuncPos
     ) {
-        super(recordFunctions, timestampIndex, timestampSampler, groupByFunctions);
+        super(
+                recordFunctions,
+                timestampIndex,
+                timestampSampler,
+                groupByFunctions,
+                timezoneNameFunc,
+                timezoneNameFuncPos,
+                offsetFunc,
+                offsetFuncPos
+        );
         this.record = new SplitVirtualRecord(recordFunctions, placeholderFunctions);
         assert recordFunctions.size() == placeholderFunctions.size();
         final TimestampFunc timestampFunc = new TimestampFunc();
@@ -56,5 +69,4 @@ public abstract class AbstractSplitVirtualRecordSampleByCursor extends AbstractN
     public Record getRecord() {
         return record;
     }
-
 }

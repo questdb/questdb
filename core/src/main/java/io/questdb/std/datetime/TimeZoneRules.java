@@ -25,7 +25,17 @@
 package io.questdb.std.datetime;
 
 public interface TimeZoneRules {
-    long getOffset(long utc, int year, boolean leap);
+    long getOffset(long utcEpoch, int year, boolean leap);
 
-    long getOffset(long utcOffset);
+    long getOffset(long utcEpoch);
+
+    long getNextDST(long utcEpoch, int year, boolean leap);
+
+    /**
+     * Computes UTC time for the next Daylight Saving Transition
+     *
+     * @param utcEpoch arbitrary point in time, UTC epoch time
+     * @return UTC epoch
+     */
+    long getNextDST(long utcEpoch);
 }

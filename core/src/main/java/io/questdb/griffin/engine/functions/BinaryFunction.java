@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions;
 
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.SymbolTableSource;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 
 public interface BinaryFunction extends Function {
@@ -37,7 +38,7 @@ public interface BinaryFunction extends Function {
     }
 
     @Override
-    default void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
+    default void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
         getLeft().init(symbolTableSource, executionContext);
         getRight().init(symbolTableSource, executionContext);
     }

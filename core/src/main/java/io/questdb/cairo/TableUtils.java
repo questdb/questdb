@@ -51,6 +51,7 @@ public final class TableUtils {
     public static final String TAB_INDEX_FILE_NAME = "_tab_index.d";
     public static final int INITIAL_TXN = 0;
     public static final int NULL_LEN = -1;
+    public static final int ANY_TABLE_ID = -1;
     public static final int ANY_TABLE_VERSION = -1;
     public static final long TX_OFFSET_TRANSIENT_ROW_COUNT = 8;
     public static final long TX_OFFSET_FIXED_ROW_COUNT = 16;

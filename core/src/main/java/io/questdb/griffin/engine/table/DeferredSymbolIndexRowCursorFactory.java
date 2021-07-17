@@ -28,6 +28,7 @@ import io.questdb.cairo.EmptyRowCursor;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.*;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 
 public class DeferredSymbolIndexRowCursorFactory implements FunctionBasedRowCursorFactory {
@@ -67,7 +68,7 @@ public class DeferredSymbolIndexRowCursorFactory implements FunctionBasedRowCurs
     }
 
     @Override
-    public void prepareCursor(TableReader tableReader, SqlExecutionContext sqlExecutionContext) {
+    public void prepareCursor(TableReader tableReader, SqlExecutionContext sqlExecutionContext) throws SqlException {
         symbol.init(tableReader, sqlExecutionContext);
         int symbolKey = tableReader.getSymbolMapReader(columnIndex).keyOf(symbol.getSymbol(null));
         if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {
