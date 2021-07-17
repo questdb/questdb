@@ -24,31 +24,28 @@
 
 package io.questdb.griffin.engine.table;
 
-import io.questdb.cairo.BitmapIndexReader;
-import io.questdb.cairo.sql.DataFrame;
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.RowCursor;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.DirectLongList;
-import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.Rows;
+import io.questdb.std.Vect;
 import org.jetbrains.annotations.NotNull;
 
-class LatestByAllIndexedFilteredRecordCursor extends AbstractRecordListCursor {
-
-    private final int columnIndex;
-    private final IntHashSet found = new IntHashSet();
-    private final Function filter;
+class LatestByAllIndexedFilteredRecordCursor extends LatestByAllIndexedRecordCursor {
+    protected final Function filter;
 
     public LatestByAllIndexedFilteredRecordCursor(
             int columnIndex,
+            int hashColumnIndex,
             @NotNull DirectLongList rows,
+            @NotNull DirectLongList hashes,
             @NotNull Function filter,
-            @NotNull IntList columnIndexes
+            @NotNull IntList columnIndexes,
+            @NotNull DirectLongList prefixes
     ) {
-        super(rows, columnIndexes);
-        this.columnIndex = columnIndex;
+        super(columnIndex, hashColumnIndex, rows, hashes, columnIndexes, prefixes);
         this.filter = filter;
     }
 
@@ -59,54 +56,32 @@ class LatestByAllIndexedFilteredRecordCursor extends AbstractRecordListCursor {
     }
 
     @Override
-    protected void buildTreeMap(SqlExecutionContext executionContext) {
-        found.clear();
+    protected void buildTreeMap(SqlExecutionContext executionContext) throws SqlException {
         filter.init(this, executionContext);
-
-        final int keyCount = getSymbolTable(columnIndex).size() + 1;
-        int keyLo = 0;
-        int keyHi = keyCount;
-
-        int localLo = Integer.MAX_VALUE;
-        int localHi = Integer.MIN_VALUE;
-
-        DataFrame frame;
-        int frameColumnIndex = columnIndexes.getQuick(columnIndex);
-        while ((frame = this.dataFrameCursor.next()) != null && found.size() < keyCount) {
-            final BitmapIndexReader indexReader = frame.getBitmapIndexReader(frameColumnIndex, BitmapIndexReader.DIR_BACKWARD);
-            final long rowLo = frame.getRowLo();
-            final long rowHi = frame.getRowHi() - 1;
-            final int partitionIndex = frame.getPartitionIndex();
-            recordA.jumpTo(partitionIndex, 0);
-
-            for (int i = keyLo; i < keyHi; i++) {
-                int index = found.keyIndex(i);
-                if (index > -1) {
-                    RowCursor cursor = indexReader.getCursor(false, i, rowLo, rowHi);
-                    if (cursor.hasNext()) {
-                        long row = cursor.next();
-                        recordA.setRecordIndex(row);
-                        if (filter.getBool(recordA)) {
-                            rows.add(Rows.toRowID(partitionIndex, row));
-                            found.addAt(index, i);
-                        }
-                    } else {
-                        // adjust range
-                        if (i < localLo) {
-                            localLo = i;
-                        }
-
-                        if (i > localHi) {
-                            localHi = i;
-                        }
-                    }
-                }
-            }
-            rows.sortAsUnsigned();
-            keyLo = localLo;
-            keyHi = localHi + 1;
-            localLo = Integer.MAX_VALUE;
-            localHi = Integer.MIN_VALUE;
-        }
+        super.buildTreeMap(executionContext);
     }
+
+    @Override
+    protected void postProcessRows() {
+        final long rowCount = aLimit;
+        rows.setPos(rowCount);
+
+        for (long r = 0; r < rowCount; ++r) {
+            long row = rows.get(r) - 1;
+            recordA.jumpTo(Rows.toPartitionIndex(row), Rows.toLocalRowID(row));
+            if (!filter.getBool(recordA)) {
+                rows.set(r, 0); // clear row id
+            }
+        }
+
+        Vect.sortULongAscInPlace(rows.getAddress(), rowCount);
+
+        while (rows.get(indexShift) <= 0) {
+            indexShift++;
+        }
+
+        aLimit = rowCount;
+        aIndex = indexShift;
+    }
+
 }

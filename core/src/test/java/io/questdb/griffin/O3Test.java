@@ -296,6 +296,30 @@ public class O3Test extends AbstractO3Test {
     }
 
     @Test
+    public void testInsertNullTimestamp() throws Exception {
+        executeWithPool(2, (engine, compiler, sqlExecutionContext) -> {
+            compiler.compile(
+                    "create table x as (" +
+                            "select" +
+                            " cast(x as int) i," +
+                            " rnd_symbol('msft','ibm', 'googl') sym," +
+                            " timestamp_sequence(10000000000,1000000000L) ts" +
+                            " from long_sequence(100)" +
+                            "), index(sym) timestamp (ts) partition by DAY",
+                    sqlExecutionContext
+            );
+
+            // to_timestamp produces NULL because values does not match the pattern
+            try {
+                TestUtils.insert(compiler, sqlExecutionContext, "insert into x values(0, 'abc', to_timestamp('2019-08-15T16:03:06.595', 'yyyy-MM-dd:HH:mm:ss.SSSUUU'))");
+                Assert.fail();
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "timestamps before 1970-01-01 are not allowed for O3");
+            }
+        });
+    }
+
+    @Test
     public void testInsertTouchesNotLastPartition() throws Exception {
         executeVanilla(O3Test::testOOOTouchesNotLastPartition0);
     }
@@ -313,6 +337,41 @@ public class O3Test extends AbstractO3Test {
     @Test
     public void testInsertTouchesNotLastTopPartition() throws Exception {
         executeVanilla(O3Test::testOOOTouchesNotLastPartitionTop0);
+    }
+
+    @Test
+    public void testLagOverflowBySize() throws Exception {
+        executeVanilla(O3Test::testLagOverflowBySize0);
+    }
+
+    @Test
+    public void testLagOverflowBySizeContended() throws Exception {
+        executeWithPool(0, O3Test::testLagOverflowBySize0);
+    }
+
+    @Test
+    public void testLagOverflowBySizeParallel() throws Exception {
+        executeWithPool(4, O3Test::testLagOverflowBySize0);
+    }
+
+    @Test
+    public void testLagOverflowMidCommit() throws Exception {
+        executeVanilla(O3Test::testLagOverflowMidCommit0);
+    }
+
+    @Test
+    public void testLagOverflowMidCommitContended() throws Exception {
+        executeWithPool(0, O3Test::testLagOverflowMidCommit0);
+    }
+
+    @Test
+    public void testLagOverflowMidCommitParallel() throws Exception {
+        executeWithPool(4, O3Test::testLagOverflowMidCommit0);
+    }
+
+    @Test
+    public void testLargeCommitLagContended() throws Exception {
+        executeWithPool(0, O3Test::testLargeCommitLag0);
     }
 
     @Test
@@ -641,11 +700,6 @@ public class O3Test extends AbstractO3Test {
     }
 
     @Test
-    public void testLargeCommitLagContended() throws Exception {
-        executeWithPool(0, O3Test::testLargeCommitLag0);
-    }
-
-    @Test
     public void testVanillaCommitLagParallel() throws Exception {
         executeWithPool(4, O3Test::testVanillaCommitLag0);
     }
@@ -877,7 +931,7 @@ public class O3Test extends AbstractO3Test {
     private static void testPartitionedOOONullSetters0(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext)
             throws SqlException, NumericException {
         compiler.compile("create table x (a int, b int, c int, ts timestamp) timestamp(ts) partition by DAY", sqlExecutionContext);
-        try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x")) {
+        try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "testing")) {
             TableWriter.Row r;
 
             r = w.newRow(TimestampFormatUtils.parseUTCTimestamp("2013-02-10T00:10:00.000000Z"));
@@ -1081,7 +1135,7 @@ public class O3Test extends AbstractO3Test {
 
         // insert some records in order
         final Rnd rnd = new Rnd();
-        try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x")) {
+        try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "testing")) {
             long t = 0;
             for (int i = 0; i < 1000; i++) {
                 TableWriter.Row r = w.newRow(t++);
@@ -1243,6 +1297,39 @@ public class O3Test extends AbstractO3Test {
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
+        assertLag(
+                engine,
+                compiler,
+                sqlExecutionContext,
+                "",
+                " from long_sequence(1000000)",
+                "insert batch 100000 commitLag 180s into x select * from top"
+        );
+    }
+
+    private static void testLagOverflowMidCommit0(
+            CairoEngine engine,
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
+        assertLag(
+                engine,
+                compiler,
+                sqlExecutionContext,
+                "with maxUncommittedRows=400",
+                " from long_sequence(1000000)",
+                "insert batch 100000 commitLag 180s into x select * from top"
+        );
+    }
+
+    private static void assertLag(
+            CairoEngine engine,
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext,
+            String createTableWith,
+            String selectFrom,
+            String o3InsertSql
+    ) throws SqlException {
         compiler.compile(
                 "create table x as (" +
                         "select" +
@@ -1265,7 +1352,8 @@ public class O3Test extends AbstractO3Test {
                         " rnd_char() t," +
                         " rnd_long256() l256" +
                         " from long_sequence(0)" +
-                        "), index(sym) timestamp (ts) partition by MONTH",
+                        "), index(sym) timestamp (ts) partition by MONTH " +
+                        createTableWith,
                 sqlExecutionContext
         );
 
@@ -1291,7 +1379,7 @@ public class O3Test extends AbstractO3Test {
                         " rnd_str(5,16,2) n," +
                         " rnd_char() t," +
                         " rnd_long256() l256" +
-                        " from long_sequence(1000000)" +
+                        selectFrom +
                         ")",
                 sqlExecutionContext
         );
@@ -1303,11 +1391,26 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext,
                 "create table y as (x union all top)",
                 "y order by ts",
-                "insert batch 100000 commitLag 180s into x select * from top",
+                o3InsertSql,
                 "x"
         );
 
         assertIndexConsistency(compiler, sqlExecutionContext);
+    }
+
+    private static void testLagOverflowBySize0(
+            CairoEngine engine,
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
+        assertLag(
+                engine,
+                compiler,
+                sqlExecutionContext,
+                "with maxUncommittedRows=10000, commitLag=5d",
+                " from long_sequence(100000)",
+                "insert batch 20000 commitLag 3d into x select * from top"
+        );
     }
 
     private static void testLargeCommitLag0(
@@ -1625,7 +1728,7 @@ public class O3Test extends AbstractO3Test {
         long expectedMaxTimestamp = Long.MIN_VALUE;
         int step = 100;
         int rowCount = 10;
-        try (TableWriter w = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "x")) {
+        try (TableWriter w = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "x", "testing")) {
             for (int i = 0; i < 20; i++) {
                 for (int j = 0; j < rowCount; j++) {
                     long t = ts + (rowCount - j) * step;
@@ -5112,30 +5215,6 @@ public class O3Test extends AbstractO3Test {
         );
     }
 
-    @Test
-    public void testInsertNullTimestamp() throws Exception {
-        executeWithPool(2, (engine, compiler, sqlExecutionContext) -> {
-            compiler.compile(
-                    "create table x as (" +
-                            "select" +
-                            " cast(x as int) i," +
-                            " rnd_symbol('msft','ibm', 'googl') sym," +
-                            " timestamp_sequence(10000000000,1000000000L) ts" +
-                            " from long_sequence(100)" +
-                            "), index(sym) timestamp (ts) partition by DAY",
-                    sqlExecutionContext
-            );
-
-            // to_timestamp produces NULL because values does not match the pattern
-            try {
-                TestUtils.insert(compiler, sqlExecutionContext, "insert into x values(0, 'abc', to_timestamp('2019-08-15T16:03:06.595', 'yyyy-MM-dd:HH:mm:ss.SSSUUU'))");
-                Assert.fail();
-            } catch (CairoException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "timestamps before 1970-01-01 are not allowed for O3");
-            }
-        });
-    }
-
     private static void testPartitionedDataOODataPbOODataDropColumn0(
             CairoEngine engine,
             SqlCompiler compiler,
@@ -5263,7 +5342,7 @@ public class O3Test extends AbstractO3Test {
         );
 
         final Rnd rnd = new Rnd();
-        try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x")) {
+        try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "testing")) {
             long ts = 1000000 * 1000L;
             long step = 1000000;
             TxnScoreboard txnScoreboard = w.getTxnScoreboard();

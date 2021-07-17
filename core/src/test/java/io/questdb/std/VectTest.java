@@ -24,6 +24,7 @@
 
 package io.questdb.std;
 
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -38,36 +39,38 @@ public class VectTest {
     }
 
     @Test
-    public void testMergeFourSameSize() {
-        final int count = 1_000_000;
-        long indexPtr1 = seedAndSort(count);
-        long indexPtr2 = seedAndSort(count);
-        long indexPtr3 = seedAndSort(count);
-        long indexPtr4 = seedAndSort(count);
+    public void testMergeFourSameSize() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final int count = 1_000_000;
+            long indexPtr1 = seedAndSort(count);
+            long indexPtr2 = seedAndSort(count);
+            long indexPtr3 = seedAndSort(count);
+            long indexPtr4 = seedAndSort(count);
 
-        long struct = Unsafe.malloc(Long.BYTES * 8);
-        Unsafe.getUnsafe().putLong(struct, indexPtr1);
-        Unsafe.getUnsafe().putLong(struct + Long.BYTES, count);
+            long struct = Unsafe.malloc(Long.BYTES * 8);
+            Unsafe.getUnsafe().putLong(struct, indexPtr1);
+            Unsafe.getUnsafe().putLong(struct + Long.BYTES, count);
 
-        Unsafe.getUnsafe().putLong(struct + 2 * Long.BYTES, indexPtr2);
-        Unsafe.getUnsafe().putLong(struct + 3 * Long.BYTES, count);
+            Unsafe.getUnsafe().putLong(struct + 2 * Long.BYTES, indexPtr2);
+            Unsafe.getUnsafe().putLong(struct + 3 * Long.BYTES, count);
 
-        Unsafe.getUnsafe().putLong(struct + 4 * Long.BYTES, indexPtr3);
-        Unsafe.getUnsafe().putLong(struct + 5 * Long.BYTES, count);
+            Unsafe.getUnsafe().putLong(struct + 4 * Long.BYTES, indexPtr3);
+            Unsafe.getUnsafe().putLong(struct + 5 * Long.BYTES, count);
 
-        Unsafe.getUnsafe().putLong(struct + 6 * Long.BYTES, indexPtr4);
-        Unsafe.getUnsafe().putLong(struct + 7 * Long.BYTES, count);
-        try {
-            long merged = Vect.mergeLongIndexesAsc(struct, 4);
-            assertIndexAsc(count * 4, merged);
-            Vect.freeMergedIndex(merged);
-        } finally {
-            Unsafe.free(indexPtr1, count * 2 * Long.BYTES);
-            Unsafe.free(indexPtr2, count * 2 * Long.BYTES);
-            Unsafe.free(indexPtr3, count * 2 * Long.BYTES);
-            Unsafe.free(indexPtr4, count * 2 * Long.BYTES);
-            Unsafe.free(struct, Long.BYTES * 8);
-        }
+            Unsafe.getUnsafe().putLong(struct + 6 * Long.BYTES, indexPtr4);
+            Unsafe.getUnsafe().putLong(struct + 7 * Long.BYTES, count);
+            try {
+                long merged = Vect.mergeLongIndexesAsc(struct, 4);
+                assertIndexAsc(count * 4, merged);
+                Vect.freeMergedIndex(merged);
+            } finally {
+                Unsafe.free(indexPtr1, count * 2 * Long.BYTES);
+                Unsafe.free(indexPtr2, count * 2 * Long.BYTES);
+                Unsafe.free(indexPtr3, count * 2 * Long.BYTES);
+                Unsafe.free(indexPtr4, count * 2 * Long.BYTES);
+                Unsafe.free(struct, Long.BYTES * 8);
+            }
+        });
     }
 
     @Test
@@ -187,10 +190,12 @@ public class VectTest {
     }
 
     @Test
-    public void testSortFour() {
-        for (int i = 0; i < 100; i++) {
-            testSort(4);
-        }
+    public void testSortFour() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            for (int i = 0; i < 100; i++) {
+                testSort(4);
+            }
+        });
     }
 
     @Test
@@ -211,7 +216,7 @@ public class VectTest {
         int[] sizes = new int[]{0, 1, 3, 4, 5, 7, 9, 15, 20, 1024 * 1024 - 1, 1024 * 1024, 1024 * 1024 + 1, 2_000_000, 10_000_000};
         long[] values = new long[]{-1, 0, 1, Long.MIN_VALUE, Long.MAX_VALUE, 0xabcd};
         long buffSize = sizes[sizes.length - 1] * Long.BYTES;
-        long buffer = Unsafe.getUnsafe().allocateMemory(buffSize);
+        long buffer = Unsafe.malloc(buffSize);
 
         try {
             for (int size : sizes) {
@@ -236,7 +241,7 @@ public class VectTest {
         double[] values = new double[]{-1, 0, 1, Double.MIN_VALUE, Double.MAX_VALUE, Double.NaN, 1.0023455};
         int typeBytes = Double.BYTES;
         long buffSize = sizes[sizes.length - 1] * typeBytes;
-        long buffer = Unsafe.getUnsafe().allocateMemory(buffSize);
+        long buffer = Unsafe.malloc(buffSize);
 
         try {
             for (int size : sizes) {
@@ -261,7 +266,7 @@ public class VectTest {
         float[] values = new float[]{-1, 0, 1, Float.MIN_VALUE, Float.MAX_VALUE, Float.NaN, 1.0023455f};
         int typeBytes = Float.BYTES;
         long buffSize = sizes[sizes.length - 1] * typeBytes;
-        long buffer = Unsafe.getUnsafe().allocateMemory(buffSize);
+        long buffer = Unsafe.malloc(buffSize);
 
         try {
             for (int size : sizes) {
@@ -286,7 +291,7 @@ public class VectTest {
         int[] values = new int[]{-1, 0, 1, Integer.MIN_VALUE, Integer.MAX_VALUE, 0xabcd};
         int typeBytes = Integer.BYTES;
         long buffSize = sizes[sizes.length - 1] * typeBytes;
-        long buffer = Unsafe.getUnsafe().allocateMemory(buffSize);
+        long buffer = Unsafe.malloc(buffSize);
 
         try {
             for (int size : sizes) {
@@ -314,7 +319,7 @@ public class VectTest {
         short[] values = new short[]{-1, 0, 1, Short.MIN_VALUE, Short.MAX_VALUE, 0xabc};
         int typeBytes = Short.BYTES;
         long buffSize = sizes[sizes.length - 1] * typeBytes + maxOffset;
-        long buffer = Unsafe.getUnsafe().allocateMemory(buffSize);
+        long buffer = Unsafe.malloc(buffSize);
 
         try {
             for (int offset: offsetBytes) {
@@ -343,9 +348,9 @@ public class VectTest {
         long buffSize = maxSize * typeBytes;
 
         int indexBuffSize = maxSize * Long.BYTES * 2;
-        long index = Unsafe.getUnsafe().allocateMemory(indexBuffSize);
-        long dst = Unsafe.getUnsafe().allocateMemory(buffSize);
-        long src = Unsafe.getUnsafe().allocateMemory(buffSize);
+        long index = Unsafe.malloc(indexBuffSize);
+        long dst = Unsafe.malloc(buffSize);
+        long src = Unsafe.malloc(buffSize);
 
         for(int i = 0; i < maxSize; i++) {
             long offset = (2 * i + 1) * Long.BYTES;
@@ -382,8 +387,8 @@ public class VectTest {
         int maxSize = 1024*1024;
         int[] sizes = {1024, 4096, maxSize};
         int buffSize = 1024 + 4096 + maxSize;
-        long from = Unsafe.getUnsafe().allocateMemory(buffSize);
-        long to = Unsafe.getUnsafe().allocateMemory(maxSize);
+        long from = Unsafe.malloc(buffSize);
+        long to = Unsafe.malloc(maxSize);
 
         try {
             // initialize from buffer

@@ -68,7 +68,7 @@ public class SimulatedDeleteTest extends AbstractGriffinTest {
         });
     }
 
-    private static void execInsert(InsertStatement statement) {
+    private static void execInsert(InsertStatement statement) throws SqlException {
         try (InsertMethod m = statement.createMethod(sqlExecutionContext)) {
             m.execute();
             m.commit();

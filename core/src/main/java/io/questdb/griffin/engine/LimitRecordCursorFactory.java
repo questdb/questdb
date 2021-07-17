@@ -26,6 +26,7 @@ package io.questdb.griffin.engine;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.sql.*;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import org.jetbrains.annotations.Nullable;
 
@@ -40,7 +41,7 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
-    public RecordCursor getCursor(SqlExecutionContext executionContext) {
+    public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         cursor.of(base.getCursor(executionContext), executionContext);
         return cursor;
     }
@@ -105,7 +106,7 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
             base.recordAt(record, atRowId);
         }
 
-        public void of(RecordCursor base, SqlExecutionContext executionContext) {
+        public void of(RecordCursor base, SqlExecutionContext executionContext) throws SqlException {
             this.base = base;
             loFunction.init(base, executionContext);
             if (hiFunction != null) {

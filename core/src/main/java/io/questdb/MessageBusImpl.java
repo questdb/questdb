@@ -67,6 +67,10 @@ public class MessageBusImpl implements MessageBus {
     private final MPSequence o3CopyPubSeq;
     private final MCSequence o3CopySubSeq;
 
+    private final RingQueue<LatestByTask> latestByQueue;
+    private final MPSequence latestByPubSeq;
+    private final MCSequence latestBySubSeq;
+
     private final CairoConfiguration configuration;
 
     public MessageBusImpl(@NotNull CairoConfiguration configuration) {
@@ -115,6 +119,11 @@ public class MessageBusImpl implements MessageBus {
         this.o3PurgePubSeq = new MPSequence(this.o3PurgeQueue.getCapacity());
         this.o3PurgeSubSeq = new MCSequence(this.o3PurgeQueue.getCapacity());
         this.o3PurgePubSeq.then(this.o3PurgeSubSeq).then(this.o3PurgePubSeq);
+
+        this.latestByQueue = new RingQueue<>(LatestByTask::new, configuration.getLatestByQueueCapacity());
+        this.latestByPubSeq = new MPSequence(latestByQueue.getCapacity());
+        this.latestBySubSeq = new MCSequence(latestByQueue.getCapacity());
+        latestByPubSeq.then(latestBySubSeq).then(latestByPubSeq);
     }
 
     @Override
@@ -255,5 +264,20 @@ public class MessageBusImpl implements MessageBus {
     @Override
     public MCSequence getO3PurgeSubSeq() {
         return o3PurgeSubSeq;
+    }
+
+    @Override
+    public Sequence getLatestByPubSeq() {
+        return latestByPubSeq;
+    }
+
+    @Override
+    public RingQueue<LatestByTask> getLatestByQueue() {
+        return latestByQueue;
+    }
+
+    @Override
+    public Sequence getLatestBySubSeq() {
+        return latestBySubSeq;
     }
 }

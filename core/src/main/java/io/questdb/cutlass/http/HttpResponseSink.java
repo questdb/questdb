@@ -176,11 +176,10 @@ public class HttpResponseSink implements Closeable, Mutable {
             len = sz - Zip.availOut(z_streamp);
             compressOutBuffer.onWrite(len);
             if (ret < 0) {
-                if (ret == Zip.Z_BUF_ERROR && len == 0) {
-                    // This is not an error, zlib just couldn't do any work with the input/output buffers it was provided.
-                    // This happens often (will depend on output buffer size) when there is no new input and zlib has finished generating
-                    // output from previously provided input
-                } else {
+                // This is not an error, zlib just couldn't do any work with the input/output buffers it was provided.
+                // This happens often (will depend on output buffer size) when there is no new input and zlib has finished generating
+                // output from previously provided input
+                if (ret != Zip.Z_BUF_ERROR || len != 0) {
                     throw HttpException.instance("could not deflate [ret=").put(ret);
                 }
             }
@@ -273,7 +272,7 @@ public class HttpResponseSink implements Closeable, Mutable {
                 // test how many times we tried to send before parking up
                 throw PeerIsSlowToReadException.INSTANCE;
             } else {
-                dumpBuffer('<', sendBuf.getReadAddress(), n);
+                dumpBuffer(sendBuf.getReadAddress(), n);
                 sendBuf.onRead(n);
                 nSend -= n;
                 totalBytesSent += n;
@@ -283,9 +282,9 @@ public class HttpResponseSink implements Closeable, Mutable {
         sendBuf.clearAndPrepareToWriteToBuffer();
     }
 
-    private void dumpBuffer(char direction, long buffer, int size) {
+    private void dumpBuffer(long buffer, int size) {
         if (dumpNetworkTraffic && size > 0) {
-            StdoutSink.INSTANCE.put(direction);
+            StdoutSink.INSTANCE.put('<');
             Net.dump(buffer, size);
         }
     }
@@ -570,6 +569,11 @@ public class HttpResponseSink implements Closeable, Mutable {
             if (deflateBeforeSend) {
                 headerImpl.put("Content-Encoding: gzip").put(Misc.EOL);
             }
+        }
+
+        @Override
+        public void shutdownWrite() {
+            nf.shutdown(fd, Net.SHUT_WR);
         }
     }
 

@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions;
 
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.SymbolTableSource;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 
 public interface TernaryFunction extends Function {
@@ -38,7 +39,7 @@ public interface TernaryFunction extends Function {
     }
 
     @Override
-    default void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
+    default void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
         getLeft().init(symbolTableSource, executionContext);
         getCenter().init(symbolTableSource, executionContext);
         getRight().init(symbolTableSource, executionContext);

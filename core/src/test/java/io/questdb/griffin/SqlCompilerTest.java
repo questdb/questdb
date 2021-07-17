@@ -1767,7 +1767,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                         public void run(CairoEngine engine) {
                             if (state++ > 0) {
                                 // remove column from table X
-                                try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "X")) {
+                                try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "X", "testing")) {
                                     if (state == 2) {
                                         writer.removeColumn("b");
                                     } else {
@@ -1872,7 +1872,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                     public void run(CairoEngine engine) {
                         if (state++ == 1) {
                             // remove column from table X
-                            try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "X")) {
+                            try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "X", "testing")) {
                                 writer.removeColumn("b");
                             }
                         }
@@ -1899,7 +1899,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                         public void run(CairoEngine engine) {
                             if (state++ == 1) {
                                 // remove column from table X
-                                try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "X")) {
+                                try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "X", "testing")) {
                                     writer.removeColumn("b");
                                 }
                             }
@@ -1929,7 +1929,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                     public void run(CairoEngine engine) {
                         if (state++ == 1) {
                             // remove column from table X
-                            try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "X")) {
+                            try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "X", "testing")) {
                                 writer.removeColumn("a");
                                 writer.addColumn("c", ColumnType.FLOAT);
                             }
@@ -1956,7 +1956,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                         public void run(CairoEngine engine) {
                             if (state++ == 1) {
                                 // remove column from table X
-                                try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "X")) {
+                                try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "X", "testing")) {
                                     writer.removeColumn("t");
                                     writer.addColumn("t", ColumnType.FLOAT);
                                 }
@@ -1990,7 +1990,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                 sqlExecutionContext
         );
 
-        try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_VERSION)) {
+        try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_VERSION, TableUtils.ANY_TABLE_VERSION)) {
             sink.clear();
             reader.getMetadata().toJson(sink);
             TestUtils.assertEquals(
@@ -2027,7 +2027,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                 sqlExecutionContext
         );
 
-        try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_VERSION)) {
+        try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION)) {
             sink.clear();
             reader.getMetadata().toJson(sink);
             TestUtils.assertEquals(
@@ -2065,7 +2065,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                 sqlExecutionContext
         );
 
-        try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_VERSION)) {
+        try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION)) {
             sink.clear();
             reader.getMetadata().toJson(sink);
             TestUtils.assertEquals(
@@ -2104,7 +2104,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
         );
 
         try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE,
-                "x", TableUtils.ANY_TABLE_VERSION)) {
+                "x", TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION)) {
             sink.clear();
             reader.getMetadata().toJson(sink);
             TestUtils.assertEquals(
@@ -2143,7 +2143,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
         );
 
         try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE,
-                "x", TableUtils.ANY_TABLE_VERSION)) {
+                "x", TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION)) {
             sink.clear();
             reader.getMetadata().toJson(sink);
             TestUtils.assertEquals(
@@ -2172,7 +2172,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                 sqlExecutionContext);
 
         try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE,
-                "x")) {
+                "x", "testing")) {
             sink.clear();
             TableWriterMetadata metadata = writer.getMetadata();
             metadata.toJson(sink);
@@ -2210,7 +2210,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     public void testCreateTableUtf8() throws SqlException {
         compiler.compile("create table доходы(экспорт int)", sqlExecutionContext);
 
-        try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "доходы")) {
+        try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "доходы", "testing")) {
             for (int i = 0; i < 20; i++) {
                 TableWriter.Row row = writer.newRow();
                 row.putInt(0, i);
@@ -2454,6 +2454,61 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                         " from long_sequence(20)) timestamp(ts)",
                 "select * from x"
         );
+    }
+
+    @Test
+    public void testInsertAsSelectColumnListAndTimestampO3() throws Exception {
+        String expectedData = "a\tn\to\tp\n" +
+                "73575701\t1970-01-01T04:26:40.000000Z\t0\t\n" +
+                "-727724771\t1970-01-01T04:43:20.000000Z\t0\t\n" +
+                "1548800833\t1970-01-01T05:00:00.000000Z\t0\t\n" +
+                "315515118\t1970-01-01T05:16:40.000000Z\t0\t\n" +
+                "-1148479920\t1970-01-01T05:33:20.000000Z\t0\t\n";
+
+        testInsertAsSelect(expectedData,
+                "create table x (a INT, n TIMESTAMP, o BYTE, p BINARY) timestamp(n) partition by DAY",
+                "insert into x (a, n) " +
+                        "select * from (select" +
+                        " rnd_int()," +
+                        " timestamp_sequence(20 * 1000000000L, -1000000000L) ts" +
+                        " from long_sequence(5))",
+                "select * from x"
+        );
+    }
+
+    @Test
+    public void testInsertAsSelectColumnListAndNoTimestamp() throws Exception {
+        try {
+            testInsertAsSelect("",
+                    "create table x (a INT, n TIMESTAMP, o BYTE, p BINARY) timestamp(n) partition by DAY",
+                    "insert into x (a) " +
+                            "select * from (select" +
+                            " rnd_int()" +
+                            " from long_sequence(5))",
+                    "select * from x"
+            );
+            Assert.fail();
+        } catch (SqlException ex) {
+            TestUtils.assertContains(ex.getFlyweightMessage(), "select clause must provide timestamp column");
+        }
+    }
+
+    @Test
+    public void testInsertAsSelectColumnListAndTimestampOfWrongType() throws Exception {
+        try {
+            testInsertAsSelect("",
+                    "create table x (a INT, n TIMESTAMP, o BYTE, p BINARY) timestamp(n)",
+                    "insert into x (a, n) " +
+                            "select * from (select" +
+                            " rnd_int(), " +
+                            "rnd_int() " +
+                            " from long_sequence(5))",
+                    "select * from x"
+            );
+            Assert.fail();
+        } catch (SqlException ex) {
+            TestUtils.assertContains(ex.getFlyweightMessage(), "expected timestamp column but type is INT");
+        }
     }
 
     @Test
@@ -2863,7 +2918,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                     // remove column from table X
                     try (TableWriter writer = engine.getWriter(
                             AllowAllCairoSecurityContext.INSTANCE,
-                            "y"
+                            "y", "testing"
                     )) {
                         writer.removeColumn("int1");
                         writer.addColumn("c", ColumnType.INT);
@@ -2875,9 +2930,9 @@ public class SqlCompilerTest extends AbstractGriffinTest {
         TestUtils.assertMemoryLeak(() -> {
             try (CairoEngine engine = new CairoEngine(configuration) {
                 @Override
-                public TableReader getReader(CairoSecurityContext cairoSecurityContext, CharSequence tableName, long version) {
+                public TableReader getReader(CairoSecurityContext cairoSecurityContext, CharSequence tableName, int id, long version) {
                     fiddler.run(this);
-                    return super.getReader(cairoSecurityContext, tableName, version);
+                    return super.getReader(cairoSecurityContext, tableName, id, version);
                 }
             }) {
                 try (SqlCompiler compiler = new SqlCompiler(engine)) {
@@ -3022,7 +3077,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                 Assert.assertEquals(1, success.get());
                 Assert.assertNotEquals(-1, index.get());
 
-                try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_VERSION)) {
+                try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION)) {
                     sink.clear();
                     reader.getMetadata().toJson(sink);
                     if (index.get() == 0) {
@@ -3044,7 +3099,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
             try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "x1")) {
                 Assert.assertEquals(2, reader.getMetadata().getTimestampIndex());
 
-                try (TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x1")) {
+                try (TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x1", "testing")) {
                     Assert.assertEquals(2, writer.getMetadata().getTimestampIndex());
                     writer.removeColumn("b");
                     Assert.assertEquals(1, writer.getMetadata().getTimestampIndex());
@@ -3064,7 +3119,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
             try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "x1")) {
                 Assert.assertEquals(2, reader.getMetadata().getTimestampIndex());
 
-                try (TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x1")) {
+                try (TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x1", "testing")) {
                     Assert.assertEquals(2, writer.getMetadata().getTimestampIndex());
                     writer.removeColumn("t");
                     Assert.assertEquals(-1, writer.getMetadata().getTimestampIndex());
@@ -3086,7 +3141,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
             try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "x1")) {
                 Assert.assertEquals(2, reader.getMetadata().getTimestampIndex());
 
-                try (TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x1")) {
+                try (TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x1", "testing")) {
                     Assert.assertEquals(2, writer.getMetadata().getTimestampIndex());
                     writer.removeColumn("t");
                     Assert.assertEquals(-1, writer.getMetadata().getTimestampIndex());
@@ -3098,9 +3153,95 @@ public class SqlCompilerTest extends AbstractGriffinTest {
         });
     }
 
+    @Test
+    public void testSymbolToStringAutoCast() throws Exception {
+        final String expected = "cc\tk\n" +
+                "PEHN_\t1970-01-01T00:00:00.000000Z\n" +
+                "CPSW_ffyu\t1970-01-01T00:00:00.010000Z\n" +
+                "VTJW_gpgw\t1970-01-01T00:00:00.020000Z\n" +
+                "_\t1970-01-01T00:00:00.030000Z\n" +
+                "VTJW_ffyu\t1970-01-01T00:00:00.040000Z\n";
+
+        assertQuery(expected,
+                "select concat(a, '_', to_lowercase(b)) cc, k from x",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_symbol(5,4,4,1) a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(0, 10000) k" +
+                        " from" +
+                        " long_sequence(5)" +
+                        ") timestamp(k)",
+                "k",
+                true,
+                true,
+                true
+        );
+
+    }
+
+    @Test
+    public void testSymbolToStringAutoCastWhere() throws Exception {
+        final String expected = "a\tb\tk\n" +
+                "IBM\tIBM\t1970-01-01T00:00:00.000000Z\n";
+        assertQuery(expected,
+                "select a, b, k from x where a=b",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_str('IBM', 'APPL', 'SPY', 'FB') a," +
+                        " rnd_symbol('IBM', 'APPL', 'SPY') b," +
+                        " timestamp_sequence(0, 10000) k" +
+                        " from" +
+                        " long_sequence(5)" +
+                        ") timestamp(k)",
+                "k",
+                true,
+                true,
+                false
+        );
+    }
+
+    @Test
+    public void testSymbolToStringAutoCastJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            final String xx = "create table xx as " +
+                    "(" +
+                    "select" +
+                    " rnd_str('IBM', 'APPL', 'SPY', 'FB') a," +
+                    " timestamp_sequence(0, 10000) k" +
+                    " from" +
+                    " long_sequence(5)" +
+                    ") timestamp(k)";
+
+            final String yy = "create table yy as " +
+                    "(" +
+                    "select" +
+                    " rnd_symbol('IBM', 'APPL', 'SPY') b," +
+                    " timestamp_sequence(0, 10000) k" +
+                    " from" +
+                    " long_sequence(5)" +
+                    ") timestamp(k)";
+
+            compiler.compile(xx, sqlExecutionContext);
+            compiler.compile(yy, sqlExecutionContext);
+
+            final String expected = "a\tb\tc\n" +
+                    "IBM\tIBM\tIBM_IBM\n" +
+                    "SPY\tSPY\tSPY_SPY\n" +
+                    "SPY\tSPY\tSPY_SPY\n" +
+                    "APPL\tAPPL\tAPPL_APPL\n" +
+                    "APPL\tAPPL\tAPPL_APPL\n" +
+                    "APPL\tAPPL\tAPPL_APPL\n" +
+                    "APPL\tAPPL\tAPPL_APPL\n";
+            assertQuery(expected, "select xx.a, yy.b, concat(xx.a, '_', yy.b) c from xx join yy on xx.a = yy.b", null, false, false);
+        });
+    }
+
     private void assertCast(String expectedData, String expectedMeta, String sql) throws SqlException {
         compiler.compile(sql, sqlExecutionContext);
-        try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "y", TableUtils.ANY_TABLE_VERSION)) {
+        try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "y", TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION)) {
             sink.clear();
             reader.getMetadata().toJson(sink);
             TestUtils.assertEquals(expectedMeta, sink);
@@ -3318,9 +3459,9 @@ public class SqlCompilerTest extends AbstractGriffinTest {
 
         try (CairoEngine engine = new CairoEngine(configuration) {
             @Override
-            public TableReader getReader(CairoSecurityContext cairoSecurityContext, CharSequence tableName, long tableVersion) {
+            public TableReader getReader(CairoSecurityContext cairoSecurityContext, CharSequence tableName, int id, long tableVersion) {
                 fiddler.run(this);
-                return super.getReader(cairoSecurityContext, tableName, tableVersion);
+                return super.getReader(cairoSecurityContext, tableName, id, tableVersion);
             }
         }) {
 
@@ -3329,7 +3470,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
 
                 Assert.assertTrue(fiddler.isHappy());
 
-                try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "Y", TableUtils.ANY_TABLE_VERSION)) {
+                try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "Y", TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION)) {
                     sink.clear();
                     reader.getMetadata().toJson(sink);
                     TestUtils.assertEquals(expectedMetadata, sink);
@@ -3381,16 +3522,16 @@ public class SqlCompilerTest extends AbstractGriffinTest {
 
                     inError.set(false);
 
-                    try (TableWriter w = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "x")) {
+                    try (TableWriter w = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "x", "testing")) {
                         Assert.assertEquals(0, w.size());
                     }
 
                     compiler.compile("insert into x select rnd_int() int1, rnd_int() int2 from long_sequence(1000000)", sqlExecutionContext);
-                    try (TableWriter w = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "x")) {
+                    try (TableWriter w = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "x", "testing")) {
                         Assert.assertEquals(1000000, w.size());
                     }
 
-                    try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", 0)) {
+                    try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", -1, 0)) {
                         Assert.assertEquals(1000000, reader.size());
                     }
                 }

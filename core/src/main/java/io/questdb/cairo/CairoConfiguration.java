@@ -42,6 +42,8 @@ public interface CairoConfiguration {
 
     int getO3PurgeQueueCapacity();
 
+    int getSampleByIndexSearchPageSize();
+
     int getSqlCopyBufferSize();
 
     int getCopyPoolCapacity();
@@ -119,6 +121,10 @@ public interface CairoConfiguration {
     int getSqlMapKeyCapacity();
 
     int getSqlMapPageSize();
+
+    int getSqlDistinctTimestampKeyCapacity();
+
+    double getSqlDistinctTimestampLoadFactor();
 
     int getSqlMapMaxPages();
 
@@ -238,4 +244,6 @@ public interface CairoConfiguration {
     long getCommitLag();
 
     boolean isO3QuickSortEnabled();
+
+    int getLatestByQueueCapacity();
 }

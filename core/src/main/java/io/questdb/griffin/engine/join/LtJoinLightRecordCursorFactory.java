@@ -33,6 +33,7 @@ import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.*;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -80,7 +81,7 @@ public class LtJoinLightRecordCursorFactory extends AbstractRecordCursorFactory 
     }
 
     @Override
-    public RecordCursor getCursor(SqlExecutionContext executionContext) {
+    public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         cursor.of(
                 masterFactory.getCursor(executionContext),
                 slaveFactory.getCursor(executionContext)

@@ -1525,8 +1525,13 @@ public class TableWriter implements Closeable {
     }
 
     void cancelRow() {
-
         if ((masterRef & 1) == 0) {
+            return;
+        }
+
+        if (hasO3()) {
+            masterRef--;
+            setO3AppendPosition(getO3RowCount());
             return;
         }
 
@@ -1539,7 +1544,7 @@ public class TableWriter implements Closeable {
         if (dirtyTransientRowCount == 1) {
             if (partitionBy != PartitionBy.NONE) {
                 // we have to undo creation of partition
-                freeColumns(false);
+                closeActivePartition(false);
                 if (removeDirOnCancelRow) {
                     try {
                         setStateForTimestamp(path, dirtyMaxTimestamp, false);
@@ -1583,13 +1588,15 @@ public class TableWriter implements Closeable {
         } else {
             txFile.cancelRow();
             // we are staying within same partition, prepare append positions for row count
-            boolean rowChanged = false;
-            // verify if any of the columns have been changed
-            // if not - we don't have to do
-            for (int i = 0; i < columnCount; i++) {
-                if (refs.getQuick(i) == masterRef) {
-                    rowChanged = true;
-                    break;
+            boolean rowChanged = metadata.getTimestampIndex() >= 0; // adding new row already writes timestamp
+            if (!rowChanged) {
+                // verify if any of the columns have been changed
+                // if not - we don't have to do
+                for (int i = 0; i < columnCount; i++) {
+                    if (refs.getQuick(i) == masterRef) {
+                        rowChanged = true;
+                        break;
+                    }
                 }
             }
 
@@ -1630,11 +1637,10 @@ public class TableWriter implements Closeable {
         }
     }
 
-    void closeActivePartition() {
+    void closeActivePartition(boolean truncate) {
         LOG.info().$("closing last partition [table=").$(tableName).I$();
-        closeAppendMemoryNoTruncate(true);
-        Misc.freeObjList(denseIndexers);
-        denseIndexers.clear();
+        closeAppendMemoryTruncate(truncate);
+        freeIndexers();
     }
 
     void closeActivePartition(long size) {
@@ -1658,7 +1664,7 @@ public class TableWriter implements Closeable {
         denseIndexers.clear();
     }
 
-    private void closeAppendMemoryNoTruncate(boolean truncate) {
+    private void closeAppendMemoryTruncate(boolean truncate) {
         for (int i = 0, n = columns.size(); i < n; i++) {
             AppendOnlyVirtualMemory m = columns.getQuick(i);
             if (m != null) {
@@ -2059,7 +2065,7 @@ public class TableWriter implements Closeable {
     private void freeColumns(boolean truncate) {
         // null check is because this method could be called from the constructor
         if (columns != null) {
-            closeAppendMemoryNoTruncate(truncate);
+            closeAppendMemoryTruncate(truncate);
         }
         Misc.freeObjListAndKeepObjects(o3Columns);
         Misc.freeObjListAndKeepObjects(o3Columns2);
@@ -2067,8 +2073,12 @@ public class TableWriter implements Closeable {
 
     private void freeIndexers() {
         if (indexers != null) {
-            Misc.freeObjList(indexers);
-            indexers.clear();
+            // Don't change items of indexers, they are re-used
+            if (indexers != null) {
+                for (int i = 0, n = indexers.size(); i < n; i++) {
+                    Misc.free(indexers.getQuick(i));
+                }
+            }
             denseIndexers.clear();
         }
     }
@@ -2443,22 +2453,17 @@ public class TableWriter implements Closeable {
                 throw CairoException.instance(0).put("timestamps before 1970-01-01 are not allowed for O3");
             }
 
-            final long o3CheckTimestampMax = getTimestampIndexValue(sortedTimestampsAddr, o3RowCount - 1);
-            if (o3CheckTimestampMax < Timestamps.O3_MIN_TS) {
+            long o3TimestampMax = getTimestampIndexValue(sortedTimestampsAddr, o3RowCount - 1);
+            if (o3TimestampMax < Timestamps.O3_MIN_TS) {
                 o3InError = true;
                 throw CairoException.instance(0).put("timestamps before 1970-01-01 are not allowed for O3");
             }
 
-            if (o3TimestampMin > o3CheckTimestampMax) {
-                // Safe check of the sort. No known way to reproduce
-                o3InError = true;
-                throw CairoException.instance(0).put("error in o3 timestamp sort results [minTimestamp=")
-                        .put(o3TimestampMin).put(",maxTimestamp=").put(o3CheckTimestampMax).put("]");
-            }
+            // Safe check of the sort. No known way to reproduce
+            assert o3TimestampMin <= o3TimestampMax;
 
             if (lag > 0) {
-                final long o3max = getTimestampIndexValue(sortedTimestampsAddr, o3RowCount - 1);
-                long lagThresholdTimestamp = o3max - lag;
+                long lagThresholdTimestamp = o3TimestampMax - lag;
                 if (lagThresholdTimestamp >= o3TimestampMin) {
                     final long lagThresholdRow = Vect.boundedBinarySearchIndexT(
                             sortedTimestampsAddr,
@@ -2476,12 +2481,20 @@ public class TableWriter implements Closeable {
                     }
                 } else {
                     o3LagRowCount = o3RowCount;
-                    srcOooMax = 0;
+                    // This is a scenario where "lag" and "maxUncommitted" values do not work with the data
+                    // in that the "lag" is larger than dictated "maxUncommitted". A simple plan here is to
+                    // commit half of the lag.
+                    if (o3LagRowCount > maxUncommittedRows) {
+                        o3LagRowCount = maxUncommittedRows / 2;
+                        srcOooMax = o3RowCount - o3LagRowCount;
+                    } else {
+                        srcOooMax = 0;
+                    }
                 }
                 LOG.debug().$("o3 commit lag [table=").$(tableName)
                         .$(", lag=").$(lag)
                         .$(", maxUncommittedRows=").$(maxUncommittedRows)
-                        .$(", o3max=").$ts(o3max)
+                        .$(", o3max=").$ts(o3TimestampMax)
                         .$(", lagThresholdTimestamp=").$ts(lagThresholdTimestamp)
                         .$(", o3LagRowCount=").$(o3LagRowCount)
                         .$(", srcOooMax=").$(srcOooMax)
@@ -2499,10 +2512,12 @@ public class TableWriter implements Closeable {
                 return true;
             }
 
-            long o3TimestampMax = getTimestampIndexValue(sortedTimestampsAddr, srcOooMax - 1);
+            // we could have moved the "srcOooMax" and hence we re-read the max timestamp
+            o3TimestampMax = getTimestampIndexValue(sortedTimestampsAddr, srcOooMax - 1);
             // move uncommitted is liable to change max timestamp
             // however we need to identify last partition before max timestamp skips to NULL for example
             final long maxTimestamp = txFile.getMaxTimestamp();
+
             // we are going to use this soon to avoid double-copying lag data
 //            final boolean yep = isAppendLastPartitionOnly(sortedTimestampsAddr, o3TimestampMax);
 
@@ -2968,6 +2983,32 @@ public class TableWriter implements Closeable {
         }
     }
 
+    private void o3SetAppendOffset(
+            int columnIndex,
+            final int columnType,
+            long o3RowCount
+    ) {
+        if (columnIndex != metadata.getTimestampIndex()) {
+            ContiguousVirtualMemory o3DataMem = o3Columns.get(getPrimaryColumnIndex(columnIndex));
+            ContiguousVirtualMemory o3IndexMem = o3Columns.get(getSecondaryColumnIndex(columnIndex));
+
+            long size;
+            if (null == o3IndexMem) {
+                // Fixed size column
+                size = o3RowCount << ColumnType.pow2SizeOf(columnType);
+            } else {
+                // Var size column
+                size = o3IndexMem.getLong(o3RowCount * 8);
+                o3IndexMem.jumpTo(o3RowCount * 8);
+            }
+
+            o3DataMem.jumpTo(size);
+        } else {
+            // Special case, designated timestamp column
+            o3TimestampMem.jumpTo(o3RowCount * 16);
+        }
+    }
+
     private long o3MoveUncommitted(final int timestampIndex) {
         final long committedRowCount = txFile.getCommittedFixedRowCount() + txFile.getCommittedTransientRowCount();
         final long rowsAdded = txFile.getRowCount() - committedRowCount;
@@ -3098,7 +3139,7 @@ public class TableWriter implements Closeable {
         final int partitionIndex = txFile.findAttachedPartitionIndexByLoTimestamp(partitionTimestamp);
         if (partitionTimestamp == lastPartitionTimestamp) {
             if (partitionMutates) {
-                closeActivePartition();
+                closeActivePartition(true);
             } else if (rowDelta < -1) {
                 closeActivePartition(partitionSize);
             } else {
@@ -4220,6 +4261,12 @@ public class TableWriter implements Closeable {
         throw e;
     }
 
+    private void setO3AppendPosition(final long position) {
+        for (int i = 0; i < columnCount; i++) {
+            o3SetAppendOffset(i, metadata.getColumnType(i), position);
+        }
+    }
+
     private void setAppendPosition(final long position, boolean ensureFileSize) {
         for (int i = 0; i < columnCount; i++) {
             // stop calculating oversize as soon as we find first over-sized column
@@ -4420,7 +4467,7 @@ public class TableWriter implements Closeable {
 
     private void updateIndexesSerially(long lo, long hi) {
         LOG.info().$("serial indexing [indexCount=").$(indexCount).$(']').$();
-        for (int i = 0, n = indexCount; i < n; i++) {
+        for (int i = 0, n = denseIndexers.size(); i < n; i++) {
             try {
                 denseIndexers.getQuick(i).refreshSourceAndIndex(lo, hi);
             } catch (CairoException e) {
@@ -4574,7 +4621,9 @@ public class TableWriter implements Closeable {
         public Row newRow(long timestamp) {
             bumpMasterRef();
             txFile.append();
-            if (timestamp >= txFile.getMaxTimestamp()) {
+            if (timestamp < 0) {
+                throw CairoException.instance(ff.errno()).put("Cannot insert rows before 1970-01-01. Table=").put(path);
+            } else if (timestamp >= txFile.getMaxTimestamp()) {
                 updateMaxTimestamp(timestamp);
                 return row;
             }

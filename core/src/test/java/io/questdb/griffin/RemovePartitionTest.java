@@ -50,7 +50,7 @@ public class RemovePartitionTest extends AbstractGriffinTest {
 
             try (
                     TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "tst");
-                    TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "tst")
+                    TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "tst", "testing")
             ) {
                 // utilise reader fully
                 RecordCursor cursor = reader.getCursor();

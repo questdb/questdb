@@ -210,6 +210,15 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
+    public long openCleanRW(LPSZ name, long size) {
+        // Open files and if file exists, try exclusively lock it
+        // If exclusive lock worked the file will be cleaned and allocated to the given size
+        // Shared lock will be left on the file which will be removed when file descriptor is closed
+        // If file did not exist, it will be allocated to the size and shared lock set
+        return Files.openCleanRW(name, size);
+    }
+
+    @Override
     public long read(long fd, long buf, long len, long offset) {
         return Files.read(fd, buf, len, offset);
     }

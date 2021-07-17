@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.functions.catalogue;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.log.Log;
@@ -81,7 +82,7 @@ public class AttrDefCatalogueFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public RecordCursor getCursor(SqlExecutionContext executionContext) {
+        public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
             cursor.toTop();
             return cursor;
         }

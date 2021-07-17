@@ -26,13 +26,12 @@ package io.questdb.test.tools;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.*;
-import io.questdb.griffin.CompiledQuery;
-import io.questdb.griffin.SqlCompiler;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.*;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogRecord;
+import io.questdb.network.Net;
+import io.questdb.network.NetworkFacade;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.MutableCharSink;
@@ -59,6 +58,29 @@ public final class TestUtils {
             if (a.byteAt(i) != b.byteAt(i)) return false;
         }
         return true;
+    }
+
+    public static void assertConnect(long fd, long sockAddr, boolean noLinger) {
+        Assert.assertTrue(fd > -1);
+        if (noLinger) {
+            Net.configureNoLinger(fd);
+        }
+        long rc = Net.connect(fd, sockAddr);
+        if (rc != 0) {
+            Assert.fail("could not connect, errno=" + Os.errno());
+        }
+    }
+
+    public static void assertConnect(long fd, long sockAddr) {
+        assertConnect(fd, sockAddr, true);
+    }
+
+    public static void assertConnect(NetworkFacade nf, long fd, long ilpSockAddr) {
+        nf.configureNoLinger(fd);
+        long rc = nf.connect(fd, ilpSockAddr);
+        if (rc != 0) {
+            Assert.fail("could not connect, errno=" + nf.errno());
+        }
     }
 
     public static void assertContains(CharSequence _this, CharSequence that) {
@@ -334,7 +356,9 @@ public final class TestUtils {
     public static void assertMemoryLeak(LeakProneCode runnable) throws Exception {
         Path.clearThreadLocals();
         long mem = Unsafe.getMemUsed();
+        Assert.assertTrue("Initial file unsafe mem should be >= 0", mem >= 0);
         long fileCount = Files.getOpenFileCount();
+        Assert.assertTrue("Initial file count should be >= 0", fileCount >= 0);
         runnable.run();
         Path.clearThreadLocals();
         Assert.assertEquals(fileCount, Files.getOpenFileCount());

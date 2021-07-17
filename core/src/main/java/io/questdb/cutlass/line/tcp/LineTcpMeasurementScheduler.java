@@ -51,6 +51,8 @@ import java.io.Closeable;
 import java.util.Arrays;
 import java.util.concurrent.locks.ReadWriteLock;
 
+import static io.questdb.network.IODispatcher.DISCONNECT_REASON_UNKNOWN_OPERATION;
+
 class LineTcpMeasurementScheduler implements Closeable {
     private static final Log LOG = LogFactory.getLog(LineTcpMeasurementScheduler.class);
     private static final int REBALANCE_EVENT_ID = -1; // A rebalance event is used to rebalance load across different threads
@@ -152,11 +154,15 @@ class LineTcpMeasurementScheduler implements Closeable {
                 ObjList<CharSequence> tableNames = tableUpdateDetailsByTableName.keys();
                 for (int n = 0, sz = tableNames.size(); n < sz; n++) {
                     TableUpdateDetails updateDetails = tableUpdateDetailsByTableName.get(tableNames.get(n));
-                    if (!updateDetails.assignedToJob) {
-                        updateDetails.close();
-                    }
+                    updateDetails.closeLocals();
                 }
                 tableUpdateDetailsByTableName.clear();
+
+                tableNames = idleTableUpdateDetailsByTableName.keys();
+                for (int n = 0, sz = tableNames.size(); n < sz; n++) {
+                    TableUpdateDetails updateDetails = idleTableUpdateDetailsByTableName.get(tableNames.get(n));
+                    updateDetails.closeLocals();
+                }
                 idleTableUpdateDetailsByTableName.clear();
             } finally {
                 tableUpdateDetailsLock.writeLock().unlock();
@@ -427,6 +433,7 @@ class LineTcpMeasurementScheduler implements Closeable {
         private int rebalanceFromThreadId;
         private int rebalanceToThreadId;
         private volatile boolean rebalanceReleasedByFromThread;
+        private boolean commitOnWriterClose;
 
         private LineTcpMeasurementEvent(int maxMeasurementSize, MicrosecondClock clock, LineProtoTimestampAdapter timestampAdapter) {
             bufSize = (long) (maxMeasurementSize / 4) * (Integer.BYTES + Double.BYTES + 1);
@@ -550,9 +557,10 @@ class LineTcpMeasurementScheduler implements Closeable {
             rebalanceReleasedByFromThread = false;
         }
 
-        void createReleaseWriterEvent(TableUpdateDetails tableUpdateDetails) {
+        void createReleaseWriterEvent(TableUpdateDetails tableUpdateDetails, boolean commitOnWriterClose) {
             threadId = RELEASE_WRITER_EVENT_ID;
             this.tableUpdateDetails = tableUpdateDetails;
+            this.commitOnWriterClose = commitOnWriterClose;
         }
 
         void processMeasurementEvent(WriterJob job) {
@@ -788,18 +796,35 @@ class LineTcpMeasurementScheduler implements Closeable {
 
         @Override
         public void close() {
+            tableUpdateDetailsLock.writeLock().lock();
+            try {
+                closeNoLock();
+            } finally {
+                tableUpdateDetailsLock.writeLock().unlock();
+            }
+        }
+
+        private void closeNoLock() {
             if (writerThreadId != Integer.MIN_VALUE) {
-                LOG.info().$("closing table [tableName=").$(tableName).$(']').$();
+                LOG.info().$("closing table writer [tableName=").$(tableName).$(']').$();
                 if (null != writer) {
-                    writer.commit();
-                    writer.close();
-                    writer = null;
-                }
-                for (int n = 0; n < localDetailsArray.length; n++) {
-                    localDetailsArray[n].close();
-                    localDetailsArray[n] = null;
+                    try {
+                        writer.commit();
+                    } catch (CairoException ex) {
+                        LOG.error().$("cannot commit writer transaction, rolling back before releasing it [table=").$(tableName).$(",ex=").$((Throwable) ex).I$();
+                        writer.rollback();
+                    } finally {
+                        writer = Misc.free(writer);
+                    }
                 }
                 writerThreadId = Integer.MIN_VALUE;
+            }
+        }
+
+        private void closeLocals() {
+            for (int n = 0; n < localDetailsArray.length; n++) {
+                LOG.info().$("closing table parsers [tableName=").$(tableName).$(']').$();
+                localDetailsArray[n] = Misc.free(localDetailsArray[n]);
             }
         }
 
@@ -814,7 +839,7 @@ class LineTcpMeasurementScheduler implements Closeable {
             if (null != writer) {
                 return writer;
             }
-            return writer = engine.getWriter(securityContext, tableName);
+            return writer = engine.getWriter(securityContext, tableName, "ilpTcp");
         }
 
         void handleRowAppended() {
@@ -823,11 +848,20 @@ class LineTcpMeasurementScheduler implements Closeable {
             }
         }
 
-        void handleWriterRelease() {
+        void handleWriterRelease(boolean commit) {
             if (null != writer) {
                 LOG.debug().$("release commit [table=").$(writer.getTableName()).I$();
-                writer.commit();
-                writer = Misc.free(writer);
+                try {
+                    if (commit) {
+                        writer.commit();
+                    }
+                } catch (Throwable ex) {
+                    LOG.error().$("writer commit fails, force closing it [table=").$(writer.getTableName()).$(",ex=").$(ex).I$();
+                } finally {
+                    // writer or FS can be in a bad state
+                    // do not leave writer locked
+                    writer = Misc.free(writer);
+                }
                 lastCommitMillis = milliClock.getTicks();
             }
         }
@@ -851,7 +885,7 @@ class LineTcpMeasurementScheduler implements Closeable {
 
         void switchThreads() {
             assignedToJob = false;
-            handleWriterRelease();
+            handleWriterRelease(true);
         }
 
         private class ThreadLocalDetails implements Closeable {
@@ -1009,28 +1043,40 @@ class LineTcpMeasurementScheduler implements Closeable {
                 busy = true;
                 final LineTcpMeasurementEvent event = queue.get(cursor);
                 boolean eventProcessed;
-                if (event.threadId == workerId) {
-                    if (!event.tableUpdateDetails.assignedToJob) {
-                        assignedTables.add(event.tableUpdateDetails);
-                        event.tableUpdateDetails.assignedToJob = true;
-                        LOG.info().$("assigned table to writer thread [tableName=").$(event.tableUpdateDetails.tableName).$(", threadId=").$(workerId).I$();
-                    }
-                    event.processMeasurementEvent(this);
-                    eventProcessed = true;
-                } else {
-                    switch (event.threadId) {
-                        case REBALANCE_EVENT_ID:
-                            eventProcessed = processRebalance(event);
-                            break;
 
-                        case RELEASE_WRITER_EVENT_ID:
-                            eventProcessed = processReleaseWriter(event);
-                            break;
-
-                        default:
+                try {
+                    if (event.threadId == workerId) {
+                        try {
+                            if (!event.tableUpdateDetails.assignedToJob) {
+                                assignedTables.add(event.tableUpdateDetails);
+                                event.tableUpdateDetails.assignedToJob = true;
+                                LOG.info().$("assigned table to writer thread [tableName=").$(event.tableUpdateDetails.tableName).$(", threadId=").$(workerId).I$();
+                            }
+                            event.processMeasurementEvent(this);
                             eventProcessed = true;
-                            break;
+                        } catch (Throwable ex) {
+                            LOG.error().$("closing writer for because of error [table=").$(event.tableUpdateDetails.tableName).$(",ex=").$(ex).I$();
+                            event.createReleaseWriterEvent(event.tableUpdateDetails, false);
+                            eventProcessed = false;
+                        }
+                    } else {
+                        switch (event.threadId) {
+                            case REBALANCE_EVENT_ID:
+                                eventProcessed = processRebalance(event);
+                                break;
+
+                            case RELEASE_WRITER_EVENT_ID:
+                                eventProcessed = processReleaseWriter(event);
+                                break;
+
+                            default:
+                                eventProcessed = true;
+                                break;
+                        }
                     }
+                } catch (Throwable ex) {
+                    eventProcessed = true;
+                    LOG.error().$("failed to process ILP event because of exception [ex=").$(ex).I$();
                 }
 
                 // by not releasing cursor we force the sequence to return us the same value over and over
@@ -1092,7 +1138,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                         .$("[tableName=").$(tableUpdateDetails.tableName)
                         .I$();
 
-                tableUpdateDetails.handleWriterRelease();
+                tableUpdateDetails.handleWriterRelease(event.commitOnWriterClose);
             } finally {
                 tableUpdateDetailsLock.readLock().unlock();
             }
@@ -1185,7 +1231,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                             final long seq = getNextPublisherEventSequence();
                             if (seq > -1) {
                                 LineTcpMeasurementEvent event = queue.get(seq);
-                                event.createReleaseWriterEvent(tableUpdateDetails);
+                                event.createReleaseWriterEvent(tableUpdateDetails, true);
                                 removeTableUpdateDetails(tableUpdateDetails);
                                 final CharSequence tableName = tableUpdateDetails.tableName;
                                 tableUpdateDetailsByTableName.remove(tableName);
@@ -1218,7 +1264,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                     case QUEUE_FULL:
                         return true;
                     case NEEDS_DISCONNECT:
-                        context.getDispatcher().disconnect(context);
+                        context.getDispatcher().disconnect(context, DISCONNECT_REASON_UNKNOWN_OPERATION);
                         return false;
                 }
             }

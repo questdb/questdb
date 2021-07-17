@@ -46,7 +46,7 @@ public class LineTCPSenderMain {
                     // } else {
                     // sender.metric("weather2");
                     // }
-                sender.tag("location", "london").tag("by", "quest").field("temp", rnd.nextPositiveLong()).field("ok", rnd.nextPositiveInt()).$(Os.currentTimeMicros() * 1000);
+                sender.tag("location", "l ondon").tag("by", "quest").field("temp", rnd.nextPositiveLong()).field("ok", rnd.nextPositiveInt()).$(Os.currentTimeMicros() * 1000);
             }
             sender.flush();
         }

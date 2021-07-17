@@ -88,12 +88,19 @@ public class BitmapIndexBwdReader extends AbstractIndexReader {
         return cachedInstance ? nullCursor : new NullCursor();
     }
 
-    private class Cursor implements RowCursor {
+    private class Cursor implements RowCursor, IndexFrameCursor {
         protected long valueCount;
         protected long minValue;
         protected long next;
         private long valueBlockOffset;
+        private final IndexFrame indexFrame = new IndexFrame();
         private final BitmapIndexUtils.ValueBlockSeeker SEEKER = this::seekValue;
+
+        @Override
+        public IndexFrame getNext() {
+            // See BitmapIndexFwdReader if needs implementing
+            throw new UnsupportedOperationException();
+        }
 
         @Override
         public boolean hasNext() {

@@ -35,11 +35,16 @@ import java.util.concurrent.atomic.AtomicInteger;
 public abstract class AbstractIODispatcher<C extends IOContext> extends SynchronizedJob implements IODispatcher<C>, EagerThreadSetup {
     protected static final int M_TIMESTAMP = 0;
     protected static final int M_FD = 1;
+    protected static final int DISCONNECT_SRC_QUEUE = 0;
+    protected static final int DISCONNECT_SRC_IDLE = 1;
+    protected static final int DISCONNECT_SRC_SHUTDOWN = 2;
+    private final static String[] DISCONNECT_SOURCES;
     protected final Log LOG;
+    private final IODispatcherConfiguration configuration;
     protected final RingQueue<IOEvent<C>> interestQueue;
     protected final MPSequence interestPubSeq;
     protected final SCSequence interestSubSeq;
-    protected final long serverFd;
+    protected long serverFd;
     protected final RingQueue<IOEvent<C>> ioEventQueue;
     protected final SPSequence ioEventPubSeq;
     protected final MCSequence ioEventSubSeq;
@@ -48,7 +53,7 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
     protected final IOContextFactory<C> ioContextFactory;
     protected final NetworkFacade nf;
     protected final int initialBias;
-    protected final AtomicInteger connectionCount = new AtomicInteger();
+    private final AtomicInteger connectionCount = new AtomicInteger();
     protected final RingQueue<IOEvent<C>> disconnectQueue;
     protected final MPSequence disconnectPubSeq;
     protected final SCSequence disconnectSubSeq;
@@ -57,14 +62,18 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
     protected final LongMatrix<C> pending = new LongMatrix<>(4);
     private final int sndBufSize;
     private final int rcvBufSize;
+    private volatile boolean listening;
+    private final long queuedConnectionTimeoutMs;
+    private long closeListenFdEpochMs;
+    private final boolean peerNoLinger;
 
     public AbstractIODispatcher(
             IODispatcherConfiguration configuration,
             IOContextFactory<C> ioContextFactory
     ) {
         this.LOG = LogFactory.getLog(configuration.getDispatcherLogName());
+        this.configuration = configuration;
         this.nf = configuration.getNetworkFacade();
-        this.serverFd = nf.socketTcp(false);
 
         this.interestQueue = new RingQueue<>(IOEvent::new, configuration.getInterestQueueCapacity());
         this.interestPubSeq = new MPSequence(interestQueue.getCapacity());
@@ -86,39 +95,41 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
         this.ioContextFactory = ioContextFactory;
         this.initialBias = configuration.getInitialBias();
         this.idleConnectionTimeout = configuration.getIdleConnectionTimeout() > 0 ? configuration.getIdleConnectionTimeout() : Long.MIN_VALUE;
-
+        this.queuedConnectionTimeoutMs = configuration.getQueuedConnectionTimeout() > 0 ? configuration.getQueuedConnectionTimeout() : 0;
         this.sndBufSize = configuration.getSndBufSize();
         this.rcvBufSize = configuration.getRcvBufSize();
+        this.peerNoLinger = configuration.getPeerNoLinger();
 
+        createListenFd();
+        listening = true;
+    }
+
+    private void createListenFd() throws NetworkError {
+        this.serverFd = nf.socketTcp(false);
         if (nf.bindTcp(this.serverFd, configuration.getBindIPv4Address(), configuration.getBindPort())) {
             nf.listen(this.serverFd, configuration.getListenBacklog());
         } else {
             throw NetworkError.instance(nf.errno()).couldNotBindSocket(
                     configuration.getDispatcherLogName(),
                     configuration.getBindIPv4Address(),
-                    configuration.getBindPort()
-            );
+                    configuration.getBindPort());
         }
-    }
-
-    @Override
-    public void setup() {
-        if (ioContextFactory instanceof EagerThreadSetup) {
-            ((EagerThreadSetup) ioContextFactory).setup();
-        }
+        LOG.advisory().$("listening on ").$ip(configuration.getBindIPv4Address()).$(':').$(configuration.getBindPort()).$(" [fd=").$(serverFd).$(']').$();
     }
 
     @Override
     public void close() {
-        processDisconnects();
-        nf.close(serverFd, LOG);
-
+        processDisconnects(Long.MAX_VALUE);
         for (int i = 0, n = pending.size(); i < n; i++) {
-            doDisconnect(pending.get(i));
+            doDisconnect(pending.get(i), DISCONNECT_SRC_SHUTDOWN);
         }
 
         interestSubSeq.consumeAll(interestQueue, this.disconnectContextRef);
         ioEventSubSeq.consumeAll(ioEventQueue, this.disconnectContextRef);
+        if (serverFd > 0) {
+            nf.close(serverFd, LOG);
+            serverFd = -1;
+        }
     }
 
     @Override
@@ -156,15 +167,27 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
     }
 
     @Override
-    public void disconnect(C context) {
+    public void disconnect(C context, int reason) {
+        LOG.info()
+                .$("scheduling disconnect [fd=").$(context.getFd())
+                .$(", reason=").$(reason)
+                .I$();
         final long cursor = disconnectPubSeq.nextBully();
         assert cursor > -1;
         disconnectQueue.get(cursor).context = context;
         disconnectPubSeq.done(cursor);
     }
 
+    @Override
+    public void setup() {
+        if (ioContextFactory instanceof EagerThreadSetup) {
+            ((EagerThreadSetup) ioContextFactory).setup();
+        }
+    }
+
     protected void accept(long timestamp) {
-        while (this.connectionCount.get() < activeConnectionLimit) {
+        int tlConCount = this.connectionCount.get();
+        while (tlConCount < activeConnectionLimit) {
             // this accept is greedy, rather than to rely on epoll(or similar) to
             // fire accept requests at us one at a time we will be actively accepting
             // until nothing left.
@@ -175,19 +198,23 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
                 if (nf.errno() != Net.EWOULDBLOCK) {
                     LOG.error().$("could not accept [ret=").$(fd).$(", errno=").$(nf.errno()).$(']').$();
                 }
-                return;
+                break;
             }
 
             if (nf.configureNonBlocking(fd) < 0) {
                 LOG.error().$("could not configure non-blocking [fd=").$(fd).$(", errno=").$(nf.errno()).$(']').$();
                 nf.close(fd, LOG);
-                return;
+                break;
             }
 
             if (nf.setTcpNoDelay(fd, true) < 0) {
-                LOG.error().$("could not configure no delay [fd=").$(fd).$(", errno=").$(nf.errno()).$(']').$();
-                nf.close(fd, LOG);
-                return;
+                // Randomly on OS X, if a client connects and the peer TCP socket has SO_LINGER set to false, then setting the TCP_NODELAY
+                // option fails!
+                LOG.info().$("could not turn off Nagle's algorithm [fd=").$(fd).$(", errno=").$(nf.errno()).$(']').$();
+            }
+
+            if (peerNoLinger) {
+                nf.configureNoLinger(fd);
             }
 
             if (sndBufSize > 0) {
@@ -199,8 +226,17 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
             }
 
             LOG.info().$("connected [ip=").$ip(nf.getPeerIP(fd)).$(", fd=").$(fd).$(']').$();
-            this.connectionCount.incrementAndGet();
+            tlConCount = connectionCount.incrementAndGet();
             addPending(fd, timestamp);
+        }
+
+        if (tlConCount >= activeConnectionLimit) {
+            if (connectionCount.get() >= activeConnectionLimit) {
+                unregisterListenerFd();
+                listening = false;
+                closeListenFdEpochMs = timestamp + queuedConnectionTimeoutMs;
+                LOG.info().$("max connection limit reached, unregistered listener [serverFd=").$(serverFd).I$();
+            }
         }
     }
 
@@ -215,12 +251,11 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
         pendingAdded(r);
     }
 
-
     private void disconnectContext(IOEvent<C> event) {
-        doDisconnect(event.context);
+        doDisconnect(event.context, DISCONNECT_SRC_QUEUE);
     }
 
-    protected void doDisconnect(C context) {
+    protected void doDisconnect(C context, int src) {
         if (context == null || context.invalid()) {
             return;
         }
@@ -228,23 +263,35 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
         LOG.info()
                 .$("disconnected [ip=").$ip(nf.getPeerIP(fd))
                 .$(", fd=").$(fd)
+                .$(", src=").$(DISCONNECT_SOURCES[src])
                 .$(']').$();
         nf.close(fd, LOG);
         ioContextFactory.done(context);
-        connectionCount.decrementAndGet();
-    }
-
-    protected void logSuccess(IODispatcherConfiguration configuration) {
-        LOG.advisory()
-                .$("listening on ")
-                .$(configuration.getBindIPv4Address()).$(':').$(configuration.getBindPort())
-                .$(" [fd=").$(serverFd).$(']').$();
+        if (connectionCount.getAndDecrement() >= activeConnectionLimit) {
+            if (connectionCount.get() < activeConnectionLimit) {
+                if (serverFd < 0) {
+                    createListenFd();
+                }
+                registerListenerFd();
+                listening = true;
+                LOG.info().$("below maximum connection limit, registered listener [serverFd=").$(serverFd).I$();
+            }
+        }
     }
 
     protected abstract void pendingAdded(int index);
 
-    protected void processDisconnects() {
+    protected abstract void registerListenerFd();
+
+    protected abstract void unregisterListenerFd();
+
+    protected void processDisconnects(long epochMs) {
         disconnectSubSeq.consumeAll(disconnectQueue, this.disconnectContextRef);
+        if (!listening && serverFd >= 0 && epochMs >= closeListenFdEpochMs) {
+            LOG.info().$("been unable to accept connections for ").$(queuedConnectionTimeoutMs).$("ms, closing listener [serverFd=").$(serverFd).I$();
+            nf.close(serverFd);
+            serverFd = -1;
+        }
     }
 
     protected void publishOperation(int operation, C context) {
@@ -254,5 +301,14 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
         evt.operation = operation;
         ioEventPubSeq.done(cursor);
         LOG.debug().$("fired [fd=").$(context.getFd()).$(", op=").$(evt.operation).$(", pos=").$(cursor).$(']').$();
+    }
+
+    @Override
+    public boolean isListening() {
+        return listening;
+    }
+
+    static {
+        DISCONNECT_SOURCES = new String[] { "queue", "idle", "shutdown" };
     }
 }

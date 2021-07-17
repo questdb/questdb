@@ -58,7 +58,9 @@ public class InSymbolFunctionFactory implements FunctionFactory {
         for (int i = 1; i < n; i++) {
             Function func = args.getQuick(i);
             switch (func.getType()) {
+                case ColumnType.NULL:
                 case ColumnType.STRING:
+                case ColumnType.SYMBOL:
                     CharSequence value = func.getStr(null);
                     if (value == null) {
                         set.add(null);
@@ -109,7 +111,7 @@ public class InSymbolFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             arg.init(symbolTableSource, executionContext);
             final StaticSymbolTable symbolTable = arg.getStaticSymbolTable();
             if (symbolTable != null) {

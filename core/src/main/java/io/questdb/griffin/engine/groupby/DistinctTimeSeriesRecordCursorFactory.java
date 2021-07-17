@@ -24,15 +24,12 @@
 
 package io.questdb.griffin.engine.groupby;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.EntityColumnFilter;
-import io.questdb.cairo.RecordSink;
-import io.questdb.cairo.RecordSinkFactory;
-import io.questdb.cairo.map.Map;
-import io.questdb.cairo.map.MapFactory;
-import io.questdb.cairo.map.MapKey;
+import io.questdb.cairo.*;
+import io.questdb.cairo.map.*;
 import io.questdb.cairo.sql.*;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionInterruptor;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.Misc;
 import io.questdb.std.Transient;
@@ -59,7 +56,14 @@ public class DistinctTimeSeriesRecordCursorFactory implements RecordCursorFactor
         // sink will be storing record columns to map key
         columnFilter.of(metadata.getColumnCount());
         RecordSink recordSink = RecordSinkFactory.getInstance(asm, metadata, columnFilter, false);
-        this.dataMap = MapFactory.createMap(configuration, metadata);
+        this.dataMap = new FastMap(
+                configuration.getSqlMapPageSize(),
+                metadata,
+                configuration.getSqlDistinctTimestampKeyCapacity(),
+                configuration.getSqlDistinctTimestampLoadFactor(),
+                Integer.MAX_VALUE
+        ) ;
+
         this.base = base;
         this.metadata = metadata;
         this.cursor = new DistinctTimeSeriesRecordCursor(
@@ -76,8 +80,8 @@ public class DistinctTimeSeriesRecordCursorFactory implements RecordCursorFactor
     }
 
     @Override
-    public RecordCursor getCursor(SqlExecutionContext executionContext) {
-        return cursor.of(base.getCursor(executionContext));
+    public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
+        return cursor.of(base.getCursor(executionContext), executionContext);
     }
 
     @Override
@@ -100,6 +104,7 @@ public class DistinctTimeSeriesRecordCursorFactory implements RecordCursorFactor
         private long prevTimestamp;
         private long prevRowId;
         private byte state = 0;
+        private SqlExecutionInterruptor interruptor;
 
         public DistinctTimeSeriesRecordCursor(int timestampIndex, Map dataMap, RecordSink recordSink) {
             this.timestampIndex = timestampIndex;
@@ -127,6 +132,7 @@ public class DistinctTimeSeriesRecordCursorFactory implements RecordCursorFactor
         public boolean hasNext() {
             if (state == COMPUTE_NEXT) {
                 while (baseCursor.hasNext()) {
+                    interruptor.checkInterrupted();
                     final long timestamp = record.getTimestamp(timestampIndex);
                     if (timestamp != prevTimestamp) {
                         prevTimestamp = timestamp;
@@ -166,8 +172,9 @@ public class DistinctTimeSeriesRecordCursorFactory implements RecordCursorFactor
             return -1;
         }
 
-        public RecordCursor of(RecordCursor baseCursor) {
+        public RecordCursor of(RecordCursor baseCursor, SqlExecutionContext sqlExecutionContext) {
             this.baseCursor = baseCursor;
+            this.interruptor = sqlExecutionContext.getSqlExecutionInterruptor();
             this.record = baseCursor.getRecord();
             this.recordB = baseCursor.getRecordB();
             this.dataMap.clear();

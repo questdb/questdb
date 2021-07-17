@@ -67,11 +67,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.NetworkError;
-import io.questdb.std.CharSequenceObjHashMap;
-import io.questdb.std.Misc;
-import io.questdb.std.ObjList;
-import io.questdb.std.Os;
-import io.questdb.std.Vect;
+import io.questdb.std.*;
 import io.questdb.std.datetime.millitime.Dates;
 import io.questdb.std.str.Path;
 import sun.misc.Signal;
@@ -119,6 +115,11 @@ public class ServerMain {
         }
 
         readServerConfiguration(rootDirectory, properties, log, buildInformation);
+        log.info().$("Server config : ").$(configurationFile.getAbsoluteFile()).$();
+        log.info().$("Config changes applied:").$();
+        log.info().$("  http.enabled : ").$(configuration.getHttpServerConfiguration().isEnabled()).$();
+        log.info().$("  tcp.enabled  : ").$(configuration.getLineTcpReceiverConfiguration().isEnabled()).$();
+        log.info().$("  pg.enabled   : ").$(configuration.getPGWireConfiguration().isEnabled()).$();
 
         log.info().$("open database [id=").$(configuration.getCairoConfiguration().getDatabaseIdLo()).$('.').$(configuration.getCairoConfiguration().getDatabaseIdHi()).$(']').$();
         log.info().$("platform [bit=").$(System.getProperty("sun.arch.data.model")).$(']').$();
@@ -147,7 +148,10 @@ public class ServerMain {
         }
 
         final WorkerPool workerPool = new WorkerPool(configuration.getWorkerPoolConfiguration());
-        final FunctionFactoryCache functionFactoryCache = new FunctionFactoryCache(configuration.getCairoConfiguration(), ServiceLoader.load(FunctionFactory.class));
+        final FunctionFactoryCache functionFactoryCache = new FunctionFactoryCache(
+                configuration.getCairoConfiguration(),
+                ServiceLoader.load(FunctionFactory.class, FunctionFactory.class.getClassLoader())
+        );
         final ObjList<Closeable> instancesToClean = new ObjList<>();
 
         LogFactory.configureFromSystemProperties(workerPool);
@@ -173,11 +177,18 @@ public class ServerMain {
         workerPool.assign(new O3PurgeJob(cairoEngine.getMessageBus()));
         O3Utils.initBuf(workerPool.getWorkerCount() + 1);
 
+        Metrics metrics;
+        if (configuration.getMetricsConfiguration().isEnabled()) {
+            metrics = Metrics.enabled();
+        } else {
+            metrics = Metrics.disabled();
+        }
+
         try {
             initQuestDb(workerPool, cairoEngine, log);
 
-            instancesToClean.add(createHttpServer(workerPool, log, cairoEngine, functionFactoryCache));
-            instancesToClean.add(createMinHttpServer(workerPool, log, cairoEngine, functionFactoryCache));
+            instancesToClean.add(createHttpServer(workerPool, log, cairoEngine, functionFactoryCache, metrics));
+            instancesToClean.add(createMinHttpServer(workerPool, log, cairoEngine, functionFactoryCache, metrics));
 
             if (configuration.getPGWireConfiguration().isEnabled()) {
                 instancesToClean.add(PGWireServer.create(
@@ -185,7 +196,8 @@ public class ServerMain {
                         workerPool,
                         log,
                         cairoEngine,
-                        functionFactoryCache
+                        functionFactoryCache,
+                        metrics
                 ));
             }
 
@@ -231,7 +243,7 @@ public class ServerMain {
                 System.err.println(new Date() + " QuestDB is down");
             }));
         } catch (NetworkError e) {
-            log.error().$(e.getMessage()).$();
+            log.error().$((Sinkable) e).$();
             LockSupport.parkNanos(10000000L);
             System.exit(55);
         }
@@ -477,23 +489,35 @@ public class ServerMain {
         return new Attributes();
     }
 
-    protected HttpServer createHttpServer(final WorkerPool workerPool, final Log log, final CairoEngine cairoEngine, FunctionFactoryCache functionFactoryCache) {
+    protected HttpServer createHttpServer(
+            final WorkerPool workerPool,
+            final Log log,
+            final CairoEngine cairoEngine,
+            FunctionFactoryCache functionFactoryCache,
+            Metrics metrics) {
         return HttpServer.create(
                 configuration.getHttpServerConfiguration(),
                 workerPool,
                 log,
                 cairoEngine,
-                functionFactoryCache
+                functionFactoryCache,
+                metrics
         );
     }
 
-    protected HttpServer createMinHttpServer(final WorkerPool workerPool, final Log log, final CairoEngine cairoEngine, FunctionFactoryCache functionFactoryCache) {
+    protected HttpServer createMinHttpServer(
+            final WorkerPool workerPool,
+            final Log log,
+            final CairoEngine cairoEngine,
+            FunctionFactoryCache functionFactoryCache,
+            Metrics metrics) {
         return HttpServer.createMin(
                 configuration.getHttpMinServerConfiguration(),
                 workerPool,
                 log,
                 cairoEngine,
-                functionFactoryCache
+                functionFactoryCache,
+                metrics
         );
     }
 

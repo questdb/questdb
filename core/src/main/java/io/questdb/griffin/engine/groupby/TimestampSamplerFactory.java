@@ -79,7 +79,7 @@ public final class TimestampSamplerFactory {
 
             switch (cs.charAt(k)) {
                 case 'T':
-                    // seconds
+                    // millis
                     return new MicroTimestampSampler(Timestamps.MILLI_MICROS * n);
                 case 's':
                     // seconds

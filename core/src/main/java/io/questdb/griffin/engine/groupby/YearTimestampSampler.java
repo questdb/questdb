@@ -29,6 +29,13 @@ import io.questdb.std.datetime.microtime.Timestamps;
 class YearTimestampSampler implements TimestampSampler {
 
     private final int bucket;
+    private int startMonth;
+    private int startDay;
+    private int startHour;
+    private int startMin;
+    private int startSec;
+    private int startMillis;
+    private int startMicros;
 
     public YearTimestampSampler(int bucket) {
         this.bucket = bucket;
@@ -36,18 +43,57 @@ class YearTimestampSampler implements TimestampSampler {
 
     @Override
     public long nextTimestamp(long timestamp) {
-        return Timestamps.addYear(timestamp, bucket);
+        return addYears(timestamp, bucket);
     }
 
     @Override
     public long previousTimestamp(long timestamp) {
-        return Timestamps.addYear(timestamp, -bucket);
+        return addYears(timestamp, -bucket);
     }
 
     @Override
     public long round(long value) {
-        int y = Timestamps.getYear(value);
-        y = y - y % bucket;
-        return Timestamps.yearMicros(y, Timestamps.isLeapYear(y));
+        final int y = Timestamps.getYear(value);
+        return Timestamps.toMicros(
+                y - y % bucket,
+                Timestamps.isLeapYear(y),
+                startDay,
+                startMonth,
+                startHour,
+                startMin,
+                startSec,
+                startMillis,
+                startMicros
+        );
+    }
+
+    @Override
+    public void setStart(long timestamp) {
+        final int y = Timestamps.getYear(timestamp);
+        final boolean leap = Timestamps.isLeapYear(y);
+        this.startMonth = Timestamps.getMonthOfYear(timestamp, y, leap);
+        this.startDay = Timestamps.getDayOfMonth(timestamp, y, startMonth, leap);
+        this.startHour = Timestamps.getHourOfDay(timestamp);
+        this.startMin = Timestamps.getMinuteOfHour(timestamp);
+        this.startSec = Timestamps.getSecondOfMinute(timestamp);
+        this.startMillis = Timestamps.getMillisOfSecond(timestamp);
+        this.startMicros = Timestamps.getMicrosOfSecond(timestamp);
+    }
+
+    private long addYears(long timestamp, int bucket) {
+        if (bucket == 0) {
+            return timestamp;
+        }
+        final int y = Timestamps.getYear(timestamp);
+        final boolean leap = Timestamps.isLeapYear(y + bucket);
+        final int maxDay = Math.min(startDay, Timestamps.getDaysPerMonth(startMonth, leap)) - 1;
+        return Timestamps.yearMicros(y + bucket, leap)
+                + Timestamps.monthOfYearMicros(startMonth, leap)
+                + maxDay * Timestamps.DAY_MICROS
+                + startHour * Timestamps.HOUR_MICROS
+                + startMin * Timestamps.MINUTE_MICROS
+                + startSec * Timestamps.SECOND_MICROS
+                + startMillis * Timestamps.MILLI_MICROS
+                + startMicros;
     }
 }

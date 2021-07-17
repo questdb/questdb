@@ -51,6 +51,7 @@ public final class TableUtils {
     public static final String TAB_INDEX_FILE_NAME = "_tab_index.d";
     public static final int INITIAL_TXN = 0;
     public static final int NULL_LEN = -1;
+    public static final int ANY_TABLE_ID = -1;
     public static final int ANY_TABLE_VERSION = -1;
     public static final long TX_OFFSET_TRANSIENT_ROW_COUNT = 8;
     public static final long TX_OFFSET_FIXED_ROW_COUNT = 16;
@@ -753,18 +754,6 @@ public final class TableUtils {
         }
     }
 
-    static String getTodoText(long code) {
-        switch ((int) (code & 0xff)) {
-            case TODO_TRUNCATE:
-                return "truncate";
-            case TODO_RESTORE_META:
-                return "restore meta";
-            default:
-                // really impossible to happen, but we keep this line to comply with Murphy's law.
-                return "unknown";
-        }
-    }
-
     private static CairoException validationException(MappedReadOnlyMemory mem) {
         return CairoException.instance(0).put("Invalid metadata at fd=").put(mem.getFd()).put(". ");
     }
@@ -887,6 +876,15 @@ public final class TableUtils {
             return fd;
         }
         throw CairoException.instance(ff.errno()).put("could not open read-write [file=").put(path).put(']');
+    }
+
+    static long openCleanRW(FilesFacade ff, LPSZ path, long size, Log log) {
+        final long fd = ff.openCleanRW(path, size);
+        if (fd > -1) {
+            log.debug().$("open clean [file=").$(path).$(", fd=").$(fd).$(']').$();
+            return fd;
+        }
+        throw CairoException.instance(ff.errno()).put("could not open read-write with clean allocation [file=").put(path).put(']');
     }
 
     static {

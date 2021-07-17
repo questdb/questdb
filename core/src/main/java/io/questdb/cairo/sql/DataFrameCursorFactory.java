@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.sql;
 
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Sinkable;
 import io.questdb.std.str.CharSink;
@@ -35,7 +36,7 @@ import java.io.Closeable;
  */
 public interface DataFrameCursorFactory extends Sinkable, Closeable {
 
-    DataFrameCursor getCursor(SqlExecutionContext executionContext);
+    DataFrameCursor getCursor(SqlExecutionContext executionContext) throws SqlException;
 
     /**
      * @param sink to print data frame cursor to

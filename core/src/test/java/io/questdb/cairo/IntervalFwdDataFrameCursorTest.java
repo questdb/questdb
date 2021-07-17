@@ -395,7 +395,7 @@ public class IntervalFwdDataFrameCursorTest extends AbstractCairoTest {
                 timestampIndex = reader.getMetadata().getTimestampIndex();
             }
             final TableReaderRecord record = new TableReaderRecord();
-            final IntervalFwdDataFrameCursorFactory factory = new IntervalFwdDataFrameCursorFactory(engine, "x", 0, new RuntimeIntervalModel(intervals), timestampIndex);
+            final IntervalFwdDataFrameCursorFactory factory = new IntervalFwdDataFrameCursorFactory(engine, "x", -1, 0, new RuntimeIntervalModel(intervals), timestampIndex);
             try (DataFrameCursor cursor = factory.getCursor(AllowAllSqlSecurityContext.INSTANCE)) {
 
                 // assert that there is nothing to start with
@@ -438,7 +438,7 @@ public class IntervalFwdDataFrameCursorTest extends AbstractCairoTest {
                 }
             }
 
-            try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "x")) {
+            try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "x", "testing")) {
                 writer.removeColumn("a");
             }
 

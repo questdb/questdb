@@ -387,7 +387,7 @@ public class TextLexer implements Closeable, Mutable {
 
     private void shift(long d) {
         for (int i = 0; i < fieldIndex; i++) {
-            fields.getQuick(i).lshift(d);
+            fields.getQuick(i).shl(d);
         }
         this.fieldLo -= d;
         this.fieldHi -= d;

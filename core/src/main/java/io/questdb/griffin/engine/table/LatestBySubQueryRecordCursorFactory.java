@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.table;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.*;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
@@ -87,7 +88,7 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
     protected AbstractDataFrameRecordCursor getCursorInstance(
             DataFrameCursor dataFrameCursor,
             SqlExecutionContext executionContext
-    ) {
+    ) throws SqlException {
         StaticSymbolTable symbolTable = dataFrameCursor.getSymbolTable(columnIndex);
         symbolKeys.clear();
         try (RecordCursor cursor = recordCursorFactory.getCursor(executionContext)) {

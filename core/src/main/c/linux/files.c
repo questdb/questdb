@@ -34,16 +34,8 @@
 #include <sys/fcntl.h>
 
 
-inline jlong _io_questdb_std_Files_mremap0
+static inline jlong _io_questdb_std_Files_mremap0
         (jlong fd, jlong address, jlong previousLen, jlong newLen, jlong offset, jint flags) {
-    int prot = 0;
-
-    if (flags == com_questdb_std_Files_MAP_RO) {
-        prot = PROT_READ;
-    } else if (flags == com_questdb_std_Files_MAP_RW) {
-        prot = PROT_READ | PROT_WRITE;
-    }
-
     void *orgAddr = (void *) address;
     void *newAddr = mremap(orgAddr, (size_t) previousLen, (size_t) newLen, MREMAP_MAYMOVE);
     if (newAddr == MAP_FAILED) {

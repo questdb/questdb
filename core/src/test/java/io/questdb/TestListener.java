@@ -27,6 +27,7 @@ package io.questdb;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import org.junit.runner.Description;
+import org.junit.runner.notification.Failure;
 import org.junit.runner.notification.RunListener;
 
 @RunListener.ThreadSafe
@@ -35,10 +36,28 @@ public class TestListener extends RunListener {
 
     @Override
     public void testStarted(Description description) {
-        LOG.info().$(">>>> ").$(description.getDisplayName()).$();
+        LOG.info().$(">>>> ").$(description.getClassName()).$('.').$(description.getMethodName()).$();
     }
 
+    @Override
     public void testFinished(Description description) {
-        LOG.info().$("<<<< ").$(description.getDisplayName()).$();
+        LOG.info().$("<<<< ").$(description.getClassName()).$('.').$(description.getMethodName()).$();
+    }
+
+    @Override
+    public void testFailure(Failure failure) throws Exception {
+        testAssumptionFailure(failure);
+    }
+
+
+    @Override
+    public void testAssumptionFailure(Failure failure) {
+        Description description = failure.getDescription();
+        LOG.error()
+                .$("***** Test Failed *****")
+                .$(description.getClassName()).$('.')
+                .$(description.getMethodName())
+                .$(" : ")
+                .$(failure.getException()).$();
     }
 }

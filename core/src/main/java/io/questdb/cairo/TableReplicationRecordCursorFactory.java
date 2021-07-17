@@ -3,6 +3,7 @@ package io.questdb.cairo;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
@@ -40,7 +41,7 @@ public class TableReplicationRecordCursorFactory extends AbstractRecordCursorFac
     }
 
     @Override
-    public RecordCursor getCursor(SqlExecutionContext executionContext) {
+    public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         throw new UnsupportedOperationException();
     }
 
@@ -70,7 +71,7 @@ public class TableReplicationRecordCursorFactory extends AbstractRecordCursorFac
     }
 
     private static RecordMetadata createMetadata(CairoEngine engine, CharSequence tableName) {
-        try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName, -1)) {
+        try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName, -1, -1)) {
             return GenericRecordMetadata.copyOf(reader.getMetadata());
         }
     }

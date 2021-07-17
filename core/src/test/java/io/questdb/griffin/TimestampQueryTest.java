@@ -33,7 +33,6 @@ import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
-import org.junit.Ignore;
 import org.junit.Test;
 
 import java.text.SimpleDateFormat;
@@ -747,6 +746,33 @@ public class TimestampQueryTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testTimestampSymbolConversion() throws Exception {
+        assertMemoryLeak(() -> {
+            try (TableModel m = new TableModel(configuration, "tt", PartitionBy.DAY)) {
+                m.timestamp("dts")
+                        .col("ts", ColumnType.TIMESTAMP);
+                createPopulateTable(m, 31, "2021-03-14", 31);
+                String expected = "dts\tts\n" +
+                        "2021-04-02T23:59:59.354820Z\t2021-04-02T23:59:59.354820Z\n";
+
+                assertQuery(
+                        expected,
+                        "tt where dts > cast('2021-04-02T13:45:49.207Z' as symbol) and dts < cast('2021-04-03 13:45:49.207' as symbol)",
+                        "dts",
+                        true,
+                        true);
+
+                assertQuery(
+                        expected,
+                        "tt where ts > cast('2021-04-02T13:45:49.207Z' as symbol) and ts < cast('2021-04-03 13:45:49.207' as symbol)",
+                        "dts",
+                        true,
+                        false);
+            }
+        });
+    }
+
+    @Test
     public void testTimestampInDay1orDay2() throws Exception {
         assertQuery(
                 "min\tmax\n\t\n",
@@ -783,11 +809,45 @@ public class TimestampQueryTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testTimestampSymbolComparison() throws Exception {
+        assertQuery(
+                "min\tmax\n\t\n",
+                "select min(nts), max(nts) from tt where nts = cast('2020-01-01' as symbol)",
+                "create table tt (dts timestamp, nts timestamp) timestamp(dts)",
+                null,
+                "insert into tt " +
+                        "select timestamp_sequence(1577836800000000L, 60*60*1000000L), timestamp_sequence(1577836800000000L, 60*60*1000000L) " +
+                        "from long_sequence(48L)",
+                "min\tmax\n" +
+                        "2020-01-01T00:00:00.000000Z\t2020-01-01T00:00:00.000000Z\n",
+                false,
+                false,
+                true
+        );
+    }
+
+    @Test
     public void testTimestampStringDateAdd() throws Exception {
         assertQuery(
                 "dateadd\n" +
                         "2020-01-02T00:00:00.000000Z\n",
                 "select dateadd('d', 1, '2020-01-01')",
+                null,
+                null,
+                null,
+                null,
+                true,
+                false,
+                true
+        );
+    }
+
+    @Test
+    public void testTimestampSymbolDateAdd() throws Exception {
+        assertQuery(
+                "dateadd\n" +
+                        "2020-01-02T00:00:00.000000Z\n",
+                "select dateadd('d', 1, cast('2020-01-01' as symbol))",
                 null,
                 null,
                 null,
@@ -976,23 +1036,96 @@ public class TimestampQueryTest extends AbstractGriffinTest {
                     "2020-01-02T00:00:00.000000Z\t2020-01-02T23:00:00.000000Z\n";
             assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where nts between '2020-01-02' and case when 1=1 then now() else now() end");
 
+            // Between with NULL and NULL
+            expected = "dts\tnts\n";
+            assertTimestampTtQuery(expected, "select * from tt where nts between NULL and NULL");
+
+            // Not between with NULL and NULL
+            expected = "dts\tnts\n" +
+                    "2020-01-01T00:00:00.000000Z\t2020-01-01T00:00:00.000000Z\n" +
+                    "2020-01-01T01:00:00.000000Z\t2020-01-01T01:00:00.000000Z\n" +
+                    "2020-01-01T02:00:00.000000Z\t2020-01-01T02:00:00.000000Z\n" +
+                    "2020-01-01T03:00:00.000000Z\t2020-01-01T03:00:00.000000Z\n" +
+                    "2020-01-01T04:00:00.000000Z\t2020-01-01T04:00:00.000000Z\n" +
+                    "2020-01-01T05:00:00.000000Z\t2020-01-01T05:00:00.000000Z\n" +
+                    "2020-01-01T06:00:00.000000Z\t2020-01-01T06:00:00.000000Z\n" +
+                    "2020-01-01T07:00:00.000000Z\t2020-01-01T07:00:00.000000Z\n" +
+                    "2020-01-01T08:00:00.000000Z\t2020-01-01T08:00:00.000000Z\n" +
+                    "2020-01-01T09:00:00.000000Z\t2020-01-01T09:00:00.000000Z\n" +
+                    "2020-01-01T10:00:00.000000Z\t2020-01-01T10:00:00.000000Z\n" +
+                    "2020-01-01T11:00:00.000000Z\t2020-01-01T11:00:00.000000Z\n" +
+                    "2020-01-01T12:00:00.000000Z\t2020-01-01T12:00:00.000000Z\n" +
+                    "2020-01-01T13:00:00.000000Z\t2020-01-01T13:00:00.000000Z\n" +
+                    "2020-01-01T14:00:00.000000Z\t2020-01-01T14:00:00.000000Z\n" +
+                    "2020-01-01T15:00:00.000000Z\t2020-01-01T15:00:00.000000Z\n" +
+                    "2020-01-01T16:00:00.000000Z\t2020-01-01T16:00:00.000000Z\n" +
+                    "2020-01-01T17:00:00.000000Z\t2020-01-01T17:00:00.000000Z\n" +
+                    "2020-01-01T18:00:00.000000Z\t2020-01-01T18:00:00.000000Z\n" +
+                    "2020-01-01T19:00:00.000000Z\t2020-01-01T19:00:00.000000Z\n" +
+                    "2020-01-01T20:00:00.000000Z\t2020-01-01T20:00:00.000000Z\n" +
+                    "2020-01-01T21:00:00.000000Z\t2020-01-01T21:00:00.000000Z\n" +
+                    "2020-01-01T22:00:00.000000Z\t2020-01-01T22:00:00.000000Z\n" +
+                    "2020-01-01T23:00:00.000000Z\t2020-01-01T23:00:00.000000Z\n" +
+                    "2020-01-02T00:00:00.000000Z\t2020-01-02T00:00:00.000000Z\n" +
+                    "2020-01-02T01:00:00.000000Z\t2020-01-02T01:00:00.000000Z\n" +
+                    "2020-01-02T02:00:00.000000Z\t2020-01-02T02:00:00.000000Z\n" +
+                    "2020-01-02T03:00:00.000000Z\t2020-01-02T03:00:00.000000Z\n" +
+                    "2020-01-02T04:00:00.000000Z\t2020-01-02T04:00:00.000000Z\n" +
+                    "2020-01-02T05:00:00.000000Z\t2020-01-02T05:00:00.000000Z\n" +
+                    "2020-01-02T06:00:00.000000Z\t2020-01-02T06:00:00.000000Z\n" +
+                    "2020-01-02T07:00:00.000000Z\t2020-01-02T07:00:00.000000Z\n" +
+                    "2020-01-02T08:00:00.000000Z\t2020-01-02T08:00:00.000000Z\n" +
+                    "2020-01-02T09:00:00.000000Z\t2020-01-02T09:00:00.000000Z\n" +
+                    "2020-01-02T10:00:00.000000Z\t2020-01-02T10:00:00.000000Z\n" +
+                    "2020-01-02T11:00:00.000000Z\t2020-01-02T11:00:00.000000Z\n" +
+                    "2020-01-02T12:00:00.000000Z\t2020-01-02T12:00:00.000000Z\n" +
+                    "2020-01-02T13:00:00.000000Z\t2020-01-02T13:00:00.000000Z\n" +
+                    "2020-01-02T14:00:00.000000Z\t2020-01-02T14:00:00.000000Z\n" +
+                    "2020-01-02T15:00:00.000000Z\t2020-01-02T15:00:00.000000Z\n" +
+                    "2020-01-02T16:00:00.000000Z\t2020-01-02T16:00:00.000000Z\n" +
+                    "2020-01-02T17:00:00.000000Z\t2020-01-02T17:00:00.000000Z\n" +
+                    "2020-01-02T18:00:00.000000Z\t2020-01-02T18:00:00.000000Z\n" +
+                    "2020-01-02T19:00:00.000000Z\t2020-01-02T19:00:00.000000Z\n" +
+                    "2020-01-02T20:00:00.000000Z\t2020-01-02T20:00:00.000000Z\n" +
+                    "2020-01-02T21:00:00.000000Z\t2020-01-02T21:00:00.000000Z\n" +
+                    "2020-01-02T22:00:00.000000Z\t2020-01-02T22:00:00.000000Z\n" +
+                    "2020-01-02T23:00:00.000000Z\t2020-01-02T23:00:00.000000Z\n";
+            assertTimestampTtQuery(expected, "select * from tt where nts not between NULL and NULL");
+
             // Between with NULL
             expected = "dts\tnts\n";
             assertTimestampTtQuery(expected, "select * from tt where nts between CAST(NULL as TIMESTAMP) and '2020-01-01'");
+            assertTimestampTtQuery(expected, "select * from tt where nts between NULL and '2020-01-01'");
+            assertTimestampTtQuery(expected, "select * from tt where nts between '2020-01-01' and NULL");
 
             // NOT Between with NULL
             expected = "min\tmax\n" +
                     "2020-01-01T00:00:00.000000Z\t2020-01-02T23:00:00.000000Z\n";
             assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where nts not between CAST(NULL as TIMESTAMP) and '2020-01-01'");
+            assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where nts not between NULL and '2020-01-01'");
+            assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where nts not between '2020-01-01' and NULL");
 
             // Between with NULL and now()
             expected = "dts\tnts\n";
             assertTimestampTtQuery(expected, "select * from tt where nts between CAST(NULL as TIMESTAMP) and now()");
+            assertTimestampTtQuery(expected, "select * from tt where nts between NULL and now()");
+
+            // Between with now() and NULL
+            expected = "dts\tnts\n";
+            assertTimestampTtQuery(expected, "select * from tt where nts between now() and CAST(NULL as TIMESTAMP)");
+            assertTimestampTtQuery(expected, "select * from tt where nts between now() and NULL");
 
             // NOT Between with NULL and now()
             expected = "min\tmax\n" +
                     "2020-01-01T00:00:00.000000Z\t2020-01-02T23:00:00.000000Z\n";
             assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where nts not between CAST(NULL as TIMESTAMP) and now()");
+            assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where nts not between NULL and now()");
+
+            // NOT Between with now() and NULL
+            expected = "min\tmax\n" +
+                    "2020-01-01T00:00:00.000000Z\t2020-01-02T23:00:00.000000Z\n";
+            assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where nts not between now() and CAST(NULL as TIMESTAMP)");
+            assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where nts not between now() and NULL");
 
             // Between runtime const evaluating to NULL
             expected = "dts\tnts\n";
@@ -1053,6 +1186,23 @@ public class TimestampQueryTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testTimestampSymbolComparisonInvalidValue() throws Exception {
+        assertMemoryLeak(() -> {
+            // create table
+            String createStmt = "create table tt (dts timestamp, nts timestamp) timestamp(dts)";
+            compiler.compile(createStmt, sqlExecutionContext);
+
+            // insert same values to dts (designated) as nts (non-designated) timestamp
+            compiler.compile("insert into tt " +
+                    "select timestamp_sequence(1577836800000000L, 60*60*1000000L), timestamp_sequence(1577836800000000L, 60*60*1000000L) " +
+                    "from long_sequence(48L)", sqlExecutionContext);
+
+            assertTimestampTtFailedQuery("Invalid date", "select min(nts), max(nts) from tt where nts > cast('invalid' as symbol)");
+            assertTimestampTtFailedQuery("cannot compare TIMESTAMP with type DOUBLE", "select min(nts), max(nts) from tt in (cast('2020-01-01' as symbol), NaN)");
+        });
+    }
+
+    @Test
     public void testTimestampStringComparisonBetweenInvalidValue() throws Exception {
         assertMemoryLeak(() -> {
             // create table
@@ -1073,6 +1223,60 @@ public class TimestampQueryTest extends AbstractGriffinTest {
         });
     }
 
+    @Test
+    public void testTimestampSymbolComparisonBetweenInvalidValue() throws Exception {
+        assertMemoryLeak(() -> {
+            // create table
+            String createStmt = "create table tt (dts timestamp, nts timestamp) timestamp(dts)";
+            compiler.compile(createStmt, sqlExecutionContext);
+
+            // insert same values to dts (designated) as nts (non-designated) timestamp
+            compiler.compile("insert into tt " +
+                    "select timestamp_sequence(1577836800000000L, 60*60*1000000L), timestamp_sequence(1577836800000000L, 60*60*1000000L) " +
+                    "from long_sequence(48L)", sqlExecutionContext);
+
+            assertTimestampTtFailedQuery("Invalid date", "select min(nts), max(nts) from tt where nts between cast('invalid' as symbol) and cast('2020-01-01' as symbol)");
+            assertTimestampTtFailedQuery("Invalid date", "select min(nts), max(nts) from tt where nts between cast('2020-01-01' as symbol) and cast('invalid' as symbol)");
+            assertTimestampTtFailedQuery("Invalid date", "select min(nts), max(nts) from tt where nts between cast('2020-01-01' as symbol) and cast('invalid' as symbol) || cast('dd' as symbol)");
+            assertTimestampTtFailedQuery("Invalid column: invalidCol", "select min(nts), max(nts) from tt where invalidCol not between cast('2020-01-01' as symbol) and cast('2020-01-02' as symbol)");
+            assertTimestampTtFailedQuery("Invalid date", "select min(nts), max(nts) from tt where nts in (cast('2020-01-01' as symbol), cast('invalid' as symbol))");
+            assertTimestampTtFailedQuery("cannot compare TIMESTAMP with type CURSOR", "select min(nts), max(nts) from tt where nts in (select nts from tt)");
+        });
+    }
+
+    @Test
+    public void testTimestampOpSymbolColumns() throws Exception {
+        assertQuery(
+                "a\tk\n" +
+                        "1970-01-01T00:00:00.040000Z\t1970-01-01T00:00:00.030000Z\n" +
+                        "1970-01-01T00:00:00.050000Z\t1970-01-01T00:00:00.040000Z\n",
+                "select a, k from x where k < a",
+                "create table x as (select cast(concat('1970-01-01T00:00:00.0', (case when x > 3 then x else x - 1 end), '0000Z') as symbol) a, timestamp_sequence(0, 10000) k from long_sequence(5)) timestamp(k)",
+                "k",
+                null,
+                null,
+                true,
+                true,
+                false
+        );
+    }
+
+    @Test
+    public void testDesignatedTimestampOpSymbolColumns() throws Exception {
+        assertQuery(
+                "a\tdk\tk\n" +
+                        "1970-01-01T00:00:00.040000Z\t1970-01-01T00:00:00.030000Z\t1970-01-01T00:00:00.030000Z\n" +
+                        "1970-01-01T00:00:00.050000Z\t1970-01-01T00:00:00.040000Z\t1970-01-01T00:00:00.040000Z\n",
+                "select a, dk, k from x where dk < a",
+                "create table x as (select cast(concat('1970-01-01T00:00:00.0', (case when x > 3 then x else x - 1 end), '0000Z') as symbol) a, timestamp_sequence(0, 10000) dk, timestamp_sequence(0, 10000) k from long_sequence(5)) timestamp(k)",
+                "k",
+                null,
+                null,
+                true,
+                true,
+                false
+        );
+    }
     private void assertTimestampTtFailedQuery(String expectedError, String query) {
         assertTimestampTtFailedQuery0(expectedError, query);
         String dtsQuery = query.replace("nts", "dts");
@@ -1126,10 +1330,10 @@ public class TimestampQueryTest extends AbstractGriffinTest {
     }
 
     @Test
-    @Ignore // https://github.com/questdb/questdb/issues/911
     public void testTimestampMin() throws Exception {
         assertQuery(
-                "nts\tmin\n",
+                "nts\tmin\n" +
+                        "nts\t\n",
                 "select 'nts', min(nts) from tt where nts > '2020-01-01T00:00:00.000000Z'",
                 "create table tt (dts timestamp, nts timestamp) timestamp(dts)",
                 null,
@@ -1137,8 +1341,8 @@ public class TimestampQueryTest extends AbstractGriffinTest {
                         "select timestamp_sequence(1577836800000000L, 10L), timestamp_sequence(1577836800000000L, 10L) " +
                         "from long_sequence(2L)",
                 "nts\tmin\n" +
-                        "nts\t2020-01-01T00:00:00.000010Z",
-                true,
+                        "nts\t2020-01-01T00:00:00.000010Z\n",
+                false,
                 false,
                 true
         );

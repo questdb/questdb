@@ -277,6 +277,16 @@ public class TablePageFrameCursor implements PageFrameCursor {
     public class ReplicationPageFrame implements PageFrame {
 
         @Override
+        public BitmapIndexReader getBitmapIndexReader(int gropuBySymbolColIndex, int dirForward) {
+            return reader.getBitmapIndexReader(partitionIndex, gropuBySymbolColIndex, dirForward);
+        }
+
+        @Override
+        public long getFirstRowId() {
+            return frameFirstRow;
+        }
+
+        @Override
         public long getFirstTimestamp() {
             return firstTimestamp;
         }

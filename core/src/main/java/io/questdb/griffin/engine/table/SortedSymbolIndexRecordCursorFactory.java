@@ -28,6 +28,7 @@ import io.questdb.cairo.sql.DataFrameCursor;
 import io.questdb.cairo.sql.DataFrameCursorFactory;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import org.jetbrains.annotations.NotNull;
@@ -68,7 +69,8 @@ public class SortedSymbolIndexRecordCursorFactory extends AbstractDataFrameRecor
     }
 
     @Override
-    protected RecordCursor getCursorInstance(DataFrameCursor dataFrameCursor, SqlExecutionContext executionContext) {
+    protected RecordCursor getCursorInstance(DataFrameCursor dataFrameCursor, SqlExecutionContext executionContext)
+            throws SqlException {
         this.cursor.of(dataFrameCursor, executionContext);
         return this.cursor;
     }

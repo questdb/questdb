@@ -26,6 +26,7 @@ package io.questdb.cutlass.http;
 
 import io.questdb.MessageBus;
 import io.questdb.MessageBusImpl;
+import io.questdb.Metrics;
 import io.questdb.TelemetryJob;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.DefaultCairoConfiguration;
@@ -171,7 +172,8 @@ public class HttpQueryTestBuilder {
                                 httpConfiguration.getJsonQueryProcessorConfiguration(),
                                 engine,
                                 messageBus,
-                                workerPool.getWorkerCount()
+                                workerPool.getWorkerCount(),
+                                Metrics.enabled()
                         );
                     }
 
@@ -214,7 +216,13 @@ public class HttpQueryTestBuilder {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
                     public HttpRequestProcessor newInstance() {
-                        return new JsonQueryProcessor(httpConfiguration.getJsonQueryProcessorConfiguration(), engine, engine.getMessageBus(), 1);
+                        return new JsonQueryProcessor(
+                                httpConfiguration.getJsonQueryProcessorConfiguration(),
+                                engine,
+                                engine.getMessageBus(),
+                                1,
+                                Metrics.enabled()
+                        );
                     }
 
                     @Override

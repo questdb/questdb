@@ -68,7 +68,7 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
 
         if (lockOwner != UNLOCKED) {
             LOG.info().$('\'').utf8(name).$("' is locked [owner=").$(lockOwner).$(']').$();
-            throw EntryLockedException.INSTANCE;
+            throw EntryLockedException.instance("unknown");
         }
 
         do {
@@ -120,7 +120,7 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
         // max entries exceeded
         notifyListener(thread, name, PoolListener.EV_FULL, -1, -1);
         LOG.info().$("could not get, busy [table=`").utf8(name).$("`, thread=").$(thread).$(", retries=").$(this.maxSegments).$(']').$();
-        throw EntryUnavailableException.INSTANCE;
+        throw EntryUnavailableException.instance("unknown");
     }
 
     public int getBusyCount() {
@@ -310,7 +310,7 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
         if (Unsafe.arrayGetVolatile(e.allocations, index) != UNALLOCATED) {
 
             LOG.debug().$('\'').$(name).$("' is back [at=").$(e.index).$(':').$(index).$(", thread=").$(thread).$(']').$();
-            notifyListener(thread, name, PoolListener.EV_RETURN, reader.entry.index, index);
+            notifyListener(thread, name, PoolListener.EV_RETURN, e.index, index);
 
             e.releaseTimes[index] = clock.getTicks();
             Unsafe.arrayPutOrdered(e.allocations, index, UNALLOCATED);

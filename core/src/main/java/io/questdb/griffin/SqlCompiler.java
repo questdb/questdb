@@ -122,7 +122,10 @@ public class SqlCompiler implements Closeable {
         this.lexer = new GenericLexer(configuration.getSqlLexerPoolCapacity());
         this.functionParser = new FunctionParser(
                 configuration,
-                functionFactoryCache != null ? functionFactoryCache : new FunctionFactoryCache(engine.getConfiguration(), ServiceLoader.load(FunctionFactory.class))
+                functionFactoryCache != null
+                                     ? functionFactoryCache
+                                     : new FunctionFactoryCache(engine.getConfiguration(), ServiceLoader.load(
+                                             FunctionFactory.class, FunctionFactory.class.getClassLoader()))
         );
         this.codeGenerator = new SqlCodeGenerator(engine, configuration, functionParser);
 
@@ -261,11 +264,15 @@ public class SqlCompiler implements Closeable {
             asm.aload(1);
             asm.iconst(i);
 
-
-            switch (from.getColumnType(i)) {
+            final int toColumnType = to.getColumnType(toColumnIndex);
+            int fromColumnType = from.getColumnType(i);
+            if (fromColumnType == ColumnType.NULL) {
+                fromColumnType = toColumnType;
+            }
+            switch (fromColumnType) {
                 case ColumnType.INT:
                     asm.invokeInterface(rGetInt, 1);
-                    switch (to.getColumnType(toColumnIndex)) {
+                    switch (toColumnType) {
                         case ColumnType.LONG:
                             asm.i2l();
                             asm.invokeVirtual(wPutLong);
@@ -301,7 +308,7 @@ public class SqlCompiler implements Closeable {
                     break;
                 case ColumnType.LONG:
                     asm.invokeInterface(rGetLong, 1);
-                    switch (to.getColumnType(toColumnIndex)) {
+                    switch (toColumnType) {
                         case ColumnType.INT:
                             asm.l2i();
                             asm.invokeVirtual(wPutInt);
@@ -337,7 +344,7 @@ public class SqlCompiler implements Closeable {
                     break;
                 case ColumnType.DATE:
                     asm.invokeInterface(rGetDate, 1);
-                    switch (to.getColumnType(toColumnIndex)) {
+                    switch (toColumnType) {
                         case ColumnType.INT:
                             asm.l2i();
                             asm.invokeVirtual(wPutInt);
@@ -373,7 +380,7 @@ public class SqlCompiler implements Closeable {
                     break;
                 case ColumnType.TIMESTAMP:
                     asm.invokeInterface(rGetTimestamp, 1);
-                    switch (to.getColumnType(toColumnIndex)) {
+                    switch (toColumnType) {
                         case ColumnType.INT:
                             asm.l2i();
                             asm.invokeVirtual(wPutInt);
@@ -409,7 +416,7 @@ public class SqlCompiler implements Closeable {
                     break;
                 case ColumnType.BYTE:
                     asm.invokeInterface(rGetByte, 1);
-                    switch (to.getColumnType(toColumnIndex)) {
+                    switch (toColumnType) {
                         case ColumnType.INT:
                             asm.invokeVirtual(wPutInt);
                             break;
@@ -444,7 +451,7 @@ public class SqlCompiler implements Closeable {
                     break;
                 case ColumnType.SHORT:
                     asm.invokeInterface(rGetShort, 1);
-                    switch (to.getColumnType(toColumnIndex)) {
+                    switch (toColumnType) {
                         case ColumnType.INT:
                             asm.invokeVirtual(wPutInt);
                             break;
@@ -483,7 +490,7 @@ public class SqlCompiler implements Closeable {
                     break;
                 case ColumnType.FLOAT:
                     asm.invokeInterface(rGetFloat, 1);
-                    switch (to.getColumnType(toColumnIndex)) {
+                    switch (toColumnType) {
                         case ColumnType.INT:
                             asm.f2i();
                             asm.invokeVirtual(wPutInt);
@@ -521,7 +528,7 @@ public class SqlCompiler implements Closeable {
                     break;
                 case ColumnType.DOUBLE:
                     asm.invokeInterface(rGetDouble, 1);
-                    switch (to.getColumnType(toColumnIndex)) {
+                    switch (toColumnType) {
                         case ColumnType.INT:
                             asm.d2i();
                             asm.invokeVirtual(wPutInt);
@@ -559,7 +566,7 @@ public class SqlCompiler implements Closeable {
                     break;
                 case ColumnType.CHAR:
                     asm.invokeInterface(rGetChar, 1);
-                    switch (to.getColumnType(toColumnIndex)) {
+                    switch (toColumnType) {
                         case ColumnType.STRING:
                             asm.invokeVirtual(wPutStrChar);
                             break;
@@ -573,7 +580,7 @@ public class SqlCompiler implements Closeable {
                     break;
                 case ColumnType.SYMBOL:
                     asm.invokeInterface(rGetSym, 1);
-                    if (to.getColumnType(toColumnIndex) == ColumnType.STRING) {
+                    if (toColumnType == ColumnType.STRING) {
                         asm.invokeVirtual(wPutStr);
                     } else {
                         asm.invokeVirtual(wPutSym);
@@ -581,7 +588,7 @@ public class SqlCompiler implements Closeable {
                     break;
                 case ColumnType.STRING:
                     asm.invokeInterface(rGetStr, 1);
-                    switch (to.getColumnType(toColumnIndex)) {
+                    switch (toColumnType) {
                         case ColumnType.SYMBOL:
                             asm.invokeVirtual(wPutSym);
                             break;
@@ -640,6 +647,7 @@ public class SqlCompiler implements Closeable {
 
     public static boolean isAssignableFrom(int to, int from) {
         return to == from
+                || from == ColumnType.NULL
                 || (from >= ColumnType.BYTE
                 && to >= ColumnType.BYTE
                 && to <= ColumnType.DOUBLE
@@ -648,7 +656,8 @@ public class SqlCompiler implements Closeable {
                 || (from == ColumnType.SYMBOL && to == ColumnType.STRING)
                 || (from == ColumnType.CHAR && to == ColumnType.SYMBOL)
                 || (from == ColumnType.CHAR && to == ColumnType.STRING)
-                || (from == ColumnType.STRING && to == ColumnType.TIMESTAMP);
+                || (from == ColumnType.STRING && to == ColumnType.TIMESTAMP)
+                || (from == ColumnType.SYMBOL && to == ColumnType.TIMESTAMP);
     }
 
     @Override
@@ -720,8 +729,9 @@ public class SqlCompiler implements Closeable {
         CharSequence tok = GenericLexer.unquote(expectToken(lexer, "table name"));
         tableExistsOrFail(tableNamePosition, tok, executionContext);
         try {
-            if (!engine.lockWriter(tok)) {
-                throw SqlException.$(tableNamePosition, "could not lock, busy [table=`").put(tok).put("`]");
+            CharSequence lockedReason = engine.lockWriter(tok, "alterSystem");
+            if (null != lockedReason) {
+                throw SqlException.$(tableNamePosition, "could not lock, busy [table=`").put(tok).put(", lockedReason=").put(lockedReason).put("`]");
             }
         } catch (CairoException e) {
             throw SqlException.position(tableNamePosition)
@@ -755,7 +765,7 @@ public class SqlCompiler implements Closeable {
             tableExistsOrFail(tableNamePosition, tok, executionContext);
 
             CharSequence tableName = GenericLexer.immutableOf(tok);
-            try (TableWriter writer = engine.getWriter(executionContext.getCairoSecurityContext(), tableName)) {
+            try (TableWriter writer = engine.getWriter(executionContext.getCairoSecurityContext(), tableName, "alterTable")) {
 
                 tok = expectToken(lexer, "'add', 'alter' or 'drop'");
 
@@ -1080,7 +1090,8 @@ public class SqlCompiler implements Closeable {
         } while (true);
     }
 
-    private void alterTableDropOrAttachPartition(TableWriter writer, int action, SqlExecutionContext executionContext) throws SqlException {
+    private void alterTableDropOrAttachPartition(TableWriter writer, int action, SqlExecutionContext executionContext)
+            throws SqlException {
         final int pos = lexer.lastTokenPosition();
         final CharSequence tok = expectToken(lexer, "'list' or 'where'");
         if (SqlKeywords.isListKeyword(tok)) {
@@ -1552,7 +1563,8 @@ public class SqlCompiler implements Closeable {
         final CreateTableModel createTableModel = (CreateTableModel) model;
         final ExpressionNode name = createTableModel.getName();
 
-        if (engine.lock(executionContext.getCairoSecurityContext(), name.token)) {
+        CharSequence lockedReason = engine.lock(executionContext.getCairoSecurityContext(), name.token, "createTable");
+        if (null == lockedReason) {
             TableWriter writer = null;
             boolean newTable = false;
             try {
@@ -1580,7 +1592,7 @@ public class SqlCompiler implements Closeable {
                 engine.unlock(executionContext.getCairoSecurityContext(), name.token, writer, newTable);
             }
         } else {
-            throw SqlException.$(name.position, "cannot acquire table lock");
+            throw SqlException.$(name.position, "cannot acquire table lock [lockedReason=").put(lockedReason).put(']');
         }
 
         return compiledQuery.ofCreateTable();
@@ -1694,7 +1706,12 @@ public class SqlCompiler implements Closeable {
         tableExistsOrFail(name.position, name.token, executionContext);
 
         ObjList<Function> valueFunctions = null;
-        try (TableReader reader = engine.getReader(executionContext.getCairoSecurityContext(), name.token, TableUtils.ANY_TABLE_VERSION)) {
+        try (TableReader reader = engine.getReader(
+                executionContext.getCairoSecurityContext(),
+                name.token,
+                TableUtils.ANY_TABLE_ID,
+                TableUtils.ANY_TABLE_VERSION
+        )) {
             final long structureVersion = reader.getVersion();
             final RecordMetadata metadata = reader.getMetadata();
             final int writerTimestampIndex = metadata.getTimestampIndex();
@@ -1768,7 +1785,7 @@ public class SqlCompiler implements Closeable {
             }
 
             // validate timestamp
-            if (writerTimestampIndex > -1 && timestampFunction == null) {
+            if (writerTimestampIndex > -1 && (timestampFunction == null || timestampFunction.getType() == ColumnType.NULL)) {
                 throw SqlException.$(0, "insert statement must populate timestamp");
             }
 
@@ -1786,7 +1803,7 @@ public class SqlCompiler implements Closeable {
         final ExpressionNode name = model.getTableName();
         tableExistsOrFail(name.position, name.token, executionContext);
 
-        try (TableWriter writer = engine.getWriter(executionContext.getCairoSecurityContext(), name.token);
+        try (TableWriter writer = engine.getWriter(executionContext.getCairoSecurityContext(), name.token, "insertAsSelect");
              RecordCursorFactory factory = generate(model.getQueryModel(), executionContext)) {
 
             final RecordMetadata cursorMetadata = factory.getMetadata();
@@ -1795,25 +1812,10 @@ public class SqlCompiler implements Closeable {
             final int cursorTimestampIndex = cursorMetadata.getTimestampIndex();
             final int cursorColumnCount = cursorMetadata.getColumnCount();
 
-            // fail when target table requires chronological data and cursor cannot provide it
-            if (writerTimestampIndex > -1 && cursorTimestampIndex == -1) {
-                if (cursorColumnCount <= writerTimestampIndex) {
-                    throw SqlException.$(name.position, "select clause must provide timestamp column");
-                } else {
-                    int columnType = cursorMetadata.getColumnType(writerTimestampIndex);
-                    if (columnType != ColumnType.TIMESTAMP && columnType != ColumnType.STRING) {
-                        throw SqlException.$(name.position, "expected timestamp column but type is ").put(ColumnType.nameOf(columnType));
-                    }
-                }
-            }
-
-            if (writerTimestampIndex > -1 && cursorTimestampIndex > -1 && writerTimestampIndex != cursorTimestampIndex) {
-                throw SqlException.$(name.position, "nominated column of existing table (").put(writerTimestampIndex).put(") does not match nominated column in select query (").put(cursorTimestampIndex).put(')');
-            }
-
             final RecordToRowCopier copier;
             CharSequenceHashSet columnSet = model.getColumnSet();
             final int columnSetSize = columnSet.size();
+            int timestampIndexFound = -1;
             if (columnSetSize > 0) {
                 // validate type cast
 
@@ -1840,10 +1842,38 @@ public class SqlCompiler implements Closeable {
                                 writerMetadata.getColumnName(i)
                         );
                     }
+
+                    if (index == writerTimestampIndex) {
+                        timestampIndexFound = i;
+                        if (fromType != ColumnType.TIMESTAMP && fromType != ColumnType.STRING) {
+                            throw SqlException.$(name.position, "expected timestamp column but type is ").put(ColumnType.nameOf(fromType));
+                        }
+                    }
+                }
+
+                // fail when target table requires chronological data and cursor cannot provide it
+                if (timestampIndexFound < 0 && writerTimestampIndex >= 0) {
+                    throw SqlException.$(name.position, "select clause must provide timestamp column");
                 }
 
                 copier = assembleRecordToRowCopier(asm, cursorMetadata, writerMetadata, listColumnFilter);
             } else {
+                // fail when target table requires chronological data and cursor cannot provide it
+                if (writerTimestampIndex > -1 && cursorTimestampIndex == -1) {
+                    if (cursorColumnCount <= writerTimestampIndex) {
+                        throw SqlException.$(name.position, "select clause must provide timestamp column");
+                    } else {
+                        int columnType = cursorMetadata.getColumnType(writerTimestampIndex);
+                        if (columnType != ColumnType.TIMESTAMP && columnType != ColumnType.STRING && columnType != ColumnType.NULL) {
+                            throw SqlException.$(name.position, "expected timestamp column but type is ").put(ColumnType.nameOf(columnType));
+                        }
+                    }
+                }
+
+                if (writerTimestampIndex > -1 && cursorTimestampIndex > -1 && writerTimestampIndex != cursorTimestampIndex) {
+                    throw SqlException.$(name.position, "nominated column of existing table (").put(writerTimestampIndex).put(") does not match nominated column in select query (").put(cursorTimestampIndex).put(')');
+                }
+                timestampIndexFound = writerTimestampIndex;
 
                 final int n = writerMetadata.getColumnCount();
                 if (n > cursorMetadata.getColumnCount()) {
@@ -1891,7 +1921,7 @@ public class SqlCompiler implements Closeable {
                                     model.getCommitLag()
                             );
                         } else {
-                            copyOrdered(writer, factory.getMetadata(), cursor, copier, writerTimestampIndex);
+                            copyOrdered(writer, factory.getMetadata(), cursor, copier, timestampIndexFound);
                         }
                     }
                 } catch (Throwable e) {
@@ -2054,6 +2084,7 @@ public class SqlCompiler implements Closeable {
                 if (tok != null && SqlKeywords.isZoneKeyword(tok)) {
                     return compiledQuery.of(new ShowTimeZoneFactory());
                 }
+                // todo: what if or rather what else?!
             }
         }
 
@@ -2183,10 +2214,10 @@ public class SqlCompiler implements Closeable {
                     tableExistsOrFail(lexer.lastTokenPosition(), tok, executionContext);
 
                     try {
-                        tableWriters.add(engine.getWriter(executionContext.getCairoSecurityContext(), tok));
+                        tableWriters.add(engine.getWriter(executionContext.getCairoSecurityContext(), tok, "truncateTables"));
                     } catch (CairoException e) {
                         LOG.info().$("table busy [table=").$(tok).$(", e=").$((Sinkable) e).$(']').$();
-                        throw SqlException.$(lexer.lastTokenPosition(), "table '").put(tok).put("' is busy");
+                        throw SqlException.$(lexer.lastTokenPosition(), "table '").put(tok).put("' could not be truncated: ").put(e);
                     }
                     tok = SqlUtil.fetchNext(lexer);
                     if (tok == null || Chars.equals(tok, ';')) {

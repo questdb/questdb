@@ -51,7 +51,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private final MessageBus messageBus;
     private final MicrosecondClock clock;
     private final AnalyticContextImpl analyticContext = new AnalyticContextImpl();
-    private RingQueue<TelemetryTask> telemetryQueue;
+    private final RingQueue<TelemetryTask> telemetryQueue;
     private Sequence telemetryPubSeq;
     private TelemetryMethod telemetryMethod = this::storeTelemetryNoop;
     private BindVariableService bindVariableService;
@@ -74,8 +74,8 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         this.clock = cairoConfiguration.getMicrosecondClock();
         this.cairoSecurityContext = AllowAllCairoSecurityContext.INSTANCE;
 
-        if (messageBus != null) {
-            this.telemetryQueue = cairoEngine.getTelemetryQueue();
+        this.telemetryQueue = cairoEngine.getTelemetryQueue();
+        if (messageBus != null && telemetryQueue != null) {
             this.telemetryPubSeq = cairoEngine.getTelemetryPubSequence();
             this.telemetryMethod = this::doStoreTelemetry;
         }

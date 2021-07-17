@@ -71,7 +71,7 @@ public class FullFwdDataFrameCursorFactoryTest extends AbstractCairoTest {
                 writer.commit();
             }
 
-            FullFwdDataFrameCursorFactory factory = new FullFwdDataFrameCursorFactory(engine, "x", 0);
+            FullFwdDataFrameCursorFactory factory = new FullFwdDataFrameCursorFactory(engine, "x", TableUtils.ANY_TABLE_ID, 0);
             long count = 0;
             try (DataFrameCursor cursor = factory.getCursor(AllowAllSqlSecurityContext.INSTANCE)) {
                 DataFrame frame;
@@ -82,7 +82,7 @@ public class FullFwdDataFrameCursorFactoryTest extends AbstractCairoTest {
             Assert.assertEquals(0, engine.getBusyReaderCount());
             Assert.assertEquals(M, count);
 
-            try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "x")) {
+            try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "x", "testing")) {
                 writer.removeColumn("b");
             }
 

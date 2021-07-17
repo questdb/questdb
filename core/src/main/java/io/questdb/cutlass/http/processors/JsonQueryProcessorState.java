@@ -373,6 +373,9 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         }
 
         int columnType = metadata.getColumnType(columnIndex);
+        if (columnType == ColumnType.NULL) {
+            columnType = ColumnType.STRING;
+        }
         this.columnTypes.add(columnType);
         this.columnSkewList.add(columnIndex);
         this.valueWriters.add(skewedValueWriters.getQuick(columnType));
@@ -520,7 +523,8 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         return cursor == null;
     }
 
-    boolean of(RecordCursorFactory factory, SqlExecutionContextImpl sqlExecutionContext) throws PeerDisconnectedException, PeerIsSlowToReadException {
+    boolean of(RecordCursorFactory factory, SqlExecutionContextImpl sqlExecutionContext)
+            throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException {
         this.recordCursorFactory = factory;
         queryCacheable = true;
         this.cursor = factory.getCursor(sqlExecutionContext);
@@ -566,7 +570,10 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         } else {
             columnCount = metadata.getColumnCount();
             for (int i = 0; i < columnCount; i++) {
-                final int columnType = metadata.getColumnType(i);
+                int columnType = metadata.getColumnType(i);
+                if (columnType == ColumnType.NULL) {
+                    columnType = ColumnType.STRING;
+                }
                 this.columnTypes.add(columnType);
                 this.valueWriters.add(allValueWriters.getQuick(columnType));
                 this.columnNames.add(metadata.getColumnName(i));

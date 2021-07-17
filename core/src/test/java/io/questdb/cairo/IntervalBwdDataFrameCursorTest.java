@@ -359,6 +359,7 @@ public class IntervalBwdDataFrameCursorTest extends AbstractCairoTest {
             final IntervalBwdDataFrameCursorFactory factory = new IntervalBwdDataFrameCursorFactory(
                     engine,
                     "x",
+                    -1,
                     0,
                     new RuntimeIntervalModel(intervals),
                     timestampIndex);
@@ -404,7 +405,7 @@ public class IntervalBwdDataFrameCursorTest extends AbstractCairoTest {
                 }
             }
 
-            try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "x")) {
+            try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "x", "testing")) {
                 writer.removeColumn("b");
             }
 

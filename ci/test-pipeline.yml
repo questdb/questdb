@@ -11,6 +11,26 @@ variables:
   DIFF_CONVER_THRESHOLD_PCT: 50
 
 stages:
+  - stage: StartBuildAgent
+    displayName: "Start Building Agent"
+    jobs:
+      - job: StartArmAgent
+        displayName: 'Start ARM Agent'
+        pool:
+          vmImage: "ubuntu-latest"
+        steps:
+          - checkout: none
+          - bash: |
+              sudo apt-get update
+              sudo apt-get install awscli
+              aws autoscaling set-desired-capacity --auto-scaling-group-name ondemand-pipeline-dev --desired-capacity 1
+            env:
+              AWS_ACCESS_KEY_ID: $(AWS_ACCESS_KEY_ID)
+              AWS_SECRET_ACCESS_KEY: $(AWS_SECRET_ACCESS_KEY)
+              AWS_DEFAULT_REGION: eu-west-1
+            name: start_agent
+            displayName: 'Start ARM build agent'
+
   - stage: RunTestsBranches
     displayName: "Running tests"
     jobs:
@@ -22,17 +42,17 @@ stages:
           - checkout: none
           - bash: |
               if [ -z "$PR_ID" ]
-                then
+              then
                 # No PR - cannot detect changed files, default to true
                 echo "##vso[task.setvariable variable=SOURCE_CODE_CHANGED;isOutput=true]true"
-                else
-                  CHANGED_CORE_FILES=$(curl https://api.github.com/repos/questdb/questdb/pulls/$PR_ID/files -s  | grep -oP 'filename": "core/*\/\K[^.]+')
-                  if [ -z "$CHANGED_CORE_FILES" ]
+              else
+                CHANGED_CORE_FILES=$(curl https://api.github.com/repos/questdb/questdb/pulls/$PR_ID/files -s  | grep -oP 'filename": "core/*\/\K[^.]+')
+                if [ -z "$CHANGED_CORE_FILES" ]
                   then
                     echo "##vso[task.setvariable variable=SOURCE_CODE_CHANGED;isOutput=true]false"
                   else
                     echo "##vso[task.setvariable variable=SOURCE_CODE_CHANGED;isOutput=true]true"
-                  fi
+                fi
               fi
             env:
               PR_ID: $(System.PullRequest.PullRequestNumber)
@@ -45,21 +65,32 @@ stages:
           matrix:
             linux:
               imageName: "ubuntu-latest"
+              poolName: "Azure Pipelines"
               os: Linux
               jdk: "1.11"
             mac:
               imageName: "macos-latest"
+              poolName: "Azure Pipelines"
               os: macOS
               jdk: "1.11"
             windows:
               imageName: "windows-latest"
+              poolName: "Azure Pipelines"
               os: Windows
               jdk: "1.11"
             linux-jdk8:
               imageName: "ubuntu-latest"
+              poolName: "Azure Pipelines"
               os: Linux
               jdk: "1.8"
+            
+            linux-arm64:
+              imageName:
+              poolName: "arm64"
+              os: Linux
+              jdk: "1.11"
         pool:
+          name: $(poolName)
           vmImage: $(imageName)
         timeoutInMinutes: 60
         variables:
@@ -84,7 +115,7 @@ stages:
             inputs:
               mavenPomFile: "core/pom.xml"
               mavenOptions: "-Xmx3072m"
-              options: "compile -DskipTests -P build-web-console,use-built-in-nodejs"
+              options: "compile -DskipTests -P build-web-console,use-built-in-nodejs -Dhttp.keepAlive=false"
               jdkVersionOption: $(jdk)
             condition: eq(variables['SOURCE_CODE_CHANGED'], 'false')
           - task: Maven@3
@@ -92,10 +123,11 @@ stages:
             inputs:
               mavenPomFile: "core/pom.xml"
               mavenOptions: "-Xmx3072m"
-              options: "--batch-mode --quiet -P build-web-console,use-built-in-nodejs -Dout=$(Build.SourcesDirectory)/ci/qlog.conf"
+              options: "--batch-mode --quiet -P build-web-console,use-built-in-nodejs -Dout=$(Build.SourcesDirectory)/ci/qlog.conf -Dhttp.keepAlive=false"
               jdkVersionOption: $(jdk)
               codeCoverageToolOption: "$(CODE_COVERAGE_TOOL_OPTION)"
               codeCoverageClassFilter: "$(COVERAGE_DIFF)"
+            timeoutInMinutes: 55
             condition: |
               and(
                    and(
@@ -109,8 +141,9 @@ stages:
             inputs:
               mavenPomFile: "core/pom.xml"
               mavenOptions: "-Xmx3072m"
-              options: "--batch-mode --quiet -P build-web-console,use-built-in-nodejs -Dout=$(Build.SourcesDirectory)/ci/qlog.conf"
+              options: "--batch-mode --quiet -P build-web-console,use-built-in-nodejs -Dout=$(Build.SourcesDirectory)/ci/qlog.conf -Dhttp.keepAlive=false"
               jdkVersionOption: $(jdk)
+            timeoutInMinutes: 55
             condition: |
               and(
                 not(
@@ -121,10 +154,11 @@ stages:
                 ),
                 eq(variables['SOURCE_CODE_CHANGED'], 'true')
               )
-          - bash: if [ "$CODE_COVERAGE_TOOL_OPTION" == "JaCoCo" ]; then $JAVA_HOME_11_X64/bin/java -jar $SOURCES/ci/cover-checker-console-1.4.2-jar-with-dependencies.jar -c $SOURCES/$COVERAGE_REPORT_PATH --github-token $SYSTEM_ACCESSTOKEN --repo "questdb/questdb" --pr $PR_ID -t $DIFF_CONVER_THRESHOLD_PCT -type jacoco; fi
+          - bash: if [ "$CODE_COVERAGE_TOOL_OPTION" == "JaCoCo" ] && [ "$IF_FORK" != "YES" ]; then $JAVA_HOME_11_X64/bin/java -jar $SOURCES/ci/cover-checker-console-1.4.2-jar-with-dependencies.jar -c $SOURCES/$COVERAGE_REPORT_PATH --github-token $SYSTEM_ACCESSTOKEN --repo "questdb/questdb" --pr $PR_ID -t $DIFF_CONVER_THRESHOLD_PCT -type jacoco; fi
             displayName: "Diff coverage PR report"
             env:
               CODE_COVERAGE_TOOL_OPTION: "$(CODE_COVERAGE_TOOL_OPTION)"
+              IF_FORK: "$(IF_FORK)"
               SYSTEM_ACCESSTOKEN: $(GH_TOKEN)
               PR_ID: $(System.PullRequest.PullRequestNumber)
               SOURCES: $(Build.SourcesDirectory)
@@ -152,3 +186,42 @@ stages:
             inputs:
               pathToPublish: $(ARCHIVED_LOGS)
               artifactName: MavenFailedTestsLogs
+
+  - stage: StopBuildAgent
+    displayName: "Stop Building Agent"
+    jobs:
+      - job: StopArmAgent
+        displayName: 'Stop ARM Agent'
+        pool:
+          vmImage: "ubuntu-latest"
+        
+        steps:
+          - checkout: none
+          - bash: echo ${AZURE_DEVOPS_CLI_PAT} | az devops login
+            env:
+              AZURE_DEVOPS_CLI_PAT: $(System.AccessToken)
+            displayName: 'Login Azure DevOps Extension'
+
+          - bash: az devops configure --defaults organization=$(System.TeamFoundationCollectionUri) project=$(System.TeamProject) --use-git-aliases true
+            displayName: 'Set default Azure DevOps organization and project'
+          
+          - bash: |
+              sudo apt-get update
+              sudo apt-get install -y awscli jq
+            displayName: 'Install dependecies'
+          
+          - bash: |
+              count=$(az pipelines runs list --pipeline-ids 1 --status inProgress --detect true --project questdb | jq length)
+              echo "Running builds: ${count}"
+              if [ $count -gt 1 ]; then
+                echo "Skipping another build is running in background.."
+              else
+                echo "Stopping the build agent!"
+                aws autoscaling set-desired-capacity --auto-scaling-group-name ondemand-pipeline-dev --desired-capacity 0
+              fi
+            env:
+              AWS_ACCESS_KEY_ID: $(AWS_ACCESS_KEY_ID)
+              AWS_SECRET_ACCESS_KEY: $(AWS_SECRET_ACCESS_KEY)
+              AWS_DEFAULT_REGION: eu-west-1
+            name: check_if_stop_agent
+            displayName: 'Check/stop build agent'

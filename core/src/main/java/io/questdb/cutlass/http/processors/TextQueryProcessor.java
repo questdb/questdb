@@ -30,6 +30,7 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.sql.ReaderOutOfDateException;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cutlass.http.*;
 import io.questdb.cutlass.text.TextUtil;
@@ -126,7 +127,18 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
 
             if (state.recordCursorFactory != null) {
                 try {
-                    state.cursor = state.recordCursorFactory.getCursor(sqlExecutionContext);
+                    boolean runQuery = true;
+                    do {
+                        try {
+                            state.cursor = state.recordCursorFactory.getCursor(sqlExecutionContext);
+                            runQuery = false;
+                        } catch (ReaderOutOfDateException e) {
+                            info(state).$(e.getFlyweightMessage()).$();
+                            state.recordCursorFactory = Misc.free(state.recordCursorFactory);
+                            final CompiledQuery cc = compiler.compile(state.query, sqlExecutionContext);
+                            state.recordCursorFactory = cc.getRecordCursorFactory();
+                        }
+                    } while (runQuery);
                     state.metadata = state.recordCursorFactory.getMetadata();
                     header(context.getChunkedResponseSocket(), state);
                     resumeSend(context);
@@ -137,7 +149,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                     internalError(context.getChunkedResponseSocket(), e, state);
                 }
             } else {
-                header(context.getChunkedResponseSocket(), state);
+                headerNoContentDisposition(context.getChunkedResponseSocket());
                 sendConfirmation(context.getChunkedResponseSocket());
                 readyForNextRequest(context);
             }
@@ -314,6 +326,12 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         socket.sendHeader();
     }
 
+    protected void headerNoContentDisposition(HttpChunkedResponseSocket socket) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        socket.status(200, "text/csv; charset=utf-8");
+        socket.headers().setKeepAlive(configuration.getKeepAliveHeader());
+        socket.sendHeader();
+    }
+
     private LogRecord info(TextQueryProcessorState state) {
         return LOG.info().$('[').$(state.getFd()).$("] ");
     }
@@ -446,6 +464,8 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                     socket.put(c);
                 }
                 break;
+            case ColumnType.NULL:
+                break;
             case ColumnType.STRING:
                 putStringOrNull(socket, rec.getStr(col));
                 break;
@@ -463,7 +483,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
     }
 
     private void sendConfirmation(HttpChunkedResponseSocket socket) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        socket.put('{').putQuoted("ddl").put(':').putQuoted("OK").put('}');
+        socket.put("DDL Success\n");
         socket.sendChunk(true);
     }
 

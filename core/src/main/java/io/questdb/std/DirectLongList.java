@@ -47,6 +47,16 @@ public class DirectLongList implements Mutable, Closeable {
         this.limit = pos + this.capacity;
     }
 
+    // base address of native memory
+    public long getAddress() {
+        return address;
+    }
+
+    // capacity in LONGs
+    public long getCapacity() {
+        return capacity / Long.BYTES;
+    }
+
     public void add(long x) {
         ensureCapacity();
         assert pos < limit;
@@ -55,12 +65,12 @@ public class DirectLongList implements Mutable, Closeable {
     }
 
     public final void add(DirectLongList that) {
-        long thatCapacity = that.limit - that.pos;
-        if (limit - pos < thatCapacity) {
-            extend(this.capacity + thatCapacity - (limit - pos));
+        long thatSize = that.pos - that.start;
+        if (limit - pos < thatSize) {
+            extendBytes(this.capacity + thatSize - (limit - pos));
         }
-        Vect.memcpy(that.start, this.pos, thatCapacity);
-        this.pos += thatCapacity;
+        Vect.memcpy(that.start, this.pos, thatSize);
+        this.pos += thatSize;
     }
 
     public void sortAsUnsigned() {
@@ -90,13 +100,14 @@ public class DirectLongList implements Mutable, Closeable {
         return -(low + 1);
     }
 
+    // clear without "zeroing" memory
     public void clear() {
-        clear(0);
+        pos = start;
     }
 
     public void clear(long b) {
-        pos = start;
         zero(b);
+        pos = start;
     }
 
     @Override
@@ -130,6 +141,7 @@ public class DirectLongList implements Mutable, Closeable {
     }
 
     public void setPos(long p) {
+        assert p * Long.BYTES <= capacity;
         pos = start + p * Long.BYTES;
     }
 
@@ -159,11 +171,16 @@ public class DirectLongList implements Mutable, Closeable {
         if (this.pos < limit) {
             return;
         }
-        extend(this.capacity * 2);
+        extendBytes(this.capacity * 2);
+    }
+
+    // desired capacity in LONGs (not count of bytes)
+    public void extend(long capacity) {
+        extendBytes(capacity * Long.BYTES);
     }
 
     // desired capacity in bytes (not count of LONG values)
-    private void extend(long capacity) {
+    private void extendBytes(long capacity) {
         final long oldCapacity = this.capacity;
         this.capacity = capacity;
         long address = Unsafe.realloc(this.address, oldCapacity, capacity);

@@ -29,6 +29,7 @@ import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.sql.DataFrame;
 import io.questdb.cairo.sql.Function;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntList;
@@ -61,7 +62,7 @@ class LatestByAllFilteredRecordCursor extends AbstractDescendingRecordListCursor
     }
 
     @Override
-    protected void buildTreeMap(SqlExecutionContext executionContext) {
+    protected void buildTreeMap(SqlExecutionContext executionContext) throws SqlException {
         map.clear();
         filter.init(this, executionContext);
 

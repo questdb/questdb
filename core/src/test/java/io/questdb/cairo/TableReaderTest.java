@@ -1432,7 +1432,7 @@ public class TableReaderTest extends AbstractCairoTest {
     public void testAppendNullTimestamp() throws Exception {
         try (TableModel model = new TableModel(configuration, "all", PartitionBy.NONE)
                 .col("int", ColumnType.INT)
-                .timestamp("t")
+//                .timestamp("t") // cannot insert null as a timestamp on designated columns
         ) {
             CairoTestUtils.createTableWithVersionAndId(model, ColumnType.VERSION, 1);
 

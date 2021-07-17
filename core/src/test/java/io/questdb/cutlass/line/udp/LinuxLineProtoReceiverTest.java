@@ -42,10 +42,10 @@ import java.util.concurrent.locks.LockSupport;
 public class LinuxLineProtoReceiverTest extends AbstractCairoTest {
 
     private final static ReceiverFactory LINUX_FACTORY =
-            (configuration, engine, workerPool, localPool, workScheduler1, functionFactoryCache) -> new LinuxMMLineProtoReceiver(configuration, engine, workerPool);
+            (configuration, engine, workerPool, localPool, workScheduler1, functionFactoryCache, metrics) -> new LinuxMMLineProtoReceiver(configuration, engine, workerPool);
 
     private final static ReceiverFactory GENERIC_FACTORY =
-            (configuration, engine, workerPool, localPool, workScheduler1, functionFactoryCache) -> new LineProtoReceiver(configuration, engine, workerPool);
+            (configuration, engine, workerPool, localPool, workScheduler1, functionFactoryCache, metrics) -> new LineProtoReceiver(configuration, engine, workerPool);
 
     @Test
     public void testGenericCannotBindSocket() throws Exception {
@@ -206,7 +206,7 @@ public class LinuxLineProtoReceiverTest extends AbstractCairoTest {
     private void assertConstructorFail(LineUdpReceiverConfiguration receiverCfg, ReceiverFactory factory) {
         try (CairoEngine engine = new CairoEngine(configuration)) {
             try {
-                factory.create(receiverCfg, engine, null, true, null, null);
+                factory.create(receiverCfg, engine, null, true, null, null, metrics);
                 Assert.fail();
             } catch (NetworkError ignore) {
             }
@@ -226,21 +226,21 @@ public class LinuxLineProtoReceiverTest extends AbstractCairoTest {
     private void assertReceive(LineUdpReceiverConfiguration receiverCfg, ReceiverFactory factory) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final String expected = "colour\tshape\tsize\ttimestamp\n" +
-                    "blue\tsquare\t3.4000000000000004\t1970-01-01T00:01:40.000000Z\n" +
-                    "blue\tsquare\t3.4000000000000004\t1970-01-01T00:01:40.000000Z\n" +
-                    "blue\tsquare\t3.4000000000000004\t1970-01-01T00:01:40.000000Z\n" +
-                    "blue\tsquare\t3.4000000000000004\t1970-01-01T00:01:40.000000Z\n" +
-                    "blue\tsquare\t3.4000000000000004\t1970-01-01T00:01:40.000000Z\n" +
-                    "blue\tsquare\t3.4000000000000004\t1970-01-01T00:01:40.000000Z\n" +
-                    "blue\tsquare\t3.4000000000000004\t1970-01-01T00:01:40.000000Z\n" +
-                    "blue\tsquare\t3.4000000000000004\t1970-01-01T00:01:40.000000Z\n" +
-                    "blue\tsquare\t3.4000000000000004\t1970-01-01T00:01:40.000000Z\n" +
-                    "blue\tsquare\t3.4000000000000004\t1970-01-01T00:01:40.000000Z\n";
+                    "blue\tx square\t3.4000000000000004\t1970-01-01T00:01:40.000000Z\n" +
+                    "blue\tx square\t3.4000000000000004\t1970-01-01T00:01:40.000000Z\n" +
+                    "blue\tx square\t3.4000000000000004\t1970-01-01T00:01:40.000000Z\n" +
+                    "blue\tx square\t3.4000000000000004\t1970-01-01T00:01:40.000000Z\n" +
+                    "blue\tx square\t3.4000000000000004\t1970-01-01T00:01:40.000000Z\n" +
+                    "blue\tx square\t3.4000000000000004\t1970-01-01T00:01:40.000000Z\n" +
+                    "blue\tx square\t3.4000000000000004\t1970-01-01T00:01:40.000000Z\n" +
+                    "blue\tx square\t3.4000000000000004\t1970-01-01T00:01:40.000000Z\n" +
+                    "blue\tx square\t3.4000000000000004\t1970-01-01T00:01:40.000000Z\n" +
+                    "blue\tx square\t3.4000000000000004\t1970-01-01T00:01:40.000000Z\n";
 
             try (CairoEngine engine = new CairoEngine(configuration)) {
 
 
-                try (AbstractLineProtoReceiver receiver = factory.create(receiverCfg, engine, null, false, null, null)) {
+                try (AbstractLineProtoReceiver receiver = factory.create(receiverCfg, engine, null, false, null, null, metrics)) {
 
                     // create table
 
@@ -253,7 +253,7 @@ public class LinuxLineProtoReceiverTest extends AbstractCairoTest {
                     }
 
                     // warm writer up
-                    try (TableWriter w = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "tab")) {
+                    try (TableWriter w = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "tab", "testing")) {
                         w.warmUp();
                     }
 
@@ -261,7 +261,7 @@ public class LinuxLineProtoReceiverTest extends AbstractCairoTest {
 
                     try (LineProtoSender sender = new LineProtoSender(NetworkFacadeImpl.INSTANCE, 0, Net.parseIPv4("127.0.0.1"), receiverCfg.getPort(), 1400, 1)) {
                         for (int i = 0; i < 10; i++) {
-                            sender.metric("tab").tag("colour", "blue").tag("shape", "square").field("size", 3.4).$(100000000000L);
+                            sender.metric("tab").tag("colour", "blue").tag("shape", "x square").field("size", 3.4).$(100000000000L);
                         }
                         sender.flush();
                     }

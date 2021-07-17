@@ -56,7 +56,7 @@ public class DropTableTest extends AbstractGriffinTest {
             CompiledQuery cc = compiler.compile("create table 'large table' (a int)", sqlExecutionContext);
             Assert.assertEquals(CompiledQuery.CREATE_TABLE, cc.getType());
 
-            try (TableWriter ignored = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "large table")) {
+            try (TableWriter ignored = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "large table", "testing")) {
                 compiler.compile("drop table 'large table'", sqlExecutionContext);
             } catch (CairoException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "Could not lock");
