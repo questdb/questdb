@@ -39,7 +39,7 @@ public abstract class AbstractIndexReader implements BitmapIndexReader {
     public static final String INDEX_CORRUPT = "cursor could not consistently read index header [corrupt?]";
     protected final static Log LOG = LogFactory.getLog(BitmapIndexBwdReader.class);
     protected final MappedReadOnlyMemory keyMem = new ContiguousMappedReadOnlyMemory();
-    protected final SinglePageMappedReadOnlyPageMemory valueMem = new ContiguousMappedReadOnlyMemory();
+    protected final ContiguousMappedReadOnlyMemory valueMem = new ContiguousMappedReadOnlyMemory();
     protected int blockValueCountMod;
     protected int blockCapacity;
     protected long spinLockTimeoutUs;
@@ -49,7 +49,7 @@ public abstract class AbstractIndexReader implements BitmapIndexReader {
     private int keyCountIncludingNulls;
 
     public long getKeyBaseAddress() {
-        return ((SinglePageMappedReadOnlyPageMemory)keyMem).addressOf(0);
+        return keyMem.addressOf(0);
     }
 
     public long getKeyMemorySize() {

@@ -95,9 +95,7 @@ public class TableReadFailTest extends AbstractCairoTest {
                     w.commit();
                 }
 
-
                 Assert.assertTrue(reader.reload());
-
 
                 RecordCursor cursor = reader.getCursor();
                 final Record record = cursor.getRecord();

@@ -194,6 +194,7 @@ public class ContiguousMappedReadWriteMemory extends AbstractContiguousMemory
     }
 
     protected void map(FilesFacade ff, @Nullable CharSequence name, long size) {
+        // todo: two system calls here
         size = Math.min(ff.length(fd), size);
         this.size = size;
         if (size > 0) {

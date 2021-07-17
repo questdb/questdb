@@ -925,7 +925,6 @@ public class BitmapIndexTest extends AbstractCairoTest {
             }
         }
 
-
         long argsAddress = LatestByArguments.allocateMemory();
         LatestByArguments.setRowsAddress(argsAddress, rows.getAddress());
         LatestByArguments.setRowsCapacity(argsAddress, rows.getCapacity());

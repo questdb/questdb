@@ -73,7 +73,7 @@ public class PagedVirtualMemory implements ReadWriteVirtualMemory, Closeable {
         final int n = pages.size();
         for (int i = 1; i < n; i++) {
             release(i, pages.getQuick(i));
-            pages.set(i, 0);
+            pages.setQuick(i, 0);
         }
         appendPointer = -1;
         pageHi = -1;
@@ -93,6 +93,7 @@ public class PagedVirtualMemory implements ReadWriteVirtualMemory, Closeable {
         int n = pages.size();
         if (n > 0) {
             release(0, pages.getQuick(0));
+            pages.setQuick(0, 0);
             pages.clear();
         }
     }
