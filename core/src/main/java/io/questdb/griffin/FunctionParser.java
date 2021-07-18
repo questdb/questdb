@@ -142,7 +142,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
         Function function = getBindVariableService().getFunction(variableIndex);
         if (function == null) {
             // bind variable is undefined
-            return new IndexedParameterLinkFunction(variableIndex, -1, position);
+            return new IndexedParameterLinkFunction(variableIndex, ColumnType.UNDEFINED, position);
         }
         return new IndexedParameterLinkFunction(variableIndex, function.getType(), position);
     }

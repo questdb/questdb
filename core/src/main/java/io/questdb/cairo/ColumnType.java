@@ -42,27 +42,27 @@ public final class ColumnType {
     public static final int VERSION = 419;
     public static final int VERSION_THAT_ADDED_TABLE_ID = 417;
 
-    public static final int UNDEFINED = -1;
-    public static final int BOOLEAN = 0;
-    public static final int BYTE = 1;
-    public static final int SHORT = 2;
-    public static final int CHAR = 3;
-    public static final int INT = 4;
-    public static final int LONG = 5;
-    public static final int DATE = 6;
-    public static final int TIMESTAMP = 7;
-    public static final int FLOAT = 8;
-    public static final int DOUBLE = 9;
-    public static final int STRING = 10;
-    public static final int SYMBOL = 11;
-    public static final int LONG256 = 12;
-    public static final int BINARY = 13;
-    public static final int PARAMETER = 14;
-    public static final int CURSOR = 15;
-    public static final int VAR_ARG = 16;
-    public static final int RECORD = 17;
+    public static final int UNDEFINED = 0;
+    public static final int BOOLEAN = 1;
+    public static final int BYTE = 2;
+    public static final int SHORT = 3;
+    public static final int CHAR = 4;
+    public static final int INT = 5;
+    public static final int LONG = 6;
+    public static final int DATE = 7;
+    public static final int TIMESTAMP = 8;
+    public static final int FLOAT = 9;
+    public static final int DOUBLE = 10;
+    public static final int STRING = 11;
+    public static final int SYMBOL = 12;
+    public static final int LONG256 = 13;
+    public static final int BINARY = 14;
+    public static final int PARAMETER = 15;
+    public static final int CURSOR = 16;
+    public static final int VAR_ARG = 17;
+    public static final int RECORD = 18;
 
-    public static final int NULL = 18;
+    public static final int NULL = 19;
 
     public static final int MAX = NULL;
     public static final int NO_OVERLOAD = 10000;
@@ -73,19 +73,19 @@ public final class ColumnType {
 
     // For function overload the priority is taken from left to right
     private static final int[][] overloadPriority = {
-            /* -1 UNDEFINED*/  {DOUBLE, FLOAT, LONG, TIMESTAMP, DATE, INT, CHAR, SHORT, BYTE, BOOLEAN}
-            /* 0  BOOLEAN  */, {}
-            /* 1  BYTE     */, {SHORT, INT, LONG, FLOAT, DOUBLE}
-            /* 2  SHORT    */, {INT, LONG, FLOAT, DOUBLE}
-            /* 3  CHAR     */, {STRING}
-            /* 4  INT      */, {LONG, DOUBLE, TIMESTAMP, DATE}
-            /* 5  LONG     */, {DOUBLE, TIMESTAMP, DATE}
-            /* 6  DATE     */, {TIMESTAMP, LONG}
-            /* 7  TIMESTAMP*/, {LONG}
-            /* 8  FLOAT    */, {DOUBLE}
-            /* 9  DOUBLE    */, {}
-            /* 10 STRING    */, {} // STRING can be cast to TIMESTAMP, but it's handled in a special way
-            /* 11 SYMBOL    */, {STRING}
+            /* 0 UNDEFINED */  {DOUBLE, FLOAT, LONG, TIMESTAMP, DATE, INT, CHAR, SHORT, BYTE, BOOLEAN}
+            /* 1  BOOLEAN  */, {}
+            /* 2  BYTE     */, {SHORT, INT, LONG, FLOAT, DOUBLE}
+            /* 3  SHORT    */, {INT, LONG, FLOAT, DOUBLE}
+            /* 4  CHAR     */, {STRING}
+            /* 5  INT      */, {LONG, DOUBLE, TIMESTAMP, DATE}
+            /* 6  LONG     */, {DOUBLE, TIMESTAMP, DATE}
+            /* 7  DATE     */, {TIMESTAMP, LONG}
+            /* 8  TIMESTAMP*/, {LONG}
+            /* 9  FLOAT    */, {DOUBLE}
+            /* 10  DOUBLE  */, {}
+            /* 11 STRING   */, {} // STRING can be cast to TIMESTAMP, but it's handled in a special way
+            /* 12 SYMBOL   */, {STRING}
     };
 
     private static final int OVERLOAD_MATRIX_SIZE = 32;
@@ -94,8 +94,8 @@ public final class ColumnType {
     static {
         assert OVERLOAD_MATRIX_SIZE > MAX;
         overloadPriorityMatrix = new int[OVERLOAD_MATRIX_SIZE * OVERLOAD_MATRIX_SIZE];
-        for (int i = 0; i <= MAX; i++) {
-            for (int j = 0; j < MAX; j++) {
+        for (int i = UNDEFINED; i < MAX; i++) {
+            for (int j = BOOLEAN; j < MAX; j++) {
                 if (i < overloadPriority.length) {
                     int index = indexOf(overloadPriority[i], j);
                     overloadPriorityMatrix[OVERLOAD_MATRIX_SIZE * i + j] = index >= 0 ? index + 1 : NO_OVERLOAD;
@@ -118,7 +118,7 @@ public final class ColumnType {
     }
 
     public static String nameOf(int columnType) {
-        final int index = typeNameMap.keyIndex(columnType);
+        final int index = typeNameMap.keyIndex(ColumnType.tagOf(columnType));
         if (index > -1) {
             return "unknown";
         }
@@ -126,21 +126,24 @@ public final class ColumnType {
     }
 
     public static int overloadDistance(int from, int to) {
+        final int fromTag = ColumnType.tagOf(from);
+        final int toTag = ColumnType.tagOf(to);
         // Functions cannot accept UNDEFINED type (signature is not supported)
         // this check is just in case
-        assert to >= 0;
-        return overloadPriorityMatrix[OVERLOAD_MATRIX_SIZE * (from + 1) + to];
+        assert toTag > UNDEFINED;
+        return overloadPriorityMatrix[OVERLOAD_MATRIX_SIZE * fromTag + toTag];
     }
 
     public static int pow2SizeOf(int columnType) {
-        return TYPE_SIZE_POW2[columnType];
+        return TYPE_SIZE_POW2[ColumnType.tagOf(columnType)];
     }
 
     public static int sizeOf(int columnType) {
-        if (columnType == ColumnType.NULL) {
+        final int tag = ColumnType.tagOf(columnType);
+        if (tag == ColumnType.NULL) {
             return 0;
         }
-        if (columnType < 0 || columnType > ColumnType.PARAMETER) {
+        if (tag < 0 || tag > ColumnType.PARAMETER) {
             return -1;
         }
         return TYPE_SIZE[columnType];

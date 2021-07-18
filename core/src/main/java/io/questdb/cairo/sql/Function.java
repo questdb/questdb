@@ -120,7 +120,7 @@ public interface Function extends Closeable {
     int getType();
 
     default boolean isUndefined() {
-        return getType() == ColumnType.UNDEFINED;
+        return ColumnType.tagOf(getType()) == ColumnType.UNDEFINED;
     }
 
     default void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {

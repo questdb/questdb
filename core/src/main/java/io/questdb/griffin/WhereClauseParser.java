@@ -311,7 +311,7 @@ final class WhereClauseParser implements Mutable {
             Function function,
             int functionPosition
     ) throws SqlException {
-        if (function.getType() == ColumnType.UNDEFINED) {
+        if (ColumnType.tagOf(function.getType()) == ColumnType.UNDEFINED) {
             int timestampType = metadata.getColumnType(metadata.getTimestampIndex());
             function.assignType(timestampType, executionContext.getBindVariableService());
         } else if (!canCastToTimestamp(function.getType())) {
@@ -320,11 +320,11 @@ final class WhereClauseParser implements Mutable {
     }
 
     private boolean checkFunctionCanBeTimestampInterval(SqlExecutionContext executionContext, Function function) throws SqlException {
-        int type = function.getType();
-        if (type == ColumnType.UNDEFINED) {
+        int typeTag = ColumnType.tagOf(function.getType());
+        if (typeTag == ColumnType.UNDEFINED) {
             function.assignType(ColumnType.STRING, executionContext.getBindVariableService());
         }
-        return ColumnType.tagOf(type) == ColumnType.STRING || type == ColumnType.UNDEFINED;
+        return typeTag == ColumnType.STRING || typeTag == ColumnType.UNDEFINED;
     }
 
     private boolean analyzeBetween(
