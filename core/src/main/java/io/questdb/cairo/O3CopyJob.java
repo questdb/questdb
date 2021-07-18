@@ -799,8 +799,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             long dstVarOffset,
             long dstVarAdjust
     ) {
-        final int typeTag = columnType < ColumnType.UNDEFINED ? -ColumnType.tagOf(Math.abs(columnType)): ColumnType.tagOf(columnType);
-        switch (typeTag) {
+        switch (ColumnType.tagOf(columnType)) {
             case ColumnType.STRING:
             case ColumnType.BINARY:
                 // we can find out the edge of string column in one of two ways
@@ -836,10 +835,12 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             case ColumnType.DATE:
             case ColumnType.DOUBLE:
             case ColumnType.TIMESTAMP:
-                copyFixedSizeCol(srcOooFixAddr, srcOooLo, srcOooHi, dstFixAddr, 3);
-                break;
-            case -ColumnType.TIMESTAMP:
-                O3Utils.copyFromTimestampIndex(srcOooFixAddr, srcOooLo, srcOooHi, dstFixAddr);
+                final boolean designated = TimestampExtra.isDesignated(columnType);
+                if (designated) {
+                    O3Utils.copyFromTimestampIndex(srcOooFixAddr, srcOooLo, srcOooHi, dstFixAddr);
+                } else {
+                    copyFixedSizeCol(srcOooFixAddr, srcOooLo, srcOooHi, dstFixAddr, 3);
+                }
                 break;
             case ColumnType.LONG256:
                 copyFixedSizeCol(srcOooFixAddr, srcOooLo, srcOooHi, dstFixAddr, 5);
@@ -898,8 +899,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             long dstVarOffset
     ) {
         final long rowCount = srcOooHi - srcOooLo + 1 + srcDataHi - srcDataLo + 1;
-        final int typeTag = columnType < ColumnType.UNDEFINED ? -ColumnType.tagOf(Math.abs(columnType)): ColumnType.tagOf(columnType);
-        switch (typeTag) {
+        switch (ColumnType.tagOf(columnType)) {
             case ColumnType.BOOLEAN:
             case ColumnType.BYTE:
                 Vect.mergeShuffle8Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, mergeIndexAddr, rowCount);
@@ -943,10 +943,12 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             case ColumnType.LONG:
             case ColumnType.DATE:
             case ColumnType.TIMESTAMP:
-                Vect.mergeShuffle64Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, mergeIndexAddr, rowCount);
-                break;
-            case -ColumnType.TIMESTAMP:
-                Vect.oooCopyIndex(mergeIndexAddr, rowCount, dstFixAddr);
+                final boolean designated = TimestampExtra.isDesignated(columnType);
+                if (designated) {
+                    Vect.oooCopyIndex(mergeIndexAddr, rowCount, dstFixAddr);
+                } else {
+                    Vect.mergeShuffle64Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, mergeIndexAddr, rowCount);
+                }
                 break;
             case ColumnType.LONG256:
                 Vect.mergeShuffle256Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, mergeIndexAddr, rowCount);

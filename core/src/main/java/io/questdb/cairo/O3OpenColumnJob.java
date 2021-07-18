@@ -80,8 +80,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             long tmpBuf
     ) {
         final long dstLen = srcOooHi - srcOooLo + 1 + srcDataMax - srcDataTop;
-        final int typeTag = columnType < ColumnType.UNDEFINED ? -ColumnType.tagOf(Math.abs(columnType)): ColumnType.tagOf(columnType);
-        switch (typeTag) {
+        switch (ColumnType.tagOf(columnType)) {
             case ColumnType.BINARY:
             case ColumnType.STRING:
                 appendVarColumn(
@@ -112,30 +111,33 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         tmpBuf
                 );
                 break;
-            case -ColumnType.TIMESTAMP:
-                appendTimestampColumn(
-                        columnCounter,
-                        columnType,
-                        srcOooFixAddr,
-                        srcOooFixSize,
-                        srcOooVarAddr,
-                        srcOooVarSize,
-                        srcOooLo,
-                        srcOooHi,
-                        srcOooMax,
-                        timestampMin,
-                        timestampMax,
-                        partitionTimestamp,
-                        srcDataMax,
-                        isIndexed,
-                        -dstFixMem.getFd(),
-                        0,
-                        0,
-                        dstFixMem,
-                        dstLen,
-                        tableWriter
-                );
-                break;
+            case ColumnType.TIMESTAMP:
+                final boolean designated = TimestampExtra.isDesignated(columnType);
+                if (designated) {
+                    appendTimestampColumn(
+                            columnCounter,
+                            columnType,
+                            srcOooFixAddr,
+                            srcOooFixSize,
+                            srcOooVarAddr,
+                            srcOooVarSize,
+                            srcOooLo,
+                            srcOooHi,
+                            srcOooMax,
+                            timestampMin,
+                            timestampMax,
+                            partitionTimestamp,
+                            srcDataMax,
+                            isIndexed,
+                            -dstFixMem.getFd(),
+                            0,
+                            0,
+                            dstFixMem,
+                            dstLen,
+                            tableWriter
+                    );
+                    break;
+                } // else fall through
             default:
                 appendFixColumn(
                         pathToPartition,
@@ -564,8 +566,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
         }
 
         final long dstLen = srcOooHi - srcOooLo + 1 + srcDataMax - srcDataTop;
-        final int typeTag = columnType < ColumnType.UNDEFINED ? -ColumnType.tagOf(Math.abs(columnType)): ColumnType.tagOf(columnType);
-        switch (typeTag) {
+        switch (ColumnType.tagOf(columnType)) {
             case ColumnType.BINARY:
             case ColumnType.STRING:
                 try {
@@ -632,30 +633,33 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         tmpBuf
                 );
                 break;
-            case -ColumnType.TIMESTAMP:
-                appendTimestampColumn(
-                        columnCounter,
-                        columnType,
-                        srcOooFixAddr,
-                        srcOooFixSize,
-                        srcOooVarAddr,
-                        srcOooVarSize,
-                        srcOooLo,
-                        srcOooHi,
-                        srcOooMax,
-                        timestampMin,
-                        timestampMax,
-                        partitionTimestamp,
-                        srcDataMax,
-                        isIndexed,
-                        srcTimestampFd,
-                        srcTimestampAddr,
-                        srcTimestampSize,
-                        null,
-                        dstLen,
-                        tableWriter
-                );
-                break;
+            case ColumnType.TIMESTAMP:
+                final boolean designated = TimestampExtra.isDesignated(columnType);
+                if (designated) {
+                    appendTimestampColumn(
+                            columnCounter,
+                            columnType,
+                            srcOooFixAddr,
+                            srcOooFixSize,
+                            srcOooVarAddr,
+                            srcOooVarSize,
+                            srcOooLo,
+                            srcOooHi,
+                            srcOooMax,
+                            timestampMin,
+                            timestampMax,
+                            partitionTimestamp,
+                            srcDataMax,
+                            isIndexed,
+                            srcTimestampFd,
+                            srcTimestampAddr,
+                            srcTimestampSize,
+                            null,
+                            dstLen,
+                            tableWriter
+                    );
+                    break;
+                } // else fall through
             default:
                 try {
                     dFile(pathToPartition.trimTo(plen), columnName);
@@ -2515,8 +2519,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
     }
 
     private static void setNull(int columnType, long addr, long count) {
-        final int typeTag = columnType < ColumnType.UNDEFINED ? -ColumnType.tagOf(Math.abs(columnType)): ColumnType.tagOf(columnType);
-        switch (typeTag) {
+        switch (ColumnType.tagOf(columnType)) {
             case ColumnType.BOOLEAN:
             case ColumnType.BYTE:
                 Vect.memset(addr, count, 0);
@@ -2536,7 +2539,6 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 break;
             case ColumnType.LONG:
             case ColumnType.DATE:
-            case -ColumnType.TIMESTAMP:
             case ColumnType.TIMESTAMP:
                 Vect.setMemoryLong(addr, Numbers.LONG_NaN, count);
                 break;

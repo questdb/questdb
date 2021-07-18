@@ -100,7 +100,7 @@ public class RecordSinkFactory {
             final int factor = columnFilter.getIndexFactor(index);
             index = (index * factor - 1);
             final int type = columnTypes.getColumnType(index);
-            final int typeTag = type < ColumnType.UNDEFINED ? -ColumnType.tagOf(Math.abs(type)): ColumnType.tagOf(type);
+            final int typeTag = type < 0 ? -ColumnType.tagOf(Math.abs(type)): ColumnType.tagOf(type);
             switch (factor * typeTag) {
                 case ColumnType.INT:
                     asm.aload(2);
