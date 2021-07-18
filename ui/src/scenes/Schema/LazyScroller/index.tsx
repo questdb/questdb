@@ -1,6 +1,5 @@
 import React, { useRef, useState } from "react"
-import styled from "styled-components"
-import * as QuestDB from "utils/questdb"
+import { throttle } from "throttle-debounce"
 
 type Props = Readonly<{
   children: JSX.Element[]
@@ -11,7 +10,9 @@ const LazyScroller = ({ children }: Props) => {
   const singleItemHeight = wrapperEl.current?.children[1]?.getBoundingClientRect()
     ?.height
   const parentEl = wrapperEl.current?.parentElement
-  const viewportHeight = singleItemHeight && singleItemHeight * children.length
+  const entireListHeight =
+    singleItemHeight && singleItemHeight * children.length
+  const viewportHeight = parentEl?.getBoundingClientRect().height
   const numItemsVisibleInViewport =
     viewportHeight &&
     singleItemHeight &&
@@ -28,27 +29,26 @@ const LazyScroller = ({ children }: Props) => {
     (!!startingViewableIdx || startingViewableIdx === 0) &&
     numItemsVisibleInViewport
   ) {
-    console.log(singleItemHeight)
-    console.log(viewportHeight)
-    viewableSubSection = children.slice(
-      startingViewableIdx,
-      startingViewableIdx + numItemsVisibleInViewport,
+    const actualStart = Math.max(
+      startingViewableIdx - numItemsVisibleInViewport,
+      0,
     )
+    const actualEnd = startingViewableIdx + 2 * numItemsVisibleInViewport
+    viewableSubSection = children.slice(actualStart, actualEnd)
   }
 
   const [, setState] = useState({})
   function forceUpdate() {
-    console.log("trying to update")
     setState({})
   }
   let spacerStyle = {}
-  if (parentEl) {
-    parentEl.onscroll = forceUpdate
-    spacerStyle = { height: `${parentEl?.scrollTop}px` }
+  if (parentEl && viewportHeight) {
+    parentEl.onscroll = throttle(60, true, forceUpdate)
+    spacerStyle = { height: `${parentEl?.scrollTop - viewportHeight}px` }
   }
   let wrapperStyle = {}
-  if (viewportHeight) {
-    wrapperStyle = { "min-height": "100%", height: `${viewportHeight}px` }
+  if (entireListHeight) {
+    wrapperStyle = { minHeight: "100%", height: `${entireListHeight}px` }
   }
 
   return (
