@@ -111,18 +111,6 @@ public class CairoTextWriter implements Closeable, Mutable {
         }
     }
 
-    public void checkMaxAndCommitLag() {
-        if (writer != null) {
-            if (durable) {
-                assert false;
-            } else {
-                if (maxUncommittedRows > 0 && writer.getO3RowCount() >= maxUncommittedRows) {
-                    writer.checkMaxAndCommitLag();
-                }
-            }
-        }
-    }
-
     public LongList getColumnErrorCounts() {
         return columnErrorCounts;
     }
@@ -209,6 +197,18 @@ public class CairoTextWriter implements Closeable, Mutable {
             checkMaxAndCommitLag();
         } catch (Exception e) {
             logError(line, timestampIndex, dbcs);
+        }
+    }
+
+    private void checkMaxAndCommitLag() {
+        if (writer != null) {
+            if (durable) {
+                assert false;
+            } else {
+                if (maxUncommittedRows > 0 && writer.getO3RowCount() >= maxUncommittedRows) {
+                    writer.checkMaxAndCommitLag();
+                }
+            }
         }
     }
 
