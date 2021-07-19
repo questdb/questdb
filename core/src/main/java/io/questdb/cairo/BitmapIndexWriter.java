@@ -257,7 +257,7 @@ public class BitmapIndexWriter implements Closeable, Mutable {
                 throw CairoException.instance(0).put("Index does not exist: ").put(path);
             }
 
-            long keyMemSize = this.keyMem.size();
+            long keyMemSize = this.keyMem.getAppendOffset();
             // check if key file header is present
             if (keyMemSize < BitmapIndexUtils.KEY_FILE_RESERVED) {
                 LOG.error().$("file too short [corrupt] ").$(path).$();
