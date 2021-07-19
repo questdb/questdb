@@ -21,21 +21,19 @@
  *  limitations under the License.
  *
  ******************************************************************************/
-
 package io.questdb.cairo;
+import org.junit.Assert;
+import org.junit.Test;
 
-public final class TimestampExtra {
-    private static final int DESIGNATED_BIT = 8;
-
-    public static boolean isDesignated(int tsType) {
-        return ((tsType >> DESIGNATED_BIT) & 1) == 1;
-    }
-
-    public static int setDesignated(int tsType, boolean designated) {
-        if (designated) {
-            return tsType | 1 << DESIGNATED_BIT;
-        } else {
-            return tsType & ~(1 << DESIGNATED_BIT);
-        }
+public class TimestampExtraTest {
+    @Test
+    public void testSetDesignated() {
+        int timestampCol = ColumnType.TIMESTAMP;
+        Assert.assertEquals(ColumnType.TIMESTAMP, ColumnType.tagOf(timestampCol));
+        Assert.assertFalse(TimestampExtra.isDesignated(timestampCol));
+        int timestampColD = TimestampExtra.setDesignated(timestampCol, true);
+        Assert.assertEquals(ColumnType.TIMESTAMP, ColumnType.tagOf(timestampColD));
+        Assert.assertTrue(TimestampExtra.isDesignated(timestampColD));
+        Assert.assertNotEquals(Integer.toBinaryString(timestampCol), Integer.toBinaryString(timestampColD));
     }
 }
