@@ -39,7 +39,7 @@ import io.questdb.std.LowerCaseAsciiCharSequenceIntHashMap;
  */
 public final class ColumnType {
     // column type version as written to the metadata file
-    public static final int VERSION = 419;
+    public static final int VERSION = 420;
     public static final int VERSION_THAT_ADDED_TABLE_ID = 417;
 
     public static final int UNDEFINED = 0;
@@ -56,13 +56,14 @@ public final class ColumnType {
     public static final int STRING = 11;
     public static final int SYMBOL = 12;
     public static final int LONG256 = 13;
-    public static final int BINARY = 14;
-    public static final int PARAMETER = 15;
-    public static final int CURSOR = 16;
-    public static final int VAR_ARG = 17;
-    public static final int RECORD = 18;
+    public static final int GEOHASH = 14;
+    public static final int BINARY = 15;
+    public static final int PARAMETER = 16;
+    public static final int CURSOR = 17;
+    public static final int VAR_ARG = 18;
+    public static final int RECORD = 19;
 
-    public static final int NULL = 19;
+    public static final int NULL = 20;
 
     public static final int MAX = NULL;
     public static final int NO_OVERLOAD = 10000;
