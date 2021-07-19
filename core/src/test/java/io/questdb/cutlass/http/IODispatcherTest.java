@@ -1164,7 +1164,19 @@ public class IODispatcherTest {
                         "timestamp,bid\r\n" +
                         "27/05/2018 00:00:01,100\r\n" +
                         "27/05/2018 00:00:02,101\r\n" +
-                        "27/05/2018 00:00:03,102\r\n" +
+                        "27/05/2018 00:00:03,102\r\n" + "Accept-Encoding: gzip, deflate, br\r\n" +
+                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                        "\r\n" +
+                        "------WebKitFormBoundaryOsOAD9cPKyHuxyBV\r\n" +
+                        "Content-Disposition: form-data; name=\"schema\"\r\n" +
+                        "\r\n" +
+                        "[{\"name\":\"timestamp\",\"type\":\"DATE\"},{\"name\":\"bid\",\"type\":\"INT\"}]\r\n" +
+                        "------WebKitFormBoundaryOsOAD9cPKyHuxyBV\r\n" +
+                        "Content-Disposition: form-data; name=\"data\"\r\n" +
+                        "\r\n" +
+                        "timestamp,bid\r\n" +
+                        "27/05/2018 00:00:01,100\r\n" +
+                        "27/05/2018 00:00:02,101\r\n" +
                         "27/05/2018 00:00:04,103\r\n" +
                         "27/05/2018 00:00:05,104\r\n" +
                         "27/05/2018 00:00:06,105\r\n" +
@@ -1735,27 +1747,29 @@ public class IODispatcherTest {
         );
     }
 
+    // TODO: MARKER
     @Test
-    public void testImportCommitLagAndMaxuncommittedRows() throws Exception {
+    public void testImportCommitLagAndMaxUncommittedRows() throws Exception {
         final long commitLag = 180_000; // 3 minutes
         final int maxUncommittedRows = 2;
         String command = "POST /upload?fmt=json&" +
                 "overwrite=true&" +
                 "forceHeader=true&" +
                 "timestamp=Execution&" +
+                "partitionBy=DAY&" +
                 "commitLag=" + commitLag + "&" +
                 "maxUncommittedRows=" + maxUncommittedRows + "&" +
                 "name=hernan_cortes HTTP/1.1\r\n";
         String expectedMetadata = "{\"status\":\"OK\"," +
                 "\"location\":\"hernan_cortes\"," +
                 "\"rowsRejected\":0," +
-                "\"rowsImported\":3," +
+                "\"rowsImported\":2," +
                 "\"header\":true," +
                 "\"columns\":[" +
-                "{\"name\":\"Execution\",\"type\":\"STRING\",\"size\":0,\"errors\":0}," +
-                "{\"name\":\"Quantity\",\"type\":\"INT\",\"size\":0,\"errors\":0}," +
-                "{\"name\":\"Price\",\"type\":\"INT\",\"size\":0,\"errors\":0}," +
-                "]}, timestamp=0\r\n";
+                "{\"name\":\"Execution\",\"type\":\"TIMESTAMP\",\"size\":8,\"errors\":0}," +
+                "{\"name\":\"Quantity\",\"type\":\"INT\",\"size\":4,\"errors\":0}," +
+                "{\"name\":\"Price\",\"type\":\"INT\",\"size\":4,\"errors\":0}," +
+                "]}\r\n";
         testImport(
                 "HTTP/1.1 200 OK\r\n" +
                         "Server: questDB/1.0\r\n" +
@@ -1763,7 +1777,7 @@ public class IODispatcherTest {
                         "Transfer-Encoding: chunked\r\n" +
                         "Content-Type: application/json; charset=utf-8\r\n" +
                         "\r\n" +
-                        "052e\r\n" +
+                        "0109\r\n" +
                         expectedMetadata +
                         "00\r\n" +
                         "\r\n",
@@ -1779,9 +1793,13 @@ public class IODispatcherTest {
                         "Content-Type: multipart/form-data; boundary=----WebKitFormBoundaryOsOAD9cPKyHuxyBV\r\n" +
                         "Sec-Fetch-Site: same-origin\r\n" +
                         "Referer: http://localhost:9000/index.html\r\n" +
-                        "Accept-Encoding: gzip, deflate, br\r\n" +
-                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
                         "\r\n" +
+                        "------WebKitFormBoundaryOsOAD9cPKyHuxyBV\r\n" +
+                        "Content-Disposition: form-data; name=\"schema\"\r\n" +
+                        "\r\n" +
+                        "[{\"name\":\"Execution\",\"type\":\"TIMESTAMP\", \"pattern\": \"yyyy-MM-dd HH:mm:ss\"}," +
+                        "{\"name\":\"Quantity\",\"type\":\"INT\"}," +
+                        "{\"name\":\"Price\",\"type\":\"INT\"}]\r\n" +
                         "------WebKitFormBoundaryOsOAD9cPKyHuxyBV\r\n" +
                         "Content-Disposition: form-data; name=\"data\"\r\n" +
                         "\r\n" +
