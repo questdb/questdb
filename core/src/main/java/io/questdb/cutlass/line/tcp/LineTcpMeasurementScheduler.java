@@ -810,9 +810,12 @@ class LineTcpMeasurementScheduler implements Closeable {
                 if (null != writer) {
                     try {
                         writer.commit();
-                    } catch (CairoException ex) {
-                        LOG.error().$("cannot commit writer transaction, rolling back before releasing it [table=").$(tableName).$(",ex=").$((Throwable) ex).I$();
-                        writer.rollback();
+                    } catch (Throwable ex) {
+                        LOG.error().$("cannot commit writer transaction, rolling back before releasing it [table=").$(tableName).$(",ex=").$(ex).I$();
+                        try {
+                            writer.rollback();
+                        } catch (Throwable ignored) {
+                        }
                     } finally {
                         writer = Misc.free(writer);
                     }

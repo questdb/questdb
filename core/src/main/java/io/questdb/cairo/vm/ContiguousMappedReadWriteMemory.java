@@ -49,11 +49,6 @@ public class ContiguousMappedReadWriteMemory extends AbstractContiguousMemory
         of(ff, name, pageSize, size);
     }
 
-
-    public ContiguousMappedReadWriteMemory(FilesFacade ff, LPSZ name, long size) {
-        of(ff, name, 0, size);
-    }
-
     public ContiguousMappedReadWriteMemory() {
     }
 
@@ -72,16 +67,16 @@ public class ContiguousMappedReadWriteMemory extends AbstractContiguousMemory
     }
 
     @Override
-    public long getAppendOffset() {
-        return appendAddress - page;
-    }
-
-    @Override
     public void close() {
         if (page != -1) {
             ff.munmap(page, size);
-            this.size = 0;
+            long truncateSize = getAppendOffset();
             this.page = -1;
+            try {
+                VmUtils.bestEffortClose(ff, LOG, fd, true, truncateSize, Files.PAGE_SIZE);
+            } finally {
+                fd = -1;
+            }
         }
         if (fd != -1) {
             ff.close(fd);
@@ -89,6 +84,7 @@ public class ContiguousMappedReadWriteMemory extends AbstractContiguousMemory
             fd = -1;
         }
         grownLength = 0;
+        size = 0;
     }
 
     @Override
@@ -102,7 +98,8 @@ public class ContiguousMappedReadWriteMemory extends AbstractContiguousMemory
     public void of(FilesFacade ff, LPSZ name, long pageSize) {
         this.pageSizeMsb = Numbers.msb(pageSize);
         openFile(ff, name);
-        map(ff, name, ff.length(fd));
+        // open the whole file based on its length
+        map(ff, name, Long.MAX_VALUE);
     }
 
     @Override
@@ -133,17 +130,6 @@ public class ContiguousMappedReadWriteMemory extends AbstractContiguousMemory
         if (newSize > size) {
             setSize0(newSize);
         }
-    }
-
-    @Override
-    public void truncate() {
-        grownLength = 0;
-        if (page != -1) {
-            ff.munmap(page, size);
-            this.size = 0;
-            this.page = -1;
-        }
-        ff.truncate(fd, 0);
     }
 
     public long size() {
@@ -177,6 +163,22 @@ public class ContiguousMappedReadWriteMemory extends AbstractContiguousMemory
         appendAddress += bytes;
     }
 
+    @Override
+    public long getAppendOffset() {
+        return appendAddress - page;
+    }
+
+    @Override
+    public void truncate() {
+        grownLength = 0;
+        if (page != -1) {
+            ff.munmap(page, size);
+            this.size = 0;
+            this.page = -1;
+        }
+        ff.truncate(fd, 0);
+    }
+
     public void of(FilesFacade ff, long fd, @Nullable CharSequence name, long size) {
         close();
         this.ff = ff;
@@ -194,29 +196,37 @@ public class ContiguousMappedReadWriteMemory extends AbstractContiguousMemory
     }
 
     protected void map(FilesFacade ff, @Nullable CharSequence name, long size) {
-        // todo: two system calls here
         size = Math.min(ff.length(fd), size);
-        this.size = size;
-        if (size > 0) {
-            this.page = ff.mmap(fd, size, 0, Files.MAP_RW);
-            if (page == FilesFacade.MAP_FAILED) {
-                long fd = this.fd;
-                long fileLen = ff.length(fd);
-                close();
-                throw CairoException.instance(ff.errno())
-                        .put("Could not mmap ").put(name)
-                        .put(" [size=").put(size)
-                        .put(", fd=").put(fd)
-                        .put(", memUsed=").put(Unsafe.getMemUsed())
-                        .put(", fileLen=").put(fileLen)
-                        .put(']');
-            }
+        if (size == 0) {
+            this.size = 16 * 1024 * 1024;
+            TableUtils.allocateDiskSpace(ff, fd, this.size);
+            map0(ff, name, 16 * 1024 * 1024);
             this.appendAddress = page;
+        } else if (size > 0) {
+            this.size = size;
+            map0(ff, name, size);
+            this.appendAddress = page + size;
         } else {
             this.page = -1;
             this.appendAddress = -1;
         }
         LOG.debug().$("open ").$(name).$(" [fd=").$(fd).$(", pageSize=").$(size).$(", size=").$(this.size).$(']').$();
+    }
+
+    private void map0(FilesFacade ff, @Nullable CharSequence name, long size) {
+        this.page = ff.mmap(fd, size, 0, Files.MAP_RW);
+        if (page == FilesFacade.MAP_FAILED) {
+            long fd = this.fd;
+            long fileLen = ff.length(fd);
+            close();
+            throw CairoException.instance(ff.errno())
+                    .put("Could not mmap ").put(name)
+                    .put(" [size=").put(size)
+                    .put(", fd=").put(fd)
+                    .put(", memUsed=").put(Unsafe.getMemUsed())
+                    .put(", fileLen=").put(fileLen)
+                    .put(']');
+        }
     }
 
     private void openFile(FilesFacade ff, LPSZ name) {
@@ -235,11 +245,19 @@ public class ContiguousMappedReadWriteMemory extends AbstractContiguousMemory
             long page = ff.mremap(fd, this.page, previousSize, newSize, 0, Files.MAP_RW);
             if (page == FilesFacade.MAP_FAILED) {
                 long fd = this.fd;
+                // Closing memory will truncate size to current append offset.
+                // Since the failed resize can occur before append offset can be
+                // explicitly set, we must assume that file size should be
+                // equal to previous memory size
+                jumpTo(previousSize);
                 close();
                 throw CairoException.instance(ff.errno()).put("Could not remap file [previousSize=").put(previousSize).put(", newSize=").put(newSize).put(", fd=").put(fd).put(']');
             }
             this.page = page;
         } else {
+            if (page != -1) {
+                System.out.println("ok");
+            }
             assert page == -1;
             page = ff.mmap(fd, newSize, 0, Files.MAP_RW);
             if (page == FilesFacade.MAP_FAILED) {

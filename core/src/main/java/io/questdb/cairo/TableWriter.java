@@ -2072,12 +2072,12 @@ public class TableWriter implements Closeable {
     }
 
     private void freeIndexers() {
+        // todo: this method seems to be called out of O3 logic where
+        //     real intent is to close active partition rather than free memory
         if (indexers != null) {
             // Don't change items of indexers, they are re-used
-            if (indexers != null) {
-                for (int i = 0, n = indexers.size(); i < n; i++) {
-                    Misc.free(indexers.getQuick(i));
-                }
+            for (int i = 0, n = indexers.size(); i < n; i++) {
+                Misc.free(indexers.getQuick(i));
             }
             denseIndexers.clear();
         }
@@ -2983,32 +2983,6 @@ public class TableWriter implements Closeable {
         }
     }
 
-    private void o3SetAppendOffset(
-            int columnIndex,
-            final int columnType,
-            long o3RowCount
-    ) {
-        if (columnIndex != metadata.getTimestampIndex()) {
-            ContiguousVirtualMemory o3DataMem = o3Columns.get(getPrimaryColumnIndex(columnIndex));
-            ContiguousVirtualMemory o3IndexMem = o3Columns.get(getSecondaryColumnIndex(columnIndex));
-
-            long size;
-            if (null == o3IndexMem) {
-                // Fixed size column
-                size = o3RowCount << ColumnType.pow2SizeOf(columnType);
-            } else {
-                // Var size column
-                size = o3IndexMem.getLong(o3RowCount * 8);
-                o3IndexMem.jumpTo(o3RowCount * 8);
-            }
-
-            o3DataMem.jumpTo(size);
-        } else {
-            // Special case, designated timestamp column
-            o3TimestampMem.jumpTo(o3RowCount * 16);
-        }
-    }
-
     private long o3MoveUncommitted(final int timestampIndex) {
         final long committedRowCount = txFile.getCommittedFixedRowCount() + txFile.getCommittedTransientRowCount();
         final long rowsAdded = txFile.getRowCount() - committedRowCount;
@@ -3367,6 +3341,32 @@ public class TableWriter implements Closeable {
         return transientRowsAdded;
     }
 
+    private void o3SetAppendOffset(
+            int columnIndex,
+            final int columnType,
+            long o3RowCount
+    ) {
+        if (columnIndex != metadata.getTimestampIndex()) {
+            ContiguousVirtualMemory o3DataMem = o3Columns.get(getPrimaryColumnIndex(columnIndex));
+            ContiguousVirtualMemory o3IndexMem = o3Columns.get(getSecondaryColumnIndex(columnIndex));
+
+            long size;
+            if (null == o3IndexMem) {
+                // Fixed size column
+                size = o3RowCount << ColumnType.pow2SizeOf(columnType);
+            } else {
+                // Var size column
+                size = o3IndexMem.getLong(o3RowCount * 8);
+                o3IndexMem.jumpTo(o3RowCount * 8);
+            }
+
+            o3DataMem.jumpTo(size);
+        } else {
+            // Special case, designated timestamp column
+            o3TimestampMem.jumpTo(o3RowCount * 16);
+        }
+    }
+
     private void o3ShiftLagRowsUp(int timestampIndex, long o3LagRowCount, long o3RowCount) {
         o3PendingCallbackTasks.clear();
 
@@ -3646,6 +3646,9 @@ public class TableWriter implements Closeable {
                 }
             }
             LOG.info().$("switched partition [path='").$(path).$("']").$();
+        } catch (Throwable e) {
+            distressed = true;
+            throw e;
         } finally {
             path.trimTo(rootLen);
         }
@@ -4261,12 +4264,6 @@ public class TableWriter implements Closeable {
         throw e;
     }
 
-    private void setO3AppendPosition(final long position) {
-        for (int i = 0; i < columnCount; i++) {
-            o3SetAppendOffset(i, metadata.getColumnType(i), position);
-        }
-    }
-
     private void setAppendPosition(final long position, boolean ensureFileSize) {
         for (int i = 0; i < columnCount; i++) {
             // stop calculating oversize as soon as we find first over-sized column
@@ -4279,6 +4276,12 @@ public class TableWriter implements Closeable {
                     tempMem16b,
                     ensureFileSize
             );
+        }
+    }
+
+    private void setO3AppendPosition(final long position) {
+        for (int i = 0; i < columnCount; i++) {
+            o3SetAppendOffset(i, metadata.getColumnType(i), position);
         }
     }
 

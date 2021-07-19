@@ -55,11 +55,6 @@ class SymbolColumnIndexer implements ColumnIndexer, Closeable {
     }
 
     @Override
-    public BitmapIndexWriter getWriter() {
-        return writer;
-    }
-
-    @Override
     public long getFd() {
         return mem.getFd();
     }
@@ -84,6 +79,11 @@ class SymbolColumnIndexer implements ColumnIndexer, Closeable {
             writer.add(TableUtils.toIndexKey(mem.getInt((lo - columnTop) * Integer.BYTES)), lo);
         }
         writer.setMaxValue(hiRow - 1);
+    }
+
+    @Override
+    public BitmapIndexWriter getWriter() {
+        return writer;
     }
 
     @Override

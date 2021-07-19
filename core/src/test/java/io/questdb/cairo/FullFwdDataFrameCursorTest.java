@@ -1171,7 +1171,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                     }
                     writer.commit();
                     Assert.fail();
-                } catch (CairoError ignored) {
+                } catch (CairoError | CairoException ignored) {
                 }
                 // writer must be closed, we must not interact with writer anymore
 
@@ -1538,7 +1538,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                     }
                     writer.commit();
                     Assert.fail();
-                } catch (CairoError ignored) {
+                } catch (CairoError | CairoException ignored) {
                 }
                 // writer must be closed, we must not interact with writer anymore
 
