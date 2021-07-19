@@ -272,12 +272,12 @@ public class TableReader implements Closeable, SymbolTableSource {
         return metadata.getPartitionBy();
     }
 
-    public int getMaxUncommittedRows() {
-        return metadata.getMaxUncommittedRows();
-    }
-
     public long getCommitLag() {
         return metadata.getCommitLag();
+    }
+
+    public int getMaxUncommittedRows() {
+        return metadata.getMaxUncommittedRows();
     }
 
     public SymbolMapReader getSymbolMapReader(int columnIndex) {

@@ -131,8 +131,12 @@ public class TextLoader implements Closeable, Mutable {
                 .$(", atomicity=").$(atomicity)
                 .$(", partitionBy=").$(PartitionBy.toString(partitionBy))
                 .$(", timestamp=").$(timestampIndexCol)
+                .$(", commitLag=").$(commitLag)
                 .$(", maxUncommittedRows=").$(maxUncommittedRows)
                 .$(']').$();
+        if (partitionBy == PartitionBy.NONE && (commitLag > 0 || maxUncommittedRows > 0)) {
+            LOG.info().$("parameters commitLag and maxUncommittedRows have no effect when partitionBy is NONE").$();
+        }
     }
 
     public byte getColumnDelimiter() {

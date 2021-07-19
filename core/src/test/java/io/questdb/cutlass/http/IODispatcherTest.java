@@ -35,6 +35,9 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.LockSupport;
 
+import io.questdb.cairo.*;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Before;
@@ -43,18 +46,6 @@ import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 
 import io.questdb.Metrics;
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.CairoTestUtils;
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.DefaultCairoConfiguration;
-import io.questdb.cairo.PartitionBy;
-import io.questdb.cairo.RecordCursorPrinter;
-import io.questdb.cairo.TableModel;
-import io.questdb.cairo.TableReader;
-import io.questdb.cairo.TableUtils;
-import io.questdb.cairo.TableWriter;
-import io.questdb.cairo.TestRecord;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cutlass.NetUtils;
 import io.questdb.cutlass.http.processors.HealthCheckProcessor;
@@ -1164,19 +1155,7 @@ public class IODispatcherTest {
                         "timestamp,bid\r\n" +
                         "27/05/2018 00:00:01,100\r\n" +
                         "27/05/2018 00:00:02,101\r\n" +
-                        "27/05/2018 00:00:03,102\r\n" + "Accept-Encoding: gzip, deflate, br\r\n" +
-                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
-                        "\r\n" +
-                        "------WebKitFormBoundaryOsOAD9cPKyHuxyBV\r\n" +
-                        "Content-Disposition: form-data; name=\"schema\"\r\n" +
-                        "\r\n" +
-                        "[{\"name\":\"timestamp\",\"type\":\"DATE\"},{\"name\":\"bid\",\"type\":\"INT\"}]\r\n" +
-                        "------WebKitFormBoundaryOsOAD9cPKyHuxyBV\r\n" +
-                        "Content-Disposition: form-data; name=\"data\"\r\n" +
-                        "\r\n" +
-                        "timestamp,bid\r\n" +
-                        "27/05/2018 00:00:01,100\r\n" +
-                        "27/05/2018 00:00:02,101\r\n" +
+                        "27/05/2018 00:00:03,102\r\n" +
                         "27/05/2018 00:00:04,103\r\n" +
                         "27/05/2018 00:00:05,104\r\n" +
                         "27/05/2018 00:00:06,105\r\n" +
@@ -1747,11 +1726,62 @@ public class IODispatcherTest {
         );
     }
 
-    // TODO: MARKER
     @Test
-    public void testImportCommitLagAndMaxUncommittedRows() throws Exception {
-        final long commitLag = 180_000; // 3 minutes
-        final int maxUncommittedRows = 2;
+    public void testImportSettingCommitLagAndMaxUncommittedRowsWithoutRejections() throws Exception {
+        testImportSettingCommitLagAndMaxUncommittedRows(
+                "test_table",
+                240_000_000, // 4 minutes, micro precision
+                3,
+                "Execution,Quantity,Price\r\n" +
+                        "2021-01-01 00:04:00,12,300\r\n" +
+                        "2021-01-01 00:05:00,13,301\r\n" +
+                        "2021-01-02 00:05:31,21,257\r\n" +
+                        "2021-01-01 00:01:00,1,3127\r\n" +
+                        "2021-01-01 00:01:30,2,3124\r\n" +
+                        "2021-01-02 00:00:30,22,12\r\n",
+                "1609459260000000,1,3127\n" +
+                        "1609459290000000,2,3124\n" +
+                        "1609459440000000,12,300\n" +
+                        "1609459500000000,13,301\n" +
+                        "1609545630000000,22,12\n" +
+                        "1609545931000000,21,257\n",
+                0,
+                6
+        );
+    }
+
+    // TODO: potential edge case?
+    @Test
+    public void testImportSettingCommitLagAndMaxUncommittedRowsWithRejectionsDueToO3() throws Exception {
+        testImportSettingCommitLagAndMaxUncommittedRows(
+                "test_table",
+                120_000_000, // 2 minutes, micro precision
+                1,
+                "Execution,Quantity,Price\r\n" +
+                        "2021-01-01 00:04:00,12,300\r\n" +
+                        "2021-01-01 00:05:00,13,301\r\n" +
+                        "2021-01-01 00:01:00,1,3127\r\n" +
+                        "2021-01-02 00:05:31,21,257\r\n" +
+                        "2021-01-01 00:01:30,2,3124\r\n" +
+                        "2021-01-02 00:00:30,22,12\r\n",
+                "1609459260000000,1,3127\n" +
+                        "1609459290000000,2,3124\n" +
+                        "1609459440000000,12,300\n" +
+                        "1609459500000000,13,301\n" +
+                        "1609545630000000,22,12\n" +
+                        "1609545931000000,21,257\n",
+                4, // TODO: it correctly detects rejected rows, yet the table contains all 6 of them!
+                2
+        );
+    }
+
+    private void testImportSettingCommitLagAndMaxUncommittedRows(String tableName,
+                                                                 long commitLag,
+                                                                 int maxUncommittedRows,
+                                                                 String data,
+                                                                 String expectedData,
+                                                                 int expectedRejectedRows,
+                                                                 int expectedImportedRows) throws Exception {
         String command = "POST /upload?fmt=json&" +
                 "overwrite=true&" +
                 "forceHeader=true&" +
@@ -1759,16 +1789,16 @@ public class IODispatcherTest {
                 "partitionBy=DAY&" +
                 "commitLag=" + commitLag + "&" +
                 "maxUncommittedRows=" + maxUncommittedRows + "&" +
-                "name=hernan_cortes HTTP/1.1\r\n";
+                "name=" + tableName + " HTTP/1.1\r\n";
         String expectedMetadata = "{\"status\":\"OK\"," +
-                "\"location\":\"hernan_cortes\"," +
-                "\"rowsRejected\":0," +
-                "\"rowsImported\":2," +
+                "\"location\":\"" + tableName + "\"," +
+                "\"rowsRejected\":" + expectedRejectedRows + "," +
+                "\"rowsImported\":" + expectedImportedRows  + "," +
                 "\"header\":true," +
                 "\"columns\":[" +
                 "{\"name\":\"Execution\",\"type\":\"TIMESTAMP\",\"size\":8,\"errors\":0}," +
                 "{\"name\":\"Quantity\",\"type\":\"INT\",\"size\":4,\"errors\":0}," +
-                "{\"name\":\"Price\",\"type\":\"INT\",\"size\":4,\"errors\":0}," +
+                "{\"name\":\"Price\",\"type\":\"INT\",\"size\":4,\"errors\":0}" +
                 "]}\r\n";
         testImport(
                 "HTTP/1.1 200 OK\r\n" +
@@ -1777,7 +1807,7 @@ public class IODispatcherTest {
                         "Transfer-Encoding: chunked\r\n" +
                         "Content-Type: application/json; charset=utf-8\r\n" +
                         "\r\n" +
-                        "0109\r\n" +
+                        "0106\r\n" +
                         expectedMetadata +
                         "00\r\n" +
                         "\r\n",
@@ -1803,15 +1833,34 @@ public class IODispatcherTest {
                         "------WebKitFormBoundaryOsOAD9cPKyHuxyBV\r\n" +
                         "Content-Disposition: form-data; name=\"data\"\r\n" +
                         "\r\n" +
-                        "Execution,Quantity,Price\r\n" +
-                        "2021-01-01 00:00:00,12,300\r\n" +
-                        "2021-01-01 00:00:00,12,300\r\n" +
+                        data +
                         "\r\n" +
                         "------WebKitFormBoundaryOsOAD9cPKyHuxyBV--",
                 NetworkFacadeImpl.INSTANCE,
                 false,
                 1
         );
+
+        final String baseDir = temp.getRoot().getAbsolutePath();
+        DefaultCairoConfiguration configuration = new DefaultCairoConfiguration(baseDir);
+        try (TableReader reader = new TableReader(configuration, tableName)) {
+            Assert.assertEquals(commitLag, reader.getCommitLag());
+            Assert.assertEquals(maxUncommittedRows, reader.getMaxUncommittedRows());
+            Assert.assertEquals(Math.abs(expectedImportedRows), reader.size());
+            StringSink sink = new StringSink();
+            try(RecordCursor cursor = reader.getCursor()) {
+                final Record record = cursor.getRecord();
+                while (cursor.hasNext()) {
+                    sink.put(record.getTimestamp(0));
+                    sink.put(',');
+                    sink.put(record.getInt(1));
+                    sink.put(',');
+                    sink.put(record.getInt(2));
+                    sink.put('\n');
+                }
+            }
+            Assert.assertEquals(expectedData, sink.toString());
+        }
     }
 
     @Test

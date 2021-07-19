@@ -111,23 +111,13 @@ public class CairoTextWriter implements Closeable, Mutable {
         }
     }
 
-    public void checkMaxAndCommitLag(CharSequence ts) {
+    public void checkMaxAndCommitLag() {
         if (writer != null) {
             if (durable) {
                 assert false;
             } else {
                 if (maxUncommittedRows > 0 && writer.getO3RowCount() >= maxUncommittedRows) {
-                    System.out.printf("BEFORE ts:%s, max:%d, uncommitted:%d, written:%d%n",
-                            ts,
-                            writer.getMaxTimestamp(),
-                            writer.getO3RowCount(),
-                            getWrittenLineCount());
-                    writer.checkMaxAndCommitLag(CommitMode.SYNC);
-                    System.out.printf("AFTER ts:%s, max:%d, uncommitted:%d, written:%d%n",
-                            ts,
-                            writer.getMaxTimestamp(),
-                            writer.getO3RowCount(),
-                            getWrittenLineCount());
+                    writer.checkMaxAndCommitLag();
                 }
             }
         }
@@ -216,7 +206,7 @@ public class CairoTextWriter implements Closeable, Mutable {
                 if (onField(line, dbcs, w, i)) return;
             }
             w.append();
-            checkMaxAndCommitLag(values.getQuick(timestampIndex));
+            checkMaxAndCommitLag();
         } catch (Exception e) {
             logError(line, timestampIndex, dbcs);
         }

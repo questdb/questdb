@@ -32,24 +32,19 @@ import io.questdb.cutlass.json.JsonLexer;
 import io.questdb.griffin.AbstractGriffinTest;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
-import io.questdb.std.CharSequenceHashSet;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
-import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
-import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.After;
 import org.junit.AfterClass;
 import org.junit.Assert;
 import org.junit.Test;
 
-import java.lang.reflect.Proxy;
 import java.nio.charset.StandardCharsets;
-import java.util.HashSet;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class TextLoaderTest extends AbstractGriffinTest {
@@ -1192,44 +1187,23 @@ public class TextLoaderTest extends AbstractGriffinTest {
         }
     }
 
-    private static FilesFacade wrapWithReporter(FilesFacade ff, String... reportJustThese) {
-        final CharSequenceHashSet justThese;
-        if (reportJustThese.length == 0) {
-            justThese = null;
-        } else {
-            justThese = new CharSequenceHashSet();
-            for (int i = 0; i < reportJustThese.length; i++) {
-                justThese.add(reportJustThese[i]);
-            }
-        }
-        return (FilesFacade) Proxy.newProxyInstance(
-                FilesFacade.class.getClassLoader(),
-                new Class[]{FilesFacade.class},
-                (proxy, method, args) -> {
-                    if (justThese == null || justThese.size() == 0 || justThese.contains(method.getName())) {
-                        StringSink sink = new StringSink();
-                        if (args != null) {
-                            for (int i = 0; i < args.length; i++) {
-                                Object arg = args[i];
-                                sink.put(arg.toString());
-                                if (i + 1 < args.length) {
-                                    sink.put(", ");
-                                }
-                            }
-                        }
-                        System.out.printf("INVOKED %s(%s)%n", method.getName(), sink);
-                    }
-                    return method.invoke(ff, args);
-                }
-        );
-    }
-
-    // TODO: MARKER TO MAKE IT FINDABLE
     @Test
-    public void testImportMaxUncommittedRows() throws Exception {
-        final FilesFacade ff = wrapWithReporter(new TestFilesFacade() {
+    public void testImportSettingCommitLagAndMaxUncommittedRowsWithoutRejections() throws Exception {
+        final String [] expected = {
+                "/2021-01-01/",
+                "/2021-01-02/",
+                "/2021-01-02.5",
+                "/2021-01-01.4",
+                "/2021-01-01/",
+                "/2021-01-02/"
+        };
+        final AtomicInteger rmdirOffset = new AtomicInteger();
+        final FilesFacade ff = new TestFilesFacade() {
             @Override
             public int rmdir(Path name) {
+                int offset = rmdirOffset.getAndIncrement();
+                Assert.assertTrue(offset < expected.length);
+                Assert.assertTrue(name.toString().endsWith(expected[offset]));
                 return Files.rmdir(name);
             }
 
@@ -1237,10 +1211,10 @@ public class TextLoaderTest extends AbstractGriffinTest {
             public boolean wasCalled() {
                 return false;
             }
-        }, "rmdir", "fsync", "msync");
+        };
 
-        final int maxUncommittedRows = 1;
-        final long commitLagMs = 1000;
+        final long commitLag = 240_000_000; // 4 minutes, precision is micro
+        final int maxUncommittedRows = 3;
         CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
             @Override
             public TextConfiguration getTextConfiguration() {
@@ -1254,7 +1228,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
 
             @Override
             public long getCommitLag() {
-                return commitLagMs;
+                return commitLag;
             }
 
             @Override
@@ -1275,52 +1249,164 @@ public class TextLoaderTest extends AbstractGriffinTest {
                         configureLoaderDefaults(
                                 textLoader,
                                 (byte) ',',
-                                0,
+                                Atomicity.SKIP_COL,
                                 false,
                                 PartitionBy.DAY,
                                 "ts",
-                                commitLagMs,
+                                commitLag,
                                 maxUncommittedRows);
                         textLoader.setForceHeaders(true);
 
                         String csv = "ts,sym,open,highest,lowest,close,volumefrom,volumeto\n" +
-                                "2021-02-01T00:00:02.000000Z,EUR,5834,5196,5031,5031,9999,50566\n" +
-                                "2021-02-02T00:00:01.000000Z,EUR,6398,6398,6398,6398,0,0\n" +
-                                "2021-02-01T00:00:01.000000Z,EUR,6398,6398,6398,6398,0,0\n";
-
-                        String expectedMetadata = "{\"columnCount\":8,\"columns\":[" +
-                                "{\"index\":0,\"name\":\"ts\",\"type\":\"TIMESTAMP\"}," +
-                                "{\"index\":1,\"name\":\"sym\",\"type\":\"STRING\"}," +
-                                "{\"index\":2,\"name\":\"open\",\"type\":\"INT\"}," +
-                                "{\"index\":3,\"name\":\"highest\",\"type\":\"INT\"}," +
-                                "{\"index\":4,\"name\":\"lowest\",\"type\":\"INT\"}," +
-                                "{\"index\":5,\"name\":\"close\",\"type\":\"INT\"}," +
-                                "{\"index\":6,\"name\":\"volumefrom\",\"type\":\"INT\"}," +
-                                "{\"index\":7,\"name\":\"volumeto\",\"type\":\"INT\"}]," +
-                                "\"timestampIndex\":0}";
-
-                        String expectedData = "ts\tsym\topen\thighest\tlowest\tclose\tvolumefrom\tvolumeto\n" +
-                                "2021-02-01T00:00:01.000000Z\tEUR\t6398\t6398\t6398\t6398\t0\t0\n" +
-                                "2021-02-01T00:00:02.000000Z\tEUR\t5834\t5196\t5031\t5031\t9999\t50566\n" +
-                                "2021-02-02T00:00:01.000000Z\tEUR\t6398\t6398\t6398\t6398\t0\t0\n"
-                                ;
-
+                                "2021-01-01T00:04:00.000000Z,EUR,5834,5196,5031,5031,9999,50566\n" +
+                                "2021-01-01T00:05:00.000000Z,EUR,6398,6398,6398,6398,0,0\n" +
+                                "2021-01-02T00:05:31.000000Z,EUR,20716,NaN,15,123,0,0\n" +
+                                "2021-01-01T00:01:00.000000Z,EUR,6398,144,15644,6398,0,0\n" +
+                                "2021-01-01T00:01:30.000000Z,EUR,6398,6666,6398,6398,0,0\n" +
+                                "2021-01-02T00:00:30.000000Z,EUR,6398,6398,6398,9999,0,0\n";
                         playText(
                                 engine,
                                 textLoader,
                                 csv,
                                 1024,
-                                expectedData,
-                                expectedMetadata,
-                                3,
-                                3
+                                "ts\tsym\topen\thighest\tlowest\tclose\tvolumefrom\tvolumeto\n" +
+                                        "2021-01-01T00:01:00.000000Z\tEUR\t6398\t144\t15644\t6398\t0\t0\n" +
+                                        "2021-01-01T00:01:30.000000Z\tEUR\t6398\t6666\t6398\t6398\t0\t0\n" +
+                                        "2021-01-01T00:04:00.000000Z\tEUR\t5834\t5196\t5031\t5031\t9999\t50566\n" +
+                                        "2021-01-01T00:05:00.000000Z\tEUR\t6398\t6398\t6398\t6398\t0\t0\n" +
+                                        "2021-01-02T00:00:30.000000Z\tEUR\t6398\t6398\t6398\t9999\t0\t0\n" +
+                                        "2021-01-02T00:05:31.000000Z\tEUR\t20716\tNaN\t15\t123\t0\t0\n",
+                                "{\"columnCount\":8,\"columns\":[" +
+                                        "{\"index\":0,\"name\":\"ts\",\"type\":\"TIMESTAMP\"}," +
+                                        "{\"index\":1,\"name\":\"sym\",\"type\":\"STRING\"}," +
+                                        "{\"index\":2,\"name\":\"open\",\"type\":\"INT\"}," +
+                                        "{\"index\":3,\"name\":\"highest\",\"type\":\"INT\"}," +
+                                        "{\"index\":4,\"name\":\"lowest\",\"type\":\"INT\"}," +
+                                        "{\"index\":5,\"name\":\"close\",\"type\":\"INT\"}," +
+                                        "{\"index\":6,\"name\":\"volumefrom\",\"type\":\"INT\"}," +
+                                        "{\"index\":7,\"name\":\"volumeto\",\"type\":\"INT\"}]," +
+                                        "\"timestampIndex\":0}",
+                                6,
+                                6
                         );
-                        try (TableReader r = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "test")) {
-                            Assert.assertEquals(maxUncommittedRows, r.getMaxUncommittedRows());
-                            Assert.assertEquals(commitLagMs, r.getCommitLag());
-                        }
                     }
             );
+            try (TableReader r = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "test")) {
+                Assert.assertEquals(maxUncommittedRows, r.getMaxUncommittedRows());
+                Assert.assertEquals(commitLag, r.getCommitLag());
+            }
+        }
+    }
+
+    // TODO: refactor this test and the one above to simplify
+    @Test
+    public void testImportSettingCommitLagAndMaxUncommittedRowsWithRejectionsDueToO3() throws Exception {
+        final String [] expected = {
+                "/2021-01-01/",
+                "/2021-01-01.4/",
+                "/2021-01-02",
+                "/2021-01-01.5",
+                "/2021-01-01/",
+                "/2021-01-01.13/"
+        };
+        final AtomicInteger rmdirOffset = new AtomicInteger();
+        final FilesFacade ff = new TestFilesFacade() {
+            @Override
+            public int rmdir(Path name) {
+                int offset = rmdirOffset.getAndIncrement();
+                Assert.assertTrue(offset < expected.length);
+                Assert.assertTrue(name.toString().endsWith(expected[offset]));
+                return Files.rmdir(name);
+            }
+
+            @Override
+            public boolean wasCalled() {
+                return false;
+            }
+        };
+
+        final long commitLag = 240_000_000; // 4 minutes, precision is micro
+        final int maxUncommittedRows = 2;
+        CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+            @Override
+            public TextConfiguration getTextConfiguration() {
+                return new DefaultTextConfiguration() {
+                    @Override
+                    public int getTextAnalysisMaxLines() {
+                        return 1;
+                    }
+                };
+            }
+
+            @Override
+            public long getCommitLag() {
+                return commitLag;
+            }
+
+            @Override
+            public int getMaxUncommittedRows() {
+                return maxUncommittedRows;
+            }
+
+            @Override
+            public FilesFacade getFilesFacade() {
+                return ff;
+            }
+        };
+
+        try (CairoEngine engine = new CairoEngine(configuration)) {
+            assertNoLeak(
+                    engine,
+                    textLoader -> {
+                        configureLoaderDefaults(
+                                textLoader,
+                                (byte) ',',
+                                Atomicity.SKIP_COL,
+                                false,
+                                PartitionBy.DAY,
+                                "ts",
+                                commitLag,
+                                maxUncommittedRows);
+                        textLoader.setForceHeaders(true);
+
+                        String csv = "ts,sym,open,highest,lowest,close,volumefrom,volumeto\n" +
+                                "2021-01-01T00:04:00.000000Z,EUR,5834,5196,5031,5031,9999,50566\n" +
+                                "2021-01-01T00:05:00.000000Z,EUR,6398,6398,6398,6398,0,0\n" +
+                                "2021-01-01T00:01:00.000000Z,EUR,6398,144,15644,6398,0,0\n" +
+                                "2021-01-02T00:05:31.000000Z,EUR,20716,NaN,15,123,0,0\n" +
+                                "2021-01-01T00:01:30.000000Z,EUR,6398,6666,6398,6398,0,0\n" +
+                                "2021-01-02T00:00:30.000000Z,EUR,6398,6398,6398,9999,0,0\n";
+                        playText(
+                                engine,
+                                textLoader,
+                                csv,
+                                1024,
+                                "ts\tsym\topen\thighest\tlowest\tclose\tvolumefrom\tvolumeto\n" +
+                                        "2021-01-01T00:01:00.000000Z\tEUR\t6398\t144\t15644\t6398\t0\t0\n" +
+                                        "2021-01-01T00:01:30.000000Z\tEUR\t6398\t6666\t6398\t6398\t0\t0\n" +
+                                        "2021-01-01T00:04:00.000000Z\tEUR\t5834\t5196\t5031\t5031\t9999\t50566\n" +
+                                        "2021-01-01T00:05:00.000000Z\tEUR\t6398\t6398\t6398\t6398\t0\t0\n" +
+                                        "2021-01-02T00:00:30.000000Z\tEUR\t6398\t6398\t6398\t9999\t0\t0\n" +
+                                        "2021-01-02T00:05:31.000000Z\tEUR\t20716\tNaN\t15\t123\t0\t0\n",
+                                "{\"columnCount\":8,\"columns\":[" +
+                                        "{\"index\":0,\"name\":\"ts\",\"type\":\"TIMESTAMP\"}," +
+                                        "{\"index\":1,\"name\":\"sym\",\"type\":\"STRING\"}," +
+                                        "{\"index\":2,\"name\":\"open\",\"type\":\"INT\"}," +
+                                        "{\"index\":3,\"name\":\"highest\",\"type\":\"INT\"}," +
+                                        "{\"index\":4,\"name\":\"lowest\",\"type\":\"INT\"}," +
+                                        "{\"index\":5,\"name\":\"close\",\"type\":\"INT\"}," +
+                                        "{\"index\":6,\"name\":\"volumefrom\",\"type\":\"INT\"}," +
+                                        "{\"index\":7,\"name\":\"volumeto\",\"type\":\"INT\"}]," +
+                                        "\"timestampIndex\":0}",
+                                6,
+                                2
+                        );
+                    }
+            );
+            try (TableReader r = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "test")) {
+                Assert.assertEquals(maxUncommittedRows, r.getMaxUncommittedRows());
+                Assert.assertEquals(commitLag, r.getCommitLag());
+            }
         }
     }
 
@@ -1912,7 +1998,18 @@ public class TextLoaderTest extends AbstractGriffinTest {
                     csv,
                     1024,
                     expected,
-                    "{\"columnCount\":10,\"columns\":[{\"index\":0,\"name\":\"f0\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"f1\",\"type\":\"INT\"},{\"index\":2,\"name\":\"f2\",\"type\":\"INT\"},{\"index\":3,\"name\":\"f3\",\"type\":\"DOUBLE\"},{\"index\":4,\"name\":\"f4\",\"type\":\"DATE\"},{\"index\":5,\"name\":\"f5\",\"type\":\"DATE\"},{\"index\":6,\"name\":\"f6\",\"type\":\"DATE\"},{\"index\":7,\"name\":\"f7\",\"type\":\"INT\"},{\"index\":8,\"name\":\"f8\",\"type\":\"BOOLEAN\"},{\"index\":9,\"name\":\"f9\",\"type\":\"LONG\"}],\"timestampIndex\":-1}",
+                    "{\"columnCount\":10,\"columns\":[" +
+                            "{\"index\":0,\"name\":\"f0\",\"type\":\"STRING\"}," +
+                            "{\"index\":1,\"name\":\"f1\",\"type\":\"INT\"}," +
+                            "{\"index\":2,\"name\":\"f2\",\"type\":\"INT\"}," +
+                            "{\"index\":3,\"name\":\"f3\",\"type\":\"DOUBLE\"}," +
+                            "{\"index\":4,\"name\":\"f4\",\"type\":\"DATE\"}," +
+                            "{\"index\":5,\"name\":\"f5\",\"type\":\"DATE\"}," +
+                            "{\"index\":6,\"name\":\"f6\",\"type\":\"DATE\"}," +
+                            "{\"index\":7,\"name\":\"f7\",\"type\":\"INT\"}," +
+                            "{\"index\":8,\"name\":\"f8\",\"type\":\"BOOLEAN\"}," +
+                            "{\"index\":9,\"name\":\"f9\",\"type\":\"LONG\"}" +
+                            "],\"timestampIndex\":-1}",
                     12,
                     12
             );

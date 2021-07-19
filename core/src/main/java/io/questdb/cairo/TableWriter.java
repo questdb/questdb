@@ -662,14 +662,6 @@ public class TableWriter implements Closeable {
         return true;
     }
 
-    public boolean checkMaxAndCommitLag(int commitMode) {
-        if (getO3RowCount() < metadata.getMaxUncommittedRows()) {
-            return false;
-        }
-        commit(commitMode, metadata.getCommitLag());
-        return true;
-    }
-
     @Override
     public void close() {
         if (null != blockWriter) {
@@ -2499,8 +2491,6 @@ public class TableWriter implements Closeable {
                         srcOooMax = 0;
                     }
                 }
-                System.out.printf("O3COMMIT: o3Min:%d, o3Max:%d, lag:%d, thre:%s, srcOooMax:%d%n",
-                        o3TimestampMin, o3TimestampMax, lag, lagThresholdTimestamp, srcOooMax);
                 LOG.debug().$("o3 commit lag [table=").$(tableName)
                         .$(", lag=").$(lag)
                         .$(", maxUncommittedRows=").$(maxUncommittedRows)
