@@ -1736,6 +1736,67 @@ public class IODispatcherTest {
     }
 
     @Test
+    public void testImportCommitLagAndMaxuncommittedRows() throws Exception {
+        final long commitLag = 180_000; // 3 minutes
+        final int maxUncommittedRows = 2;
+        String command = "POST /upload?fmt=json&" +
+                "overwrite=true&" +
+                "forceHeader=true&" +
+                "timestamp=Execution&" +
+                "commitLag=" + commitLag + "&" +
+                "maxUncommittedRows=" + maxUncommittedRows + "&" +
+                "name=hernan_cortes HTTP/1.1\r\n";
+        String expectedMetadata = "{\"status\":\"OK\"," +
+                "\"location\":\"hernan_cortes\"," +
+                "\"rowsRejected\":0," +
+                "\"rowsImported\":3," +
+                "\"header\":true," +
+                "\"columns\":[" +
+                "{\"name\":\"Execution\",\"type\":\"STRING\",\"size\":0,\"errors\":0}," +
+                "{\"name\":\"Quantity\",\"type\":\"INT\",\"size\":0,\"errors\":0}," +
+                "{\"name\":\"Price\",\"type\":\"INT\",\"size\":0,\"errors\":0}," +
+                "]}, timestamp=0\r\n";
+        testImport(
+                "HTTP/1.1 200 OK\r\n" +
+                        "Server: questDB/1.0\r\n" +
+                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                        "Transfer-Encoding: chunked\r\n" +
+                        "Content-Type: application/json; charset=utf-8\r\n" +
+                        "\r\n" +
+                        "052e\r\n" +
+                        expectedMetadata +
+                        "00\r\n" +
+                        "\r\n",
+                command +
+                        "Host: localhost:9001\r\n" +
+                        "Connection: keep-alive\r\n" +
+                        "Content-Length: 832\r\n" +
+                        "Accept: */*\r\n" +
+                        "Origin: http://localhost:9000\r\n" +
+                        "X-Requested-With: XMLHttpRequest\r\n" +
+                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/77.0.3865.120 Safari/537.36\r\n" +
+                        "Sec-Fetch-Mode: cors\r\n" +
+                        "Content-Type: multipart/form-data; boundary=----WebKitFormBoundaryOsOAD9cPKyHuxyBV\r\n" +
+                        "Sec-Fetch-Site: same-origin\r\n" +
+                        "Referer: http://localhost:9000/index.html\r\n" +
+                        "Accept-Encoding: gzip, deflate, br\r\n" +
+                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                        "\r\n" +
+                        "------WebKitFormBoundaryOsOAD9cPKyHuxyBV\r\n" +
+                        "Content-Disposition: form-data; name=\"data\"\r\n" +
+                        "\r\n" +
+                        "Execution,Quantity,Price\r\n" +
+                        "2021-01-01 00:00:00,12,300\r\n" +
+                        "2021-01-01 00:00:00,12,300\r\n" +
+                        "\r\n" +
+                        "------WebKitFormBoundaryOsOAD9cPKyHuxyBV--",
+                NetworkFacadeImpl.INSTANCE,
+                false,
+                1
+        );
+    }
+
+    @Test
     public void testJsonQueryAndDisconnectWithoutWaitingForResult() throws Exception {
         assertMemoryLeak(() -> {
 

@@ -2032,6 +2032,7 @@ public class SqlCompiler implements Closeable {
                 Atomicity.SKIP_ROW,
                 PartitionBy.NONE,
                 null,
+                PropServerConfiguration.COMMIT_LAG_DEFAULT_MS,
                 PropServerConfiguration.MAX_UNCOMMITTED_ROWS_DEFAULT);
     }
 

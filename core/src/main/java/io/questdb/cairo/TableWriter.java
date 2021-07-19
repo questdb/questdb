@@ -662,6 +662,14 @@ public class TableWriter implements Closeable {
         return true;
     }
 
+    public boolean checkMaxAndCommitLag(int commitMode) {
+        if (getO3RowCount() < metadata.getMaxUncommittedRows()) {
+            return false;
+        }
+        commit(commitMode, metadata.getCommitLag());
+        return true;
+    }
+
     @Override
     public void close() {
         if (null != blockWriter) {

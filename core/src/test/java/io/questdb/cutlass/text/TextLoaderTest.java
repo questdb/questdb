@@ -27,19 +27,14 @@ package io.questdb.cutlass.text;
 import io.questdb.PropServerConfiguration;
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
-import io.questdb.cairo.sql.Record;
-import io.questdb.cutlass.http.HttpQueryTestBuilder;
-import io.questdb.cutlass.http.HttpServerConfigurationBuilder;
-import io.questdb.cutlass.http.SendAndReceiveRequestBuilder;
 import io.questdb.cutlass.http.ex.NotEnoughLinesException;
 import io.questdb.cutlass.json.JsonLexer;
 import io.questdb.griffin.AbstractGriffinTest;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.engine.functions.constants.NullConstant;
+import io.questdb.std.CharSequenceHashSet;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
@@ -52,10 +47,9 @@ import org.junit.AfterClass;
 import org.junit.Assert;
 import org.junit.Test;
 
-import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
-import java.lang.reflect.UndeclaredThrowableException;
 import java.nio.charset.StandardCharsets;
+import java.util.HashSet;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class TextLoaderTest extends AbstractGriffinTest {
@@ -1198,60 +1192,64 @@ public class TextLoaderTest extends AbstractGriffinTest {
         }
     }
 
+    private static FilesFacade wrapWithReporter(FilesFacade ff, String... reportJustThese) {
+        final CharSequenceHashSet justThese;
+        if (reportJustThese.length == 0) {
+            justThese = null;
+        } else {
+            justThese = new CharSequenceHashSet();
+            for (int i = 0; i < reportJustThese.length; i++) {
+                justThese.add(reportJustThese[i]);
+            }
+        }
+        return (FilesFacade) Proxy.newProxyInstance(
+                FilesFacade.class.getClassLoader(),
+                new Class[]{FilesFacade.class},
+                (proxy, method, args) -> {
+                    if (justThese == null || justThese.size() == 0 || justThese.contains(method.getName())) {
+                        StringSink sink = new StringSink();
+                        if (args != null) {
+                            for (int i = 0; i < args.length; i++) {
+                                Object arg = args[i];
+                                sink.put(arg.toString());
+                                if (i + 1 < args.length) {
+                                    sink.put(", ");
+                                }
+                            }
+                        }
+                        System.out.printf("INVOKED %s(%s)%n", method.getName(), sink);
+                    }
+                    return method.invoke(ff, args);
+                }
+        );
+    }
+
     // TODO: MARKER TO MAKE IT FINDABLE
     @Test
     public void testImportMaxUncommittedRows() throws Exception {
-
-        final int maxUncommittedRows = 1;
-        final long commitLagMs = 4000;
-
-        final AtomicInteger fsyncCounter = new AtomicInteger();
-
-        final TestFilesFacade ff = new TestFilesFacade() {
+        final FilesFacade ff = wrapWithReporter(new TestFilesFacade() {
             @Override
-            public int fsync(long fd) {
-                fsyncCounter.incrementAndGet();
-                // Called by:
-                // - TableUtils.createTable
-                return super.fsync(fd);
+            public int rmdir(Path name) {
+                return Files.rmdir(name);
             }
 
             @Override
             public boolean wasCalled() {
                 return false;
             }
-        };
+        }, "rmdir", "fsync", "msync");
 
-        final FilesFacade reportingFF = (FilesFacade) Proxy.newProxyInstance(
-                FilesFacade.class.getClassLoader(),
-                new Class[]{FilesFacade.class},
-                (proxy, method, args) -> {
-                    StringSink sink = new StringSink();
-                    if (args != null) {
-                        for (int i = 0; i < args.length; i++) {
-                            Object arg = args[i];
-                            sink.put(arg.toString());
-                            if (i + 1 < args.length) {
-                                sink.put(", ");
-                            }
-                        }
-                    }
-                    System.out.printf("INVOKED %s(%s)%n", method.getName(), sink);
-                    return method.invoke(ff, args);
-                }
-        );
-
-        final TextConfiguration textConfiguration = new DefaultTextConfiguration() {
-            @Override
-            public int getTextAnalysisMaxLines() {
-                return 1;
-            }
-        };
-
+        final int maxUncommittedRows = 1;
+        final long commitLagMs = 1000;
         CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
             @Override
             public TextConfiguration getTextConfiguration() {
-                return textConfiguration;
+                return new DefaultTextConfiguration() {
+                    @Override
+                    public int getTextAnalysisMaxLines() {
+                        return 1;
+                    }
+                };
             }
 
             @Override
@@ -1266,7 +1264,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
 
             @Override
             public FilesFacade getFilesFacade() {
-                return reportingFF;
+                return ff;
             }
         };
 
@@ -1274,7 +1272,6 @@ public class TextLoaderTest extends AbstractGriffinTest {
             assertNoLeak(
                     engine,
                     textLoader -> {
-
                         configureLoaderDefaults(
                                 textLoader,
                                 (byte) ',',
@@ -1282,20 +1279,14 @@ public class TextLoaderTest extends AbstractGriffinTest {
                                 false,
                                 PartitionBy.DAY,
                                 "ts",
+                                commitLagMs,
                                 maxUncommittedRows);
                         textLoader.setForceHeaders(true);
 
                         String csv = "ts,sym,open,highest,lowest,close,volumefrom,volumeto\n" +
-                                "2021-02-28T00:00:02.000000Z,EUR,5834,5196,5031,5031,9999,50566\n" +
-                                "2021-02-28T00:00:03.000000Z,EUR,6008,6145,6008,6145,1638,9873\n" +
-                                "2021-02-28T00:00:01.000000Z,EUR,6398,6398,6398,6398,0,0\n" +
-                                "2021-02-28T00:00:04.000000Z,EUR,6145,6398,6201,6398,4928,3098\n" +
-                                "2021-02-28T00:00:05.000000Z,EUR,6398,6398,6398,6398,0,0\n" +
-                                "2021-02-28T00:00:07.000000Z,EUR,6398,6398,6398,6398,0,0\n" +
-                                "2021-02-28T00:00:06.000000Z,EUR,6398,6398,6398,6398,0,0\n" +
-                                "2021-02-28T00:00:08.000000Z,EUR,6398,5792,5699,5785,1688,9764\n" +
-                                "2021-02-28T00:00:10.000000Z,EUR,5834,5834,5834,5834,0,0\n" +
-                                "2021-02-28T00:00:09.000000Z,EUR,5785,5838,5834,5834,2068,1207\n";
+                                "2021-02-01T00:00:02.000000Z,EUR,5834,5196,5031,5031,9999,50566\n" +
+                                "2021-02-02T00:00:01.000000Z,EUR,6398,6398,6398,6398,0,0\n" +
+                                "2021-02-01T00:00:01.000000Z,EUR,6398,6398,6398,6398,0,0\n";
 
                         String expectedMetadata = "{\"columnCount\":8,\"columns\":[" +
                                 "{\"index\":0,\"name\":\"ts\",\"type\":\"TIMESTAMP\"}," +
@@ -1309,16 +1300,10 @@ public class TextLoaderTest extends AbstractGriffinTest {
                                 "\"timestampIndex\":0}";
 
                         String expectedData = "ts\tsym\topen\thighest\tlowest\tclose\tvolumefrom\tvolumeto\n" +
-                                "2021-02-28T00:00:01.000000Z\tEUR\t6398\t6398\t6398\t6398\t0\t0\n" +
-                                "2021-02-28T00:00:02.000000Z\tEUR\t5834\t5196\t5031\t5031\t9999\t50566\n" +
-                                "2021-02-28T00:00:03.000000Z\tEUR\t6008\t6145\t6008\t6145\t1638\t9873\n" +
-                                "2021-02-28T00:00:04.000000Z\tEUR\t6145\t6398\t6201\t6398\t4928\t3098\n" +
-                                "2021-02-28T00:00:05.000000Z\tEUR\t6398\t6398\t6398\t6398\t0\t0\n" +
-                                "2021-02-28T00:00:06.000000Z\tEUR\t6398\t6398\t6398\t6398\t0\t0\n" +
-                                "2021-02-28T00:00:07.000000Z\tEUR\t6398\t6398\t6398\t6398\t0\t0\n" +
-                                "2021-02-28T00:00:08.000000Z\tEUR\t6398\t5792\t5699\t5785\t1688\t9764\n" +
-                                "2021-02-28T00:00:09.000000Z\tEUR\t5785\t5838\t5834\t5834\t2068\t1207\n" +
-                                "2021-02-28T00:00:10.000000Z\tEUR\t5834\t5834\t5834\t5834\t0\t0\n";
+                                "2021-02-01T00:00:01.000000Z\tEUR\t6398\t6398\t6398\t6398\t0\t0\n" +
+                                "2021-02-01T00:00:02.000000Z\tEUR\t5834\t5196\t5031\t5031\t9999\t50566\n" +
+                                "2021-02-02T00:00:01.000000Z\tEUR\t6398\t6398\t6398\t6398\t0\t0\n"
+                                ;
 
                         playText(
                                 engine,
@@ -1327,15 +1312,13 @@ public class TextLoaderTest extends AbstractGriffinTest {
                                 1024,
                                 expectedData,
                                 expectedMetadata,
-                                10,
-                                10
+                                3,
+                                3
                         );
-
                         try (TableReader r = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "test")) {
                             Assert.assertEquals(maxUncommittedRows, r.getMaxUncommittedRows());
                             Assert.assertEquals(commitLagMs, r.getCommitLag());
                         }
-                        Assert.assertEquals(1, fsyncCounter.get());
                     }
             );
         }
@@ -3029,6 +3012,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
                 overwrite,
                 PartitionBy.NONE,
                 null,
+                PropServerConfiguration.COMMIT_LAG_DEFAULT_MS,
                 PropServerConfiguration.MAX_UNCOMMITTED_ROWS_DEFAULT);
     }
 
@@ -3045,6 +3029,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
                 overwrite,
                 partitionBy,
                 timestampIndexCol,
+                PropServerConfiguration.COMMIT_LAG_DEFAULT_MS,
                 PropServerConfiguration.MAX_UNCOMMITTED_ROWS_DEFAULT);
     }
 
@@ -3054,6 +3039,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
                                          boolean overwrite,
                                          int partitionBy,
                                          CharSequence timestampIndexCol,
+                                         long commitLag,
                                          int maxUncommittedRows) {
         textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
         textLoader.configureDestination(
@@ -3063,6 +3049,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
                 atomicity,
                 partitionBy,
                 timestampIndexCol,
+                commitLag,
                 maxUncommittedRows);
         if (columnSeparator > 0) {
             textLoader.configureColumnDelimiter(columnSeparator);

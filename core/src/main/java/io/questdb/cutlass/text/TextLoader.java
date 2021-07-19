@@ -117,8 +117,9 @@ public class TextLoader implements Closeable, Mutable {
                                      int atomicity,
                                      int partitionBy,
                                      CharSequence timestampIndexCol,
+                                     long commitLag,
                                      int maxUncommittedRows) {
-        textWriter.of(tableName, overwrite, durable, atomicity, partitionBy, timestampIndexCol, maxUncommittedRows);
+        textWriter.of(tableName, overwrite, durable, atomicity, partitionBy, timestampIndexCol, commitLag, maxUncommittedRows);
         textDelimiterScanner.setTableName(tableName);
         textMetadataParser.setTableName(tableName);
         textLexer.setTableName(tableName);
@@ -156,6 +157,10 @@ public class TextLoader implements Closeable, Mutable {
 
     public int getPartitionBy() {
         return textWriter.getPartitionBy();
+    }
+
+    public long getCommitLag() {
+        return textWriter.getCommitLag();
     }
 
     public int getMaxUncommittedRows() {

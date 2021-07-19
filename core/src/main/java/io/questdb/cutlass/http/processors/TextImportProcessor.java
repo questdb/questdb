@@ -132,13 +132,29 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
                 sendErrorAndThrowDisconnect("when specifying partitionBy you must also specify timestamp");
             }
 
+            CharSequence commitLagChars = rh.getUrlParam("commitLag");
+            long commitLag = PropServerConfiguration.COMMIT_LAG_DEFAULT_MS;
+            if (commitLagChars != null) {
+                try {
+                    commitLag = Numbers.parseInt(commitLagChars);
+                    if (commitLag <= 0) {
+                        commitLag = PropServerConfiguration.COMMIT_LAG_DEFAULT_MS;
+                    }
+                } catch (NumericException e) {
+                    sendErrorAndThrowDisconnect("invalid commitLag, must be a long");
+                }
+            }
+
             CharSequence maxUncommittedRowsChars = rh.getUrlParam("maxUncommittedRows");
             int maxUncommittedRows = PropServerConfiguration.MAX_UNCOMMITTED_ROWS_DEFAULT;
             if (maxUncommittedRowsChars != null) {
                 try {
                     maxUncommittedRows = Numbers.parseInt(maxUncommittedRowsChars);
+                    if (maxUncommittedRows <= 0) {
+                        maxUncommittedRows = PropServerConfiguration.MAX_UNCOMMITTED_ROWS_DEFAULT;
+                    }
                 } catch (NumericException e) {
-                    sendErrorAndThrowDisconnect("invalid maxUncommittedRows, must be an int > 0");
+                    sendErrorAndThrowDisconnect("invalid maxUncommittedRows, must be an int");
                 }
             }
 
@@ -150,6 +166,7 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
                     getAtomicity(rh.getUrlParam("atomicity")),
                     partitionBy,
                     timestampIndexCol,
+                    commitLag,
                     maxUncommittedRows
             );
             transientState.textLoader.setForceHeaders(Chars.equalsNc("true", rh.getUrlParam("forceHeader")));
