@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.MappedReadOnlyMemory;
 import io.questdb.cairo.vm.SinglePageMappedReadOnlyPageMemory;
 import io.questdb.cairo.vm.VmUtils;
+import io.questdb.cutlass.pgwire.PGOids;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -38,7 +39,6 @@ import io.questdb.std.str.NativeLPSZ;
 import io.questdb.std.str.Path;
 
 import static io.questdb.cutlass.pgwire.PGOids.PG_TYPE_TO_SIZE_MAP;
-import static io.questdb.cutlass.pgwire.PGOids.TYPE_OIDS;
 
 public class AttributeCatalogueFunctionFactory implements FunctionFactory {
 
@@ -191,7 +191,7 @@ public class AttributeCatalogueFunctionFactory implements FunctionFactory {
                     for (int i = 0; i < columnCount; i++) {
                         CharSequence name = metaMem.getStr(offset);
                         if (columnIndex == i) {
-                            int type = TYPE_OIDS.get(TableUtils.getColumnType(metaMem, i));
+                            int type = PGOids.getTypeOid(TableUtils.getColumnType(metaMem, i));
                             diskReadingRecord.intValues[3] = type;
                             diskReadingRecord.name = name;
                             diskReadingRecord.shortValues[2] = (short) (i + 1);

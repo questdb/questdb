@@ -43,7 +43,7 @@ public class PGOids {
     public static final int PG_CHAR = 18;
     public static final int PG_DATE = 1082;
     public static final int PG_BYTEA = 17;
-    public static final IntList TYPE_OIDS = new IntList();
+    private static final IntList TYPE_OIDS = new IntList();
     public static final IntList PG_TYPE_OIDS = new IntList();
     public static final IntIntHashMap PG_TYPE_TO_SIZE_MAP = new IntIntHashMap();
     public static final CharSequence[] PG_TYPE_TO_NAME = new CharSequence[12];
@@ -110,6 +110,14 @@ public class PGOids {
     static int toParamType(int type) {
         // clear format flag
         return type & (~1);
+    }
+
+    public static int getTypeOid(int type) {
+        return TYPE_OIDS.get(ColumnType.tagOf(type));
+    }
+
+    public static int getTypeOidQuick(int type) {
+        return TYPE_OIDS.getQuick(ColumnType.tagOf(type));
     }
 
     static {
