@@ -65,10 +65,10 @@ public final class Constants {
     }
 
     public static ConstantFunction getNullConstant(int columnType) {
-        return nullConstants.getQuick(columnType);
+        return nullConstants.getQuick(ColumnType.tagOf(columnType));
     }
 
     public static TypeConstant getTypeConstant(int columnType) {
-        return typeConstants.getQuick(columnType);
+        return typeConstants.getQuick(ColumnType.tagOf(columnType));
     }
 }
