@@ -2072,8 +2072,6 @@ public class TableWriter implements Closeable {
     }
 
     private void freeIndexers() {
-        // todo: this method seems to be called out of O3 logic where
-        //     real intent is to close active partition rather than free memory
         if (indexers != null) {
             // Don't change items of indexers, they are re-used
             for (int i = 0, n = indexers.size(); i < n; i++) {

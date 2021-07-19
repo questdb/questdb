@@ -25,9 +25,9 @@
 package io.questdb.cairo.vm;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.TableUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 
 public class PagedSlidingReadOnlyMemory extends PagedVirtualMemory {
@@ -70,7 +70,7 @@ public class PagedSlidingReadOnlyMemory extends PagedVirtualMemory {
         this.ff = parent.getFilesFacade();
         this.fd = parent.getFd();
         this.parent = parent;
-        this.setPageSize(parent.getMapPageSize());
+        this.setMapPageSize(parent.getMapPageSize());
         updateSize();
         this.pageIndex = -1;
         LOG.debug().$("open [fd=").$(fd).$(", size=").$(this.size).$(']').$();
@@ -104,16 +104,15 @@ public class PagedSlidingReadOnlyMemory extends PagedVirtualMemory {
         long sz = size - offset;
 
         if (sz > 0) {
-            sz = getMapPageSize();
-
-            long address = ff.mmap(fd, sz, offset, Files.MAP_RO);
-            if (address == -1L) {
+            try {
+                long address = TableUtils.mapRO(ff, fd, getMapPageSize(), offset);
+                this.pageIndex = page;
+                this.pageAddress = address;
+                return address;
+            } catch (Throwable e) {
                 invalidateCurrentPage();
-                throw CairoException.instance(ff.errno()).put("Cannot map read-only page. fd=").put(fd).put(", offset=").put(offset).put(", size=").put(this.size).put(", page=").put(sz);
+                throw e;
             }
-            this.pageIndex = page;
-            this.pageAddress = address;
-            return address;
         }
         invalidateCurrentPage();
         throw CairoException.instance(ff.errno()).put("Trying to map read-only page outside of file boundary. fd=").put(fd).put(", offset=").put(offset).put(", size=").put(this.size).put(", page=").put(sz);

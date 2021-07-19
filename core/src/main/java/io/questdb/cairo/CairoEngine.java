@@ -92,18 +92,11 @@ public class CairoEngine implements Closeable, WriterSource {
         FilesFacade ff = configuration.getFilesFacade();
         Path path = Path.getThreadLocal(configuration.getRoot()).concat(TableUtils.TAB_INDEX_FILE_NAME).$();
         tableIdFd = TableUtils.openFileRWOrFail(ff, path);
-        final long fileSize = ff.length(tableIdFd);
-        if (fileSize < Long.BYTES) {
-            if (!ff.allocate(tableIdFd, Files.PAGE_SIZE)) {
-                ff.close(tableIdFd);
-                throw CairoException.instance(ff.errno()).put("Could not allocate [file=").put(path).put(", actual=").put(fileSize).put(", desired=").put(this.tableIdMemSize).put(']');
-            }
-        }
-
-        this.tableIdMem = ff.mmap(tableIdFd, tableIdMemSize, 0, Files.MAP_RW);
-        if (tableIdMem == -1) {
+        try {
+            this.tableIdMem = TableUtils.mapRW(ff, tableIdFd, tableIdMemSize);
+        } catch (Throwable e) {
             ff.close(tableIdFd);
-            throw CairoException.instance(ff.errno()).put("Could not mmap [file=").put(path).put(']');
+            throw e;
         }
     }
 

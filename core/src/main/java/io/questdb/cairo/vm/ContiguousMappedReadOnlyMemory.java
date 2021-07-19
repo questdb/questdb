@@ -126,18 +126,11 @@ public class ContiguousMappedReadOnlyMemory extends AbstractContiguousMemory
         size = Math.min(ff.length(fd), size);
         this.size = size;
         if (size > 0) {
-            this.page = ff.mmap(fd, size, 0, Files.MAP_RO);
-            if (page == FilesFacade.MAP_FAILED) {
-                long fd = this.fd;
-                long fileLen = ff.length(fd);
+            try {
+                this.page = TableUtils.mapRO(ff, fd, size);
+            } catch (Throwable e) {
                 close();
-                throw CairoException.instance(ff.errno())
-                        .put("Could not mmap ").put(name)
-                        .put(" [size=").put(size)
-                        .put(", fd=").put(fd)
-                        .put(", memUsed=").put(Unsafe.getMemUsed())
-                        .put(", fileLen=").put(fileLen)
-                        .put(']');
+                throw e;
             }
         } else {
             this.page = -1;
@@ -156,20 +149,18 @@ public class ContiguousMappedReadOnlyMemory extends AbstractContiguousMemory
     }
 
     private void setSize0(long newSize) {
-        final long fileSize = ff.length(fd);
-        newSize = Math.max(newSize, fileSize);
-        long previousSize = size;
-        if (previousSize > 0) {
-            page = ff.mremap(fd, page, previousSize, newSize, 0, Files.MAP_RO);
-        } else {
-            assert page == -1;
-            page = ff.mmap(fd, newSize, 0, Files.MAP_RO);
-        }
-        if (page == FilesFacade.MAP_FAILED) {
-            long fd = this.fd;
+        newSize = Math.max(newSize, ff.length(fd));
+        try {
+            if (size > 0) {
+                page = TableUtils.mremap(ff, fd, page, size, newSize, Files.MAP_RO);
+            } else {
+                assert page == -1;
+                page = TableUtils.mapRO(ff, fd, newSize);
+            }
+            size = newSize;
+        } catch (Throwable e) {
             close();
-            throw CairoException.instance(ff.errno()).put("Could not remap file [previousSize=").put(previousSize).put(", newSize=").put(newSize).put(", fd=").put(fd).put(']');
+            throw e;
         }
-        size = newSize;
     }
 }

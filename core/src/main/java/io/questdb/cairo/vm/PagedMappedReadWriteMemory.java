@@ -60,18 +60,7 @@ public class PagedMappedReadWriteMemory extends PagedVirtualMemory implements Ma
 
     @Override
     protected long allocateNextPage(int page) {
-        final long offset = pageOffset(page);
-        final long pageSize = getMapPageSize();
-
-        if (ff.length(fd) < offset + pageSize && !ff.allocate(fd, offset + pageSize)) {
-            throw CairoException.instance(ff.errno()).put("No space left on device [need=").put(offset + pageSize).put(']');
-        }
-
-        final long address = ff.mmap(fd, pageSize, offset, Files.MAP_RW);
-        if (address != -1) {
-            return address;
-        }
-        throw CairoException.instance(ff.errno()).put("Cannot mmap read-write fd=").put(fd).put(", offset=").put(offset).put(", size=").put(pageSize);
+        return TableUtils.mapRW(ff, fd, getMapPageSize(), pageOffset(page));
     }
 
     @Override
@@ -106,7 +95,7 @@ public class PagedMappedReadWriteMemory extends PagedVirtualMemory implements Ma
     }
 
     private void of0(FilesFacade ff, LPSZ name, long pageSize, long size) {
-        setPageSize(pageSize);
+        setMapPageSize(pageSize);
         ensurePagesListCapacity(size);
         LOG.debug().$("open ").$(name).$(" [fd=").$(fd).$(']').$();
         try {
@@ -134,7 +123,7 @@ public class PagedMappedReadWriteMemory extends PagedVirtualMemory implements Ma
         this.ff = ff;
         this.fd = fd;
         long size = ff.length(fd);
-        setPageSize(pageSize);
+        setMapPageSize(pageSize);
         ensurePagesListCapacity(size);
         try {
             // we may not be able to map page here

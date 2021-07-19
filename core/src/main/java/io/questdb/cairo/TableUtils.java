@@ -373,13 +373,64 @@ public final class TableUtils {
         path.put(".lock").$();
     }
 
-    public static long mapRWOrClose(FilesFacade ff, LPSZ path, long fd, long size) {
-        final long mem = ff.mmap(fd, size, 0, Files.MAP_RW);
-        if (mem == -1) {
-            ff.close(fd);
-            throw CairoException.instance(ff.errno()).put("Could not mmap [file=").put(path).put(']');
+    public static long mapRO(FilesFacade ff, long fd, long size) {
+        return mapRO(ff, fd, size, 0);
+    }
+
+    public static long mapRO(FilesFacade ff, long fd, long size, long offset) {
+        final long address = ff.mmap(fd, size, offset, Files.MAP_RO);
+        if (address == FilesFacade.MAP_FAILED) {
+            throw CairoException.instance(ff.errno())
+                    .put("could not mmap ")
+                    .put(" [size=").put(size)
+                    .put(", fd=").put(fd)
+                    .put(", memUsed=").put(Unsafe.getMemUsed())
+                    .put(", fileLen=").put(ff.length(fd))
+                    .put(']');
         }
-        return mem;
+        return address;
+    }
+
+    public static long mapRW(FilesFacade ff, long fd, long size) {
+        return mapRW(ff, fd, size, 0);
+    }
+
+    public static long mapRW(FilesFacade ff, long fd, long size, long offset) {
+        allocateDiskSpace(ff, fd, size + offset);
+        long addr = ff.mmap(fd, size, offset, Files.MAP_RW);
+        if (addr > -1) {
+            return addr;
+        }
+        throw CairoException.instance(ff.errno()).put("could not mmap column [fd=").put(fd).put(", size=").put(size).put(']');
+    }
+
+    public static long mapRWOrClose(FilesFacade ff, LPSZ path, long fd, long size) {
+        try {
+            return TableUtils.mapRW(ff, fd, size);
+        } catch (CairoException e) {
+            ff.close(fd);
+            throw e;
+        }
+    }
+
+    public static long mremap(
+            FilesFacade ff,
+            long fd,
+            long prevAddress,
+            long prevSize,
+            long newSize,
+            int mapMode
+    ) {
+        final long page = ff.mremap(fd, prevAddress, prevSize, newSize, 0, mapMode);
+        if (page == FilesFacade.MAP_FAILED) {
+            int errno = ff.errno();
+            // Closing memory will truncate size to current append offset.
+            // Since the failed resize can occur before append offset can be
+            // explicitly set, we must assume that file size should be
+            // equal to previous memory size
+            throw CairoException.instance(errno).put("could not remap file [previousSize=").put(prevSize).put(", newSize=").put(newSize).put(", fd=").put(fd).put(']');
+        }
+        return page;
     }
 
     public static void oldPartitionName(Path path, long txn) {
@@ -397,6 +448,15 @@ public final class TableUtils {
             return fd;
         }
         throw CairoException.instance(ff.errno()).put("could not open read-only [file=").put(path).put(']');
+    }
+
+    public static long openRW(FilesFacade ff, LPSZ path, Log log) {
+        final long fd = ff.openRW(path);
+        if (fd > -1) {
+            log.debug().$("open [file=").$(path).$(", fd=").$(fd).$(']').$();
+            return fd;
+        }
+        throw CairoException.instance(ff.errno()).put("could not open read-write [file=").put(path).put(']');
     }
 
     public static void renameOrFail(FilesFacade ff, Path src, Path dst) {
@@ -825,10 +885,7 @@ public final class TableUtils {
                 final long fd = TableUtils.openRO(ff, path, LOG);
                 try {
                     long fileSize = ff.length(fd);
-                    long mappedMem = ff.mmap(fd, fileSize, 0, Files.MAP_RO);
-                    if (mappedMem < 0) {
-                        throw CairoException.instance(ff.errno()).put("Cannot map: ").put(path);
-                    }
+                    long mappedMem = mapRO(ff, fd, fileSize);
                     try {
                         long minTimestamp;
                         long maxTimestamp = timestamp;
@@ -869,15 +926,6 @@ public final class TableUtils {
         }
     }
 
-    public static long openRW(FilesFacade ff, LPSZ path, Log log) {
-        final long fd = ff.openRW(path);
-        if (fd > -1) {
-            log.debug().$("open [file=").$(path).$(", fd=").$(fd).$(']').$();
-            return fd;
-        }
-        throw CairoException.instance(ff.errno()).put("could not open read-write [file=").put(path).put(']');
-    }
-
     static long openCleanRW(FilesFacade ff, LPSZ path, long size, Log log) {
         final long fd = ff.openCleanRW(path, size);
         if (fd > -1) {
@@ -885,6 +933,10 @@ public final class TableUtils {
             return fd;
         }
         throw CairoException.instance(ff.errno()).put("could not open read-write with clean allocation [file=").put(path).put(']');
+    }
+
+    public interface FailureCloseable {
+        void close(long prevSize);
     }
 
     static {

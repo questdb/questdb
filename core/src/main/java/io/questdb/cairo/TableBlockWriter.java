@@ -143,20 +143,7 @@ public class TableBlockWriter implements Closeable {
         long alignedMapOffset = (mapOffset / ff.getPageSize()) * ff.getPageSize();
         long addressOffsetDueToAlignment = mapOffset - alignedMapOffset;
         long alignedMapSz = mapSz + addressOffsetDueToAlignment;
-        long fileSz = ff.length(fd);
-        long minFileSz = mapOffset + alignedMapSz;
-        if (fileSz < minFileSz) {
-            if (!ff.allocate(fd, minFileSz)) {
-                throw CairoException.instance(ff.errno()).put("Could not allocate file for append fd=").put(fd).put(", offset=").put(mapOffset).put(", size=")
-                        .put(mapSz);
-            }
-        }
-        long address = ff.mmap(fd, alignedMapSz, alignedMapOffset, Files.MAP_RW);
-        if (address == -1) {
-            int errno = ff.errno();
-            throw CairoException.instance(ff.errno()).put("Could not mmap append fd=").put(fd).put(", offset=").put(mapOffset).put(", size=").put(mapSz).put(", errno=")
-                    .put(errno);
-        }
+        long address = TableUtils.mapRW(ff, fd, alignedMapSz, alignedMapOffset);
         assert (address / ff.getPageSize()) * ff.getPageSize() == address; // address MUST be page aligned
         return address + addressOffsetDueToAlignment;
     }

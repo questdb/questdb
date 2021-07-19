@@ -28,7 +28,6 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.str.LPSZ;
 
@@ -57,6 +56,23 @@ public class AppendOnlyVirtualMemory extends PagedVirtualMemory implements Mappe
             return pageAddress;
         }
         return 0L;
+    }
+
+    public final void extend(long size) {
+        jumpTo(size);
+    }
+
+    public void truncate() {
+        if (fd == -1) {
+            // are we closed ?
+            return;
+        }
+        releaseCurrentPage();
+        if (!ff.truncate(Math.abs(fd), getMapPageSize())) {
+            throw CairoException.instance(ff.errno()).put("Cannot truncate fd=").put(fd).put(" to ").put(getMapPageSize()).put(" bytes");
+        }
+        updateLimits(0, pageAddress = mapPage(0));
+        LOG.debug().$("truncated [fd=").$(fd).$(']').$();
     }
 
     @Override
@@ -90,23 +106,6 @@ public class AppendOnlyVirtualMemory extends PagedVirtualMemory implements Mappe
         }
     }
 
-    @Override
-    public void growToFileSize() {
-        throw new UnsupportedOperationException();
-    }
-
-    public long mapPage(int page) {
-        ensureFileSize(page);
-        long offset = pageOffset(page);
-        long address = ff.mmap(fd, getMapPageSize(), offset, Files.MAP_RW);
-        if (address != -1) {
-            mappedPage = page;
-            return address;
-        }
-        mappedPage = -1;
-        throw CairoException.instance(ff.errno()).put("could not mmap for append fd=").put(fd).put(", offset=").put(offset).put(", size=").put(getMapPageSize());
-    }
-
     public long getAppendAddress() {
         long appendOffset = getAppendOffset();
         return getPageAddress(pageIndex(appendOffset)) + offsetInPage(appendOffset);
@@ -119,6 +118,18 @@ public class AppendOnlyVirtualMemory extends PagedVirtualMemory implements Mappe
     }
 
     @Override
+    public void growToFileSize() {
+        throw new UnsupportedOperationException();
+    }
+
+    public long mapPage(int page) {
+        // set page to "not mapped" in case mapping fails
+        final long address = TableUtils.mapRW(ff, fd, getMapPageSize(), pageOffset(page));
+        mappedPage = page;
+        return address;
+    }
+
+    @Override
     public void of(FilesFacade ff, LPSZ name, long pageSize, long size) {
         // size of file does not mapper for mapping file for append
         of(ff, name, pageSize);
@@ -128,7 +139,7 @@ public class AppendOnlyVirtualMemory extends PagedVirtualMemory implements Mappe
         close();
         this.ff = ff;
         mappedPage = -1;
-        setPageSize(pageSize);
+        setMapPageSize(pageSize);
         fd = TableUtils.openFileRWOrFail(ff, name);
         LOG.debug().$("open ").$(name).$(" [fd=").$(fd).$(", pageSize=").$(pageSize).$(']').$();
     }
@@ -142,10 +153,6 @@ public class AppendOnlyVirtualMemory extends PagedVirtualMemory implements Mappe
         return fd;
     }
 
-    public final void extend(long size) {
-        jumpTo(size);
-    }
-
     public void sync(boolean async) {
         if (pageAddress != 0) {
             if (ff.msync(pageAddress, getMapPageSize(), async) == 0) {
@@ -153,20 +160,6 @@ public class AppendOnlyVirtualMemory extends PagedVirtualMemory implements Mappe
             }
             LOG.error().$("could not msync [fd=").$(fd).$(", errno=").$(ff.errno()).$(']').$();
         }
-    }
-
-    public void truncate() {
-        if (fd == -1) {
-            // are we closed ?
-            return;
-        }
-
-        releaseCurrentPage();
-        if (!ff.truncate(Math.abs(fd), getMapPageSize())) {
-            throw CairoException.instance(ff.errno()).put("Cannot truncate fd=").put(fd).put(" to ").put(getMapPageSize()).put(" bytes");
-        }
-        updateLimits(0, pageAddress = mapPage(0));
-        LOG.debug().$("truncated [fd=").$(fd).$(']').$();
     }
 
     static void bestEffortTruncate(FilesFacade ff, Log log, long fd, long size, long mapPageSize) {

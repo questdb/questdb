@@ -48,10 +48,10 @@ public class PagedVirtualMemory implements ReadWriteVirtualMemory, Closeable {
     private final Long256Impl long256B = new Long256Impl();
     private final int maxPages;
     private final InPageLong256FromCharSequenceDecoder inPageLong256Decoder = new InPageLong256FromCharSequenceDecoder();
-    private final StradlingPageLong256FromCharSequenceDecoder stradlingPageLong256Decoder = new StradlingPageLong256FromCharSequenceDecoder();
-    private long pageSize;
-    private int bits;
-    private long mod;
+    private final StraddlingPageLong256FromCharSequenceDecoder straddlingPageLong256Decoder = new StraddlingPageLong256FromCharSequenceDecoder();
+    private long mapPageSize;
+    private int mapPageMsb;
+    private long mapPageMod;
     private long appendPointer = -1;
     private long pageHi = -1;
     private long pageLo = -1;
@@ -61,7 +61,7 @@ public class PagedVirtualMemory implements ReadWriteVirtualMemory, Closeable {
     private long absolutePointer;
 
     public PagedVirtualMemory(long pageSize, int maxPages) {
-        setPageSize(pageSize);
+        setMapPageSize(pageSize);
         this.maxPages = maxPages;
     }
 
@@ -288,7 +288,7 @@ public class PagedVirtualMemory implements ReadWriteVirtualMemory, Closeable {
     }
 
     public long getMapPageSize() {
-        return pageSize;
+        return mapPageSize;
     }
 
     public final CharSequence getStr0(long offset, CharSequenceView view) {
@@ -567,7 +567,7 @@ public class PagedVirtualMemory implements ReadWriteVirtualMemory, Closeable {
     @Override
     public final void putLong256(CharSequence hexString) {
         if (pageHi - appendPointer < 4 * Long.BYTES) {
-            stradlingPageLong256Decoder.putLong256(hexString);
+            straddlingPageLong256Decoder.putLong256(hexString);
         } else {
             inPageLong256Decoder.putLong256(hexString);
         }
@@ -576,7 +576,7 @@ public class PagedVirtualMemory implements ReadWriteVirtualMemory, Closeable {
     @Override
     public final void putLong256(@NotNull CharSequence hexString, int start, int end) {
         if (pageHi - appendPointer < 4 * Long.BYTES) {
-            stradlingPageLong256Decoder.putLong256(hexString, start, end);
+            straddlingPageLong256Decoder.putLong256(hexString, start, end);
         } else {
             inPageLong256Decoder.putLong256(hexString, start, end);
         }
@@ -693,11 +693,11 @@ public class PagedVirtualMemory implements ReadWriteVirtualMemory, Closeable {
     }
 
     public long offsetInPage(long offset) {
-        return offset & mod;
+        return offset & mapPageMod;
     }
 
     public final int pageIndex(long offset) {
-        return (int) (offset >> bits);
+        return (int) (offset >> mapPageMsb);
     }
 
     public long pageRemaining(long offset) {
@@ -711,7 +711,7 @@ public class PagedVirtualMemory implements ReadWriteVirtualMemory, Closeable {
                 address = allocateNextPage(i);
                 pages.setQuick(i, address);
             }
-            Vect.memset(address, pageSize, 0);
+            Vect.memset(address, mapPageSize, 0);
         }
     }
 
@@ -947,7 +947,7 @@ public class PagedVirtualMemory implements ReadWriteVirtualMemory, Closeable {
     }
 
     protected final long pageOffset(int page) {
-        return ((long) page << bits);
+        return ((long) page << mapPageMsb);
     }
 
     private void putBin0(BinarySequence value, long len, long remaining) {
@@ -1125,11 +1125,11 @@ public class PagedVirtualMemory implements ReadWriteVirtualMemory, Closeable {
         }
     }
 
-    protected final void setPageSize(long pageSize) {
+    protected final void setMapPageSize(long mapPageSize) {
         clear();
-        this.pageSize = Numbers.ceilPow2(pageSize);
-        this.bits = Numbers.msb(this.pageSize);
-        this.mod = this.pageSize - 1;
+        this.mapPageSize = Numbers.ceilPow2(mapPageSize);
+        this.mapPageMsb = Numbers.msb(this.mapPageSize);
+        this.mapPageMod = this.mapPageSize - 1;
     }
 
     private void skip0(long bytes) {
@@ -1243,7 +1243,7 @@ public class PagedVirtualMemory implements ReadWriteVirtualMemory, Closeable {
         }
     }
 
-    private class StradlingPageLong256FromCharSequenceDecoder extends Long256FromCharSequenceDecoder {
+    private class StraddlingPageLong256FromCharSequenceDecoder extends Long256FromCharSequenceDecoder {
         @Override
         public void onDecoded(long l0, long l1, long l2, long l3) {
             putLong(l0);
