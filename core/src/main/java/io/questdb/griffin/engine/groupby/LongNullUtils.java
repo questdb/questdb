@@ -29,7 +29,11 @@ import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
 
 public final class LongNullUtils {
-    public static final long[] LONG_NULLs = new long[ColumnType.MAX];
+    private static final long[] LONG_NULLs = new long[ColumnType.MAX];
+
+    public static long getLongNull(int type) {
+        return LONG_NULLs[ColumnType.tagOf(type)];
+    }
 
     static {
         long buffer = Unsafe.malloc(8);

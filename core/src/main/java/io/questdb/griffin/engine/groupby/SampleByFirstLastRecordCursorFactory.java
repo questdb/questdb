@@ -565,7 +565,7 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
             if (pageAddress > 0) {
                 saveFixedColToBufferWithLongAlignment(columnIndex, crossFrameRow, columnType, pageAddress, rowId);
             } else {
-                crossFrameRow.set(columnIndex, LongNullUtils.LONG_NULLs[columnType]);
+                crossFrameRow.set(columnIndex, LongNullUtils.getLongNull(columnType));
             }
         }
 
