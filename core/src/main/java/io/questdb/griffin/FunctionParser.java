@@ -542,8 +542,11 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
                     }
 
                     final int sigArgType = FunctionFactoryDescriptor.toType(sigArgTypeMask);
+                    final int argType = arg.getType();
+                    final int argTypeTag = ColumnType.tagOf(argType);
+                    final int sigArgTypeTag = ColumnType.tagOf(sigArgType);
 
-                    if (sigArgType == arg.getType()) {
+                    if (sigArgTypeTag == argTypeTag) {
                         switch (match) {
                             case MATCH_NO_MATCH: // was it no match
                                 match = MATCH_EXACT_MATCH;
@@ -558,16 +561,12 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
                         continue;
                     }
 
-                    final int argType = arg.getType();
-
                     int overloadDistance = ColumnType.overloadDistance(argType, sigArgType); // NULL to any is 0
                     sigArgTypeSum += overloadDistance;
                     // Overload with cast to higher precision
                     boolean overloadPossible = overloadDistance != ColumnType.NO_OVERLOAD;
 
                     // Overload when arg is double NaN to func which accepts INT, LONG
-                    final int argTypeTag = ColumnType.tagOf(argType);
-                    final int sigArgTypeTag = ColumnType.tagOf(sigArgType);
                     overloadPossible |= argTypeTag == ColumnType.DOUBLE &&
                             arg.isConstant() &&
                             Double.isNaN(arg.getDouble(null)) &&
