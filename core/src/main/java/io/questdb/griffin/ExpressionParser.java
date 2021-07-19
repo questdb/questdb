@@ -354,7 +354,7 @@ class ExpressionParser {
                                 if (thisWasCast) {
                                     // validate type
                                     final int columnTypeTag = ColumnType.tagOf(ColumnType.columnTypeOf(node.token));
-                                    if ((columnTypeTag < 0 || columnTypeTag > ColumnType.LONG256) && !asPoppedNull) {
+                                    if ((columnTypeTag < ColumnType.BOOLEAN || columnTypeTag > ColumnType.LONG256) && !asPoppedNull) {
                                         throw SqlException.$(node.position, "invalid type");
                                     }
 
@@ -564,7 +564,7 @@ class ExpressionParser {
 
                                     // validate type
                                     final int columnType = ColumnType.tagOf(ColumnType.columnTypeOf(prevNode.token));
-                                    if (columnType < 0 || columnType > ColumnType.LONG256) {
+                                    if (columnType < ColumnType.BOOLEAN || columnType > ColumnType.LONG256) {
                                         throw SqlException.$(prevNode.position, "invalid type");
                                     } else {
                                         ExpressionNode stringLiteral = expressionNodePool.next().of(ExpressionNode.CONSTANT, GenericLexer.immutableOf(tok), 0, position);
