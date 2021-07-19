@@ -174,13 +174,14 @@ public class ContiguousMappedReadWriteMemory extends AbstractContiguousMemory
         long fileSize = ff.length(fd);
         if (page != -1) {
             // try to remap to min size
+            long sz = Math.min(fileSize, minMappedMemorySize);
             try {
                 this.page = TableUtils.mremap(
                         ff,
                         fd,
                         this.page,
                         this.size,
-                        minMappedMemorySize,
+                        sz,
                         Files.MAP_RW
                 );
             } catch (Throwable e) {
@@ -189,8 +190,8 @@ public class ContiguousMappedReadWriteMemory extends AbstractContiguousMemory
                 throw e;
             }
 
-            this.size = minMappedMemorySize;
-            Vect.memset(page, minMappedMemorySize, 0);
+            this.size = sz;
+            Vect.memset(page, sz, 0);
 
             // try to truncate the file to remove tail data
             if (ff.truncate(fd, size)) {
@@ -201,7 +202,7 @@ public class ContiguousMappedReadWriteMemory extends AbstractContiguousMemory
             // by another process
 
             long mem = TableUtils.mapRW(ff, fd, ff.length(fd));
-            Vect.memset(mem + minMappedMemorySize, fileSize - minMappedMemorySize, 0);
+            Vect.memset(mem + sz, fileSize - sz, 0);
             ff.munmap(mem, fileSize);
             return;
         }
