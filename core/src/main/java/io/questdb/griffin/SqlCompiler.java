@@ -701,7 +701,7 @@ public class SqlCompiler implements Closeable {
     }
 
     private static boolean isCompatibleCase(int from, int to) {
-        return castGroups.getQuick(from) == castGroups.getQuick(to);
+        return castGroups.getQuick(ColumnType.tagOf(from)) == castGroups.getQuick(ColumnType.tagOf(to));
     }
 
     private static void expectKeyword(GenericLexer lexer, CharSequence keyword) throws SqlException {
