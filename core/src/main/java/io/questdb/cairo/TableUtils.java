@@ -120,7 +120,7 @@ public final class TableUtils {
     }
 
     public static void allocateDiskSpace(FilesFacade ff, long fd, long size) {
-        if (!ff.allocate(fd, size)) {
+        if (ff.length(fd) < size && !ff.allocate(fd, size)) {
             throw CairoException.instance(ff.errno()).put("No space left [size=").put(size).put(", fd=").put(fd).put(']');
         }
     }
