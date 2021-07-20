@@ -55,8 +55,8 @@ public class CairoTextWriter implements Closeable, Mutable {
     private boolean durable;
     private int atomicity;
     private int partitionBy;
-    private long commitLag;
-    private int maxUncommittedRows;
+    private long commitLag = -1;
+    private int maxUncommittedRows = -1;
     private int timestampIndex = -1;
     private CharSequence importedTimestampColumnName;
     private CharSequence designatedTimestampColumnName;
@@ -127,8 +127,16 @@ public class CairoTextWriter implements Closeable, Mutable {
         return commitLag;
     }
 
+    public void setCommitLag(long commitLag) {
+        this.commitLag = commitLag;
+    }
+
     public int getMaxUncommittedRows() {
         return maxUncommittedRows;
+    }
+
+    public void setMaxUncommittedRows(int maxUncommittedRows) {
+        this.maxUncommittedRows = maxUncommittedRows;
     }
 
     public CharSequence getTableName() {
@@ -156,17 +164,13 @@ public class CairoTextWriter implements Closeable, Mutable {
                    boolean durable,
                    int atomicity,
                    int partitionBy,
-                   CharSequence timestampIndexCol,
-                   long commitLag,
-                   int maxUncommittedRows) {
+                   CharSequence timestampIndexCol) {
         this.tableName = name;
         this.overwrite = overwrite;
         this.durable = durable;
         this.atomicity = atomicity;
         this.partitionBy = partitionBy;
         this.importedTimestampColumnName = timestampIndexCol;
-        this.commitLag = commitLag;
-        this.maxUncommittedRows = maxUncommittedRows;
     }
 
     public void onFieldsNonPartitioned(long line, ObjList<DirectByteCharSequence> values, int valuesLength) {
@@ -327,6 +331,7 @@ public class CairoTextWriter implements Closeable, Mutable {
             throw CairoException.instance(0).put("cannot determine text structure");
         }
 
+        boolean canUpdateMetadata = true;
         switch (engine.getStatus(cairoSecurityContext, path, tableName)) {
             case TableUtils.TABLE_DOES_NOT_EXIST:
                 createTable(names, detectedTypes, cairoSecurityContext);
@@ -341,6 +346,7 @@ public class CairoTextWriter implements Closeable, Mutable {
                     createTable(names, detectedTypes, cairoSecurityContext);
                     writer = engine.getWriter(cairoSecurityContext, tableName, WRITER_LOCK_REASON);
                 } else {
+                    canUpdateMetadata = false;
                     writer = openWriterAndOverrideImportTypes(cairoSecurityContext, detectedTypes);
                     designatedTimestampColumnName = writer.getDesignatedTimestampColumnName();
                     designatedTimestampIndex = writer.getMetadata().getTimestampIndex();
@@ -358,11 +364,21 @@ public class CairoTextWriter implements Closeable, Mutable {
             default:
                 throw CairoException.instance(0).put("name is reserved [table=").put(tableName).put(']');
         }
-        if (commitLag > 0) {
-            writer.setMetaCommitLag(commitLag);
-        }
-        if (maxUncommittedRows > 0) {
-            writer.setMetaMaxUncommittedRows(maxUncommittedRows);
+        if (canUpdateMetadata) {
+            if (partitionBy == PartitionBy.NONE && (commitLag > 0 || maxUncommittedRows > 0)) {
+                LOG.info().$("parameters commitLag and maxUncommittedRows have no effect when partitionBy is NONE").$();
+            } else {
+                if (commitLag > 0) {
+                    writer.setMetaCommitLag(commitLag);
+                    LOG.info().$("updating metadata attribute commitLag to ").$(commitLag).$(", table=").utf8(tableName).$();
+                }
+                if (maxUncommittedRows > 0) {
+                    writer.setMetaMaxUncommittedRows(maxUncommittedRows);
+                    LOG.info().$("updating metadata attribute maxUncommittedRows to ").$(maxUncommittedRows).$(", table=").utf8(tableName).$();
+                }
+            }
+        } else {
+           LOG.info().$("cannot update metadata attributes commitLag and maxUncommittedRows when the table exists and parameter overwrite is false").$();
         }
         _size = writer.size();
         columnErrorCounts.seed(writer.getMetadata().getColumnCount(), 0);

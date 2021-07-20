@@ -24,11 +24,8 @@
 
 package io.questdb.cutlass.text;
 
-import io.questdb.PropServerConfiguration;
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
-import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cutlass.http.ex.NotEnoughLinesException;
 import io.questdb.cutlass.json.JsonLexer;
 import io.questdb.griffin.AbstractGriffinTest;
@@ -40,7 +37,6 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.Path;
-import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.After;
 import org.junit.AfterClass;
@@ -1191,8 +1187,8 @@ public class TextLoaderTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testImportSettingCommitLagAndMaxUncommittedRowsWithoutRejections() throws Exception {
-        testImportSettingCommitLagAndMaxUncommittedRows(240_000_000, // 4 minutes, precision is micro
+    public void testImportSettingCommitLagAndMaxUncommittedRows1() throws Exception {
+        importWithCommitLagAndMaxUncommittedRowsTableNotExists(240_000_000, // 4 minutes, precision is micro
                 3,
                 6,
                 6,
@@ -1204,18 +1200,18 @@ public class TextLoaderTest extends AbstractGriffinTest {
                         "/2021-01-01/",
                         "/2021-01-02/"
                 },
-                "1609459260000000,1\n" +
-                        "1609459290000000,2\n" +
-                        "1609459440000000,3\n" +
-                        "1609459500000000,4\n" +
-                        "1609545630000000,5\n" +
-                        "1609545931000000,6\n"
+                "2021-01-01T00:01:00.000000Z\t1\n" +
+                        "2021-01-01T00:01:30.000000Z\t2\n" +
+                        "2021-01-01T00:04:00.000000Z\t3\n" +
+                        "2021-01-01T00:05:00.000000Z\t4\n" +
+                        "2021-01-02T00:00:30.000000Z\t5\n" +
+                        "2021-01-02T00:05:31.000000Z\t6\n"
         );
     }
 
     @Test
-    public void testImportSettingCommitLagAndMaxUncommittedRowsWithRejectionsDueToO3() throws Exception {
-        testImportSettingCommitLagAndMaxUncommittedRows(60_000_000, // 1 minute, precision is micro
+    public void testImportSettingCommitLagAndMaxUncommittedRows2() throws Exception {
+        importWithCommitLagAndMaxUncommittedRowsTableNotExists(60_000_000, // 1 minute, precision is micro
                 2,
                 6,
                 6,
@@ -1227,121 +1223,57 @@ public class TextLoaderTest extends AbstractGriffinTest {
                         "/2021-01-01/",
                         "/2021-01-02/",
                 },
-                "1609459260000000,1\n" +
-                        "1609459290000000,2\n" +
-                        "1609459440000000,3\n" +
-                        "1609459500000000,4\n" +
-                        "1609545630000000,5\n" +
-                        "1609545931000000,6\n"
+                "2021-01-01T00:01:00.000000Z\t1\n" +
+                        "2021-01-01T00:01:30.000000Z\t2\n" +
+                        "2021-01-01T00:04:00.000000Z\t3\n" +
+                        "2021-01-01T00:05:00.000000Z\t4\n" +
+                        "2021-01-02T00:00:30.000000Z\t5\n" +
+                        "2021-01-02T00:05:31.000000Z\t6\n"
         );
     }
 
-    private void testImportSettingCommitLagAndMaxUncommittedRows(long commitLag,
-                                                                 int maxUncommittedRows,
-                                                                 int expectedParsedLineCount,
-                                                                 int expectedWrittenLineCount,
-                                                                 String[] expectedRmdirSuffixes,
-                                                                 String expectedData) throws Exception {
-        final AtomicInteger rmdirOffset = new AtomicInteger();
-        final FilesFacade ff = new TestFilesFacade() {
-            @Override
-            public int rmdir(Path name) {
-                int offset = rmdirOffset.getAndIncrement();
-                Assert.assertTrue(offset < expectedRmdirSuffixes.length);
-                Assert.assertTrue(name.toString().endsWith(expectedRmdirSuffixes[offset]));
-                return Files.rmdir(name);
-            }
+    @Test
+    public void testCannotUpdateCommitLagAndMaxUncommittedRowsIfTableExistsAndOverwriteIsFalse() throws Exception {
+        importWithCommitLagAndMaxUncommittedRowsTableExists("partition by DAY with maxUncommittedRows = 2, commitLag = 2s",
+                false,
+                PartitionBy.DAY,
+                180_000_000,
+                721,
+                2_000_000,
+                2);
+    }
 
-            @Override
-            public boolean wasCalled() {
-                return false;
-            }
-        };
-        CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
-            @Override
-            public TextConfiguration getTextConfiguration() {
-                return new DefaultTextConfiguration() {
-                    @Override
-                    public int getTextAnalysisMaxLines() {
-                        return 1;
-                    }
-                };
-            }
+    @Test
+    public void testUpdateCommitLagAndMaxUncommittedRowsIsIgnoredIfValuesAreSmallerThanZero() throws Exception {
+        importWithCommitLagAndMaxUncommittedRowsTableExists("partition by DAY",
+                true,
+                PartitionBy.DAY,
+                -1,
+                -1,
+                0,
+                1000);
+    }
 
-            @Override
-            public long getCommitLag() {
-                return commitLag;
-            }
+    @Test
+    public void testUpdateCommitLagAndMaxUncommittedRowsIsIgnoredIfPartitionByIsNONE() throws Exception {
+        importWithCommitLagAndMaxUncommittedRowsTableExists("",
+                true,
+                PartitionBy.NONE,
+                180_000_000,
+                721,
+                0,
+                1000);
+    }
 
-            @Override
-            public int getMaxUncommittedRows() {
-                return maxUncommittedRows;
-            }
-
-            @Override
-            public FilesFacade getFilesFacade() {
-                return ff;
-            }
-        };
-        try (CairoEngine engine = new CairoEngine(configuration)) {
-            assertNoLeak(
-                    engine,
-                    textLoader -> {
-                        configureLoaderDefaults(
-                                textLoader,
-                                (byte) ',',
-                                Atomicity.SKIP_COL,
-                                false,
-                                PartitionBy.DAY,
-                                "ts",
-                                commitLag,
-                                maxUncommittedRows);
-                        textLoader.setForceHeaders(true);
-                        String csv = "ts,int\n" +
-                                "2021-01-01T00:04:00.000000Z,3\n" +
-                                "2021-01-01T00:05:00.000000Z,4\n" +
-                                "2021-01-02T00:05:31.000000Z,6\n" +
-                                "2021-01-01T00:01:00.000000Z,1\n" +
-                                "2021-01-01T00:01:30.000000Z,2\n" +
-                                "2021-01-02T00:00:30.000000Z,5\n";
-                        playText(
-                                engine,
-                                textLoader,
-                                csv,
-                                1024,
-                                "ts\tint\n" +
-                                        "2021-01-01T00:01:00.000000Z\t1\n" +
-                                        "2021-01-01T00:01:30.000000Z\t2\n" +
-                                        "2021-01-01T00:04:00.000000Z\t3\n" +
-                                        "2021-01-01T00:05:00.000000Z\t4\n" +
-                                        "2021-01-02T00:00:30.000000Z\t5\n" +
-                                        "2021-01-02T00:05:31.000000Z\t6\n",
-                                "{\"columnCount\":2,\"columns\":[" +
-                                        "{\"index\":0,\"name\":\"ts\",\"type\":\"TIMESTAMP\"}," +
-                                        "{\"index\":1,\"name\":\"int\",\"type\":\"INT\"}]," +
-                                        "\"timestampIndex\":0}",
-                                expectedParsedLineCount,
-                                expectedWrittenLineCount
-                        );
-                    }
-            );
-            try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "test")) {
-                Assert.assertEquals(maxUncommittedRows, reader.getMaxUncommittedRows());
-                Assert.assertEquals(commitLag, reader.getCommitLag());
-                Assert.assertEquals(expectedWrittenLineCount, reader.size());
-                StringSink sink = new StringSink();
-                try (RecordCursor cursor = reader.getCursor()) {
-                    final Record record = cursor.getRecord();
-                    while (cursor.hasNext()) {
-                        sink.put(record.getTimestamp(0));
-                        sink.put(',');
-                        sink.put(record.getInt(1));
-                        sink.put('\n');
-                    }
-                }
-                Assert.assertEquals(expectedData, sink.toString());
-            }
-        }
+    @Test
+    public void testCanUpdateCommitLagAndMaxUncommittedRowsIfTableExistsAndOverwriteIsTrue() throws Exception {
+        importWithCommitLagAndMaxUncommittedRowsTableExists("partition by DAY with maxUncommittedRows = 2, commitLag = 2s",
+                true,
+                PartitionBy.DAY,
+                180_000_000,
+                721,
+                180_000_000,
+                721);
     }
 
     @Test
@@ -2942,6 +2874,143 @@ public class TextLoaderTest extends AbstractGriffinTest {
                 });
     }
 
+    private void importWithCommitLagAndMaxUncommittedRowsTableNotExists(long commitLag,
+                                                                        int maxUncommittedRows,
+                                                                        int expectedParsedLineCount,
+                                                                        int expectedWrittenLineCount,
+                                                                        String[] expectedRmdirSuffixes,
+                                                                        String expectedData) throws Exception {
+        final AtomicInteger rmdirOffset = new AtomicInteger();
+        final FilesFacade ff = new TestFilesFacade() {
+            @Override
+            public int rmdir(Path name) {
+                int offset = rmdirOffset.getAndIncrement();
+                Assert.assertTrue(offset < expectedRmdirSuffixes.length);
+                Assert.assertTrue(name.toString().endsWith(expectedRmdirSuffixes[offset]));
+                return Files.rmdir(name);
+            }
+
+            @Override
+            public boolean wasCalled() {
+                return false;
+            }
+        };
+        CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+            @Override
+            public TextConfiguration getTextConfiguration() {
+                return new DefaultTextConfiguration() {
+                    @Override
+                    public int getTextAnalysisMaxLines() {
+                        return 1;
+                    }
+                };
+            }
+
+            @Override
+            public long getCommitLag() {
+                return commitLag;
+            }
+
+            @Override
+            public int getMaxUncommittedRows() {
+                return maxUncommittedRows;
+            }
+
+            @Override
+            public FilesFacade getFilesFacade() {
+                return ff;
+            }
+        };
+        try (CairoEngine engine = new CairoEngine(configuration)) {
+            assertNoLeak(
+                    engine,
+                    textLoader -> {
+                        configureLoaderDefaults(
+                                textLoader,
+                                (byte) ',',
+                                Atomicity.SKIP_COL,
+                                false,
+                                PartitionBy.DAY,
+                                "ts");
+                        textLoader.setForceHeaders(true);
+                        textLoader.setCommitLag(commitLag);
+                        textLoader.setMaxUncommittedRows(maxUncommittedRows);
+                        String csv = "ts,int\n" +
+                                "2021-01-01T00:04:00.000000Z,3\n" +
+                                "2021-01-01T00:05:00.000000Z,4\n" +
+                                "2021-01-02T00:05:31.000000Z,6\n" +
+                                "2021-01-01T00:01:00.000000Z,1\n" +
+                                "2021-01-01T00:01:30.000000Z,2\n" +
+                                "2021-01-02T00:00:30.000000Z,5\n";
+                        playText(
+                                engine,
+                                textLoader,
+                                csv,
+                                1024,
+                                "ts\tint\n" +
+                                        "2021-01-01T00:01:00.000000Z\t1\n" +
+                                        "2021-01-01T00:01:30.000000Z\t2\n" +
+                                        "2021-01-01T00:04:00.000000Z\t3\n" +
+                                        "2021-01-01T00:05:00.000000Z\t4\n" +
+                                        "2021-01-02T00:00:30.000000Z\t5\n" +
+                                        "2021-01-02T00:05:31.000000Z\t6\n",
+                                "{\"columnCount\":2,\"columns\":[" +
+                                        "{\"index\":0,\"name\":\"ts\",\"type\":\"TIMESTAMP\"}," +
+                                        "{\"index\":1,\"name\":\"int\",\"type\":\"INT\"}]," +
+                                        "\"timestampIndex\":0}",
+                                expectedParsedLineCount,
+                                expectedWrittenLineCount
+                        );
+                    }
+            );
+            try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "test")) {
+                Assert.assertEquals(maxUncommittedRows, reader.getMaxUncommittedRows());
+                Assert.assertEquals(commitLag, reader.getCommitLag());
+                Assert.assertEquals(expectedWrittenLineCount, reader.size());
+                TestUtils.assertCursor(expectedData, reader.getCursor(), reader.getMetadata(), false, sink);
+            }
+        }
+    }
+
+    private void importWithCommitLagAndMaxUncommittedRowsTableExists(String createStmtExtra,
+                                                                     boolean overwrite,
+                                                                     int partitionBy,
+                                                                     long commitLag,
+                                                                     int maxUncommittedRows,
+                                                                     long expectedCommitLag,
+                                                                     int expectedMaxUncommittedRows) throws Exception {
+        assertNoLeak(
+                textLoader -> {
+                    String createStmt = "create table test(ts timestamp, int int) timestamp(ts) " + createStmtExtra;
+                    compiler.compile(createStmt, sqlExecutionContext);
+                    configureLoaderDefaults(textLoader, (byte) ',', Atomicity.SKIP_ROW, overwrite, partitionBy, "ts");
+                    textLoader.setForceHeaders(true);
+                    textLoader.setCommitLag(commitLag);
+                    textLoader.setMaxUncommittedRows(maxUncommittedRows);
+                    playText(
+                            engine,
+                            textLoader,
+                            "ts,int\n" +
+                                    "2021-01-02T00:00:30.000000Z,1\n",
+                            1024,
+                            "ts\tint\n" +
+                                    "2021-01-02T00:00:30.000000Z\t1\n",
+                            "{\"columnCount\":2,\"columns\":[" +
+                                    "{\"index\":0,\"name\":\"ts\",\"type\":\"TIMESTAMP\"}," +
+                                    "{\"index\":1,\"name\":\"int\",\"type\":\"INT\"}]," +
+                                    "\"timestampIndex\":0}",
+                            1,
+                            1
+                    );
+                }
+        );
+        try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "test")) {
+            Assert.assertEquals(expectedCommitLag, reader.getCommitLag());
+            Assert.assertEquals(expectedMaxUncommittedRows, reader.getMaxUncommittedRows());
+            Assert.assertEquals(1, reader.size());
+        }
+    }
+
     private void assertNoLeak(TestCode code) throws Exception {
         assertNoLeak(engine, code);
     }
@@ -3042,9 +3111,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
                 atomicity,
                 overwrite,
                 PartitionBy.NONE,
-                null,
-                PropServerConfiguration.COMMIT_LAG_DEFAULT_MS,
-                PropServerConfiguration.MAX_UNCOMMITTED_ROWS_DEFAULT);
+                null);
     }
 
     private void configureLoaderDefaults(TextLoader textLoader,
@@ -3053,25 +3120,6 @@ public class TextLoaderTest extends AbstractGriffinTest {
                                          boolean overwrite,
                                          int partitionBy,
                                          CharSequence timestampIndexCol) {
-        configureLoaderDefaults(
-                textLoader,
-                columnSeparator,
-                atomicity,
-                overwrite,
-                partitionBy,
-                timestampIndexCol,
-                PropServerConfiguration.COMMIT_LAG_DEFAULT_MS,
-                PropServerConfiguration.MAX_UNCOMMITTED_ROWS_DEFAULT);
-    }
-
-    private void configureLoaderDefaults(TextLoader textLoader,
-                                         byte columnSeparator,
-                                         int atomicity,
-                                         boolean overwrite,
-                                         int partitionBy,
-                                         CharSequence timestampIndexCol,
-                                         long commitLag,
-                                         int maxUncommittedRows) {
         textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
         textLoader.configureDestination(
                 "test",
@@ -3079,9 +3127,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
                 false,
                 atomicity,
                 partitionBy,
-                timestampIndexCol,
-                commitLag,
-                maxUncommittedRows);
+                timestampIndexCol);
         if (columnSeparator > 0) {
             textLoader.configureColumnDelimiter(columnSeparator);
         }

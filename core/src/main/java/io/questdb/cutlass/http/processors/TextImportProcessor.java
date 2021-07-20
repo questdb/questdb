@@ -24,7 +24,6 @@
 
 package io.questdb.cutlass.http.processors;
 
-import io.questdb.PropServerConfiguration;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cutlass.http.*;
@@ -132,32 +131,6 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
                 sendErrorAndThrowDisconnect("when specifying partitionBy you must also specify timestamp");
             }
 
-            CharSequence commitLagChars = rh.getUrlParam("commitLag");
-            long commitLag = PropServerConfiguration.COMMIT_LAG_DEFAULT_MS;
-            if (commitLagChars != null) {
-                try {
-                    commitLag = Numbers.parseInt(commitLagChars);
-                    if (commitLag <= 0) {
-                        commitLag = PropServerConfiguration.COMMIT_LAG_DEFAULT_MS;
-                    }
-                } catch (NumericException e) {
-                    sendErrorAndThrowDisconnect("invalid commitLag, must be a long");
-                }
-            }
-
-            CharSequence maxUncommittedRowsChars = rh.getUrlParam("maxUncommittedRows");
-            int maxUncommittedRows = PropServerConfiguration.MAX_UNCOMMITTED_ROWS_DEFAULT;
-            if (maxUncommittedRowsChars != null) {
-                try {
-                    maxUncommittedRows = Numbers.parseInt(maxUncommittedRowsChars);
-                    if (maxUncommittedRows <= 0) {
-                        maxUncommittedRows = PropServerConfiguration.MAX_UNCOMMITTED_ROWS_DEFAULT;
-                    }
-                } catch (NumericException e) {
-                    sendErrorAndThrowDisconnect("invalid maxUncommittedRows, must be an int");
-                }
-            }
-
             transientState.analysed = false;
             transientState.textLoader.configureDestination(
                     name,
@@ -165,10 +138,33 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
                     Chars.equalsNc("true", rh.getUrlParam("durable")),
                     getAtomicity(rh.getUrlParam("atomicity")),
                     partitionBy,
-                    timestampIndexCol,
-                    commitLag,
-                    maxUncommittedRows
+                    timestampIndexCol
             );
+
+            CharSequence commitLagChars = rh.getUrlParam("commitLag");
+            if (commitLagChars != null) {
+                try {
+                    long commitLag = Numbers.parseInt(commitLagChars);
+                    if (commitLag > 0) {
+                        transientState.textLoader.setCommitLag(commitLag);
+                    }
+                } catch (NumericException e) {
+                    sendErrorAndThrowDisconnect("invalid commitLag, must be a long");
+                }
+            }
+
+            CharSequence maxUncommittedRowsChars = rh.getUrlParam("maxUncommittedRows");
+            if (maxUncommittedRowsChars != null) {
+                try {
+                    int maxUncommittedRows = Numbers.parseInt(maxUncommittedRowsChars);
+                    if (maxUncommittedRows > 0) {
+                        transientState.textLoader.setMaxUncommittedRows(maxUncommittedRows);
+                    }
+                } catch (NumericException e) {
+                    sendErrorAndThrowDisconnect("invalid maxUncommittedRows, must be an int");
+                }
+            }
+
             transientState.textLoader.setForceHeaders(Chars.equalsNc("true", rh.getUrlParam("forceHeader")));
             transientState.textLoader.setSkipRowsWithExtraValues(Chars.equalsNc("true", rh.getUrlParam("skipLev")));
             transientState.textLoader.setState(TextLoader.ANALYZE_STRUCTURE);

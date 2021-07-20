@@ -116,10 +116,8 @@ public class TextLoader implements Closeable, Mutable {
                                      boolean durable,
                                      int atomicity,
                                      int partitionBy,
-                                     CharSequence timestampIndexCol,
-                                     long commitLag,
-                                     int maxUncommittedRows) {
-        textWriter.of(tableName, overwrite, durable, atomicity, partitionBy, timestampIndexCol, commitLag, maxUncommittedRows);
+                                     CharSequence timestampIndexCol) {
+        textWriter.of(tableName, overwrite, durable, atomicity, partitionBy, timestampIndexCol);
         textDelimiterScanner.setTableName(tableName);
         textMetadataParser.setTableName(tableName);
         textLexer.setTableName(tableName);
@@ -131,12 +129,7 @@ public class TextLoader implements Closeable, Mutable {
                 .$(", atomicity=").$(atomicity)
                 .$(", partitionBy=").$(PartitionBy.toString(partitionBy))
                 .$(", timestamp=").$(timestampIndexCol)
-                .$(", commitLag=").$(commitLag)
-                .$(", maxUncommittedRows=").$(maxUncommittedRows)
                 .$(']').$();
-        if (partitionBy == PartitionBy.NONE && (commitLag > 0 || maxUncommittedRows > 0)) {
-            LOG.info().$("parameters commitLag and maxUncommittedRows have no effect when partitionBy is NONE").$();
-        }
     }
 
     public byte getColumnDelimiter() {
@@ -167,8 +160,16 @@ public class TextLoader implements Closeable, Mutable {
         return textWriter.getCommitLag();
     }
 
+    public void setCommitLag(long commitLag) {
+        textWriter.setCommitLag(commitLag);
+    }
+
     public int getMaxUncommittedRows() {
         return textWriter.getMaxUncommittedRows();
+    }
+
+    public void setMaxUncommittedRows(int maxUncommittedRows) {
+        textWriter.setMaxUncommittedRows(maxUncommittedRows);
     }
 
     public CharSequence getTableName() {

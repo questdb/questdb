@@ -1750,7 +1750,6 @@ public class IODispatcherTest {
         );
     }
 
-    // TODO: potential edge case?
     @Test
     public void testImportSettingCommitLagAndMaxUncommittedRowsWithRejectionsDueToO3() throws Exception {
         testImportSettingCommitLagAndMaxUncommittedRows(
@@ -1770,7 +1769,7 @@ public class IODispatcherTest {
                         "1609459500000000,4\n" +
                         "1609545630000000,5\n" +
                         "1609545931000000,6\n",
-                4, // TODO: it correctly detects rejected rows, yet the table contains all 6 of them!
+                4, // TODO: in the presence of multiple partitions these results are fubar
                 2
         );
     }
