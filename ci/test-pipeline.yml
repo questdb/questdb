@@ -189,6 +189,7 @@ stages:
 
   - stage: StopBuildAgent
     displayName: "Stop Building Agent"
+    condition: always()
     jobs:
       - job: StopArmAgent
         displayName: 'Stop ARM Agent'
