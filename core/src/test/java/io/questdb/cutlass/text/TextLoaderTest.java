@@ -27,6 +27,8 @@ package io.questdb.cutlass.text;
 import io.questdb.PropServerConfiguration;
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cutlass.http.ex.NotEnoughLinesException;
 import io.questdb.cutlass.json.JsonLexer;
 import io.questdb.griffin.AbstractGriffinTest;
@@ -38,6 +40,7 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.After;
 import org.junit.AfterClass;
@@ -1189,133 +1192,63 @@ public class TextLoaderTest extends AbstractGriffinTest {
 
     @Test
     public void testImportSettingCommitLagAndMaxUncommittedRowsWithoutRejections() throws Exception {
-        final String [] expected = {
-                "/2021-01-01/",
-                "/2021-01-02/",
-                "/2021-01-02.5",
-                "/2021-01-01.4",
-                "/2021-01-01/",
-                "/2021-01-02/"
-        };
-        final AtomicInteger rmdirOffset = new AtomicInteger();
-        final FilesFacade ff = new TestFilesFacade() {
-            @Override
-            public int rmdir(Path name) {
-                int offset = rmdirOffset.getAndIncrement();
-                Assert.assertTrue(offset < expected.length);
-                Assert.assertTrue(name.toString().endsWith(expected[offset]));
-                return Files.rmdir(name);
-            }
-
-            @Override
-            public boolean wasCalled() {
-                return false;
-            }
-        };
-
-        final long commitLag = 240_000_000; // 4 minutes, precision is micro
-        final int maxUncommittedRows = 3;
-        CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
-            @Override
-            public TextConfiguration getTextConfiguration() {
-                return new DefaultTextConfiguration() {
-                    @Override
-                    public int getTextAnalysisMaxLines() {
-                        return 1;
-                    }
-                };
-            }
-
-            @Override
-            public long getCommitLag() {
-                return commitLag;
-            }
-
-            @Override
-            public int getMaxUncommittedRows() {
-                return maxUncommittedRows;
-            }
-
-            @Override
-            public FilesFacade getFilesFacade() {
-                return ff;
-            }
-        };
-
-        try (CairoEngine engine = new CairoEngine(configuration)) {
-            assertNoLeak(
-                    engine,
-                    textLoader -> {
-                        configureLoaderDefaults(
-                                textLoader,
-                                (byte) ',',
-                                Atomicity.SKIP_COL,
-                                false,
-                                PartitionBy.DAY,
-                                "ts",
-                                commitLag,
-                                maxUncommittedRows);
-                        textLoader.setForceHeaders(true);
-
-                        String csv = "ts,sym,open,highest,lowest,close,volumefrom,volumeto\n" +
-                                "2021-01-01T00:04:00.000000Z,EUR,5834,5196,5031,5031,9999,50566\n" +
-                                "2021-01-01T00:05:00.000000Z,EUR,6398,6398,6398,6398,0,0\n" +
-                                "2021-01-02T00:05:31.000000Z,EUR,20716,NaN,15,123,0,0\n" +
-                                "2021-01-01T00:01:00.000000Z,EUR,6398,144,15644,6398,0,0\n" +
-                                "2021-01-01T00:01:30.000000Z,EUR,6398,6666,6398,6398,0,0\n" +
-                                "2021-01-02T00:00:30.000000Z,EUR,6398,6398,6398,9999,0,0\n";
-                        playText(
-                                engine,
-                                textLoader,
-                                csv,
-                                1024,
-                                "ts\tsym\topen\thighest\tlowest\tclose\tvolumefrom\tvolumeto\n" +
-                                        "2021-01-01T00:01:00.000000Z\tEUR\t6398\t144\t15644\t6398\t0\t0\n" +
-                                        "2021-01-01T00:01:30.000000Z\tEUR\t6398\t6666\t6398\t6398\t0\t0\n" +
-                                        "2021-01-01T00:04:00.000000Z\tEUR\t5834\t5196\t5031\t5031\t9999\t50566\n" +
-                                        "2021-01-01T00:05:00.000000Z\tEUR\t6398\t6398\t6398\t6398\t0\t0\n" +
-                                        "2021-01-02T00:00:30.000000Z\tEUR\t6398\t6398\t6398\t9999\t0\t0\n" +
-                                        "2021-01-02T00:05:31.000000Z\tEUR\t20716\tNaN\t15\t123\t0\t0\n",
-                                "{\"columnCount\":8,\"columns\":[" +
-                                        "{\"index\":0,\"name\":\"ts\",\"type\":\"TIMESTAMP\"}," +
-                                        "{\"index\":1,\"name\":\"sym\",\"type\":\"STRING\"}," +
-                                        "{\"index\":2,\"name\":\"open\",\"type\":\"INT\"}," +
-                                        "{\"index\":3,\"name\":\"highest\",\"type\":\"INT\"}," +
-                                        "{\"index\":4,\"name\":\"lowest\",\"type\":\"INT\"}," +
-                                        "{\"index\":5,\"name\":\"close\",\"type\":\"INT\"}," +
-                                        "{\"index\":6,\"name\":\"volumefrom\",\"type\":\"INT\"}," +
-                                        "{\"index\":7,\"name\":\"volumeto\",\"type\":\"INT\"}]," +
-                                        "\"timestampIndex\":0}",
-                                6,
-                                6
-                        );
-                    }
-            );
-            try (TableReader r = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "test")) {
-                Assert.assertEquals(maxUncommittedRows, r.getMaxUncommittedRows());
-                Assert.assertEquals(commitLag, r.getCommitLag());
-            }
-        }
+        testImportSettingCommitLagAndMaxUncommittedRows(240_000_000, // 4 minutes, precision is micro
+                3,
+                6,
+                6,
+                new String[]{
+                        "/2021-01-01/",
+                        "/2021-01-02/",
+                        "/2021-01-02.5",
+                        "/2021-01-01.4",
+                        "/2021-01-01/",
+                        "/2021-01-02/"
+                },
+                "1609459260000000,1\n" +
+                        "1609459290000000,2\n" +
+                        "1609459440000000,3\n" +
+                        "1609459500000000,4\n" +
+                        "1609545630000000,5\n" +
+                        "1609545931000000,6\n"
+        );
     }
 
-    // TODO: refactor this test and the one above to simplify
     @Test
     public void testImportSettingCommitLagAndMaxUncommittedRowsWithRejectionsDueToO3() throws Exception {
-        final String [] expected = {
-                "/2021-01-01/",
-                "/2021-01-01.4/",
-                "/2021-01-02",
-                "/2021-01-01.5",
-                "/2021-01-01/",
-                "/2021-01-01.13/"
-        };
+        testImportSettingCommitLagAndMaxUncommittedRows(60_000_000, // 1 minute, precision is micro
+                2,
+                6,
+                6,
+                new String[]{
+                        "/2021-01-01/",
+                        "/2021-01-02/",
+                        "/2021-01-02.6",
+                        "/2021-01-01.5",
+                        "/2021-01-01/",
+                        "/2021-01-02/",
+                },
+                "1609459260000000,1\n" +
+                        "1609459290000000,2\n" +
+                        "1609459440000000,3\n" +
+                        "1609459500000000,4\n" +
+                        "1609545630000000,5\n" +
+                        "1609545931000000,6\n"
+        );
+    }
+
+    private void testImportSettingCommitLagAndMaxUncommittedRows(long commitLag,
+                                                                 int maxUncommittedRows,
+                                                                 int expectedParsedLineCount,
+                                                                 int expectedWrittenLineCount,
+                                                                 String[] expectedRmdirSuffixes,
+                                                                 String expectedData) throws Exception {
         final AtomicInteger rmdirOffset = new AtomicInteger();
         final FilesFacade ff = new TestFilesFacade() {
             @Override
             public int rmdir(Path name) {
                 int offset = rmdirOffset.getAndIncrement();
-                Assert.assertTrue(offset < expected.length);
-                Assert.assertTrue(name.toString().endsWith(expected[offset]));
+                Assert.assertTrue(offset < expectedRmdirSuffixes.length);
+                Assert.assertTrue(name.toString().endsWith(expectedRmdirSuffixes[offset]));
                 return Files.rmdir(name);
             }
 
@@ -1324,9 +1257,6 @@ public class TextLoaderTest extends AbstractGriffinTest {
                 return false;
             }
         };
-
-        final long commitLag = 240_000_000; // 4 minutes, precision is micro
-        final int maxUncommittedRows = 2;
         CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
             @Override
             public TextConfiguration getTextConfiguration() {
@@ -1353,7 +1283,6 @@ public class TextLoaderTest extends AbstractGriffinTest {
                 return ff;
             }
         };
-
         try (CairoEngine engine = new CairoEngine(configuration)) {
             assertNoLeak(
                     engine,
@@ -1368,44 +1297,49 @@ public class TextLoaderTest extends AbstractGriffinTest {
                                 commitLag,
                                 maxUncommittedRows);
                         textLoader.setForceHeaders(true);
-
-                        String csv = "ts,sym,open,highest,lowest,close,volumefrom,volumeto\n" +
-                                "2021-01-01T00:04:00.000000Z,EUR,5834,5196,5031,5031,9999,50566\n" +
-                                "2021-01-01T00:05:00.000000Z,EUR,6398,6398,6398,6398,0,0\n" +
-                                "2021-01-01T00:01:00.000000Z,EUR,6398,144,15644,6398,0,0\n" +
-                                "2021-01-02T00:05:31.000000Z,EUR,20716,NaN,15,123,0,0\n" +
-                                "2021-01-01T00:01:30.000000Z,EUR,6398,6666,6398,6398,0,0\n" +
-                                "2021-01-02T00:00:30.000000Z,EUR,6398,6398,6398,9999,0,0\n";
+                        String csv = "ts,int\n" +
+                                "2021-01-01T00:04:00.000000Z,3\n" +
+                                "2021-01-01T00:05:00.000000Z,4\n" +
+                                "2021-01-02T00:05:31.000000Z,6\n" +
+                                "2021-01-01T00:01:00.000000Z,1\n" +
+                                "2021-01-01T00:01:30.000000Z,2\n" +
+                                "2021-01-02T00:00:30.000000Z,5\n";
                         playText(
                                 engine,
                                 textLoader,
                                 csv,
                                 1024,
-                                "ts\tsym\topen\thighest\tlowest\tclose\tvolumefrom\tvolumeto\n" +
-                                        "2021-01-01T00:01:00.000000Z\tEUR\t6398\t144\t15644\t6398\t0\t0\n" +
-                                        "2021-01-01T00:01:30.000000Z\tEUR\t6398\t6666\t6398\t6398\t0\t0\n" +
-                                        "2021-01-01T00:04:00.000000Z\tEUR\t5834\t5196\t5031\t5031\t9999\t50566\n" +
-                                        "2021-01-01T00:05:00.000000Z\tEUR\t6398\t6398\t6398\t6398\t0\t0\n" +
-                                        "2021-01-02T00:00:30.000000Z\tEUR\t6398\t6398\t6398\t9999\t0\t0\n" +
-                                        "2021-01-02T00:05:31.000000Z\tEUR\t20716\tNaN\t15\t123\t0\t0\n",
-                                "{\"columnCount\":8,\"columns\":[" +
+                                "ts\tint\n" +
+                                        "2021-01-01T00:01:00.000000Z\t1\n" +
+                                        "2021-01-01T00:01:30.000000Z\t2\n" +
+                                        "2021-01-01T00:04:00.000000Z\t3\n" +
+                                        "2021-01-01T00:05:00.000000Z\t4\n" +
+                                        "2021-01-02T00:00:30.000000Z\t5\n" +
+                                        "2021-01-02T00:05:31.000000Z\t6\n",
+                                "{\"columnCount\":2,\"columns\":[" +
                                         "{\"index\":0,\"name\":\"ts\",\"type\":\"TIMESTAMP\"}," +
-                                        "{\"index\":1,\"name\":\"sym\",\"type\":\"STRING\"}," +
-                                        "{\"index\":2,\"name\":\"open\",\"type\":\"INT\"}," +
-                                        "{\"index\":3,\"name\":\"highest\",\"type\":\"INT\"}," +
-                                        "{\"index\":4,\"name\":\"lowest\",\"type\":\"INT\"}," +
-                                        "{\"index\":5,\"name\":\"close\",\"type\":\"INT\"}," +
-                                        "{\"index\":6,\"name\":\"volumefrom\",\"type\":\"INT\"}," +
-                                        "{\"index\":7,\"name\":\"volumeto\",\"type\":\"INT\"}]," +
+                                        "{\"index\":1,\"name\":\"int\",\"type\":\"INT\"}]," +
                                         "\"timestampIndex\":0}",
-                                6,
-                                2
+                                expectedParsedLineCount,
+                                expectedWrittenLineCount
                         );
                     }
             );
-            try (TableReader r = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "test")) {
-                Assert.assertEquals(maxUncommittedRows, r.getMaxUncommittedRows());
-                Assert.assertEquals(commitLag, r.getCommitLag());
+            try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "test")) {
+                Assert.assertEquals(maxUncommittedRows, reader.getMaxUncommittedRows());
+                Assert.assertEquals(commitLag, reader.getCommitLag());
+                Assert.assertEquals(expectedWrittenLineCount, reader.size());
+                StringSink sink = new StringSink();
+                try (RecordCursor cursor = reader.getCursor()) {
+                    final Record record = cursor.getRecord();
+                    while (cursor.hasNext()) {
+                        sink.put(record.getTimestamp(0));
+                        sink.put(',');
+                        sink.put(record.getInt(1));
+                        sink.put('\n');
+                    }
+                }
+                Assert.assertEquals(expectedData, sink.toString());
             }
         }
     }

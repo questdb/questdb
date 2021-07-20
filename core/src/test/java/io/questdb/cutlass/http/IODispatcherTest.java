@@ -1732,19 +1732,19 @@ public class IODispatcherTest {
                 "test_table",
                 240_000_000, // 4 minutes, micro precision
                 3,
-                "Execution,Quantity,Price\r\n" +
-                        "2021-01-01 00:04:00,12,300\r\n" +
-                        "2021-01-01 00:05:00,13,301\r\n" +
-                        "2021-01-02 00:05:31,21,257\r\n" +
-                        "2021-01-01 00:01:00,1,3127\r\n" +
-                        "2021-01-01 00:01:30,2,3124\r\n" +
-                        "2021-01-02 00:00:30,22,12\r\n",
-                "1609459260000000,1,3127\n" +
-                        "1609459290000000,2,3124\n" +
-                        "1609459440000000,12,300\n" +
-                        "1609459500000000,13,301\n" +
-                        "1609545630000000,22,12\n" +
-                        "1609545931000000,21,257\n",
+                "ts,int\r\n" +
+                        "2021-01-01 00:04:00,3\r\n" +
+                        "2021-01-01 00:05:00,4\r\n" +
+                        "2021-01-02 00:05:31,6\r\n" +
+                        "2021-01-01 00:01:00,1\r\n" +
+                        "2021-01-01 00:01:30,2\r\n" +
+                        "2021-01-02 00:00:30,5\r\n",
+                "1609459260000000,1\n" +
+                        "1609459290000000,2\n" +
+                        "1609459440000000,3\n" +
+                        "1609459500000000,4\n" +
+                        "1609545630000000,5\n" +
+                        "1609545931000000,6\n",
                 0,
                 6
         );
@@ -1757,19 +1757,19 @@ public class IODispatcherTest {
                 "test_table",
                 120_000_000, // 2 minutes, micro precision
                 1,
-                "Execution,Quantity,Price\r\n" +
-                        "2021-01-01 00:04:00,12,300\r\n" +
-                        "2021-01-01 00:05:00,13,301\r\n" +
-                        "2021-01-01 00:01:00,1,3127\r\n" +
-                        "2021-01-02 00:05:31,21,257\r\n" +
-                        "2021-01-01 00:01:30,2,3124\r\n" +
-                        "2021-01-02 00:00:30,22,12\r\n",
-                "1609459260000000,1,3127\n" +
-                        "1609459290000000,2,3124\n" +
-                        "1609459440000000,12,300\n" +
-                        "1609459500000000,13,301\n" +
-                        "1609545630000000,22,12\n" +
-                        "1609545931000000,21,257\n",
+                "ts,int\r\n" +
+                        "2021-01-01 00:04:00,3\r\n" +
+                        "2021-01-01 00:05:00,4\r\n" +
+                        "2021-01-01 00:01:00,1\r\n" +
+                        "2021-01-02 00:05:31,6\r\n" +
+                        "2021-01-01 00:01:30,2\r\n" +
+                        "2021-01-02 00:00:30,5\r\n",
+                "1609459260000000,1\n" +
+                        "1609459290000000,2\n" +
+                        "1609459440000000,3\n" +
+                        "1609459500000000,4\n" +
+                        "1609545630000000,5\n" +
+                        "1609545931000000,6\n",
                 4, // TODO: it correctly detects rejected rows, yet the table contains all 6 of them!
                 2
         );
@@ -1785,7 +1785,7 @@ public class IODispatcherTest {
         String command = "POST /upload?fmt=json&" +
                 "overwrite=true&" +
                 "forceHeader=true&" +
-                "timestamp=Execution&" +
+                "timestamp=ts&" +
                 "partitionBy=DAY&" +
                 "commitLag=" + commitLag + "&" +
                 "maxUncommittedRows=" + maxUncommittedRows + "&" +
@@ -1796,9 +1796,8 @@ public class IODispatcherTest {
                 "\"rowsImported\":" + expectedImportedRows  + "," +
                 "\"header\":true," +
                 "\"columns\":[" +
-                "{\"name\":\"Execution\",\"type\":\"TIMESTAMP\",\"size\":8,\"errors\":0}," +
-                "{\"name\":\"Quantity\",\"type\":\"INT\",\"size\":4,\"errors\":0}," +
-                "{\"name\":\"Price\",\"type\":\"INT\",\"size\":4,\"errors\":0}" +
+                "{\"name\":\"ts\",\"type\":\"TIMESTAMP\",\"size\":8,\"errors\":0}," +
+                "{\"name\":\"int\",\"type\":\"INT\",\"size\":4,\"errors\":0}" +
                 "]}\r\n";
         testImport(
                 "HTTP/1.1 200 OK\r\n" +
@@ -1807,7 +1806,7 @@ public class IODispatcherTest {
                         "Transfer-Encoding: chunked\r\n" +
                         "Content-Type: application/json; charset=utf-8\r\n" +
                         "\r\n" +
-                        "0106\r\n" +
+                        "c8\r\n" +
                         expectedMetadata +
                         "00\r\n" +
                         "\r\n",
@@ -1827,9 +1826,8 @@ public class IODispatcherTest {
                         "------WebKitFormBoundaryOsOAD9cPKyHuxyBV\r\n" +
                         "Content-Disposition: form-data; name=\"schema\"\r\n" +
                         "\r\n" +
-                        "[{\"name\":\"Execution\",\"type\":\"TIMESTAMP\", \"pattern\": \"yyyy-MM-dd HH:mm:ss\"}," +
-                        "{\"name\":\"Quantity\",\"type\":\"INT\"}," +
-                        "{\"name\":\"Price\",\"type\":\"INT\"}]\r\n" +
+                        "[{\"name\":\"ts\",\"type\":\"TIMESTAMP\", \"pattern\": \"yyyy-MM-dd HH:mm:ss\"}," +
+                        "{\"name\":\"int\",\"type\":\"INT\"}]\r\n" +
                         "------WebKitFormBoundaryOsOAD9cPKyHuxyBV\r\n" +
                         "Content-Disposition: form-data; name=\"data\"\r\n" +
                         "\r\n" +
@@ -1846,7 +1844,7 @@ public class IODispatcherTest {
         try (TableReader reader = new TableReader(configuration, tableName)) {
             Assert.assertEquals(commitLag, reader.getCommitLag());
             Assert.assertEquals(maxUncommittedRows, reader.getMaxUncommittedRows());
-            Assert.assertEquals(Math.abs(expectedImportedRows), reader.size());
+            Assert.assertEquals(expectedImportedRows, reader.size());
             StringSink sink = new StringSink();
             try(RecordCursor cursor = reader.getCursor()) {
                 final Record record = cursor.getRecord();
@@ -1854,8 +1852,6 @@ public class IODispatcherTest {
                     sink.put(record.getTimestamp(0));
                     sink.put(',');
                     sink.put(record.getInt(1));
-                    sink.put(',');
-                    sink.put(record.getInt(2));
                     sink.put('\n');
                 }
             }
@@ -5076,7 +5072,7 @@ public class IODispatcherTest {
                                         sendRequest(request, fd, buffer);
                                         assertDownloadResponse(fd, rnd, buffer, netBufferLen, diskBufferLen, expectedResponseHeader, 20971667);
                                     }
-//
+
                                     // send few requests to receive 304
                                     final String request2 = "GET /questdb-temp.txt HTTP/1.1\r\n" +
                                             "Host: localhost:9000\r\n" +

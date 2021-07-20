@@ -125,7 +125,9 @@ public class HttpQueryTestBuilder {
                     return false;
                 }
             });
-            workerPool.assignCleaner(Path.CLEANER);
+            if (workerCount > 1) {
+                workerPool.assignCleaner(Path.CLEANER);
+            }
 
             DefaultCairoConfiguration cairoConfiguration = new DefaultCairoConfiguration(baseDir);
 
