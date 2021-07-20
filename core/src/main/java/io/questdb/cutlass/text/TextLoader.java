@@ -111,12 +111,7 @@ public class TextLoader implements Closeable, Mutable {
         assert this.columnDelimiter > 0;
     }
 
-    public void configureDestination(CharSequence tableName,
-                                     boolean overwrite,
-                                     boolean durable,
-                                     int atomicity,
-                                     int partitionBy,
-                                     CharSequence timestampIndexCol) {
+    public void configureDestination(CharSequence tableName, boolean overwrite, boolean durable, int atomicity, int partitionBy, CharSequence timestampIndexCol) {
         textWriter.of(tableName, overwrite, durable, atomicity, partitionBy, timestampIndexCol);
         textDelimiterScanner.setTableName(tableName);
         textMetadataParser.setTableName(tableName);

@@ -35,9 +35,6 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.LockSupport;
 
-import io.questdb.cairo.*;
-import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursor;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Before;
@@ -46,6 +43,18 @@ import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 
 import io.questdb.Metrics;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoTestUtils;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.DefaultCairoConfiguration;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.RecordCursorPrinter;
+import io.questdb.cairo.TableModel;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TestRecord;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cutlass.NetUtils;
 import io.questdb.cutlass.http.processors.HealthCheckProcessor;
@@ -1739,12 +1748,12 @@ public class IODispatcherTest {
                         "2021-01-01 00:01:00,1\r\n" +
                         "2021-01-01 00:01:30,2\r\n" +
                         "2021-01-02 00:00:30,5\r\n",
-                "1609459260000000,1\n" +
-                        "1609459290000000,2\n" +
-                        "1609459440000000,3\n" +
-                        "1609459500000000,4\n" +
-                        "1609545630000000,5\n" +
-                        "1609545931000000,6\n",
+                "2021-01-01T00:01:00.000000Z\t1\n" +
+                        "2021-01-01T00:01:30.000000Z\t2\n" +
+                        "2021-01-01T00:04:00.000000Z\t3\n" +
+                        "2021-01-01T00:05:00.000000Z\t4\n" +
+                        "2021-01-02T00:00:30.000000Z\t5\n" +
+                        "2021-01-02T00:05:31.000000Z\t6\n",
                 0,
                 6
         );
@@ -1763,12 +1772,12 @@ public class IODispatcherTest {
                         "2021-01-02 00:05:31,6\r\n" +
                         "2021-01-01 00:01:30,2\r\n" +
                         "2021-01-02 00:00:30,5\r\n",
-                "1609459260000000,1\n" +
-                        "1609459290000000,2\n" +
-                        "1609459440000000,3\n" +
-                        "1609459500000000,4\n" +
-                        "1609545630000000,5\n" +
-                        "1609545931000000,6\n",
+                "2021-01-01T00:01:00.000000Z\t1\n" +
+                        "2021-01-01T00:01:30.000000Z\t2\n" +
+                        "2021-01-01T00:04:00.000000Z\t3\n" +
+                        "2021-01-01T00:05:00.000000Z\t4\n" +
+                        "2021-01-02T00:00:30.000000Z\t5\n" +
+                        "2021-01-02T00:05:31.000000Z\t6\n",
                 4, // TODO: in the presence of multiple partitions these results are fubar
                 2
         );
@@ -1845,16 +1854,17 @@ public class IODispatcherTest {
             Assert.assertEquals(maxUncommittedRows, reader.getMaxUncommittedRows());
             Assert.assertEquals(expectedImportedRows, reader.size());
             StringSink sink = new StringSink();
-            try(RecordCursor cursor = reader.getCursor()) {
-                final Record record = cursor.getRecord();
-                while (cursor.hasNext()) {
-                    sink.put(record.getTimestamp(0));
-                    sink.put(',');
-                    sink.put(record.getInt(1));
-                    sink.put('\n');
-                }
-            }
-            Assert.assertEquals(expectedData, sink.toString());
+            TestUtils.assertCursor(expectedData, reader.getCursor(), reader.getMetadata(), false, sink);
+//            try(RecordCursor cursor = reader.getCursor()) {
+//                final Record record = cursor.getRecord();
+//                while (cursor.hasNext()) {
+//                    sink.put(record.getTimestamp(0));
+//                    sink.put(',');
+//                    sink.put(record.getInt(1));
+//                    sink.put('\n');
+//                }
+//            }
+//            Assert.assertEquals(expectedData, sink.toString());
         }
     }
 

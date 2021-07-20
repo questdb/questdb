@@ -65,14 +65,6 @@ public class TextLoaderCompletedState {
         return textLoader.getPartitionBy();
     }
 
-    public long getCommitLag() {
-        return textLoader.getCommitLag();
-    }
-
-    public int getMaxUncommittedRows() {
-        return textLoader.getMaxUncommittedRows();
-    }
-
     public CharSequence getTableName() {
         return textLoader.getTableName();
     }
