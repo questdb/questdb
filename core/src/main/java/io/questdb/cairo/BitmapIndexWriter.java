@@ -286,7 +286,7 @@ public class BitmapIndexWriter implements Closeable, Mutable {
             this.valueMem.of(configuration.getFilesFacade(), BitmapIndexUtils.valueFileName(path.trimTo(plen), name), pageSize);
             this.valueMemSize = this.keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_VALUE_MEM_SIZE);
 
-            if (this.valueMem.size() < this.valueMemSize) {
+            if (this.valueMem.getAppendOffset() < this.valueMemSize) {
                 LOG.error().$("incorrect file size [corrupt] of ").$(path).$(" [expected=").$(this.valueMemSize).$(']').$();
                 throw CairoException.instance(0).put("Incorrect file size of ").put(path);
             }

@@ -382,7 +382,7 @@ public class CairoMemoryTest {
                             }
                             Assert.fail();
                         } catch (CairoException e) {
-                            TestUtils.assertContains(e.getMessage(), "Cannot map read-only page");
+                            TestUtils.assertContains(e.getMessage(), "could not mmap");
                         }
 
                         rnd.reset();

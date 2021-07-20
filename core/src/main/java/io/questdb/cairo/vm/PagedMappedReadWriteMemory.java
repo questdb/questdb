@@ -24,7 +24,6 @@
 
 package io.questdb.cairo.vm;
 
-import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
