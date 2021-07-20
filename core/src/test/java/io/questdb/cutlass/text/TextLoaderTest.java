@@ -33,6 +33,7 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
@@ -3011,9 +3012,11 @@ public class TextLoaderTest extends AbstractGriffinTest {
         }
     }
 
+    private static String PATH_SEP_REGEX = Os.type == Os.WINDOWS ? String.format("[%c%c]", Files.SEPARATOR, Files.SEPARATOR) : String.valueOf(Files.SEPARATOR);
+
     private static String extractLast(Path path) {
         String nameStr = path.toString();
-        String[] pathElements = nameStr.split(String.valueOf(Files.SEPARATOR));
+        String[] pathElements = nameStr.split(PATH_SEP_REGEX);
         String pathLeaf = pathElements[pathElements.length - 1];
         return pathLeaf;
     }
