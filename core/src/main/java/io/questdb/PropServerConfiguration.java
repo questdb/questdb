@@ -377,7 +377,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                 }
             }
 
-            final long tableIndexMem = TableUtils.mapRWOrClose(ff, path, tableIndexFd, Files.PAGE_SIZE);
+            final long tableIndexMem = TableUtils.mapRWOrClose(ff, tableIndexFd, Files.PAGE_SIZE);
             Rnd rnd = new Rnd(getCairoConfiguration().getMicrosecondClock().getTicks(), getCairoConfiguration().getMillisecondClock().getTicks());
             if (Os.compareAndSwap(tableIndexMem + Long.BYTES, 0, rnd.nextLong()) == 0) {
                 Unsafe.getUnsafe().putLong(tableIndexMem + Long.BYTES * 2, rnd.nextLong());

@@ -36,7 +36,7 @@ public class ContiguousMappedReadWriteMemory extends AbstractContiguousMemory
         implements MappedReadWriteMemory, ContiguousReadWriteVirtualMemory {
     private static final Log LOG = LogFactory.getLog(ContiguousMappedReadWriteMemory.class);
     private final Long256Acceptor long256Acceptor = this::putLong256;
-    private final long minMappedMemorySize = FilesFacadeImpl.INSTANCE.getMapPageSize();
+    private long minMappedMemorySize;
     protected long page = -1;
     protected FilesFacade ff;
     protected long fd = -1;
@@ -88,18 +88,16 @@ public class ContiguousMappedReadWriteMemory extends AbstractContiguousMemory
     }
 
     @Override
-    public void of(FilesFacade ff, LPSZ name, long pageSize, long size) {
-        this.mappedMemorySizeMsb = Numbers.msb(pageSize);
+    public void of(FilesFacade ff, LPSZ name, long mappedMemorySize, long size) {
+        this.mappedMemorySizeMsb = Numbers.msb(mappedMemorySize);
+        this.minMappedMemorySize = ff.getMapPageSize();
         openFile(ff, name);
         map(ff, name, size);
     }
 
     @Override
     public void of(FilesFacade ff, LPSZ name, long mappedMemorySize) {
-        this.mappedMemorySizeMsb = Numbers.msb(mappedMemorySize);
-        openFile(ff, name);
-        // open the whole file based on its length
-        map(ff, name, Long.MAX_VALUE);
+        of(ff, name, mappedMemorySize, Long.MAX_VALUE);
     }
 
     @Override
@@ -265,9 +263,9 @@ public class ContiguousMappedReadWriteMemory extends AbstractContiguousMemory
     protected void map(FilesFacade ff, @Nullable CharSequence name, long size) {
         size = Math.min(ff.length(fd), size);
         if (size == 0) {
-            this.size = 16 * 1024 * 1024;
+            this.size = minMappedMemorySize;
             TableUtils.allocateDiskSpace(ff, fd, this.size);
-            map0(ff, 16 * 1024 * 1024);
+            map0(ff, minMappedMemorySize);
             this.appendAddress = page;
         } else if (size > 0) {
             this.size = size;

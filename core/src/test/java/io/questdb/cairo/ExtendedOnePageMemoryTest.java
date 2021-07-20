@@ -4,6 +4,7 @@ import io.questdb.cairo.vm.ContiguousMappedReadOnlyMemory;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.str.Path;
+import io.questdb.test.tools.TestUtils;
 import org.junit.*;
 import org.junit.rules.TemporaryFolder;
 
@@ -32,7 +33,7 @@ public class ExtendedOnePageMemoryTest {
                 mem.of(ff, path, FILE_SIZE, FILE_SIZE);
                 Assert.fail();
             } catch (CairoException ex) {
-                Assert.assertTrue(ex.getMessage().contains("Could not mmap"));
+                TestUtils.assertContains(ex.getFlyweightMessage(), "could not mmap");
             }
         }
     }
@@ -49,7 +50,7 @@ public class ExtendedOnePageMemoryTest {
                 mem.extend(sz);
                 Assert.fail();
             } catch (CairoException ex) {
-                Assert.assertTrue(ex.getMessage().contains("Could not remap"));
+                TestUtils.assertContains(ex.getFlyweightMessage(), "could not remap");
             }
         }
     }

@@ -404,7 +404,7 @@ public final class TableUtils {
         throw CairoException.instance(ff.errno()).put("could not mmap column [fd=").put(fd).put(", size=").put(size).put(']');
     }
 
-    public static long mapRWOrClose(FilesFacade ff, LPSZ path, long fd, long size) {
+    public static long mapRWOrClose(FilesFacade ff, long fd, long size) {
         try {
             return TableUtils.mapRW(ff, fd, size);
         } catch (CairoException e) {
