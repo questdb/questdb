@@ -214,6 +214,7 @@ public class ContiguousMappedReadWriteMemory extends AbstractContiguousMemory
     public void of(FilesFacade ff, long fd, @Nullable CharSequence name, long size) {
         close();
         this.ff = ff;
+        this.minMappedMemorySize = ff.getMapPageSize();
         this.fd = fd;
         if (fd != -1) {
             map(ff, name, size);
