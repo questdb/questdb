@@ -1200,6 +1200,13 @@ public class TextLoaderTest extends AbstractGriffinTest {
                         "/2021-01-01/",
                         "/2021-01-02/"
                 },
+                "ts,int\n" +
+                        "2021-01-01T00:04:00.000000Z,3\n" +
+                        "2021-01-01T00:05:00.000000Z,4\n" +
+                        "2021-01-02T00:05:31.000000Z,6\n" +
+                        "2021-01-01T00:01:00.000000Z,1\n" +
+                        "2021-01-01T00:01:30.000000Z,2\n" +
+                        "2021-01-02T00:00:30.000000Z,5\n",
                 "2021-01-01T00:01:00.000000Z\t1\n" +
                         "2021-01-01T00:01:30.000000Z\t2\n" +
                         "2021-01-01T00:04:00.000000Z\t3\n" +
@@ -1223,6 +1230,13 @@ public class TextLoaderTest extends AbstractGriffinTest {
                         "/2021-01-01/",
                         "/2021-01-02/",
                 },
+                "ts,int\n" +
+                        "2021-01-01T00:04:00.000000Z,3\n" +
+                        "2021-01-01T00:05:00.000000Z,4\n" +
+                        "2021-01-02T00:05:31.000000Z,6\n" +
+                        "2021-01-01T00:01:00.000000Z,1\n" +
+                        "2021-01-01T00:01:30.000000Z,2\n" +
+                        "2021-01-02T00:00:30.000000Z,5\n",
                 "2021-01-01T00:01:00.000000Z\t1\n" +
                         "2021-01-01T00:01:30.000000Z\t2\n" +
                         "2021-01-01T00:04:00.000000Z\t3\n" +
@@ -2879,6 +2893,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
                                                                         int expectedParsedLineCount,
                                                                         int expectedWrittenLineCount,
                                                                         String[] expectedRmdirSuffixes,
+                                                                        String csvWithHeader,
                                                                         String expectedData) throws Exception {
         final AtomicInteger rmdirOffset = new AtomicInteger();
         final FilesFacade ff = new TestFilesFacade() {
@@ -2935,17 +2950,10 @@ public class TextLoaderTest extends AbstractGriffinTest {
                         textLoader.setForceHeaders(true);
                         textLoader.setCommitLag(commitLag);
                         textLoader.setMaxUncommittedRows(maxUncommittedRows);
-                        String csv = "ts,int\n" +
-                                "2021-01-01T00:04:00.000000Z,3\n" +
-                                "2021-01-01T00:05:00.000000Z,4\n" +
-                                "2021-01-02T00:05:31.000000Z,6\n" +
-                                "2021-01-01T00:01:00.000000Z,1\n" +
-                                "2021-01-01T00:01:30.000000Z,2\n" +
-                                "2021-01-02T00:00:30.000000Z,5\n";
                         playText(
                                 engine,
                                 textLoader,
-                                csv,
+                                csvWithHeader,
                                 1024,
                                 "ts\tint\n" +
                                         "2021-01-01T00:01:00.000000Z\t1\n" +
