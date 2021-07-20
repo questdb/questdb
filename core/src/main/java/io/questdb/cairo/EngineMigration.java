@@ -24,10 +24,7 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.vm.MappedReadWriteMemory;
-import io.questdb.cairo.vm.PagedMappedReadWriteMemory;
-import io.questdb.cairo.vm.PagedVirtualMemory;
-import io.questdb.cairo.vm.ReadWriteVirtualMemory;
+import io.questdb.cairo.vm.*;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
@@ -41,6 +38,7 @@ import static io.questdb.cairo.TableUtils.*;
 public class EngineMigration {
     public static final int VERSION_TX_STRUCT_UPDATE_1 = 418;
     public static final int VERSION_TBL_META_COMMIT_LAG = 419;
+    public static final int VERSION_COLUMN_TYPE_ENCODING_CHANGED = 420;
 
     // All offsets hardcoded here in case TableUtils offset calculation changes
     // in future code version
@@ -398,6 +396,75 @@ public class EngineMigration {
             }
             return false;
         }
+
+        public static void updateColumnTypeIds(MigrationContext migrationContext) {
+            // old type ids
+            final int BOOLEAN = 0;
+            final int BYTE = 1;
+            final int SHORT = 2;
+            final int CHAR = 3;
+            final int INT = 4;
+            final int LONG = 5;
+            final int DATE = 6;
+            final int TIMESTAMP = 7;
+            final int FLOAT = 8;
+            final int DOUBLE = 9;
+            final int STRING = 10;
+            final int SYMBOL = 11;
+            final int LONG256 = 12;
+            final int BINARY = 13;
+            final int PARAMETER = 14;
+
+            final IntList typeMapping = new IntList();
+
+            typeMapping.extendAndSet(BOOLEAN, ColumnType.BOOLEAN);
+            typeMapping.extendAndSet(BYTE, ColumnType.BYTE);
+            typeMapping.extendAndSet(SHORT, ColumnType.SHORT);
+            typeMapping.extendAndSet(CHAR, ColumnType.CHAR);
+            typeMapping.extendAndSet(INT, ColumnType.INT);
+            typeMapping.extendAndSet(LONG, ColumnType.LONG);
+            typeMapping.extendAndSet(DATE, ColumnType.DATE);
+            typeMapping.extendAndSet(TIMESTAMP, ColumnType.TIMESTAMP);
+            typeMapping.extendAndSet(FLOAT, ColumnType.FLOAT);
+            typeMapping.extendAndSet(DOUBLE, ColumnType.DOUBLE);
+            typeMapping.extendAndSet(STRING, ColumnType.STRING);
+            typeMapping.extendAndSet(SYMBOL, ColumnType.SYMBOL);
+            typeMapping.extendAndSet(LONG256, ColumnType.LONG256);
+            typeMapping.extendAndSet(BINARY, ColumnType.BINARY);
+            typeMapping.extendAndSet(PARAMETER, ColumnType.PARAMETER);
+
+            final FilesFacade ff = migrationContext.getFf();
+            Path path = migrationContext.getTablePath();
+            path.concat(META_FILE_NAME).$();
+
+            if (!ff.exists(path)) {
+                LOG.error().$("meta file does not exist, nothing to migrate [path=").$(path).I$();
+                return;
+            }
+
+            // Metadata file should already be backed up
+            final MappedReadWriteMemory rwMem = migrationContext.rwMemory;
+            rwMem.of(ff, path, ff.getPageSize());
+
+            // column count
+            final int columnCount = rwMem.getInt(TableUtils.META_OFFSET_COUNT);
+            rwMem.putInt(TableUtils.META_OFFSET_VERSION, ColumnType.VERSION);
+
+            long offset = TableUtils.META_OFFSET_COLUMN_TYPES;
+            for (int i = 0; i < columnCount; i++) {
+                final byte oldTypeId = rwMem.getByte(offset);
+                final long oldFlags = rwMem.getLong(offset + 1);
+                final int blockCapacity = rwMem.getInt(offset + 1 + 8);
+                // column type id is int now
+                // we grabbed 3 reserved bytes for extra type info
+                // extra for old types is zeros
+                rwMem.putInt(offset, typeMapping.getQuick(oldTypeId));
+                rwMem.putLong(offset + 4, oldFlags);
+                rwMem.putInt(offset + 4 + 8, blockCapacity);
+                offset += TableUtils.META_COLUMN_DATA_SIZE;
+            }
+            rwMem.close();
+        }
     }
 
     class MigrationContext {
@@ -475,5 +542,6 @@ public class EngineMigration {
         setByVersion(VERSION_THAT_ADDED_TABLE_ID, MigrationActions::assignTableId, 1);
         setByVersion(VERSION_TX_STRUCT_UPDATE_1, MigrationActions::rebuildTransactionFile, 0);
         setByVersion(VERSION_TBL_META_COMMIT_LAG, MigrationActions::addTblMetaCommitLag, 0);
+        setByVersion(VERSION_COLUMN_TYPE_ENCODING_CHANGED, MigrationActions::updateColumnTypeIds, 1);
     }
 }

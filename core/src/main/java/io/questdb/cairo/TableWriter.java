@@ -1489,7 +1489,7 @@ public class TableWriter implements Closeable {
             }
 
             // add new column metadata to bottom of list
-            ddlMem.putByte((byte) type);
+            ddlMem.putInt(type);
             long flags = 0;
             if (indexFlag) {
                 flags |= META_FLAG_BIT_INDEXED;
@@ -1501,7 +1501,6 @@ public class TableWriter implements Closeable {
 
             ddlMem.putLong(flags);
             ddlMem.putInt(indexValueBlockCapacity);
-            ddlMem.skip(META_COLUMN_DATA_RESERVED);
 
             long nameOffset = getColumnNameOffset(columnCount);
             for (int i = 0; i < columnCount; i++) {
@@ -1890,14 +1889,13 @@ public class TableWriter implements Closeable {
                 if (i != columnIndex) {
                     writeColumnEntry(i);
                 } else {
-                    ddlMem.putByte((byte) getColumnType(metaMem, i));
+                    ddlMem.putInt(getColumnType(metaMem, i));
                     long flags = META_FLAG_BIT_INDEXED;
                     if (isSequential(metaMem, i)) {
                         flags |= META_FLAG_BIT_SEQUENTIAL;
                     }
                     ddlMem.putLong(flags);
                     ddlMem.putInt(indexValueBlockSize);
-                    ddlMem.skip(META_COLUMN_DATA_RESERVED);
                 }
             }
 
@@ -4516,7 +4514,7 @@ public class TableWriter implements Closeable {
     }
 
     private void writeColumnEntry(int i) {
-        ddlMem.putByte((byte) getColumnType(metaMem, i));
+        ddlMem.putInt(getColumnType(metaMem, i));
         long flags = 0;
         if (isColumnIndexed(metaMem, i)) {
             flags |= META_FLAG_BIT_INDEXED;
@@ -4527,7 +4525,6 @@ public class TableWriter implements Closeable {
         }
         ddlMem.putLong(flags);
         ddlMem.putInt(getIndexBlockCapacity(metaMem, i));
-        ddlMem.skip(META_COLUMN_DATA_RESERVED);
     }
 
     private void writeColumnTop(CharSequence name) {

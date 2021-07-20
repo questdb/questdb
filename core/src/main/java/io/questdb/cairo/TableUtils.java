@@ -165,7 +165,7 @@ public final class TableUtils {
             mem.jumpTo(TableUtils.META_OFFSET_COLUMN_TYPES);
 
             for (int i = 0; i < count; i++) {
-                mem.putByte((byte) structure.getColumnType(i));
+                mem.putInt(structure.getColumnType(i));
                 long flags = 0;
                 if (structure.isIndexed(i)) {
                     flags |= META_FLAG_BIT_INDEXED;
@@ -177,7 +177,6 @@ public final class TableUtils {
 
                 mem.putLong(flags);
                 mem.putInt(structure.getIndexBlockCapacity(i));
-                mem.skip(META_COLUMN_DATA_RESERVED); // reserved
             }
             for (int i = 0; i < count; i++) {
                 mem.putStr(structure.getColumnName(i));
@@ -239,7 +238,7 @@ public final class TableUtils {
     }
 
     public static int getColumnType(ReadOnlyVirtualMemory metaMem, int columnIndex) {
-        return metaMem.getByte(META_OFFSET_COLUMN_TYPES + columnIndex * META_COLUMN_DATA_SIZE);
+        return metaMem.getInt(META_OFFSET_COLUMN_TYPES + columnIndex * META_COLUMN_DATA_SIZE);
     }
 
     public static Timestamps.TimestampAddMethod getPartitionAdd(int partitionBy) {
@@ -685,7 +684,7 @@ public final class TableUtils {
     }
 
     static long getColumnFlags(ReadOnlyVirtualMemory metaMem, int columnIndex) {
-        return metaMem.getLong(META_OFFSET_COLUMN_TYPES + columnIndex * META_COLUMN_DATA_SIZE + 1);
+        return metaMem.getLong(META_OFFSET_COLUMN_TYPES + columnIndex * META_COLUMN_DATA_SIZE + 4);
     }
 
     static boolean isColumnIndexed(ReadOnlyVirtualMemory metaMem, int columnIndex) {
@@ -697,7 +696,7 @@ public final class TableUtils {
     }
 
     static int getIndexBlockCapacity(ReadOnlyVirtualMemory metaMem, int columnIndex) {
-        return metaMem.getInt(META_OFFSET_COLUMN_TYPES + columnIndex * META_COLUMN_DATA_SIZE + 9);
+        return metaMem.getInt(META_OFFSET_COLUMN_TYPES + columnIndex * META_COLUMN_DATA_SIZE + 4 + 8);
     }
 
     static int openMetaSwapFile(FilesFacade ff, AppendOnlyVirtualMemory mem, Path path, int rootLen, int retryCount) {
