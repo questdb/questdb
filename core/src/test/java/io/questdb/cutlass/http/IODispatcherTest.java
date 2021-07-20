@@ -1855,16 +1855,6 @@ public class IODispatcherTest {
             Assert.assertEquals(expectedImportedRows, reader.size());
             StringSink sink = new StringSink();
             TestUtils.assertCursor(expectedData, reader.getCursor(), reader.getMetadata(), false, sink);
-//            try(RecordCursor cursor = reader.getCursor()) {
-//                final Record record = cursor.getRecord();
-//                while (cursor.hasNext()) {
-//                    sink.put(record.getTimestamp(0));
-//                    sink.put(',');
-//                    sink.put(record.getInt(1));
-//                    sink.put('\n');
-//                }
-//            }
-//            Assert.assertEquals(expectedData, sink.toString());
         }
     }
 
