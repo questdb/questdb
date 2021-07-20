@@ -3113,29 +3113,16 @@ public class TextLoaderTest extends AbstractGriffinTest {
     }
 
     private void configureLoaderDefaults(TextLoader textLoader, byte columnSeparator, int atomicity, boolean overwrite) {
-        configureLoaderDefaults(
-                textLoader,
-                columnSeparator,
-                atomicity,
-                overwrite,
-                PartitionBy.NONE,
-                null);
+        textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
+        textLoader.configureDestination("test", overwrite, false, atomicity, PartitionBy.NONE, null);
+        if (columnSeparator > 0) {
+            textLoader.configureColumnDelimiter(columnSeparator);
+        }
     }
 
-    private void configureLoaderDefaults(TextLoader textLoader,
-                                         byte columnSeparator,
-                                         int atomicity,
-                                         boolean overwrite,
-                                         int partitionBy,
-                                         CharSequence timestampIndexCol) {
+    private void configureLoaderDefaults(TextLoader textLoader, byte columnSeparator, int atomicity, boolean overwrite, int partitionBy, CharSequence timestampIndexCol) {
         textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
-        textLoader.configureDestination(
-                "test",
-                overwrite,
-                false,
-                atomicity,
-                partitionBy,
-                timestampIndexCol);
+        textLoader.configureDestination("test", overwrite, false, atomicity, partitionBy, timestampIndexCol);
         if (columnSeparator > 0) {
             textLoader.configureColumnDelimiter(columnSeparator);
         }
