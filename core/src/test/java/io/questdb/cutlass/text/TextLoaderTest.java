@@ -44,6 +44,9 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class TextLoaderTest extends AbstractGriffinTest {
@@ -1192,14 +1195,8 @@ public class TextLoaderTest extends AbstractGriffinTest {
                 3,
                 6,
                 6,
-                new String[]{
-                        "/2021-01-01/",
-                        "/2021-01-02/",
-                        "/2021-01-02.5",
-                        "/2021-01-01.4",
-                        "/2021-01-01/",
-                        "/2021-01-02/"
-                },
+                6,
+                setOf("2021-01-01", "2021-01-02", "2021-01-01.4", "2021-01-02.5"),
                 "ts,int\n" +
                         "2021-01-01T00:04:00.000000Z,3\n" +
                         "2021-01-01T00:05:00.000000Z,4\n" +
@@ -1222,14 +1219,8 @@ public class TextLoaderTest extends AbstractGriffinTest {
                 2,
                 6,
                 6,
-                new String[]{
-                        "/2021-01-01/",
-                        "/2021-01-02/",
-                        "/2021-01-02.6",
-                        "/2021-01-01.5",
-                        "/2021-01-01/",
-                        "/2021-01-02/",
-                },
+                6,
+                setOf("2021-01-01", "2021-01-02", "2021-01-01.5", "2021-01-02.6"),
                 "ts,int\n" +
                         "2021-01-01T00:04:00.000000Z,3\n" +
                         "2021-01-01T00:05:00.000000Z,4\n" +
@@ -2892,21 +2883,16 @@ public class TextLoaderTest extends AbstractGriffinTest {
                                                                         int maxUncommittedRows,
                                                                         int expectedParsedLineCount,
                                                                         int expectedWrittenLineCount,
-                                                                        String[] expectedRmdirSuffixes,
+                                                                        int expectedRmdirCalls,
+                                                                        Set<String> expectedPartitionNames,
                                                                         String csvWithHeader,
                                                                         String expectedData) throws Exception {
-        final AtomicInteger rmdirOffset = new AtomicInteger();
+        final AtomicInteger rmdirCallCount = new AtomicInteger();
         final FilesFacade ff = new TestFilesFacade() {
             @Override
             public int rmdir(Path name) {
-                int offset = rmdirOffset.getAndIncrement();
-//                Assert.assertTrue(offset < expectedRmdirSuffixes.length);
-
-                // TODO: clearly these names are system dependent
-
-                System.out.printf("RMDIR offset:%d, name:%s%n", offset, name);
-
-//                Assert.assertTrue(name.toString().endsWith(expectedRmdirSuffixes[offset]));
+                rmdirCallCount.getAndIncrement();
+                Assert.assertTrue(expectedPartitionNames.contains(extractLast(name)));
                 return Files.rmdir(name);
             }
 
@@ -2976,6 +2962,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
                         );
                     }
             );
+            Assert.assertEquals(expectedRmdirCalls, rmdirCallCount.get());
             try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "test")) {
                 Assert.assertEquals(maxUncommittedRows, reader.getMaxUncommittedRows());
                 Assert.assertEquals(commitLag, reader.getCommitLag());
@@ -3022,6 +3009,17 @@ public class TextLoaderTest extends AbstractGriffinTest {
             Assert.assertEquals(expectedMaxUncommittedRows, reader.getMaxUncommittedRows());
             Assert.assertEquals(1, reader.size());
         }
+    }
+
+    private static String extractLast(Path path) {
+        String nameStr = path.toString();
+        String[] pathElements = nameStr.split(String.valueOf(Files.SEPARATOR));
+        String pathLeaf = pathElements[pathElements.length - 1];
+        return pathLeaf;
+    }
+
+    private static <T> Set<T> setOf(T... elements) {
+        return new HashSet<>(Arrays.asList(elements));
     }
 
     private void assertNoLeak(TestCode code) throws Exception {
