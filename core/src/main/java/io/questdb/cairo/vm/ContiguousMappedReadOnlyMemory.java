@@ -30,14 +30,13 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.Unsafe;
 import io.questdb.std.str.LPSZ;
 
 public class ContiguousMappedReadOnlyMemory extends AbstractContiguousMemory
         implements MappedReadOnlyMemory, ContiguousReadOnlyMemory {
 
     private static final Log LOG = LogFactory.getLog(ContiguousMappedReadOnlyMemory.class);
-    protected long page = -1;
+    protected long page = 0;
     protected FilesFacade ff;
     protected long fd = -1;
     protected long size = 0;
@@ -56,10 +55,10 @@ public class ContiguousMappedReadOnlyMemory extends AbstractContiguousMemory
 
     @Override
     public void close() {
-        if (page != -1) {
+        if (page != 0) {
             ff.munmap(page, size);
             this.size = 0;
-            this.page = -1;
+            this.page = 0;
         }
         if (fd != -1) {
             ff.close(fd);
@@ -108,6 +107,11 @@ public class ContiguousMappedReadOnlyMemory extends AbstractContiguousMemory
         }
     }
 
+    @Override
+    public int getPageCount() {
+        return page != 0 ? 1 : 0;
+    }
+
     public long size() {
         return size;
     }
@@ -133,7 +137,7 @@ public class ContiguousMappedReadOnlyMemory extends AbstractContiguousMemory
                 throw e;
             }
         } else {
-            this.page = -1;
+            this.page = 0;
         }
         LOG.debug().$("open ").$(name).$(" [fd=").$(fd).$(", pageSize=").$(size).$(", size=").$(this.size).$(']').$();
     }
@@ -154,7 +158,7 @@ public class ContiguousMappedReadOnlyMemory extends AbstractContiguousMemory
             if (size > 0) {
                 page = TableUtils.mremap(ff, fd, page, size, newSize, Files.MAP_RO);
             } else {
-                assert page == -1;
+                assert page == 0;
                 page = TableUtils.mapRO(ff, fd, newSize);
             }
             size = newSize;

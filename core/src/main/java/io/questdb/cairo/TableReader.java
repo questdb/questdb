@@ -737,23 +737,25 @@ public class TableReader implements Closeable, SymbolTableSource {
             path.concat(TableUtils.TODO_FILE_NAME).$();
             if (ff.exists(path)) {
                 todoMem.of(ff, path, ff.getPageSize());
-                long instanceHashLo;
-                long instanceHashHi;
-                long todoTxn;
-                long attemptsLeft = 10;
-                do {
-                    todoTxn = todoMem.getLong(24);
-                    Unsafe.getUnsafe().loadFence();
-                    instanceHashLo = todoMem.getLong(8);
-                    instanceHashHi = todoMem.getLong(16);
-                    Unsafe.getUnsafe().loadFence();
-                } while (todoTxn != todoMem.getLong(0) && --attemptsLeft > 0);
+                if (todoMem.getPageCount() > 0) {
+                    long instanceHashLo;
+                    long instanceHashHi;
+                    long todoTxn;
+                    long attemptsLeft = 10;
+                    do {
+                        todoTxn = todoMem.getLong(24);
+                        Unsafe.getUnsafe().loadFence();
+                        instanceHashLo = todoMem.getLong(8);
+                        instanceHashHi = todoMem.getLong(16);
+                        Unsafe.getUnsafe().loadFence();
+                    } while (todoTxn != todoMem.getLong(0) && --attemptsLeft > 0);
 
-                if (
-                        (instanceHashHi != 0 && instanceHashHi != configuration.getDatabaseIdHi())
-                                || (instanceHashLo != 0 && instanceHashLo != configuration.getDatabaseIdLo())
-                ) {
-                    throw CairoException.instance(0).put("Table ").put(path.$()).put(" is pending recovery.");
+                    if (
+                            (instanceHashHi != 0 && instanceHashHi != configuration.getDatabaseIdHi())
+                                    || (instanceHashLo != 0 && instanceHashLo != configuration.getDatabaseIdLo())
+                    ) {
+                        throw CairoException.instance(0).put("Table ").put(path.$()).put(" is pending recovery.");
+                    }
                 }
             }
         } finally {

@@ -127,7 +127,7 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
             this.indexReader.of(configuration, path.trimTo(plen), name, 0, -1);
 
             // this is the place where symbol values are stored
-            this.charMem.of(ff, SymbolMapWriter.charFileName(path.trimTo(plen), name), mapPageSize, 0);
+            this.charMem.of(ff, SymbolMapWriter.charFileName(path.trimTo(plen), name), mapPageSize);
 
             // move append pointer for symbol values in the correct place
             growCharMemToSymbolCount(symbolCount);

@@ -510,6 +510,48 @@ public class ContiguousMappedMemoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPageCountAPI() throws Exception {
+        withMem(0, (rwMem, roMem) -> {
+
+            Assert.assertEquals(0, roMem.getPageCount());
+            // read-write memory will always have one page unless it is closed
+            Assert.assertEquals(1, rwMem.getPageCount());
+
+            final int N = 10_000_000;
+            for (int i = 0; i < N; i++) {
+                rwMem.putBool(rnd.nextBoolean());
+            }
+
+            roMem.extend(rwMem.size());
+
+            // read these values back from
+            assertBool(rwMem, N);
+            assertBool(roMem, N);
+
+            Assert.assertEquals(1, roMem.getPageCount());
+            Assert.assertEquals(1, rwMem.getPageCount());
+
+        });
+    }
+
+    @Test
+    public void testPageCountIsZeroAfterClose() throws Exception {
+        assertMemoryLeak(() -> {
+            try (final Path path = Path.getThreadLocal(root).concat("t.d").$()) {
+                rnd.reset();
+                ContiguousMappedReadWriteMemory rwMem = new ContiguousMappedReadWriteMemory(
+                        FilesFacadeImpl.INSTANCE,
+                        path,
+                        0,
+                        0
+                );
+                rwMem.close();
+                Assert.assertEquals(0, rwMem.getPageCount());
+            }
+        });
+    }
+
+    @Test
     public void testShortAppend() throws Exception {
         withMem((rwMem, roMem) -> {
             final int N = 10_000_000;
@@ -723,6 +765,10 @@ public class ContiguousMappedMemoryTest extends AbstractCairoTest {
     }
 
     private void withMem(MemTestCode code) throws Exception {
+        withMem(_4M, code);
+    }
+
+    private void withMem(long sz, MemTestCode code) throws Exception {
         assertMemoryLeak(() -> {
             final Path path = Path.getThreadLocal(root).concat("t.d").$();
             rnd.reset();
@@ -730,15 +776,15 @@ public class ContiguousMappedMemoryTest extends AbstractCairoTest {
                     ContiguousMappedReadWriteMemory rwMem = new ContiguousMappedReadWriteMemory(
                             FilesFacadeImpl.INSTANCE,
                             path,
-                            _4M,
-                            _4M
+                            sz,
+                            sz
                     );
 
                     ContiguousMappedReadOnlyMemory roMem = new ContiguousMappedReadOnlyMemory(
                             FilesFacadeImpl.INSTANCE,
                             path,
-                            _4M,
-                            _4M
+                            sz,
+                            sz
                     )
             ) {
                 code.run(rwMem, roMem);

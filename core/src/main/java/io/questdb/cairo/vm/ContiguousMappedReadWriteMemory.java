@@ -36,12 +36,12 @@ public class ContiguousMappedReadWriteMemory extends AbstractContiguousMemory
         implements MappedReadWriteMemory, ContiguousReadWriteVirtualMemory {
     private static final Log LOG = LogFactory.getLog(ContiguousMappedReadWriteMemory.class);
     private final Long256Acceptor long256Acceptor = this::putLong256;
-    private long minMappedMemorySize;
-    protected long page = -1;
+    protected long page = 0;
     protected FilesFacade ff;
     protected long fd = -1;
     protected long size = 0;
     protected long appendAddress;
+    private long minMappedMemorySize;
     private long grownLength;
     private long mappedMemorySizeMsb;
 
@@ -68,10 +68,10 @@ public class ContiguousMappedReadWriteMemory extends AbstractContiguousMemory
 
     @Override
     public void close() {
-        if (page != -1) {
+        if (page != 0) {
             ff.munmap(page, size);
             long truncateSize = getAppendOffset();
-            this.page = -1;
+            this.page = 0;
             try {
                 VmUtils.bestEffortClose(ff, LOG, fd, true, truncateSize, Files.PAGE_SIZE);
             } finally {
@@ -117,6 +117,11 @@ public class ContiguousMappedReadWriteMemory extends AbstractContiguousMemory
     @Override
     public long getPageAddress(int pageIndex) {
         return page;
+    }
+
+    @Override
+    public int getPageCount() {
+        return page == 0 ? 0 : 1;
     }
 
     @Override
@@ -170,7 +175,7 @@ public class ContiguousMappedReadWriteMemory extends AbstractContiguousMemory
     public void truncate() {
         grownLength = 0;
         long fileSize = ff.length(fd);
-        if (page != -1) {
+        if (page != 0) {
             // try to remap to min size
             long sz = Math.min(fileSize, minMappedMemorySize);
             try {
@@ -273,8 +278,8 @@ public class ContiguousMappedReadWriteMemory extends AbstractContiguousMemory
             map0(ff, size);
             this.appendAddress = page + size;
         } else {
-            this.page = -1;
-            this.appendAddress = -1;
+            this.page = 0;
+            this.appendAddress = 0;
         }
         LOG.debug().$("open ").$(name).$(" [fd=").$(fd).$(", pageSize=").$(size).$(", size=").$(this.size).$(']').$();
     }

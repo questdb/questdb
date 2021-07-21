@@ -95,6 +95,11 @@ public class ContiguousVirtualMemory extends AbstractContiguousMemory
     }
 
     @Override
+    public int getPageCount() {
+        return baseAddress == 0 ? 0 : 1;
+    }
+
+    @Override
     public void extend(long size) {
         long nPages = (size >>> pageSizeMsb) + 1;
         size = nPages << pageSizeMsb;
@@ -107,15 +112,6 @@ public class ContiguousVirtualMemory extends AbstractContiguousMemory
             LOG.debug().$("extended [oldBase=").$(baseAddress).$(", newBase=").$(newBaseAddress).$(", oldSize=").$(oldSize).$(", newSize=").$(size).$(']').$();
         }
         handleMemoryReallocation(newBaseAddress, size);
-    }
-
-    @Override
-    public void truncate() {
-        // our "extend" implementation will reduce size as well as
-        // extend it
-        extend(0);
-        // reset append offset
-        appendAddress = baseAddress;
     }
 
     @Override
@@ -144,18 +140,6 @@ public class ContiguousVirtualMemory extends AbstractContiguousMemory
         putLong256(hexString, start, end, long256Acceptor);
     }
 
-    public void replacePage(long address, long size) {
-        long appendOffset = getAppendOffset();
-        this.baseAddress = this.appendAddress = address;
-        this.baseAddressHi = baseAddress + size;
-        jumpTo(appendOffset);
-    }
-
-    public long resize(long size) {
-        checkAndExtend(baseAddress + size);
-        return baseAddress;
-    }
-
     /**
      * Skips given number of bytes. Same as logically appending 0-bytes. Advantage of this method is that
      * no memory write takes place.
@@ -166,6 +150,27 @@ public class ContiguousVirtualMemory extends AbstractContiguousMemory
     public void skip(long bytes) {
         checkAndExtend(appendAddress + bytes);
         appendAddress += bytes;
+    }
+
+    @Override
+    public void truncate() {
+        // our "extend" implementation will reduce size as well as
+        // extend it
+        extend(0);
+        // reset append offset
+        appendAddress = baseAddress;
+    }
+
+    public void replacePage(long address, long size) {
+        long appendOffset = getAppendOffset();
+        this.baseAddress = this.appendAddress = address;
+        this.baseAddressHi = baseAddress + size;
+        jumpTo(appendOffset);
+    }
+
+    public long resize(long size) {
+        checkAndExtend(baseAddress + size);
+        return baseAddress;
     }
 
     public void zero() {

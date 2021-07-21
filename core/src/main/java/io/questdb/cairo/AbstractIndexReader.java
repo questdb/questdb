@@ -39,7 +39,7 @@ public abstract class AbstractIndexReader implements BitmapIndexReader {
     public static final String INDEX_CORRUPT = "cursor could not consistently read index header [corrupt?]";
     protected final static Log LOG = LogFactory.getLog(BitmapIndexBwdReader.class);
     protected final MappedReadOnlyMemory keyMem = new ContiguousMappedReadOnlyMemory();
-    protected final ContiguousMappedReadOnlyMemory valueMem = new ContiguousMappedReadOnlyMemory();
+    protected final MappedReadOnlyMemory valueMem = new ContiguousMappedReadOnlyMemory();
     protected int blockValueCountMod;
     protected int blockCapacity;
     protected long spinLockTimeoutUs;
@@ -98,7 +98,7 @@ public abstract class AbstractIndexReader implements BitmapIndexReader {
         this.spinLockTimeoutUs = configuration.getSpinLockTimeoutUs();
 
         try {
-            this.keyMem.of(configuration.getFilesFacade(), BitmapIndexUtils.keyFileName(path, name), pageSize, 0);
+            this.keyMem.of(configuration.getFilesFacade(), BitmapIndexUtils.keyFileName(path, name), pageSize);
             this.keyMem.extend(configuration.getFilesFacade().length(this.keyMem.getFd()));
             this.clock = configuration.getMicrosecondClock();
 
@@ -149,7 +149,7 @@ public abstract class AbstractIndexReader implements BitmapIndexReader {
             if (unIndexedNullCount > 0) {
                 this.keyCountIncludingNulls++;
             }
-            this.valueMem.of(configuration.getFilesFacade(), BitmapIndexUtils.valueFileName(path.trimTo(plen), name), pageSize, 0);
+            this.valueMem.of(configuration.getFilesFacade(), BitmapIndexUtils.valueFileName(path.trimTo(plen), name), pageSize);
             this.valueMem.extend(configuration.getFilesFacade().length(this.valueMem.getFd()));
         } catch (Throwable e) {
             close();
