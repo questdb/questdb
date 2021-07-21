@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-import React, { useRef, useState } from "react"
+import React, { useRef, useState, useEffect } from "react"
 import { throttle } from "throttle-debounce"
 
 type Props = Readonly<{
@@ -83,31 +83,24 @@ const LazyScroller = ({ children }: Props) => {
       endPageIdx * ITEMS_PER_PAGE,
     )
   }
-  if (innerWrapClientRect && bottomOfViewport) {
-    const diffFromBot = innerWrapClientRect.bottom - bottomOfViewport
-    const diffFromTop = innerWrapClientRect.top
-    if (diffFromTop < -300 && heightRealDiff === 0) {
-      setTimeout(() => {
+  useEffect(() => {
+    if (innerWrapClientRect && bottomOfViewport) {
+      const diffFromBot = innerWrapClientRect.bottom - bottomOfViewport
+      const diffFromTop = innerWrapClientRect.top
+      if (diffFromTop < -300 && heightRealDiff === 0) {
         setStart(startPageIdx + 1)
-      })
-    } else if (diffFromTop > 50 && startPageIdx > 0) {
-      setTimeout(() => {
+      } else if (diffFromTop > 50 && startPageIdx > 0) {
         setStart(startPageIdx - 1)
-      })
-    }
+      }
 
-    if (diffFromBot < -300) {
-      // Delay the change so the application actually gets the time to re-render
-      setTimeout(() => {
+      if (diffFromBot < -300) {
         setEnd(endPageIdx + 1)
-      })
-    } else if (diffFromBot > 500 && heightRealDiff === 0) {
-      // If we're too far away from the bottom and the height is the same
-      setTimeout(() => {
+      } else if (diffFromBot > 500 && heightRealDiff === 0) {
+        // If we're too far away from the bottom and the height is the same
         setEnd(endPageIdx - 1)
-      })
+      }
     }
-  }
+  }, [innerWrapClientRect?.top])
 
   const [, setState] = useState({})
   function forceUpdate() {
