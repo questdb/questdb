@@ -103,11 +103,7 @@ public class CairoTextWriter implements Closeable, Mutable {
 
     public void commit() {
         if (writer != null) {
-            if (durable) {
-                assert false;
-            } else {
-                writer.commit();
-            }
+            writer.commit(durable ? CommitMode.SYNC : CommitMode.NOSYNC);
         }
     }
 
@@ -200,14 +196,8 @@ public class CairoTextWriter implements Closeable, Mutable {
     }
 
     private void checkMaxAndCommitLag() {
-        if (writer != null) {
-            if (durable) {
-                assert false;
-            } else {
-                if (maxUncommittedRows > 0 && writer.getO3RowCount() >= maxUncommittedRows) {
-                    writer.checkMaxAndCommitLag();
-                }
-            }
+        if (writer != null && maxUncommittedRows > 0 && writer.getO3RowCount() >= maxUncommittedRows) {
+            writer.checkMaxAndCommitLag(durable ? CommitMode.SYNC : CommitMode.NOSYNC);
         }
     }
 
@@ -373,7 +363,7 @@ public class CairoTextWriter implements Closeable, Mutable {
                 }
             }
         } else {
-           LOG.info().$("cannot update metadata attributes commitLag and maxUncommittedRows when the table exists and parameter overwrite is false").$();
+            LOG.info().$("cannot update metadata attributes commitLag and maxUncommittedRows when the table exists and parameter overwrite is false").$();
         }
         _size = writer.size();
         columnErrorCounts.seed(writer.getMetadata().getColumnCount(), 0);

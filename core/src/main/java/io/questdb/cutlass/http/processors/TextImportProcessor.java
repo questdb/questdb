@@ -144,7 +144,7 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
             CharSequence commitLagChars = rh.getUrlParam("commitLag");
             if (commitLagChars != null) {
                 try {
-                    long commitLag = Numbers.parseInt(commitLagChars);
+                    long commitLag = Numbers.parseLong(commitLagChars);
                     if (commitLag >= 0) {
                         transientState.textLoader.setCommitLag(commitLag);
                     }

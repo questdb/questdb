@@ -35,23 +35,13 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.LockSupport;
 
+import io.questdb.cairo.*;
+import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
 import org.junit.*;
 import org.junit.rules.TemporaryFolder;
 
 import io.questdb.Metrics;
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.CairoTestUtils;
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.DefaultCairoConfiguration;
-import io.questdb.cairo.PartitionBy;
-import io.questdb.cairo.RecordCursorPrinter;
-import io.questdb.cairo.TableModel;
-import io.questdb.cairo.TableReader;
-import io.questdb.cairo.TableUtils;
-import io.questdb.cairo.TableWriter;
-import io.questdb.cairo.TestRecord;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cutlass.NetUtils;
 import io.questdb.cutlass.http.processors.HealthCheckProcessor;
@@ -86,16 +76,6 @@ import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
-import io.questdb.std.Chars;
-import io.questdb.std.Files;
-import io.questdb.std.LongHashSet;
-import io.questdb.std.LongList;
-import io.questdb.std.ObjList;
-import io.questdb.std.Os;
-import io.questdb.std.Rnd;
-import io.questdb.std.StationaryMillisClock;
-import io.questdb.std.Unsafe;
-import io.questdb.std.Zip;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.AbstractCharSequence;
@@ -696,6 +676,17 @@ public class IODispatcherTest {
             boolean expectDisconnect,
             int requestCount
     ) throws Exception {
+        testImport(response, request, nf,null, expectDisconnect, requestCount);
+    }
+
+    public void testImport(
+            String response,
+            String request,
+            NetworkFacade nf,
+            CairoConfiguration configuration,
+            boolean expectDisconnect,
+            int requestCount
+    ) throws Exception {
 
         new HttpQueryTestBuilder()
                 .withTempFolder(temp)
@@ -708,15 +699,16 @@ public class IODispatcherTest {
                                 .withHttpProtocolVersion("HTTP/1.1 ")
                                 .withServerKeepAlive(true)
                 )
-                .run(engine -> sendAndReceive(
-                        nf,
-                        request,
-                        response,
-                        requestCount,
-                        0,
-                        false,
-                        expectDisconnect
-                ));
+                .run(configuration,
+                        engine -> sendAndReceive(
+                                nf,
+                                request,
+                                response,
+                                requestCount,
+                                0,
+                                false,
+                                expectDisconnect
+                        ));
     }
 
     @Test
@@ -1734,10 +1726,13 @@ public class IODispatcherTest {
 
     @Test
     public void testImportSettingCommitLagAndMaxUncommittedRows1() throws Exception {
-        testImportSettingCommitLagAndMaxUncommittedRows(
-                "test_table",
+        importWithCommitLagAndMaxUncommittedRowsTableNotExists(
                 240_000_000, // 4 minutes, micro precision
                 3,
+                240_000_000, // 4 minutes, micro precision
+                3,
+                0,
+                6,
                 "ts,int\r\n" +
                         "2021-01-01 00:04:00,3\r\n" +
                         "2021-01-01 00:05:00,4\r\n" +
@@ -1750,20 +1745,22 @@ public class IODispatcherTest {
                         "2021-01-01T00:04:00.000000Z\t3\n" +
                         "2021-01-01T00:05:00.000000Z\t4\n" +
                         "2021-01-02T00:00:30.000000Z\t5\n" +
-                        "2021-01-02T00:05:31.000000Z\t6\n",
-                0,
-                6
+                        "2021-01-02T00:05:31.000000Z\t6\n"
         );
     }
 
-    // TODO: a partition switch is missing. When transientRowCount goes from 4 to 1 fixedRowCount is not updated
+    // TODO: a partition switch is missing. When transientRowCount goes from 4 to 1 fixedRowCount
+    //  is not updated, this results in "rowsRejected":3, "rowsImported":2.
     @Ignore("Edge case, no regression.")
     @Test
     public void testImportSettingCommitLagAndMaxUncommittedRows2() throws Exception {
-        testImportSettingCommitLagAndMaxUncommittedRows(
-                "test_table",
+        importWithCommitLagAndMaxUncommittedRowsTableNotExists(
                 120_000_000, // 2 minutes, micro precision
                 1,
+                120_000_000,
+                1,
+                0,
+                5,
                 "ts,int\r\n" +
                         "2021-01-01 00:05:00,3\r\n" +
                         "2021-01-01 00:01:00,1\r\n" +
@@ -1774,36 +1771,98 @@ public class IODispatcherTest {
                         "2021-01-01T00:01:30.000000Z\t2\n" +
                         "2021-01-01T00:05:00.000000Z\t3\n" +
                         "2021-01-02T00:00:30.000000Z\t4\n" +
-                        "2021-01-02T00:05:31.000000Z\t5\n",
-                0,
-                5
+                        "2021-01-02T00:05:31.000000Z\t5\n"
         );
     }
 
-    private void testImportSettingCommitLagAndMaxUncommittedRows(String tableName,
-                                                                 long commitLag,
-                                                                 int maxUncommittedRows,
-                                                                 String data,
-                                                                 String expectedData,
-                                                                 int expectedRejectedRows,
-                                                                 int expectedImportedRows) throws Exception {
+    @Test
+    public void testCannotUpdateCommitLagAndMaxUncommittedRowsIfTableExistsAndOverwriteIsFalse() throws Exception {
+        importWithCommitLagAndMaxUncommittedRowsTableExists(
+                false,
+                true,
+                PartitionBy.DAY,
+                3_600_000_000L, // 1 hour, micro precision
+                1,
+                0,
+                1000);
+    }
+
+    @Test
+    public void testUpdateCommitLagAndMaxUncommittedRowsIsIgnoredIfValuesAreSmallerThanZero() throws Exception {
+        importWithCommitLagAndMaxUncommittedRowsTableExists(
+                true,
+                true,
+                PartitionBy.DAY,
+                -1,
+                -1,
+                0,
+                1000);
+    }
+
+    @Test
+    public void testUpdateCommitLagAndMaxUncommittedRowsIsIgnoredIfPartitionByIsNONE() throws Exception {
+        importWithCommitLagAndMaxUncommittedRowsTableExists(
+                true,
+                false,
+                PartitionBy.NONE,
+                180_000_000,
+                1,
+                0,
+                1000);
+    }
+
+    @Test
+    public void testCanUpdateCommitLagAndMaxUncommittedRowsIfTableExistsAndOverwriteIsTrue() throws Exception {
+        importWithCommitLagAndMaxUncommittedRowsTableExists(
+                true,
+                true,
+                PartitionBy.DAY,
+                180_000_000,
+                721,
+                180_000_000,
+                721);
+    }
+
+    @Test
+    public void testCanUpdateCommitLagAndMaxUncommittedRowsToZeroIfTableExistsAndOverwriteIsTrue() throws Exception {
+        importWithCommitLagAndMaxUncommittedRowsTableExists(
+                true,
+                false,
+                PartitionBy.DAY,
+                0,
+                0,
+                0,
+                0);
+    }
+
+    private void importWithCommitLagAndMaxUncommittedRowsTableNotExists(long commitLag,
+                                                                        int maxUncommittedRows,
+                                                                        long expectedCommitLag,
+                                                                        int expectedMaxUncommittedRows,
+                                                                        int expectedRejectedRows,
+                                                                        int expectedImportedRows,
+                                                                        String data,
+                                                                        String expectedData) throws Exception {
+        String tableName = "test_table";
         String command = "POST /upload?fmt=json&" +
-                "overwrite=true&" +
+                "overwrite=false&" +
                 "forceHeader=true&" +
                 "timestamp=ts&" +
                 "partitionBy=DAY&" +
                 "commitLag=" + commitLag + "&" +
                 "maxUncommittedRows=" + maxUncommittedRows + "&" +
                 "name=" + tableName + " HTTP/1.1\r\n";
+
         String expectedMetadata = "{\"status\":\"OK\"," +
                 "\"location\":\"" + tableName + "\"," +
                 "\"rowsRejected\":" + expectedRejectedRows + "," +
-                "\"rowsImported\":" + expectedImportedRows  + "," +
+                "\"rowsImported\":" + expectedImportedRows + "," +
                 "\"header\":true," +
                 "\"columns\":[" +
                 "{\"name\":\"ts\",\"type\":\"TIMESTAMP\",\"size\":8,\"errors\":0}," +
                 "{\"name\":\"int\",\"type\":\"INT\",\"size\":4,\"errors\":0}" +
                 "]}\r\n";
+
         testImport(
                 "HTTP/1.1 200 OK\r\n" +
                         "Server: questDB/1.0\r\n" +
@@ -1844,15 +1903,215 @@ public class IODispatcherTest {
                 1
         );
 
+        assertMetadataAndData(
+                tableName,
+                expectedCommitLag,
+                expectedMaxUncommittedRows,
+                expectedRejectedRows,
+                expectedImportedRows,
+                expectedData);
+    }
+
+    private void importWithCommitLagAndMaxUncommittedRowsTableExists(boolean overwrite,
+                                                                     boolean durable,
+                                                                     int partitionBy,
+                                                                     long commitLag,
+                                                                     int maxUncommittedRows,
+                                                                     long expectedCommitLag,
+                                                                     int expectedMaxUncommittedRows) throws Exception {
+        final AtomicInteger msyncCallCount = new AtomicInteger();
+        final String baseDir = temp.getRoot().getAbsolutePath();
+        CairoConfiguration configuration = new DefaultCairoConfiguration(baseDir) {
+            @Override
+            public FilesFacade getFilesFacade() {
+                return new FilesFacadeImpl() {
+                    @Override
+                    public int msync(long addr, long len, boolean async) {
+                        msyncCallCount.incrementAndGet();
+                        return Files.msync(addr, len, async);
+                    }
+                };
+            }
+        };
+
+        String tableName = "test_table";
+        try (TableModel model = new TableModel(configuration, tableName, partitionBy)
+                .timestamp("ts")
+                .col("int", ColumnType.INT)) {
+            CairoTestUtils.create(model);
+        }
+
+        String command = "POST /upload?fmt=json&" +
+                String.format("overwrite=%b&", overwrite) +
+                String.format("durable=%b&", durable) +
+                "forceHeader=true&" +
+                "timestamp=ts&" +
+                String.format("partitionBy=%s&", PartitionBy.toString(partitionBy)) +
+                "commitLag=" + commitLag + "&" +
+                "maxUncommittedRows=" + maxUncommittedRows + "&" +
+                "name=" + tableName + " HTTP/1.1\r\n";
+
+        String expectedMetadata = "{\"status\":\"OK\"," +
+                "\"location\":\"" + tableName + "\"," +
+                "\"rowsRejected\":0," +
+                "\"rowsImported\":1," +
+                "\"header\":true," +
+                "\"columns\":[" +
+                "{\"name\":\"ts\",\"type\":\"TIMESTAMP\",\"size\":8,\"errors\":0}," +
+                "{\"name\":\"int\",\"type\":\"INT\",\"size\":4,\"errors\":0}" +
+                "]}\r\n";
+
+        testImport(
+                "HTTP/1.1 200 OK\r\n" +
+                        "Server: questDB/1.0\r\n" +
+                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                        "Transfer-Encoding: chunked\r\n" +
+                        "Content-Type: application/json; charset=utf-8\r\n" +
+                        "\r\n" +
+                        "c8\r\n" +
+                        expectedMetadata +
+                        "00\r\n" +
+                        "\r\n",
+                command +
+                        "Host: localhost:9001\r\n" +
+                        "Connection: keep-alive\r\n" +
+                        "Content-Length: 832\r\n" +
+                        "Accept: */*\r\n" +
+                        "Origin: http://localhost:9000\r\n" +
+                        "X-Requested-With: XMLHttpRequest\r\n" +
+                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/77.0.3865.120 Safari/537.36\r\n" +
+                        "Sec-Fetch-Mode: cors\r\n" +
+                        "Content-Type: multipart/form-data; boundary=----WebKitFormBoundaryOsOAD9cPKyHuxyBV\r\n" +
+                        "Sec-Fetch-Site: same-origin\r\n" +
+                        "Referer: http://localhost:9000/index.html\r\n" +
+                        "\r\n" +
+                        "------WebKitFormBoundaryOsOAD9cPKyHuxyBV\r\n" +
+                        "Content-Disposition: form-data; name=\"schema\"\r\n" +
+                        "\r\n" +
+                        "[{\"name\":\"ts\",\"type\":\"TIMESTAMP\", \"pattern\": \"yyyy-MM-dd HH:mm:ss\"}," +
+                        "{\"name\":\"int\",\"type\":\"INT\"}]\r\n" +
+                        "------WebKitFormBoundaryOsOAD9cPKyHuxyBV\r\n" +
+                        "Content-Disposition: form-data; name=\"data\"\r\n" +
+                        "\r\n" +
+                        "ts,int\r\n" +
+                        "2021-01-01 00:01:00,1\r\n" +
+                        "\r\n" +
+                        "------WebKitFormBoundaryOsOAD9cPKyHuxyBV--",
+                NetworkFacadeImpl.INSTANCE,
+                configuration,
+                false,
+                1
+        );
+
+        Assert.assertTrue((durable && msyncCallCount.get() > 0) || (!durable && msyncCallCount.get() == 0));
+
+        assertMetadataAndData(
+                tableName,
+                expectedCommitLag,
+                expectedMaxUncommittedRows,
+                0,
+                1,
+                "2021-01-01T00:01:00.000000Z\t1\n");
+    }
+
+    private void assertMetadataAndData(String tableName,
+                                       long expectedCommitLag,
+                                       int expectedMaxUncommittedRows,
+                                       int expectedRejectedRows,
+                                       int expectedImportedRows,
+                                       String expectedData) {
         final String baseDir = temp.getRoot().getAbsolutePath();
         DefaultCairoConfiguration configuration = new DefaultCairoConfiguration(baseDir);
         try (TableReader reader = new TableReader(configuration, tableName)) {
-            Assert.assertEquals(commitLag, reader.getCommitLag());
-            Assert.assertEquals(maxUncommittedRows, reader.getMaxUncommittedRows());
+            Assert.assertEquals(expectedCommitLag, reader.getCommitLag());
+            Assert.assertEquals(expectedMaxUncommittedRows, reader.getMaxUncommittedRows());
             Assert.assertEquals(expectedImportedRows, reader.size());
+            Assert.assertEquals(expectedRejectedRows, expectedImportedRows - reader.size());
             StringSink sink = new StringSink();
             TestUtils.assertCursor(expectedData, reader.getCursor(), reader.getMetadata(), false, sink);
         }
+    }
+
+    @Test
+    public void testFailsOnBadCommitLag() throws Exception {
+        String command = "POST /upload?fmt=json&" +
+                "commitLag=2seconds+please&" +
+                "name=test HTTP/1.1\r\n";
+        testImport(
+                "HTTP/1.1 200 OK\r\n" +
+                        "Server: questDB/1.0\r\n" +
+                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                        "Transfer-Encoding: chunked\r\n" +
+                        "Content-Type: application/json; charset=utf-8\r\n" +
+                        "\r\n" +
+                        "2e\r\n" +
+                        "{\"status\":\"invalid commitLag, must be a long\"}\r\n" +
+                        "00\r\n" +
+                        "\r\n",
+                command +
+                        "Host: localhost:9001\r\n" +
+                        "Connection: keep-alive\r\n" +
+                        "Content-Length: 832\r\n" +
+                        "Accept: */*\r\n" +
+                        "Origin: http://localhost:9000\r\n" +
+                        "X-Requested-With: XMLHttpRequest\r\n" +
+                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/77.0.3865.120 Safari/537.36\r\n" +
+                        "Sec-Fetch-Mode: cors\r\n" +
+                        "Content-Type: multipart/form-data; boundary=----WebKitFormBoundaryOsOAD9cPKyHuxyBV\r\n" +
+                        "Sec-Fetch-Site: same-origin\r\n" +
+                        "Referer: http://localhost:9000/index.html\r\n" +
+                        "\r\n" +
+                        "------WebKitFormBoundaryOsOAD9cPKyHuxyBV\r\n" +
+                        "Content-Disposition: form-data; name=\"data\"\r\n" +
+                        "\r\n" +
+                        "2021-01-01 00:00:00,1\r\n" +
+                        "\r\n" +
+                        "------WebKitFormBoundaryOsOAD9cPKyHuxyBV--",
+                NetworkFacadeImpl.INSTANCE,
+                true,
+                1
+        );
+    }
+
+    @Test
+    public void testFailsOnBadMaxUncommittedRows() throws Exception {
+        String command = "POST /upload?fmt=json&" +
+                "maxUncommittedRows=two&" +
+                "name=test HTTP/1.1\r\n";
+        testImport(
+                "HTTP/1.1 200 OK\r\n" +
+                        "Server: questDB/1.0\r\n" +
+                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                        "Transfer-Encoding: chunked\r\n" +
+                        "Content-Type: application/json; charset=utf-8\r\n" +
+                        "\r\n" +
+                        "37\r\n" +
+                        "{\"status\":\"invalid maxUncommittedRows, must be an int\"}\r\n" +
+                        "00\r\n" +
+                        "\r\n",
+                command +
+                        "Host: localhost:9001\r\n" +
+                        "Connection: keep-alive\r\n" +
+                        "Content-Length: 832\r\n" +
+                        "Accept: */*\r\n" +
+                        "Origin: http://localhost:9000\r\n" +
+                        "X-Requested-With: XMLHttpRequest\r\n" +
+                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/77.0.3865.120 Safari/537.36\r\n" +
+                        "Sec-Fetch-Mode: cors\r\n" +
+                        "Content-Type: multipart/form-data; boundary=----WebKitFormBoundaryOsOAD9cPKyHuxyBV\r\n" +
+                        "Sec-Fetch-Site: same-origin\r\n" +
+                        "Referer: http://localhost:9000/index.html\r\n" +
+                        "\r\n" +
+                        "------WebKitFormBoundaryOsOAD9cPKyHuxyBV\r\n" +
+                        "Content-Disposition: form-data; name=\"data\"\r\n" +
+                        "\r\n" +
+                        "2021-01-01 00:00:00,1\r\n" +
+                        "\r\n" +
+                        "------WebKitFormBoundaryOsOAD9cPKyHuxyBV--",
+                NetworkFacadeImpl.INSTANCE,
+                true,
+                1
+        );
     }
 
     @Test
@@ -4267,7 +4526,7 @@ public class IODispatcherTest {
                     configuration,
                     new IOContextFactory<HttpConnectionContext>() {
                         @SuppressWarnings("resource")
-						@Override
+                        @Override
                         public HttpConnectionContext newInstance(long fd, IODispatcher<HttpConnectionContext> dispatcher1) {
                             openCount.incrementAndGet();
                             return new HttpConnectionContext(httpServerConfiguration.getHttpContextConfiguration()) {
@@ -4301,16 +4560,16 @@ public class IODispatcherTest {
                 SOCountDownLatch serverHaltLatch = new SOCountDownLatch(1);
 
                 new Thread(() -> {
-                	try {
-	                    do {
-	                        dispatcher.run(0);
-	                        dispatcher.processIOQueue(
-	                                (operation, context) -> context.handleClientOperation(operation, selector, EmptyRescheduleContext)
-	                        );
-	                    } while (serverRunning.get());
-                	} finally {
-                		serverHaltLatch.countDown();
-                	}
+                    try {
+                        do {
+                            dispatcher.run(0);
+                            dispatcher.processIOQueue(
+                                    (operation, context) -> context.handleClientOperation(operation, selector, EmptyRescheduleContext)
+                            );
+                        } while (serverRunning.get());
+                    } finally {
+                        serverHaltLatch.countDown();
+                    }
                 }).start();
 
                 LongList openFds = new LongList();
@@ -4362,10 +4621,10 @@ public class IODispatcherTest {
                         for (int i = 0; i < N; i++) {
                             if (i == activeConnectionLimit) {
                                 for (int j = 0; j < activeConnectionLimit; j++) {
-                                	long fd = openFds.getQuick(j);
+                                    long fd = openFds.getQuick(j);
                                     Net.close(fd);
                                     closedFds.add(fd);
-                               }
+                                }
                             }
 
                             long fd = openFds.getQuick(i);
@@ -4386,11 +4645,11 @@ public class IODispatcherTest {
                         Unsafe.free(mem, request.length());
                     }
                 } finally {
-                    for (int i=0; i<openFds.size(); i++) {
-                    	long fd = openFds.getQuick(i);
-                    	if (! closedFds.contains(fd)) {
-                    		Net.close(fd);
-                    	}
+                    for (int i = 0; i < openFds.size(); i++) {
+                        long fd = openFds.getQuick(i);
+                        if (!closedFds.contains(fd)) {
+                            Net.close(fd);
+                        }
                     }
                     Net.freeSockAddr(sockAddr);
                     Unsafe.free(buf, 4096);
@@ -4477,7 +4736,7 @@ public class IODispatcherTest {
                                 public void onRequest(int operation, IOContext context) {
                                     long fd = context.getFd();
                                     int rc;
-                                    switch(operation) {
+                                    switch (operation) {
                                         case IOOperation.READ:
                                             rc = Net.recv(fd, smem, 1);
                                             if (rc == 1) {
@@ -4596,7 +4855,7 @@ public class IODispatcherTest {
             }
         });
     }
-    
+
     @Test
     public void testMissingContentDisposition() throws Exception {
         testImport(

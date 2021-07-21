@@ -1192,8 +1192,10 @@ public class TextLoaderTest extends AbstractGriffinTest {
 
     @Test
     public void testImportSettingCommitLagAndMaxUncommittedRows1() throws Exception {
-        importWithCommitLagAndMaxUncommittedRowsTableNotExists(240_000_000, // 4 minutes, precision is micro
+        importWithCommitLagAndMaxUncommittedRowsTableNotExists(
+                240_000_000, // 4 minutes, precision is micro
                 3,
+                true,
                 6,
                 6,
                 6,
@@ -1216,8 +1218,10 @@ public class TextLoaderTest extends AbstractGriffinTest {
 
     @Test
     public void testImportSettingCommitLagAndMaxUncommittedRows2() throws Exception {
-        importWithCommitLagAndMaxUncommittedRowsTableNotExists(60_000_000, // 1 minute, precision is micro
+        importWithCommitLagAndMaxUncommittedRowsTableNotExists(
+                60_000_000, // 1 minute, precision is micro
                 2,
+                false,
                 6,
                 6,
                 6,
@@ -1240,7 +1244,8 @@ public class TextLoaderTest extends AbstractGriffinTest {
 
     @Test
     public void testCannotUpdateCommitLagAndMaxUncommittedRowsIfTableExistsAndOverwriteIsFalse() throws Exception {
-        importWithCommitLagAndMaxUncommittedRowsTableExists("partition by DAY with maxUncommittedRows = 2, commitLag = 2s",
+        importWithCommitLagAndMaxUncommittedRowsTableExists(
+                "partition by DAY with maxUncommittedRows = 2, commitLag = 2s",
                 false,
                 PartitionBy.DAY,
                 180_000_000,
@@ -1251,7 +1256,8 @@ public class TextLoaderTest extends AbstractGriffinTest {
 
     @Test
     public void testUpdateCommitLagAndMaxUncommittedRowsIsIgnoredIfValuesAreSmallerThanZero() throws Exception {
-        importWithCommitLagAndMaxUncommittedRowsTableExists("partition by DAY",
+        importWithCommitLagAndMaxUncommittedRowsTableExists(
+                "partition by DAY",
                 true,
                 PartitionBy.DAY,
                 -1,
@@ -1262,7 +1268,8 @@ public class TextLoaderTest extends AbstractGriffinTest {
 
     @Test
     public void testUpdateCommitLagAndMaxUncommittedRowsIsIgnoredIfPartitionByIsNONE() throws Exception {
-        importWithCommitLagAndMaxUncommittedRowsTableExists("",
+        importWithCommitLagAndMaxUncommittedRowsTableExists(
+                "",
                 true,
                 PartitionBy.NONE,
                 180_000_000,
@@ -1273,7 +1280,8 @@ public class TextLoaderTest extends AbstractGriffinTest {
 
     @Test
     public void testCanUpdateCommitLagAndMaxUncommittedRowsIfTableExistsAndOverwriteIsTrue() throws Exception {
-        importWithCommitLagAndMaxUncommittedRowsTableExists("partition by DAY with maxUncommittedRows = 2, commitLag = 2s",
+        importWithCommitLagAndMaxUncommittedRowsTableExists(
+                "partition by DAY with maxUncommittedRows = 2, commitLag = 2s",
                 true,
                 PartitionBy.DAY,
                 180_000_000,
@@ -2893,6 +2901,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
 
     private void importWithCommitLagAndMaxUncommittedRowsTableNotExists(long commitLag,
                                                                         int maxUncommittedRows,
+                                                                        boolean durable,
                                                                         int expectedParsedLineCount,
                                                                         int expectedWrittenLineCount,
                                                                         int expectedRmdirCalls,
@@ -2900,12 +2909,21 @@ public class TextLoaderTest extends AbstractGriffinTest {
                                                                         String csvWithHeader,
                                                                         String expectedData) throws Exception {
         final AtomicInteger rmdirCallCount = new AtomicInteger();
+        final AtomicInteger msyncCallCount = new AtomicInteger();
+
         final FilesFacade ff = new TestFilesFacade() {
             @Override
             public int rmdir(Path name) {
                 rmdirCallCount.getAndIncrement();
                 Assert.assertTrue(expectedPartitionNames.contains(extractLast(name)));
                 return Files.rmdir(name);
+            }
+
+            @Override
+            public int msync(long addr, long len, boolean async) {
+                msyncCallCount.incrementAndGet();
+                Assert.assertFalse(async);
+                return Files.msync(addr, len, async);
             }
 
             @Override
@@ -2948,6 +2966,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
                                 (byte) ',',
                                 Atomicity.SKIP_COL,
                                 false,
+                                durable,
                                 PartitionBy.DAY,
                                 "ts");
                         textLoader.setForceHeaders(true);
@@ -2975,6 +2994,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
                     }
             );
             Assert.assertEquals(expectedRmdirCalls, rmdirCallCount.get());
+            Assert.assertTrue((durable && msyncCallCount.get() > 0) || (!durable && msyncCallCount.get() == 0));
             try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "test")) {
                 Assert.assertEquals(maxUncommittedRows, reader.getMaxUncommittedRows());
                 Assert.assertEquals(commitLag, reader.getCommitLag());
@@ -2995,7 +3015,13 @@ public class TextLoaderTest extends AbstractGriffinTest {
                 textLoader -> {
                     String createStmt = "create table test(ts timestamp, int int) timestamp(ts) " + createStmtExtra;
                     compiler.compile(createStmt, sqlExecutionContext);
-                    configureLoaderDefaults(textLoader, (byte) ',', Atomicity.SKIP_ROW, overwrite, partitionBy, "ts");
+                    configureLoaderDefaults(
+                            textLoader,
+                            (byte) ',',
+                            Atomicity.SKIP_ROW,
+                            overwrite,
+                            partitionBy,
+                            "ts");
                     textLoader.setForceHeaders(true);
                     textLoader.setCommitLag(commitLag);
                     textLoader.setMaxUncommittedRows(maxUncommittedRows);
@@ -3023,7 +3049,8 @@ public class TextLoaderTest extends AbstractGriffinTest {
         }
     }
 
-    private static String PATH_SEP_REGEX = Os.type == Os.WINDOWS ? String.format("[%c%c]", Files.SEPARATOR, Files.SEPARATOR) : String.valueOf(Files.SEPARATOR);
+    private static String PATH_SEP_REGEX = Os.type == Os.WINDOWS ?
+            String.format("[%c%c]", Files.SEPARATOR, Files.SEPARATOR) : String.valueOf(Files.SEPARATOR);
 
     private static String extractLast(Path path) {
         String nameStr = path.toString();
@@ -3140,6 +3167,20 @@ public class TextLoaderTest extends AbstractGriffinTest {
     private void configureLoaderDefaults(TextLoader textLoader, byte columnSeparator, int atomicity, boolean overwrite, int partitionBy, CharSequence timestampIndexCol) {
         textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
         textLoader.configureDestination("test", overwrite, false, atomicity, partitionBy, timestampIndexCol);
+        if (columnSeparator > 0) {
+            textLoader.configureColumnDelimiter(columnSeparator);
+        }
+    }
+
+    private void configureLoaderDefaults(TextLoader textLoader,
+                                         byte columnSeparator,
+                                         int atomicity,
+                                         boolean overwrite,
+                                         boolean durable,
+                                         int partitionBy,
+                                         CharSequence timestampIndexCol) {
+        textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
+        textLoader.configureDestination("test", overwrite, durable, atomicity, partitionBy, timestampIndexCol);
         if (columnSeparator > 0) {
             textLoader.configureColumnDelimiter(columnSeparator);
         }

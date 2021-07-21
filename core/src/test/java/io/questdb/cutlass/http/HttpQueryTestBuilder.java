@@ -28,6 +28,7 @@ import io.questdb.MessageBus;
 import io.questdb.MessageBusImpl;
 import io.questdb.Metrics;
 import io.questdb.TelemetryJob;
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cutlass.http.processors.*;
@@ -100,13 +101,17 @@ public class HttpQueryTestBuilder {
     }
 
     public void run(HttpClientCode code) throws Exception {
+        run(null, code);
+    }
+
+    public void run(CairoConfiguration configuration, HttpClientCode code) throws Exception {
         final int[] workerAffinity = new int[workerCount];
         Arrays.fill(workerAffinity, -1);
 
         assertMemoryLeak(() -> {
             final String baseDir = temp.getRoot().getAbsolutePath();
             final DefaultHttpServerConfiguration httpConfiguration = serverConfigBuilder
-                    .withBaseDir(temp.getRoot().getAbsolutePath())
+                    .withBaseDir(baseDir)
                     .build();
 
             final WorkerPool workerPool = new WorkerPool(new WorkerPoolConfiguration() {
@@ -129,8 +134,10 @@ public class HttpQueryTestBuilder {
                 workerPool.assignCleaner(Path.CLEANER);
             }
 
-            DefaultCairoConfiguration cairoConfiguration = new DefaultCairoConfiguration(baseDir);
-
+            CairoConfiguration cairoConfiguration = configuration;
+            if (cairoConfiguration == null) {
+                cairoConfiguration = new DefaultCairoConfiguration(baseDir);
+            }
             try (
                     CairoEngine engine = new CairoEngine(cairoConfiguration);
                     HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, false);

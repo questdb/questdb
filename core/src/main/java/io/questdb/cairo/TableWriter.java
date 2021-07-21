@@ -654,11 +654,11 @@ public class TableWriter implements Closeable {
         txFile.bumpStructureVersion(this.denseSymbolMapWriters);
     }
 
-    public boolean checkMaxAndCommitLag() {
+    public boolean checkMaxAndCommitLag(int commitMode) {
         if (getO3RowCount() < metadata.getMaxUncommittedRows()) {
             return false;
         }
-        commitWithLag();
+        commit(commitMode, metadata.getCommitLag());
         return true;
     }
 
