@@ -32,7 +32,10 @@ const ITEMS_PER_PAGE = 10
 function getClientHeight(el: Element) {
   return el.getBoundingClientRect().height
 }
-function getMinHeightFromElList(listOfEls: HTMLCollection): number {
+function getMinHeightFromElList(listOfEls: HTMLCollection | undefined): number {
+  if (!listOfEls || listOfEls.length === 0) {
+    return 0
+  }
   const elemCount = Math.min(listOfEls.length, 3)
   const arrayOfHeights: number[] = []
   for (let idx = 0; idx < elemCount; idx++) {
@@ -46,11 +49,9 @@ const LazyScroller = ({ children }: Props) => {
   const innerEl = useRef<HTMLDivElement | null>(null)
   const [startPageIdx, setStart] = useState(0)
   const [endPageIdx, setEnd] = useState(2)
-  // FIXME if the first element is expanded it will mess up the calculations, we should pick 3 and take the less of them
-  let singleItemHeight: number = 0
-  if (innerEl.current && innerEl.current.children.length >= 1) {
-    singleItemHeight = getMinHeightFromElList(innerEl.current.children)
-  }
+  const singleItemHeight: number = getMinHeightFromElList(
+    innerEl.current?.children,
+  )
   const parentEl = wrapperEl.current?.parentElement
   let viewportClientHeight = null
   if (parentEl) {
@@ -100,7 +101,13 @@ const LazyScroller = ({ children }: Props) => {
         setEnd(endPageIdx - 1)
       }
     }
-  }, [innerWrapClientRect?.top])
+  }, [
+    innerWrapClientRect,
+    bottomOfViewport,
+    startPageIdx,
+    endPageIdx,
+    heightRealDiff,
+  ])
 
   const [, setState] = useState({})
   function forceUpdate() {
