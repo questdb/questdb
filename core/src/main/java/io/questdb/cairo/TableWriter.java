@@ -2519,7 +2519,7 @@ public class TableWriter implements Closeable {
             final long maxTimestamp = txFile.getMaxTimestamp();
 
             // we are going to use this soon to avoid double-copying lag data
-//            final boolean yep = isAppendLastPartitionOnly(sortedTimestampsAddr, o3TimestampMax);
+            // final boolean yep = isAppendLastPartitionOnly(sortedTimestampsAddr, o3TimestampMax);
 
             // reshuffle all columns according to timestamp index
             o3Sort(sortedTimestampsAddr, timestampIndex, o3RowCount);
