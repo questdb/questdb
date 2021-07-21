@@ -83,9 +83,8 @@ void MULTI_VERSION_NAME (filter_with_prefix)(
             hit_mask |= (current_hashes_vec & target_mask) == target_hash;
 
         }
-        Vec8q bit_mask(hit_mask);
-        offset &= bit_mask;
-        offset.store(rows + i);
+        Vec8q filtered = select(hit_mask, offset, 0);
+        filtered.store(rows + i);
     }
 
     for (; i < rows_count; ++i) {
