@@ -1,9 +1,10 @@
-import React, { useRef, useState, useEffect } from "react"
+import React, { useRef, useState } from "react"
 import { throttle } from "throttle-debounce"
 
 type Props = Readonly<{
   children: JSX.Element[]
 }>
+const ITEMS_PER_PAGE = 10
 
 const LazyScroller = ({ children }: Props) => {
   const wrapperEl = useRef<HTMLDivElement | null>(null)
@@ -17,59 +18,55 @@ const LazyScroller = ({ children }: Props) => {
   const viewportClientRect = parentEl?.getBoundingClientRect()
   const innerWrapClientRect = innerEl.current?.getBoundingClientRect()
 
+  const topOfViewport = parentEl?.scrollTop
   const bottomOfViewport =
     viewportClientRect &&
     parentEl &&
     parentEl.scrollTop + viewportClientRect.height
 
   const actualHeightOfList = innerWrapClientRect?.height
-  const itemsPerPage = 10
-  const itemsToRender = itemsPerPage * 3
+  const itemsToRender = ITEMS_PER_PAGE * (endPageIdx - startPageIdx)
   const projectedHeightOfList =
     singleItemHeight && itemsToRender * singleItemHeight
-  const wrapperHeight = singleItemHeight && singleItemHeight * children.length
   let heightRealDiff = 0
-  // TODO possibly makes a bug when you have a DB with only 1 table??
   if (actualHeightOfList && projectedHeightOfList) {
     heightRealDiff = actualHeightOfList - projectedHeightOfList
   }
-  const viewportScrollRatio =
-    wrapperHeight &&
-    parentEl &&
-    (parentEl.scrollTop - heightRealDiff) / wrapperHeight
 
-  const startingViewableIdx =
-    viewportScrollRatio && Math.ceil(viewportScrollRatio * children.length)
-  let currPage = 0
-  let actualStart = 0
+  const actualStart = startPageIdx * ITEMS_PER_PAGE
 
   // always show at least one item so we can know how big the elements are
   let viewableSubSection = [children[0]]
-  if (!!startingViewableIdx || startingViewableIdx === 0) {
-    currPage = Math.floor(startingViewableIdx / itemsPerPage)
-    actualStart = Math.max((currPage - 1) * itemsPerPage, 0)
-    const actualEnd = actualStart + itemsToRender
+  if (singleItemHeight) {
     viewableSubSection = children.slice(
-      startPageIdx * itemsPerPage,
-      endPageIdx * itemsPerPage,
+      actualStart,
+      endPageIdx * ITEMS_PER_PAGE,
     )
   }
-  if (singleItemHeight && innerWrapClientRect && bottomOfViewport) {
+  if (innerWrapClientRect && bottomOfViewport && topOfViewport) {
     const diffFromBot = innerWrapClientRect.bottom - bottomOfViewport
+    const diffFromTop = innerWrapClientRect.top
+    if (diffFromTop < -300 && heightRealDiff === 0) {
+      setTimeout(() => {
+        setStart(startPageIdx + 1)
+      })
+    } else if (diffFromTop > 50 && startPageIdx > 0) {
+      setTimeout(() => {
+        setStart(startPageIdx - 1)
+      })
+    }
+
     if (diffFromBot < -300) {
       // Delay the change so the application actually gets the time to re-render
       setTimeout(() => {
         setEnd(endPageIdx + 1)
       })
-    // If we're too far away from the bottom and the height is the same
     } else if (diffFromBot > 500 && heightRealDiff === 0) {
+      // If we're too far away from the bottom and the height is the same
       setTimeout(() => {
         setEnd(endPageIdx - 1)
       })
     }
-    console.log(diffFromBot)
-    console.log(actualStart)
-    console.log("-----------")
   }
 
   const [, setState] = useState({})
@@ -83,6 +80,10 @@ const LazyScroller = ({ children }: Props) => {
       height: `${actualStart * singleItemHeight}px`,
     }
   }
+  const wrapperHeight =
+    singleItemHeight &&
+    viewportClientRect &&
+    Math.max(singleItemHeight * children.length, viewportClientRect.height)
   let wrapperStyle = {}
   if (wrapperHeight) {
     wrapperStyle = { minHeight: `${wrapperHeight}px` }
