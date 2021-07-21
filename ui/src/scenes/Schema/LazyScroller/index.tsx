@@ -1,3 +1,27 @@
+/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2020 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
 import React, { useRef, useState } from "react"
 import { throttle } from "throttle-debounce"
 
@@ -5,6 +29,17 @@ type Props = Readonly<{
   children: JSX.Element[]
 }>
 const ITEMS_PER_PAGE = 10
+function getClientHeight(el: Element) {
+  return el.getBoundingClientRect().height
+}
+function getMinHeightFromElList(listOfEls: HTMLCollection): number {
+  const elemCount = Math.min(listOfEls.length, 3)
+  const arrayOfHeights: number[] = []
+  for (let idx = 0; idx < elemCount; idx++) {
+    arrayOfHeights.push(getClientHeight(listOfEls[idx]))
+  }
+  return Math.min.apply(undefined, arrayOfHeights)
+}
 
 const LazyScroller = ({ children }: Props) => {
   const wrapperEl = useRef<HTMLDivElement | null>(null)
@@ -12,18 +47,23 @@ const LazyScroller = ({ children }: Props) => {
   const [startPageIdx, setStart] = useState(0)
   const [endPageIdx, setEnd] = useState(2)
   // FIXME if the first element is expanded it will mess up the calculations, we should pick 3 and take the less of them
-  const singleItemHeight = innerEl.current?.children[0]?.getBoundingClientRect()
-    ?.height
+  let singleItemHeight: number = 0
+  if (innerEl.current && innerEl.current.children.length >= 1) {
+    singleItemHeight = getMinHeightFromElList(innerEl.current.children)
+  }
   const parentEl = wrapperEl.current?.parentElement
-  const viewportClientRect = parentEl?.getBoundingClientRect()
+  let viewportClientHeight = null
+  if (parentEl) {
+    viewportClientHeight = getClientHeight(parentEl)
+  }
   const innerWrapClientRect = innerEl.current?.getBoundingClientRect()
 
-  const topOfViewport = parentEl?.scrollTop
   const bottomOfViewport =
-    viewportClientRect &&
+    viewportClientHeight &&
     parentEl &&
-    parentEl.scrollTop + viewportClientRect.height
+    parentEl.scrollTop + viewportClientHeight
 
+  // Calculate if the list is actually taller than it should be i.e. someone has expanded something in the list
   const actualHeightOfList = innerWrapClientRect?.height
   const itemsToRender = ITEMS_PER_PAGE * (endPageIdx - startPageIdx)
   const projectedHeightOfList =
@@ -43,7 +83,7 @@ const LazyScroller = ({ children }: Props) => {
       endPageIdx * ITEMS_PER_PAGE,
     )
   }
-  if (innerWrapClientRect && bottomOfViewport && topOfViewport) {
+  if (innerWrapClientRect && bottomOfViewport) {
     const diffFromBot = innerWrapClientRect.bottom - bottomOfViewport
     const diffFromTop = innerWrapClientRect.top
     if (diffFromTop < -300 && heightRealDiff === 0) {
@@ -82,8 +122,8 @@ const LazyScroller = ({ children }: Props) => {
   }
   const wrapperHeight =
     singleItemHeight &&
-    viewportClientRect &&
-    Math.max(singleItemHeight * children.length, viewportClientRect.height)
+    viewportClientHeight &&
+    Math.max(singleItemHeight * children.length, viewportClientHeight)
   let wrapperStyle = {}
   if (wrapperHeight) {
     wrapperStyle = { minHeight: `${wrapperHeight}px` }
