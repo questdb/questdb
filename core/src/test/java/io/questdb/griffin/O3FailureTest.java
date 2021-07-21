@@ -52,7 +52,6 @@ public class O3FailureTest extends AbstractO3Test {
     private final static AtomicInteger counter = new AtomicInteger(0);
 
     private static final FilesFacade ffAllocateFailure = new FilesFacadeImpl() {
-        int c = 0;
         private boolean failNextAlloc = false;
         @Override
         public boolean allocate(long fd, long size) {
@@ -69,7 +68,6 @@ public class O3FailureTest extends AbstractO3Test {
                 failNextAlloc = true;
                 return 0;
             }
-            System.out.println("alloc: " + c++);
             return super.length(fd);
         }
     };
