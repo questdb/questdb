@@ -48,7 +48,7 @@ type Props = QuestDB.Table &
 
 const Wrapper = styled.div`
   display: flex;
-  margin-top: 0.5rem;
+  padding-top: 0.5rem;
   align-items: stretch;
   flex-direction: column;
   overflow: hidden;

@@ -135,17 +135,20 @@ const Schema = ({
   useEffect(() => {
     void fetchTables()
   }, [fetchTables])
-  let tablesElements: JSX.Element[] = []
+  const tablesElements: JSX.Element[] = []
   if (tables && !loading) {
-    tablesElements = tables.map(({ table }) => (
-      <Table
-        expanded={table === opened}
-        key={table}
-        onChange={handleChange}
-        refresh={refresh}
-        table={table}
-      />
-    ))
+    tables.reduce(function (elemsSoFar, { table }) {
+      elemsSoFar.push(
+        <Table
+          expanded={table === opened}
+          key={table}
+          onChange={handleChange}
+          refresh={refresh}
+          table={table}
+        />,
+      )
+      return elemsSoFar
+    }, tablesElements)
   }
 
   return (
