@@ -145,7 +145,7 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
             if (commitLagChars != null) {
                 try {
                     long commitLag = Numbers.parseInt(commitLagChars);
-                    if (commitLag > 0) {
+                    if (commitLag >= 0) {
                         transientState.textLoader.setCommitLag(commitLag);
                     }
                 } catch (NumericException e) {
@@ -157,7 +157,7 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
             if (maxUncommittedRowsChars != null) {
                 try {
                     int maxUncommittedRows = Numbers.parseInt(maxUncommittedRowsChars);
-                    if (maxUncommittedRows > 0) {
+                    if (maxUncommittedRows >= 0) {
                         transientState.textLoader.setMaxUncommittedRows(maxUncommittedRows);
                     }
                 } catch (NumericException e) {

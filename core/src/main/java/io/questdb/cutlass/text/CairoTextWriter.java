@@ -360,14 +360,14 @@ public class CairoTextWriter implements Closeable, Mutable {
                 throw CairoException.instance(0).put("name is reserved [table=").put(tableName).put(']');
         }
         if (canUpdateMetadata) {
-            if (partitionBy == PartitionBy.NONE && (commitLag > 0 || maxUncommittedRows > 0)) {
+            if (partitionBy == PartitionBy.NONE && (commitLag >= 0 || maxUncommittedRows >= 0)) {
                 LOG.info().$("parameters commitLag and maxUncommittedRows have no effect when partitionBy is NONE").$();
             } else {
-                if (commitLag > 0) {
+                if (commitLag >= 0) {
                     writer.setMetaCommitLag(commitLag);
                     LOG.info().$("updating metadata attribute commitLag to ").$(commitLag).$(", table=").utf8(tableName).$();
                 }
-                if (maxUncommittedRows > 0) {
+                if (maxUncommittedRows >= 0) {
                     writer.setMetaMaxUncommittedRows(maxUncommittedRows);
                     LOG.info().$("updating metadata attribute maxUncommittedRows to ").$(maxUncommittedRows).$(", table=").utf8(tableName).$();
                 }

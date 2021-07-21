@@ -1283,6 +1283,17 @@ public class TextLoaderTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testCanUpdateCommitLagAndMaxUncommittedRowsToZeroIfTableExistsAndOverwriteIsTrue() throws Exception {
+        importWithCommitLagAndMaxUncommittedRowsTableExists("partition by DAY with maxUncommittedRows = 2, commitLag = 2s",
+                true,
+                PartitionBy.DAY,
+                0,
+                0,
+                0,
+                0);
+    }
+
+    @Test
     public void testLineRoll() throws Exception {
         assertNoLeak(textLoader -> {
             String expected = "f0\tf1\tf2\tf3\tf4\tf5\tf6\tf7\tf8\tf9\n" +
