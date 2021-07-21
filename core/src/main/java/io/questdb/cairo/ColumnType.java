@@ -118,7 +118,7 @@ public final class ColumnType {
     public static int overloadDistance(int from, int to) {
         // Functions cannot accept UNDEFINED type (signature is not supported)
         // this check is just in case
-        assert to >= 0;
+        assert to >= 0 : "Undefined not supported in overloads";
         return overloadPriorityMatrix[OVERLOAD_MATRIX_SIZE * (from + 1) + to];
     }
 

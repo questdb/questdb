@@ -281,6 +281,9 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         namedPortalMap.clear();
         bindVariableService.clear();
         bindVariableTypes.clear();
+        resumeProcessor = null;
+        completed = true;
+        clearCursorAndFactory();
     }
 
     public void clearWriters() {
@@ -2090,21 +2093,9 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
             }
         }
 
-        completed = maxRows <= 0 || rowCount < maxRows;
+        completed = maxRows < 0 || rowCount < maxRows;
         if (completed) {
-            resumeProcessor = null;
-            currentCursor = Misc.free(currentCursor);
-            // do not free factory, it will be cached
-            currentFactory = null;
-            // we we resumed the cursor send the typeAndSelect will be null
-            // we do not want to overwrite cache entries and potentially
-            // leak memory
-            if (typesAndSelect != null) {
-                typesAndSelectCache.put(queryText, typesAndSelect);
-                // clear selectAndTypes so that context doesn't accidentally
-                // free the factory when context finishes abnormally
-                this.typesAndSelect = null;
-            }
+            clearCursorAndFactory();
             // at this point buffer can contain unsent data
             // and it may not have enough space for the command
             if (sendBufferLimit - sendBufferPtr < PROTOCOL_TAIL_COMMAND_LENGTH) {
@@ -2114,6 +2105,22 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
             prepareCommandComplete(true);
         } else {
             prepareSuspended();
+        }
+    }
+
+    private void clearCursorAndFactory() {
+        resumeProcessor = null;
+        currentCursor = Misc.free(currentCursor);
+        // do not free factory, it will be cached
+        currentFactory = null;
+        // we we resumed the cursor send the typeAndSelect will be null
+        // we do not want to overwrite cache entries and potentially
+        // leak memory
+        if (typesAndSelect != null) {
+            typesAndSelectCache.put(queryText, typesAndSelect);
+            // clear selectAndTypes so that context doesn't accidentally
+            // free the factory when context finishes abnormally
+            this.typesAndSelect = null;
         }
     }
 
