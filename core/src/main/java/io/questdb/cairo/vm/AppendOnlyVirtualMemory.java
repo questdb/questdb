@@ -68,8 +68,8 @@ public class AppendOnlyVirtualMemory extends PagedVirtualMemory implements Mappe
             return;
         }
         releaseCurrentPage();
-        if (!ff.truncate(Math.abs(fd), getMapPageSize())) {
-            throw CairoException.instance(ff.errno()).put("Cannot truncate fd=").put(fd).put(" to ").put(getMapPageSize()).put(" bytes");
+        if (!ff.truncate(Math.abs(fd), getExtendSegmentSize())) {
+            throw CairoException.instance(ff.errno()).put("Cannot truncate fd=").put(fd).put(" to ").put(getExtendSegmentSize()).put(" bytes");
         }
         updateLimits(0, pageAddress = mapPage(0));
         LOG.debug().$("truncated [fd=").$(fd).$(']').$();
@@ -92,7 +92,7 @@ public class AppendOnlyVirtualMemory extends PagedVirtualMemory implements Mappe
         super.close();
         if (fd != -1) {
             try {
-                VmUtils.bestEffortClose(ff, LOG, fd, truncate, sz, getMapPageSize());
+                VmUtils.bestEffortClose(ff, LOG, fd, truncate, sz, getExtendSegmentSize());
             } finally {
                 fd = -1;
             }
@@ -124,24 +124,29 @@ public class AppendOnlyVirtualMemory extends PagedVirtualMemory implements Mappe
 
     public long mapPage(int page) {
         // set page to "not mapped" in case mapping fails
-        final long address = TableUtils.mapRW(ff, fd, getMapPageSize(), pageOffset(page));
+        final long address = TableUtils.mapRW(ff, fd, getExtendSegmentSize(), pageOffset(page));
         mappedPage = page;
         return address;
     }
 
     @Override
-    public void of(FilesFacade ff, LPSZ name, long pageSize, long size) {
+    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size) {
         // size of file does not mapper for mapping file for append
-        of(ff, name, pageSize);
+        of(ff, name, extendSegmentSize);
     }
 
-    public final void of(FilesFacade ff, LPSZ name, long pageSize) {
+    @Override
+    public void wholeFile(FilesFacade ff, LPSZ name) {
+        throw new UnsupportedOperationException();
+    }
+
+    public final void of(FilesFacade ff, LPSZ name, long extendSegmentSize) {
         close();
         this.ff = ff;
         mappedPage = -1;
-        setMapPageSize(pageSize);
+        setExtendSegmentSize(extendSegmentSize);
         fd = TableUtils.openFileRWOrFail(ff, name);
-        LOG.debug().$("open ").$(name).$(" [fd=").$(fd).$(", pageSize=").$(pageSize).$(']').$();
+        LOG.debug().$("open ").$(name).$(" [fd=").$(fd).$(", extendSegmentSize=").$(extendSegmentSize).$(']').$();
     }
 
     @Override
@@ -155,7 +160,7 @@ public class AppendOnlyVirtualMemory extends PagedVirtualMemory implements Mappe
 
     public void sync(boolean async) {
         if (pageAddress != 0) {
-            if (ff.msync(pageAddress, getMapPageSize(), async) == 0) {
+            if (ff.msync(pageAddress, getExtendSegmentSize(), async) == 0) {
                 return;
             }
             LOG.error().$("could not msync [fd=").$(fd).$(", errno=").$(ff.errno()).$(']').$();

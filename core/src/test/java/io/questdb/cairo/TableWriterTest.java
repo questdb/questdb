@@ -2626,7 +2626,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 for (int i = 0, n = w.columns.size(); i < n; i++) {
                     AppendOnlyVirtualMemory m = w.columns.getQuick(i);
                     if (m != null) {
-                        Assert.assertEquals(configuration.getAppendPageSize(), m.getMapPageSize());
+                        Assert.assertEquals(configuration.getAppendPageSize(), m.getExtendSegmentSize());
                     }
                 }
             }

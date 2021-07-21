@@ -38,12 +38,17 @@ public class NullColumn implements MappedReadOnlyMemory {
     }
 
     @Override
-    public void of(FilesFacade ff, LPSZ name, long pageSize, long size) {
+    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public void of(FilesFacade ff, LPSZ name, long pageSize) {
+    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void wholeFile(FilesFacade ff, LPSZ name) {
         throw new UnsupportedOperationException();
     }
 

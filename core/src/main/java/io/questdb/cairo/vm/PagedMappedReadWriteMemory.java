@@ -50,21 +50,11 @@ public class PagedMappedReadWriteMemory extends PagedVirtualMemory implements Ma
         super.close();
         if (isOpen()) {
             try {
-                VmUtils.bestEffortClose(ff, LOG, fd, true, size, getMapPageSize());
+                VmUtils.bestEffortClose(ff, LOG, fd, true, size, getExtendSegmentSize());
             } finally {
                 fd = -1;
             }
         }
-    }
-
-    @Override
-    protected long allocateNextPage(int page) {
-        return TableUtils.mapRW(ff, fd, getMapPageSize(), pageOffset(page));
-    }
-
-    @Override
-    public void growToFileSize() {
-        this.extend(ff.length(fd));
     }
 
     @Override
@@ -73,91 +63,15 @@ public class PagedMappedReadWriteMemory extends PagedVirtualMemory implements Ma
     }
 
     @Override
-    protected void release(int page, long address) {
-        ff.munmap(address, getPageSize(page));
-    }
-
-    @Override
-    public void of(FilesFacade ff, LPSZ name, long pageSize, long size) {
-        close();
-        this.ff = ff;
-        fd = TableUtils.openFileRWOrFail(ff, name);
-        of0(ff, name, pageSize, size);
-    }
-
-    @Override
-    public final void of(FilesFacade ff, LPSZ name, long pageSize) {
-        close();
-        this.ff = ff;
-        fd = TableUtils.openFileRWOrFail(ff, name);
-        of0(ff, name, pageSize, ff.length(fd));
-    }
-
-    private void of0(FilesFacade ff, LPSZ name, long pageSize, long size) {
-        setMapPageSize(pageSize);
-        ensurePagesListCapacity(size);
-        LOG.debug().$("open ").$(name).$(" [fd=").$(fd).$(']').$();
-        try {
-            // we may not be able to map page here
-            // make sure we close file before bailing out
-            jumpTo(size);
-        } catch (Throwable e) {
-            ff.close(fd);
-            fd = -1;
-            throw e;
-        }
-    }
-
-    @Override
-    public boolean isDeleted() {
-        return !ff.exists(fd);
-    }
-
-    public long getFd() {
-        return fd;
-    }
-
-    public final void of(FilesFacade ff, long fd, long pageSize) {
-        close();
-        this.ff = ff;
-        this.fd = fd;
-        long size = ff.length(fd);
-        setMapPageSize(pageSize);
-        ensurePagesListCapacity(size);
-        try {
-            // we may not be able to map page here
-            // make sure we close file before bailing out
-            jumpTo(size);
-        } catch (Throwable e) {
-            ff.close(fd);
-            this.fd = -1;
-            throw e;
-        }
-    }
-
-    @Override
     public void extend(long size) {
         jumpTo(size);
-    }
-
-    public void sync(int pageIndex, boolean async) {
-        if (ff.msync(pages.getQuick(pageIndex), getMapPageSize(), async) == 0) {
-            return;
-        }
-        LOG.error().$("could not msync [fd=").$(fd).$(']').$();
-    }
-
-    public void sync(boolean async) {
-        for (int i = 0, n = pages.size(); i < n; i++) {
-            sync(i, async);
-        }
     }
 
     public void truncate() {
         // We may have many pages papped. Keep one, unmap all others and
         // truncate file to the size of first page
         final long firstPage = getPageAddress(0);
-        final long pageSize = getMapPageSize();
+        final long pageSize = getExtendSegmentSize();
         Vect.memset(firstPage, pageSize, 0);
         for (int i = 1, n = pages.size(); i < n; i++) {
             release(i, pages.getQuick(i));
@@ -175,6 +89,102 @@ public class PagedMappedReadWriteMemory extends PagedVirtualMemory implements Ma
             Vect.memset(mem + pageSize, fileSize - pageSize, 0);
             ff.munmap(mem, fileSize);
             LOG.debug().$("could not truncate, zeroed [fd=").$(fd).$(']').$();
+        }
+    }
+
+    @Override
+    protected long allocateNextPage(int page) {
+        return TableUtils.mapRW(ff, fd, getExtendSegmentSize(), pageOffset(page));
+    }
+
+    @Override
+    protected void release(int page, long address) {
+        ff.munmap(address, getPageSize(page));
+    }
+
+    @Override
+    public void growToFileSize() {
+        this.extend(ff.length(fd));
+    }
+
+    @Override
+    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size) {
+        close();
+        this.ff = ff;
+        fd = TableUtils.openFileRWOrFail(ff, name);
+        of0(ff, name, extendSegmentSize, size);
+    }
+
+    @Override
+    public void wholeFile(FilesFacade ff, LPSZ name) {
+        of(ff, name, ff.getMapPageSize());
+    }
+
+    @Override
+    public void partialFile(FilesFacade ff, LPSZ name, long size) {
+        of(ff, name, ff.getMapPageSize(), size);
+    }
+
+    @Override
+    public final void of(FilesFacade ff, LPSZ name, long extendSegmentSize) {
+        close();
+        this.ff = ff;
+        fd = TableUtils.openFileRWOrFail(ff, name);
+        of0(ff, name, extendSegmentSize, ff.length(fd));
+    }
+
+    @Override
+    public boolean isDeleted() {
+        return !ff.exists(fd);
+    }
+
+    public long getFd() {
+        return fd;
+    }
+
+    public final void of(FilesFacade ff, long fd, long pageSize) {
+        close();
+        this.ff = ff;
+        this.fd = fd;
+        long size = ff.length(fd);
+        setExtendSegmentSize(pageSize);
+        ensurePagesListCapacity(size);
+        try {
+            // we may not be able to map page here
+            // make sure we close file before bailing out
+            jumpTo(size);
+        } catch (Throwable e) {
+            ff.close(fd);
+            this.fd = -1;
+            throw e;
+        }
+    }
+
+    public void sync(int pageIndex, boolean async) {
+        if (ff.msync(pages.getQuick(pageIndex), getExtendSegmentSize(), async) == 0) {
+            return;
+        }
+        LOG.error().$("could not msync [fd=").$(fd).$(']').$();
+    }
+
+    public void sync(boolean async) {
+        for (int i = 0, n = pages.size(); i < n; i++) {
+            sync(i, async);
+        }
+    }
+
+    private void of0(FilesFacade ff, LPSZ name, long pageSize, long size) {
+        setExtendSegmentSize(pageSize);
+        ensurePagesListCapacity(size);
+        LOG.debug().$("open ").$(name).$(" [fd=").$(fd).$(']').$();
+        try {
+            // we may not be able to map page here
+            // make sure we close file before bailing out
+            jumpTo(size);
+        } catch (Throwable e) {
+            ff.close(fd);
+            fd = -1;
+            throw e;
         }
     }
 }

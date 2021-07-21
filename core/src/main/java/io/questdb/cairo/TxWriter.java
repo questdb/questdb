@@ -24,8 +24,8 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.vm.ContiguousMappedReadWriteMemory;
 import io.questdb.cairo.vm.Mappable;
-import io.questdb.cairo.vm.PagedMappedReadWriteMemory;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
@@ -42,7 +42,7 @@ public final class TxWriter extends TxReader implements Closeable {
     private long prevMinTimestamp;
     protected long prevTransientRowCount;
 
-    private PagedMappedReadWriteMemory txMem;
+    private ContiguousMappedReadWriteMemory txMem;
 
     public TxWriter(FilesFacade ff, Path path, int partitionBy) {
         super(ff, path, partitionBy);
@@ -149,7 +149,7 @@ public final class TxWriter extends TxReader implements Closeable {
     protected Mappable openTxnFile(FilesFacade ff, Path path, int rootLen) {
         try {
             if (ff.exists(path.concat(TXN_FILE_NAME).$())) {
-                return txMem = new PagedMappedReadWriteMemory(ff, path, ff.getPageSize());
+                return txMem = new ContiguousMappedReadWriteMemory(ff, path, ff.getPageSize(), Long.MAX_VALUE);
             }
             throw CairoException.instance(ff.errno()).put("Cannot append. File does not exist: ").put(path);
 
@@ -179,7 +179,7 @@ public final class TxWriter extends TxReader implements Closeable {
         Unsafe.getUnsafe().storeFence();
         txMem.putLong(TX_OFFSET_TXN_CHECK, txn);
         if (commitMode != CommitMode.NOSYNC) {
-            txMem.sync(0, commitMode == CommitMode.ASYNC);
+            txMem.sync(commitMode == CommitMode.ASYNC);
         }
 
         prevTransientRowCount = transientRowCount;

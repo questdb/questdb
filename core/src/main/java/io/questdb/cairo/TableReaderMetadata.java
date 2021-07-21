@@ -25,8 +25,8 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.vm.AppendOnlyVirtualMemory;
-import io.questdb.cairo.vm.MappedReadOnlyMemory;
 import io.questdb.cairo.vm.ContiguousMappedReadOnlyMemory;
+import io.questdb.cairo.vm.MappedReadOnlyMemory;
 import io.questdb.cairo.vm.VmUtils;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
@@ -98,7 +98,7 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
 
     public void applyTransitionIndex(long pTransitionIndex) {
         // re-open _meta file
-        this.metaMem.of(ff, path, ff.getPageSize(), ff.length(path));
+        this.metaMem.wholeFile(ff, path);
 
         this.columnNameIndexMap.clear();
 
@@ -201,7 +201,7 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
             transitionMeta = new ContiguousMappedReadOnlyMemory();
         }
 
-        transitionMeta.of(ff, path, ff.getPageSize(), ff.length(path));
+        transitionMeta.wholeFile(ff, path);
         try (MappedReadOnlyMemory metaMem = transitionMeta) {
 
             tmpValidationMap.clear();

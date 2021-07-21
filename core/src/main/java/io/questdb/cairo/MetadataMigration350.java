@@ -25,8 +25,8 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.vm.AppendOnlyVirtualMemory;
-import io.questdb.cairo.vm.MappedReadOnlyMemory;
 import io.questdb.cairo.vm.ContiguousMappedReadOnlyMemory;
+import io.questdb.cairo.vm.MappedReadOnlyMemory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
@@ -77,7 +77,7 @@ public class MetadataMigration350 {
             return;
         }
 
-        roMem.of(ff, path1, ff.getPageSize(), ff.length(path1));
+        roMem.wholeFile(ff, path1);
 
         if (roMem.getInt(12) == ColumnType.VERSION) {
             LOG.error().$("already up to date ").$(path1).$();

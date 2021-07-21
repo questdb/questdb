@@ -30,7 +30,7 @@ public class ExtendedOnePageMemoryTest {
         try (ContiguousMappedReadOnlyMemory mem = new ContiguousMappedReadOnlyMemory()) {
             FILE_MAP_FAIL.set(true);
             try {
-                mem.of(ff, path, FILE_SIZE, FILE_SIZE);
+                mem.wholeFile(ff, path);
                 Assert.fail();
             } catch (CairoException ex) {
                 TestUtils.assertContains(ex.getFlyweightMessage(), "could not mmap");

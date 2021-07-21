@@ -43,7 +43,7 @@ public class ContiguousMappedReadWriteMemory extends AbstractContiguousMemory
     protected long appendAddress;
     private long minMappedMemorySize;
     private long grownLength;
-    private long mappedMemorySizeMsb;
+    private long extendSegmentMsb;
 
     public ContiguousMappedReadWriteMemory(FilesFacade ff, LPSZ name, long pageSize, long size) {
         of(ff, name, pageSize, size);
@@ -64,6 +64,13 @@ public class ContiguousMappedReadWriteMemory extends AbstractContiguousMemory
     public long appendAddressFor(long offset, long bytes) {
         checkAndExtend(page + offset + bytes);
         return page + offset;
+    }
+
+    public void sync(boolean async) {
+        if (page != 0 && ff.msync(page, size, async) == 0) {
+            return;
+        }
+        LOG.error().$("could not msync [fd=").$(fd).$(']').$();
     }
 
     @Override
@@ -88,16 +95,16 @@ public class ContiguousMappedReadWriteMemory extends AbstractContiguousMemory
     }
 
     @Override
-    public void of(FilesFacade ff, LPSZ name, long mappedMemorySize, long size) {
-        this.mappedMemorySizeMsb = Numbers.msb(mappedMemorySize);
+    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size) {
+        this.extendSegmentMsb = Numbers.msb(extendSegmentSize);
         this.minMappedMemorySize = ff.getMapPageSize();
         openFile(ff, name);
         map(ff, name, size);
     }
 
     @Override
-    public void of(FilesFacade ff, LPSZ name, long mappedMemorySize) {
-        of(ff, name, mappedMemorySize, Long.MAX_VALUE);
+    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize) {
+        of(ff, name, extendSegmentSize, Long.MAX_VALUE);
     }
 
     @Override
@@ -234,8 +241,8 @@ public class ContiguousMappedReadWriteMemory extends AbstractContiguousMemory
     }
 
     private void extend0(long newSize) {
-        long nPages = (newSize >>> mappedMemorySizeMsb) + 1;
-        newSize = nPages << mappedMemorySizeMsb;
+        long nPages = (newSize >>> extendSegmentMsb) + 1;
+        newSize = nPages << extendSegmentMsb;
         long offset = appendAddress - page;
         long previousSize = size;
         TableUtils.allocateDiskSpace(ff, fd, newSize);

@@ -66,9 +66,11 @@ public class EngineMigration {
         int tempMemSize = 8;
         long mem = Unsafe.malloc(tempMemSize);
 
-        try (PagedVirtualMemory virtualMem = new PagedVirtualMemory(ff.getPageSize(), 8);
-             Path path = new Path();
-             PagedMappedReadWriteMemory rwMemory = new PagedMappedReadWriteMemory()) {
+        try (
+                PagedVirtualMemory virtualMem = new PagedVirtualMemory(ff.getPageSize(), 8);
+                Path path = new Path();
+                PagedMappedReadWriteMemory rwMemory = new PagedMappedReadWriteMemory()
+        ) {
 
             MigrationContext context = new MigrationContext(mem, tempMemSize, virtualMem, rwMemory);
             path.of(configuration.getRoot());
@@ -121,6 +123,35 @@ public class EngineMigration {
     private static void setByVersion(int version, MigrationAction action, int criticality) {
         MIGRATIONS.setQuick(version - MIGRATIONS_LIST_OFFSET, action);
         MIGRATIONS_CRITICALITY.extendAndSet(version - MIGRATIONS_LIST_OFFSET, criticality);
+    }
+
+    private static void backupFile(FilesFacade ff, Path src, Path toTemp, String backupName, int version) {
+        // make a copy
+        int copyPathLen = toTemp.length();
+        try {
+            toTemp.concat(backupName).put(".v").put(version);
+            for (int i = 1; ff.exists(toTemp.$()); i++) {
+                // if backup file already exists
+                // add .<num> at the end until file name is unique
+                LOG.info().$("back up file exists, [path=").$(toTemp).I$();
+                toTemp.trimTo(copyPathLen);
+                toTemp.concat(backupName).put(".v").put(version).put(".").put(i);
+            }
+
+            LOG.info().$("back up coping file [from=").$(src).$(",to=").$(toTemp).I$();
+            if (ff.copy(src.$(), toTemp.$()) < 0) {
+                throw CairoException.instance(ff.errno()).put("Cannot backup transaction file [to=").put(toTemp).put(']');
+            }
+        } finally {
+            toTemp.trimTo(copyPathLen);
+        }
+    }
+
+    static int readIntAtOffset(FilesFacade ff, Path path, long tempMem4b, long fd) {
+        if (ff.read(fd, tempMem4b, Integer.BYTES, EngineMigration.TX_STRUCT_UPDATE_1_META_OFFSET_PARTITION_BY) != Integer.BYTES) {
+            throw CairoException.instance(ff.errno()).put("Cannot read: ").put(path);
+        }
+        return Unsafe.getUnsafe().getInt(tempMem4b);
     }
 
     private boolean upgradeTables(MigrationContext context, int latestVersion) {
@@ -213,38 +244,9 @@ public class EngineMigration {
         return updateSuccess;
     }
 
-    private static void backupFile(FilesFacade ff, Path src, Path toTemp, String backupName, int version) {
-        // make a copy
-        int copyPathLen = toTemp.length();
-        try {
-            toTemp.concat(backupName).put(".v").put(version);
-            for (int i = 1; ff.exists(toTemp.$()); i++) {
-                // if backup file already exists
-                // add .<num> at the end until file name is unique
-                LOG.info().$("back up file exists, [path=").$(toTemp).I$();
-                toTemp.trimTo(copyPathLen);
-                toTemp.concat(backupName).put(".v").put(version).put(".").put(i);
-            }
-
-            LOG.info().$("back up coping file [from=").$(src).$(",to=").$(toTemp).I$();
-            if (ff.copy(src.$(), toTemp.$()) < 0) {
-                throw CairoException.instance(ff.errno()).put("Cannot backup transaction file [to=").put(toTemp).put(']');
-            }
-        } finally {
-            toTemp.trimTo(copyPathLen);
-        }
-    }
-
     @FunctionalInterface
     interface MigrationAction {
         void migrate(MigrationContext context);
-    }
-
-    static int readIntAtOffset(FilesFacade ff, Path path, long tempMem4b, long fd) {
-        if (ff.read(fd, tempMem4b, Integer.BYTES, EngineMigration.TX_STRUCT_UPDATE_1_META_OFFSET_PARTITION_BY) != Integer.BYTES) {
-            throw CairoException.instance(ff.errno()).put("Cannot read: ").put(path);
-        }
-        return Unsafe.getUnsafe().getInt(tempMem4b);
     }
 
     private static class MigrationActions {
@@ -416,6 +418,13 @@ public class EngineMigration {
             this.rwMemory = rwMemory;
         }
 
+        public MappedReadWriteMemory createRwMemoryOf(FilesFacade ff, Path path, long pageSize) {
+            // re-use same rwMemory
+            // assumption that it is re-usable after the close() and then of()  methods called.
+            rwMemory.of(ff, path, pageSize);
+            return rwMemory;
+        }
+
         public CairoConfiguration getConfiguration() {
             return configuration;
         }
@@ -430,13 +439,6 @@ public class EngineMigration {
 
         public int getNextTableId() {
             return (int) engine.getNextTableId();
-        }
-
-        public MappedReadWriteMemory createRwMemoryOf(FilesFacade ff, Path path, long pageSize) {
-            // re-use same rwMemory
-            // assumption that it is re-usable after the close() and then of()  methods called.
-            rwMemory.of(ff, path, pageSize);
-            return rwMemory;
         }
 
         public Path getTablePath() {

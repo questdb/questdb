@@ -26,9 +26,9 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.SymbolTableSource;
+import io.questdb.cairo.vm.ContiguousMappedReadOnlyMemory;
 import io.questdb.cairo.vm.MappedReadOnlyMemory;
 import io.questdb.cairo.vm.ReadOnlyVirtualMemory;
-import io.questdb.cairo.vm.ContiguousMappedReadOnlyMemory;
 import io.questdb.cairo.vm.VmUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -884,7 +884,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     @NotNull
     private MappedReadOnlyMemory openOrCreateMemory(Path path, ObjList<MappedReadOnlyMemory> columns, boolean lastPartition, int primaryIndex, MappedReadOnlyMemory mem) {
         if (mem != null && mem != NullColumn.INSTANCE) {
-            mem.of(ff, path, ff.getMapPageSize(), ff.length(path));
+            mem.wholeFile(ff, path);
         } else {
             if (lastPartition) {
                 mem = new ContiguousMappedReadOnlyMemory(ff, path, ff.getMapPageSize());

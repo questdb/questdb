@@ -29,6 +29,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Numbers;
 import io.questdb.std.Transient;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 
 import java.io.Closeable;
@@ -47,7 +48,7 @@ public class TxnScoreboard implements Closeable {
         root.concat(TableUtils.TXN_SCOREBOARD_FILE_NAME).$();
         int pow2EntryCount = Numbers.ceilPow2(entryCount);
         this.size = TxnScoreboard.getScoreboardSize(pow2EntryCount);
-        this.fd = TableUtils.openCleanRW(ff, root, this.size, LOG);
+        this.fd = openCleanRW(ff, root, this.size);
 
         // truncate is required to give file a size
         // the allocate above does not seem to update file system's size entry
@@ -115,4 +116,13 @@ public class TxnScoreboard implements Closeable {
     private static native boolean isTxnAvailable(long pTxnScoreboard, long txn);
 
     private static native void init(long pTxnScoreboard, int entryCount);
+
+    static long openCleanRW(FilesFacade ff, LPSZ path, long size) {
+        final long fd = ff.openCleanRW(path, size);
+        if (fd > -1) {
+            LOG.debug().$("open clean [file=").$(path).$(", fd=").$(fd).$(']').$();
+            return fd;
+        }
+        throw CairoException.instance(ff.errno()).put("could not open read-write with clean allocation [file=").put(path).put(']');
+    }
 }

@@ -783,7 +783,6 @@ public class ContiguousMappedMemoryTest extends AbstractCairoTest {
                     ContiguousMappedReadOnlyMemory roMem = new ContiguousMappedReadOnlyMemory(
                             FilesFacadeImpl.INSTANCE,
                             path,
-                            sz,
                             sz
                     )
             ) {

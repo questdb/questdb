@@ -26,8 +26,8 @@ package io.questdb.griffin.engine.functions.catalogue;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.*;
-import io.questdb.cairo.vm.MappedReadOnlyMemory;
 import io.questdb.cairo.vm.ContiguousMappedReadOnlyMemory;
+import io.questdb.cairo.vm.MappedReadOnlyMemory;
 import io.questdb.cairo.vm.VmUtils;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
@@ -177,7 +177,7 @@ public class AttributeCatalogueFunctionFactory implements FunctionFactory {
                             path.concat(pname);
                             if (ff.exists(path.concat(TableUtils.META_FILE_NAME).$())) {
                                 foundMetadataFile = true;
-                                metaMem.of(ff, path, ff.getPageSize(), ff.length(path));
+                                metaMem.wholeFile(ff, path);
                                 columnCount = metaMem.getInt(TableUtils.META_OFFSET_COUNT);
                                 tableId = metaMem.getInt(TableUtils.META_OFFSET_TABLE_ID);
                             }

@@ -37,7 +37,7 @@ public class SymbolCacheTest extends AbstractCairoTest {
                     long symCountOffset = TableUtils.getSymbolWriterIndexOffset(symColIndex2);
                     long transientSymCountOffset = TableUtils.getSymbolWriterTransientIndexOffset(symColIndex2);
                     path.of(configuration.getRoot()).concat(tableName);
-                    txMem.of(configuration.getFilesFacade(), path.concat(TableUtils.TXN_FILE_NAME).$(), configuration.getFilesFacade().getPageSize(),
+                    txMem.partialFile(configuration.getFilesFacade(), path.concat(TableUtils.TXN_FILE_NAME).$(),
                             transientSymCountOffset + Integer.BYTES);
                     cache.of(configuration, path.of(configuration.getRoot()).concat(tableName), "symCol2", symColIndex2);
 
@@ -116,7 +116,7 @@ public class SymbolCacheTest extends AbstractCairoTest {
                     symCountOffset = TableUtils.getSymbolWriterIndexOffset(symColIndex2);
                     transientSymCountOffset = TableUtils.getSymbolWriterTransientIndexOffset(symColIndex2);
                     path.of(configuration.getRoot()).concat(tableName);
-                    txMem.of(configuration.getFilesFacade(), path.concat(TableUtils.TXN_FILE_NAME).$(), configuration.getFilesFacade().getPageSize(),
+                    txMem.partialFile(configuration.getFilesFacade(), path.concat(TableUtils.TXN_FILE_NAME).$(),
                             transientSymCountOffset + Integer.BYTES);
                     cache.of(configuration, path.of(configuration.getRoot()).concat(tableName), "symCol2", symColIndex2);
 

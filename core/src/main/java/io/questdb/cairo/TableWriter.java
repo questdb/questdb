@@ -1378,7 +1378,7 @@ public class TableWriter implements Closeable {
     private static void openMetaFile(FilesFacade ff, Path path, int rootLen, MappedReadOnlyMemory metaMem) {
         path.concat(META_FILE_NAME).$();
         try {
-            metaMem.of(ff, path, ff.getPageSize(), ff.length(path));
+            metaMem.wholeFile(ff, path);
         } finally {
             path.trimTo(rootLen);
         }
@@ -2229,10 +2229,7 @@ public class TableWriter implements Closeable {
 
                             if (partitionSize > columnTop) {
                                 TableUtils.dFile(path.trimTo(plen), columnName);
-
-                                roMem.of(ff, path, ff.getPageSize(), 0);
-                                roMem.extend((partitionSize - columnTop) << ColumnType.pow2SizeOf(ColumnType.INT));
-
+                                roMem.partialFile(ff, path, (partitionSize - columnTop) << ColumnType.pow2SizeOf(ColumnType.INT));
                                 indexer.configureWriter(configuration, path.trimTo(plen), columnName, columnTop);
                                 indexer.index(roMem, columnTop, partitionSize);
                             }
@@ -3661,7 +3658,7 @@ public class TableWriter implements Closeable {
                     throw CairoException.instance(0).put("corrupt ").put(path);
                 }
 
-                todoMem.of(ff, path, ff.getPageSize(), fileLen);
+                todoMem.wholeFile(ff, path);
                 this.todoTxn = todoMem.getLong(0);
                 // check if _todo_ file is consistent, if not, we just ignore its contents and reset hash
                 if (todoMem.getLong(24) != todoTxn) {
@@ -4502,7 +4499,7 @@ public class TableWriter implements Closeable {
                 if (metaSwapIndex > 0) {
                     path.put('.').put(metaSwapIndex);
                 }
-                metaMem.of(ff, path.$(), ff.getPageSize(), ff.length(path));
+                metaMem.wholeFile(ff, path.$());
                 validationMap.clear();
                 validate(ff, metaMem, validationMap);
             } finally {

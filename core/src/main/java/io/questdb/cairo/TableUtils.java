@@ -477,7 +477,7 @@ public final class TableUtils {
         mem.extend(40);
     }
 
-    public static void resetTxn(PagedVirtualMemory txMem, int symbolMapCount, long txn, long dataVersion, long partitionTableVersion) {
+    public static void resetTxn(WriteOnlyVirtualMemory txMem, int symbolMapCount, long txn, long dataVersion, long partitionTableVersion) {
         // txn to let readers know table is being reset
         txMem.putLong(TX_OFFSET_TXN, txn);
         Unsafe.getUnsafe().storeFence();
@@ -874,6 +874,12 @@ public final class TableUtils {
         }
     }
 
+    static void createDirsOrFail(FilesFacade ff, Path path, int mkDirMode) {
+        if (ff.mkdirs(path, mkDirMode) != 0) {
+            throw CairoException.instance(ff.errno()).put("could not create directories [file=").put(path).put(']');
+        }
+    }
+
     // Scans timestamp file
     // returns size of partition detected, e.g. size of monotonic increase
     // of timestamp longs read from 0 offset to the end of the file
@@ -918,21 +924,6 @@ public final class TableUtils {
         } finally {
             path.trimTo(plen);
         }
-    }
-
-    static void createDirsOrFail(FilesFacade ff, Path path, int mkDirMode) {
-        if (ff.mkdirs(path, mkDirMode) != 0) {
-            throw CairoException.instance(ff.errno()).put("could not create directories [file=").put(path).put(']');
-        }
-    }
-
-    static long openCleanRW(FilesFacade ff, LPSZ path, long size, Log log) {
-        final long fd = ff.openCleanRW(path, size);
-        if (fd > -1) {
-            log.debug().$("open clean [file=").$(path).$(", fd=").$(fd).$(']').$();
-            return fd;
-        }
-        throw CairoException.instance(ff.errno()).put("could not open read-write with clean allocation [file=").put(path).put(']');
     }
 
     public interface FailureCloseable {

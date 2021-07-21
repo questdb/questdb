@@ -42,10 +42,6 @@ public class ContiguousMappedReadOnlyMemory extends AbstractContiguousMemory
     protected long size = 0;
     private long grownLength;
 
-    public ContiguousMappedReadOnlyMemory(FilesFacade ff, LPSZ name, long pageSize, long size) {
-        of(ff, name, pageSize, size);
-    }
-
     public ContiguousMappedReadOnlyMemory(FilesFacade ff, LPSZ name, long size) {
         of(ff, name, 0, size);
     }
@@ -69,15 +65,15 @@ public class ContiguousMappedReadOnlyMemory extends AbstractContiguousMemory
     }
 
     @Override
-    public void of(FilesFacade ff, LPSZ name, long pageSize, long size) {
+    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size) {
         openFile(ff, name);
         map(ff, name, size);
     }
 
     @Override
-    public void of(FilesFacade ff, LPSZ name, long pageSize) {
+    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize) {
         openFile(ff, name);
-        map(ff, name, ff.length(fd));
+        map(ff, name, Long.MAX_VALUE);
     }
 
     @Override
@@ -100,16 +96,16 @@ public class ContiguousMappedReadOnlyMemory extends AbstractContiguousMemory
     }
 
     @Override
+    public int getPageCount() {
+        return page != 0 ? 1 : 0;
+    }
+
+    @Override
     public void extend(long newSize) {
         grownLength = Math.max(newSize, grownLength);
         if (newSize > size) {
             setSize0(newSize);
         }
-    }
-
-    @Override
-    public int getPageCount() {
-        return page != 0 ? 1 : 0;
     }
 
     public long size() {

@@ -53,7 +53,7 @@ public class PagedSlidingReadOnlyMemory extends PagedVirtualMemory {
 
     @Override
     public long getPageSize(int page) {
-        return getMapPageSize();
+        return getExtendSegmentSize();
     }
 
     @Override
@@ -70,7 +70,7 @@ public class PagedSlidingReadOnlyMemory extends PagedVirtualMemory {
         this.ff = parent.getFilesFacade();
         this.fd = parent.getFd();
         this.parent = parent;
-        this.setMapPageSize(parent.getMapPageSize());
+        this.setExtendSegmentSize(parent.getExtendSegmentSize());
         updateSize();
         this.pageIndex = -1;
         LOG.debug().$("open [fd=").$(fd).$(", size=").$(this.size).$(']').$();
@@ -78,7 +78,7 @@ public class PagedSlidingReadOnlyMemory extends PagedVirtualMemory {
 
     public void updateSize() {
         if (parent != null) {
-            this.size = pageOffset(pageIndex(parent.getAppendOffset())) + getMapPageSize();
+            this.size = pageOffset(pageIndex(parent.getAppendOffset())) + getExtendSegmentSize();
         }
     }
 
@@ -105,7 +105,7 @@ public class PagedSlidingReadOnlyMemory extends PagedVirtualMemory {
 
         if (sz > 0) {
             try {
-                long address = TableUtils.mapRO(ff, fd, getMapPageSize(), offset);
+                long address = TableUtils.mapRO(ff, fd, getExtendSegmentSize(), offset);
                 this.pageIndex = page;
                 this.pageAddress = address;
                 return address;
@@ -120,7 +120,7 @@ public class PagedSlidingReadOnlyMemory extends PagedVirtualMemory {
 
     private void releaseCurrentPage() {
         if (pageAddress != 0) {
-            ff.munmap(pageAddress, getMapPageSize());
+            ff.munmap(pageAddress, getExtendSegmentSize());
         }
     }
 

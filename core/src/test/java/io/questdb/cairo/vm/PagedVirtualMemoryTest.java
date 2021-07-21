@@ -1081,7 +1081,7 @@ public class PagedVirtualMemoryTest {
         binarySequence.of(buffer);
 
         try (PagedVirtualMemory mem = new PagedVirtualMemory(mem1Size, Integer.MAX_VALUE)) {
-            Assert.assertEquals(Numbers.ceilPow2(mem1Size), mem.getMapPageSize());
+            Assert.assertEquals(Numbers.ceilPow2(mem1Size), mem.getExtendSegmentSize());
             long offset1 = 0;
             for (int i = 0; i < n; i++) {
                 long o;
@@ -1107,7 +1107,7 @@ public class PagedVirtualMemoryTest {
             }
 
             try (PagedVirtualMemory mem2 = new PagedVirtualMemory(mem2Size, Integer.MAX_VALUE)) {
-                Assert.assertEquals(Numbers.ceilPow2(mem2Size), mem2.getMapPageSize());
+                Assert.assertEquals(Numbers.ceilPow2(mem2Size), mem2.getExtendSegmentSize());
                 offset1 = 0;
                 for (int i = 0; i < n; i++) {
                     BinarySequence sequence = mem.getBin(offset1);
@@ -1202,7 +1202,7 @@ public class PagedVirtualMemoryTest {
         int maxPages = 3;
         int sz = 256 * 3;
         try (PagedVirtualMemory mem = new PagedVirtualMemory(pageSize, maxPages)) {
-            Assert.assertEquals(pageSize, mem.getMapPageSize());
+            Assert.assertEquals(pageSize, mem.getExtendSegmentSize());
             int n = 0;
             try {
                 while (n <= sz) {

@@ -24,8 +24,8 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.vm.MappedReadOnlyMemory;
 import io.questdb.cairo.vm.ContiguousMappedReadOnlyMemory;
+import io.questdb.cairo.vm.MappedReadOnlyMemory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Misc;
@@ -94,12 +94,10 @@ public abstract class AbstractIndexReader implements BitmapIndexReader {
         this.unIndexedNullCount = unIndexedNullCount;
         TableUtils.txnPartitionConditionally(path, partitionTxn);
         final int plen = path.length();
-        final long pageSize = configuration.getFilesFacade().getMapPageSize();
         this.spinLockTimeoutUs = configuration.getSpinLockTimeoutUs();
 
         try {
-            this.keyMem.of(configuration.getFilesFacade(), BitmapIndexUtils.keyFileName(path, name), pageSize);
-            this.keyMem.extend(configuration.getFilesFacade().length(this.keyMem.getFd()));
+            this.keyMem.wholeFile(configuration.getFilesFacade(), BitmapIndexUtils.keyFileName(path, name));
             this.clock = configuration.getMicrosecondClock();
 
             // key file should already be created at least with header
@@ -149,8 +147,7 @@ public abstract class AbstractIndexReader implements BitmapIndexReader {
             if (unIndexedNullCount > 0) {
                 this.keyCountIncludingNulls++;
             }
-            this.valueMem.of(configuration.getFilesFacade(), BitmapIndexUtils.valueFileName(path.trimTo(plen), name), pageSize);
-            this.valueMem.extend(configuration.getFilesFacade().length(this.valueMem.getFd()));
+            this.valueMem.wholeFile(configuration.getFilesFacade(), BitmapIndexUtils.valueFileName(path.trimTo(plen), name));
         } catch (Throwable e) {
             close();
             throw e;

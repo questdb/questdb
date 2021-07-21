@@ -24,17 +24,17 @@
 
 package io.questdb.cutlass.line.tcp;
 
-import java.io.Closeable;
-
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.SymbolMapReaderImpl;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.SymbolTable;
-import io.questdb.cairo.vm.MappedReadOnlyMemory;
 import io.questdb.cairo.vm.ContiguousMappedReadOnlyMemory;
+import io.questdb.cairo.vm.MappedReadOnlyMemory;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.ObjIntHashMap;
 import io.questdb.std.str.Path;
+
+import java.io.Closeable;
 
 class SymbolCache implements Closeable {
     private final ObjIntHashMap<CharSequence> indexBySym = new ObjIntHashMap<>(256, 0.5, SymbolTable.VALUE_NOT_FOUND);
@@ -48,8 +48,8 @@ class SymbolCache implements Closeable {
     void of(CairoConfiguration configuration, Path path, CharSequence name, int symIndex) {
         FilesFacade ff = configuration.getFilesFacade();
         transientSymCountOffset = TableUtils.getSymbolWriterTransientIndexOffset(symIndex);
-        int plen = path.length();
-        txMem.of(ff, path.concat(TableUtils.TXN_FILE_NAME).$(), ff.getPageSize(), transientSymCountOffset + Integer.BYTES);
+        final int plen = path.length();
+        txMem.partialFile(ff, path.concat(TableUtils.TXN_FILE_NAME).$(), transientSymCountOffset + Integer.BYTES);
         int symCount = txMem.getInt(transientSymCountOffset);
         path.trimTo(plen);
         symMapReader.of(configuration, path, name, symCount);

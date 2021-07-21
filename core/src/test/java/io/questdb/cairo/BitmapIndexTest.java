@@ -192,7 +192,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
                 try (PagedMappedReadWriteMemory mem = new PagedMappedReadWriteMemory()) {
                     try (Path path = new Path()) {
                         path.of(configuration.getRoot()).concat("x").put(".k").$();
-                        mem.of(configuration.getFilesFacade(), path, configuration.getFilesFacade().getPageSize());
+                        mem.wholeFile(configuration.getFilesFacade(), path);
                     }
 
                     long offset = BitmapIndexUtils.getKeyEntryOffset(0);
@@ -388,7 +388,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
                 try (PagedMappedReadWriteMemory mem = new PagedMappedReadWriteMemory()) {
                     try (Path path = new Path()) {
                         path.of(configuration.getRoot()).concat("x").put(".k").$();
-                        mem.of(configuration.getFilesFacade(), path, configuration.getFilesFacade().getPageSize());
+                        mem.wholeFile(configuration.getFilesFacade(), path);
                     }
 
                     long offset = BitmapIndexUtils.getKeyEntryOffset(0);

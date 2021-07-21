@@ -429,7 +429,7 @@ public class CairoMemoryTest {
                 }
                 Assert.assertEquals(8L * N, mem.getAppendOffset());
             }
-            try (MappedReadOnlyMemory mem = new ContiguousMappedReadOnlyMemory(FF, path, FF.getPageSize(), 8L * N)) {
+            try (MappedReadOnlyMemory mem = new ContiguousMappedReadOnlyMemory(FF, path, 8L * N)) {
                 for (int i = 0; i < N; i++) {
                     Assert.assertEquals(i, mem.getLong(i * 8));
                 }
@@ -494,7 +494,7 @@ public class CairoMemoryTest {
                     mem.jumpTo(800);
                 }
 
-                try (MappedReadOnlyMemory roMem = new ContiguousMappedReadOnlyMemory(FF, path, FF.getPageSize(), 800)) {
+                try (MappedReadOnlyMemory roMem = new ContiguousMappedReadOnlyMemory(FF, path, 800)) {
                     for (int i = 0; i < 50; i++) {
                         Assert.assertEquals(50 - i, roMem.getLong(i * 8));
                     }

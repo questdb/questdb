@@ -49,9 +49,9 @@ public class PagedVirtualMemory implements ReadWriteVirtualMemory, Closeable {
     private final int maxPages;
     private final InPageLong256FromCharSequenceDecoder inPageLong256Decoder = new InPageLong256FromCharSequenceDecoder();
     private final StraddlingPageLong256FromCharSequenceDecoder straddlingPageLong256Decoder = new StraddlingPageLong256FromCharSequenceDecoder();
-    private long mapPageSize;
-    private int mapPageMsb;
-    private long mapPageMod;
+    private long extendSegmentSize;
+    private int extendSegmentMsb;
+    private long extendSegmentMod;
     private long appendPointer = -1;
     private long pageHi = -1;
     private long pageLo = -1;
@@ -61,7 +61,7 @@ public class PagedVirtualMemory implements ReadWriteVirtualMemory, Closeable {
     private long absolutePointer;
 
     public PagedVirtualMemory(long pageSize, int maxPages) {
-        setMapPageSize(pageSize);
+        setExtendSegmentSize(pageSize);
         this.maxPages = maxPages;
     }
 
@@ -182,7 +182,7 @@ public class PagedVirtualMemory implements ReadWriteVirtualMemory, Closeable {
     }
 
     public long getPageSize(int page) {
-        return getMapPageSize();
+        return getExtendSegmentSize();
     }
 
     public final short getShort(long offset) {
@@ -287,8 +287,8 @@ public class PagedVirtualMemory implements ReadWriteVirtualMemory, Closeable {
         }
     }
 
-    public long getMapPageSize() {
-        return mapPageSize;
+    public long getExtendSegmentSize() {
+        return extendSegmentSize;
     }
 
     public final CharSequence getStr0(long offset, CharSequenceView view) {
@@ -693,11 +693,11 @@ public class PagedVirtualMemory implements ReadWriteVirtualMemory, Closeable {
     }
 
     public long offsetInPage(long offset) {
-        return offset & mapPageMod;
+        return offset & extendSegmentMod;
     }
 
     public final int pageIndex(long offset) {
-        return (int) (offset >> mapPageMsb);
+        return (int) (offset >> extendSegmentMsb);
     }
 
     public long pageRemaining(long offset) {
@@ -711,7 +711,7 @@ public class PagedVirtualMemory implements ReadWriteVirtualMemory, Closeable {
                 address = allocateNextPage(i);
                 pages.setQuick(i, address);
             }
-            Vect.memset(address, mapPageSize, 0);
+            Vect.memset(address, extendSegmentSize, 0);
         }
     }
 
@@ -727,11 +727,11 @@ public class PagedVirtualMemory implements ReadWriteVirtualMemory, Closeable {
     }
 
     protected long allocateNextPage(int page) {
-        LOG.debug().$("new page [size=").$(getMapPageSize()).I$();
+        LOG.debug().$("new page [size=").$(getExtendSegmentSize()).I$();
         if (page >= maxPages) {
             throw LimitOverflowException.instance().put("Maximum number of pages (").put(maxPages).put(") breached in VirtualMemory");
         }
-        return Unsafe.malloc(getMapPageSize());
+        return Unsafe.malloc(getExtendSegmentSize());
     }
 
     protected long cachePageAddress(int index, long address) {
@@ -947,7 +947,7 @@ public class PagedVirtualMemory implements ReadWriteVirtualMemory, Closeable {
     }
 
     protected final long pageOffset(int page) {
-        return ((long) page << mapPageMsb);
+        return ((long) page << extendSegmentMsb);
     }
 
     private void putBin0(BinarySequence value, long len, long remaining) {
@@ -1125,11 +1125,11 @@ public class PagedVirtualMemory implements ReadWriteVirtualMemory, Closeable {
         }
     }
 
-    protected final void setMapPageSize(long mapPageSize) {
+    protected final void setExtendSegmentSize(long extendSegmentSize) {
         clear();
-        this.mapPageSize = Numbers.ceilPow2(mapPageSize);
-        this.mapPageMsb = Numbers.msb(this.mapPageSize);
-        this.mapPageMod = this.mapPageSize - 1;
+        this.extendSegmentSize = Numbers.ceilPow2(extendSegmentSize);
+        this.extendSegmentMsb = Numbers.msb(this.extendSegmentSize);
+        this.extendSegmentMod = this.extendSegmentSize - 1;
     }
 
     private void skip0(long bytes) {

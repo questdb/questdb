@@ -246,12 +246,10 @@ public class BitmapIndexWriter implements Closeable, Mutable {
 
     final public void of(CairoConfiguration configuration, Path path, CharSequence name) {
         close();
-        long pageSize = configuration.getFilesFacade().getMapPageSize();
-        int plen = path.length();
-
+        final int plen = path.length();
         try {
             boolean exists = configuration.getFilesFacade().exists(BitmapIndexUtils.keyFileName(path, name));
-            this.keyMem.of(configuration.getFilesFacade(), path, pageSize);
+            this.keyMem.wholeFile(configuration.getFilesFacade(), path);
             if (!exists) {
                 LOG.error().$(path).$(" not found").$();
                 throw CairoException.instance(0).put("Index does not exist: ").put(path);
@@ -283,7 +281,7 @@ public class BitmapIndexWriter implements Closeable, Mutable {
                 throw CairoException.instance(0).put("Sequence mismatch on ").put(path);
             }
 
-            this.valueMem.of(configuration.getFilesFacade(), BitmapIndexUtils.valueFileName(path.trimTo(plen), name), pageSize);
+            this.valueMem.wholeFile(configuration.getFilesFacade(), BitmapIndexUtils.valueFileName(path.trimTo(plen), name));
             this.valueMemSize = this.keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_VALUE_MEM_SIZE);
 
             if (this.valueMem.getAppendOffset() < this.valueMemSize) {

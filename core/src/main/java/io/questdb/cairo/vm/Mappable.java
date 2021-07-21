@@ -33,11 +33,28 @@ public interface Mappable extends Closeable {
     @Override
     void close();
 
-    void of(FilesFacade ff, LPSZ name, long pageSize, long size);
-
-    void of(FilesFacade ff, LPSZ name, long pageSize);
+    long getFd();
 
     boolean isDeleted();
 
-    long getFd();
+    /**
+     * Maps file to memory
+     *
+     * @param ff                the files facade - an abstraction used to simulate failures
+     * @param name              the name of the file
+     * @param extendSegmentSize for those implementations that can need to extend mapped memory beyond available file size
+     *                          should use this parameter as the increment size
+     * @param size              size of the initial mapped memory when smaller than the actual file
+     */
+    void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size);
+
+    void of(FilesFacade ff, LPSZ name, long extendSegmentSize);
+
+    default void partialFile(FilesFacade ff, LPSZ name, long size) {
+        of(ff, name, ff.getMapPageSize(), size);
+    }
+
+    default void wholeFile(FilesFacade ff, LPSZ name) {
+        of(ff, name, ff.getMapPageSize(), Long.MAX_VALUE);
+    }
 }
