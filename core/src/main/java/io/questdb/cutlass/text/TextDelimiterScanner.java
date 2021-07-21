@@ -179,7 +179,7 @@ public class TextDelimiterScanner implements Closeable {
         // calculate standard deviation for every byte in the matrix
         byte delimiter = Byte.MIN_VALUE;
 
-        if (lineCount < 1) {
+        if (lineCount < 2) {
             LOG.info().$("not enough lines [table=").$(tableName).$(']').$();
             throw NotEnoughLinesException.$("not enough lines [table=").put(tableName).put(']');
         }
