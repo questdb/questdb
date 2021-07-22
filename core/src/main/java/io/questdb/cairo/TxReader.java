@@ -24,9 +24,9 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.vm.ContinuousMappedReadOnlyMemory;
 import io.questdb.cairo.vm.Mappable;
 import io.questdb.cairo.vm.MappedReadOnlyMemory;
-import io.questdb.cairo.vm.ContinuousMappedReadOnlyMemory;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;

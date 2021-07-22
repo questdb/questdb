@@ -26,7 +26,6 @@ package io.questdb.cairo;
 
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;

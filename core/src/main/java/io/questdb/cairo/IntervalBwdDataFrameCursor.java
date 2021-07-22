@@ -25,8 +25,8 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.sql.DataFrame;
-import io.questdb.cairo.vm.ReadOnlyVirtualMemory;
 import io.questdb.cairo.vm.ContinuousMappedReadOnlyMemory;
+import io.questdb.cairo.vm.ReadOnlyVirtualMemory;
 import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;

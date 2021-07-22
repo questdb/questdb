@@ -86,7 +86,7 @@ public class LongSequenceFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
+        public RecordCursor getCursor(SqlExecutionContext executionContext) {
             cursor.toTop();
             return cursor;
         }
@@ -110,7 +110,7 @@ public class LongSequenceFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
+        public RecordCursor getCursor(SqlExecutionContext executionContext) {
             rnd.reset(this.seedLo, this.seedHi);
             executionContext.setRandom(rnd);
             cursor.toTop();

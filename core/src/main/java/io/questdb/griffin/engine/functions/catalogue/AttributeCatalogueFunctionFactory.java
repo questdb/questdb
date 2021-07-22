@@ -30,7 +30,6 @@ import io.questdb.cairo.vm.ContinuousMappedReadOnlyMemory;
 import io.questdb.cairo.vm.MappedReadOnlyMemory;
 import io.questdb.cairo.vm.VmUtils;
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.std.*;
@@ -87,7 +86,7 @@ public class AttributeCatalogueFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
+        public RecordCursor getCursor(SqlExecutionContext executionContext) {
             cursor.toTop();
             return cursor;
         }

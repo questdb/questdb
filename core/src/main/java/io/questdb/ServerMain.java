@@ -24,36 +24,7 @@
 
 package io.questdb;
 
-import java.io.Closeable;
-import java.io.File;
-import java.io.FileInputStream;
-import java.io.FileOutputStream;
-import java.io.IOException;
-import java.io.InputStream;
-import java.net.Inet4Address;
-import java.net.InetAddress;
-import java.net.NetworkInterface;
-import java.net.SocketException;
-import java.net.URL;
-import java.util.Collections;
-import java.util.Date;
-import java.util.Enumeration;
-import java.util.Properties;
-import java.util.ServiceLoader;
-import java.util.concurrent.locks.LockSupport;
-import java.util.jar.Attributes;
-import java.util.jar.Manifest;
-import java.util.zip.ZipEntry;
-import java.util.zip.ZipInputStream;
-
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.O3CallbackJob;
-import io.questdb.cairo.O3CopyJob;
-import io.questdb.cairo.O3OpenColumnJob;
-import io.questdb.cairo.O3PartitionJob;
-import io.questdb.cairo.O3PurgeDiscoveryJob;
-import io.questdb.cairo.O3PurgeJob;
-import io.questdb.cairo.O3Utils;
+import io.questdb.cairo.*;
 import io.questdb.cutlass.http.HttpServer;
 import io.questdb.cutlass.json.JsonException;
 import io.questdb.cutlass.line.tcp.LineTcpServer;
@@ -71,6 +42,15 @@ import io.questdb.std.*;
 import io.questdb.std.datetime.millitime.Dates;
 import io.questdb.std.str.Path;
 import sun.misc.Signal;
+
+import java.io.*;
+import java.net.*;
+import java.util.*;
+import java.util.concurrent.locks.LockSupport;
+import java.util.jar.Attributes;
+import java.util.jar.Manifest;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipInputStream;
 
 public class ServerMain {
     private static final String VERSION_TXT = "version.txt";

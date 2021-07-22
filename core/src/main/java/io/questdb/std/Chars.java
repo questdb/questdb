@@ -239,21 +239,6 @@ public final class Chars {
         return true;
     }
 
-    public static boolean equalsLowerCase(@NotNull CharSequence l, CharSequence r) {
-        int ll;
-        if ((ll = l.length()) != r.length()) {
-            return false;
-        }
-
-        for (int i = 0; i < ll; i++) {
-            if (Character.toLowerCase(l.charAt(i)) != Character.toLowerCase(r.charAt(i))) {
-                return false;
-            }
-        }
-
-        return true;
-    }
-
     public static boolean equalsLowerCaseAscii(CharSequence l, int lLo, int lHi, CharSequence r, int rLo, int rHi) {
         if (l == r) {
             return true;

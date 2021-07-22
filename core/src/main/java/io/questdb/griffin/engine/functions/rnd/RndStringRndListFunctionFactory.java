@@ -25,10 +25,10 @@
 package io.questdb.griffin.engine.functions.rnd;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.vm.ContinuousVirtualMemory;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
+import io.questdb.cairo.vm.ContinuousVirtualMemory;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.StrFunction;

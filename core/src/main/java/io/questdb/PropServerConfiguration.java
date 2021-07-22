@@ -1533,11 +1533,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public NanosecondClock getNanosecondClock() {
-            return NanosecondClockImpl.INSTANCE;
-        }
-
-        @Override
         public int getMkDirMode() {
             return mkdirMode;
         }

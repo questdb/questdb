@@ -26,7 +26,9 @@ package io.questdb.griffin.engine.functions.constants;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableUtils;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.str.CharSink;

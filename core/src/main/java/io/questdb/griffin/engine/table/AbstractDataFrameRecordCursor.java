@@ -25,7 +25,10 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.TableReaderSelectedColumnRecord;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.DataFrameCursor;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;

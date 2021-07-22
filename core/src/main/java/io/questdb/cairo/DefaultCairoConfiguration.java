@@ -165,11 +165,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public NanosecondClock getNanosecondClock() {
-        return NanosecondClockImpl.INSTANCE;
-    }
-
-    @Override
     public int getMkDirMode() {
         return 509;
     }

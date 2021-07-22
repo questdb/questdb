@@ -25,6 +25,7 @@
 package io.questdb.cutlass.http;
 
 import io.questdb.MessageBus;
+import io.questdb.Metrics;
 import io.questdb.WorkerPoolAwareConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnIndexerJob;
@@ -35,7 +36,6 @@ import io.questdb.griffin.engine.groupby.vect.GroupByJob;
 import io.questdb.griffin.engine.table.LatestByAllIndexedJob;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.Metrics;
 import io.questdb.mp.EagerThreadSetup;
 import io.questdb.mp.Job;
 import io.questdb.mp.WorkerPool;
