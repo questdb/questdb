@@ -165,6 +165,7 @@ public class EngineMigration {
                                                 if (migration != null) {
                                                     LOG.info().$("upgrading table [path=").$(path).$(",toVersion=").$(i).I$();
                                                     migration.migrate(context);
+                                                    path.trimTo(plen);
                                                 }
                                             } catch (Exception e) {
                                                 LOG.error().$("failed to upgrade table path=")
