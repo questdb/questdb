@@ -30,6 +30,31 @@ import io.questdb.std.FilesFacade;
 public class VmUtils {
     public static final int STRING_LENGTH_BYTES = 4;
 
+    public static long bestEffortTruncate(FilesFacade ff, Log log, long fd, long size, long mapPageSize) {
+        if (ff.truncate(Math.abs(fd), size)) {
+            log.debug()
+                    .$("truncated and closed [fd=").$(fd)
+                    .$(", size=").$(size)
+                    .$(']').$();
+            return size;
+        }
+            if (ff.isRestrictedFileSystem()) {
+                // Windows does truncate file if it has a mapped page somewhere, could be another handle and process.
+                // To make it work size needs to be rounded up to nearest page.
+                long n = (size - 1) / mapPageSize;
+                long sz = (n + 1) * mapPageSize;
+                if (ff.truncate(Math.abs(fd), sz)) {
+                    log.debug()
+                            .$("truncated and closed, second attempt [fd=").$(fd)
+                            .$(", size=").$(sz)
+                            .$(']').$();
+                    return sz;
+                }
+            }
+            log.debug().$("closed without truncate [fd=").$(fd).$(", errno=").$(ff.errno()).$(']').$();
+            return -1;
+    }
+
     public static int getStorageLength(CharSequence s) {
         if (s == null) {
             return STRING_LENGTH_BYTES;
@@ -45,7 +70,7 @@ public class VmUtils {
     public static void bestEffortClose(FilesFacade ff, Log log, long fd, boolean truncate, long size, long mapPageSize) {
         try {
             if (truncate) {
-                AppendOnlyVirtualMemory.bestEffortTruncate(ff, log, fd, size, mapPageSize);
+                bestEffortTruncate(ff, log, fd, size, mapPageSize);
             } else {
                 log.debug().$("closed [fd=").$(fd).$(']').$();
             }

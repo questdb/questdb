@@ -26,7 +26,7 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.sql.SymbolTable;
-import io.questdb.cairo.vm.ContiguousMappedReadOnlyMemory;
+import io.questdb.cairo.vm.ContinuousMappedReadOnlyMemory;
 import io.questdb.cairo.vm.VmUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -38,8 +38,8 @@ import java.io.Closeable;
 public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
     private static final Log LOG = LogFactory.getLog(SymbolMapReaderImpl.class);
     private final BitmapIndexBwdReader indexReader = new BitmapIndexBwdReader();
-    private final ContiguousMappedReadOnlyMemory charMem = new ContiguousMappedReadOnlyMemory();
-    private final ContiguousMappedReadOnlyMemory offsetMem = new ContiguousMappedReadOnlyMemory();
+    private final ContinuousMappedReadOnlyMemory charMem = new ContinuousMappedReadOnlyMemory();
+    private final ContinuousMappedReadOnlyMemory offsetMem = new ContinuousMappedReadOnlyMemory();
     private final ObjList<String> cache = new ObjList<>();
     private int maxHash;
     private boolean cached;

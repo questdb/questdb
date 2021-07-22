@@ -28,7 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.SymbolMapReaderImpl;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.SymbolTable;
-import io.questdb.cairo.vm.ContiguousMappedReadOnlyMemory;
+import io.questdb.cairo.vm.ContinuousMappedReadOnlyMemory;
 import io.questdb.cairo.vm.MappedReadOnlyMemory;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.ObjIntHashMap;
@@ -38,7 +38,7 @@ import java.io.Closeable;
 
 class SymbolCache implements Closeable {
     private final ObjIntHashMap<CharSequence> indexBySym = new ObjIntHashMap<>(256, 0.5, SymbolTable.VALUE_NOT_FOUND);
-    private final MappedReadOnlyMemory txMem = new ContiguousMappedReadOnlyMemory();
+    private final MappedReadOnlyMemory txMem = new ContinuousMappedReadOnlyMemory();
     private final SymbolMapReaderImpl symMapReader = new SymbolMapReaderImpl();
     private long transientSymCountOffset;
 

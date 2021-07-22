@@ -418,10 +418,11 @@ public class EngineMigration {
             this.rwMemory = rwMemory;
         }
 
+        // todo: remove extra param
         public MappedReadWriteMemory createRwMemoryOf(FilesFacade ff, Path path, long pageSize) {
             // re-use same rwMemory
             // assumption that it is re-usable after the close() and then of()  methods called.
-            rwMemory.of(ff, path, pageSize);
+            rwMemory.wholeFile(ff, path);
             return rwMemory;
         }
 

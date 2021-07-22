@@ -34,39 +34,6 @@ public class NullColumn implements MappedReadOnlyMemory {
     public static final NullColumn INSTANCE = new NullColumn();
 
     @Override
-    public void close() {
-    }
-
-    @Override
-    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void wholeFile(FilesFacade ff, LPSZ name) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public boolean isDeleted() {
-        return true;
-    }
-
-    @Override
-    public long getFd() {
-        return -1;
-    }
-
-    @Override
-    public void growToFileSize() {
-    }
-
-    @Override
     public BinarySequence getBin(long offset) {
         return null;
     }
@@ -172,5 +139,39 @@ public class NullColumn implements MappedReadOnlyMemory {
     @Override
     public long addressOf(long offset) {
         return 0;
+    }
+
+    @Override
+    public FilesFacade getFilesFacade() {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void close() {
+    }
+
+    @Override
+    public long getFd() {
+        return -1;
+    }
+
+    @Override
+    public boolean isDeleted() {
+        return true;
+    }
+
+    @Override
+    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void wholeFile(FilesFacade ff, LPSZ name) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void growToFileSize() {
+        throw new UnsupportedOperationException();
     }
 }

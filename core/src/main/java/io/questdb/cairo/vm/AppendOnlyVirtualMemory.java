@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.str.LPSZ;
 
@@ -58,8 +59,9 @@ public class AppendOnlyVirtualMemory extends PagedVirtualMemory implements Mappe
         return 0L;
     }
 
-    public final void extend(long size) {
-        jumpTo(size);
+    @Override
+    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size) {
+        of(ff, name, extendSegmentSize);
     }
 
     public void truncate() {
@@ -92,7 +94,7 @@ public class AppendOnlyVirtualMemory extends PagedVirtualMemory implements Mappe
         super.close();
         if (fd != -1) {
             try {
-                VmUtils.bestEffortClose(ff, LOG, fd, truncate, sz, getExtendSegmentSize());
+                VmUtils.bestEffortClose(ff, LOG, fd, truncate, sz, Files.PAGE_SIZE);
             } finally {
                 fd = -1;
             }
@@ -130,12 +132,6 @@ public class AppendOnlyVirtualMemory extends PagedVirtualMemory implements Mappe
     }
 
     @Override
-    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size) {
-        // size of file does not mapper for mapping file for append
-        of(ff, name, extendSegmentSize);
-    }
-
-    @Override
     public void wholeFile(FilesFacade ff, LPSZ name) {
         throw new UnsupportedOperationException();
     }
@@ -167,30 +163,8 @@ public class AppendOnlyVirtualMemory extends PagedVirtualMemory implements Mappe
         }
     }
 
-    static void bestEffortTruncate(FilesFacade ff, Log log, long fd, long size, long mapPageSize) {
-        if (ff.truncate(Math.abs(fd), size)) {
-            log.debug()
-                    .$("truncated and closed [fd=").$(fd)
-                    .$(", size=").$(size)
-                    .$(']').$();
-        } else {
-            if (ff.isRestrictedFileSystem()) {
-                // Windows does truncate file if it has a mapped page somewhere, could be another handle and process.
-                // To make it work size needs to be rounded up to nearest page.
-                long n = (size - 1) / mapPageSize;
-                if (ff.truncate(Math.abs(fd), (n + 1) * mapPageSize)) {
-                    log.debug()
-                            .$("truncated and closed, second attempt [fd=").$(fd)
-                            .$(", size=").$((n + 1) * mapPageSize)
-                            .$(']').$();
-                    return;
-                }
-            }
-            log.debug().$("closed without truncate [fd=").$(fd).$(", errno=").$(ff.errno()).$(']').$();
-        }
-    }
-
-    FilesFacade getFilesFacade() {
+    @Override
+    public FilesFacade getFilesFacade() {
         return ff;
     }
 

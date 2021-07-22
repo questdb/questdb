@@ -25,7 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.vm.AppendOnlyVirtualMemory;
-import io.questdb.cairo.vm.ContiguousMappedReadOnlyMemory;
+import io.questdb.cairo.vm.ContinuousMappedReadOnlyMemory;
 import io.questdb.cairo.vm.MappedReadOnlyMemory;
 import io.questdb.cairo.vm.VmUtils;
 import io.questdb.std.*;
@@ -44,7 +44,7 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
     public TableReaderMetadata(FilesFacade ff) {
         this.path = new Path();
         this.ff = ff;
-        this.metaMem = new ContiguousMappedReadOnlyMemory();
+        this.metaMem = new ContinuousMappedReadOnlyMemory();
         this.columnMetadata = new ObjList<>(columnCount);
         this.columnNameIndexMap = new LowerCaseCharSequenceIntHashMap();
     }
@@ -57,7 +57,7 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
     public TableReaderMetadata of(Path path) {
         this.path.of(path).$();
         try {
-            this.metaMem.of(ff, path, ff.length(path));
+            this.metaMem.wholeFile(ff, path);
             this.columnCount = metaMem.getInt(TableUtils.META_OFFSET_COUNT);
             this.columnNameIndexMap.clear();
             TableUtils.validate(ff, metaMem, this.columnNameIndexMap);
@@ -198,7 +198,7 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
 
     public long createTransitionIndex() {
         if (transitionMeta == null) {
-            transitionMeta = new ContiguousMappedReadOnlyMemory();
+            transitionMeta = new ContinuousMappedReadOnlyMemory();
         }
 
         transitionMeta.wholeFile(ff, path);

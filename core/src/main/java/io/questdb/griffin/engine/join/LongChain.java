@@ -24,18 +24,18 @@
 
 package io.questdb.griffin.engine.join;
 
-import io.questdb.cairo.vm.ContiguousVirtualMemory;
+import io.questdb.cairo.vm.ContinuousVirtualMemory;
 import io.questdb.std.Mutable;
 
 import java.io.Closeable;
 
 public class LongChain implements Closeable, Mutable {
 
-    private final ContiguousVirtualMemory valueChain;
+    private final ContinuousVirtualMemory valueChain;
     private final TreeCursor cursor;
 
     public LongChain(long valuePageSize, int valueMaxPages) {
-        this.valueChain = new ContiguousVirtualMemory(valuePageSize, valueMaxPages);
+        this.valueChain = new ContinuousVirtualMemory(valuePageSize, valueMaxPages);
         this.cursor = new TreeCursor();
     }
 

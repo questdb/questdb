@@ -27,7 +27,7 @@ package io.questdb.tasks;
 import io.questdb.cairo.O3Basket;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.vm.AppendOnlyVirtualMemory;
-import io.questdb.cairo.vm.ContiguousVirtualMemory;
+import io.questdb.cairo.vm.ContinuousVirtualMemory;
 import io.questdb.std.ObjList;
 
 import java.util.concurrent.atomic.AtomicInteger;
@@ -36,7 +36,7 @@ public class O3PartitionTask {
     private CharSequence pathToTable;
     private int partitionBy;
     private ObjList<AppendOnlyVirtualMemory> columns;
-    private ObjList<ContiguousVirtualMemory> o3Columns;
+    private ObjList<ContinuousVirtualMemory> o3Columns;
     private long srcOooLo;
     private long srcOooHi;
     private long srcOooMax;
@@ -61,7 +61,7 @@ public class O3PartitionTask {
         return maxTimestamp;
     }
 
-    public ObjList<ContiguousVirtualMemory> getO3Columns() {
+    public ObjList<ContinuousVirtualMemory> getO3Columns() {
         return o3Columns;
     }
 
@@ -133,7 +133,7 @@ public class O3PartitionTask {
             CharSequence path,
             int partitionBy,
             ObjList<AppendOnlyVirtualMemory> columns,
-            ObjList<ContiguousVirtualMemory> o3Columns,
+            ObjList<ContinuousVirtualMemory> o3Columns,
             long srcOooLo,
             long srcOooHi,
             long srcOooMax,

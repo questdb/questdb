@@ -24,7 +24,7 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.vm.ContiguousMappedReadWriteMemory;
+import io.questdb.cairo.vm.ContinuousMappedReadWriteMemory;
 import io.questdb.cairo.vm.Mappable;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.ObjList;
@@ -42,7 +42,7 @@ public final class TxWriter extends TxReader implements Closeable {
     private long prevMinTimestamp;
     protected long prevTransientRowCount;
 
-    private ContiguousMappedReadWriteMemory txMem;
+    private ContinuousMappedReadWriteMemory txMem;
 
     public TxWriter(FilesFacade ff, Path path, int partitionBy) {
         super(ff, path, partitionBy);
@@ -149,7 +149,7 @@ public final class TxWriter extends TxReader implements Closeable {
     protected Mappable openTxnFile(FilesFacade ff, Path path, int rootLen) {
         try {
             if (ff.exists(path.concat(TXN_FILE_NAME).$())) {
-                return txMem = new ContiguousMappedReadWriteMemory(ff, path, ff.getPageSize(), Long.MAX_VALUE);
+                return txMem = new ContinuousMappedReadWriteMemory(ff, path, ff.getPageSize(), Long.MAX_VALUE);
             }
             throw CairoException.instance(ff.errno()).put("Cannot append. File does not exist: ").put(path);
 

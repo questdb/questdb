@@ -37,9 +37,9 @@ import java.io.Closeable;
  *
  * @author Patrick Mackinlay
  */
-public class ContiguousVirtualMemory extends AbstractContiguousMemory
-        implements ContiguousReadWriteVirtualMemory, Mutable, Closeable {
-    private static final Log LOG = LogFactory.getLog(ContiguousVirtualMemory.class);
+public class ContinuousVirtualMemory extends AbstractContinuousMemory
+        implements ContinuousReadWriteVirtualMemory, Mutable, Closeable {
+    private static final Log LOG = LogFactory.getLog(ContinuousVirtualMemory.class);
     private final int maxPages;
     private final Long256Acceptor long256Acceptor = this::putLong256;
     private long pageSize;
@@ -48,7 +48,7 @@ public class ContiguousVirtualMemory extends AbstractContiguousMemory
     private long baseAddressHi = 0;
     private long appendAddress = 0;
 
-    public ContiguousVirtualMemory(long pageSize, int maxPages) {
+    public ContinuousVirtualMemory(long pageSize, int maxPages) {
         this.maxPages = maxPages;
         setPageSize(pageSize);
     }

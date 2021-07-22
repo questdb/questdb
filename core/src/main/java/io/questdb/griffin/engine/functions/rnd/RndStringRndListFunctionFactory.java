@@ -25,7 +25,7 @@
 package io.questdb.griffin.engine.functions.rnd;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.vm.ContiguousVirtualMemory;
+import io.questdb.cairo.vm.ContinuousVirtualMemory;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
@@ -47,8 +47,8 @@ public class RndStringRndListFunctionFactory implements FunctionFactory {
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
 
         // todo: limit pages
-        ContiguousVirtualMemory strMem = new ContiguousVirtualMemory(1024 * 1024, Integer.MAX_VALUE);
-        ContiguousVirtualMemory idxMem = new ContiguousVirtualMemory(1024 * 1024, Integer.MAX_VALUE);
+        ContinuousVirtualMemory strMem = new ContinuousVirtualMemory(1024 * 1024, Integer.MAX_VALUE);
+        ContinuousVirtualMemory idxMem = new ContinuousVirtualMemory(1024 * 1024, Integer.MAX_VALUE);
 
         final int lo = args.getQuick(1).getInt(null);
         final int hi = args.getQuick(2).getInt(null);
@@ -74,13 +74,13 @@ public class RndStringRndListFunctionFactory implements FunctionFactory {
 
     private static final class Func extends StrFunction implements Function {
         private final int count;
-        private final ContiguousVirtualMemory strMem;
-        private final ContiguousVirtualMemory idxMem;
+        private final ContinuousVirtualMemory strMem;
+        private final ContinuousVirtualMemory idxMem;
         private final int strLo;
         private final int strHi;
         private Rnd rnd;
 
-        public Func(ContiguousVirtualMemory strMem, ContiguousVirtualMemory idxMem, int strLo, int strHi, int strCount, int nullRate) {
+        public Func(ContinuousVirtualMemory strMem, ContinuousVirtualMemory idxMem, int strLo, int strHi, int strCount, int nullRate) {
             this.count = strCount;
             this.strMem = strMem;
             this.idxMem = idxMem;
@@ -121,12 +121,12 @@ public class RndStringRndListFunctionFactory implements FunctionFactory {
 
     private static final class FixedFunc extends StrFunction implements Function {
         private final int count;
-        private final ContiguousVirtualMemory strMem;
-        private final ContiguousVirtualMemory idxMem;
+        private final ContinuousVirtualMemory strMem;
+        private final ContinuousVirtualMemory idxMem;
         private final int strLen;
         private Rnd rnd;
 
-        public FixedFunc(ContiguousVirtualMemory strMem, ContiguousVirtualMemory idxMem, int strLen, int strCount, int nullRate) {
+        public FixedFunc(ContinuousVirtualMemory strMem, ContinuousVirtualMemory idxMem, int strLen, int strCount, int nullRate) {
             this.count = strCount;
             this.strMem = strMem;
             this.idxMem = idxMem;

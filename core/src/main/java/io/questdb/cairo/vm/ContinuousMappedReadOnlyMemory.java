@@ -32,29 +32,33 @@ import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.str.LPSZ;
 
-public class ContiguousMappedReadOnlyMemory extends AbstractContiguousMemory
-        implements MappedReadOnlyMemory, ContiguousReadOnlyMemory {
-
-    private static final Log LOG = LogFactory.getLog(ContiguousMappedReadOnlyMemory.class);
-    protected long page = 0;
-    protected FilesFacade ff;
-    protected long fd = -1;
-    protected long size = 0;
+public class ContinuousMappedReadOnlyMemory extends AbstractContinuousMemory
+        implements MappedReadOnlyMemory, ContinuousReadOnlyMemory {
+    private static final Log LOG = LogFactory.getLog(ContinuousMappedReadOnlyMemory.class);
+    private long pageAddress = 0;
+    private FilesFacade ff;
+    private long fd = -1;
+    private long size = 0;
     private long grownLength;
 
-    public ContiguousMappedReadOnlyMemory(FilesFacade ff, LPSZ name, long size) {
+    public ContinuousMappedReadOnlyMemory(FilesFacade ff, LPSZ name, long size) {
         of(ff, name, 0, size);
     }
 
-    public ContiguousMappedReadOnlyMemory() {
+    public ContinuousMappedReadOnlyMemory() {
+    }
+
+    @Override
+    public FilesFacade getFilesFacade() {
+        return ff;
     }
 
     @Override
     public void close() {
-        if (page != 0) {
-            ff.munmap(page, size);
+        if (pageAddress != 0) {
+            ff.munmap(pageAddress, size);
             this.size = 0;
-            this.page = 0;
+            this.pageAddress = 0;
         }
         if (fd != -1) {
             ff.close(fd);
@@ -65,15 +69,8 @@ public class ContiguousMappedReadOnlyMemory extends AbstractContiguousMemory
     }
 
     @Override
-    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size) {
-        openFile(ff, name);
-        map(ff, name, size);
-    }
-
-    @Override
-    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize) {
-        openFile(ff, name);
-        map(ff, name, Long.MAX_VALUE);
+    public long getFd() {
+        return fd;
     }
 
     @Override
@@ -82,8 +79,9 @@ public class ContiguousMappedReadOnlyMemory extends AbstractContiguousMemory
     }
 
     @Override
-    public long getFd() {
-        return fd;
+    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size) {
+        openFile(ff, name);
+        map(ff, name, size);
     }
 
     public long getGrownLength() {
@@ -92,12 +90,12 @@ public class ContiguousMappedReadOnlyMemory extends AbstractContiguousMemory
 
     @Override
     public long getPageAddress(int pageIndex) {
-        return page;
+        return pageAddress;
     }
 
     @Override
     public int getPageCount() {
-        return page != 0 ? 1 : 0;
+        return pageAddress != 0 ? 1 : 0;
     }
 
     @Override
@@ -114,12 +112,7 @@ public class ContiguousMappedReadOnlyMemory extends AbstractContiguousMemory
 
     public long addressOf(long offset) {
         assert offset <= size : "offset=" + offset + ", size=" + size + ", fd=" + fd;
-        return page + offset;
-    }
-
-    @Override
-    public void growToFileSize() {
-        extend(ff.length(fd));
+        return pageAddress + offset;
     }
 
     protected void map(FilesFacade ff, LPSZ name, long size) {
@@ -127,13 +120,13 @@ public class ContiguousMappedReadOnlyMemory extends AbstractContiguousMemory
         this.size = size;
         if (size > 0) {
             try {
-                this.page = TableUtils.mapRO(ff, fd, size);
+                this.pageAddress = TableUtils.mapRO(ff, fd, size);
             } catch (Throwable e) {
                 close();
                 throw e;
             }
         } else {
-            this.page = 0;
+            this.pageAddress = 0;
         }
         LOG.debug().$("open ").$(name).$(" [fd=").$(fd).$(", pageSize=").$(size).$(", size=").$(this.size).$(']').$();
     }
@@ -152,10 +145,10 @@ public class ContiguousMappedReadOnlyMemory extends AbstractContiguousMemory
         newSize = Math.max(newSize, ff.length(fd));
         try {
             if (size > 0) {
-                page = TableUtils.mremap(ff, fd, page, size, newSize, Files.MAP_RO);
+                pageAddress = TableUtils.mremap(ff, fd, pageAddress, size, newSize, Files.MAP_RO);
             } else {
-                assert page == 0;
-                page = TableUtils.mapRO(ff, fd, newSize);
+                assert pageAddress == 0;
+                pageAddress = TableUtils.mapRO(ff, fd, newSize);
             }
             size = newSize;
         } catch (Throwable e) {

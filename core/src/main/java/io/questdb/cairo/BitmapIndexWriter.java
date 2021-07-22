@@ -25,7 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.sql.RowCursor;
-import io.questdb.cairo.vm.ContiguousMappedReadWriteMemory;
+import io.questdb.cairo.vm.ContinuousMappedReadWriteMemory;
 import io.questdb.cairo.vm.WriteOnlyVirtualMemory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -36,8 +36,8 @@ import java.io.Closeable;
 
 public class BitmapIndexWriter implements Closeable, Mutable {
     private static final Log LOG = LogFactory.getLog(BitmapIndexWriter.class);
-    private final ContiguousMappedReadWriteMemory keyMem = new ContiguousMappedReadWriteMemory();
-    private final ContiguousMappedReadWriteMemory valueMem = new ContiguousMappedReadWriteMemory();
+    private final ContinuousMappedReadWriteMemory keyMem = new ContinuousMappedReadWriteMemory();
+    private final ContinuousMappedReadWriteMemory valueMem = new ContinuousMappedReadWriteMemory();
     private final Cursor cursor = new Cursor();
     private int blockCapacity;
     private int blockValueCountMod;

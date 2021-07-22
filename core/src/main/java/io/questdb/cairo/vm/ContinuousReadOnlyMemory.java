@@ -30,8 +30,8 @@ import io.questdb.std.*;
 import io.questdb.std.str.AbstractCharSequence;
 import io.questdb.std.str.CharSink;
 
-public interface ContiguousReadOnlyMemory extends ReadOnlyVirtualMemory {
-    default BinarySequence getBin(long offset, ContiguousReadWriteVirtualMemory.ByteSequenceView view) {
+public interface ContinuousReadOnlyMemory extends ReadOnlyVirtualMemory {
+    default BinarySequence getBin(long offset, ContinuousReadWriteVirtualMemory.ByteSequenceView view) {
         final long addr = addressOf(offset);
         final long len = Unsafe.getUnsafe().getLong(addr);
         if (len > -1) {
@@ -98,7 +98,7 @@ public interface ContiguousReadOnlyMemory extends ReadOnlyVirtualMemory {
         sink.setLong3(Unsafe.getUnsafe().getLong(addr - Long.BYTES));
     }
 
-    default CharSequence getStr(long offset, ContiguousReadWriteVirtualMemory.CharSequenceView view) {
+    default CharSequence getStr(long offset, ContinuousReadWriteVirtualMemory.CharSequenceView view) {
         long addr = addressOf(offset);
         final int len = Unsafe.getUnsafe().getInt(addr);
         if (len != TableUtils.NULL_LEN ) {

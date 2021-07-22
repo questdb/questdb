@@ -27,7 +27,7 @@ package io.questdb.cairo;
 import io.questdb.MessageBus;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.vm.AppendOnlyVirtualMemory;
-import io.questdb.cairo.vm.ContiguousVirtualMemory;
+import io.questdb.cairo.vm.ContinuousVirtualMemory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.AbstractQueueConsumerJob;
@@ -59,7 +59,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             CharSequence pathToTable,
             int partitionBy,
             ObjList<AppendOnlyVirtualMemory> columns,
-            ObjList<ContiguousVirtualMemory> oooColumns,
+            ObjList<ContinuousVirtualMemory> oooColumns,
             long srcOooLo,
             long srcOooHi,
             long srcOooMax,
@@ -549,7 +549,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         final CharSequence pathToTable = task.getPathToTable();
         final int partitionBy = task.getPartitionBy();
         final ObjList<AppendOnlyVirtualMemory> columns = task.getColumns();
-        final ObjList<ContiguousVirtualMemory> oooColumns = task.getO3Columns();
+        final ObjList<ContinuousVirtualMemory> oooColumns = task.getO3Columns();
         final long srcOooLo = task.getSrcOooLo();
         final long srcOooHi = task.getSrcOooHi();
         final long srcOooMax = task.getSrcOooMax();
@@ -710,7 +710,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
     private static void publishOpenColumnTasks(
             long txn,
             ObjList<AppendOnlyVirtualMemory> columns,
-            ObjList<ContiguousVirtualMemory> oooColumns,
+            ObjList<ContinuousVirtualMemory> oooColumns,
             CharSequence pathToTable,
             long srcOooLo,
             long srcOooHi,
@@ -768,8 +768,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 final int colOffset = TableWriter.getPrimaryColumnIndex(i);
                 final boolean notTheTimestamp = i != timestampIndex;
                 final int columnType = metadata.getColumnType(i);
-                final ContiguousVirtualMemory oooMem1 = oooColumns.getQuick(colOffset);
-                final ContiguousVirtualMemory oooMem2 = oooColumns.getQuick(colOffset + 1);
+                final ContinuousVirtualMemory oooMem1 = oooColumns.getQuick(colOffset);
+                final ContinuousVirtualMemory oooMem2 = oooColumns.getQuick(colOffset + 1);
                 final AppendOnlyVirtualMemory mem1 = columns.getQuick(colOffset);
                 final AppendOnlyVirtualMemory mem2 = columns.getQuick(colOffset + 1);
                 final long activeFixFd;

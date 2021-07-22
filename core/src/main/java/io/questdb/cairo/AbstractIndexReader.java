@@ -24,7 +24,7 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.vm.ContiguousMappedReadOnlyMemory;
+import io.questdb.cairo.vm.ContinuousMappedReadOnlyMemory;
 import io.questdb.cairo.vm.MappedReadOnlyMemory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -38,8 +38,8 @@ import java.util.concurrent.locks.LockSupport;
 public abstract class AbstractIndexReader implements BitmapIndexReader {
     public static final String INDEX_CORRUPT = "cursor could not consistently read index header [corrupt?]";
     protected final static Log LOG = LogFactory.getLog(BitmapIndexBwdReader.class);
-    protected final MappedReadOnlyMemory keyMem = new ContiguousMappedReadOnlyMemory();
-    protected final MappedReadOnlyMemory valueMem = new ContiguousMappedReadOnlyMemory();
+    protected final MappedReadOnlyMemory keyMem = new ContinuousMappedReadOnlyMemory();
+    protected final MappedReadOnlyMemory valueMem = new ContinuousMappedReadOnlyMemory();
     protected int blockValueCountMod;
     protected int blockCapacity;
     protected long spinLockTimeoutUs;

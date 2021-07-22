@@ -27,7 +27,7 @@ package io.questdb.cairo;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.vm.AppendOnlyVirtualMemory;
-import io.questdb.cairo.vm.ContiguousVirtualMemory;
+import io.questdb.cairo.vm.ContinuousVirtualMemory;
 import io.questdb.cairo.vm.PagedMappedReadWriteMemory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -974,7 +974,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
             // this contraption will verify that all timestamps that are
             // supposed to be stored have matching partitions
-            try (ContiguousVirtualMemory vmem = new ContiguousVirtualMemory(FF.getPageSize(), Integer.MAX_VALUE)) {
+            try (ContinuousVirtualMemory vmem = new ContinuousVirtualMemory(FF.getPageSize(), Integer.MAX_VALUE)) {
                 try (TableWriter writer = new TableWriter(configuration, PRODUCT)) {
                     long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
                     int i = 0;
@@ -1132,7 +1132,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
             // this contraption will verify that all timestamps that are
             // supposed to be stored have matching partitions
-            try (ContiguousVirtualMemory vmem = new ContiguousVirtualMemory(ff.getPageSize(), Integer.MAX_VALUE)) {
+            try (ContinuousVirtualMemory vmem = new ContinuousVirtualMemory(ff.getPageSize(), Integer.MAX_VALUE)) {
                 try (TableWriter writer = new TableWriter(new DefaultCairoConfiguration(root) {
                     @Override
                     public FilesFacade getFilesFacade() {
@@ -1203,7 +1203,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
             // this contraption will verify that all timestamps that are
             // supposed to be stored have matching partitions
-            try (ContiguousVirtualMemory vmem = new ContiguousVirtualMemory(ff.getPageSize(), Integer.MAX_VALUE)) {
+            try (ContinuousVirtualMemory vmem = new ContinuousVirtualMemory(ff.getPageSize(), Integer.MAX_VALUE)) {
                 try (TableWriter writer = new TableWriter(new DefaultCairoConfiguration(root) {
                     @Override
                     public FilesFacade getFilesFacade() {
@@ -1716,7 +1716,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 mem.of(FilesFacadeImpl.INSTANCE, path, FilesFacadeImpl.INSTANCE.getPageSize());
                 mem.putLong(32, 1);
                 mem.putLong(40, 9990001L);
-                mem.extend(48);
+                mem.jumpTo(48);
             }
             try (TableWriter writer = new TableWriter(configuration, "all")) {
                 Assert.assertNotNull(writer);
@@ -3834,7 +3834,7 @@ public class TableWriterTest extends AbstractCairoTest {
         });
     }
 
-    void verifyTimestampPartitions(ContiguousVirtualMemory vmem) {
+    void verifyTimestampPartitions(ContinuousVirtualMemory vmem) {
         int i;
         TimestampFormatCompiler compiler = new TimestampFormatCompiler();
         DateFormat fmt = compiler.compile("yyyy-MM-dd");

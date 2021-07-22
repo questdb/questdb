@@ -26,7 +26,7 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.vm.Mappable;
 import io.questdb.cairo.vm.MappedReadOnlyMemory;
-import io.questdb.cairo.vm.ContiguousMappedReadOnlyMemory;
+import io.questdb.cairo.vm.ContinuousMappedReadOnlyMemory;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
@@ -291,7 +291,7 @@ public class TxReader implements Closeable {
     protected Mappable openTxnFile(FilesFacade ff, Path path, int rootLen) {
         try {
             if (this.ff.exists(this.path.concat(TXN_FILE_NAME).$())) {
-                return new ContiguousMappedReadOnlyMemory(ff, path, ff.length(path));
+                return new ContinuousMappedReadOnlyMemory(ff, path, ff.length(path));
             }
             throw CairoException.instance(ff.errno()).put("Cannot append. File does not exist: ").put(this.path);
         } finally {

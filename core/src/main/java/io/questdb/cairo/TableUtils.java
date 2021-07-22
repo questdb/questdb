@@ -466,7 +466,7 @@ public final class TableUtils {
     }
 
     public static void resetTodoLog(FilesFacade ff, Path path, int rootLen, MappedReadWriteMemory mem) {
-        mem.of(ff, path.trimTo(rootLen).concat(TODO_FILE_NAME).$(), ff.getPageSize());
+        mem.of(ff, path.trimTo(rootLen).concat(TODO_FILE_NAME).$(), ff.getPageSize(), Long.MAX_VALUE);
         mem.putLong(24, 0); // txn check
         Unsafe.getUnsafe().storeFence();
         mem.putLong(8, 0); // hashLo
@@ -474,7 +474,7 @@ public final class TableUtils {
         Unsafe.getUnsafe().storeFence();
         mem.putLong(0, 0); // txn
         mem.putLong(32, 0); // count
-        mem.extend(40);
+        mem.jumpTo(40);
     }
 
     public static void resetTxn(WriteOnlyVirtualMemory txMem, int symbolMapCount, long txn, long dataVersion, long partitionTableVersion) {

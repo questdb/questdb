@@ -31,7 +31,7 @@ import io.questdb.std.str.Path;
 public class FilesFacadeImpl implements FilesFacade {
 
     public static final FilesFacade INSTANCE = new FilesFacadeImpl();
-    private static final int _16M = 16 * 1024 * 1024;
+    public static final int _16M = 16 * 1024 * 1024;
     private long mapPageSize = 0;
 
     @Override

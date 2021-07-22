@@ -110,8 +110,8 @@ public class TableWriter implements Closeable {
     private final FindVisitor removePartitionDirectories = this::removePartitionDirectories0;
     private final ObjList<Runnable> nullSetters;
     private final ObjList<Runnable> o3NullSetters;
-    private final ObjList<ContiguousVirtualMemory> o3Columns;
-    private final ObjList<ContiguousVirtualMemory> o3Columns2;
+    private final ObjList<ContinuousVirtualMemory> o3Columns;
+    private final ObjList<ContinuousVirtualMemory> o3Columns2;
     private final TableBlockWriter blockWriter;
     private final TimestampValueRecord dropPartitionFunctionRec = new TimestampValueRecord();
     private final ObjList<O3CallbackTask> o3PendingCallbackTasks = new ObjList<>();
@@ -120,7 +120,7 @@ public class TableWriter implements Closeable {
     private final SOUnboundedCountDownLatch o3DoneLatch = new SOUnboundedCountDownLatch();
     private final AtomicLong o3PartitionUpdRemaining = new AtomicLong();
     private final AtomicInteger o3ErrorCount = new AtomicInteger();
-    private final MappedReadWriteMemory todoMem = new PagedMappedReadWriteMemory();
+    private final MappedReadWriteMemory todoMem = new ContinuousMappedReadWriteMemory();
     private final TxWriter txFile;
     private final FindVisitor removePartitionDirsNotAttached = this::removePartitionDirsNotAttached;
     private final LongList o3PartitionRemoveCandidates = new LongList();
@@ -135,9 +135,9 @@ public class TableWriter implements Closeable {
     private final boolean o3QuickSortEnabled;
     private final LongConsumer appendTimestampSetter;
     private long todoTxn;
-    private ContiguousVirtualMemory o3TimestampMem;
+    private ContinuousVirtualMemory o3TimestampMem;
     private final O3ColumnUpdateMethod o3MoveLagRef = this::o3MoveLag0;
-    private ContiguousVirtualMemory o3TimestampMemCpy;
+    private ContinuousVirtualMemory o3TimestampMemCpy;
     private long lockFd = -1;
     private LongConsumer timestampSetter;
     private int columnCount;
@@ -228,7 +228,7 @@ public class TableWriter implements Closeable {
                 repairMetaRename((int) todoMem.getLong(48));
             }
             this.ddlMem = new AppendOnlyVirtualMemory();
-            this.metaMem = new ContiguousMappedReadOnlyMemory();
+            this.metaMem = new ContinuousMappedReadOnlyMemory();
             openMetaFile(ff, path, rootLen, metaMem);
             this.metadata = new TableWriterMetadata(ff, metaMem);
             this.partitionBy = metaMem.getInt(META_OFFSET_PARTITION_BY);
@@ -1118,7 +1118,8 @@ public class TableWriter implements Closeable {
         todoMem.putLong(24, todoTxn);
         todoMem.putLong(32, 1);
         todoMem.putLong(40, TODO_TRUNCATE);
-        todoMem.extend(48);
+        // ensure file is closed with correct length
+        todoMem.jumpTo(48);
 
         for (int i = 0; i < columnCount; i++) {
             getPrimaryColumn(i).truncate();
@@ -1269,8 +1270,8 @@ public class TableWriter implements Closeable {
                         mem1.ensureFileSize(mem1.pageIndex(mem1Size));
                         mem2.ensureFileSize(mem2.pageIndex(actualPosition * Long.BYTES));
                     }
-                    mem1.extend(mem1Size);
-                    mem2.extend(actualPosition * Long.BYTES);
+                    mem1.jumpTo(mem1Size);
+                    mem2.jumpTo(actualPosition * Long.BYTES);
                     break;
                 case ColumnType.STRING:
                     assert mem2 != null;
@@ -1283,21 +1284,21 @@ public class TableWriter implements Closeable {
                         mem1.ensureFileSize(mem1.pageIndex(mem1Size));
                         mem2.ensureFileSize(mem2.pageIndex(actualPosition * Long.BYTES));
                     }
-                    mem1.extend(mem1Size);
-                    mem2.extend(actualPosition * Long.BYTES);
+                    mem1.jumpTo(mem1Size);
+                    mem2.jumpTo(actualPosition * Long.BYTES);
                     break;
                 default:
                     mem1Size = actualPosition << ColumnType.pow2SizeOf(type);
                     if (ensureFileSize) {
                         mem1.ensureFileSize(mem1.pageIndex(mem1Size));
                     }
-                    mem1.extend(mem1Size);
+                    mem1.jumpTo(mem1Size);
                     break;
             }
         } else {
-            mem1.extend(0);
+            mem1.jumpTo(0);
             if (mem2 != null) {
-                mem2.extend(0);
+                mem2.jumpTo(0);
             }
         }
     }
@@ -1578,10 +1579,10 @@ public class TableWriter implements Closeable {
                 txFile.cancelRow();
                 // we only have one partition, jump to start on every column
                 for (int i = 0; i < columnCount; i++) {
-                    getPrimaryColumn(i).extend(0);
+                    getPrimaryColumn(i).jumpTo(0);
                     AppendOnlyVirtualMemory mem = getSecondaryColumn(i);
                     if (mem != null) {
-                        mem.extend(0);
+                        mem.jumpTo(0);
                     }
                 }
             }
@@ -1631,7 +1632,8 @@ public class TableWriter implements Closeable {
             todoMem.putLong(32, 0);
             Unsafe.getUnsafe().storeFence();
             todoMem.putLong(24, todoTxn);
-            todoMem.extend(40);
+            // ensure file is closed with correct length
+            todoMem.jumpTo(40);
         } finally {
             path.trimTo(rootLen);
         }
@@ -1750,16 +1752,16 @@ public class TableWriter implements Closeable {
     private void configureColumn(int type, boolean indexFlag) {
         final AppendOnlyVirtualMemory primary = new AppendOnlyVirtualMemory();
         final AppendOnlyVirtualMemory secondary;
-        final ContiguousVirtualMemory oooPrimary = new ContiguousVirtualMemory(MEM_PAGE_SIZE, Integer.MAX_VALUE);
-        final ContiguousVirtualMemory oooSecondary;
-        final ContiguousVirtualMemory oooPrimary2 = new ContiguousVirtualMemory(MEM_PAGE_SIZE, Integer.MAX_VALUE);
-        final ContiguousVirtualMemory oooSecondary2;
+        final ContinuousVirtualMemory oooPrimary = new ContinuousVirtualMemory(MEM_PAGE_SIZE, Integer.MAX_VALUE);
+        final ContinuousVirtualMemory oooSecondary;
+        final ContinuousVirtualMemory oooPrimary2 = new ContinuousVirtualMemory(MEM_PAGE_SIZE, Integer.MAX_VALUE);
+        final ContinuousVirtualMemory oooSecondary2;
         switch (type) {
             case ColumnType.BINARY:
             case ColumnType.STRING:
                 secondary = new AppendOnlyVirtualMemory();
-                oooSecondary = new ContiguousVirtualMemory(MEM_PAGE_SIZE, Integer.MAX_VALUE);
-                oooSecondary2 = new ContiguousVirtualMemory(MEM_PAGE_SIZE, Integer.MAX_VALUE);
+                oooSecondary = new ContinuousVirtualMemory(MEM_PAGE_SIZE, Integer.MAX_VALUE);
+                oooSecondary2 = new ContinuousVirtualMemory(MEM_PAGE_SIZE, Integer.MAX_VALUE);
                 break;
             default:
                 secondary = null;
@@ -1806,7 +1808,7 @@ public class TableWriter implements Closeable {
         final int timestampIndex = metadata.getTimestampIndex();
         if (timestampIndex != -1) {
             o3TimestampMem = o3Columns.getQuick(getPrimaryColumnIndex(timestampIndex));
-            o3TimestampMemCpy = new ContiguousVirtualMemory(MEM_PAGE_SIZE, Integer.MAX_VALUE);
+            o3TimestampMemCpy = new ContinuousVirtualMemory(MEM_PAGE_SIZE, Integer.MAX_VALUE);
         }
         populateDenseIndexerList();
     }
@@ -2202,7 +2204,7 @@ public class TableWriter implements Closeable {
             long timestamp = txFile.getMinTimestamp();
 
             //noinspection TryFinallyCanBeTryWithResources
-            try (final MappedReadOnlyMemory roMem = new ContiguousMappedReadOnlyMemory()) {
+            try (final MappedReadOnlyMemory roMem = new ContinuousMappedReadOnlyMemory()) {
 
                 while (timestamp < maxTimestamp) {
 
@@ -2604,8 +2606,8 @@ public class TableWriter implements Closeable {
                                 final CharSequence columnName = metadata.getColumnName(i);
                                 final boolean isIndexed = metadata.isColumnIndexed(i);
                                 final BitmapIndexWriter indexWriter = isIndexed ? getBitmapIndexWriter(i) : null;
-                                final ContiguousVirtualMemory oooMem1 = o3Columns.getQuick(colOffset);
-                                final ContiguousVirtualMemory oooMem2 = o3Columns.getQuick(colOffset + 1);
+                                final ContinuousVirtualMemory oooMem1 = o3Columns.getQuick(colOffset);
+                                final ContinuousVirtualMemory oooMem2 = o3Columns.getQuick(colOffset + 1);
                                 final AppendOnlyVirtualMemory mem1 = columns.getQuick(colOffset);
                                 final AppendOnlyVirtualMemory mem2 = columns.getQuick(colOffset + 1);
                                 final long srcDataTop = getColumnTop(i);
@@ -2942,8 +2944,8 @@ public class TableWriter implements Closeable {
             long o3RowCount
     ) {
         if (columnIndex > -1) {
-            ContiguousVirtualMemory o3DataMem = o3Columns.get(getPrimaryColumnIndex(columnIndex));
-            ContiguousVirtualMemory o3IndexMem = o3Columns.get(getSecondaryColumnIndex(columnIndex));
+            ContinuousVirtualMemory o3DataMem = o3Columns.get(getPrimaryColumnIndex(columnIndex));
+            ContinuousVirtualMemory o3IndexMem = o3Columns.get(getSecondaryColumnIndex(columnIndex));
 
             long size;
             long sourceOffset;
@@ -3006,8 +3008,8 @@ public class TableWriter implements Closeable {
             AppendOnlyVirtualMemory srcDataMem = getPrimaryColumn(colIndex);
             int shl = ColumnType.pow2SizeOf(columnType);
             long srcFixOffset;
-            final ContiguousVirtualMemory o3DataMem = o3Columns.get(getPrimaryColumnIndex(colIndex));
-            final ContiguousVirtualMemory o3IndexMem = o3Columns.get(getSecondaryColumnIndex(colIndex));
+            final ContinuousVirtualMemory o3DataMem = o3Columns.get(getPrimaryColumnIndex(colIndex));
+            final ContinuousVirtualMemory o3IndexMem = o3Columns.get(getSecondaryColumnIndex(colIndex));
 
             long extendedSize;
             long dstVarOffset = o3DataMem.getAppendOffset();
@@ -3068,9 +3070,9 @@ public class TableWriter implements Closeable {
 
     private void o3OpenColumns() {
         for (int i = 0; i < columnCount; i++) {
-            ContiguousVirtualMemory mem1 = o3Columns.getQuick(getPrimaryColumnIndex(i));
+            ContinuousVirtualMemory mem1 = o3Columns.getQuick(getPrimaryColumnIndex(i));
             mem1.jumpTo(0);
-            ContiguousVirtualMemory mem2 = o3Columns.getQuick(getSecondaryColumnIndex(i));
+            ContinuousVirtualMemory mem2 = o3Columns.getQuick(getSecondaryColumnIndex(i));
             if (mem2 != null) {
                 mem2.jumpTo(0);
             }
@@ -3342,8 +3344,8 @@ public class TableWriter implements Closeable {
             long o3RowCount
     ) {
         if (columnIndex != metadata.getTimestampIndex()) {
-            ContiguousVirtualMemory o3DataMem = o3Columns.get(getPrimaryColumnIndex(columnIndex));
-            ContiguousVirtualMemory o3IndexMem = o3Columns.get(getSecondaryColumnIndex(columnIndex));
+            ContinuousVirtualMemory o3DataMem = o3Columns.get(getPrimaryColumnIndex(columnIndex));
+            ContinuousVirtualMemory o3IndexMem = o3Columns.get(getSecondaryColumnIndex(columnIndex));
 
             long size;
             if (null == o3IndexMem) {
@@ -3479,8 +3481,8 @@ public class TableWriter implements Closeable {
             long valueCount
     ) {
         final int columnOffset = getPrimaryColumnIndex(columnIndex);
-        final ContiguousVirtualMemory mem = o3Columns.getQuick(columnOffset);
-        final ContiguousVirtualMemory mem2 = o3Columns2.getQuick(columnOffset);
+        final ContinuousVirtualMemory mem = o3Columns.getQuick(columnOffset);
+        final ContinuousVirtualMemory mem2 = o3Columns2.getQuick(columnOffset);
         final long src = mem.addressOf(0);
         final long srcSize = mem.size();
         final int shl = ColumnType.pow2SizeOf(columnType);
@@ -3519,10 +3521,10 @@ public class TableWriter implements Closeable {
     ) {
         final int primaryIndex = getPrimaryColumnIndex(columnIndex);
         final int secondaryIndex = primaryIndex + 1;
-        final ContiguousVirtualMemory dataMem = o3Columns.getQuick(primaryIndex);
-        final ContiguousVirtualMemory indexMem = o3Columns.getQuick(secondaryIndex);
-        final ContiguousVirtualMemory dataMem2 = o3Columns2.getQuick(primaryIndex);
-        final ContiguousVirtualMemory indexMem2 = o3Columns2.getQuick(secondaryIndex);
+        final ContinuousVirtualMemory dataMem = o3Columns.getQuick(primaryIndex);
+        final ContinuousVirtualMemory indexMem = o3Columns.getQuick(secondaryIndex);
+        final ContinuousVirtualMemory dataMem2 = o3Columns2.getQuick(primaryIndex);
+        final ContinuousVirtualMemory indexMem2 = o3Columns2.getQuick(secondaryIndex);
         final long dataSize = dataMem.getAppendOffset();
         // ensure we have enough memory allocated
         final long srcDataAddr = dataMem.addressOf(0);
@@ -4559,7 +4561,7 @@ public class TableWriter implements Closeable {
         todoMem.putLong(48, metaPrevIndex);
         Unsafe.getUnsafe().storeFence();
         todoMem.putLong(24, todoTxn);
-        todoMem.extend(56);
+        todoMem.jumpTo(56);
     }
 
     @FunctionalInterface

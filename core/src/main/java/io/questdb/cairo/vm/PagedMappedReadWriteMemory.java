@@ -50,11 +50,16 @@ public class PagedMappedReadWriteMemory extends PagedVirtualMemory implements Ma
         super.close();
         if (isOpen()) {
             try {
-                VmUtils.bestEffortClose(ff, LOG, fd, true, size, getExtendSegmentSize());
+                VmUtils.bestEffortClose(ff, LOG, fd, true, size, Files.PAGE_SIZE);
             } finally {
                 fd = -1;
             }
         }
+    }
+
+    @Override
+    public FilesFacade getFilesFacade() {
+        return ff;
     }
 
     @Override
@@ -102,9 +107,13 @@ public class PagedMappedReadWriteMemory extends PagedVirtualMemory implements Ma
         ff.munmap(address, getPageSize(page));
     }
 
+    public long getFd() {
+        return fd;
+    }
+
     @Override
-    public void growToFileSize() {
-        this.extend(ff.length(fd));
+    public boolean isDeleted() {
+        return !ff.exists(fd);
     }
 
     @Override
@@ -116,30 +125,20 @@ public class PagedMappedReadWriteMemory extends PagedVirtualMemory implements Ma
     }
 
     @Override
-    public void wholeFile(FilesFacade ff, LPSZ name) {
-        of(ff, name, ff.getMapPageSize());
-    }
-
-    @Override
     public void partialFile(FilesFacade ff, LPSZ name, long size) {
         of(ff, name, ff.getMapPageSize(), size);
     }
 
     @Override
+    public void wholeFile(FilesFacade ff, LPSZ name) {
+        of(ff, name, ff.getMapPageSize());
+    }
+
     public final void of(FilesFacade ff, LPSZ name, long extendSegmentSize) {
         close();
         this.ff = ff;
         fd = TableUtils.openFileRWOrFail(ff, name);
         of0(ff, name, extendSegmentSize, ff.length(fd));
-    }
-
-    @Override
-    public boolean isDeleted() {
-        return !ff.exists(fd);
-    }
-
-    public long getFd() {
-        return fd;
     }
 
     public final void of(FilesFacade ff, long fd, long pageSize) {

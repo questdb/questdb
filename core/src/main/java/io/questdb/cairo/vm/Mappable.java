@@ -30,6 +30,9 @@ import io.questdb.std.str.LPSZ;
 import java.io.Closeable;
 
 public interface Mappable extends Closeable {
+
+    FilesFacade getFilesFacade();
+
     @Override
     void close();
 
@@ -47,8 +50,6 @@ public interface Mappable extends Closeable {
      * @param size              size of the initial mapped memory when smaller than the actual file
      */
     void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size);
-
-    void of(FilesFacade ff, LPSZ name, long extendSegmentSize);
 
     default void partialFile(FilesFacade ff, LPSZ name, long size) {
         of(ff, name, ff.getMapPageSize(), size);

@@ -25,5 +25,7 @@
 package io.questdb.cairo.vm;
 
 public interface MappedReadOnlyMemory extends Mappable, ReadOnlyVirtualMemory {
-    void growToFileSize();
+    default void growToFileSize() {
+        extend(getFilesFacade().length(getFd()));
+    }
 }

@@ -27,7 +27,7 @@ package io.questdb.cairo;
 import io.questdb.cairo.sql.AnalyticSPI;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.vm.ContiguousVirtualMemory;
+import io.questdb.cairo.vm.ContinuousVirtualMemory;
 import io.questdb.cairo.vm.VmUtils;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
@@ -40,7 +40,7 @@ import java.io.Closeable;
 public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSinkSPI, AnalyticSPI {
 
     private final long[] columnOffsets;
-    private final ContiguousVirtualMemory mem;
+    private final ContinuousVirtualMemory mem;
     private final RecordChainRecord recordA = new RecordChainRecord();
     private final RecordChainRecord recordB = new RecordChainRecord();
     private final long varOffset;
@@ -52,7 +52,7 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
     private RecordCursor symbolTableResolver;
 
     public RecordChain(@Transient ColumnTypes columnTypes, RecordSink recordSink, long pageSize, int maxPages) {
-        this.mem = new ContiguousVirtualMemory(pageSize, maxPages);
+        this.mem = new ContinuousVirtualMemory(pageSize, maxPages);
         this.recordSink = recordSink;
         int count = columnTypes.getColumnCount();
         long varOffset = 0L;

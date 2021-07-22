@@ -2,7 +2,7 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.vm.AppendOnlyVirtualMemory;
 import io.questdb.cairo.vm.MappedReadOnlyMemory;
-import io.questdb.cairo.vm.ContiguousMappedReadOnlyMemory;
+import io.questdb.cairo.vm.ContinuousMappedReadOnlyMemory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;
@@ -30,14 +30,14 @@ public class MemRemappedFileTest {
     @Test
     public void testReadOnlyMemory() {
         LOG.info().$("ReadOnlyMemory starting").$();
-        double micros = test(new ContiguousMappedReadOnlyMemory());
+        double micros = test(new ContinuousMappedReadOnlyMemory());
         LOG.info().$("ReadOnlyMemory took ").$(micros).$("ms").$();
     }
 
     @Test
     public void testExtendableOnePageMemory() {
         LOG.info().$("ExtendableOnePageMemory starting").$();
-        double micros = test(new ContiguousMappedReadOnlyMemory());
+        double micros = test(new ContinuousMappedReadOnlyMemory());
         LOG.info().$("ExtendableOnePageMemory took ").$(micros).$("ms").$();
     }
 

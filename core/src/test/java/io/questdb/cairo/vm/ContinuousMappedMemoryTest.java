@@ -25,14 +25,20 @@
 package io.questdb.cairo.vm;
 
 import io.questdb.cairo.AbstractCairoTest;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.TableUtils;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class ContiguousMappedMemoryTest extends AbstractCairoTest {
+public class ContinuousMappedMemoryTest extends AbstractCairoTest {
 
+    private static final Log LOG = LogFactory.getLog(ContinuousMappedMemoryTest.class);
     private final Rnd rnd = new Rnd();
     private final long _4M = 4 * 1024 * 1024;
     private final long _8M = 2 * _4M;
@@ -283,6 +289,26 @@ public class ContiguousMappedMemoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testForcedExtend() {
+        FilesFacade ff = FilesFacadeImpl.INSTANCE;
+        try (Path path = new Path().of(root).concat("tmp1").$()) {
+            ff.touch(path);
+            final long fd = TableUtils.openRW(ff, path, LOG);
+            try {
+                ContinuousMappedReadWriteMemory mem = new ContinuousMappedReadWriteMemory();
+                mem.of(ff, fd, null, Long.MAX_VALUE);
+
+                mem.extend(ff.getMapPageSize() * 2);
+
+                mem.putLong(ff.getMapPageSize(), 999);
+                Assert.assertEquals(999, mem.getLong(ff.getMapPageSize()));
+            } finally {
+                ff.close(fd);
+            }
+        }
+    }
+
+    @Test
     public void testIntAppend() throws Exception {
         withMem((rwMem, roMem) -> {
             final int N = 10_000_000;
@@ -329,6 +355,33 @@ public class ContiguousMappedMemoryTest extends AbstractCairoTest {
             assertRandomInt(rwMem, MAX, N);
             assertRandomInt(roMem, MAX, N);
         });
+    }
+
+    @Test
+    public void testJumpToSetAppendPosition() {
+        FilesFacade ff = FilesFacadeImpl.INSTANCE;
+        try (Path path = new Path().of(root).concat("tmp3").$()) {
+            ff.touch(path);
+            try {
+                ContinuousMappedReadWriteMemory mem = new ContinuousMappedReadWriteMemory();
+                try {
+                    mem.of(ff, TableUtils.openRW(ff, path, LOG), null, Long.MAX_VALUE);
+
+                    mem.extend(ff.getMapPageSize() * 2);
+
+                    mem.putLong(ff.getMapPageSize(), 999);
+                    Assert.assertEquals(999, mem.getLong(ff.getMapPageSize()));
+
+                    mem.jumpTo(1024);
+                } finally {
+                    mem.close();
+                }
+
+                Assert.assertEquals(ff.length(path), 1024);
+            } finally {
+                Assert.assertTrue(ff.remove(path));
+            }
+        }
     }
 
     @Test
@@ -539,7 +592,7 @@ public class ContiguousMappedMemoryTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             try (final Path path = Path.getThreadLocal(root).concat("t.d").$()) {
                 rnd.reset();
-                ContiguousMappedReadWriteMemory rwMem = new ContiguousMappedReadWriteMemory(
+                ContinuousMappedReadWriteMemory rwMem = new ContinuousMappedReadWriteMemory(
                         FilesFacadeImpl.INSTANCE,
                         path,
                         0,
@@ -598,6 +651,96 @@ public class ContiguousMappedMemoryTest extends AbstractCairoTest {
             assertRandomShort(rwMem, MAX, N);
             assertRandomShort(roMem, MAX, N);
         });
+    }
+
+    @Test
+    public void testTruncate() {
+        FilesFacade ff = FilesFacadeImpl.INSTANCE;
+        try (Path path = new Path().of(root).concat("tmp1").$()) {
+            ff.touch(path);
+            try {
+                ContinuousMappedReadWriteMemory mem = new ContinuousMappedReadWriteMemory();
+                try {
+                    mem.of(ff, path, FilesFacadeImpl._16M, Long.MAX_VALUE);
+                    // this is larger than page size
+                    for (int i = 0; i < 3_000_000; i++) {
+                        mem.putLong(i * 8, i + 1);
+                    }
+
+                    mem.truncate();
+                    Assert.assertEquals(FilesFacadeImpl._16M, mem.size());
+                    Assert.assertEquals(0, mem.getAppendOffset());
+                } finally {
+                    mem.close();
+                }
+
+                Assert.assertEquals(0, ff.length(path));
+            } finally {
+                Assert.assertTrue(ff.remove(path));
+            }
+        }
+    }
+
+    @Test
+    public void testTruncateRemapFailed() {
+        FilesFacade ff = new FilesFacadeImpl() {
+            int counter = 1;
+            boolean failTruncate = false;
+            @Override
+            public long mremap(long fd, long addr, long previousSize, long newSize, long offset, int mode) {
+                if (--counter < 0) {
+                    failTruncate = true;
+                    return -1;
+                }
+                return super.mremap(fd, addr, previousSize, newSize, offset, mode);
+            }
+
+            @Override
+            public boolean truncate(long fd, long size) {
+                if (failTruncate) {
+                    return false;
+                }
+                return super.truncate(fd, size);
+            }
+        };
+
+        try (Path path = new Path().of(root).concat("tmp4").$()) {
+            ff.touch(path);
+            try {
+                ContinuousMappedReadWriteMemory mem = new ContinuousMappedReadWriteMemory();
+                try {
+                    mem.of(ff, path, FilesFacadeImpl._16M, Long.MAX_VALUE);
+                    // this is larger than page size
+                    for (int i = 0; i < 3_000_000; i++) {
+                        mem.putLong(i * 8, i + 1);
+                    }
+
+                    try {
+                        mem.truncate();
+                        Assert.fail();
+                    } catch (CairoException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "could not remap file");
+                    }
+                } finally {
+                    mem.close();
+                }
+
+                long fileLen = ff.length(path);
+                Assert.assertNotEquals(0, fileLen);
+
+                // we expect memory to zero out the file, which failed to truncate
+
+                try (ContinuousMappedReadOnlyMemory roMem = new ContinuousMappedReadOnlyMemory(ff, path, fileLen)) {
+                    Assert.assertEquals(fileLen, roMem.size());
+
+                    for (int i = 0; i < fileLen; i++) {
+                        Assert.assertEquals(0, roMem.getByte(i));
+                    }
+                }
+            } finally {
+                Assert.assertTrue(ff.remove(path));
+            }
+        }
     }
 
     private void assertBool(ReadOnlyVirtualMemory rwMem, int count) {
@@ -773,14 +916,14 @@ public class ContiguousMappedMemoryTest extends AbstractCairoTest {
             final Path path = Path.getThreadLocal(root).concat("t.d").$();
             rnd.reset();
             try (
-                    ContiguousMappedReadWriteMemory rwMem = new ContiguousMappedReadWriteMemory(
+                    ContinuousMappedReadWriteMemory rwMem = new ContinuousMappedReadWriteMemory(
                             FilesFacadeImpl.INSTANCE,
                             path,
                             sz,
                             sz
                     );
 
-                    ContiguousMappedReadOnlyMemory roMem = new ContiguousMappedReadOnlyMemory(
+                    ContinuousMappedReadOnlyMemory roMem = new ContinuousMappedReadOnlyMemory(
                             FilesFacadeImpl.INSTANCE,
                             path,
                             sz
@@ -796,6 +939,6 @@ public class ContiguousMappedMemoryTest extends AbstractCairoTest {
 
     @FunctionalInterface
     private interface MemTestCode {
-        void run(ContiguousMappedReadWriteMemory rwMem, ContiguousMappedReadOnlyMemory roMem);
+        void run(ContinuousMappedReadWriteMemory rwMem, ContinuousMappedReadOnlyMemory roMem);
     }
 }

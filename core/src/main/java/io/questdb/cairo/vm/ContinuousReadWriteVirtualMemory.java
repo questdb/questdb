@@ -28,7 +28,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableUtils;
 import io.questdb.std.*;
 
-public interface ContiguousReadWriteVirtualMemory extends WriteOnlyVirtualMemory, ContiguousReadOnlyMemory {
+public interface ContinuousReadWriteVirtualMemory extends WriteOnlyVirtualMemory, ContinuousReadOnlyMemory {
     long appendAddressFor(long bytes);
 
     long appendAddressFor(long offset, long bytes);

@@ -28,10 +28,10 @@ import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
 
-public abstract class AbstractContiguousMemory implements ContiguousReadOnlyMemory {
-    private final ContiguousReadOnlyMemory.ByteSequenceView bsview = new ContiguousReadOnlyMemory.ByteSequenceView();
-    private final ContiguousReadOnlyMemory.CharSequenceView csview = new ContiguousReadOnlyMemory.CharSequenceView();
-    private final ContiguousReadOnlyMemory.CharSequenceView csview2 = new ContiguousReadOnlyMemory.CharSequenceView();
+public abstract class AbstractContinuousMemory implements ContinuousReadOnlyMemory {
+    private final ContinuousReadOnlyMemory.ByteSequenceView bsview = new ContinuousReadOnlyMemory.ByteSequenceView();
+    private final ContinuousReadOnlyMemory.CharSequenceView csview = new ContinuousReadOnlyMemory.CharSequenceView();
+    private final ContinuousReadOnlyMemory.CharSequenceView csview2 = new ContinuousReadOnlyMemory.CharSequenceView();
     private final Long256Impl long256 = new Long256Impl();
     private final Long256Impl long256B = new Long256Impl();
 
