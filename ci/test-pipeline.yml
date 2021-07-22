@@ -11,26 +11,6 @@ variables:
   DIFF_CONVER_THRESHOLD_PCT: 50
 
 stages:
-  - stage: StartBuildAgent
-    displayName: "Start Building Agent"
-    jobs:
-      - job: StartArmAgent
-        displayName: 'Start ARM Agent'
-        pool:
-          vmImage: "ubuntu-latest"
-        steps:
-          - checkout: none
-          - bash: |
-              sudo apt-get update
-              sudo apt-get install awscli
-              aws autoscaling set-desired-capacity --auto-scaling-group-name ondemand-pipeline-dev --desired-capacity 1
-            env:
-              AWS_ACCESS_KEY_ID: $(AWS_ACCESS_KEY_ID)
-              AWS_SECRET_ACCESS_KEY: $(AWS_SECRET_ACCESS_KEY)
-              AWS_DEFAULT_REGION: eu-west-1
-            name: start_agent
-            displayName: 'Start ARM build agent'
-
   - stage: RunTestsBranches
     displayName: "Running tests"
     jobs:
@@ -100,6 +80,17 @@ stages:
             fetchDepth: 1
             lfs: false
             submodules: false
+          - bash: |
+              sudo apt-get update
+              sudo apt-get install awscli
+              aws autoscaling set-desired-capacity --auto-scaling-group-name ondemand-pipeline-dev --desired-capacity 1
+            env:
+              AWS_ACCESS_KEY_ID: $(AWS_ACCESS_KEY_ID)
+              AWS_SECRET_ACCESS_KEY: $(AWS_SECRET_ACCESS_KEY)
+              AWS_DEFAULT_REGION: eu-west-1 
+            displayName: "Start ARM Agent"
+            condition: and(always(), eq(variables['Agent.OS'], 'Linux'))
+            
           - bash: sudo sysctl -w fs.file-max=500000
             displayName: "Increase file count on Linux"
             condition: eq(variables['Agent.OS'], 'Linux')
@@ -186,32 +177,9 @@ stages:
             inputs:
               pathToPublish: $(ARCHIVED_LOGS)
               artifactName: MavenFailedTestsLogs
-
-  - stage: StopBuildAgent
-    displayName: "Stop Building Agent"
-    condition: always()
-    jobs:
-      - job: StopArmAgent
-        displayName: 'Stop ARM Agent'
-        pool:
-          vmImage: "ubuntu-latest"
-        
-        steps:
-          - checkout: none
-          - bash: echo ${AZURE_DEVOPS_CLI_PAT} | az devops login
-            env:
-              AZURE_DEVOPS_CLI_PAT: $(System.AccessToken)
-            displayName: 'Login Azure DevOps Extension'
-
-          - bash: az devops configure --defaults organization=$(System.TeamFoundationCollectionUri) project=$(System.TeamProject) --use-git-aliases true
-            displayName: 'Set default Azure DevOps organization and project'
-          
           - bash: |
               sudo apt-get update
-              sudo apt-get install -y awscli jq
-            displayName: 'Install dependecies'
-          
-          - bash: |
+              sudo apt-get install awscli jq
               count=$(az pipelines runs list --pipeline-ids 1 --status inProgress --detect true --project questdb | jq length)
               echo "Running builds: ${count}"
               if [ $count -gt 1 ]; then
@@ -223,6 +191,6 @@ stages:
             env:
               AWS_ACCESS_KEY_ID: $(AWS_ACCESS_KEY_ID)
               AWS_SECRET_ACCESS_KEY: $(AWS_SECRET_ACCESS_KEY)
-              AWS_DEFAULT_REGION: eu-west-1
-            name: check_if_stop_agent
-            displayName: 'Check/stop build agent'
+              AWS_DEFAULT_REGION: eu-west-1 
+            displayName: "Stop ARM Agent"
+            condition: and(always(), eq(variables['Agent.OS'], 'Linux'))
