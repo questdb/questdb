@@ -63,34 +63,19 @@ stages:
               poolName: "Azure Pipelines"
               os: Linux
               jdk: "1.8"
-            
-            linux-arm64:
-              imageName:
-              poolName: "arm64"
-              os: Linux
-              jdk: "1.11"
         pool:
           name: $(poolName)
           vmImage: $(imageName)
         timeoutInMinutes: 60
         variables:
           SOURCE_CODE_CHANGED: $[ dependencies.CheckChanges.outputs['check_changes.SOURCE_CODE_CHANGED'] ]
+          MAVEN_CACHE_FOLDER: $(HOME)/.m2/repository
+          MAVEN_OPTS: '-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER)'
         steps:
           - checkout: self
             fetchDepth: 1
             lfs: false
             submodules: false
-          - bash: |
-              sudo apt-get update
-              sudo apt-get install awscli
-              aws autoscaling set-desired-capacity --auto-scaling-group-name ondemand-pipeline-dev --desired-capacity 1
-            env:
-              AWS_ACCESS_KEY_ID: $(AWS_ACCESS_KEY_ID)
-              AWS_SECRET_ACCESS_KEY: $(AWS_SECRET_ACCESS_KEY)
-              AWS_DEFAULT_REGION: eu-west-1 
-            displayName: "Start ARM Agent"
-            condition: and(always(), eq(variables['Agent.OS'], 'Linux'))
-            
           - bash: sudo sysctl -w fs.file-max=500000
             displayName: "Increase file count on Linux"
             condition: eq(variables['Agent.OS'], 'Linux')
@@ -101,6 +86,12 @@ stages:
               args: $(System.PullRequest.PullRequestNumber)
               failOnStandardError: true
             condition: and(and(eq(variables['Agent.OS'], 'Linux'), eq(variables['jdk'], '1.11')), not(eq(variables['System.PullRequest.PullRequestId'], '')) )
+          - task: Cache@2
+            inputs:
+              key: '"funcs" | maven |"$(Agent.OS)" | **/pom.xml'
+              restoreKeys: |
+              path: $(MAVEN_CACHE_FOLDER)
+            displayName: Cache Maven local repo
           - task: Maven@3
             displayName: "Compile with Maven"
             inputs:
@@ -177,23 +168,3 @@ stages:
             inputs:
               pathToPublish: $(ARCHIVED_LOGS)
               artifactName: MavenFailedTestsLogs
-          - bash: |
-              echo ${AZURE_DEVOPS_CLI_PAT} | az devops login
-              az devops configure --defaults organization=$(System.TeamFoundationCollectionUri) project=$(System.TeamProject) --use-git-aliases true
-              sudo apt-get update
-              sudo apt-get install awscli jq
-              count=$(az pipelines runs list --pipeline-ids 1 --status inProgress --detect true --project questdb | jq length)
-              echo "Running builds: ${count}"
-              if [ $count -gt 1 ]; then
-                echo "Skipping another build is running in background.."
-              else
-                echo "Stopping the build agent!"
-                aws autoscaling set-desired-capacity --auto-scaling-group-name ondemand-pipeline-dev --desired-capacity 0
-              fi
-            env:
-              AZURE_DEVOPS_CLI_PAT: $(System.AccessToken)
-              AWS_ACCESS_KEY_ID: $(AWS_ACCESS_KEY_ID)
-              AWS_SECRET_ACCESS_KEY: $(AWS_SECRET_ACCESS_KEY)
-              AWS_DEFAULT_REGION: eu-west-1 
-            displayName: "Stop ARM Agent"
-            condition: and(always(), eq(variables['Agent.OS'], 'Linux'))
