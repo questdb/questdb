@@ -59,11 +59,6 @@ public class AppendOnlyVirtualMemory extends PagedVirtualMemory implements Mappe
         return 0L;
     }
 
-    @Override
-    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size) {
-        of(ff, name, extendSegmentSize);
-    }
-
     public void truncate() {
         if (fd == -1) {
             // are we closed ?
@@ -84,8 +79,8 @@ public class AppendOnlyVirtualMemory extends PagedVirtualMemory implements Mappe
     }
 
     @Override
-    protected void release(int page, long address) {
-        ff.munmap(address, getPageSize(page));
+    protected void release(long address) {
+        ff.munmap(address, getPageSize());
     }
 
     public final void close(boolean truncate) {
@@ -114,9 +109,31 @@ public class AppendOnlyVirtualMemory extends PagedVirtualMemory implements Mappe
     }
 
     public long getAppendAddressSize() {
-        long appendOffset = getAppendOffset();
-        long sz = getPageSize(pageIndex(appendOffset));
-        return sz - offsetInPage(appendOffset);
+        return getPageSize() - offsetInPage(getAppendOffset());
+    }
+
+    @Override
+    public FilesFacade getFilesFacade() {
+        return ff;
+    }
+
+    public long getFd() {
+        return fd;
+    }
+
+    @Override
+    public boolean isDeleted() {
+        return !ff.exists(fd);
+    }
+
+    @Override
+    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size) {
+        of(ff, name, extendSegmentSize);
+    }
+
+    @Override
+    public void wholeFile(FilesFacade ff, LPSZ name) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -131,11 +148,6 @@ public class AppendOnlyVirtualMemory extends PagedVirtualMemory implements Mappe
         return address;
     }
 
-    @Override
-    public void wholeFile(FilesFacade ff, LPSZ name) {
-        throw new UnsupportedOperationException();
-    }
-
     public final void of(FilesFacade ff, LPSZ name, long extendSegmentSize) {
         close();
         this.ff = ff;
@@ -143,15 +155,6 @@ public class AppendOnlyVirtualMemory extends PagedVirtualMemory implements Mappe
         setExtendSegmentSize(extendSegmentSize);
         fd = TableUtils.openFileRWOrFail(ff, name);
         LOG.debug().$("open ").$(name).$(" [fd=").$(fd).$(", extendSegmentSize=").$(extendSegmentSize).$(']').$();
-    }
-
-    @Override
-    public boolean isDeleted() {
-        return !ff.exists(fd);
-    }
-
-    public long getFd() {
-        return fd;
     }
 
     public void sync(boolean async) {
@@ -163,14 +166,9 @@ public class AppendOnlyVirtualMemory extends PagedVirtualMemory implements Mappe
         }
     }
 
-    @Override
-    public FilesFacade getFilesFacade() {
-        return ff;
-    }
-
     void releaseCurrentPage() {
         if (pageAddress != 0) {
-            release(0, pageAddress);
+            release(pageAddress);
             pageAddress = 0;
         }
     }

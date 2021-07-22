@@ -159,7 +159,7 @@ public interface ContinuousReadOnlyMemory extends ReadOnlyVirtualMemory {
         }
     }
 
-    default long getPageSize(int pageIndex) {
+    default long getPageSize() {
         return size();
     }
 }

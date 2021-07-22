@@ -141,10 +141,9 @@ public class TableReader implements Closeable, SymbolTableSource {
             final int index = getPrimaryColumnIndex(base, columnIndex);
             final ReadOnlyVirtualMemory column = columns.getQuick(index);
             if (column != null) {
+                final long count = column.getPageSize() / Double.BYTES;
                 for (int pageIndex = 0, pageCount = column.getPageCount(); pageIndex < pageCount; pageIndex++) {
-                    final long a = column.getPageAddress(pageIndex);
-                    final long count = column.getPageSize(pageIndex) / Double.BYTES;
-                    result += Vect.avgDouble(a, count);
+                    result += Vect.avgDouble(column.getPageAddress(pageIndex), count);
                     countTotal++;
                 }
             }
@@ -325,9 +324,9 @@ public class TableReader implements Closeable, SymbolTableSource {
             final int index = getPrimaryColumnIndex(base, columnIndex);
             final ReadOnlyVirtualMemory column = columns.getQuick(index);
             if (column != null) {
+                final long count = column.getPageSize() / Double.BYTES;
                 for (int pageIndex = 0, pageCount = column.getPageCount(); pageIndex < pageCount; pageIndex++) {
                     long a = column.getPageAddress(pageIndex);
-                    long count = column.getPageSize(pageIndex) / Double.BYTES;
                     double x = Vect.maxDouble(a, count);
                     if (x > max) {
                         max = x;
@@ -346,9 +345,9 @@ public class TableReader implements Closeable, SymbolTableSource {
             final int index = getPrimaryColumnIndex(base, columnIndex);
             final ReadOnlyVirtualMemory column = columns.getQuick(index);
             if (column != null) {
+                final long count = column.getPageSize() / Double.BYTES;
                 for (int pageIndex = 0, pageCount = column.getPageCount(); pageIndex < pageCount; pageIndex++) {
                     long a = column.getPageAddress(pageIndex);
-                    long count = column.getPageSize(pageIndex) / Double.BYTES;
                     double x = Vect.minDouble(a, count);
                     if (x < min) {
                         min = x;
@@ -523,9 +522,9 @@ public class TableReader implements Closeable, SymbolTableSource {
             final int index = getPrimaryColumnIndex(base, columnIndex);
             final ReadOnlyVirtualMemory column = columns.getQuick(index);
             if (column != null) {
+                final long count = column.getPageSize() / Double.BYTES;
                 for (int pageIndex = 0, pageCount = column.getPageCount(); pageIndex < pageCount; pageIndex++) {
                     long a = column.getPageAddress(pageIndex);
-                    long count = column.getPageSize(pageIndex) / Double.BYTES;
                     result += Vect.sumDouble(a, count);
                 }
             }
@@ -842,9 +841,9 @@ public class TableReader implements Closeable, SymbolTableSource {
             final int index = getPrimaryColumnIndex(base, columnIndex);
             final ReadOnlyVirtualMemory column = columns.getQuick(index);
             if (column != null) {
+                final long count = column.getPageSize() / Integer.BYTES;
                 for (int pageIndex = 0, pageCount = column.getPageCount(); pageIndex < pageCount; pageIndex++) {
                     long a = column.getPageAddress(pageIndex);
-                    long count = column.getPageSize(pageIndex) / Integer.BYTES;
                     if (Vect.hasNull(a, count)) {
                         return true;
                     }

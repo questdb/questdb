@@ -70,16 +70,23 @@ public class PagedVirtualMemory implements ReadWriteVirtualMemory, Closeable {
     }
 
     public void clear() {
-        final int n = pages.size();
-        for (int i = 1; i < n; i++) {
-            release(i, pages.getQuick(i));
-            pages.setQuick(i, 0);
-        }
+        releaseAllPagesButFirst();
         appendPointer = -1;
         pageHi = -1;
         pageLo = -1;
         baseOffset = 1;
         clearHotPage();
+    }
+
+    protected void releaseAllPagesButFirst() {
+        final int n = pages.size();
+        for (int i = 1; i < n; i++) {
+            release(pages.getQuick(i));
+            pages.setQuick(i, 0);
+        }
+        if (n > 0) {
+            pages.setPos(1);
+        }
     }
 
     public void clearHotPage() {
@@ -92,16 +99,16 @@ public class PagedVirtualMemory implements ReadWriteVirtualMemory, Closeable {
         clear();
         int n = pages.size();
         if (n > 0) {
-            release(0, pages.getQuick(0));
+            release(pages.getQuick(0));
             pages.setQuick(0, 0);
             pages.clear();
         }
     }
 
     public void copyTo(long address, long offset, long len) {
+        final long pageSize = getPageSize();
         while (len > 0) {
             final int page = pageIndex(offset);
-            final long pageSize = getPageSize(page);
             final long pageAddress = getPageAddress(page);
             assert pageAddress > 0;
             final long offsetInPage = offsetInPage(offset);
@@ -181,7 +188,7 @@ public class PagedVirtualMemory implements ReadWriteVirtualMemory, Closeable {
         return pages.size();
     }
 
-    public long getPageSize(int page) {
+    public long getPageSize() {
         return getExtendSegmentSize();
     }
 
@@ -270,7 +277,7 @@ public class PagedVirtualMemory implements ReadWriteVirtualMemory, Closeable {
             return h;
         }
 
-        return hashSlow(offset, size);
+        return hash0(offset, size);
     }
 
     public void getLong256(long offset, Long256Sink sink) {
@@ -701,7 +708,7 @@ public class PagedVirtualMemory implements ReadWriteVirtualMemory, Closeable {
     }
 
     public long pageRemaining(long offset) {
-        return getPageSize(pageIndex(offset)) - offsetInPage(offset);
+        return getPageSize() - offsetInPage(offset);
     }
 
     public void zero() {
@@ -746,7 +753,7 @@ public class PagedVirtualMemory implements ReadWriteVirtualMemory, Closeable {
         long pageAddress = getPageAddress(page);
         assert pageAddress > 0;
         roOffsetLo = pageOffset(page) - 1;
-        roOffsetHi = roOffsetLo + getPageSize(page) + 1;
+        roOffsetHi = roOffsetLo + getPageSize() + 1;
         absolutePointer = pageAddress - roOffsetLo - 1;
         return pageAddress;
     }
@@ -763,7 +770,7 @@ public class PagedVirtualMemory implements ReadWriteVirtualMemory, Closeable {
     private char getChar0(long offset) {
         int page = pageIndex(offset);
         long pageOffset = offsetInPage(offset);
-        final long pageSize = getPageSize(page);
+        final long pageSize = getPageSize();
 
         if (pageSize - pageOffset > 1) {
             return Unsafe.getUnsafe().getChar(computeHotPage(page) + pageOffset);
@@ -791,7 +798,7 @@ public class PagedVirtualMemory implements ReadWriteVirtualMemory, Closeable {
     private double getDouble0(long offset) {
         int page = pageIndex(offset);
         long pageOffset = offsetInPage(offset);
-        final long pageSize = getPageSize(page);
+        final long pageSize = getPageSize();
 
         if (pageSize - pageOffset > 7) {
             return Unsafe.getUnsafe().getDouble(computeHotPage(page) + pageOffset);
@@ -807,7 +814,7 @@ public class PagedVirtualMemory implements ReadWriteVirtualMemory, Closeable {
         int page = pageIndex(offset);
         long pageOffset = offsetInPage(offset);
 
-        if (getPageSize(page) - pageOffset > 3) {
+        if (getPageSize() - pageOffset > 3) {
             return Unsafe.getUnsafe().getFloat(computeHotPage(page) + pageOffset);
         }
         return getFloatBytes(page, pageOffset);
@@ -821,7 +828,7 @@ public class PagedVirtualMemory implements ReadWriteVirtualMemory, Closeable {
         int page = pageIndex(offset);
         long pageOffset = offsetInPage(offset);
 
-        if (getPageSize(page) - pageOffset > 3) {
+        if (getPageSize() - pageOffset > 3) {
             return Unsafe.getUnsafe().getInt(computeHotPage(page) + pageOffset);
         }
         return getIntBytes(page, pageOffset);
@@ -830,7 +837,7 @@ public class PagedVirtualMemory implements ReadWriteVirtualMemory, Closeable {
     int getIntBytes(int page, long pageOffset) {
         int value = 0;
         long pageAddress = getPageAddress(page);
-        final long pageSize = getPageSize(page);
+        final long pageSize = getPageSize();
 
         for (int i = 0; i < 4; i++) {
             if (pageOffset == pageSize) {
@@ -846,7 +853,7 @@ public class PagedVirtualMemory implements ReadWriteVirtualMemory, Closeable {
     private long getLong0(long offset) {
         int page = pageIndex(offset);
         long pageOffset = offsetInPage(offset);
-        final long pageSize = getPageSize(page);
+        final long pageSize = getPageSize();
 
         if (pageSize - pageOffset > 7) {
             return Unsafe.getUnsafe().getLong(computeHotPage(page) + pageOffset);
@@ -872,7 +879,7 @@ public class PagedVirtualMemory implements ReadWriteVirtualMemory, Closeable {
     private short getShort0(long offset) {
         int page = pageIndex(offset);
         long pageOffset = offsetInPage(offset);
-        final long pageSize = getPageSize(page);
+        final long pageSize = getPageSize();
 
         if (pageSize - pageOffset > 1) {
             return Unsafe.getUnsafe().getShort(computeHotPage(page) + pageOffset);
@@ -898,23 +905,10 @@ public class PagedVirtualMemory implements ReadWriteVirtualMemory, Closeable {
         return value;
     }
 
-    private long hashSlow(long offset, long size) {
-        long n = size - (size & 7);
-        long h = 179426491L;
-        for (long i = 0; i < n; i += 8) {
-            h = (h << 5) - h + getLong(offset + i);
-        }
-
-        for (; n < size; n++) {
-            h = (h << 5) - h + getByte(offset + n);
-        }
-        return h;
-    }
-
     private void jumpTo0(long offset) {
         int page = pageIndex(offset);
         pageLo = mapWritePage(page);
-        pageHi = pageLo + getPageSize(page);
+        pageHi = pageLo + getPageSize();
         baseOffset = pageOffset(page + 1) - pageHi;
         appendPointer = pageLo + offsetInPage(offset);
         pageLo--;
@@ -925,7 +919,7 @@ public class PagedVirtualMemory implements ReadWriteVirtualMemory, Closeable {
         long pageAddress = mapWritePage(page);
         assert pageAddress != 0;
         roOffsetLo = pageOffset(page) - 1;
-        roOffsetHi = roOffsetLo + getPageSize(page) + 1;
+        roOffsetHi = roOffsetLo + getPageSize() + 1;
         absolutePointer = pageAddress - roOffsetLo - 1;
         return pageAddress;
     }
@@ -1119,9 +1113,9 @@ public class PagedVirtualMemory implements ReadWriteVirtualMemory, Closeable {
         }
     }
 
-    protected void release(int page, long address) {
+    protected void release(long address) {
         if (address != 0) {
-            Unsafe.free(address, getPageSize(page));
+            Unsafe.free(address, getPageSize());
         }
     }
 
@@ -1138,7 +1132,7 @@ public class PagedVirtualMemory implements ReadWriteVirtualMemory, Closeable {
 
     protected final void updateLimits(int page, long pageAddress) {
         pageLo = pageAddress - 1;
-        pageHi = pageAddress + getPageSize(page);
+        pageHi = pageAddress + getPageSize();
         baseOffset = pageOffset(page + 1) - pageHi;
         this.appendPointer = pageAddress;
     }
@@ -1197,7 +1191,7 @@ public class PagedVirtualMemory implements ReadWriteVirtualMemory, Closeable {
             final int page = pageIndex(offset);
             final long pa = getPageAddress(page);
             this.readAddress = pa + offsetInPage(offset);
-            this.readLimit = pa + getPageSize(page);
+            this.readLimit = pa + getPageSize();
         }
 
         ByteSequenceView of(long offset, long len) {

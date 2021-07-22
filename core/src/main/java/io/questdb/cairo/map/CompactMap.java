@@ -118,7 +118,7 @@ public class CompactMap implements Map {
                     5209859150892887590L
             };
 
-    private static final HashFunction DEFAULT_HASH = ContinuousVirtualMemory::hash;
+    private static final HashFunction DEFAULT_HASH = ContinuousVirtualMemory::hash0;
     private final ContinuousVirtualMemory entries;
     private final ContinuousVirtualMemory entrySlots;
     private final Key key = new Key();

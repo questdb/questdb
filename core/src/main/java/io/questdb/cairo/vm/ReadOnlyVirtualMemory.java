@@ -50,7 +50,7 @@ public interface ReadOnlyVirtualMemory {
 
     int getPageCount();
 
-    long getPageSize(int pageIndex);
+    long getPageSize();
 
     short getShort(long offset);
 
@@ -74,7 +74,7 @@ public interface ReadOnlyVirtualMemory {
 
     long addressOf(long offset);
 
-    default long hash(long offset, long size) {
+    default long hash0(long offset, long size) {
         long n = size - (size & 7);
         long h = 179426491L;
         for (long i = 0; i < n; i += 8) {

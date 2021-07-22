@@ -301,7 +301,7 @@ public class EngineMigration {
             backupFile(ff, path, migrationContext.getTablePath2(), TXN_FILE_NAME, VERSION_TX_STRUCT_UPDATE_1 - 1);
 
             LOG.debug().$("opening for rw [path=").$(path).I$();
-            MappedReadWriteMemory txMem = migrationContext.createRwMemoryOf(ff, path.$(), ff.getPageSize());
+            MappedReadWriteMemory txMem = migrationContext.createRwMemoryOf(ff, path.$());
             long tempMem8b = migrationContext.getTempMemory(8);
 
             PagedVirtualMemory txFileUpdate = migrationContext.getTempVirtualMem();
@@ -335,7 +335,7 @@ public class EngineMigration {
                 txMem.jumpTo(writeOffset);
 
                 for (int i = 0, size = txFileUpdate.getPageCount(); i < size && updateSize > 0; i++) {
-                    long writeSize = Math.min(updateSize, txFileUpdate.getPageSize(i));
+                    long writeSize = Math.min(updateSize, txFileUpdate.getPageSize());
                     txMem.putBlockOfBytes(txFileUpdate.getPageAddress(i), writeSize);
                     updateSize -= writeSize;
                 }
@@ -418,8 +418,7 @@ public class EngineMigration {
             this.rwMemory = rwMemory;
         }
 
-        // todo: remove extra param
-        public MappedReadWriteMemory createRwMemoryOf(FilesFacade ff, Path path, long pageSize) {
+        public MappedReadWriteMemory createRwMemoryOf(FilesFacade ff, Path path) {
             // re-use same rwMemory
             // assumption that it is re-usable after the close() and then of()  methods called.
             rwMemory.wholeFile(ff, path);

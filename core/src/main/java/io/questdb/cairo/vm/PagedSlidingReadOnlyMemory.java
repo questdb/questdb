@@ -52,7 +52,7 @@ public class PagedSlidingReadOnlyMemory extends PagedVirtualMemory {
     }
 
     @Override
-    public long getPageSize(int page) {
+    public long getPageSize() {
         return getExtendSegmentSize();
     }
 

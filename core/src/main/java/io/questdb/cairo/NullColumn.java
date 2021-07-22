@@ -84,7 +84,7 @@ public class NullColumn implements MappedReadOnlyMemory {
     }
 
     @Override
-    public long getPageSize(int pageIndex) {
+    public long getPageSize() {
         return 0;
     }
 

@@ -78,10 +78,7 @@ public class PagedMappedReadWriteMemory extends PagedVirtualMemory implements Ma
         final long firstPage = getPageAddress(0);
         final long pageSize = getExtendSegmentSize();
         Vect.memset(firstPage, pageSize, 0);
-        for (int i = 1, n = pages.size(); i < n; i++) {
-            release(i, pages.getQuick(i));
-            pages.setQuick(i, 0);
-        }
+        releaseAllPagesButFirst();
         jumpTo(0);
         long fileSize = ff.length(fd);
         if (fileSize > pageSize) {
@@ -103,8 +100,8 @@ public class PagedMappedReadWriteMemory extends PagedVirtualMemory implements Ma
     }
 
     @Override
-    protected void release(int page, long address) {
-        ff.munmap(address, getPageSize(page));
+    protected void release(long address) {
+        ff.munmap(address, getPageSize());
     }
 
     public long getFd() {
