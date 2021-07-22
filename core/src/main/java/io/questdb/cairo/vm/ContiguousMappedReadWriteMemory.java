@@ -41,6 +41,7 @@ public class ContiguousMappedReadWriteMemory extends AbstractContiguousMemory
     protected long fd = -1;
     protected long size = 0;
     protected long appendAddress;
+    private long lim;
     private long minMappedMemorySize;
     private long grownLength;
     private long extendSegmentMsb;
@@ -55,7 +56,7 @@ public class ContiguousMappedReadWriteMemory extends AbstractContiguousMemory
     @Override
     public long appendAddressFor(long bytes) {
         checkAndExtend(appendAddress + bytes);
-        long result = appendAddress;
+        final long result = appendAddress;
         appendAddress += bytes;
         return result;
     }
@@ -64,13 +65,6 @@ public class ContiguousMappedReadWriteMemory extends AbstractContiguousMemory
     public long appendAddressFor(long offset, long bytes) {
         checkAndExtend(page + offset + bytes);
         return page + offset;
-    }
-
-    public void sync(boolean async) {
-        if (page != 0 && ff.msync(page, size, async) == 0) {
-            return;
-        }
-        LOG.error().$("could not msync [fd=").$(fd).$(']').$();
     }
 
     @Override
@@ -95,6 +89,16 @@ public class ContiguousMappedReadWriteMemory extends AbstractContiguousMemory
     }
 
     @Override
+    public long getFd() {
+        return fd;
+    }
+
+    @Override
+    public boolean isDeleted() {
+        return !ff.exists(fd);
+    }
+
+    @Override
     public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size) {
         this.extendSegmentMsb = Numbers.msb(extendSegmentSize);
         this.minMappedMemorySize = ff.getMapPageSize();
@@ -105,16 +109,6 @@ public class ContiguousMappedReadWriteMemory extends AbstractContiguousMemory
     @Override
     public void of(FilesFacade ff, LPSZ name, long extendSegmentSize) {
         of(ff, name, extendSegmentSize, Long.MAX_VALUE);
-    }
-
-    @Override
-    public boolean isDeleted() {
-        return !ff.exists(fd);
-    }
-
-    @Override
-    public long getFd() {
-        return fd;
     }
 
     public long getGrownLength() {
@@ -133,10 +127,6 @@ public class ContiguousMappedReadWriteMemory extends AbstractContiguousMemory
 
     @Override
     public void extend(long newSize) {
-        if (newSize > grownLength) {
-            grownLength = newSize;
-        }
-
         if (newSize > size) {
             extend0(newSize);
         }
@@ -147,7 +137,7 @@ public class ContiguousMappedReadWriteMemory extends AbstractContiguousMemory
     }
 
     public long addressOf(long offset) {
-        assert offset <= size : "offset=" + offset + ", size=" + size + ", fd=" + fd;
+        assert offset < size : "offset=" + offset + ", size=" + size + ", fd=" + fd;
         return page + offset;
     }
 
@@ -201,6 +191,7 @@ public class ContiguousMappedReadWriteMemory extends AbstractContiguousMemory
             }
 
             this.size = sz;
+            this.lim = page + sz;
             Vect.memset(page, sz, 0);
 
             // try to truncate the file to remove tail data
@@ -233,11 +224,18 @@ public class ContiguousMappedReadWriteMemory extends AbstractContiguousMemory
         }
     }
 
-    private void checkAndExtend(long address) {
-        if (address <= page + size) {
+    public void sync(boolean async) {
+        if (page != 0 && ff.msync(page, size, async) == 0) {
             return;
         }
-        extend(address - page);
+        LOG.error().$("could not msync [fd=").$(fd).$(']').$();
+    }
+
+    private void checkAndExtend(long address) {
+        if (address <= lim) {
+            return;
+        }
+        extend0(address - page);
     }
 
     private void extend0(long newSize) {
@@ -257,7 +255,7 @@ public class ContiguousMappedReadWriteMemory extends AbstractContiguousMemory
                         Files.MAP_RW
                 );
             } catch (Throwable e) {
-                jumpTo(previousSize);
+                appendAddress = page + previousSize;
                 close();
                 throw e;
             }
@@ -270,7 +268,9 @@ public class ContiguousMappedReadWriteMemory extends AbstractContiguousMemory
             }
         }
         size = newSize;
+        lim = page + newSize;
         appendAddress = page + offset;
+        grownLength = newSize;
     }
 
     protected void map(FilesFacade ff, @Nullable CharSequence name, long size) {
@@ -294,6 +294,7 @@ public class ContiguousMappedReadWriteMemory extends AbstractContiguousMemory
     private void map0(FilesFacade ff, long size) {
         try {
             this.page = TableUtils.mapRW(ff, fd, size);
+            this.lim = page + size;
         } catch (Throwable e) {
             close();
             throw e;
