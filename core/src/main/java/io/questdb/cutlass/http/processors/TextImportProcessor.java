@@ -141,6 +141,31 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
                     partitionBy,
                     timestampIndexCol
             );
+
+            CharSequence commitLagChars = rh.getUrlParam("commitLag");
+            if (commitLagChars != null) {
+                try {
+                    long commitLag = Numbers.parseLong(commitLagChars);
+                    if (commitLag >= 0) {
+                        transientState.textLoader.setCommitLag(commitLag);
+                    }
+                } catch (NumericException e) {
+                    sendErrorAndThrowDisconnect("invalid commitLag, must be a long");
+                }
+            }
+
+            CharSequence maxUncommittedRowsChars = rh.getUrlParam("maxUncommittedRows");
+            if (maxUncommittedRowsChars != null) {
+                try {
+                    int maxUncommittedRows = Numbers.parseInt(maxUncommittedRowsChars);
+                    if (maxUncommittedRows >= 0) {
+                        transientState.textLoader.setMaxUncommittedRows(maxUncommittedRows);
+                    }
+                } catch (NumericException e) {
+                    sendErrorAndThrowDisconnect("invalid maxUncommittedRows, must be an int");
+                }
+            }
+
             transientState.textLoader.setForceHeaders(Chars.equalsNc("true", rh.getUrlParam("forceHeader")));
             transientState.textLoader.setSkipRowsWithExtraValues(Chars.equalsNc("true", rh.getUrlParam("skipLev")));
             transientState.textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
