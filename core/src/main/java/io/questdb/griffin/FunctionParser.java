@@ -447,7 +447,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
 
         final int columnType = ColumnType.columnTypeOf(tok);
 
-        if (columnType > -1) {
+        if (columnType >= ColumnType.BOOLEAN && columnType <= ColumnType.BINARY) {
             return Constants.getTypeConstant(columnType);
         }
 
