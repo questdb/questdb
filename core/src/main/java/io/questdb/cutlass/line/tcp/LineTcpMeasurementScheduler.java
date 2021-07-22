@@ -75,6 +75,7 @@ class LineTcpMeasurementScheduler implements Closeable {
     private final long maintenanceInterval;
     private final long writerIdleTimeout;
     private final int defaultPartitionBy;
+    private final int commitMode;
     private final NetworkIOJob[] netIoJobs;
     private final TableStructureAdapter tableStructureAdapter = new TableStructureAdapter();
     private final Path path = new Path();
@@ -94,6 +95,7 @@ class LineTcpMeasurementScheduler implements Closeable {
         this.securityContext = lineConfiguration.getCairoSecurityContext();
         this.cairoConfiguration = engine.getConfiguration();
         this.milliClock = cairoConfiguration.getMillisecondClock();
+        this.commitMode = cairoConfiguration.getCommitMode();
 
         this.netIoJobs = new NetworkIOJob[ioWorkerPool.getWorkerCount()];
         for (int i = 0; i < ioWorkerPool.getWorkerCount(); i++) {
@@ -846,7 +848,7 @@ class LineTcpMeasurementScheduler implements Closeable {
         }
 
         void handleRowAppended() {
-            if (writer.checkMaxAndCommitLag()) {
+            if (writer.checkMaxAndCommitLag(commitMode)) {
                 lastCommitMillis = milliClock.getTicks();
             }
         }
