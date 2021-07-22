@@ -119,16 +119,8 @@ public class CairoTextWriter implements Closeable, Mutable {
         return partitionBy;
     }
 
-    public long getCommitLag() {
-        return commitLag;
-    }
-
     public void setCommitLag(long commitLag) {
         this.commitLag = commitLag;
-    }
-
-    public int getMaxUncommittedRows() {
-        return maxUncommittedRows;
     }
 
     public void setMaxUncommittedRows(int maxUncommittedRows) {

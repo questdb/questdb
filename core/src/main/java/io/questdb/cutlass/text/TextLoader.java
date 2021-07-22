@@ -151,16 +151,8 @@ public class TextLoader implements Closeable, Mutable {
         return textWriter.getPartitionBy();
     }
 
-    public long getCommitLag() {
-        return textWriter.getCommitLag();
-    }
-
     public void setCommitLag(long commitLag) {
         textWriter.setCommitLag(commitLag);
-    }
-
-    public int getMaxUncommittedRows() {
-        return textWriter.getMaxUncommittedRows();
     }
 
     public void setMaxUncommittedRows(int maxUncommittedRows) {
@@ -181,10 +173,6 @@ public class TextLoader implements Closeable, Mutable {
 
     public long getWrittenLineCount() {
         return textWriter.getWrittenLineCount();
-    }
-
-    public boolean hasHeader() {
-        return textLexer.isHeaderDetected();
     }
 
     public boolean isForceHeaders() {

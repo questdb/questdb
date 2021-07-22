@@ -2991,6 +2991,8 @@ public class TextLoaderTest extends AbstractGriffinTest {
                                 expectedParsedLineCount,
                                 expectedWrittenLineCount
                         );
+                        Assert.assertEquals("test", textLoader.getTableName());
+                        Assert.assertEquals(TextLoadWarning.NONE, textLoader.getWarnings());
                     }
             );
             Assert.assertEquals(expectedRmdirCalls, rmdirCallCount.get());
@@ -3040,6 +3042,8 @@ public class TextLoaderTest extends AbstractGriffinTest {
                             1,
                             1
                     );
+                    Assert.assertEquals("test", textLoader.getTableName());
+                    Assert.assertEquals(TextLoadWarning.NONE, textLoader.getWarnings());
                 }
         );
         try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "test")) {
