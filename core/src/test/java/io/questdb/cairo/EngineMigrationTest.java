@@ -737,18 +737,27 @@ public class EngineMigrationTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testMigrateTableNoSymbolsNoPartitions2() throws Exception {
+    public void testAllColumns() throws Exception {
         assertMemoryLeak(() -> {
-            try (TableModel src = new TableModel(configuration, "x_day", PartitionBy.DAY)) {
-                createPopulateTable(
-                        src.col("s1", ColumnType.SYMBOL).indexed(true, 4096)
-                                .col("c1", ColumnType.INT)
-                                .col("s2", ColumnType.SYMBOL)
-                                .col("c2", ColumnType.LONG)
+            try (TableModel src = new TableModel(configuration, "x_cols", PartitionBy.DAY)) {
+
+                createPopulateTable(src.col("bool", ColumnType.BOOLEAN)
+                                .col("byte", ColumnType.BYTE)
+                                .col("short", ColumnType.SHORT)
+                                .col("char", ColumnType.CHAR)
+                                .col("int", ColumnType.INT)
+                                .col("long", ColumnType.LONG)
+                                .col("date", ColumnType.DATE)
+                                .col("float", ColumnType.FLOAT)
+                                .col("double", ColumnType.DOUBLE)
+                                .col("string", ColumnType.STRING)
+                                .col("long256", ColumnType.LONG256)
+                                .col("symbol", ColumnType.SYMBOL).indexed(true, 4096)
                                 .col("ts", ColumnType.TIMESTAMP).timestamp(),
-                        100, "2020-01-01", 10
+                        100, "2020-01-01", 0
                 );
-                String query = "select sum(c1) from x_day";
+                //TODO: bool,symbol,ts - random values.
+                String query = "select byte,short,char,int,long,date,float,double,string,long256 from x_cols";
                 assertMigration(src, query);
             }
         });
