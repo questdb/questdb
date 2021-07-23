@@ -466,6 +466,7 @@ io.questdb.griffin.engine.functions.catalogue.PrefixedNamespaceCatalogueFunction
 io.questdb.griffin.engine.functions.catalogue.IsTableVisibleCatalogueFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.UserByIdCatalogueFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.TypeCatalogueFunctionFactory
+io.questdb.griffin.engine.functions.catalogue.VersionFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.NamespaceCatalogueFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.PrefixedCurrentSchemasFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.CursorDereferenceFunctionFactory
