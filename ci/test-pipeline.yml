@@ -114,7 +114,7 @@ stages:
             condition: and(and(eq(variables['Agent.OS'], 'Linux'), eq(variables['jdk'], '1.11')), not(eq(variables['System.PullRequest.PullRequestId'], '')) )
           - task: Cache@2
             inputs:
-              key: '"questdb_main" | maven |"$(Agent.OS)" | **/pom.xml'
+              key: '"questdb_main" | "maven"'
               restoreKeys: |
               path: $(MAVEN_CACHE_FOLDER)
           - task: Maven@3
