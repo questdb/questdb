@@ -22,20 +22,26 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo;
-import org.junit.Assert;
-import org.junit.Test;
+package io.questdb.griffin.engine.functions.constants;
 
-public class GeohashExtraTest {
-    @Test
-    public void testBitsPrecision() {
-        Assert.assertEquals(ColumnType.GEOHASH, ColumnType.tagOf(ColumnType.GEOHASH));
-        Assert.assertEquals(0, GeohashExtra.getBitsPrecision(ColumnType.GEOHASH));
+import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.TypeConstant;
+import io.questdb.griffin.engine.functions.GeoHashFunction;
 
-        int geohashCol = GeohashExtra.setBitsPrecision(ColumnType.GEOHASH, 42);
-        Assert.assertEquals(ColumnType.GEOHASH, ColumnType.tagOf(geohashCol));
-        Assert.assertEquals(42, GeohashExtra.getBitsPrecision(geohashCol));
-        geohashCol = GeohashExtra.setBitsPrecision(geohashCol, 24);
-        Assert.assertEquals(24, GeohashExtra.getBitsPrecision(geohashCol));
+public class GeoHashTypeConstant extends GeoHashFunction implements TypeConstant {
+    public static final GeoHashTypeConstant INSTANCE = new GeoHashTypeConstant();
+
+    public GeoHashTypeConstant() {
+        super();
+    }
+
+    @Override
+    public long getLong(Record rec) {
+        return 0;
+    }
+
+    @Override
+    public long getGeoHash(Record rec) {
+        return 0;
     }
 }

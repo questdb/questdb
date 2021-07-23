@@ -580,6 +580,10 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
                     overloadPossible |= argTypeTag == ColumnType.STRING &&
                             sigArgTypeTag == ColumnType.TIMESTAMP && !factory.isGroupBy();
 
+                    // Implicit cast from STRING to GEOHASH
+                    overloadPossible |= argTypeTag == ColumnType.STRING &&
+                            sigArgTypeTag == ColumnType.GEOHASH && !factory.isGroupBy();
+
                     // Implicit cast from SYMBOL to TIMESTAMP
                     overloadPossible |= argTypeTag == ColumnType.SYMBOL &&
                             sigArgTypeTag == ColumnType.TIMESTAMP && !factory.isGroupBy();
@@ -755,6 +759,12 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
                     return function;
                 } else {
                     return new Long256Constant(function.getLong256A(null));
+                }
+            case ColumnType.GEOHASH:
+                if (function instanceof GeoHashConstant) {
+                    return function;
+                } else {
+                    return GeoHashConstant.newInstance(function.getGeoHash(null), function.getType());
                 }
             case ColumnType.DATE:
                 if (function instanceof DateConstant) {

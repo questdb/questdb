@@ -354,7 +354,7 @@ class ExpressionParser {
                                 if (thisWasCast) {
                                     // validate type
                                     final int columnTypeTag = ColumnType.tagOf(ColumnType.columnTypeOf(node.token));
-                                    if ((columnTypeTag < ColumnType.BOOLEAN || columnTypeTag > ColumnType.LONG256) && !asPoppedNull) {
+                                    if ((columnTypeTag < ColumnType.BOOLEAN || columnTypeTag > ColumnType.GEOHASH) && !asPoppedNull) {
                                         throw SqlException.$(node.position, "invalid type");
                                     }
 

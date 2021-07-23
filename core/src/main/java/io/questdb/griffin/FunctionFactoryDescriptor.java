@@ -147,6 +147,9 @@ public class FunctionFactoryDescriptor {
             case 'h':
                 sigArgType = ColumnType.LONG256;
                 break;
+            case 'g':
+                sigArgType = ColumnType.GEOHASH;
+                break;
             case 'o':
                 sigArgType = ColumnType.NULL;
                 break;

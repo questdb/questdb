@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.functions.geohash;
 import io.questdb.griffin.engine.table.LatestByArguments;
 import io.questdb.std.CharSequenceHashSet;
 import io.questdb.std.DirectLongList;
+import io.questdb.std.str.StringSink;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -43,12 +44,12 @@ public class GeoHashNativeTest {
     private static long rnd_geohash(int size) {
         double x = rnd_double(-90, 90);
         double y = rnd_double(-180, 180);
-        return GeoHashNative.fromCoordinates(x, y, size*5);
+        return GeoHashNative.fromCoordinates(x, y, size * 5);
     }
 
     @Test
     public void testFromString() {
-        final long gh = GeoHashNative.fromCoordinates(lat,lon, 8*5);
+        final long gh = GeoHashNative.fromCoordinates(lat, lon, 8 * 5);
         final CharSequence ghStr = GeoHashNative.toString(gh, 8);
         final long gh1 = GeoHashNative.fromString(ghStr);
         Assert.assertEquals(gh, gh1);
@@ -56,14 +57,14 @@ public class GeoHashNativeTest {
 
     @Test
     public void testFromCoordinates() {
-        Assert.assertEquals(GeoHashNative.fromCoordinates(lat,lon, 1*5),GeoHashNative.fromBitString("11100"));
-        Assert.assertEquals(GeoHashNative.fromCoordinates(lat,lon, 2*5),GeoHashNative.fromBitString("1110011001"));
-        Assert.assertEquals(GeoHashNative.fromCoordinates(lat,lon, 3*5),GeoHashNative.fromBitString("111001100111100"));
-        Assert.assertEquals(GeoHashNative.fromCoordinates(lat,lon, 4*5),GeoHashNative.fromBitString("11100110011110000011"));
-        Assert.assertEquals(GeoHashNative.fromCoordinates(lat,lon, 5*5),GeoHashNative.fromBitString("1110011001111000001111000"));
-        Assert.assertEquals(GeoHashNative.fromCoordinates(lat,lon, 6*5),GeoHashNative.fromBitString("111001100111100000111100010001"));
-        Assert.assertEquals(GeoHashNative.fromCoordinates(lat,lon, 7*5),GeoHashNative.fromBitString("11100110011110000011110001000110001"));
-        Assert.assertEquals(GeoHashNative.fromCoordinates(lat,lon, 8*5),GeoHashNative.fromBitString("1110011001111000001111000100011000111111"));
+        Assert.assertEquals(GeoHashNative.fromCoordinates(lat, lon, 1 * 5), GeoHashNative.fromBitString("11100"));
+        Assert.assertEquals(GeoHashNative.fromCoordinates(lat, lon, 2 * 5), GeoHashNative.fromBitString("1110011001"));
+        Assert.assertEquals(GeoHashNative.fromCoordinates(lat, lon, 3 * 5), GeoHashNative.fromBitString("111001100111100"));
+        Assert.assertEquals(GeoHashNative.fromCoordinates(lat, lon, 4 * 5), GeoHashNative.fromBitString("11100110011110000011"));
+        Assert.assertEquals(GeoHashNative.fromCoordinates(lat, lon, 5 * 5), GeoHashNative.fromBitString("1110011001111000001111000"));
+        Assert.assertEquals(GeoHashNative.fromCoordinates(lat, lon, 6 * 5), GeoHashNative.fromBitString("111001100111100000111100010001"));
+        Assert.assertEquals(GeoHashNative.fromCoordinates(lat, lon, 7 * 5), GeoHashNative.fromBitString("11100110011110000011110001000110001"));
+        Assert.assertEquals(GeoHashNative.fromCoordinates(lat, lon, 8 * 5), GeoHashNative.fromBitString("1110011001111000001111000100011000111111"));
     }
 
     @Test
@@ -72,12 +73,12 @@ public class GeoHashNativeTest {
             final long bm = GeoHashNative.bitmask(1, i);
             Assert.assertEquals(1L << i, bm);
         }
-        Assert.assertEquals(7L << 5, GeoHashNative.bitmask(3,5));
+        Assert.assertEquals(7L << 5, GeoHashNative.bitmask(3, 5));
     }
 
     @Test
     public void testToHash() {
-        final long gh = GeoHashNative.fromCoordinates(lat,lon, 8*5);
+        final long gh = GeoHashNative.fromCoordinates(lat, lon, 8 * 5);
         final long ghz = GeoHashNative.toHashWithSize(gh, 8);
         Assert.assertEquals(gh, GeoHashNative.toHash(ghz));
         Assert.assertEquals(8, GeoHashNative.hashSize(ghz));
@@ -89,12 +90,12 @@ public class GeoHashNativeTest {
         DirectLongList bits = new DirectLongList(cap * 2); // hash and mask
         CharSequenceHashSet strh = new CharSequenceHashSet();
         for (int i = 0; i < cap; i++) {
-            final int prec = (i%3) + 3;
+            final int prec = (i % 3) + 3;
             final long h = rnd_geohash(prec);
             strh.add(GeoHashNative.toString(h, prec));
         }
         GeoHashNative.fromStringToBits(strh, bits);
-        for (int i = 0; i < bits.size() / 2; i+=2) {
+        for (int i = 0; i < bits.size() / 2; i += 2) {
             final long b = bits.get(i);
             final long m = bits.get(i + 1);
             Assert.assertEquals(b, b & m);
@@ -113,7 +114,7 @@ public class GeoHashNativeTest {
         final int workerCount = 5;
 
         final long chunkSize = (keyCount + workerCount - 1) / workerCount;
-        final int taskCount = (int)((keyCount + chunkSize - 1) / chunkSize);
+        final int taskCount = (int) ((keyCount + chunkSize - 1) / chunkSize);
 
         final long argumentsAddress = LatestByArguments.allocateMemoryArray(taskCount);
         try {
@@ -164,5 +165,29 @@ public class GeoHashNativeTest {
                 }
             }
         }
+    }
+
+    @Test
+    public void testLatLon() {
+        String expected = "1:5: 24 -> s\n" +
+                "2:10: 789 -> sp\n" +
+                "3:15: 25248 -> sp0\n" +
+                "4:20: 807941 -> sp05\n" +
+                "5:25: 25854114 -> sp052\n" +
+                "6:30: 827331676 -> sp052w\n" +
+                "7:35: 26474613641 -> sp052w9\n" +
+                "8:40: 847187636514 -> sp052w92\n" +
+                "9:45: 27110004368469 -> sp052w92p\n" +
+                "10:50: 867520139791009 -> sp052w92p1\n" +
+                "11:55: 27760644473312309 -> sp052w92p1p\n" +
+                "12:60: 888340623145993896 -> sp052w92p1p8\n";
+        StringSink sink = new StringSink();
+        for (int precision = 1; precision <= 12; precision++) {
+            int numBits = precision * 5;
+            long geohash = GeoHashNative.fromCoordinates(39.982, 0.024, numBits);
+            String location = GeoHashNative.toString(geohash, precision);
+            sink.put(String.format("%d:%d: %d -> %s%n", precision, numBits, geohash, location));
+        }
+        Assert.assertEquals(expected, sink.toString());
     }
 }

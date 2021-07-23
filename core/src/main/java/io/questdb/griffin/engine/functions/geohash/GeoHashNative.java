@@ -28,9 +28,9 @@ import io.questdb.std.CharSequenceHashSet;
 import io.questdb.std.DirectLongList;
 
 public class GeoHashNative {
-    static final int[] base32Indexes ={
-            0,  1,  2,  3,  4,  5,  6,  7,  // 30-37, '0'..'7'
-            8,  9, -1, -1, -1, -1, -1, -1,  // 38-2F, '8','9'
+    static final int[] base32Indexes = {
+            0, 1, 2, 3, 4, 5, 6, 7,        // 30-37, '0'..'7'
+            8, 9, -1, -1, -1, -1, -1, -1,  // 38-2F, '8','9'
             -1, -1, 10, 11, 12, 13, 14, 15, // 40-47, 'B'..'G'
             16, -1, 17, 18, -1, 19, 20, -1, // 48-4F, 'H','J','K','M','N'
             21, 22, 23, 24, 25, 26, 27, 28, // 50-57, 'P'..'W'
@@ -38,18 +38,21 @@ public class GeoHashNative {
             -1, -1, 10, 11, 12, 13, 14, 15, // 60-67, 'b'..'g'
             16, -1, 17, 18, -1, 19, 20, -1, // 68-6F, 'h','j','k','m','n'
             21, 22, 23, 24, 25, 26, 27, 28, // 70-77, 'p'..'w'
-            29, 30, 31,                     // 78-7A, 'x'..'z'
+            29, 30, 31                      // 78-7A, 'x'..'z'
     };
 
-    private static final char[] base32 = {'0', '1', '2', '3', '4', '5', '6',
-            '7', '8', '9', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'j', 'k', 'm', 'n',
-            'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z'};
+    private static final char[] base32 = {
+            '0', '1', '2', '3', '4', '5', '6', '7',
+            '8', '9', 'b', 'c', 'd', 'e', 'f', 'g',
+            'h', 'j', 'k', 'm', 'n', 'p', 'q', 'r',
+            's', 't', 'u', 'v', 'w', 'x', 'y', 'z'
+    };
 
     public static long fromString(CharSequence hash) {
         long output = 0;
-        for(int i = 0; i < hash.length(); ++i) {
+        for (int i = 0; i < hash.length(); ++i) {
             char c = hash.charAt(i);
-            int idx = base32Indexes[(int)c - 48];
+            int idx = base32Indexes[(int) c - 48];
             if (idx < 0) throw new IllegalArgumentException(hash.toString());
             for (int bits = 4; bits >= 0; --bits) {
                 output <<= 1;
@@ -90,7 +93,7 @@ public class GeoHashNative {
         long result = 0;
         for (int i = 0; i < bits.length(); i++) {
             char c = bits.charAt(i);
-            if(c == '1') {
+            if (c == '1') {
                 result = (result << 1) | 1;
             } else {
                 result = result << 1;
@@ -101,14 +104,15 @@ public class GeoHashNative {
 
     public static String toString(long geohashAsLong, int precision) {
         char[] chars = new char[precision];
-        for (int i = precision - 1; i >= 0 ; i--) {
-            chars[i] =  base32[(int) (geohashAsLong & 31)];
+        for (int i = precision - 1; i >= 0; i--) {
+            chars[i] = base32[(int) (geohashAsLong & 31)];
             geohashAsLong >>= 5;
         }
         return new String(chars);
     }
 
-    public static long bitmask(int count , int shift) {
+    public static long bitmask(int count, int shift) {
+        // e.g. 3, 4 -> 1110000
         return ((1L << count) - 1) << shift;
     }
 
@@ -117,7 +121,7 @@ public class GeoHashNative {
     }
 
     public static int hashSize(long hashWithLength) {
-        return (int)(hashWithLength >>> 60);
+        return (int) (hashWithLength >>> 60);
     }
 
     public static long toHashWithSize(long hash, int length) {
@@ -131,9 +135,9 @@ public class GeoHashNative {
             final CharSequence prefix = prefixes.get(i);
             final long bits = fromString(prefix);
             final int length = prefix.length();
-            final int shift = 8*5 - length*5;
+            final int shift = 8 * 5 - length * 5;
             final long norm = bits << shift;
-            final long mask = bitmask(length*5, shift);
+            final long mask = bitmask(length * 5, shift);
 
             prefixesBits.add(norm);
             prefixesBits.add(mask);

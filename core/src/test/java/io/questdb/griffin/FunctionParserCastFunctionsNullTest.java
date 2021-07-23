@@ -51,6 +51,7 @@ public class FunctionParserCastFunctionsNullTest extends BaseFunctionFactoryTest
             new CastStrToStrFunctionFactory(),
             new CastSymbolToSymbolFunctionFactory(),
             new CastLong256ToLong256FunctionFactory(),
+            new CastStrToGeoHashFunctionFactory(),
             new CastNullFunctionFactory()
     };
 
@@ -71,6 +72,7 @@ public class FunctionParserCastFunctionsNullTest extends BaseFunctionFactoryTest
         typeNameToId.put("symbol", ColumnType.SYMBOL);
         typeNameToId.put("long256", ColumnType.LONG256);
         typeNameToId.put("binary", ColumnType.BINARY);
+        typeNameToId.put("geohash", ColumnType.GEOHASH);
     }
 
     private static final ObjList<CharSequence> typeNames = typeNameToId.keys();

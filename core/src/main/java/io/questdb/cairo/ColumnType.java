@@ -166,6 +166,7 @@ public final class ColumnType {
         typeNameMap.put(PARAMETER, "PARAMETER");
         typeNameMap.put(TIMESTAMP, "TIMESTAMP");
         typeNameMap.put(LONG256, "LONG256");
+        typeNameMap.put(GEOHASH, "GEOHASH");
         typeNameMap.put(CURSOR, "CURSOR");
         typeNameMap.put(RECORD, "RECORD");
         typeNameMap.put(VAR_ARG, "VARARG");
@@ -186,6 +187,7 @@ public final class ColumnType {
         nameTypeMap.put("timestamp", TIMESTAMP);
         nameTypeMap.put("cursor", CURSOR);
         nameTypeMap.put("long256", ColumnType.LONG256);
+        nameTypeMap.put("geohash", ColumnType.GEOHASH);
         nameTypeMap.put("text", ColumnType.STRING);
         nameTypeMap.put("smallint", ColumnType.SHORT);
         nameTypeMap.put("bigint", ColumnType.LONG);

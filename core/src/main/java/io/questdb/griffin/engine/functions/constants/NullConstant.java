@@ -187,6 +187,11 @@ public final class NullConstant implements ConstantFunction, ScalarFunction {
     }
 
     @Override
+    public long getGeoHash(Record rec) {
+        return GeoHashConstant.NULL.getGeoHash(null);
+    }
+
+    @Override
     public RecordCursorFactory getRecordCursorFactory() {
         throw new UnsupportedOperationException();
     }

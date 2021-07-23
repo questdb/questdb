@@ -47,6 +47,7 @@ public final class Constants {
         Constants.nullConstants.extendAndSet(ColumnType.FLOAT, FloatConstant.NULL);
         Constants.nullConstants.extendAndSet(ColumnType.BINARY, NullBinConstant.INSTANCE);
         Constants.nullConstants.extendAndSet(ColumnType.LONG256, Long256NullConstant.INSTANCE);
+        Constants.nullConstants.extendAndSet(ColumnType.GEOHASH, GeoHashConstant.NULL);
 
         Constants.typeConstants.extendAndSet(ColumnType.INT, IntTypeConstant.INSTANCE);
         Constants.typeConstants.extendAndSet(ColumnType.STRING, StrTypeConstant.INSTANCE);
@@ -62,6 +63,7 @@ public final class Constants {
         Constants.typeConstants.extendAndSet(ColumnType.FLOAT, FloatTypeConstant.INSTANCE);
         Constants.typeConstants.extendAndSet(ColumnType.BINARY, BinTypeConstant.INSTANCE);
         Constants.typeConstants.extendAndSet(ColumnType.LONG256, Long256TypeConstant.INSTANCE);
+        Constants.typeConstants.extendAndSet(ColumnType.GEOHASH, GeoHashTypeConstant.INSTANCE);
     }
 
     public static ConstantFunction getNullConstant(int columnType) {

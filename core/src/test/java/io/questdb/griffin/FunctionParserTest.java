@@ -41,6 +41,7 @@ import io.questdb.griffin.engine.functions.date.ToStrTimestampFunctionFactory;
 import io.questdb.griffin.engine.functions.eq.EqDoubleFunctionFactory;
 import io.questdb.griffin.engine.functions.eq.EqIntFunctionFactory;
 import io.questdb.griffin.engine.functions.eq.EqLongFunctionFactory;
+import io.questdb.griffin.engine.functions.geohash.GeoHashNative;
 import io.questdb.griffin.engine.functions.groupby.CountLong256GroupByFunctionFactory;
 import io.questdb.griffin.engine.functions.groupby.MinDateGroupByFunctionFactory;
 import io.questdb.griffin.engine.functions.groupby.MinFloatGroupByFunctionFactory;
@@ -321,6 +322,14 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
     @Test
     public void testExplicitConstantFloat() throws SqlException {
         testConstantPassThru(new FloatConstant(200));
+    }
+
+    @Test
+    public void testExplicitConstantGeoHash() throws SqlException {
+        long hash = GeoHashNative.fromCoordinates(39.9830487269087, 0.02405432769681642, 6 * 5);
+        testConstantPassThru(new GeoHashConstant(hash, ColumnType.GEOHASH));
+        functions.clear();
+        testConstantPassThru(new GeoHashConstant(GeoHashNative.toString(hash, 6)));
     }
 
     @Test
@@ -748,6 +757,43 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
 
         Function function = parseFunction("x()", new GenericRecordMetadata(), createFunctionParser());
         Assert.assertTrue(function instanceof LongConstant);
+    }
+
+    @Test
+    public void testImplicitConstantGeoHash() throws SqlException {
+        functions.add(new FunctionFactory() {
+            @Override
+            public String getSignature() {
+                return "x()";
+            }
+
+            @Override
+            public Function newInstance(int position,
+                                        ObjList<Function> args,
+                                        IntList argPositions,
+                                        CairoConfiguration configuration1,
+                                        SqlExecutionContext sqlExecutionContext) {
+                return new GeoHashFunction() {
+                    @Override
+                    public long getLong(Record rec) {
+                        return 0;
+                    }
+
+                    @Override
+                    public long getGeoHash(Record rec) {
+                        return 0;
+                    }
+
+                    @Override
+                    public boolean isConstant() {
+                        return true;
+                    }
+                };
+            }
+        });
+
+        Function function = parseFunction("x()", new GenericRecordMetadata(), createFunctionParser());
+        Assert.assertTrue(function instanceof GeoHashConstant);
     }
 
     @Test

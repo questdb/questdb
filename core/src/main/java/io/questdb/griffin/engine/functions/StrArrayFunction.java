@@ -150,6 +150,11 @@ public abstract class StrArrayFunction implements Function {
     }
 
     @Override
+    public long getGeoHash(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public final int getType() {
         return ColumnType.STRING;
     }

@@ -350,6 +350,7 @@ io.questdb.griffin.engine.functions.cast.CastStrToCharFunctionFactory
 io.questdb.griffin.engine.functions.cast.CastStrToDateFunctionFactory
 io.questdb.griffin.engine.functions.cast.CastStrToTimestampFunctionFactory
 io.questdb.griffin.engine.functions.cast.CastStrToBinaryFunctionFactory
+io.questdb.griffin.engine.functions.cast.CastStrToGeoHashFunctionFactory
 
 # cast symbol to ...
 io.questdb.griffin.engine.functions.cast.CastSymbolToIntFunctionFactory

@@ -23,16 +23,19 @@
  ******************************************************************************/
 
 package io.questdb.cairo;
+import org.junit.Assert;
+import org.junit.Test;
 
-public class GeohashExtra {
-    private static final int BITS_OFFSET = 8;
+public class GeoHashExtraTest {
+    @Test
+    public void testBitsPrecision() {
+        Assert.assertEquals(ColumnType.GEOHASH, ColumnType.tagOf(ColumnType.GEOHASH));
+        Assert.assertEquals(0, GeoHashExtra.getBitsPrecision(ColumnType.GEOHASH));
 
-    public static int setBitsPrecision(int type, int bits) {
-        assert bits > 0 && bits < 65;
-        return (type & ~(0xFF << BITS_OFFSET)) | (bits << BITS_OFFSET);
-    }
-
-    public static int getBitsPrecision(int type) {
-        return (type >> BITS_OFFSET) & 0xFF;
+        int geohashCol = GeoHashExtra.setBitsPrecision(ColumnType.GEOHASH, 42);
+        Assert.assertEquals(ColumnType.GEOHASH, ColumnType.tagOf(geohashCol));
+        Assert.assertEquals(42, GeoHashExtra.getBitsPrecision(geohashCol));
+        geohashCol = GeoHashExtra.setBitsPrecision(geohashCol, 24);
+        Assert.assertEquals(24, GeoHashExtra.getBitsPrecision(geohashCol));
     }
 }

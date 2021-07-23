@@ -24,7 +24,6 @@
 
 package io.questdb.griffin.engine.functions;
 
-
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -34,19 +33,12 @@ import io.questdb.std.Long256;
 import io.questdb.std.Numbers;
 import io.questdb.std.str.CharSink;
 
-public abstract class DateFunction implements ScalarFunction {
-    @Override
-    public Long256 getLong256A(Record rec) {
-        throw new UnsupportedOperationException();
-    }
+public abstract class GeoHashFunction implements ScalarFunction {
+
+    protected int typep = ColumnType.GEOHASH; // +precision
 
     @Override
-    public Long256 getLong256B(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public char getChar(Record rec) {
+    public final char getChar(Record rec) {
         throw new UnsupportedOperationException();
     }
 
@@ -71,23 +63,23 @@ public abstract class DateFunction implements ScalarFunction {
     }
 
     @Override
-    public final double getDouble(Record rec) {
-        return Numbers.longToDouble(getDate(rec));
+    public final long getDate(Record rec) {
+        return getLong(rec);
     }
 
     @Override
-    public final float getFloat(Record rec) {
-        return Numbers.longToFloat(getDate(rec));
+    public double getDouble(Record rec) {
+        return Numbers.longToDouble(getLong(rec));
+    }
+
+    @Override
+    public float getFloat(Record rec) {
+        return Numbers.longToFloat(getLong(rec));
     }
 
     @Override
     public final int getInt(Record rec) {
         throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public final long getLong(Record rec) {
-        return getDate(rec);
     }
 
     @Override
@@ -101,17 +93,17 @@ public abstract class DateFunction implements ScalarFunction {
     }
 
     @Override
-    public final CharSequence getStr(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
     public final void getStr(Record rec, CharSink sink) {
         throw new UnsupportedOperationException();
     }
 
     @Override
     public final CharSequence getStrB(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public final String getStr(Record rec) {
         throw new UnsupportedOperationException();
     }
 
@@ -132,22 +124,26 @@ public abstract class DateFunction implements ScalarFunction {
 
     @Override
     public final long getTimestamp(Record rec) {
-        final long value = getDate(rec);
-        return value == Numbers.LONG_NaN ? value : value * 1000L;
+        return getLong(rec);
     }
 
     @Override
-    public void getLong256(Record rec, CharSink sink) {
+    public final Long256 getLong256A(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public long getGeoHash(Record rec) {
+    public final Long256 getLong256B(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public final void getLong256(Record rec, CharSink sink) {
         throw new UnsupportedOperationException();
     }
 
     @Override
     public final int getType() {
-        return ColumnType.DATE;
+        return typep;
     }
 }

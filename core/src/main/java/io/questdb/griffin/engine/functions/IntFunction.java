@@ -141,6 +141,11 @@ public abstract class IntFunction implements ScalarFunction {
     }
 
     @Override
+    public long getGeoHash(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public final int getType() {
         return ColumnType.INT;
     }

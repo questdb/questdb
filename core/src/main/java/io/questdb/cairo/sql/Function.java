@@ -117,6 +117,8 @@ public interface Function extends Closeable {
 
     long getTimestamp(Record rec);
 
+    long getGeoHash(Record rec);
+
     int getType();
 
     default boolean isUndefined() {
