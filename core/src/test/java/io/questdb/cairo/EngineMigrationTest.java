@@ -205,45 +205,18 @@ public class EngineMigrationTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             // This test has to run in a separate engine from the base test engine
             // because of removal of mapped file _tab_index.d with every test
-            try (CairoEngine engine = new CairoEngine(configuration)) {
-                // roll table id up
-                for (int i = 0; i < 10; i++) {
-                    engine.getNextTableId();
-                }
-                // old table
-                try (TableModel model = new TableModel(configuration, "y_416", PartitionBy.DAY).col("aaa", ColumnType.SYMBOL).timestamp()
-                ) {
-                    CairoTestUtils.createTableWithVersion(model, 416);
-                    replaceDbContent();
-                    downgradeTxFile(model, null);
-                }
+            replaceDbContent(); // last tableId is 16. 10 skipped + 7 tables generated
+            // we need to remove "upgrade" file for the engine to upgrade tables
+            // remember, this is the second instance of the engine
+            assertRemoveUpgradeFile();
 
-                try (TableModel model = new TableModel(configuration, "y_419", PartitionBy.DAY).col("aaa", ColumnType.SYMBOL).timestamp()
-                ) {
-                    TableUtils.createTable(
-                            model.getCairoCfg().getFilesFacade(),
-                            model.getMem(),
-                            model.getPath(),
-                            model.getCairoCfg().getRoot(),
-                            model,
-                            model.getCairoCfg().getMkDirMode(),
-                            ColumnType.VERSION,
-                            (int) engine.getNextTableId()
-                    );
+            try (CairoEngine engine2 = new CairoEngine(configuration)) {
+                // check if constructor upgrades test
+                try (TableReader reader = engine2.getReader(sqlExecutionContext.getCairoSecurityContext(), "y_416")) {
+                    Assert.assertEquals(17, reader.getMetadata().getId());
                 }
-
-                // we need to remove "upgrade" file for the engine to upgrade tables
-                // remember, this is the second instance of the engine
-                assertRemoveUpgradeFile();
-
-                try (CairoEngine engine2 = new CairoEngine(configuration)) {
-                    // check if constructor upgrades test
-                    try (TableReader reader = engine2.getReader(sqlExecutionContext.getCairoSecurityContext(), "y_416")) {
-                        Assert.assertEquals(12, reader.getMetadata().getId());
-                    }
-                    try (TableReader reader = engine2.getReader(sqlExecutionContext.getCairoSecurityContext(), "y_419")) {
-                        Assert.assertEquals(11, reader.getMetadata().getId());
-                    }
+                try (TableReader reader = engine2.getReader(sqlExecutionContext.getCairoSecurityContext(), "y_419")) {
+                    Assert.assertEquals(11, reader.getMetadata().getId());
                 }
             }
         });
@@ -739,7 +712,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
     @Test
     public void testAllColumns() throws Exception {
         assertMemoryLeak(() -> {
-            try (TableModel src = new TableModel(configuration, "x_cols", PartitionBy.DAY)) {
+            try (TableModel src = new TableModel(configuration, "x_cols", PartitionBy.NONE)) {
 
                 createPopulateTable(src.col("bool", ColumnType.BOOLEAN)
                                 .col("byte", ColumnType.BYTE)
@@ -756,8 +729,8 @@ public class EngineMigrationTest extends AbstractGriffinTest {
                                 .col("ts", ColumnType.TIMESTAMP).timestamp(),
                         100, "2020-01-01", 0
                 );
-                //TODO: bool,symbol,ts - random values.
-                String query = "select byte,short,char,int,long,date,float,double,string,long256 from x_cols";
+
+                String query = "select * from x_cols";
                 assertMigration(src, query);
             }
         });
