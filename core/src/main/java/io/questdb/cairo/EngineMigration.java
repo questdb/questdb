@@ -399,41 +399,6 @@ public class EngineMigration {
         }
 
         public static void updateColumnTypeIds(MigrationContext migrationContext) {
-            // old type ids
-            final int BOOLEAN = 0;
-            final int BYTE = 1;
-            final int SHORT = 2;
-            final int CHAR = 3;
-            final int INT = 4;
-            final int LONG = 5;
-            final int DATE = 6;
-            final int TIMESTAMP = 7;
-            final int FLOAT = 8;
-            final int DOUBLE = 9;
-            final int STRING = 10;
-            final int SYMBOL = 11;
-            final int LONG256 = 12;
-            final int BINARY = 13;
-            final int PARAMETER = 14;
-
-            final IntList typeMapping = new IntList();
-
-            typeMapping.extendAndSet(BOOLEAN, ColumnType.BOOLEAN);
-            typeMapping.extendAndSet(BYTE, ColumnType.BYTE);
-            typeMapping.extendAndSet(SHORT, ColumnType.SHORT);
-            typeMapping.extendAndSet(CHAR, ColumnType.CHAR);
-            typeMapping.extendAndSet(INT, ColumnType.INT);
-            typeMapping.extendAndSet(LONG, ColumnType.LONG);
-            typeMapping.extendAndSet(DATE, ColumnType.DATE);
-            typeMapping.extendAndSet(TIMESTAMP, ColumnType.TIMESTAMP);
-            typeMapping.extendAndSet(FLOAT, ColumnType.FLOAT);
-            typeMapping.extendAndSet(DOUBLE, ColumnType.DOUBLE);
-            typeMapping.extendAndSet(STRING, ColumnType.STRING);
-            typeMapping.extendAndSet(SYMBOL, ColumnType.SYMBOL);
-            typeMapping.extendAndSet(LONG256, ColumnType.LONG256);
-            typeMapping.extendAndSet(BINARY, ColumnType.BINARY);
-            typeMapping.extendAndSet(PARAMETER, ColumnType.PARAMETER);
-
             final FilesFacade ff = migrationContext.getFf();
             Path path = migrationContext.getTablePath();
             path.concat(META_FILE_NAME).$();
@@ -459,7 +424,7 @@ public class EngineMigration {
                 // column type id is int now
                 // we grabbed 3 reserved bytes for extra type info
                 // extra for old types is zeros
-                rwMem.putInt(offset, typeMapping.getQuick(oldTypeId));
+                rwMem.putInt(offset, oldTypeId + 1); // ColumnType.VERSION_420 - ColumnType.VERSION_419 = 1
                 rwMem.putLong(offset + 4, oldFlags);
                 rwMem.putInt(offset + 4 + 8, blockCapacity);
                 offset += TableUtils.META_COLUMN_DATA_SIZE;
