@@ -116,7 +116,7 @@ stages:
             inputs:
               key: '"questdb_main" | maven |"$(Agent.OS)" | **/pom.xml'
               restoreKeys: |
-              path: $(MAVEN_CACHE_FOLDER)          
+              path: $(MAVEN_CACHE_FOLDER)
           - task: Maven@3
             displayName: "Compile with Maven"
             inputs:
@@ -130,7 +130,7 @@ stages:
             inputs:
               mavenPomFile: "core/pom.xml"
               mavenOptions: "$(MAVEN_OPTS)"
-              options: "--batch-mode --quiet -P build-web-console,use-built-in-nodejs -Dout=$(Build.SourcesDirectory)/ci/qlog.conf -Dhttp.keepAlive=false"
+              options: "clean test --batch-mode --quiet -P build-web-console,use-built-in-nodejs -Dout=$(Build.SourcesDirectory)/ci/qlog.conf -Dhttp.keepAlive=false"
               jdkVersionOption: $(jdk)
               codeCoverageToolOption: "$(CODE_COVERAGE_TOOL_OPTION)"
               codeCoverageClassFilter: "$(COVERAGE_DIFF)"
@@ -138,8 +138,8 @@ stages:
             condition: |
               and(
                    and(
-                      and( eq(variables['Agent.OS'],                         'Linux'), eq(variables['jdk'], '1.11') ),
-                      not( eq(variables['System.PullRequest.PullRequestId'], ''     ) )
+                      and( eq(variables['Agent.OS'], 'Linux'), eq(variables['jdk'], '1.11') ),
+                      not( eq(variables['System.PullRequest.PullRequestId'], '') )
                   ),
                   eq(variables['SOURCE_CODE_CHANGED'], 'true')
               )
@@ -148,15 +148,15 @@ stages:
             inputs:
               mavenPomFile: "core/pom.xml"
               mavenOptions: "$(MAVEN_OPTS)"
-              options: "--batch-mode --quiet -P build-web-console,use-built-in-nodejs -Dout=$(Build.SourcesDirectory)/ci/qlog.conf -Dhttp.keepAlive=false"
+              options: "clean test --batch-mode --quiet -P build-web-console,use-built-in-nodejs -Dout=$(Build.SourcesDirectory)/ci/qlog.conf -Dhttp.keepAlive=false"
               jdkVersionOption: $(jdk)
             timeoutInMinutes: 55
             condition: |
               and(
                 not(
                    and(
-                      and( eq(variables['Agent.OS'],                         'Linux'), eq(variables['jdk'], '1.11') ),
-                      not( eq(variables['System.PullRequest.PullRequestId'], ''     ) )
+                      and( eq(variables['Agent.OS'], 'Linux'), eq(variables['jdk'], '1.11') ),
+                      not( eq(variables['System.PullRequest.PullRequestId'], '') )
                   )
                 ),
                 eq(variables['SOURCE_CODE_CHANGED'], 'true')
@@ -174,8 +174,8 @@ stages:
             condition: |
               and(
                   and(
-                     and( eq(variables['Agent.OS'],                         'Linux'), eq(variables['jdk'], '1.11') ),
-                     not( eq(variables['System.PullRequest.PullRequestId'], ''     ) )
+                     and( eq(variables['Agent.OS'], 'Linux'), eq(variables['jdk'], '1.11') ),
+                     not( eq(variables['System.PullRequest.PullRequestId'], '') )
                  ),
                  eq(variables['SOURCE_CODE_CHANGED'], 'true')
               )
