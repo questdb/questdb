@@ -767,50 +767,8 @@ public class EngineMigrationTest extends AbstractGriffinTest {
     @Ignore
     public void testGenerateTablesForMigrationTest() throws Exception {
         assertMemoryLeak(() -> {
-            try (TableModel src = new TableModel(configuration, "x_none", PartitionBy.NONE)) {
-                createPopulateTable(
-                        src.col("s1", ColumnType.SYMBOL).indexed(true, 4096)
-                                .col("c1", ColumnType.INT)
-                                .col("s2", ColumnType.SYMBOL)
-                                .col("c2", ColumnType.LONG)
-                                .col("ts", ColumnType.TIMESTAMP).timestamp(),
-                        100, "2020-01-01", 0
-                );
-            }
 
-            try (TableModel src = new TableModel(configuration, "x_day", PartitionBy.DAY)) {
-                createPopulateTable(
-                        src.col("s1", ColumnType.SYMBOL).indexed(true, 4096)
-                                .col("c1", ColumnType.INT)
-                                .col("s2", ColumnType.SYMBOL)
-                                .col("c2", ColumnType.LONG)
-                                .col("ts", ColumnType.TIMESTAMP).timestamp(),
-                        100, "2020-01-01", 10
-                );
-            }
-
-            try (TableModel src = new TableModel(configuration, "x_month", PartitionBy.MONTH)) {
-                createPopulateTable(
-                        src.col("s1", ColumnType.SYMBOL).indexed(true, 4096)
-                                .col("c1", ColumnType.INT)
-                                .col("s2", ColumnType.SYMBOL)
-                                .col("c2", ColumnType.LONG)
-                                .col("ts", ColumnType.TIMESTAMP).timestamp(),
-                        100, "2020-01-01", 3
-                );
-            }
-
-            try (TableModel src = new TableModel(configuration, "x_year", PartitionBy.YEAR)) {
-                createPopulateTable(
-                        src.col("s1", ColumnType.SYMBOL).indexed(true, 4096)
-                                .col("c1", ColumnType.INT)
-                                .col("s2", ColumnType.SYMBOL)
-                                .col("c2", ColumnType.LONG)
-                                .col("ts", ColumnType.TIMESTAMP).timestamp(),
-                        100, "2020-01-01", 3
-                );
-            }
-
+            SharedRandom.RANDOM.set(new Rnd());
             try (CairoEngine engine = new CairoEngine(configuration)) {
                 // roll table id up
                 for (int i = 0; i < 10; i++) {
@@ -819,6 +777,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
 
                 try (TableModel model = new TableModel(configuration, "y_416", PartitionBy.DAY).col("aaa", ColumnType.SYMBOL).timestamp()) {
                     CairoTestUtils.createTableWithVersion(model, 416);
+                    downgradeTxFile(model, null);
                 }
 
                 try (TableModel model = new TableModel(configuration, "y_419", PartitionBy.DAY).col("aaa", ColumnType.SYMBOL).timestamp()) {
@@ -835,6 +794,54 @@ public class EngineMigrationTest extends AbstractGriffinTest {
                 }
             }
 
+            try (TableModel src = new TableModel(configuration, "x_none", PartitionBy.NONE)) {
+                createPopulateTable(
+                        src.col("s1", ColumnType.SYMBOL).indexed(true, 4096)
+                                .col("c1", ColumnType.INT)
+                                .col("s2", ColumnType.SYMBOL)
+                                .col("c2", ColumnType.LONG)
+                                .col("ts", ColumnType.TIMESTAMP).timestamp(),
+                        100, "2020-01-01", 0
+                );
+            }
+
+            SharedRandom.RANDOM.set(new Rnd());
+            try (TableModel src = new TableModel(configuration, "x_day", PartitionBy.DAY)) {
+                createPopulateTable(
+                        src.col("s1", ColumnType.SYMBOL).indexed(true, 4096)
+                                .col("c1", ColumnType.INT)
+                                .col("s2", ColumnType.SYMBOL)
+                                .col("c2", ColumnType.LONG)
+                                .col("ts", ColumnType.TIMESTAMP).timestamp(),
+                        100, "2020-01-01", 10
+                );
+            }
+
+            SharedRandom.RANDOM.set(new Rnd());
+            try (TableModel src = new TableModel(configuration, "x_month", PartitionBy.MONTH)) {
+                createPopulateTable(
+                        src.col("s1", ColumnType.SYMBOL).indexed(true, 4096)
+                                .col("c1", ColumnType.INT)
+                                .col("s2", ColumnType.SYMBOL)
+                                .col("c2", ColumnType.LONG)
+                                .col("ts", ColumnType.TIMESTAMP).timestamp(),
+                        100, "2020-01-01", 3
+                );
+            }
+
+            SharedRandom.RANDOM.set(new Rnd());
+            try (TableModel src = new TableModel(configuration, "x_year", PartitionBy.YEAR)) {
+                createPopulateTable(
+                        src.col("s1", ColumnType.SYMBOL).indexed(true, 4096)
+                                .col("c1", ColumnType.INT)
+                                .col("s2", ColumnType.SYMBOL)
+                                .col("c2", ColumnType.LONG)
+                                .col("ts", ColumnType.TIMESTAMP).timestamp(),
+                        100, "2020-01-01", 3
+                );
+            }
+
+            SharedRandom.RANDOM.set(new Rnd());
             try (TableModel src = new TableModel(configuration, "x_cols", PartitionBy.NONE)) {
                 createPopulateTable(src.col("bool", ColumnType.BOOLEAN)
                                 .col("byte", ColumnType.BYTE)
@@ -852,7 +859,6 @@ public class EngineMigrationTest extends AbstractGriffinTest {
                         100, "2020-01-01", 0
                 );
             }
-
         });
     }
 
