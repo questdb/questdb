@@ -144,7 +144,7 @@ public final class ColumnType {
         if (tag == ColumnType.NULL) {
             return 0;
         }
-        if (tag < 0 || tag > ColumnType.PARAMETER) {
+        if (tag < ColumnType.BOOLEAN || tag > ColumnType.PARAMETER) {
             return -1;
         }
         return TYPE_SIZE[columnType];
