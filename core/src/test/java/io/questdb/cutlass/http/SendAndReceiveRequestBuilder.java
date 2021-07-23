@@ -203,11 +203,14 @@ public class SendAndReceiveRequestBuilder {
                     expected = expected.substring(0, Math.min(compareLength, expected.length()) - 1);
                     actual = actual.length() > 0 ? actual.substring(0, Math.min(compareLength, actual.length()) - 1) : actual;
                 }
-                TestUtils.assertEquals(disconnected ? "Server disconnected" : null, expected, actual);
+                if (!expectSendDisconnect) {
+                    // expectSendDisconnect means that test expect disconnect during send or straight after
+                    TestUtils.assertEquals(disconnected ? "Server disconnected" : null, expected, actual);
+                }
             }
         }
 
-        if (disconnected && !expectDisconnect) {
+        if (disconnected && !expectDisconnect && !expectSendDisconnect) {
             LOG.error().$("disconnected?").$();
             Assert.fail();
         }
