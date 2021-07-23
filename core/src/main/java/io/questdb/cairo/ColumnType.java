@@ -206,6 +206,7 @@ public final class ColumnType {
         TYPE_SIZE_POW2[ColumnType.DATE] = 3;
         TYPE_SIZE_POW2[ColumnType.TIMESTAMP] = 3;
         TYPE_SIZE_POW2[ColumnType.LONG256] = 5;
+        TYPE_SIZE_POW2[ColumnType.GEOHASH] = 3;
 
         TYPE_SIZE[ColumnType.BOOLEAN] = Byte.BYTES;
         TYPE_SIZE[ColumnType.BYTE] = Byte.BYTES;
@@ -219,6 +220,7 @@ public final class ColumnType {
         TYPE_SIZE[ColumnType.DATE] = Long.BYTES;
         TYPE_SIZE[ColumnType.TIMESTAMP] = Long.BYTES;
         TYPE_SIZE[ColumnType.LONG256] = Long256.BYTES;
+        TYPE_SIZE[ColumnType.GEOHASH] = Long.BYTES; // current size is long. can be int/short for storage optimization
     }
 
     private static int indexOf(int[] list, int value) {
