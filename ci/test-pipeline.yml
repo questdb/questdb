@@ -149,7 +149,7 @@ stages:
             inputs:
               mavenPomFile: "core/pom.xml"
               mavenOptions: "$(MAVEN_OPTS)"
-              goals: "test"
+              goals: "clean test"
               options: "--batch-mode --quiet -P build-web-console,use-built-in-nodejs -Dout=$(Build.SourcesDirectory)/ci/qlog.conf -Dhttp.keepAlive=false"
               jdkVersionOption: $(jdk)
             timeoutInMinutes: 55
