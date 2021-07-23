@@ -25,6 +25,7 @@
 package io.questdb.cairo.vm;
 
 import io.questdb.std.BinarySequence;
+import io.questdb.std.FilesFacade;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
 
@@ -34,9 +35,33 @@ public abstract class AbstractContinuousMemory implements ContinuousReadOnlyMemo
     private final ContinuousReadOnlyMemory.CharSequenceView csview2 = new ContinuousReadOnlyMemory.CharSequenceView();
     private final Long256Impl long256 = new Long256Impl();
     private final Long256Impl long256B = new Long256Impl();
+    protected long pageAddress = 0;
+    protected FilesFacade ff;
+    protected long fd = -1;
+    protected long size = 0;
+    protected long lim;
+    protected long grownLength;
 
     public final BinarySequence getBin(long offset) {
         return getBin(offset, bsview);
+    }
+
+    @Override
+    public long getPageAddress(int pageIndex) {
+        return pageAddress;
+    }
+
+    @Override
+    public int getPageCount() {
+        return pageAddress == 0 ? 0 : 1;
+    }
+
+    public final CharSequence getStr(long offset) {
+        return getStr(offset, csview);
+    }
+
+    public final CharSequence getStr2(long offset) {
+        return getStr(offset, csview2);
     }
 
     public Long256 getLong256A(long offset) {
@@ -49,11 +74,24 @@ public abstract class AbstractContinuousMemory implements ContinuousReadOnlyMemo
         return long256B;
     }
 
-    public final CharSequence getStr(long offset) {
-        return getStr(offset, csview);
+    public long size() {
+        return size;
     }
 
-    public final CharSequence getStr2(long offset) {
-        return getStr(offset, csview2);
+    public long addressOf(long offset) {
+        assert offset <= size : "offset=" + offset + ", size=" + size + ", fd=" + fd;
+        return pageAddress + offset;
+    }
+
+    public long getFd() {
+        return fd;
+    }
+
+    public FilesFacade getFilesFacade() {
+        return ff;
+    }
+
+    public long getGrownLength() {
+        return grownLength;
     }
 }

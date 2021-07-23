@@ -334,7 +334,7 @@ public class EngineMigration {
                 long writeOffset = TX_STRUCT_UPDATE_1_OFFSET_MAP_WRITER_COUNT + Integer.BYTES;
                 txMem.jumpTo(writeOffset);
 
-                for (int i = 0, size = txFileUpdate.getPageCount(); i < size && updateSize > 0; i++) {
+                for (int i = 0, size = 1; i < size && updateSize > 0; i++) {
                     long writeSize = Math.min(updateSize, txFileUpdate.getPageSize());
                     txMem.putBlockOfBytes(txFileUpdate.getPageAddress(i), writeSize);
                     updateSize -= writeSize;

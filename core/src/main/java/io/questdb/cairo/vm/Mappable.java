@@ -38,7 +38,9 @@ public interface Mappable extends Closeable {
 
     long getFd();
 
-    boolean isDeleted();
+    default boolean isDeleted() {
+        return !getFilesFacade().exists(getFd());
+    }
 
     /**
      * Maps file to memory

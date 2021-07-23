@@ -35,22 +35,12 @@ import io.questdb.std.str.LPSZ;
 public class ContinuousMappedReadOnlyMemory extends AbstractContinuousMemory
         implements MappedReadOnlyMemory, ContinuousReadOnlyMemory {
     private static final Log LOG = LogFactory.getLog(ContinuousMappedReadOnlyMemory.class);
-    private long pageAddress = 0;
-    private FilesFacade ff;
-    private long fd = -1;
-    private long size = 0;
-    private long grownLength;
 
     public ContinuousMappedReadOnlyMemory(FilesFacade ff, LPSZ name, long size) {
         of(ff, name, 0, size);
     }
 
     public ContinuousMappedReadOnlyMemory() {
-    }
-
-    @Override
-    public FilesFacade getFilesFacade() {
-        return ff;
     }
 
     @Override
@@ -69,33 +59,9 @@ public class ContinuousMappedReadOnlyMemory extends AbstractContinuousMemory
     }
 
     @Override
-    public long getFd() {
-        return fd;
-    }
-
-    @Override
-    public boolean isDeleted() {
-        return !ff.exists(fd);
-    }
-
-    @Override
     public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size) {
         openFile(ff, name);
         map(ff, name, size);
-    }
-
-    public long getGrownLength() {
-        return grownLength;
-    }
-
-    @Override
-    public long getPageAddress(int pageIndex) {
-        return pageAddress;
-    }
-
-    @Override
-    public int getPageCount() {
-        return pageAddress != 0 ? 1 : 0;
     }
 
     @Override
@@ -104,15 +70,6 @@ public class ContinuousMappedReadOnlyMemory extends AbstractContinuousMemory
         if (newSize > size) {
             setSize0(newSize);
         }
-    }
-
-    public long size() {
-        return size;
-    }
-
-    public long addressOf(long offset) {
-        assert offset <= size : "offset=" + offset + ", size=" + size + ", fd=" + fd;
-        return pageAddress + offset;
     }
 
     protected void map(FilesFacade ff, LPSZ name, long size) {

@@ -36,14 +36,8 @@ public class ContinuousMappedReadWriteMemory extends AbstractContinuousMemory
         implements MappedReadWriteMemory, ContinuousReadWriteVirtualMemory {
     private static final Log LOG = LogFactory.getLog(ContinuousMappedReadWriteMemory.class);
     private final Long256Acceptor long256Acceptor = this::putLong256;
-    private long pageAddress = 0;
-    private FilesFacade ff;
-    private long fd = -1;
-    private long size = 0;
     private long appendAddress = 0;
-    private long lim;
     private long minMappedMemorySize;
-    private long grownLength;
     private long extendSegmentMsb;
 
     public ContinuousMappedReadWriteMemory(FilesFacade ff, LPSZ name, long pageSize, long size) {
@@ -65,11 +59,6 @@ public class ContinuousMappedReadWriteMemory extends AbstractContinuousMemory
     public long appendAddressFor(long offset, long bytes) {
         checkAndExtend(pageAddress + offset + bytes);
         return pageAddress + offset;
-    }
-
-    @Override
-    public FilesFacade getFilesFacade() {
-        return ff;
     }
 
     @Override
@@ -100,11 +89,6 @@ public class ContinuousMappedReadWriteMemory extends AbstractContinuousMemory
     }
 
     @Override
-    public boolean isDeleted() {
-        return !ff.exists(fd);
-    }
-
-    @Override
     public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size) {
         this.extendSegmentMsb = Numbers.msb(extendSegmentSize);
         this.minMappedMemorySize = ff.getMapPageSize();
@@ -112,34 +96,11 @@ public class ContinuousMappedReadWriteMemory extends AbstractContinuousMemory
         map(ff, name, size);
     }
 
-    public long getGrownLength() {
-        return grownLength;
-    }
-
-    @Override
-    public long getPageAddress(int pageIndex) {
-        return pageAddress;
-    }
-
-    @Override
-    public int getPageCount() {
-        return pageAddress == 0 ? 0 : 1;
-    }
-
     @Override
     public void extend(long newSize) {
         if (newSize > size) {
             extend0(newSize);
         }
-    }
-
-    public long size() {
-        return size;
-    }
-
-    public long addressOf(long offset) {
-        assert offset < size : "offset=" + offset + ", size=" + size + ", fd=" + fd;
-        return pageAddress + offset;
     }
 
     @Override

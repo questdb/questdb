@@ -109,11 +109,6 @@ public class PagedMappedReadWriteMemory extends PagedVirtualMemory implements Ma
     }
 
     @Override
-    public boolean isDeleted() {
-        return !ff.exists(fd);
-    }
-
-    @Override
     public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size) {
         close();
         this.ff = ff;

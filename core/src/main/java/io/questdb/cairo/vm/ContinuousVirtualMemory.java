@@ -42,10 +42,7 @@ public class ContinuousVirtualMemory extends AbstractContinuousMemory
     private static final Log LOG = LogFactory.getLog(ContinuousVirtualMemory.class);
     private final int maxPages;
     private final Long256Acceptor long256Acceptor = this::putLong256;
-    private long pageSize;
-    private long pageSizeMsb;
-    private long baseAddress = 0;
-    private long baseAddressHi = 0;
+    private long sizeMsb;
     private long appendAddress = 0;
 
     public ContinuousVirtualMemory(long pageSize, int maxPages) {
@@ -63,20 +60,20 @@ public class ContinuousVirtualMemory extends AbstractContinuousMemory
 
     @Override
     public long appendAddressFor(long offset, long bytes) {
-        checkAndExtend(baseAddress + offset + bytes);
+        checkAndExtend(pageAddress + offset + bytes);
         return addressOf(offset);
     }
 
     @Override
     public final long getAppendOffset() {
-        return appendAddress - baseAddress;
+        return appendAddress - pageAddress;
     }
 
     @Override
     public void clear() {
-        if (baseAddress != 0) {
-            long baseLength = baseAddressHi - baseAddress;
-            Unsafe.free(baseAddress, baseLength);
+        if (pageAddress != 0) {
+            long baseLength = lim - pageAddress;
+            Unsafe.free(pageAddress, baseLength);
             handleMemoryReleased();
         }
     }
@@ -84,44 +81,29 @@ public class ContinuousVirtualMemory extends AbstractContinuousMemory
     @Override
     public void close() {
         clear();
-        baseAddress = 0;
-        baseAddressHi = 0;
+        pageAddress = 0;
+        lim = 0;
         appendAddress = 0;
     }
 
     @Override
-    public long getPageAddress(int pageIndex) {
-        return baseAddress;
-    }
-
-    @Override
-    public int getPageCount() {
-        return baseAddress == 0 ? 0 : 1;
-    }
-
-    @Override
     public void extend(long size) {
-        long nPages = (size >>> pageSizeMsb) + 1;
-        size = nPages << pageSizeMsb;
+        long nPages = (size >>> sizeMsb) + 1;
+        size = nPages << sizeMsb;
         final long oldSize = size();
         if (nPages > maxPages) {
             throw LimitOverflowException.instance().put("Maximum number of pages (").put(maxPages).put(") breached in VirtualMemory");
         }
-        final long newBaseAddress = reallocateMemory(baseAddress, size(), size);
+        final long newBaseAddress = reallocateMemory(pageAddress, size(), size);
         if (oldSize > 0) {
-            LOG.debug().$("extended [oldBase=").$(baseAddress).$(", newBase=").$(newBaseAddress).$(", oldSize=").$(oldSize).$(", newSize=").$(size).$(']').$();
+            LOG.debug().$("extended [oldBase=").$(pageAddress).$(", newBase=").$(newBaseAddress).$(", oldSize=").$(oldSize).$(", newSize=").$(size).$(']').$();
         }
         handleMemoryReallocation(newBaseAddress, size);
     }
 
     @Override
     public long size() {
-        return baseAddressHi - baseAddress;
-    }
-
-    @Override
-    public long addressOf(long offset) {
-        return baseAddress + offset;
+        return lim - pageAddress;
     }
 
     /**
@@ -132,8 +114,8 @@ public class ContinuousVirtualMemory extends AbstractContinuousMemory
      * @param offset position from 0 in virtual memory.
      */
     public void jumpTo(long offset) {
-        checkAndExtend(baseAddress + offset);
-        appendAddress = baseAddress + offset;
+        checkAndExtend(pageAddress + offset);
+        appendAddress = pageAddress + offset;
     }
 
     public final void putLong256(@NotNull CharSequence hexString, int start, int end) {
@@ -158,53 +140,54 @@ public class ContinuousVirtualMemory extends AbstractContinuousMemory
         // extend it
         extend(0);
         // reset append offset
-        appendAddress = baseAddress;
+        appendAddress = pageAddress;
     }
 
     public void replacePage(long address, long size) {
         long appendOffset = getAppendOffset();
-        this.baseAddress = this.appendAddress = address;
-        this.baseAddressHi = baseAddress + size;
+        this.pageAddress = this.appendAddress = address;
+        this.lim = pageAddress + size;
         jumpTo(appendOffset);
     }
 
     public long resize(long size) {
-        checkAndExtend(baseAddress + size);
-        return baseAddress;
+        checkAndExtend(pageAddress + size);
+        return pageAddress;
     }
 
     public void zero() {
-        long baseLength = baseAddressHi - baseAddress;
-        Vect.memset(baseAddress, baseLength, 0);
+        long baseLength = lim - pageAddress;
+        Vect.memset(pageAddress, baseLength, 0);
     }
 
     private void checkAndExtend(long address) {
-        assert appendAddress <= baseAddressHi;
-        assert address >= baseAddress;
-        if (address <= baseAddressHi) {
+        assert appendAddress <= lim;
+        assert address >= pageAddress;
+        if (address <= lim) {
             return;
         }
-        extend(address - baseAddress);
+        extend(address - pageAddress);
     }
 
     protected long getMapPageSize() {
-        return pageSize;
+        return size;
     }
 
     protected final void handleMemoryReallocation(long newBaseAddress, long newSize) {
         assert newBaseAddress != 0;
-        long appendOffset = appendAddress - baseAddress;
-        baseAddress = newBaseAddress;
-        baseAddressHi = baseAddress + newSize;
-        appendAddress = baseAddress + appendOffset;
-        if (appendAddress > baseAddressHi) {
-            appendAddress = baseAddressHi;
+        long appendOffset = appendAddress - pageAddress;
+        pageAddress = newBaseAddress;
+        lim = pageAddress + newSize;
+        appendAddress = pageAddress + appendOffset;
+        if (appendAddress > lim) {
+            appendAddress = lim;
         }
+        this.size = newSize;
     }
 
     protected final void handleMemoryReleased() {
-        baseAddress = 0;
-        baseAddressHi = 0;
+        pageAddress = 0;
+        lim = 0;
         appendAddress = 0;
     }
 
@@ -215,8 +198,8 @@ public class ContinuousVirtualMemory extends AbstractContinuousMemory
         return Unsafe.malloc(newSize);
     }
 
-    protected final void setPageSize(long pageSize) {
-        this.pageSize = Numbers.ceilPow2(pageSize);
-        this.pageSizeMsb = Numbers.msb(this.pageSize);
+    protected final void setPageSize(long size) {
+        this.size = Numbers.ceilPow2(size);
+        this.sizeMsb = Numbers.msb(this.size);
     }
 }

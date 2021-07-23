@@ -122,11 +122,6 @@ public class AppendOnlyVirtualMemory extends PagedVirtualMemory implements Mappe
     }
 
     @Override
-    public boolean isDeleted() {
-        return !ff.exists(fd);
-    }
-
-    @Override
     public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size) {
         of(ff, name, extendSegmentSize);
     }
