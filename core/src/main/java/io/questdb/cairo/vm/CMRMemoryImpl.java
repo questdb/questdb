@@ -26,21 +26,21 @@ package io.questdb.cairo.vm;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.vm.api.CMRMemory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.str.LPSZ;
 
-public class ContinuousMappedReadOnlyMemory extends AbstractContinuousMemory
-        implements MappedReadOnlyMemory, ContinuousReadOnlyMemory {
-    private static final Log LOG = LogFactory.getLog(ContinuousMappedReadOnlyMemory.class);
+public class CMRMemoryImpl extends AbstractCRMemory implements CMRMemory {
+    private static final Log LOG = LogFactory.getLog(CMRMemoryImpl.class);
 
-    public ContinuousMappedReadOnlyMemory(FilesFacade ff, LPSZ name, long size) {
+    public CMRMemoryImpl(FilesFacade ff, LPSZ name, long size) {
         of(ff, name, 0, size);
     }
 
-    public ContinuousMappedReadOnlyMemory() {
+    public CMRMemoryImpl() {
     }
 
     @Override
@@ -59,17 +59,17 @@ public class ContinuousMappedReadOnlyMemory extends AbstractContinuousMemory
     }
 
     @Override
-    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size) {
-        openFile(ff, name);
-        map(ff, name, size);
-    }
-
-    @Override
     public void extend(long newSize) {
         grownLength = Math.max(newSize, grownLength);
         if (newSize > size) {
             setSize0(newSize);
         }
+    }
+
+    @Override
+    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size) {
+        openFile(ff, name);
+        map(ff, name, size);
     }
 
     protected void map(FilesFacade ff, LPSZ name, long size) {

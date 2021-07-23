@@ -24,12 +24,12 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.vm.MappedReadOnlyMemory;
+import io.questdb.cairo.vm.api.MRMemory;
 import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.LPSZ;
 
-public class NullColumn implements MappedReadOnlyMemory {
+public class NullColumn implements MRMemory {
 
     public static final NullColumn INSTANCE = new NullColumn();
 
@@ -167,11 +167,6 @@ public class NullColumn implements MappedReadOnlyMemory {
 
     @Override
     public void wholeFile(FilesFacade ff, LPSZ name) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void growToFileSize() {
         throw new UnsupportedOperationException();
     }
 }

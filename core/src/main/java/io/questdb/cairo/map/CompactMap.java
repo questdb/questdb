@@ -27,7 +27,7 @@ package io.questdb.cairo.map;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.vm.ContinuousVirtualMemory;
+import io.questdb.cairo.vm.CARWMemoryImpl;
 import io.questdb.cairo.vm.VmUtils;
 import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.std.BinarySequence;
@@ -118,9 +118,9 @@ public class CompactMap implements Map {
                     5209859150892887590L
             };
 
-    private static final HashFunction DEFAULT_HASH = ContinuousVirtualMemory::hash0;
-    private final ContinuousVirtualMemory entries;
-    private final ContinuousVirtualMemory entrySlots;
+    private static final HashFunction DEFAULT_HASH = CARWMemoryImpl::hash0;
+    private final CARWMemoryImpl entries;
+    private final CARWMemoryImpl entrySlots;
     private final Key key = new Key();
     private final CompactMapValue value;
     private final double loadFactor;
@@ -144,8 +144,8 @@ public class CompactMap implements Map {
     }
 
     CompactMap(int pageSize, ColumnTypes keyTypes, ColumnTypes valueTypes, long keyCapacity, double loadFactor, HashFunction hashFunction, int maxResizes, int maxPages) {
-        this.entries = new ContinuousVirtualMemory(pageSize, maxPages);
-        this.entrySlots = new ContinuousVirtualMemory(pageSize, maxPages);
+        this.entries = new CARWMemoryImpl(pageSize, maxPages);
+        this.entrySlots = new CARWMemoryImpl(pageSize, maxPages);
         try {
             this.loadFactor = loadFactor;
             this.columnOffsets = new long[keyTypes.getColumnCount() + valueTypes.getColumnCount()];
@@ -283,7 +283,7 @@ public class CompactMap implements Map {
 
     @FunctionalInterface
     public interface HashFunction {
-        long hash(ContinuousVirtualMemory mem, long offset, long size);
+        long hash(CARWMemoryImpl mem, long offset, long size);
     }
 
     public class Key implements MapKey {

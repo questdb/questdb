@@ -26,24 +26,25 @@ package io.questdb.cairo.vm;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.vm.api.MAMemory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.str.LPSZ;
 
-public class AppendOnlyVirtualMemory extends PagedVirtualMemory implements MappedReadWriteMemory {
-    private static final Log LOG = LogFactory.getLog(AppendOnlyVirtualMemory.class);
+public class MAMemoryImpl extends PagedVirtualMemory implements MAMemory {
+    private static final Log LOG = LogFactory.getLog(MAMemoryImpl.class);
     private FilesFacade ff;
     private long fd = -1;
     private long pageAddress = 0;
     private int mappedPage;
 
-    public AppendOnlyVirtualMemory(FilesFacade ff, LPSZ name, long pageSize) {
+    public MAMemoryImpl(FilesFacade ff, LPSZ name, long pageSize) {
         of(ff, name, pageSize);
     }
 
-    public AppendOnlyVirtualMemory() {
+    public MAMemoryImpl() {
     }
 
     @Override
@@ -128,11 +129,6 @@ public class AppendOnlyVirtualMemory extends PagedVirtualMemory implements Mappe
 
     @Override
     public void wholeFile(FilesFacade ff, LPSZ name) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void growToFileSize() {
         throw new UnsupportedOperationException();
     }
 

@@ -27,7 +27,7 @@ package io.questdb.cairo.map;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.vm.ContinuousVirtualMemory;
+import io.questdb.cairo.vm.CARWMemoryImpl;
 import io.questdb.std.*;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
@@ -308,7 +308,7 @@ public class CompactMapTest extends AbstractCairoTest {
         // string is always a number and this number will be hash code of string.
         class MockHash implements CompactMap.HashFunction {
             @Override
-            public long hash(ContinuousVirtualMemory mem, long offset, long size) {
+            public long hash(CARWMemoryImpl mem, long offset, long size) {
                 // we have single key field, which is string
                 // the offset of string is 8 bytes for key cell + 4 bytes for string length, total is 12
                 char c = mem.getChar(offset + 12);
@@ -724,7 +724,7 @@ public class CompactMapTest extends AbstractCairoTest {
     // we need decent spread of hash codes making single character not enough
     private static class MockHash implements CompactMap.HashFunction {
         @Override
-        public long hash(ContinuousVirtualMemory mem, long offset, long size) {
+        public long hash(CARWMemoryImpl mem, long offset, long size) {
             // string begins after 8-byte cell for key value
             CharSequence cs = mem.getStr(offset + 8);
             try {

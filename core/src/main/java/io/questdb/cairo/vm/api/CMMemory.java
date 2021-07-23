@@ -22,7 +22,10 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.vm;
+package io.questdb.cairo.vm.api;
 
-public interface ReadWriteVirtualMemory extends ReadOnlyVirtualMemory, WriteOnlyVirtualMemory {
+public interface CMMemory extends ContinuousMemory, MappedMemory {
+    default void growToFileSize() {
+        extend(getFilesFacade().length(getFd()));
+    }
 }

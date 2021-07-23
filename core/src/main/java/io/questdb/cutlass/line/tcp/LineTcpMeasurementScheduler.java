@@ -29,7 +29,9 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.TableWriter.Row;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.SymbolTable;
-import io.questdb.cairo.vm.AppendOnlyVirtualMemory;
+import io.questdb.cairo.vm.CMARWMemoryImpl;
+import io.questdb.cairo.vm.MAMemoryImpl;
+import io.questdb.cairo.vm.api.MARWMemory;
 import io.questdb.cutlass.line.LineProtoTimestampAdapter;
 import io.questdb.cutlass.line.tcp.NewLineProtoParser.ProtoEntity;
 import io.questdb.log.Log;
@@ -79,7 +81,7 @@ class LineTcpMeasurementScheduler implements Closeable {
     private final NetworkIOJob[] netIoJobs;
     private final TableStructureAdapter tableStructureAdapter = new TableStructureAdapter();
     private final Path path = new Path();
-    private final AppendOnlyVirtualMemory mem = new AppendOnlyVirtualMemory();
+    private final MARWMemory ddlMem = new CMARWMemoryImpl();
     private Sequence pubSeq;
     private int nLoadCheckCycles = 0;
     private int nRebalances = 0;
@@ -173,7 +175,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                 queue.get(n).close();
             }
             path.close();
-            mem.close();
+            ddlMem.close();
         }
     }
 
@@ -352,7 +354,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                 int status = engine.getStatus(securityContext, path, tableName, 0, tableName.length());
                 if (status != TableUtils.TABLE_EXISTS) {
                     LOG.info().$("creating table [tableName=").$(tableName).$(']').$();
-                    engine.createTable(securityContext, mem, path, tableStructureAdapter.of(tableName, protoParser));
+                    engine.createTable(securityContext, ddlMem, path, tableStructureAdapter.of(tableName, protoParser));
                 }
 
                 keyIndex = idleTableUpdateDetailsByTableName.keyIndex(tableName);
@@ -806,6 +808,13 @@ class LineTcpMeasurementScheduler implements Closeable {
             }
         }
 
+        private void closeLocals() {
+            for (int n = 0; n < localDetailsArray.length; n++) {
+                LOG.info().$("closing table parsers [tableName=").$(tableName).$(']').$();
+                localDetailsArray[n] = Misc.free(localDetailsArray[n]);
+            }
+        }
+
         private void closeNoLock() {
             if (writerThreadId != Integer.MIN_VALUE) {
                 LOG.info().$("closing table writer [tableName=").$(tableName).$(']').$();
@@ -823,13 +832,6 @@ class LineTcpMeasurementScheduler implements Closeable {
                     }
                 }
                 writerThreadId = Integer.MIN_VALUE;
-            }
-        }
-
-        private void closeLocals() {
-            for (int n = 0; n < localDetailsArray.length; n++) {
-                LOG.info().$("closing table parsers [tableName=").$(tableName).$(']').$();
-                localDetailsArray[n] = Misc.free(localDetailsArray[n]);
             }
         }
 
@@ -986,7 +988,7 @@ class LineTcpMeasurementScheduler implements Closeable {
     private class WriterJob implements Job {
         private final int workerId;
         private final Sequence sequence;
-        private final AppendOnlyVirtualMemory appendMemory = new AppendOnlyVirtualMemory();
+        private final MAMemoryImpl appendMemory = new MAMemoryImpl();
         private final Path path = new Path();
         private final DirectCharSink charSink = new DirectCharSink(64);
         private final FloatingDirectCharSink floatingCharSink = new FloatingDirectCharSink();

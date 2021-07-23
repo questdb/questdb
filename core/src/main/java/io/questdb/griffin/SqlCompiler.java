@@ -27,7 +27,8 @@ package io.questdb.griffin;
 import io.questdb.MessageBus;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.*;
-import io.questdb.cairo.vm.AppendOnlyVirtualMemory;
+import io.questdb.cairo.vm.CMARWMemoryImpl;
+import io.questdb.cairo.vm.api.MARWMemory;
 import io.questdb.cutlass.text.Atomicity;
 import io.questdb.cutlass.text.TextException;
 import io.questdb.cutlass.text.TextLoader;
@@ -71,7 +72,7 @@ public class SqlCompiler implements Closeable {
     private final SqlCodeGenerator codeGenerator;
     private final CairoConfiguration configuration;
     private final Path renamePath = new Path();
-    private final AppendOnlyVirtualMemory mem = new AppendOnlyVirtualMemory();
+    private final MARWMemory mem = new CMARWMemoryImpl();
     private final BytecodeAssembler asm = new BytecodeAssembler();
     private final MessageBus messageBus;
     private final ListColumnFilter listColumnFilter = new ListColumnFilter();
@@ -1298,7 +1299,7 @@ public class SqlCompiler implements Closeable {
 
         TableReaderMetadata sourceMetaData = reader.getMetadata();
         try {
-            mem.of(ff, path.trimTo(rootLen).concat(TableUtils.META_FILE_NAME).$(), ff.getPageSize());
+            mem.smallFile(ff, path.trimTo(rootLen).concat(TableUtils.META_FILE_NAME).$());
             sourceMetaData.cloneTo(mem);
 
             // create symbol maps
@@ -1311,7 +1312,7 @@ public class SqlCompiler implements Closeable {
                     symbolMapCount++;
                 }
             }
-            mem.of(ff, path.trimTo(rootLen).concat(TableUtils.TXN_FILE_NAME).$(), ff.getPageSize());
+            mem.smallFile(ff, path.trimTo(rootLen).concat(TableUtils.TXN_FILE_NAME).$());
             TableUtils.resetTxn(mem, symbolMapCount, 0L, TableUtils.INITIAL_TXN, 0L);
             path.trimTo(rootLen).concat(TableUtils.TXN_SCOREBOARD_FILE_NAME).$();
         } finally {

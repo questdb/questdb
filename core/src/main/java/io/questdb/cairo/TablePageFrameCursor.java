@@ -26,7 +26,7 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameCursor;
-import io.questdb.cairo.vm.ReadOnlyVirtualMemory;
+import io.questdb.cairo.vm.api.ReadMemory;
 import io.questdb.cairo.vm.VmUtils;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
@@ -109,7 +109,7 @@ public class TablePageFrameCursor implements PageFrameCursor {
             for (int i = 0; i < columnCount; i++) {
                 int columnIndex = columnIndexes.get(i);
                 final long columnTop = columnTops.getQuick(i);
-                final ReadOnlyVirtualMemory col = reader.getColumn(TableReader.getPrimaryColumnIndex(columnBase, columnIndex));
+                final ReadMemory col = reader.getColumn(TableReader.getPrimaryColumnIndex(columnBase, columnIndex));
 
                 if (columnTop <= frameFirstRow && col.getPageCount() > 0) {
                     assert col.getPageCount() == 1;
@@ -123,7 +123,7 @@ public class TablePageFrameCursor implements PageFrameCursor {
                     int columnType = reader.getMetadata().getColumnType(columnIndex);
                     switch (columnType) {
                         case ColumnType.STRING: {
-                            final ReadOnlyVirtualMemory strLenCol = reader.getColumn(TableReader.getPrimaryColumnIndex(columnBase, columnIndex) + 1);
+                            final ReadMemory strLenCol = reader.getColumn(TableReader.getPrimaryColumnIndex(columnBase, columnIndex) + 1);
                             columnPageLength = calculateStringPagePosition(col, strLenCol, colFrameLastRow, colMaxRow);
 
                             if (colFrameFirstRow > 0) {
@@ -136,7 +136,7 @@ public class TablePageFrameCursor implements PageFrameCursor {
                         }
 
                         case ColumnType.BINARY: {
-                            final ReadOnlyVirtualMemory binLenCol = reader.getColumn(TableReader.getPrimaryColumnIndex(columnBase, columnIndex) + 1);
+                            final ReadMemory binLenCol = reader.getColumn(TableReader.getPrimaryColumnIndex(columnBase, columnIndex) + 1);
                             columnPageLength = calculateBinaryPagePosition(col, binLenCol, colFrameLastRow, colMaxRow);
 
                             if (colFrameFirstRow > 0) {
@@ -217,7 +217,7 @@ public class TablePageFrameCursor implements PageFrameCursor {
         return this;
     }
 
-    private long calculateBinaryPagePosition(final ReadOnlyVirtualMemory col, final ReadOnlyVirtualMemory binLenCol, long row, long maxRows) {
+    private long calculateBinaryPagePosition(final ReadMemory col, final ReadMemory binLenCol, long row, long maxRows) {
         assert row > 0 && row <= maxRows;
 
         if (row < maxRows) {
@@ -238,7 +238,7 @@ public class TablePageFrameCursor implements PageFrameCursor {
         return prevBinOffset + sz;
     }
 
-    private long calculateStringPagePosition(final ReadOnlyVirtualMemory col, final ReadOnlyVirtualMemory strLenCol, long row, long maxRows) {
+    private long calculateStringPagePosition(final ReadMemory col, final ReadMemory strLenCol, long row, long maxRows) {
         assert row > 0 && row <= maxRows;
 
         if (row < maxRows) {

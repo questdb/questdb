@@ -26,6 +26,7 @@ package io.questdb.cairo.vm;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.vm.api.ARWMemory;
 import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -34,11 +35,9 @@ import io.questdb.std.str.AbstractCharSequence;
 import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
 
-import java.io.Closeable;
-
 import static io.questdb.cairo.vm.VmUtils.STRING_LENGTH_BYTES;
 
-public class PagedVirtualMemory implements ReadWriteVirtualMemory, Closeable {
+public class PagedVirtualMemory implements ARWMemory  {
     private static final Log LOG = LogFactory.getLog(PagedVirtualMemory.class);
     protected final LongList pages = new LongList(4, 0);
     private final ByteSequenceView bsview = new ByteSequenceView();
@@ -76,6 +75,22 @@ public class PagedVirtualMemory implements ReadWriteVirtualMemory, Closeable {
         pageLo = -1;
         baseOffset = 1;
         clearHotPage();
+    }
+
+
+    @Override
+    public long appendAddressFor(long bytes) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public long appendAddressFor(long offset, long bytes) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void putBlockOfBytes(long offset, long from, long len) {
+        throw new UnsupportedOperationException();
     }
 
     protected void releaseAllPagesButFirst() {
@@ -246,6 +261,7 @@ public class PagedVirtualMemory implements ReadWriteVirtualMemory, Closeable {
 
     @Override
     public void extend(long size) {
+        // todo: extending memory should not update append position
         jumpTo(size);
     }
 

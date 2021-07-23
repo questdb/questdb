@@ -24,7 +24,7 @@
 
 package org.questdb;
 
-import io.questdb.cairo.vm.ContinuousVirtualMemory;
+import io.questdb.cairo.vm.CARWMemoryImpl;
 import io.questdb.cairo.vm.PagedVirtualMemory;
 import org.openjdk.jmh.annotations.*;
 import org.openjdk.jmh.runner.Runner;
@@ -39,7 +39,7 @@ import java.util.concurrent.TimeUnit;
 @OutputTimeUnit(TimeUnit.NANOSECONDS)
 public class VirtualMemoryLongWriteBenchmark {
     private static final PagedVirtualMemory mem1 = new PagedVirtualMemory(1024 * 1024, Integer.MAX_VALUE);
-    private static final ContinuousVirtualMemory mem3 = new ContinuousVirtualMemory(1024 * 1024, Integer.MAX_VALUE);
+    private static final CARWMemoryImpl mem3 = new CARWMemoryImpl(1024 * 1024, Integer.MAX_VALUE);
 
     public static void main(String[] args) throws RunnerException {
         Options opt = new OptionsBuilder()

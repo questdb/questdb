@@ -25,6 +25,7 @@
 package io.questdb.cairo.vm;
 
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.vm.api.MARWMemory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Files;
@@ -32,10 +33,15 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.Vect;
 import io.questdb.std.str.LPSZ;
 
-public class PagedMappedReadWriteMemory extends PagedVirtualMemory implements MappedReadWriteMemory {
+public class PagedMappedReadWriteMemory extends PagedVirtualMemory implements MARWMemory {
     private static final Log LOG = LogFactory.getLog(PagedMappedReadWriteMemory.class);
     private FilesFacade ff;
     private long fd = -1;
+
+    @Override
+    public void setTruncateSize(long size) {
+        jumpTo(size);
+    }
 
     public PagedMappedReadWriteMemory(FilesFacade ff, LPSZ name, long maxPageSize) {
         of(ff, name, maxPageSize);
@@ -65,11 +71,6 @@ public class PagedMappedReadWriteMemory extends PagedVirtualMemory implements Ma
     @Override
     public long getPageAddress(int page) {
         return mapWritePage(page);
-    }
-
-    @Override
-    public void extend(long size) {
-        jumpTo(size);
     }
 
     public void truncate() {

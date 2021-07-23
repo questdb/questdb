@@ -24,8 +24,8 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.vm.MappedReadOnlyMemory;
 import io.questdb.cairo.vm.VmUtils;
+import io.questdb.cairo.vm.api.MRMemory;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.LowerCaseCharSequenceIntHashMap;
@@ -38,7 +38,7 @@ public class TableWriterMetadata extends BaseRecordMetadata {
     private int maxUncommittedRows;
     private long commitLag;
 
-    public TableWriterMetadata(FilesFacade ff, MappedReadOnlyMemory metaMem) {
+    public TableWriterMetadata(FilesFacade ff, MRMemory metaMem) {
         this.columnCount = metaMem.getInt(TableUtils.META_OFFSET_COUNT);
         this.columnNameIndexMap = new LowerCaseCharSequenceIntHashMap(columnCount);
         this.version = metaMem.getInt(TableUtils.META_OFFSET_VERSION);

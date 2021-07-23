@@ -26,8 +26,8 @@ package io.questdb.cairo;
 
 import io.questdb.MessageBus;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.cairo.vm.AppendOnlyVirtualMemory;
-import io.questdb.cairo.vm.ContinuousVirtualMemory;
+import io.questdb.cairo.vm.MAMemoryImpl;
+import io.questdb.cairo.vm.CARWMemoryImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.AbstractQueueConsumerJob;
@@ -58,8 +58,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
     public static void processPartition(
             CharSequence pathToTable,
             int partitionBy,
-            ObjList<AppendOnlyVirtualMemory> columns,
-            ObjList<ContinuousVirtualMemory> oooColumns,
+            ObjList<MAMemoryImpl> columns,
+            ObjList<CARWMemoryImpl> oooColumns,
             long srcOooLo,
             long srcOooHi,
             long srcOooMax,
@@ -548,8 +548,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         // srcOooHi is index inclusive of value
         final CharSequence pathToTable = task.getPathToTable();
         final int partitionBy = task.getPartitionBy();
-        final ObjList<AppendOnlyVirtualMemory> columns = task.getColumns();
-        final ObjList<ContinuousVirtualMemory> oooColumns = task.getO3Columns();
+        final ObjList<MAMemoryImpl> columns = task.getColumns();
+        final ObjList<CARWMemoryImpl> oooColumns = task.getO3Columns();
         final long srcOooLo = task.getSrcOooLo();
         final long srcOooHi = task.getSrcOooHi();
         final long srcOooMax = task.getSrcOooMax();
@@ -709,8 +709,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
     private static void publishOpenColumnTasks(
             long txn,
-            ObjList<AppendOnlyVirtualMemory> columns,
-            ObjList<ContinuousVirtualMemory> oooColumns,
+            ObjList<MAMemoryImpl> columns,
+            ObjList<CARWMemoryImpl> oooColumns,
             CharSequence pathToTable,
             long srcOooLo,
             long srcOooHi,
@@ -768,10 +768,10 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 final int colOffset = TableWriter.getPrimaryColumnIndex(i);
                 final boolean notTheTimestamp = i != timestampIndex;
                 final int columnType = metadata.getColumnType(i);
-                final ContinuousVirtualMemory oooMem1 = oooColumns.getQuick(colOffset);
-                final ContinuousVirtualMemory oooMem2 = oooColumns.getQuick(colOffset + 1);
-                final AppendOnlyVirtualMemory mem1 = columns.getQuick(colOffset);
-                final AppendOnlyVirtualMemory mem2 = columns.getQuick(colOffset + 1);
+                final CARWMemoryImpl oooMem1 = oooColumns.getQuick(colOffset);
+                final CARWMemoryImpl oooMem2 = oooColumns.getQuick(colOffset + 1);
+                final MAMemoryImpl mem1 = columns.getQuick(colOffset);
+                final MAMemoryImpl mem2 = columns.getQuick(colOffset + 1);
                 final long activeFixFd;
                 final long activeVarFd;
                 final long srcDataTop;

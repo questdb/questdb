@@ -22,16 +22,20 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.vm;
+package io.questdb.cairo.vm.api;
 
 import io.questdb.std.FilesFacade;
 import io.questdb.std.str.LPSZ;
 
 import java.io.Closeable;
 
-public interface Mappable extends Closeable {
+public interface MappedMemory extends Closeable {
 
     FilesFacade getFilesFacade();
+
+    default boolean isOpen() {
+        return getFd() != -1;
+    }
 
     @Override
     void close();
@@ -59,5 +63,9 @@ public interface Mappable extends Closeable {
 
     default void wholeFile(FilesFacade ff, LPSZ name) {
         of(ff, name, ff.getMapPageSize(), Long.MAX_VALUE);
+    }
+
+    default void smallFile(FilesFacade ff, LPSZ name) {
+        of(ff, name, ff.getPageSize(), Long.MAX_VALUE);
     }
 }

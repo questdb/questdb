@@ -24,10 +24,10 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.vm.MappedReadWriteMemory;
-import io.questdb.cairo.vm.PagedMappedReadWriteMemory;
+import io.questdb.cairo.vm.CMARWMemoryImpl;
 import io.questdb.cairo.vm.PagedVirtualMemory;
-import io.questdb.cairo.vm.ReadWriteVirtualMemory;
+import io.questdb.cairo.vm.api.MARWMemory;
+import io.questdb.cairo.vm.api.ReadMemory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
@@ -69,7 +69,7 @@ public class EngineMigration {
         try (
                 PagedVirtualMemory virtualMem = new PagedVirtualMemory(ff.getPageSize(), 8);
                 Path path = new Path();
-                PagedMappedReadWriteMemory rwMemory = new PagedMappedReadWriteMemory()
+                MARWMemory rwMemory = new CMARWMemoryImpl()
         ) {
 
             MigrationContext context = new MigrationContext(mem, tempMemSize, virtualMem, rwMemory);
@@ -301,7 +301,7 @@ public class EngineMigration {
             backupFile(ff, path, migrationContext.getTablePath2(), TXN_FILE_NAME, VERSION_TX_STRUCT_UPDATE_1 - 1);
 
             LOG.debug().$("opening for rw [path=").$(path).I$();
-            MappedReadWriteMemory txMem = migrationContext.createRwMemoryOf(ff, path.$());
+            MARWMemory txMem = migrationContext.createRwMemoryOf(ff, path.$());
             long tempMem8b = migrationContext.getTempMemory(8);
 
             PagedVirtualMemory txFileUpdate = migrationContext.getTempVirtualMem();
@@ -350,7 +350,7 @@ public class EngineMigration {
                 FilesFacade ff,
                 long tempMem8b,
                 Path path,
-                MappedReadWriteMemory txMem,
+                MARWMemory txMem,
                 int partitionBy,
                 int symbolsCount,
                 PagedVirtualMemory writeTo
@@ -387,7 +387,7 @@ public class EngineMigration {
             writeTo.putLong(0);
         }
 
-        private static boolean removedPartitionsIncludes(long ts, ReadWriteVirtualMemory txMem, int symbolsCount) {
+        private static boolean removedPartitionsIncludes(long ts, ReadMemory txMem, int symbolsCount) {
             long removedPartitionLo = TX_STRUCT_UPDATE_1_OFFSET_MAP_WRITER_COUNT + (symbolsCount + 1L) * Integer.BYTES;
             long removedPartitionCount = txMem.getInt(removedPartitionLo);
             long removedPartitionsHi = removedPartitionLo + Long.BYTES * removedPartitionCount;
@@ -406,19 +406,19 @@ public class EngineMigration {
         private final long tempMemory;
         private final int tempMemoryLen;
         private final PagedVirtualMemory tempVirtualMem;
-        private final MappedReadWriteMemory rwMemory;
+        private final MARWMemory rwMemory;
         private Path tablePath;
         private long metadataFd;
         private Path tablePath2;
 
-        public MigrationContext(long mem, int tempMemSize, PagedVirtualMemory tempVirtualMem, MappedReadWriteMemory rwMemory) {
+        public MigrationContext(long mem, int tempMemSize, PagedVirtualMemory tempVirtualMem, MARWMemory rwMemory) {
             this.tempMemory = mem;
             this.tempMemoryLen = tempMemSize;
             this.tempVirtualMem = tempVirtualMem;
             this.rwMemory = rwMemory;
         }
 
-        public MappedReadWriteMemory createRwMemoryOf(FilesFacade ff, Path path) {
+        public MARWMemory createRwMemoryOf(FilesFacade ff, Path path) {
             // re-use same rwMemory
             // assumption that it is re-usable after the close() and then of()  methods called.
             rwMemory.wholeFile(ff, path);

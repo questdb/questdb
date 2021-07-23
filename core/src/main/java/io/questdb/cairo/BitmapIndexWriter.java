@@ -25,8 +25,8 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.sql.RowCursor;
-import io.questdb.cairo.vm.ContinuousMappedReadWriteMemory;
-import io.questdb.cairo.vm.WriteOnlyVirtualMemory;
+import io.questdb.cairo.vm.api.AppendMemory;
+import io.questdb.cairo.vm.CMARWMemoryImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
@@ -36,8 +36,8 @@ import java.io.Closeable;
 
 public class BitmapIndexWriter implements Closeable, Mutable {
     private static final Log LOG = LogFactory.getLog(BitmapIndexWriter.class);
-    private final ContinuousMappedReadWriteMemory keyMem = new ContinuousMappedReadWriteMemory();
-    private final ContinuousMappedReadWriteMemory valueMem = new ContinuousMappedReadWriteMemory();
+    private final CMARWMemoryImpl keyMem = new CMARWMemoryImpl();
+    private final CMARWMemoryImpl valueMem = new CMARWMemoryImpl();
     private final Cursor cursor = new Cursor();
     private int blockCapacity;
     private int blockValueCountMod;
@@ -59,7 +59,7 @@ public class BitmapIndexWriter implements Closeable, Mutable {
         close();
     }
 
-    public static void initKeyMemory(WriteOnlyVirtualMemory keyMem, int blockValueCount) {
+    public static void initKeyMemory(AppendMemory keyMem, int blockValueCount) {
 
         // block value count must be power of 2
         assert blockValueCount == Numbers.ceilPow2(blockValueCount);

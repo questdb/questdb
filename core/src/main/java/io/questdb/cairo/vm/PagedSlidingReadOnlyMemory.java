@@ -37,7 +37,7 @@ public class PagedSlidingReadOnlyMemory extends PagedVirtualMemory {
     private long size = 0;
     private long pageAddress;
     private int pageIndex;
-    private AppendOnlyVirtualMemory parent;
+    private MAMemoryImpl parent;
 
     @Override
     public void close() {
@@ -65,7 +65,7 @@ public class PagedSlidingReadOnlyMemory extends PagedVirtualMemory {
         return fd;
     }
 
-    public void of(AppendOnlyVirtualMemory parent) {
+    public void of(MAMemoryImpl parent) {
         close();
         this.ff = parent.getFilesFacade();
         this.fd = parent.getFd();

@@ -24,9 +24,10 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.vm.AppendOnlyVirtualMemory;
-import io.questdb.cairo.vm.ContinuousMappedReadOnlyMemory;
-import io.questdb.cairo.vm.MappedReadOnlyMemory;
+import io.questdb.cairo.vm.CMRMemoryImpl;
+import io.questdb.cairo.vm.CMARWMemoryImpl;
+import io.questdb.cairo.vm.api.MARWMemory;
+import io.questdb.cairo.vm.api.MRMemory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
@@ -69,7 +70,7 @@ public class MetadataMigration350 {
         typeMapping.extendAndSet(CHAR, ColumnType.CHAR);
     }
 
-    public static void convert(FilesFacade ff, Path path1, Path path2, AppendOnlyVirtualMemory appendMem, MappedReadOnlyMemory roMem) {
+    public static void convert(FilesFacade ff, Path path1, Path path2, MARWMemory appendMem, MRMemory roMem) {
         final int plen = path1.length();
         path1.concat(TableUtils.META_FILE_NAME).$();
 
@@ -87,7 +88,7 @@ public class MetadataMigration350 {
         path1.trimTo(plen);
         path1.concat("_meta.1").$();
 
-        appendMem.of(ff, path1, ff.getPageSize());
+        appendMem.smallFile(ff, path1);
 
         // column count
         final int columnCount = roMem.getInt(0);
@@ -142,8 +143,8 @@ public class MetadataMigration350 {
 
     public static void main(String[] args) {
         try (
-                final MappedReadOnlyMemory roMem = new ContinuousMappedReadOnlyMemory();
-                final AppendOnlyVirtualMemory appendMem = new AppendOnlyVirtualMemory();
+                final MRMemory roMem = new CMRMemoryImpl();
+                final MARWMemory appendMem = new CMARWMemoryImpl();
                 final Path path1 = new Path();
                 final Path path2 = new Path()
         ) {

@@ -36,7 +36,7 @@ import org.junit.Test;
 
 import static org.junit.Assert.*;
 
-public class ContinuousVirtualMemoryTest {
+public class CARWMemoryImplTest {
 
     @Test
     public void testBinSequence() {
@@ -51,7 +51,7 @@ public class ContinuousVirtualMemoryTest {
     @Test
     public void testBinSequenceOnEdge() {
         final Rnd rnd = new Rnd();
-        try (ContinuousVirtualMemory mem = new ContinuousVirtualMemory(32, Integer.MAX_VALUE)) {
+        try (CARWMemoryImpl mem = new CARWMemoryImpl(32, Integer.MAX_VALUE)) {
             TestRecord.ArrayBinarySequence seq = new TestRecord.ArrayBinarySequence();
             int N = 33;
             int O = 10;
@@ -101,7 +101,7 @@ public class ContinuousVirtualMemoryTest {
     @Test
     public void testBool() {
         Rnd rnd = new Rnd();
-        try (ContinuousVirtualMemory mem = new ContinuousVirtualMemory(11, Integer.MAX_VALUE)) {
+        try (CARWMemoryImpl mem = new CARWMemoryImpl(11, Integer.MAX_VALUE)) {
             int n = 120;
 
             for (int i = 0; i < n; i++) {
@@ -119,7 +119,7 @@ public class ContinuousVirtualMemoryTest {
     @Test
     public void testBoolRnd() {
         Rnd rnd = new Rnd();
-        try (ContinuousVirtualMemory mem = new ContinuousVirtualMemory(11, Integer.MAX_VALUE)) {
+        try (CARWMemoryImpl mem = new CARWMemoryImpl(11, Integer.MAX_VALUE)) {
             int n = 120;
             long o = 0;
 
@@ -138,7 +138,7 @@ public class ContinuousVirtualMemoryTest {
     @Test
     public void testBulkCopy() {
         int N = 1000;
-        try (ContinuousVirtualMemory mem = new ContinuousVirtualMemory(128, Integer.MAX_VALUE)) {
+        try (CARWMemoryImpl mem = new CARWMemoryImpl(128, Integer.MAX_VALUE)) {
             for (int i = 0; i < N; i++) {
                 mem.putShort((short) i);
             }
@@ -163,7 +163,7 @@ public class ContinuousVirtualMemoryTest {
 
     @Test
     public void testByte() {
-        try (ContinuousVirtualMemory mem = new ContinuousVirtualMemory(11, Integer.MAX_VALUE)) {
+        try (CARWMemoryImpl mem = new CARWMemoryImpl(11, Integer.MAX_VALUE)) {
             int n = 120;
 
             for (int i = 0; i < n; i++) {
@@ -179,7 +179,7 @@ public class ContinuousVirtualMemoryTest {
 
     @Test
     public void testChar() {
-        try (ContinuousVirtualMemory mem = new ContinuousVirtualMemory(7, Integer.MAX_VALUE)) {
+        try (CARWMemoryImpl mem = new CARWMemoryImpl(7, Integer.MAX_VALUE)) {
             char n = 999;
             long o = 0;
             for (char i = n; i > 0; i--) {
@@ -198,7 +198,7 @@ public class ContinuousVirtualMemoryTest {
 
     @Test
     public void testCharWithOffset() {
-        try (ContinuousVirtualMemory mem = new ContinuousVirtualMemory(7, Integer.MAX_VALUE)) {
+        try (CARWMemoryImpl mem = new CARWMemoryImpl(7, Integer.MAX_VALUE)) {
             char n = 999;
             long o = 0;
             for (char i = n; i > 0; i--) {
@@ -216,7 +216,7 @@ public class ContinuousVirtualMemoryTest {
 
     @Test
     public void testLong256() {
-        try (ContinuousVirtualMemory mem = new ContinuousVirtualMemory(256, Integer.MAX_VALUE)) {
+        try (CARWMemoryImpl mem = new CARWMemoryImpl(256, Integer.MAX_VALUE)) {
             mem.putLong256("0xEA674fdDe714fd979de3EdF0F56AA9716B898ec8");
             mem.putLong256("0xEA674fdDe714fd979de3EdF0F56AA9716B898ec8");
         }
@@ -224,7 +224,7 @@ public class ContinuousVirtualMemoryTest {
 
     @Test
     public void testByteRandom() {
-        try (ContinuousVirtualMemory mem = new ContinuousVirtualMemory(128, Integer.MAX_VALUE)) {
+        try (CARWMemoryImpl mem = new CARWMemoryImpl(128, Integer.MAX_VALUE)) {
             long offset1 = 512;
             mem.putByte(offset1, (byte) 3);
             mem.putByte(offset1 + 1, (byte) 4);
@@ -238,7 +238,7 @@ public class ContinuousVirtualMemoryTest {
 
     @Test
     public void testByteRnd() {
-        try (ContinuousVirtualMemory mem = new ContinuousVirtualMemory(11, Integer.MAX_VALUE)) {
+        try (CARWMemoryImpl mem = new CARWMemoryImpl(11, Integer.MAX_VALUE)) {
             int n = 120;
 
             long o = 0;
@@ -255,7 +255,7 @@ public class ContinuousVirtualMemoryTest {
 
     @Test
     public void testDouble() {
-        try (ContinuousVirtualMemory mem = new ContinuousVirtualMemory(11, Integer.MAX_VALUE)) {
+        try (CARWMemoryImpl mem = new CARWMemoryImpl(11, Integer.MAX_VALUE)) {
             Rnd rnd = new Rnd();
             int n = 999;
 
@@ -282,7 +282,7 @@ public class ContinuousVirtualMemoryTest {
         long pageSize = 64;
         Rnd rnd = new Rnd();
         Long256Impl sink = new Long256Impl();
-        try (ContinuousVirtualMemory mem = new ContinuousVirtualMemory(pageSize, Integer.MAX_VALUE)) {
+        try (CARWMemoryImpl mem = new CARWMemoryImpl(pageSize, Integer.MAX_VALUE)) {
             for (int i = 0; i < 1000; i++) {
                 mem.putLong256(rnd.nextLong(), rnd.nextLong(), rnd.nextLong(), rnd.nextLong());
             }
@@ -311,7 +311,7 @@ public class ContinuousVirtualMemoryTest {
         long pageSize = 64;
         Rnd rnd = new Rnd();
         Long256Impl long256 = new Long256Impl();
-        try (ContinuousVirtualMemory mem = new ContinuousVirtualMemory(pageSize, Integer.MAX_VALUE)) {
+        try (CARWMemoryImpl mem = new CARWMemoryImpl(pageSize, Integer.MAX_VALUE)) {
             for (int i = 0; i < 1000; i++) {
                 long256.setLong0(rnd.nextLong());
                 long256.setLong1(rnd.nextLong());
@@ -338,7 +338,7 @@ public class ContinuousVirtualMemoryTest {
         long pageSize = 64;
         final int N = 1000;
         Long256Impl long256 = new Long256Impl();
-        try (ContinuousVirtualMemory mem = new ContinuousVirtualMemory(pageSize, Integer.MAX_VALUE)) {
+        try (CARWMemoryImpl mem = new CARWMemoryImpl(pageSize, Integer.MAX_VALUE)) {
             for (int i = 0; i < N; i++) {
                 mem.putLong256((CharSequence) null);
             }
@@ -364,7 +364,7 @@ public class ContinuousVirtualMemoryTest {
         Rnd rnd = new Rnd();
         long offset = 0;
         Long256Impl long256 = new Long256Impl();
-        try (ContinuousVirtualMemory mem = new ContinuousVirtualMemory(pageSize, Integer.MAX_VALUE)) {
+        try (CARWMemoryImpl mem = new CARWMemoryImpl(pageSize, Integer.MAX_VALUE)) {
             for (int i = 0; i < 1000; i++) {
                 long256.setLong0(rnd.nextLong());
                 long256.setLong1(rnd.nextLong());
@@ -393,7 +393,7 @@ public class ContinuousVirtualMemoryTest {
         long pageSize = 128;
         Long256Impl long256 = new Long256Impl();
         Long256Impl long256a = new Long256Impl();
-        try (ContinuousVirtualMemory mem = new ContinuousVirtualMemory(pageSize, Integer.MAX_VALUE)) {
+        try (CARWMemoryImpl mem = new CARWMemoryImpl(pageSize, Integer.MAX_VALUE)) {
 
             mem.putLong256(expected);
             mem.putLong256(expected);
@@ -416,7 +416,7 @@ public class ContinuousVirtualMemoryTest {
         long pageSize = 128;
         Long256Impl long256 = new Long256Impl();
         Long256Impl long256a = new Long256Impl();
-        try (ContinuousVirtualMemory mem = new ContinuousVirtualMemory(pageSize, Integer.MAX_VALUE)) {
+        try (CARWMemoryImpl mem = new CARWMemoryImpl(pageSize, Integer.MAX_VALUE)) {
             mem.putLong256(expected);
             mem.putLong256(expected);
             mem.getLong256(0, long256);
@@ -475,7 +475,7 @@ public class ContinuousVirtualMemoryTest {
         long pageSize = 64;
         Rnd rnd = new Rnd();
         Long256Impl sink = new Long256Impl();
-        try (ContinuousVirtualMemory mem = new ContinuousVirtualMemory(pageSize, Integer.MAX_VALUE)) {
+        try (CARWMemoryImpl mem = new CARWMemoryImpl(pageSize, Integer.MAX_VALUE)) {
             long offset = 0;
             for (int i = 0; i < 1000; i++) {
                 mem.putLong256(offset, rnd.nextLong(), rnd.nextLong(), rnd.nextLong(), rnd.nextLong());
@@ -499,7 +499,7 @@ public class ContinuousVirtualMemoryTest {
     @Test
     public void testDoubleCompatibility() {
         long pageSize = 64;
-        try (ContinuousVirtualMemory mem = new ContinuousVirtualMemory(pageSize, Integer.MAX_VALUE)) {
+        try (CARWMemoryImpl mem = new CARWMemoryImpl(pageSize, Integer.MAX_VALUE)) {
             mem.putInt(10);
             mem.putDouble(8980980284.22234);
             assertEquals(8980980284.22234, mem.getDouble(4), 0.00001);
@@ -508,7 +508,7 @@ public class ContinuousVirtualMemoryTest {
 
     @Test
     public void testDoubleRnd() {
-        try (ContinuousVirtualMemory mem = new ContinuousVirtualMemory(11, Integer.MAX_VALUE)) {
+        try (CARWMemoryImpl mem = new CARWMemoryImpl(11, Integer.MAX_VALUE)) {
             Rnd rnd = new Rnd();
             int n = 999;
 
@@ -533,7 +533,7 @@ public class ContinuousVirtualMemoryTest {
     @Test
     public void testDoubleRndCompatibility() {
         long pageSize = 64;
-        try (ContinuousVirtualMemory mem = new ContinuousVirtualMemory(pageSize, Integer.MAX_VALUE)) {
+        try (CARWMemoryImpl mem = new CARWMemoryImpl(pageSize, Integer.MAX_VALUE)) {
             // prime
             mem.putInt(10, 900);
             mem.putDouble(22, 8980980284.22234);
@@ -545,14 +545,14 @@ public class ContinuousVirtualMemoryTest {
 
     @Test
     public void testEvenPageSize() {
-        try (ContinuousVirtualMemory mem = new ContinuousVirtualMemory(32, Integer.MAX_VALUE)) {
+        try (CARWMemoryImpl mem = new CARWMemoryImpl(32, Integer.MAX_VALUE)) {
             assertStrings(mem, false);
         }
     }
 
     @Test
     public void testFloat() {
-        try (ContinuousVirtualMemory mem = new ContinuousVirtualMemory(11, Integer.MAX_VALUE)) {
+        try (CARWMemoryImpl mem = new CARWMemoryImpl(11, Integer.MAX_VALUE)) {
             Rnd rnd = new Rnd();
             int n = 999;
 
@@ -575,7 +575,7 @@ public class ContinuousVirtualMemoryTest {
     @Test
     public void testFloatCompatibility() {
         long pageSize = 64;
-        try (ContinuousVirtualMemory mem = new ContinuousVirtualMemory(pageSize, Integer.MAX_VALUE)) {
+        try (CARWMemoryImpl mem = new CARWMemoryImpl(pageSize, Integer.MAX_VALUE)) {
             mem.putFloat(1024f);
             mem.putFloat(2048f);
             assertEquals(1024f, mem.getFloat(0), 0.00001f);
@@ -585,7 +585,7 @@ public class ContinuousVirtualMemoryTest {
 
     @Test
     public void testFloatRnd() {
-        try (ContinuousVirtualMemory mem = new ContinuousVirtualMemory(11, Integer.MAX_VALUE)) {
+        try (CARWMemoryImpl mem = new CARWMemoryImpl(11, Integer.MAX_VALUE)) {
             Rnd rnd = new Rnd();
             int n = 999;
 
@@ -610,7 +610,7 @@ public class ContinuousVirtualMemoryTest {
     @Test
     public void testFloatRndCompatibility() {
         long pageSize = 64;
-        try (ContinuousVirtualMemory mem = new ContinuousVirtualMemory(pageSize, Integer.MAX_VALUE)) {
+        try (CARWMemoryImpl mem = new CARWMemoryImpl(pageSize, Integer.MAX_VALUE)) {
             // prime
             mem.putByte(10, (byte) 5);
             mem.putFloat(61, 1024f);
@@ -622,7 +622,7 @@ public class ContinuousVirtualMemoryTest {
 
     @Test
     public void testInt() {
-        try (ContinuousVirtualMemory mem = new ContinuousVirtualMemory(7, Integer.MAX_VALUE)) {
+        try (CARWMemoryImpl mem = new CARWMemoryImpl(7, Integer.MAX_VALUE)) {
             mem.putByte((byte) 1);
             int n = 999;
             for (int i = n; i > 0; i--) {
@@ -642,7 +642,7 @@ public class ContinuousVirtualMemoryTest {
     @Test
     public void testIntCompatibility() {
         long pageSize = 64;
-        try (ContinuousVirtualMemory mem = new ContinuousVirtualMemory(pageSize, Integer.MAX_VALUE)) {
+        try (CARWMemoryImpl mem = new CARWMemoryImpl(pageSize, Integer.MAX_VALUE)) {
             mem.putInt(1024);
             mem.putInt(2048);
             assertEquals(1024, mem.getInt(0));
@@ -652,7 +652,7 @@ public class ContinuousVirtualMemoryTest {
 
     @Test
     public void testIntRnd() {
-        try (ContinuousVirtualMemory mem = new ContinuousVirtualMemory(7, Integer.MAX_VALUE)) {
+        try (CARWMemoryImpl mem = new CARWMemoryImpl(7, Integer.MAX_VALUE)) {
             long o = 1;
             mem.putByte(0, (byte) 1);
             int n = 999;
@@ -674,7 +674,7 @@ public class ContinuousVirtualMemoryTest {
     @Test
     public void testIntRndCompatibility() {
         long pageSize = 64;
-        try (ContinuousVirtualMemory mem = new ContinuousVirtualMemory(pageSize, Integer.MAX_VALUE)) {
+        try (CARWMemoryImpl mem = new CARWMemoryImpl(pageSize, Integer.MAX_VALUE)) {
             // prime page
             mem.putByte(10, (byte) 22);
             mem.putInt(15, 1024);
@@ -686,7 +686,7 @@ public class ContinuousVirtualMemoryTest {
 
     @Test
     public void testJumpTo() {
-        try (ContinuousVirtualMemory mem = new ContinuousVirtualMemory(11, Integer.MAX_VALUE)) {
+        try (CARWMemoryImpl mem = new CARWMemoryImpl(11, Integer.MAX_VALUE)) {
             mem.putByte((byte) 1);
             int n = 999;
             for (int i = n; i > 0; i--) {
@@ -710,7 +710,7 @@ public class ContinuousVirtualMemoryTest {
 
     @Test
     public void testJumpTo2() {
-        try (ContinuousVirtualMemory mem = new ContinuousVirtualMemory(11, Integer.MAX_VALUE)) {
+        try (CARWMemoryImpl mem = new CARWMemoryImpl(11, Integer.MAX_VALUE)) {
             mem.jumpTo(8);
             int n = 999;
             for (int i = n; i > 0; i--) {
@@ -727,7 +727,7 @@ public class ContinuousVirtualMemoryTest {
 
     @Test
     public void testJumpTo3() {
-        try (ContinuousVirtualMemory mem = new ContinuousVirtualMemory(11, Integer.MAX_VALUE)) {
+        try (CARWMemoryImpl mem = new CARWMemoryImpl(11, Integer.MAX_VALUE)) {
             mem.jumpTo(256);
             int n = 999;
             for (int i = n; i > 0; i--) {
@@ -758,7 +758,7 @@ public class ContinuousVirtualMemoryTest {
     @Test
     public void testLongCompatibility() {
         long pageSize = 64;
-        try (ContinuousVirtualMemory mem = new ContinuousVirtualMemory(pageSize, Integer.MAX_VALUE)) {
+        try (CARWMemoryImpl mem = new CARWMemoryImpl(pageSize, Integer.MAX_VALUE)) {
             mem.putLong(8980980284302834L);
             mem.putLong(897928374972983477L);
             assertEquals(8980980284302834L, mem.getLong(0));
@@ -768,7 +768,7 @@ public class ContinuousVirtualMemoryTest {
 
     @Test
     public void testLongEven() {
-        try (ContinuousVirtualMemory mem = new ContinuousVirtualMemory(11, Integer.MAX_VALUE)) {
+        try (CARWMemoryImpl mem = new CARWMemoryImpl(11, Integer.MAX_VALUE)) {
             int n = 999;
             for (int i = n; i > 0; i--) {
                 mem.putLong(i);
@@ -784,7 +784,7 @@ public class ContinuousVirtualMemoryTest {
 
     @Test
     public void testLongOdd() {
-        try (ContinuousVirtualMemory mem = new ContinuousVirtualMemory(11, Integer.MAX_VALUE)) {
+        try (CARWMemoryImpl mem = new CARWMemoryImpl(11, Integer.MAX_VALUE)) {
             mem.putByte((byte) 1);
             int n = 999;
             for (int i = n; i > 0; i--) {
@@ -804,7 +804,7 @@ public class ContinuousVirtualMemoryTest {
     @Test
     public void testLongRndCompatibility() {
         long pageSize = 64;
-        try (ContinuousVirtualMemory mem = new ContinuousVirtualMemory(pageSize, Integer.MAX_VALUE)) {
+        try (CARWMemoryImpl mem = new CARWMemoryImpl(pageSize, Integer.MAX_VALUE)) {
             mem.putLong(33, 8980980284302834L);
             mem.putLong(12, 897928374972983477L);
             assertEquals(8980980284302834L, mem.getLong(33));
@@ -814,7 +814,7 @@ public class ContinuousVirtualMemoryTest {
 
     @Test
     public void testLongRndEven() {
-        try (ContinuousVirtualMemory mem = new ContinuousVirtualMemory(11, Integer.MAX_VALUE)) {
+        try (CARWMemoryImpl mem = new CARWMemoryImpl(11, Integer.MAX_VALUE)) {
             int n = 999;
             long o = 0;
             for (int i = n; i > 0; i--) {
@@ -832,7 +832,7 @@ public class ContinuousVirtualMemoryTest {
 
     @Test
     public void testLongRndOdd() {
-        try (ContinuousVirtualMemory mem = new ContinuousVirtualMemory(11, Integer.MAX_VALUE)) {
+        try (CARWMemoryImpl mem = new CARWMemoryImpl(11, Integer.MAX_VALUE)) {
             mem.putByte(0, (byte) 1);
             int n = 999;
             long o = 1;
@@ -853,7 +853,7 @@ public class ContinuousVirtualMemoryTest {
 
     @Test
     public void testNullBin() {
-        try (ContinuousVirtualMemory mem = new ContinuousVirtualMemory(1024, Integer.MAX_VALUE)) {
+        try (CARWMemoryImpl mem = new CARWMemoryImpl(1024, Integer.MAX_VALUE)) {
             final TestBinarySequence binarySequence = new TestBinarySequence();
             final byte[] buf = new byte[0];
             binarySequence.of(buf);
@@ -873,21 +873,21 @@ public class ContinuousVirtualMemoryTest {
 
     @Test
     public void testOffPageSize() {
-        try (ContinuousVirtualMemory mem = new ContinuousVirtualMemory(12, Integer.MAX_VALUE)) {
+        try (CARWMemoryImpl mem = new CARWMemoryImpl(12, Integer.MAX_VALUE)) {
             assertStrings(mem, true);
         }
     }
 
     @Test
     public void testOkSize() {
-        try (ContinuousVirtualMemory mem = new ContinuousVirtualMemory(1024, Integer.MAX_VALUE)) {
+        try (CARWMemoryImpl mem = new CARWMemoryImpl(1024, Integer.MAX_VALUE)) {
             assertStrings(mem, false);
         }
     }
 
     @Test
     public void testShort() {
-        try (ContinuousVirtualMemory mem = new ContinuousVirtualMemory(7, Integer.MAX_VALUE)) {
+        try (CARWMemoryImpl mem = new CARWMemoryImpl(7, Integer.MAX_VALUE)) {
             mem.putByte((byte) 1);
             short n = 999;
             for (short i = n; i > 0; i--) {
@@ -907,7 +907,7 @@ public class ContinuousVirtualMemoryTest {
     @Test
     public void testShortCompatibility() {
         long pageSize = 64;
-        try (ContinuousVirtualMemory mem = new ContinuousVirtualMemory(pageSize, Integer.MAX_VALUE)) {
+        try (CARWMemoryImpl mem = new CARWMemoryImpl(pageSize, Integer.MAX_VALUE)) {
             mem.putShort((short) 1024);
             mem.putShort((short) 2048);
             assertEquals(1024, mem.getShort(0));
@@ -917,7 +917,7 @@ public class ContinuousVirtualMemoryTest {
 
     @Test
     public void testShortRnd() {
-        try (ContinuousVirtualMemory mem = new ContinuousVirtualMemory(7, Integer.MAX_VALUE)) {
+        try (CARWMemoryImpl mem = new CARWMemoryImpl(7, Integer.MAX_VALUE)) {
             long o = 1;
             mem.putByte(0, (byte) 1);
             short n = 999;
@@ -939,7 +939,7 @@ public class ContinuousVirtualMemoryTest {
     @Test
     public void testShortRndCompatibility() {
         long pageSize = 64;
-        try (ContinuousVirtualMemory mem = new ContinuousVirtualMemory(pageSize, Integer.MAX_VALUE)) {
+        try (CARWMemoryImpl mem = new CARWMemoryImpl(pageSize, Integer.MAX_VALUE)) {
             // prime the page
             mem.putShort(5, (short) 3);
             mem.putShort(11, (short) 1024);
@@ -951,7 +951,7 @@ public class ContinuousVirtualMemoryTest {
 
     @Test
     public void testSkip() {
-        try (ContinuousVirtualMemory mem = new ContinuousVirtualMemory(11, Integer.MAX_VALUE)) {
+        try (CARWMemoryImpl mem = new CARWMemoryImpl(11, Integer.MAX_VALUE)) {
             mem.putByte((byte) 1);
             int n = 999;
             for (int i = n; i > 0; i--) {
@@ -972,14 +972,14 @@ public class ContinuousVirtualMemoryTest {
 
     @Test
     public void testSmallEven() {
-        try (ContinuousVirtualMemory mem = new ContinuousVirtualMemory(2, Integer.MAX_VALUE)) {
+        try (CARWMemoryImpl mem = new CARWMemoryImpl(2, Integer.MAX_VALUE)) {
             assertStrings(mem, false);
         }
     }
 
     @Test
     public void testSmallOdd() {
-        try (ContinuousVirtualMemory mem = new ContinuousVirtualMemory(2, Integer.MAX_VALUE)) {
+        try (CARWMemoryImpl mem = new CARWMemoryImpl(2, Integer.MAX_VALUE)) {
             assertStrings(mem, true);
         }
     }
@@ -1006,7 +1006,7 @@ public class ContinuousVirtualMemoryTest {
         assertEquals(4, VmUtils.getStorageLength(null));
     }
 
-    private void assertStrings(ContinuousVirtualMemory mem, boolean b) {
+    private void assertStrings(CARWMemoryImpl mem, boolean b) {
         if (b) {
             mem.putByte((byte) 1);
         }
@@ -1072,7 +1072,7 @@ public class ContinuousVirtualMemoryTest {
         final long bufAddr = Unsafe.malloc(buffer.length);
         binarySequence.of(buffer);
 
-        try (ContinuousVirtualMemory mem = new ContinuousVirtualMemory(mem1Size, Integer.MAX_VALUE)) {
+        try (CARWMemoryImpl mem = new CARWMemoryImpl(mem1Size, Integer.MAX_VALUE)) {
             Assert.assertEquals(Numbers.ceilPow2(mem1Size), mem.getMapPageSize());
             long offset1 = 0;
             for (int i = 0; i < n; i++) {
@@ -1098,7 +1098,7 @@ public class ContinuousVirtualMemoryTest {
                 offset1 += 8 + sz;
             }
 
-            try (ContinuousVirtualMemory mem2 = new ContinuousVirtualMemory(mem2Size, Integer.MAX_VALUE)) {
+            try (CARWMemoryImpl mem2 = new CARWMemoryImpl(mem2Size, Integer.MAX_VALUE)) {
                 Assert.assertEquals(Numbers.ceilPow2(mem2Size), mem2.getMapPageSize());
                 offset1 = 0;
                 for (int i = 0; i < n; i++) {
@@ -1154,7 +1154,7 @@ public class ContinuousVirtualMemoryTest {
         Rnd rnd = new Rnd();
         int N = 1000;
         final int M = 4;
-        try (ContinuousVirtualMemory mem = new ContinuousVirtualMemory(pageSize, Integer.MAX_VALUE)) {
+        try (CARWMemoryImpl mem = new CARWMemoryImpl(pageSize, Integer.MAX_VALUE)) {
             long o = offset;
             for (int i = 0; i < N; i++) {
                 int flag = rnd.nextInt();
@@ -1193,7 +1193,7 @@ public class ContinuousVirtualMemoryTest {
         int pageSize = 256;
         int maxPages = 3;
         int sz = 256 * 3;
-        try (ContinuousVirtualMemory mem = new ContinuousVirtualMemory(pageSize, maxPages)) {
+        try (CARWMemoryImpl mem = new CARWMemoryImpl(pageSize, maxPages)) {
             Assert.assertEquals(pageSize, mem.getMapPageSize());
             int n = 0;
             try {

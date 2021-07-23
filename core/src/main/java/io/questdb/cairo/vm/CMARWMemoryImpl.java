@@ -25,6 +25,8 @@
 package io.questdb.cairo.vm;
 
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.vm.api.CARWMemory;
+import io.questdb.cairo.vm.api.CMARWMemory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
@@ -32,19 +34,28 @@ import io.questdb.std.str.LPSZ;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-public class ContinuousMappedReadWriteMemory extends AbstractContinuousMemory
-        implements MappedReadWriteMemory, ContinuousReadWriteVirtualMemory {
-    private static final Log LOG = LogFactory.getLog(ContinuousMappedReadWriteMemory.class);
+public class CMARWMemoryImpl extends AbstractCRMemory implements CMARWMemory, CARWMemory {
+    private static final Log LOG = LogFactory.getLog(CMARWMemoryImpl.class);
     private final Long256Acceptor long256Acceptor = this::putLong256;
     private long appendAddress = 0;
     private long minMappedMemorySize;
     private long extendSegmentMsb;
 
-    public ContinuousMappedReadWriteMemory(FilesFacade ff, LPSZ name, long pageSize, long size) {
-        of(ff, name, pageSize, size);
+    @Override
+    public void setTruncateSize(long size) {
+        jumpTo(size);
     }
 
-    public ContinuousMappedReadWriteMemory() {
+    @Override
+    public void putBlockOfBytes(long offset, long from, long len) {
+        throw new UnsupportedOperationException();
+    }
+
+    public CMARWMemoryImpl(FilesFacade ff, LPSZ name, long extendSegmentSize, long size) {
+        of(ff, name, extendSegmentSize, size);
+    }
+
+    public CMARWMemoryImpl() {
     }
 
     @Override

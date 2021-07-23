@@ -24,7 +24,7 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.vm.AppendOnlyVirtualMemory;
+import io.questdb.cairo.vm.MAMemoryImpl;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Os;
 import io.questdb.std.str.Path;
@@ -171,7 +171,7 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
                     throw CairoException.instance(FilesFacadeImpl.INSTANCE.errno()).put("Cannot create dir: ").put(path);
                 }
 
-                try (AppendOnlyVirtualMemory mem = new AppendOnlyVirtualMemory()) {
+                try (MAMemoryImpl mem = new MAMemoryImpl()) {
 
                     mem.of(FilesFacadeImpl.INSTANCE, path.trimTo(rootLen).concat(TableUtils.META_FILE_NAME).$(), pageSize);
 
@@ -213,7 +213,7 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
                 long len = FilesFacadeImpl.INSTANCE.length(path);
 
                 try (TableReaderMetadata metadata = new TableReaderMetadata(FilesFacadeImpl.INSTANCE, path)) {
-                    try (AppendOnlyVirtualMemory mem = new AppendOnlyVirtualMemory()) {
+                    try (MAMemoryImpl mem = new MAMemoryImpl()) {
                         mem.of(FilesFacadeImpl.INSTANCE, path, FilesFacadeImpl.INSTANCE.getPageSize());
                         mem.putInt(columnCount);
                         mem.skip(len - 4);

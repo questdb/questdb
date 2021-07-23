@@ -297,7 +297,7 @@ public class O3CommitLagTest extends AbstractO3Test {
             long idCount = mils * 1_000_000L;
 
             // Create big commit with has big part before OOO starts
-            // which exceed default AppendOnlyVirtualMemory size in one or all columns
+            // which exceed default MAMemoryImpl size in one or all columns
             int iterations = 2;
             String[] varCol = new String[]{"abc", "aldfjkasdlfkj", "as", "2021-04-27T12:00:00"};
 

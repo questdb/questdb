@@ -26,7 +26,8 @@ package io.questdb.cutlass.line.udp;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.cairo.vm.AppendOnlyVirtualMemory;
+import io.questdb.cairo.vm.CMARWMemoryImpl;
+import io.questdb.cairo.vm.api.MARWMemory;
 import io.questdb.cutlass.line.*;
 import io.questdb.cutlass.line.CairoLineProtoParserSupport.BadCastException;
 import io.questdb.log.Log;
@@ -58,7 +59,7 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
     private final LongList columnNameType = new LongList();
     private final LongList columnIndexAndType = new LongList();
     private final LongList columnValues = new LongList();
-    private final AppendOnlyVirtualMemory appendMemory = new AppendOnlyVirtualMemory();
+    private final MARWMemory ddlMem = new CMARWMemoryImpl();
     private final MicrosecondClock clock;
     private final FieldNameParser MY_NEW_FIELD_NAME = this::parseFieldNameNewTable;
     private final FieldValueParser MY_NEW_TAG_VALUE = this::parseTagValueNewTable;
@@ -101,7 +102,7 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
     @Override
     public void close() {
         Misc.free(path);
-        Misc.free(appendMemory);
+        Misc.free(ddlMem);
         for (int i = 0, n = writerCache.size(); i < n; i++) {
             Misc.free(writerCache.valueQuick(i).writer);
         }
@@ -263,7 +264,7 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
     private void createTableAndAppendRow(CharSequenceCache cache) {
         engine.createTable(
                 cairoSecurityContext,
-                appendMemory,
+                ddlMem,
                 path,
                 tableStructureAdapter.of(cache)
         );

@@ -1,8 +1,8 @@
 package io.questdb.cairo;
 
-import io.questdb.cairo.vm.AppendOnlyVirtualMemory;
-import io.questdb.cairo.vm.MappedReadOnlyMemory;
-import io.questdb.cairo.vm.ContinuousMappedReadOnlyMemory;
+import io.questdb.cairo.vm.CMRMemoryImpl;
+import io.questdb.cairo.vm.MAMemoryImpl;
+import io.questdb.cairo.vm.api.MRMemory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;
@@ -30,20 +30,20 @@ public class MemRemappedFileTest {
     @Test
     public void testReadOnlyMemory() {
         LOG.info().$("ReadOnlyMemory starting").$();
-        double micros = test(new ContinuousMappedReadOnlyMemory());
+        double micros = test(new CMRMemoryImpl());
         LOG.info().$("ReadOnlyMemory took ").$(micros).$("ms").$();
     }
 
     @Test
     public void testExtendableOnePageMemory() {
         LOG.info().$("ExtendableOnePageMemory starting").$();
-        double micros = test(new ContinuousMappedReadOnlyMemory());
+        double micros = test(new CMRMemoryImpl());
         LOG.info().$("ExtendableOnePageMemory took ").$(micros).$("ms").$();
     }
 
-    private double test(MappedReadOnlyMemory readMem) {
+    private double test(MRMemory readMem) {
         long nanos = 0;
-        try (AppendOnlyVirtualMemory appMem = new AppendOnlyVirtualMemory()) {
+        try (MAMemoryImpl appMem = new MAMemoryImpl()) {
             for (int cycle = 0; cycle < NCYCLES; cycle++) {
                 path.trimTo(0).concat(root).concat("file" + nFile).$();
                 nFile++;

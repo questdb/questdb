@@ -25,7 +25,8 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.sql.SymbolTable;
-import io.questdb.cairo.vm.*;
+import io.questdb.cairo.vm.VmUtils;
+import io.questdb.cairo.vm.api.*;
 import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -127,7 +128,7 @@ public final class TableUtils {
 
     public static void createTable(
             FilesFacade ff,
-            AppendOnlyVirtualMemory memory,
+            MARWMemory memory,
             Path path,
             @Transient CharSequence root,
             TableStructure structure,
@@ -139,7 +140,7 @@ public final class TableUtils {
 
     public static void createTable(
             FilesFacade ff,
-            AppendOnlyVirtualMemory memory,
+            MARWMemory memory,
             Path path,
             @Transient CharSequence root,
             TableStructure structure,
@@ -157,8 +158,8 @@ public final class TableUtils {
         final int rootLen = path.length();
 
         final long dirFd = !ff.isRestrictedFileSystem() ? TableUtils.openRO(ff, path.$(), LOG) : 0;
-        try (AppendOnlyVirtualMemory mem = memory) {
-            mem.of(ff, path.trimTo(rootLen).concat(META_FILE_NAME).$(), ff.getPageSize());
+        try (MARWMemory mem = memory) {
+            mem.wholeFile(ff, path.trimTo(rootLen).concat(META_FILE_NAME).$());
             final int count = structure.getColumnCount();
             path.trimTo(rootLen);
             mem.putInt(count);
@@ -204,7 +205,7 @@ public final class TableUtils {
                     symbolMapCount++;
                 }
             }
-            mem.of(ff, path.trimTo(rootLen).concat(TXN_FILE_NAME).$(), ff.getPageSize());
+            mem.wholeFile(ff, path.trimTo(rootLen).concat(TXN_FILE_NAME).$());
             TableUtils.resetTxn(mem, symbolMapCount, 0L, INITIAL_TXN, 0L);
             resetTodoLog(ff, path, rootLen, mem);
             // allocate txn scoreboard
@@ -244,7 +245,7 @@ public final class TableUtils {
         return META_OFFSET_COLUMN_TYPES + columnCount * META_COLUMN_DATA_SIZE;
     }
 
-    public static int getColumnType(ReadOnlyVirtualMemory metaMem, int columnIndex) {
+    public static int getColumnType(ReadMemory metaMem, int columnIndex) {
         return metaMem.getByte(META_OFFSET_COLUMN_TYPES + columnIndex * META_COLUMN_DATA_SIZE);
     }
 
@@ -465,8 +466,8 @@ public final class TableUtils {
         }
     }
 
-    public static void resetTodoLog(FilesFacade ff, Path path, int rootLen, MappedReadWriteMemory mem) {
-        mem.of(ff, path.trimTo(rootLen).concat(TODO_FILE_NAME).$(), ff.getPageSize(), Long.MAX_VALUE);
+    public static void resetTodoLog(FilesFacade ff, Path path, int rootLen, MARWMemory mem) {
+        mem.wholeFile(ff, path.trimTo(rootLen).concat(TODO_FILE_NAME).$());
         mem.putLong(24, 0); // txn check
         Unsafe.getUnsafe().storeFence();
         mem.putLong(8, 0); // hashLo
@@ -477,7 +478,7 @@ public final class TableUtils {
         mem.jumpTo(40);
     }
 
-    public static void resetTxn(WriteOnlyVirtualMemory txMem, int symbolMapCount, long txn, long dataVersion, long partitionTableVersion) {
+    public static void resetTxn(MWMemory txMem, int symbolMapCount, long txn, long dataVersion, long partitionTableVersion) {
         // txn to let readers know table is being reset
         txMem.putLong(TX_OFFSET_TXN, txn);
         Unsafe.getUnsafe().storeFence();
@@ -514,7 +515,7 @@ public final class TableUtils {
 
         // make sure we put append pointer behind our data so that
         // files does not get truncated when closing
-        txMem.jumpTo(getPartitionTableIndexOffset(symbolMapCount, 0));
+        txMem.setTruncateSize(getPartitionTableIndexOffset(symbolMapCount, 0));
     }
 
     /**
@@ -593,7 +594,7 @@ public final class TableUtils {
         }
     }
 
-    public static void validate(FilesFacade ff, MappedReadOnlyMemory metaMem, LowerCaseCharSequenceIntHashMap nameIndex) {
+    public static void validate(FilesFacade ff, MRMemory metaMem, LowerCaseCharSequenceIntHashMap nameIndex) {
         try {
             final int metaVersion = metaMem.getInt(TableUtils.META_OFFSET_VERSION);
             if (ColumnType.VERSION != metaVersion && metaVersion != 404) {
@@ -750,23 +751,23 @@ public final class TableUtils {
         return path.concat(columnName).put(FILE_SUFFIX_I).$();
     }
 
-    static long getColumnFlags(ReadOnlyVirtualMemory metaMem, int columnIndex) {
+    static long getColumnFlags(ReadMemory metaMem, int columnIndex) {
         return metaMem.getLong(META_OFFSET_COLUMN_TYPES + columnIndex * META_COLUMN_DATA_SIZE + 1);
     }
 
-    static boolean isColumnIndexed(ReadOnlyVirtualMemory metaMem, int columnIndex) {
+    static boolean isColumnIndexed(ReadMemory metaMem, int columnIndex) {
         return (getColumnFlags(metaMem, columnIndex) & META_FLAG_BIT_INDEXED) != 0;
     }
 
-    static boolean isSequential(ReadOnlyVirtualMemory metaMem, int columnIndex) {
+    static boolean isSequential(ReadMemory metaMem, int columnIndex) {
         return (getColumnFlags(metaMem, columnIndex) & META_FLAG_BIT_SEQUENTIAL) != 0;
     }
 
-    static int getIndexBlockCapacity(ReadOnlyVirtualMemory metaMem, int columnIndex) {
+    static int getIndexBlockCapacity(ReadMemory metaMem, int columnIndex) {
         return metaMem.getInt(META_OFFSET_COLUMN_TYPES + columnIndex * META_COLUMN_DATA_SIZE + 9);
     }
 
-    static int openMetaSwapFile(FilesFacade ff, AppendOnlyVirtualMemory mem, Path path, int rootLen, int retryCount) {
+    static int openMetaSwapFile(FilesFacade ff, MAMemory mem, Path path, int rootLen, int retryCount) {
         try {
             path.concat(META_SWAP_FILE_NAME).$();
             int l = path.length();
@@ -779,7 +780,7 @@ public final class TableUtils {
 
                 if (!ff.exists(path) || ff.remove(path)) {
                     try {
-                        mem.of(ff, path, ff.getPageSize());
+                        mem.smallFile(ff, path);
                         return index;
                     } catch (CairoException e) {
                         // right, cannot open file for some reason?
@@ -801,20 +802,20 @@ public final class TableUtils {
         }
     }
 
-    static void openMetaSwapFileByIndex(FilesFacade ff, AppendOnlyVirtualMemory mem, Path path, int rootLen, int swapIndex) {
+    static void openMetaSwapFileByIndex(FilesFacade ff, MAMemory mem, Path path, int rootLen, int swapIndex) {
         try {
             path.concat(META_SWAP_FILE_NAME);
             if (swapIndex > 0) {
                 path.put('.').put(swapIndex);
             }
             path.$();
-            mem.of(ff, path, ff.getPageSize());
+            mem.smallFile(ff, path);
         } finally {
             path.trimTo(rootLen);
         }
     }
 
-    private static CairoException validationException(MappedReadOnlyMemory mem) {
+    private static CairoException validationException(MRMemory mem) {
         return CairoException.instance(0).put("Invalid metadata at fd=").put(mem.getFd()).put(". ");
     }
 

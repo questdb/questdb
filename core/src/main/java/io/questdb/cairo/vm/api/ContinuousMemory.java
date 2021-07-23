@@ -22,32 +22,8 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo;
+package io.questdb.cairo.vm.api;
 
-import io.questdb.cairo.vm.MAMemoryImpl;
-import io.questdb.cairo.vm.api.ReadMemory;
-import io.questdb.std.str.Path;
-
-public interface ColumnIndexer {
-    void distress();
-
-    long getFd();
-
-    long getSequence();
-
-    void refreshSourceAndIndex(long loRow, long hiRow);
-
-    void index(ReadMemory mem, long loRow, long hiRow);
-
-    BitmapIndexWriter getWriter();
-
-    boolean isDistressed();
-
-    void configureFollowerAndWriter(CairoConfiguration configuration, Path path, CharSequence name, MAMemoryImpl columnMem, long columnTop);
-
-    void configureWriter(CairoConfiguration configuration, Path path, CharSequence name, long columnTop);
-
-    void rollback(long maxRow);
-
-    boolean tryLock(long expectedSequence);
+public interface ContinuousMemory {
+    void extend(long size);
 }

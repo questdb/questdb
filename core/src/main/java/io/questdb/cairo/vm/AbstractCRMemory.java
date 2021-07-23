@@ -24,15 +24,17 @@
 
 package io.questdb.cairo.vm;
 
+import io.questdb.cairo.vm.api.CRMemory;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
 
-public abstract class AbstractContinuousMemory implements ContinuousReadOnlyMemory {
-    private final ContinuousReadOnlyMemory.ByteSequenceView bsview = new ContinuousReadOnlyMemory.ByteSequenceView();
-    private final ContinuousReadOnlyMemory.CharSequenceView csview = new ContinuousReadOnlyMemory.CharSequenceView();
-    private final ContinuousReadOnlyMemory.CharSequenceView csview2 = new ContinuousReadOnlyMemory.CharSequenceView();
+public abstract class AbstractCRMemory implements CRMemory {
+
+    private final CRMemory.ByteSequenceView bsview = new CRMemory.ByteSequenceView();
+    private final CRMemory.CharSequenceView csview = new CRMemory.CharSequenceView();
+    private final CRMemory.CharSequenceView csview2 = new CRMemory.CharSequenceView();
     private final Long256Impl long256 = new Long256Impl();
     private final Long256Impl long256B = new Long256Impl();
     protected long pageAddress = 0;

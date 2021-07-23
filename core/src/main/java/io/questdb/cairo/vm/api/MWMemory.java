@@ -22,10 +22,9 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.vm;
+package io.questdb.cairo.vm.api;
 
-public interface MappedReadWriteMemory extends Mappable, ReadWriteVirtualMemory, MappedReadOnlyMemory {
-    default boolean isOpen() {
-        return getFd() != -1;
-    }
+public interface MWMemory extends MappedMemory, WriteMemory {
+    void setTruncateSize(long size);
+    void sync(boolean async);
 }

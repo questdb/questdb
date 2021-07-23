@@ -24,28 +24,26 @@
 
 package io.questdb.cairo.vm;
 
+import io.questdb.cairo.vm.api.CARWMemory;
 import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
 
-import java.io.Closeable;
-
 /**
  * A version of {@link PagedVirtualMemory} that uses a single contiguous memory region instead of pages. Note that it still has the concept of a page such that the contiguous memory region will extend in page sizes.
  *
  * @author Patrick Mackinlay
  */
-public class ContinuousVirtualMemory extends AbstractContinuousMemory
-        implements ContinuousReadWriteVirtualMemory, Mutable, Closeable {
-    private static final Log LOG = LogFactory.getLog(ContinuousVirtualMemory.class);
+public class CARWMemoryImpl extends AbstractCRMemory implements CARWMemory, Mutable {
+    private static final Log LOG = LogFactory.getLog(CARWMemoryImpl.class);
     private final int maxPages;
     private final Long256Acceptor long256Acceptor = this::putLong256;
     private long sizeMsb;
     private long appendAddress = 0;
 
-    public ContinuousVirtualMemory(long pageSize, int maxPages) {
+    public CARWMemoryImpl(long pageSize, int maxPages) {
         this.maxPages = maxPages;
         setPageSize(pageSize);
     }
@@ -58,6 +56,48 @@ public class ContinuousVirtualMemory extends AbstractContinuousMemory
         return result;
     }
 
+    /**
+     * Updates append pointer with address for the given offset. All put* functions will be
+     * appending from this offset onwards effectively overwriting data. Size of virtual memory remains
+     * unaffected until the moment memory has to be extended.
+     *
+     * @param offset position from 0 in virtual memory.
+     */
+    public void jumpTo(long offset) {
+        checkAndExtend(pageAddress + offset);
+        appendAddress = pageAddress + offset;
+    }
+
+    public final void putLong256(@NotNull CharSequence hexString, int start, int end) {
+        putLong256(hexString, start, end, long256Acceptor);
+    }
+
+    /**
+     * Skips given number of bytes. Same as logically appending 0-bytes. Advantage of this method is that
+     * no memory write takes place.
+     *
+     * @param bytes number of bytes to skip
+     */
+    @Override
+    public void skip(long bytes) {
+        checkAndExtend(appendAddress + bytes);
+        appendAddress += bytes;
+    }
+
+    @Override
+    public final long getAppendOffset() {
+        return appendAddress - pageAddress;
+    }
+
+    @Override
+    public void truncate() {
+        // our "extend" implementation will reduce size as well as
+        // extend it
+        extend(0);
+        // reset append offset
+        appendAddress = pageAddress;
+    }
+
     @Override
     public long appendAddressFor(long offset, long bytes) {
         checkAndExtend(pageAddress + offset + bytes);
@@ -65,8 +105,8 @@ public class ContinuousVirtualMemory extends AbstractContinuousMemory
     }
 
     @Override
-    public final long getAppendOffset() {
-        return appendAddress - pageAddress;
+    public void putBlockOfBytes(long offset, long from, long len) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -101,48 +141,6 @@ public class ContinuousVirtualMemory extends AbstractContinuousMemory
         handleMemoryReallocation(newBaseAddress, size);
     }
 
-    @Override
-    public long size() {
-        return lim - pageAddress;
-    }
-
-    /**
-     * Updates append pointer with address for the given offset. All put* functions will be
-     * appending from this offset onwards effectively overwriting data. Size of virtual memory remains
-     * unaffected until the moment memory has to be extended.
-     *
-     * @param offset position from 0 in virtual memory.
-     */
-    public void jumpTo(long offset) {
-        checkAndExtend(pageAddress + offset);
-        appendAddress = pageAddress + offset;
-    }
-
-    public final void putLong256(@NotNull CharSequence hexString, int start, int end) {
-        putLong256(hexString, start, end, long256Acceptor);
-    }
-
-    /**
-     * Skips given number of bytes. Same as logically appending 0-bytes. Advantage of this method is that
-     * no memory write takes place.
-     *
-     * @param bytes number of bytes to skip
-     */
-    @Override
-    public void skip(long bytes) {
-        checkAndExtend(appendAddress + bytes);
-        appendAddress += bytes;
-    }
-
-    @Override
-    public void truncate() {
-        // our "extend" implementation will reduce size as well as
-        // extend it
-        extend(0);
-        // reset append offset
-        appendAddress = pageAddress;
-    }
-
     public void replacePage(long address, long size) {
         long appendOffset = getAppendOffset();
         this.pageAddress = this.appendAddress = address;
@@ -153,6 +151,11 @@ public class ContinuousVirtualMemory extends AbstractContinuousMemory
     public long resize(long size) {
         checkAndExtend(pageAddress + size);
         return pageAddress;
+    }
+
+    @Override
+    public long size() {
+        return lim - pageAddress;
     }
 
     public void zero() {

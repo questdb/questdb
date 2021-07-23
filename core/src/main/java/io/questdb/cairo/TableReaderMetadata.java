@@ -24,27 +24,27 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.vm.AppendOnlyVirtualMemory;
-import io.questdb.cairo.vm.ContinuousMappedReadOnlyMemory;
-import io.questdb.cairo.vm.MappedReadOnlyMemory;
+import io.questdb.cairo.vm.CMRMemoryImpl;
 import io.questdb.cairo.vm.VmUtils;
+import io.questdb.cairo.vm.api.MAMemory;
+import io.questdb.cairo.vm.api.MRMemory;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
 
 import java.io.Closeable;
 
 public class TableReaderMetadata extends BaseRecordMetadata implements Closeable {
-    private final MappedReadOnlyMemory metaMem;
+    private final MRMemory metaMem;
     private final Path path;
     private final FilesFacade ff;
     private final LowerCaseCharSequenceIntHashMap tmpValidationMap = new LowerCaseCharSequenceIntHashMap();
     private int id;
-    private MappedReadOnlyMemory transitionMeta;
+    private MRMemory transitionMeta;
 
     public TableReaderMetadata(FilesFacade ff) {
         this.path = new Path();
         this.ff = ff;
-        this.metaMem = new ContinuousMappedReadOnlyMemory();
+        this.metaMem = new CMRMemoryImpl();
         this.columnMetadata = new ObjList<>(columnCount);
         this.columnNameIndexMap = new LowerCaseCharSequenceIntHashMap();
     }
@@ -183,7 +183,7 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
         this.timestampIndex = metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX);
     }
 
-    public void cloneTo(AppendOnlyVirtualMemory mem) {
+    public void cloneTo(MAMemory mem) {
         long len = ff.length(metaMem.getFd());
         for (long p = 0; p < len; p++) {
             mem.putByte(metaMem.getByte(p));
@@ -198,11 +198,11 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
 
     public long createTransitionIndex() {
         if (transitionMeta == null) {
-            transitionMeta = new ContinuousMappedReadOnlyMemory();
+            transitionMeta = new CMRMemoryImpl();
         }
 
         transitionMeta.wholeFile(ff, path);
-        try (MappedReadOnlyMemory metaMem = transitionMeta) {
+        try (MRMemory metaMem = transitionMeta) {
 
             tmpValidationMap.clear();
             TableUtils.validate(ff, metaMem, tmpValidationMap);

@@ -24,9 +24,10 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.vm.AppendOnlyVirtualMemory;
-import io.questdb.cairo.vm.ContinuousMappedReadOnlyMemory;
-import io.questdb.cairo.vm.MappedReadOnlyMemory;
+import io.questdb.cairo.vm.CMRMemoryImpl;
+import io.questdb.cairo.vm.CMARWMemoryImpl;
+import io.questdb.cairo.vm.api.MARWMemory;
+import io.questdb.cairo.vm.api.MRMemory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
@@ -53,25 +54,7 @@ public class MetadataMigration400 {
     private static final IntList typeMapping = new IntList();
     private static final Log LOG = LogFactory.getLog(MetadataMigration400.class);
 
-    static {
-        typeMapping.extendAndSet(BOOLEAN, ColumnType.BOOLEAN);
-        typeMapping.extendAndSet(BYTE, ColumnType.BYTE);
-        typeMapping.extendAndSet(SHORT, ColumnType.SHORT);
-        typeMapping.extendAndSet(INT, ColumnType.INT);
-        typeMapping.extendAndSet(LONG, ColumnType.LONG);
-        typeMapping.extendAndSet(FLOAT, ColumnType.FLOAT);
-        typeMapping.extendAndSet(DOUBLE, ColumnType.DOUBLE);
-        typeMapping.extendAndSet(STRING, ColumnType.STRING);
-        typeMapping.extendAndSet(SYMBOL, ColumnType.SYMBOL);
-        typeMapping.extendAndSet(BINARY, ColumnType.BINARY);
-        typeMapping.extendAndSet(DATE, ColumnType.DATE);
-        typeMapping.extendAndSet(PARAMETER, ColumnType.PARAMETER);
-        typeMapping.extendAndSet(TIMESTAMP, ColumnType.TIMESTAMP);
-        typeMapping.extendAndSet(CHAR, ColumnType.CHAR);
-        typeMapping.extendAndSet(LONG256, ColumnType.LONG256);
-    }
-
-    public static void convert(FilesFacade ff, Path path1, Path path2, AppendOnlyVirtualMemory appendMem, MappedReadOnlyMemory roMem) {
+    public static void convert(FilesFacade ff, Path path1, Path path2, MARWMemory appendMem, MRMemory roMem) {
         final int plen = path1.length();
         path1.concat(TableUtils.META_FILE_NAME).$();
 
@@ -144,8 +127,8 @@ public class MetadataMigration400 {
 
     public static void main(String[] args) {
         try (
-                final MappedReadOnlyMemory roMem = new ContinuousMappedReadOnlyMemory();
-                final AppendOnlyVirtualMemory appendMem = new AppendOnlyVirtualMemory();
+                final MRMemory roMem = new CMRMemoryImpl();
+                final MARWMemory appendMem = new CMARWMemoryImpl();
                 final Path path1 = new Path();
                 final Path path2 = new Path()
         ) {
@@ -178,5 +161,23 @@ public class MetadataMigration400 {
                     roMem
             );
         }
+    }
+
+    static {
+        typeMapping.extendAndSet(BOOLEAN, ColumnType.BOOLEAN);
+        typeMapping.extendAndSet(BYTE, ColumnType.BYTE);
+        typeMapping.extendAndSet(SHORT, ColumnType.SHORT);
+        typeMapping.extendAndSet(INT, ColumnType.INT);
+        typeMapping.extendAndSet(LONG, ColumnType.LONG);
+        typeMapping.extendAndSet(FLOAT, ColumnType.FLOAT);
+        typeMapping.extendAndSet(DOUBLE, ColumnType.DOUBLE);
+        typeMapping.extendAndSet(STRING, ColumnType.STRING);
+        typeMapping.extendAndSet(SYMBOL, ColumnType.SYMBOL);
+        typeMapping.extendAndSet(BINARY, ColumnType.BINARY);
+        typeMapping.extendAndSet(DATE, ColumnType.DATE);
+        typeMapping.extendAndSet(PARAMETER, ColumnType.PARAMETER);
+        typeMapping.extendAndSet(TIMESTAMP, ColumnType.TIMESTAMP);
+        typeMapping.extendAndSet(CHAR, ColumnType.CHAR);
+        typeMapping.extendAndSet(LONG256, ColumnType.LONG256);
     }
 }

@@ -22,16 +22,17 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.vm;
+package io.questdb.cairo.vm.api;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.vm.VmUtils;
 import io.questdb.std.*;
 import io.questdb.std.str.AbstractCharSequence;
 import io.questdb.std.str.CharSink;
 
-public interface ContinuousReadOnlyMemory extends ReadOnlyVirtualMemory {
-    default BinarySequence getBin(long offset, ContinuousReadWriteVirtualMemory.ByteSequenceView view) {
+public interface CRMemory extends ContinuousMemory, ReadMemory {
+    default BinarySequence getBin(long offset, ByteSequenceView view) {
         final long addr = addressOf(offset);
         final long len = Unsafe.getUnsafe().getLong(addr);
         if (len > -1) {
@@ -68,6 +69,10 @@ public interface ContinuousReadOnlyMemory extends ReadOnlyVirtualMemory {
         return Unsafe.getUnsafe().getLong(addressOf(offset));
     }
 
+    default long getPageSize() {
+        return size();
+    }
+
     default short getShort(long offset) {
         return Unsafe.getUnsafe().getShort(addressOf(offset));
     }
@@ -98,10 +103,10 @@ public interface ContinuousReadOnlyMemory extends ReadOnlyVirtualMemory {
         sink.setLong3(Unsafe.getUnsafe().getLong(addr - Long.BYTES));
     }
 
-    default CharSequence getStr(long offset, ContinuousReadWriteVirtualMemory.CharSequenceView view) {
+    default CharSequence getStr(long offset, CharSequenceView view) {
         long addr = addressOf(offset);
         final int len = Unsafe.getUnsafe().getInt(addr);
-        if (len != TableUtils.NULL_LEN ) {
+        if (len != TableUtils.NULL_LEN) {
             if (len + 4 + offset <= size()) {
                 return view.of(addr + VmUtils.STRING_LENGTH_BYTES, len);
             }
@@ -157,9 +162,5 @@ public interface ContinuousReadOnlyMemory extends ReadOnlyVirtualMemory {
             this.len = len;
             return this;
         }
-    }
-
-    default long getPageSize() {
-        return size();
     }
 }

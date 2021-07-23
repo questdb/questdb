@@ -28,8 +28,8 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.SymbolMapReaderImpl;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.SymbolTable;
-import io.questdb.cairo.vm.ContinuousMappedReadOnlyMemory;
-import io.questdb.cairo.vm.MappedReadOnlyMemory;
+import io.questdb.cairo.vm.CMRMemoryImpl;
+import io.questdb.cairo.vm.api.MRMemory;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.ObjIntHashMap;
 import io.questdb.std.str.Path;
@@ -38,22 +38,22 @@ import java.io.Closeable;
 
 class SymbolCache implements Closeable {
     private final ObjIntHashMap<CharSequence> indexBySym = new ObjIntHashMap<>(256, 0.5, SymbolTable.VALUE_NOT_FOUND);
-    private final MappedReadOnlyMemory txMem = new ContinuousMappedReadOnlyMemory();
+    private final MRMemory txMem = new CMRMemoryImpl();
     private final SymbolMapReaderImpl symMapReader = new SymbolMapReaderImpl();
     private long transientSymCountOffset;
 
     SymbolCache() {
     }
 
-    void of(CairoConfiguration configuration, Path path, CharSequence name, int symIndex) {
-        FilesFacade ff = configuration.getFilesFacade();
-        transientSymCountOffset = TableUtils.getSymbolWriterTransientIndexOffset(symIndex);
-        final int plen = path.length();
-        txMem.partialFile(ff, path.concat(TableUtils.TXN_FILE_NAME).$(), transientSymCountOffset + Integer.BYTES);
-        int symCount = txMem.getInt(transientSymCountOffset);
-        path.trimTo(plen);
-        symMapReader.of(configuration, path, name, symCount);
-        indexBySym.clear(symCount);
+    @Override
+    public void close() {
+        symMapReader.close();
+        indexBySym.clear();
+        txMem.close();
+    }
+
+    int getNCached() {
+        return indexBySym.size();
     }
 
     int getSymIndex(CharSequence symValue) {
@@ -74,14 +74,14 @@ class SymbolCache implements Closeable {
         return symIndex;
     }
 
-    int getNCached() {
-        return indexBySym.size();
-    }
-
-    @Override
-    public void close() {
-        symMapReader.close();
-        indexBySym.clear();
-        txMem.close();
+    void of(CairoConfiguration configuration, Path path, CharSequence name, int symIndex) {
+        FilesFacade ff = configuration.getFilesFacade();
+        transientSymCountOffset = TableUtils.getSymbolWriterTransientIndexOffset(symIndex);
+        final int plen = path.length();
+        txMem.partialFile(ff, path.concat(TableUtils.TXN_FILE_NAME).$(), transientSymCountOffset + Integer.BYTES);
+        int symCount = txMem.getInt(transientSymCountOffset);
+        path.trimTo(plen);
+        symMapReader.of(configuration, path, name, symCount);
+        indexBySym.clear(symCount);
     }
 }

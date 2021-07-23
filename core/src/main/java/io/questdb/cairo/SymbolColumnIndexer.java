@@ -24,9 +24,9 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.vm.AppendOnlyVirtualMemory;
+import io.questdb.cairo.vm.MAMemoryImpl;
 import io.questdb.cairo.vm.PagedSlidingReadOnlyMemory;
-import io.questdb.cairo.vm.ReadOnlyVirtualMemory;
+import io.questdb.cairo.vm.api.ReadMemory;
 import io.questdb.std.Misc;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
@@ -71,7 +71,7 @@ class SymbolColumnIndexer implements ColumnIndexer, Closeable {
     }
 
     @Override
-    public void index(ReadOnlyVirtualMemory mem, long loRow, long hiRow) {
+    public void index(ReadMemory mem, long loRow, long hiRow) {
         // while we may have to read column starting with zero offset
         // index values have to be adjusted to partition-level row id
         writer.rollbackConditionally(loRow);
@@ -96,7 +96,7 @@ class SymbolColumnIndexer implements ColumnIndexer, Closeable {
             CairoConfiguration configuration,
             Path path,
             CharSequence name,
-            AppendOnlyVirtualMemory columnMem,
+            MAMemoryImpl columnMem,
             long columnTop
     ) {
         this.columnTop = columnTop;

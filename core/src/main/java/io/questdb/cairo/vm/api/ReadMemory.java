@@ -22,13 +22,18 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.vm;
+package io.questdb.cairo.vm.api;
 
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.str.CharSink;
 
-public interface ReadOnlyVirtualMemory {
+import java.io.Closeable;
+
+public interface ReadMemory extends Closeable {
+
+    @Override
+    void close();
 
     BinarySequence getBin(long offset);
 
