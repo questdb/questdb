@@ -2093,7 +2093,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
             }
         }
 
-        completed = maxRows < 0 || rowCount < maxRows;
+        completed = maxRows <= 0 || rowCount < maxRows;
         if (completed) {
             clearCursorAndFactory();
             // at this point buffer can contain unsent data
