@@ -120,6 +120,7 @@ public class RecordSinkFactory {
                     }
                     break;
                 case ColumnType.LONG:
+                case ColumnType.GEOHASH:
                     asm.aload(2);
                     asm.aload(1);
                     asm.iconst(getSkewedIndex(index, skewIndex));

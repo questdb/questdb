@@ -35,7 +35,7 @@ import io.questdb.std.str.CharSink;
 
 public abstract class GeoHashFunction implements ScalarFunction {
 
-    protected int typep = ColumnType.GEOHASH; // +precision
+    protected int typep = ColumnType.GEOHASH; // +number bits
 
     @Override
     public final char getChar(Record rec) {

@@ -53,20 +53,31 @@ public class GeoHashNative {
         for (int i = 0; i < hash.length(); ++i) {
             char c = hash.charAt(i);
             int idx = base32Indexes[(int) c - 48];
-            if (idx < 0) throw new IllegalArgumentException(hash.toString());
+            if (idx < 0) {
+                throw new IllegalArgumentException(hash.toString());
+            }
             for (int bits = 4; bits >= 0; --bits) {
                 output <<= 1;
                 output |= ((idx >> bits) & 1) != 0 ? 1 : 0;
             }
         }
-        return output;
+        return (((long) hash.length()) << 60L) + output;
     }
 
     public static long fromCoordinates(double lat, double lng, int bits) {
-        double minLat = -90,  maxLat = 90;
+        if (lat < -90.0 || lat > 90.0) {
+            throw new IllegalArgumentException("lat range is [-90, 90]");
+        }
+        if (lng < -180.0 || lng > 180.0) {
+            throw new IllegalArgumentException("lat range is [-180, 180]");
+        }
+        if (bits % 5 != 0) {
+            throw new IllegalArgumentException("bits range is [0, 60] and a multiple of 5");
+        }
+        double minLat = -90, maxLat = 90;
         double minLng = -180, maxLng = 180;
         long result = 0;
-        for (int i = 0; i < bits; ++i)
+        for (int i = 0; i < bits; ++i) {
             if (i % 2 == 0) {
                 double midpoint = (minLng + maxLng) / 2;
                 if (lng < midpoint) {
@@ -86,10 +97,14 @@ public class GeoHashNative {
                     minLat = midpoint;
                 }
             }
-        return result;
+        }
+        return ((bits / 5L) << 60L) + result;
     }
 
     public static long fromBitString(CharSequence bits) {
+        if (bits.length() % 5 != 0) {
+            throw new IllegalArgumentException("length must be a multiple of 5 from 0 to 60");
+        }
         long result = 0;
         for (int i = 0; i < bits.length(); i++) {
             char c = bits.charAt(i);
@@ -99,16 +114,23 @@ public class GeoHashNative {
                 result = result << 1;
             }
         }
-        return result;
+        return ((bits.length() / 5L) << 60L) + result;
     }
 
-    public static String toString(long geohashAsLong, int precision) {
+    public static String toString(long hash, int precision) {
+        if (precision < 0 || precision > 12) {
+            throw new IllegalArgumentException("precision range is [0, 12]");
+        }
         char[] chars = new char[precision];
         for (int i = precision - 1; i >= 0; i--) {
-            chars[i] = base32[(int) (geohashAsLong & 31)];
-            geohashAsLong >>= 5;
+            chars[i] = base32[(int) (hash & 31)];
+            hash >>= 5;
         }
         return new String(chars);
+    }
+
+    public static String toString(long hashz) {
+        return toString(hashz, hashSize(hashz));
     }
 
     public static long bitmask(int count, int shift) {
@@ -116,12 +138,12 @@ public class GeoHashNative {
         return ((1L << count) - 1) << shift;
     }
 
-    public static long toHash(long hashWithLength) {
-        return hashWithLength & 0x0fffffffffffffffL;
+    public static long toHash(long hashz) {
+        return hashz & 0x0fffffffffffffffL;
     }
 
-    public static int hashSize(long hashWithLength) {
-        return (int) (hashWithLength >>> 60);
+    public static int hashSize(long hashz) {
+        return (int) (hashz >>> 60);
     }
 
     public static long toHashWithSize(long hash, int length) {
@@ -133,11 +155,11 @@ public class GeoHashNative {
         // skip first (search column name) element
         for (int i = 1, sz = prefixes.size(); i < sz; i++) {
             final CharSequence prefix = prefixes.get(i);
-            final long bits = fromString(prefix);
-            final int length = prefix.length();
-            final int shift = 8 * 5 - length * 5;
-            final long norm = bits << shift;
-            final long mask = bitmask(length * 5, shift);
+            final long hashz = fromString(prefix);
+            final int bits = 5 * (int) (hashz >>> 60);
+            final int shift = 8 * 5 - bits;
+            final long norm = (hashz & 0x0fffffffffffffffL) << shift;
+            final long mask = bitmask(bits, shift);
 
             prefixesBits.add(norm);
             prefixesBits.add(mask);

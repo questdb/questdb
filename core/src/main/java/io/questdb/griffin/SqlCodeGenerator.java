@@ -2428,6 +2428,7 @@ public class SqlCodeGenerator implements Mutable {
             int hashColumnIndex = -1;
             if (prefixes.size() > 1) {
                 CharSequence column = prefixes.get(0);
+                prefixes.remove(column); // TODO: until the appropriate data structure is available
                 hashColumnIndex = reader.getMetadata().getColumnIndexQuiet(column);
             }
 

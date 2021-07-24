@@ -35,9 +35,10 @@ import io.questdb.std.Numbers;
 public class GeoHashConstant extends GeoHashFunction implements ConstantFunction {
     public static final GeoHashConstant NULL = new GeoHashConstant(Numbers.LONG_NaN, ColumnType.GEOHASH);
 
-    private final long hashz; // +size
+    private final long hashz;
 
     public GeoHashConstant(long hashz, int typep) {
+        assert ColumnType.GEOHASH == ColumnType.tagOf(typep);
         this.hashz = hashz;
         this.typep = typep;
     }
@@ -47,12 +48,11 @@ public class GeoHashConstant extends GeoHashFunction implements ConstantFunction
             hashz = Numbers.LONG_NaN;
         } else {
             CharSequence str = value;
-            if (Chars.startsWith(value, '\'') && Chars.endsWith(value,'\'')) {
+            if (Chars.startsWith(value, '\'') && Chars.endsWith(value, '\'')) {
                 str = Chars.toString(value, 1, value.length() - 1);
             }
-            long gh = GeoHashNative.fromString(str);
+            hashz = GeoHashNative.fromString(str);
             typep = GeoHashExtra.setBitsPrecision(ColumnType.GEOHASH, str.length() * 5);
-            hashz = GeoHashNative.toHashWithSize(gh, str.length());
         }
     }
 

@@ -35,6 +35,7 @@ import io.questdb.griffin.engine.functions.catalogue.ShowSearchPathCursorFactory
 import io.questdb.griffin.engine.functions.catalogue.ShowStandardConformingStringsCursorFactory;
 import io.questdb.griffin.engine.functions.catalogue.ShowTimeZoneFactory;
 import io.questdb.griffin.engine.functions.catalogue.ShowTransactionIsolationLevelCursorFactory;
+import io.questdb.griffin.engine.functions.constants.GeoHashConstant;
 import io.questdb.griffin.engine.table.ShowColumnsRecordCursorFactory;
 import io.questdb.griffin.engine.table.TableListRecordCursorFactory;
 import io.questdb.griffin.model.*;
@@ -608,6 +609,11 @@ public class SqlCompiler implements Closeable {
                     asm.invokeInterface(rGetLong256, 1);
                     asm.invokeVirtual(wPutLong256);
                     break;
+                case ColumnType.GEOHASH:
+                    assert toColumnType == ColumnType.GEOHASH;
+                    asm.invokeInterface(rGetLong, 1);
+                    asm.invokeVirtual(wPutLong);
+                    break;
                 default:
                     break;
             }
@@ -654,6 +660,7 @@ public class SqlCompiler implements Closeable {
                 && toTag >= ColumnType.BYTE
                 && toTag <= ColumnType.DOUBLE
                 && fromTag < toTag)
+                || (fromTag == ColumnType.STRING && toTag == ColumnType.GEOHASH) // TODO: add b0101010101010101
                 || (fromTag == ColumnType.STRING && toTag == ColumnType.SYMBOL)
                 || (fromTag == ColumnType.SYMBOL && toTag == ColumnType.STRING)
                 || (fromTag == ColumnType.CHAR && toTag == ColumnType.SYMBOL)
@@ -1729,13 +1736,13 @@ public class SqlCompiler implements Closeable {
                     if (index > -1) {
                         final ExpressionNode node = model.getColumnValues().getQuick(i);
 
-                        final Function function = functionParser.parseFunction(
+                        Function function = functionParser.parseFunction(
                                 node,
                                 GenericRecordMetadata.EMPTY,
                                 executionContext
                         );
 
-                        validateAndConsume(
+                        function = validateAndConsume(
                                 model,
                                 valueFunctions,
                                 metadata,
@@ -2261,7 +2268,7 @@ public class SqlCompiler implements Closeable {
         return compiledQuery.ofTruncate();
     }
 
-    private void validateAndConsume(
+    private Function validateAndConsume(
             InsertModel model,
             ObjList<Function> valueFunctions,
             RecordMetadata metadata,
@@ -2281,11 +2288,24 @@ public class SqlCompiler implements Closeable {
 
         if (isAssignableFrom(columnType, function.getType())) {
             if (metadataColumnIndex == writerTimestampIndex) {
-                return;
+                return function;
             }
-            valueFunctions.add(function);
+            Function f = function;
+            if (ColumnType.GEOHASH == ColumnType.tagOf(columnType)) {
+                assert function.isConstant();
+                if (ColumnType.STRING == ColumnType.tagOf(function.getType())) {
+                    f = GeoHashConstant.newInstance(function.getStr(null));
+                } else {
+                    throw SqlException.position(0)
+                            .put("cannot cast ")
+                            .put(ColumnType.nameOf(function.getType()))
+                            .put(" to ")
+                            .put(ColumnType.nameOf(ColumnType.GEOHASH));
+                }
+            }
+            valueFunctions.add(f);
             listColumnFilter.add(metadataColumnIndex + 1);
-            return;
+            return f;
         }
 
         throw SqlException.inconvertibleTypes(

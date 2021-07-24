@@ -75,9 +75,9 @@ public class CastStrToGeoHashFunctionFactory implements FunctionFactory {
                 return Numbers.LONG_NaN;
             }
             try {
-                long hash = GeoHashNative.fromString(value);
+                long hashz = GeoHashNative.fromString(value);
                 typep = GeoHashExtra.setBitsPrecision(ColumnType.GEOHASH, value.length() * 5);
-                return GeoHashNative.toHashWithSize(hash, value.length());
+                return hashz;
             } catch (IllegalArgumentException e) {
                 return Numbers.LONG_NaN;
             }
