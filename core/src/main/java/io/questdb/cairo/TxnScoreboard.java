@@ -38,8 +38,8 @@ public class TxnScoreboard implements Closeable {
 
     private static final Log LOG = LogFactory.getLog(TxnScoreboard.class);
 
-    private final long fd;
-    private final long mem;
+    private long fd ;
+    private long mem;
     private final long size;
     private final FilesFacade ff;
 
@@ -79,8 +79,15 @@ public class TxnScoreboard implements Closeable {
 
     @Override
     public void close() {
-        ff.munmap(mem, size);
-        ff.close(fd);
+        if (mem != 0) {
+            ff.munmap(mem, size);
+            mem = 0;
+        }
+
+        if (fd != -1) {
+            ff.close(fd);
+            fd = -1;
+        }
     }
 
     public long getActiveReaderCount(long txn) {

@@ -139,6 +139,7 @@ public class SymbolMapWriter implements Closeable {
         int plen = path.length();
         try {
             mem.wholeFile(ff, offsetFileName(path.trimTo(plen), columnName));
+            mem.jumpTo(0);
             mem.putInt(symbolCapacity);
             mem.putBool(symbolCacheFlag);
             mem.jumpTo(HEADER_SIZE);
@@ -148,7 +149,7 @@ public class SymbolMapWriter implements Closeable {
                 throw CairoException.instance(ff.errno()).put("Cannot create ").put(path);
             }
 
-            mem.wholeFile(ff, BitmapIndexUtils.keyFileName(path.trimTo(plen), columnName));
+            mem.smallFile(ff, BitmapIndexUtils.keyFileName(path.trimTo(plen), columnName));
             BitmapIndexWriter.initKeyMemory(mem, TableUtils.MIN_INDEX_VALUE_BLOCK_SIZE);
             ff.touch(BitmapIndexUtils.valueFileName(path.trimTo(plen), columnName));
         } finally {

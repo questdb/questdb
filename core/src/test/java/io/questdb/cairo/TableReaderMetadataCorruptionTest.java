@@ -210,6 +210,7 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
                 try (TableReaderMetadata metadata = new TableReaderMetadata(FilesFacadeImpl.INSTANCE, path)) {
                     try (CMARWMemory mem = new CMARWMemoryImpl()) {
                         mem.smallFile(FilesFacadeImpl.INSTANCE, path);
+                        mem.jumpTo(0);
                         mem.putInt(columnCount);
                         mem.skip(len - 4);
                     }

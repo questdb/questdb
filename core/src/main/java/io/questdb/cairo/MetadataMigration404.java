@@ -90,6 +90,7 @@ public class MetadataMigration404 {
         path1.concat("_meta.1").$();
 
         appendMem.smallFile(ff, path1);
+        appendMem.jumpTo(0);
 
         // column count
         final int columnCount = roMem.getInt(0);

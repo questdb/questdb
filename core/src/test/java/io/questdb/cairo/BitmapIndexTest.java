@@ -1043,6 +1043,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
     public void testWriterConstructorIncorrectValueCount() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (AppendMemory mem = openKey()) {
+                mem.jumpTo(0);
                 mem.putByte(BitmapIndexUtils.SIGNATURE);
                 mem.skip(9);
                 mem.putLong(1000);
@@ -1146,7 +1147,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
             new BitmapIndexWriter(configuration, path.trimTo(plen), "x");
             Assert.fail();
         } catch (CairoException e) {
-            Assert.assertTrue(Chars.contains(e.getMessage(), contains));
+            TestUtils.assertContains(e.getFlyweightMessage(), contains);
         }
     }
 
@@ -1161,6 +1162,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
 
     private void setupIndexHeader() {
         try (AppendMemory mem = openKey()) {
+            mem.jumpTo(0);
             mem.putByte(BitmapIndexUtils.SIGNATURE);
             mem.putLong(10); // sequence
             mem.putLong(0); // value mem size

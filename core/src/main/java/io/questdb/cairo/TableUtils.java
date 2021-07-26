@@ -160,6 +160,7 @@ public final class TableUtils {
         final long dirFd = !ff.isRestrictedFileSystem() ? TableUtils.openRO(ff, path.$(), LOG) : 0;
         try (MARWMemory mem = memory) {
             mem.smallFile(ff, path.trimTo(rootLen).concat(META_FILE_NAME).$());
+            mem.jumpTo(0);
             final int count = structure.getColumnCount();
             path.trimTo(rootLen);
             mem.putInt(count);
@@ -468,6 +469,7 @@ public final class TableUtils {
 
     public static void resetTodoLog(FilesFacade ff, Path path, int rootLen, MARWMemory mem) {
         mem.smallFile(ff, path.trimTo(rootLen).concat(TODO_FILE_NAME).$());
+        mem.jumpTo(0);
         mem.putLong(24, 0); // txn check
         Unsafe.getUnsafe().storeFence();
         mem.putLong(8, 0); // hashLo
@@ -781,6 +783,7 @@ public final class TableUtils {
                 if (!ff.exists(path) || ff.remove(path)) {
                     try {
                         mem.smallFile(ff, path);
+                        mem.jumpTo(0);
                         return index;
                     } catch (CairoException e) {
                         // right, cannot open file for some reason?

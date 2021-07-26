@@ -28,7 +28,6 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.vm.CARWMemoryImpl;
 import io.questdb.cairo.vm.CMARWMemoryImpl;
-import io.questdb.cairo.vm.PMAMemoryImpl;
 import io.questdb.cairo.vm.api.CMARWMemory;
 import io.questdb.cairo.vm.api.MARMemory;
 import io.questdb.log.Log;
@@ -511,30 +510,6 @@ public class TableWriterTest extends AbstractCairoTest {
             @Override
             public boolean remove(LPSZ name) {
                 return !Chars.contains(name, TableUtils.META_SWAP_FILE_NAME) && super.remove(name);
-            }
-        });
-    }
-
-    @Test
-    public void testAddColumnSwpFileMapFail() throws Exception {
-        testAddColumnRecoverableFault(new FilesFacadeImpl() {
-            long fd = -1;
-
-            @Override
-            public long mmap(long fd, long len, long offset, int flags) {
-                if (fd == this.fd) {
-                    this.fd = -1;
-                    return -1;
-                }
-                return super.mmap(fd, len, offset, flags);
-            }
-
-            @Override
-            public long openRW(LPSZ name) {
-                if (Chars.endsWith(name, TableUtils.META_SWAP_FILE_NAME)) {
-                    return fd = super.openRW(name);
-                }
-                return super.openRW(name);
             }
         });
     }
@@ -1920,39 +1895,6 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRemoveColumnCannotMMapSwap() throws Exception {
-        class X extends TestFilesFacade {
-
-            long fd = -1;
-            boolean hit = false;
-
-            @Override
-            public long mmap(long fd, long len, long offset, int flags) {
-                if (fd == this.fd) {
-                    this.fd = -1;
-                    this.hit = true;
-                    return -1;
-                }
-                return super.mmap(fd, len, offset, flags);
-            }
-
-            @Override
-            public long openRW(LPSZ name) {
-                if (Chars.endsWith(name, TableUtils.META_SWAP_FILE_NAME)) {
-                    return fd = super.openRW(name);
-                }
-                return super.openRW(name);
-            }
-
-            @Override
-            public boolean wasCalled() {
-                return hit;
-            }
-        }
-        testRemoveColumnRecoverableFailure(new X());
-    }
-
-    @Test
     public void testRemoveColumnCannotOpenSwap() throws Exception {
         class X extends TestFilesFacade {
 
@@ -2208,39 +2150,6 @@ public class TableWriterTest extends AbstractCairoTest {
             CairoTestUtils.create(model);
             testRenameColumn(model);
         }
-    }
-
-    @Test
-    public void testRenameColumnCannotMMapSwap() throws Exception {
-        class X extends TestFilesFacade {
-
-            long fd = -1;
-            boolean hit = false;
-
-            @Override
-            public long mmap(long fd, long len, long offset, int flags) {
-                if (fd == this.fd) {
-                    this.fd = -1;
-                    this.hit = true;
-                    return -1;
-                }
-                return super.mmap(fd, len, offset, flags);
-            }
-
-            @Override
-            public long openRW(LPSZ name) {
-                if (Chars.endsWith(name, TableUtils.META_SWAP_FILE_NAME)) {
-                    return fd = super.openRW(name);
-                }
-                return super.openRW(name);
-            }
-
-            @Override
-            public boolean wasCalled() {
-                return hit;
-            }
-        }
-        testRenameColumnRecoverableFailure(new X());
     }
 
     @Test
