@@ -834,6 +834,8 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             case ColumnType.LONG:
             case ColumnType.DATE:
             case ColumnType.DOUBLE:
+                copyFixedSizeCol(srcOooFixAddr, srcOooLo, srcOooHi, dstFixAddr, 3);
+                break;
             case ColumnType.TIMESTAMP:
                 final boolean designated = TimestampExtra.isDesignated(columnType);
                 if (designated) {
@@ -844,6 +846,10 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                 break;
             case ColumnType.LONG256:
                 copyFixedSizeCol(srcOooFixAddr, srcOooLo, srcOooHi, dstFixAddr, 5);
+                break;
+            case ColumnType.GEOHASH:
+                final int pow2SizeOf = ColumnType.pow2SizeOf(columnType);
+                copyFixedSizeCol(srcOooFixAddr, srcOooLo, srcOooHi, dstFixAddr, pow2SizeOf);
                 break;
             default:
                 // we have exhausted all supported types in "case" clauses
@@ -942,6 +948,8 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             case ColumnType.DOUBLE:
             case ColumnType.LONG:
             case ColumnType.DATE:
+                Vect.mergeShuffle64Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, mergeIndexAddr, rowCount);
+                break;
             case ColumnType.TIMESTAMP:
                 final boolean designated = TimestampExtra.isDesignated(columnType);
                 if (designated) {
@@ -952,6 +960,21 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                 break;
             case ColumnType.LONG256:
                 Vect.mergeShuffle256Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, mergeIndexAddr, rowCount);
+                break;
+            case ColumnType.GEOHASH:
+                switch (ColumnType.sizeOf(columnType)) {
+                    case 1:
+                        Vect.mergeShuffle8Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, mergeIndexAddr, rowCount);
+                        break;
+                    case 2:
+                        Vect.mergeShuffle16Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, mergeIndexAddr, rowCount);
+                        break;
+                    case 4:
+                        Vect.mergeShuffle32Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, mergeIndexAddr, rowCount);
+                        break;
+                    default:
+                        Vect.mergeShuffle64Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, mergeIndexAddr, rowCount);
+                }
                 break;
             default:
                 break;

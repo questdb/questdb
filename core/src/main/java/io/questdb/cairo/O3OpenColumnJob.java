@@ -2549,6 +2549,21 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 // Long256 is null when all 4 longs are NaNs
                 Vect.setMemoryLong(addr, Numbers.LONG_NaN, count * 4);
                 break;
+            case ColumnType.GEOHASH:
+                switch (ColumnType.sizeOf(columnType)) {
+                    case 1:
+                        Vect.memset(addr, count, 0);
+                        break;
+                    case 2:
+                        Vect.setMemoryShort(addr, (short) 0, count);
+                        break;
+                    case 4:
+                        Vect.setMemoryInt(addr, Numbers.INT_NaN, count);
+                        break;
+                    default:
+                        Vect.setMemoryLong(addr, Numbers.LONG_NaN, count);
+                }
+                break;
             default:
                 break;
         }
