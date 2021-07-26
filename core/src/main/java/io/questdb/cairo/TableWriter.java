@@ -92,7 +92,7 @@ public class TableWriter implements Closeable {
     private final LongList columnTops;
     private final FilesFacade ff;
     private final DateFormat partitionDirFmt;
-    private final MAMemory ddlMem;
+    private final MARMemory ddlMem;
     private final int mkDirMode;
     private final int fileOperationRetryCount;
     private final CharSequence tableName;
@@ -164,6 +164,7 @@ public class TableWriter implements Closeable {
     private final O3ColumnUpdateMethod o3MoveUncommittedRef = this::o3MoveUncommitted0;
     private long lastPartitionTimestamp;
     private boolean o3InError = false;
+    private final MRMemory indexMem = new CMRMemoryImpl();
 
     public TableWriter(CairoConfiguration configuration, CharSequence tableName) {
         this(configuration, tableName, new MessageBusImpl(configuration));
@@ -2015,6 +2016,7 @@ public class TableWriter implements Closeable {
         Misc.free(blockWriter);
         Misc.free(metaMem);
         Misc.free(ddlMem);
+        Misc.free(indexMem);
         Misc.free(other);
         Misc.free(todoMem);
         try {
@@ -2190,10 +2192,6 @@ public class TableWriter implements Closeable {
         return symbolMapWriters.getQuick(columnIndex);
     }
 
-    int getTxPartitionCount() {
-        return txFile.getAppendedPartitionCount();
-    }
-
     private boolean hasO3() {
         return o3MasterRef > -1 && getO3RowCount() > 0;
     }
@@ -2203,10 +2201,7 @@ public class TableWriter implements Closeable {
         if (ts > Numbers.LONG_NaN) {
             final long maxTimestamp = timestampFloorMethod.floor(ts);
             long timestamp = txFile.getMinTimestamp();
-
-            //noinspection TryFinallyCanBeTryWithResources
-            // todo: reuse memory
-            try (final MRMemory roMem = new CMRMemoryImpl()) {
+            try (final MRMemory roMem = indexMem) {
 
                 while (timestamp < maxTimestamp) {
 

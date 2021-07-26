@@ -27,6 +27,7 @@ package io.questdb.cairo.vm;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.vm.api.CARWMemory;
 import io.questdb.cairo.vm.api.CMARWMemory;
+import io.questdb.cairo.vm.api.MARMemory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
@@ -34,7 +35,7 @@ import io.questdb.std.str.LPSZ;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-public class CMARWMemoryImpl extends AbstractCRMemory implements CMARWMemory, CARWMemory {
+public class CMARWMemoryImpl extends AbstractCRMemory implements CMARWMemory, CARWMemory, MARMemory {
     private static final Log LOG = LogFactory.getLog(CMARWMemoryImpl.class);
     private final Long256Acceptor long256Acceptor = this::putLong256;
     private long appendAddress = 0;
