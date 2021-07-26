@@ -24,8 +24,8 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.vm.MAMemoryImpl;
 import io.questdb.cairo.vm.PagedSlidingReadOnlyMemory;
+import io.questdb.cairo.vm.api.MAMemory;
 import io.questdb.cairo.vm.api.ReadMemory;
 import io.questdb.std.Misc;
 import io.questdb.std.Unsafe;
@@ -96,7 +96,7 @@ class SymbolColumnIndexer implements ColumnIndexer, Closeable {
             CairoConfiguration configuration,
             Path path,
             CharSequence name,
-            MAMemoryImpl columnMem,
+            MAMemory columnMem,
             long columnTop
     ) {
         this.columnTop = columnTop;

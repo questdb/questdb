@@ -25,7 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.vm.CMRMemoryImpl;
-import io.questdb.cairo.vm.MAMemoryImpl;
+import io.questdb.cairo.vm.PMAMemoryImpl;
 import io.questdb.cairo.vm.api.MRMemory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -71,7 +71,7 @@ public class MetadataMigration404 {
         typeMapping.extendAndSet(LONG256, ColumnType.LONG256);
     }
 
-    public static void convert(FilesFacade ff, Path path1, Path path2, MAMemoryImpl appendMem, MRMemory roMem) {
+    public static void convert(FilesFacade ff, Path path1, Path path2, PMAMemoryImpl appendMem, MRMemory roMem) {
         final int plen = path1.length();
         path1.concat(TableUtils.META_FILE_NAME).$();
 
@@ -79,7 +79,7 @@ public class MetadataMigration404 {
             return;
         }
 
-        roMem.wholeFile(ff, path1);
+        roMem.smallFile(ff, path1);
 
         if (roMem.getInt(12) == ColumnType.VERSION) {
             LOG.error().$("already up to date ").$(path1).$();
@@ -89,7 +89,7 @@ public class MetadataMigration404 {
         path1.trimTo(plen);
         path1.concat("_meta.1").$();
 
-        appendMem.wholeFile(ff, path1);
+        appendMem.smallFile(ff, path1);
 
         // column count
         final int columnCount = roMem.getInt(0);
@@ -145,7 +145,7 @@ public class MetadataMigration404 {
     public static void main(String[] args) {
         try (
                 final MRMemory roMem = new CMRMemoryImpl();
-                final MAMemoryImpl appendMem = new MAMemoryImpl();
+                final PMAMemoryImpl appendMem = new PMAMemoryImpl();
                 final Path path1 = new Path();
                 final Path path2 = new Path()
         ) {

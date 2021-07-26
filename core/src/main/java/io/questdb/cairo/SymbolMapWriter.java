@@ -84,7 +84,7 @@ public class SymbolMapWriter implements Closeable {
 
             // open "offset" memory and make sure we start appending from where
             // we left off. Where we left off is stored externally to symbol map
-            this.offsetMem = new CMARWMemoryImpl(ff, path, mapPageSize, Long.MAX_VALUE);
+            this.offsetMem = CMARWMemoryImpl.whole(ff, path, mapPageSize);
             final int symbolCapacity = offsetMem.getInt(HEADER_CAPACITY);
             final boolean useCache = offsetMem.getBool(HEADER_CACHE_ENABLED);
             this.offsetMem.jumpTo(keyToOffset(symbolCount));
@@ -93,7 +93,7 @@ public class SymbolMapWriter implements Closeable {
             this.indexWriter = new BitmapIndexWriter(configuration, path.trimTo(plen), name);
 
             // this is the place where symbol values are stored
-            this.charMem = new CMARWMemoryImpl(ff, charFileName(path.trimTo(plen), name), mapPageSize, Long.MAX_VALUE);
+            this.charMem = CMARWMemoryImpl.whole(ff, charFileName(path.trimTo(plen), name), mapPageSize);
 
             // move append pointer for symbol values in the correct place
             jumpCharMemToSymbolCount(symbolCount);

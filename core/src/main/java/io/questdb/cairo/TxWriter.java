@@ -149,7 +149,7 @@ public final class TxWriter extends TxReader implements Closeable {
     protected CMRMemory openTxnFile(FilesFacade ff, Path path, int rootLen) {
         try {
             if (ff.exists(path.concat(TXN_FILE_NAME).$())) {
-                return txMem = new CMARWMemoryImpl(ff, path, ff.getPageSize(), Long.MAX_VALUE);
+                return txMem = CMARWMemoryImpl.small(ff, path);
             }
             throw CairoException.instance(ff.errno()).put("Cannot append. File does not exist: ").put(path);
 

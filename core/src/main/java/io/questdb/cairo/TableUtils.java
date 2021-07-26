@@ -159,7 +159,7 @@ public final class TableUtils {
 
         final long dirFd = !ff.isRestrictedFileSystem() ? TableUtils.openRO(ff, path.$(), LOG) : 0;
         try (MARWMemory mem = memory) {
-            mem.wholeFile(ff, path.trimTo(rootLen).concat(META_FILE_NAME).$());
+            mem.smallFile(ff, path.trimTo(rootLen).concat(META_FILE_NAME).$());
             final int count = structure.getColumnCount();
             path.trimTo(rootLen);
             mem.putInt(count);
@@ -205,7 +205,7 @@ public final class TableUtils {
                     symbolMapCount++;
                 }
             }
-            mem.wholeFile(ff, path.trimTo(rootLen).concat(TXN_FILE_NAME).$());
+            mem.smallFile(ff, path.trimTo(rootLen).concat(TXN_FILE_NAME).$());
             TableUtils.resetTxn(mem, symbolMapCount, 0L, INITIAL_TXN, 0L);
             resetTodoLog(ff, path, rootLen, mem);
             // allocate txn scoreboard
@@ -467,7 +467,7 @@ public final class TableUtils {
     }
 
     public static void resetTodoLog(FilesFacade ff, Path path, int rootLen, MARWMemory mem) {
-        mem.wholeFile(ff, path.trimTo(rootLen).concat(TODO_FILE_NAME).$());
+        mem.smallFile(ff, path.trimTo(rootLen).concat(TODO_FILE_NAME).$());
         mem.putLong(24, 0); // txn check
         Unsafe.getUnsafe().storeFence();
         mem.putLong(8, 0); // hashLo

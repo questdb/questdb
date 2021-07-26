@@ -30,7 +30,7 @@ public class ExtendedOnePageMemoryTest {
         try (CMRMemoryImpl mem = new CMRMemoryImpl()) {
             FILE_MAP_FAIL.set(true);
             try {
-                mem.wholeFile(ff, path);
+                mem.smallFile(ff, path);
                 Assert.fail();
             } catch (CairoException ex) {
                 TestUtils.assertContains(ex.getFlyweightMessage(), "could not mmap");

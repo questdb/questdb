@@ -24,7 +24,8 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.vm.PagedMappedReadWriteMemory;
+import io.questdb.cairo.vm.CMARWMemoryImpl;
+import io.questdb.cairo.vm.api.CMARWMemory;
 import io.questdb.griffin.AbstractGriffinTest;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
@@ -455,7 +456,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
 
             long fileSize = ff.length(fd);
             ff.close(fd);
-            try (PagedMappedReadWriteMemory rwTx = new PagedMappedReadWriteMemory(ff, path.$(), fileSize)) {
+            try (CMARWMemory rwTx = CMARWMemoryImpl.whole(ff, path.$())) {
                 rwTx.putInt(META_OFFSET_MAX_UNCOMMITTED_ROWS, 0);
                 rwTx.putLong(META_OFFSET_COMMIT_LAG, 0);
                 rwTx.jumpTo(fileSize);
@@ -476,7 +477,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
 
             long fileSize = ff.length(fd);
             ff.close(fd);
-            try (PagedMappedReadWriteMemory rwTx = new PagedMappedReadWriteMemory(ff, path.$(), fileSize)) {
+            try (CMARWMemory rwTx = CMARWMemoryImpl.whole(ff, path.$())) {
                 if (rwTx.getInt(META_OFFSET_VERSION) > version - 1) {
                     rwTx.putInt(META_OFFSET_VERSION, version - 1);
                     rwTx.jumpTo(fileSize);
@@ -490,7 +491,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
     private void downgradeUpdateFileTo(FilesFacade ff, Path path) {
         path.trimTo(0).concat(root).concat(UPGRADE_FILE_NAME);
         if (ff.exists(path.$())) {
-            try (PagedMappedReadWriteMemory rwTx = new PagedMappedReadWriteMemory(ff, path.$(), 8)) {
+            try (CMARWMemory rwTx = CMARWMemoryImpl.small(ff, path.$())) {
                 rwTx.putInt(0, EngineMigration.VERSION_TBL_META_COMMIT_LAG - 1);
                 rwTx.jumpTo(Integer.BYTES);
             }
@@ -595,7 +596,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
             }
 
             path.trimTo(0).concat(root).concat(src.getName()).concat(TXN_FILE_NAME);
-            try (PagedMappedReadWriteMemory rwTx = new PagedMappedReadWriteMemory(ff, path.$(), ff.getPageSize())) {
+            try (CMARWMemory rwTx = CMARWMemoryImpl.small(ff, path.$())) {
                 rwTx.putInt(TX_STRUCT_UPDATE_1_OFFSET_MAP_WRITER_COUNT, symbolCounts.size());
                 rwTx.jumpTo(TX_STRUCT_UPDATE_1_OFFSET_MAP_WRITER_COUNT + 4);
 
@@ -628,8 +629,9 @@ public class EngineMigrationTest extends AbstractGriffinTest {
                     if (ff.exists(path.$())) {
                         ff.remove(path);
                     }
-                    try (PagedMappedReadWriteMemory rwAr = new PagedMappedReadWriteMemory(ff, path.$(), 8)) {
+                    try (CMARWMemory rwAr = CMARWMemoryImpl.small(ff, path.$())) {
                         rwAr.putLong(partitionSize);
+                        rwAr.jumpTo(8);
                     }
                 }
             }

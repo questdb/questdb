@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.vm.api;
 
+import io.questdb.cairo.TableUtils;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.str.LPSZ;
 
@@ -44,6 +45,12 @@ public interface MappedMemory extends Closeable {
 
     default boolean isDeleted() {
         return !getFilesFacade().exists(getFd());
+    }
+
+    boolean isMapped(long offset, long len);
+
+    default void allocate(long size) {
+        TableUtils.allocateDiskSpace(getFilesFacade(), getFd(), size);
     }
 
     /**

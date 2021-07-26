@@ -26,10 +26,11 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.vm.CMARWMemoryImpl;
-import io.questdb.cairo.vm.MAMemoryImpl;
-import io.questdb.cairo.vm.PagedMappedReadWriteMemory;
+import io.questdb.cairo.vm.PMAMemoryImpl;
 import io.questdb.cairo.vm.PagedSlidingReadOnlyMemory;
+import io.questdb.cairo.vm.api.AppendMemory;
 import io.questdb.cairo.vm.api.CMARWMemory;
+import io.questdb.cairo.vm.api.MARMemory;
 import io.questdb.griffin.engine.functions.geohash.GeoHashNative;
 import io.questdb.griffin.engine.table.LatestByArguments;
 import io.questdb.std.*;
@@ -54,7 +55,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
         int plen = path.length();
         try {
             FilesFacade ff = configuration.getFilesFacade();
-            try (MAMemoryImpl mem = new MAMemoryImpl(ff, BitmapIndexUtils.keyFileName(path, name), ff.getPageSize())) {
+            try (AppendMemory mem = CMARWMemoryImpl.small(ff, BitmapIndexUtils.keyFileName(path, name))) {
                 BitmapIndexWriter.initKeyMemory(mem, Numbers.ceilPow2(valueBlockCapacity));
             }
             ff.touch(BitmapIndexUtils.valueFileName(path.trimTo(plen), name));
@@ -224,7 +225,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
     @Test
     public void testBackwardReaderConstructorBadSig() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (MAMemoryImpl mem = openKey()) {
+            try (AppendMemory mem = openKey()) {
                 mem.skip(BitmapIndexUtils.KEY_FILE_RESERVED);
             }
             assertBackwardReaderConstructorFail("Unknown format");
@@ -314,11 +315,9 @@ public class BitmapIndexTest extends AbstractCairoTest {
 
             try (
                     Path path = new Path();
-                    CMARWMemory mem = new CMARWMemoryImpl(
+                    CMARWMemory mem = CMARWMemoryImpl.small(
                             configuration.getFilesFacade(),
-                            path.of(root).concat("x").put(".k").$(),
-                            configuration.getFilesFacade().getPageSize(),
-                            Long.MAX_VALUE
+                            path.of(root).concat("x").put(".k").$()
                     )
             ) {
                 // change sequence but not sequence check
@@ -624,7 +623,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
                 try (CMARWMemory mem = new CMARWMemoryImpl()) {
                     try (Path path = new Path()) {
                         path.of(configuration.getRoot()).concat("x").put(".k").$();
-                        mem.wholeFile(configuration.getFilesFacade(), path);
+                        mem.smallFile(configuration.getFilesFacade(), path);
                     }
 
                     long offset = BitmapIndexUtils.getKeyEntryOffset(0);
@@ -715,11 +714,9 @@ public class BitmapIndexTest extends AbstractCairoTest {
 
             try (
                     Path path = new Path();
-                    CMARWMemory mem = new CMARWMemoryImpl(
+                    CMARWMemory mem = CMARWMemoryImpl.small(
                             configuration.getFilesFacade(),
-                            path.of(root).concat("x").put(".k").$(),
-                            configuration.getFilesFacade().getPageSize(),
-                            Long.MAX_VALUE
+                            path.of(root).concat("x").put(".k").$()
                     )
             ) {
                 // change sequence but not sequence check
@@ -774,9 +771,9 @@ public class BitmapIndexTest extends AbstractCairoTest {
         int N = 100000000;
         final int MOD = 1024;
         TestUtils.assertMemoryLeak(() -> {
-            try (MAMemoryImpl mem = new MAMemoryImpl()) {
+            try (MARMemory mem = new PMAMemoryImpl()) {
 
-                mem.of(configuration.getFilesFacade(), path.concat("x.dat").$(), configuration.getFilesFacade().getMapPageSize());
+                mem.wholeFile(configuration.getFilesFacade(), path.concat("x.dat").$());
 
                 for (int i = 0; i < N; i++) {
                     mem.putInt(rnd.nextPositiveInt() & (MOD - 1));
@@ -1027,7 +1024,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
     @Test
     public void testWriterConstructorBadSig() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (MAMemoryImpl mem = openKey()) {
+            try (AppendMemory mem = openKey()) {
                 mem.skip(BitmapIndexUtils.KEY_FILE_RESERVED);
             }
             assertWriterConstructorFail("Unknown format");
@@ -1045,7 +1042,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
     @Test
     public void testWriterConstructorIncorrectValueCount() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (MAMemoryImpl mem = openKey()) {
+            try (AppendMemory mem = openKey()) {
                 mem.putByte(BitmapIndexUtils.SIGNATURE);
                 mem.skip(9);
                 mem.putLong(1000);
@@ -1061,7 +1058,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
     @Test
     public void testWriterConstructorKeyMismatch() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (MAMemoryImpl mem = openKey()) {
+            try (AppendMemory mem = openKey()) {
                 mem.putByte(BitmapIndexUtils.SIGNATURE);
                 mem.skip(20);
                 mem.putLong(300);
@@ -1153,14 +1150,17 @@ public class BitmapIndexTest extends AbstractCairoTest {
         }
     }
 
-    private MAMemoryImpl openKey() {
+    private AppendMemory openKey() {
         try (Path path = new Path()) {
-            return new MAMemoryImpl(configuration.getFilesFacade(), path.of(configuration.getRoot()).concat("x").put(".k").$(), configuration.getFilesFacade().getPageSize());
+            return CMARWMemoryImpl.small(
+                    configuration.getFilesFacade(),
+                    path.of(configuration.getRoot()).concat("x").put(".k").$()
+            );
         }
     }
 
     private void setupIndexHeader() {
-        try (MAMemoryImpl mem = openKey()) {
+        try (AppendMemory mem = openKey()) {
             mem.putByte(BitmapIndexUtils.SIGNATURE);
             mem.putLong(10); // sequence
             mem.putLong(0); // value mem size

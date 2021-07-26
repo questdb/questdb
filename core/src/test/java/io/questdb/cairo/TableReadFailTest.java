@@ -26,7 +26,8 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.vm.PagedMappedReadWriteMemory;
+import io.questdb.cairo.vm.CMARWMemoryImpl;
+import io.questdb.cairo.vm.api.CMARWMemory;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
@@ -73,9 +74,11 @@ public class TableReadFailTest extends AbstractCairoTest {
                 CairoTestUtils.create(model);
             }
 
-            try (Path path = new Path();
-                 TableReader reader = new TableReader(configuration, "x");
-                 PagedMappedReadWriteMemory mem = new PagedMappedReadWriteMemory()) {
+            try (
+                    Path path = new Path();
+                    TableReader reader = new TableReader(configuration, "x");
+                    CMARWMemory mem = new CMARWMemoryImpl()
+            ) {
 
                 final Rnd rnd = new Rnd();
                 final int N = 1000;
@@ -109,7 +112,7 @@ public class TableReadFailTest extends AbstractCairoTest {
 
                 Assert.assertEquals(N, count);
 
-                mem.of(configuration.getFilesFacade(), path, configuration.getFilesFacade().getPageSize());
+                mem.smallFile(configuration.getFilesFacade(), path);
 
                 // keep txn file parameters
                 long offset = configuration.getFilesFacade().length(mem.getFd());
@@ -131,7 +134,7 @@ public class TableReadFailTest extends AbstractCairoTest {
 
                 // restore txn file to its former glory
 
-                mem.of(configuration.getFilesFacade(), path, configuration.getFilesFacade().getPageSize());
+                mem.smallFile(configuration.getFilesFacade(), path);
                 mem.jumpTo(TableUtils.TX_OFFSET_TXN);
                 mem.putLong(txn);
                 mem.jumpTo(offset);

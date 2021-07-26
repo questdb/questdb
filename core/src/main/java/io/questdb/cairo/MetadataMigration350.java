@@ -78,7 +78,7 @@ public class MetadataMigration350 {
             return;
         }
 
-        roMem.wholeFile(ff, path1);
+        roMem.smallFile(ff, path1);
 
         if (roMem.getInt(12) == ColumnType.VERSION) {
             LOG.error().$("already up to date ").$(path1).$();

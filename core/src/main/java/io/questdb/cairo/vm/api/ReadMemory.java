@@ -79,6 +79,10 @@ public interface ReadMemory extends Closeable {
 
     long addressOf(long offset);
 
+    long offsetInPage(long offset);
+
+    int pageIndex(long offset);
+
     default long hash0(long offset, long size) {
         long n = size - (size & 7);
         long h = 179426491L;

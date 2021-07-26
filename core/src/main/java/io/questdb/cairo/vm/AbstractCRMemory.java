@@ -44,12 +44,28 @@ public abstract class AbstractCRMemory implements CRMemory {
     protected long lim;
     protected long grownLength;
 
+    @Override
+    public long offsetInPage(long offset) {
+        return offset;
+    }
+
+    @Override
+    public int pageIndex(long offset) {
+        return 0;
+    }
+
     public final BinarySequence getBin(long offset) {
         return getBin(offset, bsview);
     }
 
     @Override
     public long getPageAddress(int pageIndex) {
+        return pageAddress;
+    }
+
+    @Override
+    public long resize(long size) {
+        extend(size);
         return pageAddress;
     }
 

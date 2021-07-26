@@ -26,7 +26,8 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.SymbolMapWriter.TransientSymbolCountChangeHandler;
 import io.questdb.cairo.sql.SymbolTable;
-import io.questdb.cairo.vm.PagedMappedReadWriteMemory;
+import io.questdb.cairo.vm.CMARWMemoryImpl;
+import io.questdb.cairo.vm.api.CMARWMemory;
 import io.questdb.std.Chars;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
@@ -42,7 +43,12 @@ public class SymbolMapTest extends AbstractCairoTest {
     public static void create(Path path, CharSequence name, int symbolCapacity, boolean useCache) {
         int plen = path.length();
         try {
-            try (PagedMappedReadWriteMemory mem = new PagedMappedReadWriteMemory(configuration.getFilesFacade(), path.concat(name).put(".o").$(), configuration.getFilesFacade().getMapPageSize())) {
+            try (
+                    CMARWMemory mem = CMARWMemoryImpl.small(
+                            configuration.getFilesFacade(),
+                            path.concat(name).put(".o").$()
+                    )
+            ) {
                 mem.putInt(symbolCapacity);
                 mem.putBool(useCache);
                 mem.jumpTo(SymbolMapWriter.HEADER_SIZE);

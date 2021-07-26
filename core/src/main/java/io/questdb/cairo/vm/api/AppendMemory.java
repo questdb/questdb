@@ -32,7 +32,6 @@ import java.io.Closeable;
 
 public interface AppendMemory extends Closeable {
 
-
     long appendAddressFor(long bytes);
 
     @Override
@@ -87,4 +86,6 @@ public interface AppendMemory extends Closeable {
     long getAppendOffset();
 
     void truncate();
+
+    long getExtendSegmentSize();
 }

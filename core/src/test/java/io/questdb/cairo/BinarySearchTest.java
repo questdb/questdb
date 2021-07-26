@@ -24,8 +24,11 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.vm.MAMemoryImpl;
+import io.questdb.cairo.vm.CMARWMemoryImpl;
 import io.questdb.cairo.vm.CMRMemoryImpl;
+import io.questdb.cairo.vm.api.AppendMemory;
+import io.questdb.cairo.vm.api.CMARWMemory;
+import io.questdb.cairo.vm.api.MAMemory;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
@@ -36,55 +39,57 @@ import org.junit.Test;
 public class BinarySearchTest extends AbstractCairoTest {
 
     @Test
-    public void testFindForward1() {
+    public void testFindForward1() throws Exception {
         testColumnFindForward(1, 24, 113, BinarySearch.SCAN_DOWN);
     }
 
     @Test
-    public void testFindForward1Even() {
+    public void testFindForward1Even() throws Exception {
         testColumnFindForward(1, 20, 21, BinarySearch.SCAN_DOWN);
     }
 
     @Test
-    public void testFindForward1Odd() {
+    public void testFindForward1Odd() throws Exception {
         testColumnFindForward(1, 21, 21, BinarySearch.SCAN_DOWN);
     }
 
     @Test
-    public void testFindForward2() {
+    public void testFindForward2() throws Exception {
         testColumnFindForward(2, 140, 141, BinarySearch.SCAN_DOWN);
     }
 
     @Test
-    public void testFindForward3() {
+    public void testFindForward3() throws Exception {
         testColumnFindForward(3, 20, 100, BinarySearch.SCAN_DOWN);
     }
 
     @Test
-    public void testFindForwardBeforeRange() {
-        try (Path path = new Path()) {
-            path.of(root).concat("binsearch.d").$();
-            try (MAMemoryImpl appendMem = new MAMemoryImpl(FilesFacadeImpl.INSTANCE, path, 4096)) {
-                for (int i = 0; i < 100; i++) {
-                    for (int j = 0; j < 3; j++) {
-                        appendMem.putLong(i);
+    public void testFindForwardBeforeRange() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = new Path()) {
+                path.of(root).concat("binsearch.d").$();
+                try (CMARWMemory appendMem = CMARWMemoryImpl.small(FilesFacadeImpl.INSTANCE, path)) {
+                    for (int i = 0; i < 100; i++) {
+                        for (int j = 0; j < 3; j++) {
+                            appendMem.putLong(i);
+                        }
+                    }
+
+                    long max = 100 * 3 - 1;
+                    try (CMRMemoryImpl mem = new CMRMemoryImpl(FilesFacadeImpl.INSTANCE, path, 400 * Long.BYTES)) {
+                        long index = BinarySearch.find(mem, -20, 0, max, BinarySearch.SCAN_DOWN);
+                        Assert.assertEquals(-1, index);
                     }
                 }
-
-                long max = 100 * 3 - 1;
-                try (CMRMemoryImpl mem = new CMRMemoryImpl(FilesFacadeImpl.INSTANCE, path, 400 * Long.BYTES)) {
-                    long index = BinarySearch.find(mem, -20, 0, max, BinarySearch.SCAN_DOWN);
-                    Assert.assertEquals(-1, index);
-                }
             }
-        }
+        });
     }
 
     @Test
     public void testFindForwardTwoValues() {
         try (Path path = new Path()) {
             path.of(root).concat("binsearch.d").$();
-            try (MAMemoryImpl appendMem = new MAMemoryImpl(FilesFacadeImpl.INSTANCE, path, 4096)) {
+            try (MAMemory appendMem = CMARWMemoryImpl.small(FilesFacadeImpl.INSTANCE, path)) {
                 appendMem.putLong(1);
                 appendMem.putLong(3);
 
@@ -96,43 +101,45 @@ public class BinarySearchTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testFindReverse1() {
+    public void testFindReverse1() throws Exception {
         testColumnFindForward(1, 24, 113, BinarySearch.SCAN_UP);
     }
 
     @Test
-    public void testFindReverse1Even() {
+    public void testFindReverse1Even() throws Exception {
         testColumnFindForward(1, 20, 21, BinarySearch.SCAN_UP);
     }
 
     @Test
-    public void testFindReverse1Odd() {
+    public void testFindReverse1Odd() throws Exception {
         testColumnFindForward(1, 21, 21, BinarySearch.SCAN_UP);
     }
 
     @Test
-    public void testFindReverse2() {
+    public void testFindReverse2() throws Exception {
         testColumnFindForward(2, 140, 141, BinarySearch.SCAN_UP);
     }
 
     @Test
-    public void testFindReverse3() {
+    public void testFindReverse3() throws Exception {
         testColumnFindForward(3, 20, 100, BinarySearch.SCAN_UP);
     }
 
     @Test
-    public void testFindReverseTwoValues() {
-        try (Path path = new Path()) {
-            path.of(root).concat("binsearch.d").$();
-            try (MAMemoryImpl appendMem = new MAMemoryImpl(FilesFacadeImpl.INSTANCE, path, 4096)) {
-                appendMem.putLong(1);
-                appendMem.putLong(3);
+    public void testFindReverseTwoValues() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = new Path()) {
+                path.of(root).concat("binsearch.d").$();
+                try (MAMemory appendMem = CMARWMemoryImpl.small(FilesFacadeImpl.INSTANCE, path)) {
+                    appendMem.putLong(1);
+                    appendMem.putLong(3);
 
-                try (CMRMemoryImpl mem = new CMRMemoryImpl(FilesFacadeImpl.INSTANCE, path, 400 * Long.BYTES)) {
-                    Assert.assertEquals(0, BinarySearch.find(mem, 2, 0, 1, BinarySearch.SCAN_UP));
+                    try (CMRMemoryImpl mem = new CMRMemoryImpl(FilesFacadeImpl.INSTANCE, path, 400 * Long.BYTES)) {
+                        Assert.assertEquals(0, BinarySearch.find(mem, 2, 0, 1, BinarySearch.SCAN_UP));
+                    }
                 }
             }
-        }
+        });
     }
 
     @Test
@@ -185,32 +192,39 @@ public class BinarySearchTest extends AbstractCairoTest {
         testMem256Find(3, 20, 100, BinarySearch.SCAN_UP);
     }
 
-    private void testColumnFindForward(long repeatCount, long searchValue, int distinctValueCount, int scanDirection) {
-        try (Path path = new Path()) {
-            path.of(root).concat("binsearch.d").$();
-            try (MAMemoryImpl appendMem = new MAMemoryImpl(FilesFacadeImpl.INSTANCE, path, 4096)) {
-                for (int i = 0; i < distinctValueCount; i++) {
-                    for (int j = 0; j < repeatCount; j++) {
-                        appendMem.putLong(i);
+    private void testColumnFindForward(
+            long repeatCount,
+            long searchValue,
+            int distinctValueCount,
+            int scanDirection
+    ) throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = new Path()) {
+                path.of(root).concat("binsearch.d").$();
+                try (AppendMemory appendMem = CMARWMemoryImpl.small(FilesFacadeImpl.INSTANCE, path)) {
+                    for (int i = 0; i < distinctValueCount; i++) {
+                        for (int j = 0; j < repeatCount; j++) {
+                            appendMem.putLong(i);
+                        }
                     }
-                }
 
-                long max = distinctValueCount * repeatCount - 1;
-                try (CMRMemoryImpl mem = new CMRMemoryImpl(FilesFacadeImpl.INSTANCE, path, 400 * Long.BYTES)) {
-                    long index = BinarySearch.find(mem, searchValue, 0, max, scanDirection);
-                    if (searchValue > distinctValueCount - 1) {
-                        Assert.assertEquals(max, index);
-                    } else {
-                        Assert.assertEquals(searchValue, mem.getLong(index * Long.BYTES));
-                        if (scanDirection == BinarySearch.SCAN_DOWN) {
-                            Assert.assertTrue(index == max || searchValue < mem.getLong((index + 1) * Long.BYTES));
+                    long max = distinctValueCount * repeatCount - 1;
+                    try (CMRMemoryImpl mem = new CMRMemoryImpl(FilesFacadeImpl.INSTANCE, path, 400 * Long.BYTES)) {
+                        long index = BinarySearch.find(mem, searchValue, 0, max, scanDirection);
+                        if (searchValue > distinctValueCount - 1) {
+                            Assert.assertEquals(max, index);
                         } else {
-                            Assert.assertTrue(index == 0 || searchValue > mem.getLong((index - 1) * Long.BYTES));
+                            Assert.assertEquals(searchValue, mem.getLong(index * Long.BYTES));
+                            if (scanDirection == BinarySearch.SCAN_DOWN) {
+                                Assert.assertTrue(index == max || searchValue < mem.getLong((index + 1) * Long.BYTES));
+                            } else {
+                                Assert.assertTrue(index == 0 || searchValue > mem.getLong((index - 1) * Long.BYTES));
+                            }
                         }
                     }
                 }
             }
-        }
+        });
     }
 
     private void testMem256Find(long repeatCount, long searchValue, int distinctValueCount, int scanDirection) {

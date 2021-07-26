@@ -26,25 +26,48 @@ package io.questdb.cairo.vm;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableUtils;
-import io.questdb.cairo.vm.api.MAMemory;
+import io.questdb.cairo.vm.api.MARMemory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.str.LPSZ;
 
-public class MAMemoryImpl extends PagedVirtualMemory implements MAMemory {
-    private static final Log LOG = LogFactory.getLog(MAMemoryImpl.class);
+public class PMAMemoryImpl extends PARWMemoryImpl implements MARMemory {
+    private static final Log LOG = LogFactory.getLog(PMAMemoryImpl.class);
     private FilesFacade ff;
     private long fd = -1;
     private long pageAddress = 0;
     private int mappedPage;
 
-    public MAMemoryImpl(FilesFacade ff, LPSZ name, long pageSize) {
+    public PMAMemoryImpl(FilesFacade ff, LPSZ name, long pageSize) {
         of(ff, name, pageSize);
     }
 
-    public MAMemoryImpl() {
+    public PMAMemoryImpl() {
+    }
+
+    @Override
+    public final void close(boolean truncate) {
+        long sz = getAppendOffset();
+        releaseCurrentPage();
+        super.close();
+        if (fd != -1) {
+            try {
+                VmUtils.bestEffortClose(ff, LOG, fd, truncate, sz, Files.PAGE_SIZE);
+            } finally {
+                fd = -1;
+            }
+        }
+    }
+
+    public void sync(boolean async) {
+        if (pageAddress != 0) {
+            if (ff.msync(pageAddress, getExtendSegmentSize(), async) == 0) {
+                return;
+            }
+            LOG.error().$("could not msync [fd=").$(fd).$(", errno=").$(ff.errno()).$(']').$();
+        }
     }
 
     @Override
@@ -84,35 +107,6 @@ public class MAMemoryImpl extends PagedVirtualMemory implements MAMemory {
         ff.munmap(address, getPageSize());
     }
 
-    public final void close(boolean truncate) {
-        long sz = getAppendOffset();
-        releaseCurrentPage();
-        super.close();
-        if (fd != -1) {
-            try {
-                VmUtils.bestEffortClose(ff, LOG, fd, truncate, sz, Files.PAGE_SIZE);
-            } finally {
-                fd = -1;
-            }
-        }
-    }
-
-    public void ensureFileSize(int page) {
-        long target = pageOffset(page + 1);
-        if (ff.length(fd) < target && !ff.allocate(fd, target)) {
-            throw CairoException.instance(ff.errno()).put("Appender resize failed fd=").put(fd).put(", size=").put(target);
-        }
-    }
-
-    public long getAppendAddress() {
-        long appendOffset = getAppendOffset();
-        return getPageAddress(pageIndex(appendOffset)) + offsetInPage(appendOffset);
-    }
-
-    public long getAppendAddressSize() {
-        return getPageSize() - offsetInPage(getAppendOffset());
-    }
-
     @Override
     public FilesFacade getFilesFacade() {
         return ff;
@@ -129,7 +123,7 @@ public class MAMemoryImpl extends PagedVirtualMemory implements MAMemory {
 
     @Override
     public void wholeFile(FilesFacade ff, LPSZ name) {
-        throw new UnsupportedOperationException();
+        of(ff, name, ff.getMapPageSize());
     }
 
     public long mapPage(int page) {
@@ -146,15 +140,6 @@ public class MAMemoryImpl extends PagedVirtualMemory implements MAMemory {
         setExtendSegmentSize(extendSegmentSize);
         fd = TableUtils.openFileRWOrFail(ff, name);
         LOG.debug().$("open ").$(name).$(" [fd=").$(fd).$(", extendSegmentSize=").$(extendSegmentSize).$(']').$();
-    }
-
-    public void sync(boolean async) {
-        if (pageAddress != 0) {
-            if (ff.msync(pageAddress, getExtendSegmentSize(), async) == 0) {
-                return;
-            }
-            LOG.error().$("could not msync [fd=").$(fd).$(", errno=").$(ff.errno()).$(']').$();
-        }
     }
 
     void releaseCurrentPage() {

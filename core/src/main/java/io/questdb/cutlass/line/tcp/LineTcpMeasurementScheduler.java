@@ -30,7 +30,6 @@ import io.questdb.cairo.TableWriter.Row;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.CMARWMemoryImpl;
-import io.questdb.cairo.vm.MAMemoryImpl;
 import io.questdb.cairo.vm.api.MARWMemory;
 import io.questdb.cutlass.line.LineProtoTimestampAdapter;
 import io.questdb.cutlass.line.tcp.NewLineProtoParser.ProtoEntity;
@@ -988,7 +987,6 @@ class LineTcpMeasurementScheduler implements Closeable {
     private class WriterJob implements Job {
         private final int workerId;
         private final Sequence sequence;
-        private final MAMemoryImpl appendMemory = new MAMemoryImpl();
         private final Path path = new Path();
         private final DirectCharSink charSink = new DirectCharSink(64);
         private final FloatingDirectCharSink floatingCharSink = new FloatingDirectCharSink();
@@ -1018,7 +1016,6 @@ class LineTcpMeasurementScheduler implements Closeable {
                 }
             }
 
-            Misc.free(appendMemory);
             Misc.free(path);
             Misc.free(charSink);
             Misc.free(floatingCharSink);

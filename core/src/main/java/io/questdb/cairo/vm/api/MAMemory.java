@@ -25,4 +25,12 @@
 package io.questdb.cairo.vm.api;
 
 public interface MAMemory extends MappedMemory, AppendMemory {
+
+    void close(boolean truncate);
+
+    long getAppendAddress();
+
+    long getAppendAddressSize();
+
+    void sync(boolean async);
 }

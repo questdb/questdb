@@ -25,7 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.vm.CMARWMemoryImpl;
-import io.questdb.cairo.vm.PagedVirtualMemory;
+import io.questdb.cairo.vm.PARWMemoryImpl;
 import io.questdb.cairo.vm.api.MARWMemory;
 import io.questdb.cairo.vm.api.ReadMemory;
 import io.questdb.log.Log;
@@ -67,7 +67,7 @@ public class EngineMigration {
         long mem = Unsafe.malloc(tempMemSize);
 
         try (
-                PagedVirtualMemory virtualMem = new PagedVirtualMemory(ff.getPageSize(), 8);
+                PARWMemoryImpl virtualMem = new PARWMemoryImpl(ff.getPageSize(), 8);
                 Path path = new Path();
                 MARWMemory rwMemory = new CMARWMemoryImpl()
         ) {
@@ -304,7 +304,7 @@ public class EngineMigration {
             MARWMemory txMem = migrationContext.createRwMemoryOf(ff, path.$());
             long tempMem8b = migrationContext.getTempMemory(8);
 
-            PagedVirtualMemory txFileUpdate = migrationContext.getTempVirtualMem();
+            PARWMemoryImpl txFileUpdate = migrationContext.getTempVirtualMem();
             txFileUpdate.clear();
             txFileUpdate.jumpTo(0);
 
@@ -353,7 +353,7 @@ public class EngineMigration {
                 MARWMemory txMem,
                 int partitionBy,
                 int symbolsCount,
-                PagedVirtualMemory writeTo
+                PARWMemoryImpl writeTo
         ) {
             int rootLen = path.length();
 
@@ -405,13 +405,13 @@ public class EngineMigration {
     class MigrationContext {
         private final long tempMemory;
         private final int tempMemoryLen;
-        private final PagedVirtualMemory tempVirtualMem;
+        private final PARWMemoryImpl tempVirtualMem;
         private final MARWMemory rwMemory;
         private Path tablePath;
         private long metadataFd;
         private Path tablePath2;
 
-        public MigrationContext(long mem, int tempMemSize, PagedVirtualMemory tempVirtualMem, MARWMemory rwMemory) {
+        public MigrationContext(long mem, int tempMemSize, PARWMemoryImpl tempVirtualMem, MARWMemory rwMemory) {
             this.tempMemory = mem;
             this.tempMemoryLen = tempMemSize;
             this.tempVirtualMem = tempVirtualMem;
@@ -421,7 +421,7 @@ public class EngineMigration {
         public MARWMemory createRwMemoryOf(FilesFacade ff, Path path) {
             // re-use same rwMemory
             // assumption that it is re-usable after the close() and then of()  methods called.
-            rwMemory.wholeFile(ff, path);
+            rwMemory.smallFile(ff, path);
             return rwMemory;
         }
 
@@ -460,7 +460,7 @@ public class EngineMigration {
                     + " is available");
         }
 
-        public PagedVirtualMemory getTempVirtualMem() {
+        public PARWMemoryImpl getTempVirtualMem() {
             return tempVirtualMem;
         }
 

@@ -37,8 +37,8 @@ import org.jetbrains.annotations.NotNull;
 
 import static io.questdb.cairo.vm.VmUtils.STRING_LENGTH_BYTES;
 
-public class PagedVirtualMemory implements ARWMemory  {
-    private static final Log LOG = LogFactory.getLog(PagedVirtualMemory.class);
+public class PARWMemoryImpl implements ARWMemory  {
+    private static final Log LOG = LogFactory.getLog(PARWMemoryImpl.class);
     protected final LongList pages = new LongList(4, 0);
     private final ByteSequenceView bsview = new ByteSequenceView();
     private final CharSequenceView csview = new CharSequenceView();
@@ -59,12 +59,12 @@ public class PagedVirtualMemory implements ARWMemory  {
     private long roOffsetHi = 0;
     private long absolutePointer;
 
-    public PagedVirtualMemory(long pageSize, int maxPages) {
+    public PARWMemoryImpl(long pageSize, int maxPages) {
         setExtendSegmentSize(pageSize);
         this.maxPages = maxPages;
     }
 
-    protected PagedVirtualMemory() {
+    protected PARWMemoryImpl() {
         maxPages = Integer.MAX_VALUE;
     }
 
@@ -327,9 +327,9 @@ public class PagedVirtualMemory implements ARWMemory  {
         return view.of(offset + STRING_LENGTH_BYTES, len);
     }
 
-    public boolean isMapped(long offset, long size) {
+    public boolean isMapped(long offset, long len) {
         int pageIndex = pageIndex(offset);
-        int pageEndIndex = pageIndex(offset + size - 1);
+        int pageEndIndex = pageIndex(offset + len - 1);
         if (pageIndex == pageEndIndex) {
             return getPageAddress(pageIndex) > 0;
         }
@@ -715,10 +715,12 @@ public class PagedVirtualMemory implements ARWMemory  {
         clear();
     }
 
+    @Override
     public long offsetInPage(long offset) {
         return offset & extendSegmentMod;
     }
 
+    @Override
     public final int pageIndex(long offset) {
         return (int) (offset >> extendSegmentMsb);
     }
@@ -1195,7 +1197,7 @@ public class PagedVirtualMemory implements ARWMemory  {
 
         @Override
         public void copyTo(long address, final long start, final long length) {
-            PagedVirtualMemory.this.copyTo(address, this.offset + start, Math.min(length, this.len - start));
+            PARWMemoryImpl.this.copyTo(address, this.offset + start, Math.min(length, this.len - start));
         }
 
         @Override

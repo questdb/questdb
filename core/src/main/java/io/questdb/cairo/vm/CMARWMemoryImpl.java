@@ -41,21 +41,23 @@ public class CMARWMemoryImpl extends AbstractCRMemory implements CMARWMemory, CA
     private long minMappedMemorySize;
     private long extendSegmentMsb;
 
-    @Override
-    public void setTruncateSize(long size) {
-        jumpTo(size);
-    }
-
-    @Override
-    public void putBlockOfBytes(long offset, long from, long len) {
-        throw new UnsupportedOperationException();
-    }
-
     public CMARWMemoryImpl(FilesFacade ff, LPSZ name, long extendSegmentSize, long size) {
         of(ff, name, extendSegmentSize, size);
     }
 
     public CMARWMemoryImpl() {
+    }
+
+    public static CMARWMemoryImpl small(FilesFacade ff, LPSZ name) {
+        return new CMARWMemoryImpl(ff, name, ff.getPageSize(), Long.MAX_VALUE);
+    }
+
+    public static CMARWMemoryImpl whole(FilesFacade ff, LPSZ name) {
+        return new CMARWMemoryImpl(ff, name, ff.getMapPageSize(), Long.MAX_VALUE);
+    }
+
+    public static CMARWMemoryImpl whole(FilesFacade ff, LPSZ name, long extendSegmentSize) {
+        return new CMARWMemoryImpl(ff, name, extendSegmentSize, Long.MAX_VALUE);
     }
 
     @Override
@@ -64,54 +66,6 @@ public class CMARWMemoryImpl extends AbstractCRMemory implements CMARWMemory, CA
         final long result = appendAddress;
         appendAddress += bytes;
         return result;
-    }
-
-    @Override
-    public long appendAddressFor(long offset, long bytes) {
-        checkAndExtend(pageAddress + offset + bytes);
-        return pageAddress + offset;
-    }
-
-    @Override
-    public void close() {
-        if (pageAddress != 0) {
-            ff.munmap(pageAddress, size);
-            long truncateSize = getAppendOffset();
-            this.pageAddress = 0;
-            try {
-                VmUtils.bestEffortClose(ff, LOG, fd, true, truncateSize, Files.PAGE_SIZE);
-            } finally {
-                fd = -1;
-            }
-        }
-        if (fd != -1) {
-            ff.close(fd);
-            LOG.debug().$("closed [fd=").$(fd).$(']').$();
-            fd = -1;
-        }
-        grownLength = 0;
-        size = 0;
-        ff = null;
-    }
-
-    @Override
-    public long getFd() {
-        return fd;
-    }
-
-    @Override
-    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size) {
-        this.extendSegmentMsb = Numbers.msb(extendSegmentSize);
-        this.minMappedMemorySize = ff.getMapPageSize();
-        openFile(ff, name);
-        map(ff, name, size);
-    }
-
-    @Override
-    public void extend(long newSize) {
-        if (newSize > size) {
-            extend0(newSize);
-        }
     }
 
     @Override
@@ -134,6 +88,22 @@ public class CMARWMemoryImpl extends AbstractCRMemory implements CMARWMemory, CA
     @Override
     public long getAppendOffset() {
         return appendAddress - pageAddress;
+    }
+
+    @Override
+    public long getExtendSegmentSize() {
+        return extendSegmentMsb;
+    }
+
+    @Override
+    public long appendAddressFor(long offset, long bytes) {
+        checkAndExtend(pageAddress + offset + bytes);
+        return pageAddress + offset;
+    }
+
+    @Override
+    public void putBlockOfBytes(long offset, long from, long len) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -188,6 +158,63 @@ public class CMARWMemoryImpl extends AbstractCRMemory implements CMARWMemory, CA
         }
     }
 
+    @Override
+    public void close(boolean truncate) {
+        if (pageAddress != 0) {
+            ff.munmap(pageAddress, size);
+            long truncateSize = getAppendOffset();
+            this.pageAddress = 0;
+            try {
+                VmUtils.bestEffortClose(ff, LOG, fd, truncate, truncateSize, Files.PAGE_SIZE);
+            } finally {
+                fd = -1;
+            }
+        }
+        if (fd != -1) {
+            ff.close(fd);
+            LOG.debug().$("closed [fd=").$(fd).$(']').$();
+            fd = -1;
+        }
+        grownLength = 0;
+        size = 0;
+        ff = null;
+    }
+
+    @Override
+    public long getAppendAddress() {
+        return appendAddress;
+    }
+
+    @Override
+    public long getAppendAddressSize() {
+        return lim - appendAddress;
+    }
+
+    @Override
+    public void close() {
+        close(true);
+    }
+
+    @Override
+    public void extend(long newSize) {
+        if (newSize > size) {
+            extend0(newSize);
+        }
+    }
+
+    @Override
+    public long getFd() {
+        return fd;
+    }
+
+    @Override
+    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size) {
+        this.extendSegmentMsb = Numbers.msb(extendSegmentSize);
+        this.minMappedMemorySize = ff.getMapPageSize();
+        openFile(ff, name);
+        map(ff, name, size);
+    }
+
     public void of(FilesFacade ff, long fd, @Nullable CharSequence name, long size) {
         close();
         assert fd > 0;
@@ -195,6 +222,19 @@ public class CMARWMemoryImpl extends AbstractCRMemory implements CMARWMemory, CA
         this.minMappedMemorySize = ff.getMapPageSize();
         this.fd = fd;
         map(ff, name, size);
+    }
+
+    @Override
+    public void replacePage(long address, long size) {
+        long appendOffset = getAppendOffset();
+        this.pageAddress = this.appendAddress = address;
+        this.lim = pageAddress + size;
+        jumpTo(appendOffset);
+    }
+
+    @Override
+    public void setTruncateSize(long size) {
+        jumpTo(size);
     }
 
     public void sync(boolean async) {

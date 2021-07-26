@@ -62,7 +62,7 @@ public class MetadataMigration400 {
             return;
         }
 
-        roMem.wholeFile(ff, path1);
+        roMem.smallFile(ff, path1);
 
         if (roMem.getInt(12) == ColumnType.VERSION) {
             LOG.error().$("already up to date ").$(path1).$();
@@ -72,7 +72,7 @@ public class MetadataMigration400 {
         path1.trimTo(plen);
         path1.concat("_meta.1").$();
 
-        appendMem.wholeFile(ff, path1);
+        appendMem.smallFile(ff, path1);
 
         // column count
         final int columnCount = roMem.getInt(0);

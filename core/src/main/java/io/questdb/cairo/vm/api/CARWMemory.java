@@ -27,8 +27,6 @@ package io.questdb.cairo.vm.api;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.vm.VmUtils;
-import io.questdb.cairo.vm.api.ARWMemory;
-import io.questdb.cairo.vm.api.CRMemory;
 import io.questdb.std.*;
 
 public interface CARWMemory extends CRMemory, ARWMemory {
@@ -245,4 +243,5 @@ public interface CARWMemory extends CRMemory, ARWMemory {
         return offset;
     }
 
+    void replacePage(long address, long size);
 }

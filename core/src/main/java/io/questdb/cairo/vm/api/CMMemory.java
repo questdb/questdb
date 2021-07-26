@@ -25,7 +25,9 @@
 package io.questdb.cairo.vm.api;
 
 public interface CMMemory extends ContinuousMemory, MappedMemory {
-    default void growToFileSize() {
-        extend(getFilesFacade().length(getFd()));
+
+    @Override
+    default boolean isMapped(long offset, long len) {
+        return offset + len < size();
     }
 }

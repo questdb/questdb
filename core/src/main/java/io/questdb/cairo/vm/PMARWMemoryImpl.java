@@ -33,30 +33,25 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.Vect;
 import io.questdb.std.str.LPSZ;
 
-public class PagedMappedReadWriteMemory extends PagedVirtualMemory implements MARWMemory {
-    private static final Log LOG = LogFactory.getLog(PagedMappedReadWriteMemory.class);
+public class PMARWMemoryImpl extends PARWMemoryImpl implements MARWMemory {
+    private static final Log LOG = LogFactory.getLog(PMARWMemoryImpl.class);
     private FilesFacade ff;
     private long fd = -1;
 
-    @Override
-    public void setTruncateSize(long size) {
-        jumpTo(size);
-    }
-
-    public PagedMappedReadWriteMemory(FilesFacade ff, LPSZ name, long maxPageSize) {
+    public PMARWMemoryImpl(FilesFacade ff, LPSZ name, long maxPageSize) {
         of(ff, name, maxPageSize);
     }
 
-    public PagedMappedReadWriteMemory() {
+    public PMARWMemoryImpl() {
     }
 
     @Override
-    public void close() {
+    public void close(boolean truncate) {
         long size = getAppendOffset();
         super.close();
         if (isOpen()) {
             try {
-                VmUtils.bestEffortClose(ff, LOG, fd, true, size, Files.PAGE_SIZE);
+                VmUtils.bestEffortClose(ff, LOG, fd, truncate, size, Files.PAGE_SIZE);
             } finally {
                 fd = -1;
             }
@@ -64,8 +59,19 @@ public class PagedMappedReadWriteMemory extends PagedVirtualMemory implements MA
     }
 
     @Override
-    public FilesFacade getFilesFacade() {
-        return ff;
+    public long getAppendAddress() {
+        long appendOffset = getAppendOffset();
+        return getPageAddress(pageIndex(appendOffset)) + offsetInPage(appendOffset);
+    }
+
+    @Override
+    public long getAppendAddressSize() {
+        return getPageSize() - offsetInPage(getAppendOffset());
+    }
+
+    @Override
+    public void close() {
+        close(true);
     }
 
     @Override
@@ -105,6 +111,11 @@ public class PagedMappedReadWriteMemory extends PagedVirtualMemory implements MA
         ff.munmap(address, getPageSize());
     }
 
+    @Override
+    public FilesFacade getFilesFacade() {
+        return ff;
+    }
+
     public long getFd() {
         return fd;
     }
@@ -127,13 +138,6 @@ public class PagedMappedReadWriteMemory extends PagedVirtualMemory implements MA
         of(ff, name, ff.getMapPageSize());
     }
 
-    public final void of(FilesFacade ff, LPSZ name, long extendSegmentSize) {
-        close();
-        this.ff = ff;
-        fd = TableUtils.openFileRWOrFail(ff, name);
-        of0(ff, name, extendSegmentSize, ff.length(fd));
-    }
-
     public final void of(FilesFacade ff, long fd, long pageSize) {
         close();
         this.ff = ff;
@@ -152,17 +156,30 @@ public class PagedMappedReadWriteMemory extends PagedVirtualMemory implements MA
         }
     }
 
+    public final void of(FilesFacade ff, LPSZ name, long extendSegmentSize) {
+        close();
+        this.ff = ff;
+        fd = TableUtils.openFileRWOrFail(ff, name);
+        of0(ff, name, extendSegmentSize, ff.length(fd));
+    }
+
+    @Override
+    public void setTruncateSize(long size) {
+        jumpTo(size);
+    }
+
+    @Override
+    public void sync(boolean async) {
+        for (int i = 0, n = pages.size(); i < n; i++) {
+            sync(i, async);
+        }
+    }
+
     public void sync(int pageIndex, boolean async) {
         if (ff.msync(pages.getQuick(pageIndex), getExtendSegmentSize(), async) == 0) {
             return;
         }
         LOG.error().$("could not msync [fd=").$(fd).$(']').$();
-    }
-
-    public void sync(boolean async) {
-        for (int i = 0, n = pages.size(); i < n; i++) {
-            sync(i, async);
-        }
     }
 
     private void of0(FilesFacade ff, LPSZ name, long pageSize, long size) {

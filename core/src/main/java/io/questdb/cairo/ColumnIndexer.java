@@ -24,7 +24,7 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.vm.MAMemoryImpl;
+import io.questdb.cairo.vm.api.MAMemory;
 import io.questdb.cairo.vm.api.ReadMemory;
 import io.questdb.std.str.Path;
 
@@ -43,7 +43,13 @@ public interface ColumnIndexer {
 
     boolean isDistressed();
 
-    void configureFollowerAndWriter(CairoConfiguration configuration, Path path, CharSequence name, MAMemoryImpl columnMem, long columnTop);
+    void configureFollowerAndWriter(
+            CairoConfiguration configuration,
+            Path path,
+            CharSequence name,
+            MAMemory columnMem,
+            long columnTop
+    );
 
     void configureWriter(CairoConfiguration configuration, Path path, CharSequence name, long columnTop);
 

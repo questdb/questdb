@@ -57,7 +57,7 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
     public TableReaderMetadata of(Path path) {
         this.path.of(path).$();
         try {
-            this.metaMem.wholeFile(ff, path);
+            this.metaMem.smallFile(ff, path);
             this.columnCount = metaMem.getInt(TableUtils.META_OFFSET_COUNT);
             this.columnNameIndexMap.clear();
             TableUtils.validate(ff, metaMem, this.columnNameIndexMap);
@@ -98,8 +98,7 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
 
     public void applyTransitionIndex(long pTransitionIndex) {
         // re-open _meta file
-        this.metaMem.wholeFile(ff, path);
-
+        this.metaMem.smallFile(ff, path);
         this.columnNameIndexMap.clear();
 
         final int columnCount = Unsafe.getUnsafe().getInt(pTransitionIndex + 4);
@@ -201,7 +200,7 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
             transitionMeta = new CMRMemoryImpl();
         }
 
-        transitionMeta.wholeFile(ff, path);
+        transitionMeta.smallFile(ff, path);
         try (MRMemory metaMem = transitionMeta) {
 
             tmpValidationMap.clear();

@@ -32,10 +32,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.*;
-import io.questdb.cairo.vm.api.AppendMemory;
-import io.questdb.cairo.vm.api.MAMemory;
-import io.questdb.cairo.vm.api.MARWMemory;
-import io.questdb.cairo.vm.api.MRMemory;
+import io.questdb.cairo.vm.api.*;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
@@ -73,7 +70,7 @@ public class TableWriter implements Closeable {
     };
     private final static RemoveFileLambda REMOVE_OR_LOG = TableWriter::removeFileAndOrLog;
     private final static RemoveFileLambda REMOVE_OR_EXCEPTION = TableWriter::removeOrException;
-    final ObjList<MAMemoryImpl> columns;
+    final ObjList<MARMemory> columns;
     private final ObjList<SymbolMapWriter> symbolMapWriters;
     private final ObjList<SymbolMapWriter> denseSymbolMapWriters;
     private final ObjList<WriterTransientSymbolCountChangeHandler> denseSymbolTransientCountHandlers;
@@ -114,8 +111,8 @@ public class TableWriter implements Closeable {
     private final FindVisitor removePartitionDirectories = this::removePartitionDirectories0;
     private final ObjList<Runnable> nullSetters;
     private final ObjList<Runnable> o3NullSetters;
-    private final ObjList<CARWMemoryImpl> o3Columns;
-    private final ObjList<CARWMemoryImpl> o3Columns2;
+    private final ObjList<CARWMemory> o3Columns;
+    private final ObjList<CARWMemory> o3Columns2;
     private final TableBlockWriter blockWriter;
     private final TimestampValueRecord dropPartitionFunctionRec = new TimestampValueRecord();
     private final ObjList<O3CallbackTask> o3PendingCallbackTasks = new ObjList<>();
@@ -139,9 +136,9 @@ public class TableWriter implements Closeable {
     private final boolean o3QuickSortEnabled;
     private final LongConsumer appendTimestampSetter;
     private long todoTxn;
-    private CARWMemoryImpl o3TimestampMem;
+    private ARWMemory o3TimestampMem;
     private final O3ColumnUpdateMethod o3MoveLagRef = this::o3MoveLag0;
-    private CARWMemoryImpl o3TimestampMemCpy;
+    private ARWMemory o3TimestampMemCpy;
     private long lockFd = -1;
     private LongConsumer timestampSetter;
     private int columnCount;
@@ -1127,7 +1124,7 @@ public class TableWriter implements Closeable {
 
         for (int i = 0; i < columnCount; i++) {
             getPrimaryColumn(i).truncate();
-            MAMemoryImpl mem = getSecondaryColumn(i);
+            MAMemory mem = getSecondaryColumn(i);
             if (mem != null) {
                 mem.truncate();
             }
@@ -1250,8 +1247,8 @@ public class TableWriter implements Closeable {
 
     private static void setColumnSize(
             FilesFacade ff,
-            MAMemoryImpl mem1,
-            MAMemoryImpl mem2,
+            MAMemory mem1,
+            MAMemory mem2,
             int type,
             long actualPosition,
             long buf,
@@ -1271,8 +1268,8 @@ public class TableWriter implements Closeable {
                     len = Unsafe.getUnsafe().getLong(buf);
                     mem1Size = len == -1 ? offset + Long.BYTES : offset + len + Long.BYTES;
                     if (ensureFileSize) {
-                        mem1.ensureFileSize(mem1.pageIndex(mem1Size));
-                        mem2.ensureFileSize(mem2.pageIndex(actualPosition * Long.BYTES));
+                        mem1.allocate(mem1Size);
+                        mem2.allocate(actualPosition * Long.BYTES);
                     }
                     mem1.jumpTo(mem1Size);
                     mem2.jumpTo(actualPosition * Long.BYTES);
@@ -1285,8 +1282,8 @@ public class TableWriter implements Closeable {
                     len = Unsafe.getUnsafe().getInt(buf);
                     mem1Size = len == -1 ? offset + Integer.BYTES : offset + len * Character.BYTES + Integer.BYTES;
                     if (ensureFileSize) {
-                        mem1.ensureFileSize(mem1.pageIndex(mem1Size));
-                        mem2.ensureFileSize(mem2.pageIndex(actualPosition * Long.BYTES));
+                        mem1.allocate(mem1Size);
+                        mem2.allocate(actualPosition * Long.BYTES);
                     }
                     mem1.jumpTo(mem1Size);
                     mem2.jumpTo(actualPosition * Long.BYTES);
@@ -1294,7 +1291,7 @@ public class TableWriter implements Closeable {
                 default:
                     mem1Size = actualPosition << ColumnType.pow2SizeOf(type);
                     if (ensureFileSize) {
-                        mem1.ensureFileSize(mem1.pageIndex(mem1Size));
+                        mem1.allocate(mem1Size);
                     }
                     mem1.jumpTo(mem1Size);
                     break;
@@ -1327,11 +1324,11 @@ public class TableWriter implements Closeable {
         return -1;
     }
 
-    private static void readOffsetBytes(FilesFacade ff, MAMemoryImpl mem, long position, long buf) {
+    private static void readOffsetBytes(FilesFacade ff, MappedMemory mem, long position, long buf) {
         readBytes(ff, mem, buf, 8, (position - 1) * 8, "could not read offset, fd=");
     }
 
-    private static void readBytes(FilesFacade ff, MAMemoryImpl mem, long buf, int byteCount, long offset, CharSequence errorMsg) {
+    private static void readBytes(FilesFacade ff, MappedMemory mem, long buf, int byteCount, long offset, CharSequence errorMsg) {
         if (ff.read(mem.getFd(), buf, byteCount, offset) != byteCount) {
             throw CairoException.instance(ff.errno()).put(errorMsg).put(mem.getFd()).put(", offset=").put(offset);
         }
@@ -1383,7 +1380,7 @@ public class TableWriter implements Closeable {
     private static void openMetaFile(FilesFacade ff, Path path, int rootLen, MRMemory metaMem) {
         path.concat(META_FILE_NAME).$();
         try {
-            metaMem.wholeFile(ff, path);
+            metaMem.smallFile(ff, path);
         } finally {
             path.trimTo(rootLen);
         }
@@ -1584,7 +1581,7 @@ public class TableWriter implements Closeable {
                 // we only have one partition, jump to start on every column
                 for (int i = 0; i < columnCount; i++) {
                     getPrimaryColumn(i).jumpTo(0);
-                    MAMemoryImpl mem = getSecondaryColumn(i);
+                    MAMemory mem = getSecondaryColumn(i);
                     if (mem != null) {
                         mem.jumpTo(0);
                     }
@@ -1652,8 +1649,8 @@ public class TableWriter implements Closeable {
     void closeActivePartition(long size) {
         for (int i = 0; i < columnCount; i++) {
             // stop calculating oversize as soon as we find first over-sized column
-            final MAMemoryImpl mem1 = getPrimaryColumn(i);
-            final MAMemoryImpl mem2 = getSecondaryColumn(i);
+            final MAMemory mem1 = getPrimaryColumn(i);
+            final MAMemory mem2 = getSecondaryColumn(i);
             setColumnSize(
                     ff,
                     mem1,
@@ -1672,7 +1669,7 @@ public class TableWriter implements Closeable {
 
     private void closeAppendMemoryTruncate(boolean truncate) {
         for (int i = 0, n = columns.size(); i < n; i++) {
-            MAMemoryImpl m = columns.getQuick(i);
+            MAMemory m = columns.getQuick(i);
             if (m != null) {
                 m.close(truncate);
             }
@@ -1754,16 +1751,16 @@ public class TableWriter implements Closeable {
     }
 
     private void configureColumn(int type, boolean indexFlag) {
-        final MAMemoryImpl primary = new MAMemoryImpl();
-        final MAMemoryImpl secondary;
-        final CARWMemoryImpl oooPrimary = new CARWMemoryImpl(MEM_PAGE_SIZE, Integer.MAX_VALUE);
-        final CARWMemoryImpl oooSecondary;
-        final CARWMemoryImpl oooPrimary2 = new CARWMemoryImpl(MEM_PAGE_SIZE, Integer.MAX_VALUE);
-        final CARWMemoryImpl oooSecondary2;
+        final MARMemory primary = new PMAMemoryImpl();
+        final MARMemory secondary;
+        final CARWMemory oooPrimary = new CARWMemoryImpl(MEM_PAGE_SIZE, Integer.MAX_VALUE);
+        final CARWMemory oooSecondary;
+        final CARWMemory oooPrimary2 = new CARWMemoryImpl(MEM_PAGE_SIZE, Integer.MAX_VALUE);
+        final CARWMemory oooSecondary2;
         switch (type) {
             case ColumnType.BINARY:
             case ColumnType.STRING:
-                secondary = new MAMemoryImpl();
+                secondary = new PMAMemoryImpl();
                 oooSecondary = new CARWMemoryImpl(MEM_PAGE_SIZE, Integer.MAX_VALUE);
                 oooSecondary2 = new CARWMemoryImpl(MEM_PAGE_SIZE, Integer.MAX_VALUE);
                 break;
@@ -2167,7 +2164,7 @@ public class TableWriter implements Closeable {
         return columns.get(getPrimaryColumnIndex(columnIndex)).getAppendOffset();
     }
 
-    private MAMemoryImpl getPrimaryColumn(int column) {
+    private MARMemory getPrimaryColumn(int column) {
         assert column < columnCount : "Column index is out of bounds: " + column + " >= " + columnCount;
         return columns.getQuick(getPrimaryColumnIndex(column));
     }
@@ -2184,7 +2181,7 @@ public class TableWriter implements Closeable {
         return columns.get(getSecondaryColumnIndex(columnIndex)).getAppendOffset();
     }
 
-    private MAMemoryImpl getSecondaryColumn(int column) {
+    private MARMemory getSecondaryColumn(int column) {
         assert column < columnCount : "Column index is out of bounds: " + column + " >= " + columnCount;
         return columns.getQuick(getSecondaryColumnIndex(column));
     }
@@ -2291,8 +2288,8 @@ public class TableWriter implements Closeable {
         // If all the rows moved this will be sort shuffle in O3 memory and copying back to column files
         for (int colIndex = 0; colIndex < columnCount; colIndex++) {
             int columnType = metadata.getColumnType(colIndex);
-            MAMemoryImpl primaryColumn = getPrimaryColumn(colIndex);
-            MAMemoryImpl secondaryColumn = getSecondaryColumn(colIndex);
+            MARMemory primaryColumn = getPrimaryColumn(colIndex);
+            MARMemory secondaryColumn = getSecondaryColumn(colIndex);
             // Fixed size column
             //
             //   Partition can be like this
@@ -2611,17 +2608,17 @@ public class TableWriter implements Closeable {
                                 final CharSequence columnName = metadata.getColumnName(i);
                                 final boolean isIndexed = metadata.isColumnIndexed(i);
                                 final BitmapIndexWriter indexWriter = isIndexed ? getBitmapIndexWriter(i) : null;
-                                final CARWMemoryImpl oooMem1 = o3Columns.getQuick(colOffset);
-                                final CARWMemoryImpl oooMem2 = o3Columns.getQuick(colOffset + 1);
-                                final MAMemoryImpl mem1 = columns.getQuick(colOffset);
-                                final MAMemoryImpl mem2 = columns.getQuick(colOffset + 1);
+                                final ARWMemory oooMem1 = o3Columns.getQuick(colOffset);
+                                final ARWMemory oooMem2 = o3Columns.getQuick(colOffset + 1);
+                                final MARMemory mem1 = columns.getQuick(colOffset);
+                                final MARMemory mem2 = columns.getQuick(colOffset + 1);
                                 final long srcDataTop = getColumnTop(i);
                                 final long srcOooFixAddr;
                                 final long srcOooFixSize;
                                 final long srcOooVarAddr;
                                 final long srcOooVarSize;
-                                final MAMemoryImpl dstFixMem;
-                                final MAMemoryImpl dstVarMem;
+                                final MARMemory dstFixMem;
+                                final MARMemory dstVarMem;
                                 if (columnType != ColumnType.STRING && columnType != ColumnType.BINARY) {
                                     srcOooFixAddr = oooMem1.addressOf(0);
                                     srcOooFixSize = oooMem1.getAppendOffset();
@@ -2949,8 +2946,8 @@ public class TableWriter implements Closeable {
             long o3RowCount
     ) {
         if (columnIndex > -1) {
-            CARWMemoryImpl o3DataMem = o3Columns.get(getPrimaryColumnIndex(columnIndex));
-            CARWMemoryImpl o3IndexMem = o3Columns.get(getSecondaryColumnIndex(columnIndex));
+            ARWMemory o3DataMem = o3Columns.get(getPrimaryColumnIndex(columnIndex));
+            ARWMemory o3IndexMem = o3Columns.get(getSecondaryColumnIndex(columnIndex));
 
             long size;
             long sourceOffset;
@@ -3010,11 +3007,11 @@ public class TableWriter implements Closeable {
             long transientRowsAdded
     ) {
         if (colIndex > -1) {
-            MAMemoryImpl srcDataMem = getPrimaryColumn(colIndex);
+            MARMemory srcDataMem = getPrimaryColumn(colIndex);
             int shl = ColumnType.pow2SizeOf(columnType);
             long srcFixOffset;
-            final CARWMemoryImpl o3DataMem = o3Columns.get(getPrimaryColumnIndex(colIndex));
-            final CARWMemoryImpl o3IndexMem = o3Columns.get(getSecondaryColumnIndex(colIndex));
+            final ARWMemory o3DataMem = o3Columns.get(getPrimaryColumnIndex(colIndex));
+            final ARWMemory o3IndexMem = o3Columns.get(getSecondaryColumnIndex(colIndex));
 
             long extendedSize;
             long dstVarOffset = o3DataMem.getAppendOffset();
@@ -3025,7 +3022,7 @@ public class TableWriter implements Closeable {
                 srcFixOffset = committedTransientRowCount << shl;
             } else {
                 // Var size
-                final MAMemoryImpl srcFixMem = getSecondaryColumn(colIndex);
+                final MARMemory srcFixMem = getSecondaryColumn(colIndex);
                 long srcVarOffset = srcFixMem.getLong(committedTransientRowCount * Long.BYTES);
                 // ensure memory is available
                 long dstAppendOffset = o3IndexMem.getAppendOffset();
@@ -3053,7 +3050,7 @@ public class TableWriter implements Closeable {
             // Timestamp column
             colIndex = -colIndex - 1;
             int shl = ColumnType.pow2SizeOf(ColumnType.TIMESTAMP);
-            MAMemoryImpl srcDataMem = getPrimaryColumn(colIndex);
+            MARMemory srcDataMem = getPrimaryColumn(colIndex);
             long srcFixOffset = committedTransientRowCount << shl;
             for (long n = 0; n < transientRowsAdded; n++) {
                 long ts = srcDataMem.getLong(srcFixOffset + (n << shl));
@@ -3075,9 +3072,9 @@ public class TableWriter implements Closeable {
 
     private void o3OpenColumns() {
         for (int i = 0; i < columnCount; i++) {
-            CARWMemoryImpl mem1 = o3Columns.getQuick(getPrimaryColumnIndex(i));
+            ARWMemory mem1 = o3Columns.getQuick(getPrimaryColumnIndex(i));
             mem1.jumpTo(0);
-            CARWMemoryImpl mem2 = o3Columns.getQuick(getSecondaryColumnIndex(i));
+            ARWMemory mem2 = o3Columns.getQuick(getSecondaryColumnIndex(i));
             if (mem2 != null) {
                 mem2.jumpTo(0);
             }
@@ -3275,7 +3272,7 @@ public class TableWriter implements Closeable {
                 // If there are rows to move
                 // and we cannot move all uncommitted rows to o3 memory
                 // we have to set maxCommittedTimestamp in tx file
-                MAMemoryImpl timestampColumn = getPrimaryColumn(timestampIndex);
+                MARMemory timestampColumn = getPrimaryColumn(timestampIndex);
                 if (!timestampColumn.isMapped((committedTransientRowCount - 1) << 3, Long.BYTES)) {
                     // Need to leave one more record in column files
                     // to correctly get max timestamp
@@ -3349,8 +3346,8 @@ public class TableWriter implements Closeable {
             long o3RowCount
     ) {
         if (columnIndex != metadata.getTimestampIndex()) {
-            CARWMemoryImpl o3DataMem = o3Columns.get(getPrimaryColumnIndex(columnIndex));
-            CARWMemoryImpl o3IndexMem = o3Columns.get(getSecondaryColumnIndex(columnIndex));
+            ARWMemory o3DataMem = o3Columns.get(getPrimaryColumnIndex(columnIndex));
+            ARWMemory o3IndexMem = o3Columns.get(getSecondaryColumnIndex(columnIndex));
 
             long size;
             if (null == o3IndexMem) {
@@ -3486,8 +3483,8 @@ public class TableWriter implements Closeable {
             long valueCount
     ) {
         final int columnOffset = getPrimaryColumnIndex(columnIndex);
-        final CARWMemoryImpl mem = o3Columns.getQuick(columnOffset);
-        final CARWMemoryImpl mem2 = o3Columns2.getQuick(columnOffset);
+        final CARWMemory mem = o3Columns.getQuick(columnOffset);
+        final CARWMemory mem2 = o3Columns2.getQuick(columnOffset);
         final long src = mem.addressOf(0);
         final long srcSize = mem.size();
         final int shl = ColumnType.pow2SizeOf(columnType);
@@ -3526,10 +3523,10 @@ public class TableWriter implements Closeable {
     ) {
         final int primaryIndex = getPrimaryColumnIndex(columnIndex);
         final int secondaryIndex = primaryIndex + 1;
-        final CARWMemoryImpl dataMem = o3Columns.getQuick(primaryIndex);
-        final CARWMemoryImpl indexMem = o3Columns.getQuick(secondaryIndex);
-        final CARWMemoryImpl dataMem2 = o3Columns2.getQuick(primaryIndex);
-        final CARWMemoryImpl indexMem2 = o3Columns2.getQuick(secondaryIndex);
+        final CARWMemory dataMem = o3Columns.getQuick(primaryIndex);
+        final CARWMemory indexMem = o3Columns.getQuick(secondaryIndex);
+        final CARWMemory dataMem2 = o3Columns2.getQuick(primaryIndex);
+        final CARWMemory indexMem2 = o3Columns2.getQuick(secondaryIndex);
         final long dataSize = dataMem.getAppendOffset();
         // ensure we have enough memory allocated
         final long srcDataAddr = dataMem.addressOf(0);
@@ -3563,13 +3560,13 @@ public class TableWriter implements Closeable {
     }
 
     private void openColumnFiles(CharSequence name, int i, int plen) {
-        MAMemoryImpl mem1 = getPrimaryColumn(i);
-        MAMemoryImpl mem2 = getSecondaryColumn(i);
+        MARMemory mem1 = getPrimaryColumn(i);
+        MARMemory mem2 = getSecondaryColumn(i);
 
         try {
-            mem1.of(ff, dFile(path.trimTo(plen), name), configuration.getAppendPageSize());
+            mem1.of(ff, dFile(path.trimTo(plen), name), configuration.getAppendPageSize(), Long.MAX_VALUE);
             if (mem2 != null) {
-                mem2.of(ff, iFile(path.trimTo(plen), name), configuration.getAppendPageSize());
+                mem2.of(ff, iFile(path.trimTo(plen), name), configuration.getAppendPageSize(), Long.MAX_VALUE);
             }
         } finally {
             path.trimTo(plen);
@@ -3665,7 +3662,7 @@ public class TableWriter implements Closeable {
                     throw CairoException.instance(0).put("corrupt ").put(path);
                 }
 
-                todoMem.wholeFile(ff, path);
+                todoMem.smallFile(ff, path);
                 this.todoTxn = todoMem.getLong(0);
                 // check if _todo_ file is consistent, if not, we just ignore its contents and reset hash
                 if (todoMem.getLong(24) != todoTxn) {
@@ -4324,9 +4321,9 @@ public class TableWriter implements Closeable {
         if (partitionBy != PartitionBy.NONE && timestampLo > partitionTimestampHi) {
             // Need close memory without truncating
             for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
-                MAMemoryImpl mem1 = getPrimaryColumn(columnIndex);
+                MARMemory mem1 = getPrimaryColumn(columnIndex);
                 mem1.close(false);
-                MAMemoryImpl mem2 = getSecondaryColumn(columnIndex);
+                MARMemory mem2 = getSecondaryColumn(columnIndex);
                 if (null != mem2) {
                     mem2.close(false);
                 }
@@ -4369,7 +4366,7 @@ public class TableWriter implements Closeable {
         final boolean async = commitMode == CommitMode.ASYNC;
         for (int i = 0; i < columnCount; i++) {
             columns.getQuick(i * 2).sync(async);
-            final MAMemoryImpl m2 = columns.getQuick(i * 2 + 1);
+            final MARMemory m2 = columns.getQuick(i * 2 + 1);
             if (m2 != null) {
                 m2.sync(false);
             }
@@ -4506,7 +4503,7 @@ public class TableWriter implements Closeable {
                 if (metaSwapIndex > 0) {
                     path.put('.').put(metaSwapIndex);
                 }
-                metaMem.wholeFile(ff, path.$());
+                metaMem.smallFile(ff, path.$());
                 validationMap.clear();
                 validate(ff, metaMem, validationMap);
             } finally {

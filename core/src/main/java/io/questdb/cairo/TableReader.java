@@ -743,7 +743,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         try {
             path.concat(TableUtils.TODO_FILE_NAME).$();
             if (ff.exists(path)) {
-                todoMem.wholeFile(ff, path);
+                todoMem.smallFile(ff, path);
                 if (todoMem.getPageCount() > 0) {
                     long instanceHashLo;
                     long instanceHashHi;

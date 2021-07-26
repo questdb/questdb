@@ -25,7 +25,7 @@
 package org.questdb;
 
 import io.questdb.cairo.vm.CARWMemoryImpl;
-import io.questdb.cairo.vm.PagedVirtualMemory;
+import io.questdb.cairo.vm.PARWMemoryImpl;
 import io.questdb.std.Rnd;
 import org.openjdk.jmh.annotations.*;
 import org.openjdk.jmh.runner.Runner;
@@ -39,8 +39,8 @@ import java.util.concurrent.TimeUnit;
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.NANOSECONDS)
 public class VirtualMemoryBenchmark {
-    private static final PagedVirtualMemory mem1 = new PagedVirtualMemory(1024 * 1024, Integer.MAX_VALUE);
-    private static final PagedVirtualMemory mem2 = new PagedVirtualMemory(1024 * 1024, Integer.MAX_VALUE);
+    private static final PARWMemoryImpl mem1 = new PARWMemoryImpl(1024 * 1024, Integer.MAX_VALUE);
+    private static final PARWMemoryImpl mem2 = new PARWMemoryImpl(1024 * 1024, Integer.MAX_VALUE);
     private static final CARWMemoryImpl mem3 = new CARWMemoryImpl(1024 * 1024L, Integer.MAX_VALUE);
     private static final Rnd rnd = new Rnd();
 

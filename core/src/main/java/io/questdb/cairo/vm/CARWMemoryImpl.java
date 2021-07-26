@@ -32,7 +32,7 @@ import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
 
 /**
- * A version of {@link PagedVirtualMemory} that uses a single contiguous memory region instead of pages. Note that it still has the concept of a page such that the contiguous memory region will extend in page sizes.
+ * A version of {@link PARWMemoryImpl} that uses a single contiguous memory region instead of pages. Note that it still has the concept of a page such that the contiguous memory region will extend in page sizes.
  *
  * @author Patrick Mackinlay
  */
@@ -99,6 +99,11 @@ public class CARWMemoryImpl extends AbstractCRMemory implements CARWMemory, Muta
     }
 
     @Override
+    public long getExtendSegmentSize() {
+        return 1L << sizeMsb;
+    }
+
+    @Override
     public long appendAddressFor(long offset, long bytes) {
         checkAndExtend(pageAddress + offset + bytes);
         return addressOf(offset);
@@ -126,31 +131,16 @@ public class CARWMemoryImpl extends AbstractCRMemory implements CARWMemory, Muta
         appendAddress = 0;
     }
 
-    @Override
     public void extend(long size) {
-        long nPages = (size >>> sizeMsb) + 1;
-        size = nPages << sizeMsb;
-        final long oldSize = size();
-        if (nPages > maxPages) {
-            throw LimitOverflowException.instance().put("Maximum number of pages (").put(maxPages).put(") breached in VirtualMemory");
-        }
-        final long newBaseAddress = reallocateMemory(pageAddress, size(), size);
-        if (oldSize > 0) {
-            LOG.debug().$("extended [oldBase=").$(pageAddress).$(", newBase=").$(newBaseAddress).$(", oldSize=").$(oldSize).$(", newSize=").$(size).$(']').$();
-        }
-        handleMemoryReallocation(newBaseAddress, size);
+        checkAndExtend(pageAddress + size);
     }
 
+    @Override
     public void replacePage(long address, long size) {
         long appendOffset = getAppendOffset();
         this.pageAddress = this.appendAddress = address;
         this.lim = pageAddress + size;
         jumpTo(appendOffset);
-    }
-
-    public long resize(long size) {
-        checkAndExtend(pageAddress + size);
-        return pageAddress;
     }
 
     @Override
@@ -169,7 +159,21 @@ public class CARWMemoryImpl extends AbstractCRMemory implements CARWMemory, Muta
         if (address <= lim) {
             return;
         }
-        extend(address - pageAddress);
+        extend0(address - pageAddress);
+    }
+
+    private void extend0(long size) {
+        long nPages = (size >>> sizeMsb) + 1;
+        size = nPages << sizeMsb;
+        final long oldSize = size();
+        if (nPages > maxPages) {
+            throw LimitOverflowException.instance().put("Maximum number of pages (").put(maxPages).put(") breached in VirtualMemory");
+        }
+        final long newBaseAddress = reallocateMemory(pageAddress, size(), size);
+        if (oldSize > 0) {
+            LOG.debug().$("extended [oldBase=").$(pageAddress).$(", newBase=").$(newBaseAddress).$(", oldSize=").$(oldSize).$(", newSize=").$(size).$(']').$();
+        }
+        handleMemoryReallocation(newBaseAddress, size);
     }
 
     protected long getMapPageSize() {

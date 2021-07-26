@@ -169,4 +169,19 @@ public class NullColumn implements MRMemory {
     public void wholeFile(FilesFacade ff, LPSZ name) {
         throw new UnsupportedOperationException();
     }
+
+    @Override
+    public boolean isMapped(long offset, long len) {
+        return false;
+    }
+
+    @Override
+    public long offsetInPage(long offset) {
+        return offset;
+    }
+
+    @Override
+    public int pageIndex(long offset) {
+        return 0;
+    }
 }
