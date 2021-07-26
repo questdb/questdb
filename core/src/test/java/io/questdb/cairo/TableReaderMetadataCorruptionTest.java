@@ -45,7 +45,7 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
                 names.length + 1,
                 PartitionBy.NONE,
                 5,
-                "outside of file boundary"
+                "Index flag is only supported for SYMBOL" //failed validation on garbage flags value
         );
     }
 
