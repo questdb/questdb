@@ -45,10 +45,10 @@ public abstract class Long256FromCharSequenceDecoder implements Long256Acceptor 
         }
         long l3 = parse64BitGroup(startPos, minPos, hexString, p, lim);
 
-        acceptor.onDecoded(l0, l1, l2, l3);
+        acceptor.setAll(l0, l1, l2, l3);
     }
 
-    public abstract void onDecoded(long l0, long l1, long l2, long l3);
+    public abstract void setAll(long l0, long l1, long l2, long l3);
 
     private static long parse64BitGroup(int startPos, int minPos, CharSequence hexString, int p, int lim) throws NumericException {
         assert minPos == startPos - 16;

@@ -26,5 +26,5 @@ package io.questdb.std;
 
 @FunctionalInterface
 public interface Long256Acceptor {
-    void onDecoded(long l0, long l1, long l2, long l3);
+    void setAll(long l0, long l1, long l2, long l3);
 }

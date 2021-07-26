@@ -313,10 +313,7 @@ public class CARWMemoryImplTest {
         Long256Impl long256 = new Long256Impl();
         try (CARWMemoryImpl mem = new CARWMemoryImpl(pageSize, Integer.MAX_VALUE)) {
             for (int i = 0; i < 1000; i++) {
-                long256.setLong0(rnd.nextLong());
-                long256.setLong1(rnd.nextLong());
-                long256.setLong2(rnd.nextLong());
-                long256.setLong3(rnd.nextLong());
+                long256.fromRnd(rnd);
                 mem.putLong256(long256);
             }
 
@@ -366,10 +363,7 @@ public class CARWMemoryImplTest {
         Long256Impl long256 = new Long256Impl();
         try (CARWMemoryImpl mem = new CARWMemoryImpl(pageSize, Integer.MAX_VALUE)) {
             for (int i = 0; i < 1000; i++) {
-                long256.setLong0(rnd.nextLong());
-                long256.setLong1(rnd.nextLong());
-                long256.setLong2(rnd.nextLong());
-                long256.setLong3(rnd.nextLong());
+                long256.fromRnd(rnd);
                 mem.putLong256(offset, long256);
                 offset += Long256.BYTES;
             }

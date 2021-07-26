@@ -75,10 +75,12 @@ public class RndLong256FunctionFactory implements FunctionFactory {
 
         @NotNull
         private Long256 rndLong(Long256Impl long256) {
-            long256.setLong0(rnd.nextLong());
-            long256.setLong1(rnd.nextLong());
-            long256.setLong2(rnd.nextLong());
-            long256.setLong3(rnd.nextLong());
+            long256.setAll(
+                    rnd.nextLong(),
+                    rnd.nextLong(),
+                    rnd.nextLong(),
+                    rnd.nextLong()
+            );
             return long256;
         }
     }

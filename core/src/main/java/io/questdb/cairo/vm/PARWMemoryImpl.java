@@ -37,7 +37,7 @@ import org.jetbrains.annotations.NotNull;
 
 import static io.questdb.cairo.vm.VmUtils.STRING_LENGTH_BYTES;
 
-public class PARWMemoryImpl implements ARWMemory  {
+public class PARWMemoryImpl implements ARWMemory {
     private static final Log LOG = LogFactory.getLog(PARWMemoryImpl.class);
     protected final LongList pages = new LongList(4, 0);
     private final ByteSequenceView bsview = new ByteSequenceView();
@@ -68,44 +68,9 @@ public class PARWMemoryImpl implements ARWMemory  {
         maxPages = Integer.MAX_VALUE;
     }
 
-    public void clear() {
-        releaseAllPagesButFirst();
-        appendPointer = -1;
-        pageHi = -1;
-        pageLo = -1;
-        baseOffset = 1;
-        clearHotPage();
-    }
-
-
     @Override
     public long appendAddressFor(long bytes) {
         throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public long appendAddressFor(long offset, long bytes) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void putBlockOfBytes(long offset, long from, long len) {
-        throw new UnsupportedOperationException();
-    }
-
-    protected void releaseAllPagesButFirst() {
-        final int n = pages.size();
-        for (int i = 1; i < n; i++) {
-            release(pages.getQuick(i));
-            pages.setQuick(i, 0);
-        }
-        if (n > 0) {
-            pages.setPos(1);
-        }
-    }
-
-    public void clearHotPage() {
-        roOffsetLo = roOffsetHi = 0;
     }
 
     @Override
@@ -118,6 +83,419 @@ public class PARWMemoryImpl implements ARWMemory  {
             pages.setQuick(0, 0);
             pages.clear();
         }
+    }
+
+    /**
+     * Updates append pointer with address for the given offset. All put* functions will be
+     * appending from this offset onwards effectively overwriting data. Size of virtual memory remains
+     * unaffected until the moment memory has to be extended.
+     *
+     * @param offset position from 0 in virtual memory.
+     */
+    @Override
+    public void jumpTo(long offset) {
+        assert offset > -1;
+        final long p = offset - baseOffset;
+        if (p > pageLo && p < pageHi) {
+            appendPointer = p;
+        } else {
+            jumpTo0(offset);
+        }
+    }
+
+    @Override
+    public final long putBin(BinarySequence value) {
+        final long offset = getAppendOffset();
+        if (value == null) {
+            putLong(TableUtils.NULL_LEN);
+        } else {
+            final long len = value.length();
+            putLong(len);
+            final long remaining = pageHi - appendPointer;
+            if (len < remaining) {
+                putBinSequence(value, 0, len);
+                appendPointer += len;
+            } else {
+                putBin0(value, len, remaining);
+            }
+        }
+        return offset;
+    }
+
+    @Override
+    public final long putBin(long from, long len) {
+        final long offset = getAppendOffset();
+        putLong(len > 0 ? len : TableUtils.NULL_LEN);
+        if (len < 1) {
+            return offset;
+        }
+
+        if (len < pageHi - appendPointer) {
+            Vect.memcpy(from, appendPointer, len);
+            appendPointer += len;
+        } else {
+            putBinSlit(from, len);
+        }
+
+        return offset;
+    }
+
+    @Override
+    public final void putBlockOfBytes(long from, long len) {
+        if (len < pageHi - appendPointer) {
+            Vect.memcpy(from, appendPointer, len);
+            appendPointer += len;
+        } else {
+            putBinSlit(from, len);
+        }
+    }
+
+    @Override
+    public void putBool(boolean value) {
+        putByte((byte) (value ? 1 : 0));
+    }
+
+    @Override
+    public void putByte(byte b) {
+        if (pageHi == appendPointer) {
+            pageAt(getAppendOffset() + 1);
+        }
+        Unsafe.getUnsafe().putByte(appendPointer++, b);
+    }
+
+    @Override
+    public final void putChar(char value) {
+        if (pageHi - appendPointer > 1) {
+            Unsafe.getUnsafe().putChar(appendPointer, value);
+            appendPointer += 2;
+        } else {
+            putCharBytes(value);
+        }
+    }
+
+    @Override
+    public final void putDouble(double value) {
+        if (pageHi - appendPointer > 7) {
+            Unsafe.getUnsafe().putDouble(appendPointer, value);
+            appendPointer += 8;
+        } else {
+            putDoubleBytes(value);
+        }
+    }
+
+    @Override
+    public final void putFloat(float value) {
+        if (pageHi - appendPointer > 3) {
+            Unsafe.getUnsafe().putFloat(appendPointer, value);
+            appendPointer += 4;
+        } else {
+            putFloatBytes(value);
+        }
+    }
+
+    @Override
+    public final void putInt(int value) {
+        if (pageHi - appendPointer > 3) {
+            Unsafe.getUnsafe().putInt(appendPointer, value);
+            appendPointer += 4;
+        } else {
+            putIntBytes(value);
+        }
+    }
+
+    @Override
+    public final void putLong(long value) {
+        if (pageHi - appendPointer > 7) {
+            Unsafe.getUnsafe().putLong(appendPointer, value);
+            appendPointer += 8;
+        } else {
+            putLongBytes(value);
+        }
+    }
+
+    @Override
+    public final void putLong128(long l1, long l2) {
+        if (pageHi - appendPointer > 15) {
+            Unsafe.getUnsafe().putLong(appendPointer, l1);
+            Unsafe.getUnsafe().putLong(appendPointer + Long.BYTES, l2);
+            appendPointer += 16;
+        } else {
+            putLong(l1);
+            putLong(l2);
+        }
+    }
+
+    @Override
+    public final void putLong256(long l0, long l1, long l2, long l3) {
+        if (pageHi - appendPointer > Long256.BYTES - 1) {
+            Unsafe.getUnsafe().putLong(appendPointer, l0);
+            Unsafe.getUnsafe().putLong(appendPointer + Long.BYTES, l1);
+            Unsafe.getUnsafe().putLong(appendPointer + Long.BYTES * 2, l2);
+            Unsafe.getUnsafe().putLong(appendPointer + Long.BYTES * 3, l3);
+            appendPointer += Long256.BYTES;
+        } else {
+            putLong(l0);
+            putLong(l1);
+            putLong(l2);
+            putLong(l3);
+        }
+    }
+
+    @Override
+    public final void putLong256(Long256 value) {
+        putLong256(
+                value.getLong0(),
+                value.getLong1(),
+                value.getLong2(),
+                value.getLong3()
+        );
+    }
+
+    @Override
+    public final void putLong256(CharSequence hexString) {
+        if (pageHi - appendPointer < 4 * Long.BYTES) {
+            straddlingPageLong256Decoder.putLong256(hexString);
+        } else {
+            inPageLong256Decoder.putLong256(hexString);
+        }
+    }
+
+    @Override
+    public final void putLong256(@NotNull CharSequence hexString, int start, int end) {
+        if (pageHi - appendPointer < 4 * Long.BYTES) {
+            straddlingPageLong256Decoder.putLong256(hexString, start, end);
+        } else {
+            inPageLong256Decoder.putLong256(hexString, start, end);
+        }
+    }
+
+    @Override
+    public final long putNullBin() {
+        final long offset = getAppendOffset();
+        putLong(TableUtils.NULL_LEN);
+        return offset;
+    }
+
+    @Override
+    public final long putNullStr() {
+        final long offset = getAppendOffset();
+        putInt(TableUtils.NULL_LEN);
+        return offset;
+    }
+
+    @Override
+    public final void putShort(short value) {
+        if (pageHi - appendPointer > 1) {
+            Unsafe.getUnsafe().putShort(appendPointer, value);
+            appendPointer += 2;
+        } else {
+            putShortBytes(value);
+        }
+    }
+
+    @Override
+    public final long putStr(CharSequence value) {
+        return value == null ? putNullStr() : putStr0(value, 0, value.length());
+    }
+
+    @Override
+    public final long putStr(char value) {
+        if (value == 0) return putNullStr();
+        else {
+            final long offset = getAppendOffset();
+            putInt(1);
+            if (pageHi - appendPointer < Character.BYTES) {
+                putSplitChar(value);
+            } else {
+                Unsafe.getUnsafe().putChar(appendPointer, value);
+                appendPointer += Character.BYTES;
+            }
+            return offset;
+        }
+    }
+
+    @Override
+    public final long putStr(CharSequence value, int pos, int len) {
+        if (value == null) {
+            return putNullStr();
+        }
+        return putStr0(value, pos, len);
+    }
+
+    /**
+     * Skips given number of bytes. Same as logically appending 0-bytes. Advantage of this method is that
+     * no memory write takes place.
+     *
+     * @param bytes number of bytes to skip
+     */
+    public void skip(long bytes) {
+        assert bytes >= 0;
+        if (pageHi - appendPointer > bytes) {
+            appendPointer += bytes;
+        } else {
+            skip0(bytes);
+        }
+    }
+
+    public final long getAppendOffset() {
+        return baseOffset + appendPointer;
+    }
+
+    @Override
+    public void truncate() {
+        clear();
+    }
+
+    public long getExtendSegmentSize() {
+        return extendSegmentSize;
+    }
+
+    protected final void setExtendSegmentSize(long extendSegmentSize) {
+        clear();
+        this.extendSegmentSize = Numbers.ceilPow2(extendSegmentSize);
+        this.extendSegmentMsb = Numbers.msb(this.extendSegmentSize);
+        this.extendSegmentMod = this.extendSegmentSize - 1;
+    }
+
+    @Override
+    public long appendAddressFor(long offset, long bytes) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void putBlockOfBytes(long offset, long from, long len) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void putBool(long offset, boolean value) {
+        putByte(offset, (byte) (value ? 1 : 0));
+    }
+
+    @Override
+    public final void putByte(long offset, byte value) {
+        if (roOffsetLo < offset && offset < roOffsetHi - 1) {
+            Unsafe.getUnsafe().putByte(absolutePointer + offset, value);
+        } else {
+            putByteRnd(offset, value);
+        }
+    }
+
+    @Override
+    public void putChar(long offset, char value) {
+        if (roOffsetLo < offset && offset < roOffsetHi - 2) {
+            Unsafe.getUnsafe().putChar(absolutePointer + offset, value);
+        } else {
+            putCharBytes(offset, value);
+        }
+    }
+
+    @Override
+    public void putDouble(long offset, double value) {
+        if (roOffsetLo < offset && offset < roOffsetHi - 8) {
+            Unsafe.getUnsafe().putDouble(absolutePointer + offset, value);
+        } else {
+            putDoubleBytes(offset, value);
+        }
+    }
+
+    @Override
+    public void putFloat(long offset, float value) {
+        if (roOffsetLo < offset && offset < roOffsetHi - 4) {
+            Unsafe.getUnsafe().putFloat(absolutePointer + offset, value);
+        } else {
+            putFloatBytes(offset, value);
+        }
+    }
+
+    @Override
+    public void putInt(long offset, int value) {
+        if (roOffsetLo < offset && offset < roOffsetHi - Integer.BYTES) {
+            Unsafe.getUnsafe().putInt(absolutePointer + offset, value);
+        } else {
+            putIntBytes(offset, value);
+        }
+    }
+
+    @Override
+    public void putLong(long offset, long value) {
+        if (roOffsetLo < offset && offset < roOffsetHi - 8) {
+            Unsafe.getUnsafe().putLong(absolutePointer + offset, value);
+        } else {
+            putLongBytes(offset, value);
+        }
+    }
+
+    @Override
+    public void putLong256(long offset, Long256 value) {
+        putLong256(
+                offset,
+                value.getLong0(),
+                value.getLong1(),
+                value.getLong2(),
+                value.getLong3()
+        );
+    }
+
+    @Override
+    public void putLong256(long offset, long l0, long l1, long l2, long l3) {
+        if (roOffsetLo < offset && offset < roOffsetHi - Long256.BYTES) {
+            Unsafe.getUnsafe().putLong(absolutePointer + offset, l0);
+            Unsafe.getUnsafe().putLong(absolutePointer + offset + Long.BYTES, l1);
+            Unsafe.getUnsafe().putLong(absolutePointer + offset + Long.BYTES * 2, l2);
+            Unsafe.getUnsafe().putLong(absolutePointer + offset + Long.BYTES * 3, l3);
+        } else {
+            putLong(offset, l0);
+            putLong(offset + Long.BYTES, l1);
+            putLong(offset + Long.BYTES * 2, l2);
+            putLong(offset + Long.BYTES * 3, l3);
+        }
+    }
+
+    @Override
+    public final void putNullStr(long offset) {
+        putInt(offset, TableUtils.NULL_LEN);
+    }
+
+    @Override
+    public void putShort(long offset, short value) {
+        if (roOffsetLo < offset && offset < roOffsetHi - 2) {
+            Unsafe.getUnsafe().putShort(absolutePointer + offset, value);
+        } else {
+            putShortBytes(offset, value);
+        }
+    }
+
+    @Override
+    public void putStr(long offset, CharSequence value) {
+        if (value == null) {
+            putNullStr(offset);
+        } else {
+            putStr(offset, value, 0, value.length());
+        }
+    }
+
+    @Override
+    public void putStr(long offset, CharSequence value, int pos, int len) {
+        putInt(offset, len);
+        if (roOffsetLo < offset && offset < roOffsetHi - len * 2L - 4) {
+            copyStrChars(value, pos, len, absolutePointer + offset + 4);
+        } else {
+            putStrSplit(offset + 4, value, pos, len);
+        }
+    }
+
+    public void clear() {
+        releaseAllPagesButFirst();
+        appendPointer = -1;
+        pageHi = -1;
+        pageLo = -1;
+        baseOffset = 1;
+        clearHotPage();
+    }
+
+    public void clearHotPage() {
+        roOffsetLo = roOffsetHi = 0;
     }
 
     public void copyTo(long address, long offset, long len) {
@@ -261,8 +639,8 @@ public class PARWMemoryImpl implements ARWMemory  {
 
     @Override
     public void extend(long size) {
-        // todo: extending memory should not update append position
-        jumpTo(size);
+        assert size > 0;
+        mapWritePage(pageIndex(size - 1));
     }
 
     @Override
@@ -275,6 +653,47 @@ public class PARWMemoryImpl implements ARWMemory  {
             return absolutePointer + offset;
         }
         return addressOf0(offset);
+    }
+
+    @Override
+    public long offsetInPage(long offset) {
+        return offset & extendSegmentMod;
+    }
+
+    @Override
+    public final int pageIndex(long offset) {
+        return (int) (offset >> extendSegmentMsb);
+    }
+
+    public void getLong256(long offset, Long256Acceptor sink) {
+        if (roOffsetLo < offset && offset < roOffsetHi - Long256.BYTES) {
+            sink.setAll(
+                    Unsafe.getUnsafe().getLong(absolutePointer + offset),
+                    Unsafe.getUnsafe().getLong(absolutePointer + offset + Long.BYTES),
+                    Unsafe.getUnsafe().getLong(absolutePointer + offset + Long.BYTES * 2),
+                    Unsafe.getUnsafe().getLong(absolutePointer + offset + Long.BYTES * 3)
+            );
+        } else {
+            sink.setAll(
+                    getLong(offset),
+                    getLong(offset + Long.BYTES),
+                    getLong(offset + Long.BYTES * 2),
+                    getLong(offset + Long.BYTES * 3)
+            );
+        }
+    }
+
+    public final CharSequence getStr0(long offset, CharSequenceView view) {
+        final int len = getInt(offset);
+        if (len == TableUtils.NULL_LEN) {
+            return null;
+        }
+
+        if (len == 0) {
+            return "";
+        }
+
+        return view.of(offset + STRING_LENGTH_BYTES, len);
     }
 
     public long hash(long offset, long size) {
@@ -296,37 +715,6 @@ public class PARWMemoryImpl implements ARWMemory  {
         return hash0(offset, size);
     }
 
-    public void getLong256(long offset, Long256Sink sink) {
-        if (roOffsetLo < offset && offset < roOffsetHi - Long256.BYTES) {
-            sink.setLong0(Unsafe.getUnsafe().getLong(absolutePointer + offset));
-            sink.setLong1(Unsafe.getUnsafe().getLong(absolutePointer + offset + Long.BYTES));
-            sink.setLong2(Unsafe.getUnsafe().getLong(absolutePointer + offset + Long.BYTES * 2));
-            sink.setLong3(Unsafe.getUnsafe().getLong(absolutePointer + offset + Long.BYTES * 3));
-        } else {
-            sink.setLong0(getLong(offset));
-            sink.setLong1(getLong(offset + Long.BYTES));
-            sink.setLong2(getLong(offset + Long.BYTES * 2));
-            sink.setLong3(getLong(offset + Long.BYTES * 3));
-        }
-    }
-
-    public long getExtendSegmentSize() {
-        return extendSegmentSize;
-    }
-
-    public final CharSequence getStr0(long offset, CharSequenceView view) {
-        final int len = getInt(offset);
-        if (len == TableUtils.NULL_LEN) {
-            return null;
-        }
-
-        if (len == 0) {
-            return "";
-        }
-
-        return view.of(offset + STRING_LENGTH_BYTES, len);
-    }
-
     public boolean isMapped(long offset, long len) {
         int pageIndex = pageIndex(offset);
         int pageEndIndex = pageIndex(offset + len - 1);
@@ -336,408 +724,8 @@ public class PARWMemoryImpl implements ARWMemory  {
         return false;
     }
 
-    /**
-     * Updates append pointer with address for the given offset. All put* functions will be
-     * appending from this offset onwards effectively overwriting data. Size of virtual memory remains
-     * unaffected until the moment memory has to be extended.
-     *
-     * @param offset position from 0 in virtual memory.
-     */
-    @Override
-    public void jumpTo(long offset) {
-        assert offset > -1;
-        final long p = offset - baseOffset;
-        if (p > pageLo && p < pageHi) {
-            appendPointer = p;
-        } else {
-            jumpTo0(offset);
-        }
-    }
-
-    @Override
-    public final long putBin(BinarySequence value) {
-        final long offset = getAppendOffset();
-        if (value == null) {
-            putLong(TableUtils.NULL_LEN);
-        } else {
-            final long len = value.length();
-            putLong(len);
-            final long remaining = pageHi - appendPointer;
-            if (len < remaining) {
-                putBinSequence(value, 0, len);
-                appendPointer += len;
-            } else {
-                putBin0(value, len, remaining);
-            }
-        }
-        return offset;
-    }
-
-    @Override
-    public final long putBin(long from, long len) {
-        final long offset = getAppendOffset();
-        putLong(len > 0 ? len : TableUtils.NULL_LEN);
-        if (len < 1) {
-            return offset;
-        }
-
-        if (len < pageHi - appendPointer) {
-            Vect.memcpy(from, appendPointer, len);
-            appendPointer += len;
-        } else {
-            putBinSlit(from, len);
-        }
-
-        return offset;
-    }
-
-    @Override
-    public final void putBlockOfBytes(long from, long len) {
-        if (len < pageHi - appendPointer) {
-            Vect.memcpy(from, appendPointer, len);
-            appendPointer += len;
-        } else {
-            putBinSlit(from, len);
-        }
-    }
-
-    @Override
-    public void putBool(boolean value) {
-        putByte((byte) (value ? 1 : 0));
-    }
-
-    @Override
-    public void putBool(long offset, boolean value) {
-        putByte(offset, (byte) (value ? 1 : 0));
-    }
-
-    @Override
-    public final void putByte(long offset, byte value) {
-        if (roOffsetLo < offset && offset < roOffsetHi - 1) {
-            Unsafe.getUnsafe().putByte(absolutePointer + offset, value);
-        } else {
-            putByteRnd(offset, value);
-        }
-    }
-
-    @Override
-    public void putByte(byte b) {
-        if (pageHi == appendPointer) {
-            pageAt(getAppendOffset() + 1);
-        }
-        Unsafe.getUnsafe().putByte(appendPointer++, b);
-    }
-
-    @Override
-    public void putChar(long offset, char value) {
-        if (roOffsetLo < offset && offset < roOffsetHi - 2) {
-            Unsafe.getUnsafe().putChar(absolutePointer + offset, value);
-        } else {
-            putCharBytes(offset, value);
-        }
-    }
-
-    @Override
-    public final void putChar(char value) {
-        if (pageHi - appendPointer > 1) {
-            Unsafe.getUnsafe().putChar(appendPointer, value);
-            appendPointer += 2;
-        } else {
-            putCharBytes(value);
-        }
-    }
-
-    @Override
-    public void putDouble(long offset, double value) {
-        if (roOffsetLo < offset && offset < roOffsetHi - 8) {
-            Unsafe.getUnsafe().putDouble(absolutePointer + offset, value);
-        } else {
-            putDoubleBytes(offset, value);
-        }
-    }
-
-    @Override
-    public final void putDouble(double value) {
-        if (pageHi - appendPointer > 7) {
-            Unsafe.getUnsafe().putDouble(appendPointer, value);
-            appendPointer += 8;
-        } else {
-            putDoubleBytes(value);
-        }
-    }
-
-    @Override
-    public void putFloat(long offset, float value) {
-        if (roOffsetLo < offset && offset < roOffsetHi - 4) {
-            Unsafe.getUnsafe().putFloat(absolutePointer + offset, value);
-        } else {
-            putFloatBytes(offset, value);
-        }
-    }
-
-    @Override
-    public final void putFloat(float value) {
-        if (pageHi - appendPointer > 3) {
-            Unsafe.getUnsafe().putFloat(appendPointer, value);
-            appendPointer += 4;
-        } else {
-            putFloatBytes(value);
-        }
-    }
-
-    @Override
-    public void putInt(long offset, int value) {
-        if (roOffsetLo < offset && offset < roOffsetHi - Integer.BYTES) {
-            Unsafe.getUnsafe().putInt(absolutePointer + offset, value);
-        } else {
-            putIntBytes(offset, value);
-        }
-    }
-
-    @Override
-    public final void putInt(int value) {
-        if (pageHi - appendPointer > 3) {
-            Unsafe.getUnsafe().putInt(appendPointer, value);
-            appendPointer += 4;
-        } else {
-            putIntBytes(value);
-        }
-    }
-
-    @Override
-    public void putLong(long offset, long value) {
-        if (roOffsetLo < offset && offset < roOffsetHi - 8) {
-            Unsafe.getUnsafe().putLong(absolutePointer + offset, value);
-        } else {
-            putLongBytes(offset, value);
-        }
-    }
-
-    @Override
-    public final void putLong(long value) {
-        if (pageHi - appendPointer > 7) {
-            Unsafe.getUnsafe().putLong(appendPointer, value);
-            appendPointer += 8;
-        } else {
-            putLongBytes(value);
-        }
-    }
-
-    @Override
-    public final void putLong128(long l1, long l2) {
-        if (pageHi - appendPointer > 15) {
-            Unsafe.getUnsafe().putLong(appendPointer, l1);
-            Unsafe.getUnsafe().putLong(appendPointer + Long.BYTES, l2);
-            appendPointer += 16;
-        } else {
-            putLong(l1);
-            putLong(l2);
-        }
-    }
-
-    @Override
-    public void putLong256(long offset, Long256 value) {
-        putLong256(
-                offset,
-                value.getLong0(),
-                value.getLong1(),
-                value.getLong2(),
-                value.getLong3()
-        );
-    }
-
-    @Override
-    public void putLong256(long offset, long l0, long l1, long l2, long l3) {
-        if (roOffsetLo < offset && offset < roOffsetHi - Long256.BYTES) {
-            Unsafe.getUnsafe().putLong(absolutePointer + offset, l0);
-            Unsafe.getUnsafe().putLong(absolutePointer + offset + Long.BYTES, l1);
-            Unsafe.getUnsafe().putLong(absolutePointer + offset + Long.BYTES * 2, l2);
-            Unsafe.getUnsafe().putLong(absolutePointer + offset + Long.BYTES * 3, l3);
-        } else {
-            putLong(offset, l0);
-            putLong(offset + Long.BYTES, l1);
-            putLong(offset + Long.BYTES * 2, l2);
-            putLong(offset + Long.BYTES * 3, l3);
-        }
-    }
-
-    @Override
-    public final void putLong256(long l0, long l1, long l2, long l3) {
-        if (pageHi - appendPointer > Long256.BYTES - 1) {
-            Unsafe.getUnsafe().putLong(appendPointer, l0);
-            Unsafe.getUnsafe().putLong(appendPointer + Long.BYTES, l1);
-            Unsafe.getUnsafe().putLong(appendPointer + Long.BYTES * 2, l2);
-            Unsafe.getUnsafe().putLong(appendPointer + Long.BYTES * 3, l3);
-            appendPointer += Long256.BYTES;
-        } else {
-            putLong(l0);
-            putLong(l1);
-            putLong(l2);
-            putLong(l3);
-        }
-    }
-
-    @Override
-    public final void putLong256(Long256 value) {
-        putLong256(
-                value.getLong0(),
-                value.getLong1(),
-                value.getLong2(),
-                value.getLong3()
-        );
-    }
-
-    @Override
-    public final void putLong256(CharSequence hexString) {
-        if (pageHi - appendPointer < 4 * Long.BYTES) {
-            straddlingPageLong256Decoder.putLong256(hexString);
-        } else {
-            inPageLong256Decoder.putLong256(hexString);
-        }
-    }
-
-    @Override
-    public final void putLong256(@NotNull CharSequence hexString, int start, int end) {
-        if (pageHi - appendPointer < 4 * Long.BYTES) {
-            straddlingPageLong256Decoder.putLong256(hexString, start, end);
-        } else {
-            inPageLong256Decoder.putLong256(hexString, start, end);
-        }
-    }
-
-    @Override
-    public final long putNullBin() {
-        final long offset = getAppendOffset();
-        putLong(TableUtils.NULL_LEN);
-        return offset;
-    }
-
-    @Override
-    public final long putNullStr() {
-        final long offset = getAppendOffset();
-        putInt(TableUtils.NULL_LEN);
-        return offset;
-    }
-
-    @Override
-    public final void putNullStr(long offset) {
-        putInt(offset, TableUtils.NULL_LEN);
-    }
-
-    @Override
-    public void putShort(long offset, short value) {
-        if (roOffsetLo < offset && offset < roOffsetHi - 2) {
-            Unsafe.getUnsafe().putShort(absolutePointer + offset, value);
-        } else {
-            putShortBytes(offset, value);
-        }
-    }
-
-    @Override
-    public final void putShort(short value) {
-        if (pageHi - appendPointer > 1) {
-            Unsafe.getUnsafe().putShort(appendPointer, value);
-            appendPointer += 2;
-        } else {
-            putShortBytes(value);
-        }
-    }
-
-    @Override
-    public final long putStr(CharSequence value) {
-        return value == null ? putNullStr() : putStr0(value, 0, value.length());
-    }
-
-    @Override
-    public final long putStr(char value) {
-        if (value == 0) return putNullStr();
-        else {
-            final long offset = getAppendOffset();
-            putInt(1);
-            if (pageHi - appendPointer < Character.BYTES) {
-                putSplitChar(value);
-            } else {
-                Unsafe.getUnsafe().putChar(appendPointer, value);
-                appendPointer += Character.BYTES;
-            }
-            return offset;
-        }
-    }
-
-    @Override
-    public final long putStr(CharSequence value, int pos, int len) {
-        if (value == null) {
-            return putNullStr();
-        }
-        return putStr0(value, pos, len);
-    }
-
-    @Override
-    public void putStr(long offset, CharSequence value) {
-        if (value == null) {
-            putNullStr(offset);
-        } else {
-            putStr(offset, value, 0, value.length());
-        }
-    }
-
-    @Override
-    public void putStr(long offset, CharSequence value, int pos, int len) {
-        putInt(offset, len);
-        if (roOffsetLo < offset && offset < roOffsetHi - len * 2L - 4) {
-            copyStrChars(value, pos, len, absolutePointer + offset + 4);
-        } else {
-            putStrSplit(offset + 4, value, pos, len);
-        }
-    }
-
-    /**
-     * Skips given number of bytes. Same as logically appending 0-bytes. Advantage of this method is that
-     * no memory write takes place.
-     *
-     * @param bytes number of bytes to skip
-     */
-    public void skip(long bytes) {
-        assert bytes >= 0;
-        if (pageHi - appendPointer > bytes) {
-            appendPointer += bytes;
-        } else {
-            skip0(bytes);
-        }
-    }
-
-    public final long getAppendOffset() {
-        return baseOffset + appendPointer;
-    }
-
-    @Override
-    public void truncate() {
-        clear();
-    }
-
-    @Override
-    public long offsetInPage(long offset) {
-        return offset & extendSegmentMod;
-    }
-
-    @Override
-    public final int pageIndex(long offset) {
-        return (int) (offset >> extendSegmentMsb);
-    }
-
     public long pageRemaining(long offset) {
         return getPageSize() - offsetInPage(offset);
-    }
-
-    public void zero() {
-        for (int i = 0, n = pages.size(); i < n; i++) {
-            long address = pages.getQuick(i);
-            if (address == 0) {
-                address = allocateNextPage(i);
-                pages.setQuick(i, address);
-            }
-            Vect.memset(address, extendSegmentSize, 0);
-        }
     }
 
     private static void copyStrChars(CharSequence value, int pos, int len, long address) {
@@ -1137,11 +1125,15 @@ public class PARWMemoryImpl implements ARWMemory  {
         }
     }
 
-    protected final void setExtendSegmentSize(long extendSegmentSize) {
-        clear();
-        this.extendSegmentSize = Numbers.ceilPow2(extendSegmentSize);
-        this.extendSegmentMsb = Numbers.msb(this.extendSegmentSize);
-        this.extendSegmentMod = this.extendSegmentSize - 1;
+    protected void releaseAllPagesButFirst() {
+        final int n = pages.size();
+        for (int i = 1; i < n; i++) {
+            release(pages.getQuick(i));
+            pages.setQuick(i, 0);
+        }
+        if (n > 0) {
+            pages.setPos(1);
+        }
     }
 
     private void skip0(long bytes) {
@@ -1228,7 +1220,7 @@ public class PARWMemoryImpl implements ARWMemory  {
 
     private class InPageLong256FromCharSequenceDecoder extends Long256FromCharSequenceDecoder {
         @Override
-        public void onDecoded(long l0, long l1, long l2, long l3) {
+        public void setAll(long l0, long l1, long l2, long l3) {
             Unsafe.getUnsafe().putLong(appendPointer, l0);
             Unsafe.getUnsafe().putLong(appendPointer + 8, l1);
             Unsafe.getUnsafe().putLong(appendPointer + 16, l2);
@@ -1257,7 +1249,7 @@ public class PARWMemoryImpl implements ARWMemory  {
 
     private class StraddlingPageLong256FromCharSequenceDecoder extends Long256FromCharSequenceDecoder {
         @Override
-        public void onDecoded(long l0, long l1, long l2, long l3) {
+        public void setAll(long l0, long l1, long l2, long l3) {
             putLong(l0);
             putLong(l1);
             putLong(l2);

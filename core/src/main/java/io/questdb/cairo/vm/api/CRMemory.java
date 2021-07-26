@@ -95,12 +95,14 @@ public interface CRMemory extends ContinuousMemory, ReadMemory {
         return getInt(offset);
     }
 
-    default void getLong256(long offset, Long256Sink sink) {
+    default void getLong256(long offset, Long256Acceptor sink) {
         long addr = addressOf(offset + Long.BYTES * 4);
-        sink.setLong0(Unsafe.getUnsafe().getLong(addr - Long.BYTES * 4));
-        sink.setLong1(Unsafe.getUnsafe().getLong(addr - Long.BYTES * 3));
-        sink.setLong2(Unsafe.getUnsafe().getLong(addr - Long.BYTES * 2));
-        sink.setLong3(Unsafe.getUnsafe().getLong(addr - Long.BYTES));
+        sink.setAll(
+                Unsafe.getUnsafe().getLong(addr - Long.BYTES * 4),
+                Unsafe.getUnsafe().getLong(addr - Long.BYTES * 3),
+                Unsafe.getUnsafe().getLong(addr - Long.BYTES * 2),
+                Unsafe.getUnsafe().getLong(addr - Long.BYTES)
+        );
     }
 
     default CharSequence getStr(long offset, CharSequenceView view) {

@@ -259,11 +259,6 @@ public class CairoMemoryTest {
     }
 
     @Test
-    public void testReadWriteMemoryJump() throws Exception {
-        testVirtualMemoryJump(path -> new PMARWMemoryImpl(FF, path, FF.getPageSize()));
-    }
-
-    @Test
     public void testReadWriteMemoryTruncate() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (Path path = new Path().of(temp.newFile().getAbsolutePath()).$()) {

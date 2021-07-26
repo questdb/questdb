@@ -60,12 +60,21 @@ public class CastTimestampToLong256FunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public void getLong256(Record rec, CharSink sink) {
+            final long value = arg.getLong(rec);
+            if (value == Numbers.LONG_NaN) {
+                return;
+            }
+            Numbers.appendLong256(value, 0, 0, 0, sink);
+        }
+
+        @Override
         public Long256 getLong256A(Record rec) {
             final long value = arg.getTimestamp(rec);
             if (value == Numbers.LONG_NaN) {
                 return Long256Impl.NULL_LONG256;
             }
-            long256a.setLong0(value);
+            long256a.setAll(value, 0, 0, 0);
             return long256a;
         }
 
@@ -75,17 +84,8 @@ public class CastTimestampToLong256FunctionFactory implements FunctionFactory {
             if (value == Numbers.LONG_NaN) {
                 return Long256Impl.NULL_LONG256;
             }
-            long256b.setLong0(value);
+            long256b.setAll(value, 0, 0, 0);
             return long256b;
-        }
-
-        @Override
-        public void getLong256(Record rec, CharSink sink) {
-            final long value = arg.getLong(rec);
-            if (value == Numbers.LONG_NaN) {
-                return;
-            }
-            Numbers.appendLong256(value, 0, 0, 0, sink);
         }
     }
 }
