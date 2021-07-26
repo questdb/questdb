@@ -1370,6 +1370,9 @@ public class TableWriter implements Closeable {
             case ColumnType.BINARY:
                 nullers.add(() -> mem2.putLong(mem1.putNullBin()));
                 break;
+            case ColumnType.GEOHASH:
+                    //TODO: geohash null value?
+                    break;
             default:
                 break;
         }
@@ -1407,6 +1410,7 @@ public class TableWriter implements Closeable {
                     case ColumnType.LONG256:
                         // Consider Symbols as fixed, check data file size
                     case ColumnType.SYMBOL:
+                    case ColumnType.GEOHASH:
                         attachPartitionCheckFilesMatchFixedColumn(ff, path, columnType, partitionSize);
                         break;
                     case ColumnType.STRING:

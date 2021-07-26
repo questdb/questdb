@@ -118,7 +118,8 @@ public class RecordCursorPrinter {
     }
 
     protected void printColumn(Record r, RecordMetadata m, int i, CharSink sink) {
-        switch (ColumnType.tagOf(m.getColumnType(i))) {
+        final int columnType = m.getColumnType(i);
+        switch (ColumnType.tagOf(columnType)) {
             case ColumnType.DATE:
                 DateFormatUtils.appendDateTime(sink, r.getDate(i));
                 break;
@@ -156,7 +157,7 @@ public class RecordCursorPrinter {
                 sink.put(r.getLong(i));
                 break;
             case ColumnType.GEOHASH:
-                sink.put(GeoHashNative.toString(r.getLong(i)));
+                sink.put(GeoHashNative.toString(readGeoHash(r, i, columnType)));
                 break;
             case ColumnType.BYTE:
                 sink.put(r.getByte(i));
@@ -174,7 +175,21 @@ public class RecordCursorPrinter {
                 break;
         }
         if (printTypes) {
-            sink.put(':').put(ColumnType.nameOf(m.getColumnType(i)));
+            sink.put(':').put(ColumnType.nameOf(columnType));
+        }
+    }
+
+    private long readGeoHash(Record r, int index, int type) {
+        final int size = ColumnType.sizeOf(type);
+        switch (size) {
+            case 1:
+                return r.getByte(index);
+            case 2:
+                return r.getShort(index);
+            case 4:
+                return r.getInt(index);
+            default:
+                return r.getLong(index);
         }
     }
 }

@@ -39,12 +39,16 @@ public class GeoHashExtra {
     }
 
     public static int storageSizeInBits(int type) {
-        int size = GeoHashExtra.getBitsPrecision(type);
-        if (size == 0) {
+        int bits = GeoHashExtra.getBitsPrecision(type);
+        return roundUpToPow2(bits);
+    }
+
+    public static int roundUpToPow2(int bits) {
+        if (bits == 0) {
             return 64; // variable length geohash
         }
-        size = (size + Byte.SIZE - 1) & -Byte.SIZE; // round up to 8 bit
-        return Numbers.ceilPow2(size); // next pow of 2
+        bits = (bits + Byte.SIZE - 1) & -Byte.SIZE; // round up to 8 bit
+        return Numbers.ceilPow2(bits); // next pow of 2
     }
 
     public static int storageSizeInPow2(int type) {

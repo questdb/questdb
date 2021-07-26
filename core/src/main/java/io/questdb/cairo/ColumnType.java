@@ -110,6 +110,10 @@ public final class ColumnType {
     private ColumnType() {
     }
 
+    public static int geohashWithPrecision(int bits) {
+        return GeoHashExtra.setBitsPrecision(ColumnType.GEOHASH, bits);
+    }
+
     public static int tagOf(int type) {
         return type & 0xFF;
     }
