@@ -46,6 +46,8 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import static io.questdb.test.tools.TestUtils.getSendDelayNetworkFacade;
+
 // These test the retry behaviour of IODispatcher, HttpConnectionContext
 // They run the same test multiple times in order to test concurrent retry executions
 // If a test becomes unstable (fails sometimes on build server or local run), increase number of iterations
@@ -792,33 +794,6 @@ public class RetryIODispatcherTest {
                     Assert.assertTrue("Table rename did not complete within timeout after writer is released",
                             countDownLatch.await(500, TimeUnit.MILLISECONDS));
                 });
-    }
-
-    @NotNull
-    private NetworkFacade getSendDelayNetworkFacade(int startDelayDelayAfter) {
-        return new NetworkFacadeImpl() {
-            final AtomicInteger totalSent = new AtomicInteger();
-
-            @Override
-            public int send(long fd, long buffer, int bufferLen) {
-                if (startDelayDelayAfter == 0) {
-                    return super.send(fd, buffer, bufferLen);
-                }
-
-                int sentNow = totalSent.get();
-                if (bufferLen > 0) {
-                    if (sentNow >= startDelayDelayAfter) {
-                        totalSent.set(0);
-                        return 0;
-                    }
-
-                    int result = super.send(fd, buffer, Math.min(bufferLen, startDelayDelayAfter - sentNow));
-                    totalSent.addAndGet(result);
-                    return result;
-                }
-                return 0;
-            }
-        };
     }
 
     @NotNull

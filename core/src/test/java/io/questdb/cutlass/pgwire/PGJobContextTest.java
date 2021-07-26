@@ -3747,6 +3747,44 @@ nodejs code:
     }
 
     @Test
+    public void testRowLimitNotResumed() throws Exception {
+        assertMemoryLeak(() -> {
+            try (final PGWireServer ignored = createPGServer(1)) {
+                try (final Connection connection = getConnection(false
+                        , true)) {
+                    try (CallableStatement st1 = connection.prepareCall("create table y as (" +
+                            "select timestamp_sequence(0, 1000000000) timestamp," +
+                            " rnd_symbol('a','b',null) symbol1 " +
+                            " from long_sequence(10)" +
+                            ") timestamp (timestamp)")) {
+                        st1.execute();
+                    }
+                }
+            }
+
+            try (final PGWireServer ignored = createPGServer(1)) {
+                for (int i = 0; i < 3; i++) {
+                    try (final Connection connection = getConnection(false, true)) {
+                        try (PreparedStatement select1 = connection.prepareStatement("select version()")) {
+                            ResultSet rs0 = select1.executeQuery();
+                            sink.clear();
+                            assertResultSet("version[VARCHAR]\n" +
+                                    "PostgreSQL 12.3, compiled by Visual C++ build 1914, 64-bit\n", sink, rs0);
+                            rs0.close();
+                        }
+                        try (PreparedStatement select2 = connection.prepareStatement("select timestamp from y")) {
+                            select2.setMaxRows(1);
+                            ResultSet rs2 = select2.executeQuery();
+                            rs2.next();
+                            rs2.close();
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testStaleQueryCacheOnTableDroppedSimple() throws Exception {
         testStaleQueryCacheOnTableDropped(true);
     }
@@ -3756,13 +3794,13 @@ nodejs code:
         testStaleQueryCacheOnTableDropped(false);
     }
 
-    public void testStaleQueryCacheOnTableDropped(boolean simple) throws Exception {
+    private void testStaleQueryCacheOnTableDropped(boolean simple) throws Exception {
         assertMemoryLeak(() -> {
             try (
                     final PGWireServer ignored = createPGServer(2);
                     final Connection connection = getConnection(simple, true)
             ) {
-                try(CallableStatement st1 = connection.prepareCall("create table y as (" +
+                try (CallableStatement st1 = connection.prepareCall("create table y as (" +
                         "select timestamp_sequence(0, 1000000000) timestamp," +
                         " rnd_symbol('a','b',null) symbol1 " +
                         " from long_sequence(10)" +

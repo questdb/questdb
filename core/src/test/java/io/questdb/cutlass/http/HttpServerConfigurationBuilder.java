@@ -274,6 +274,11 @@ public class HttpServerConfigurationBuilder {
                     public Runnable onPeerDisconnect() {
                         return onPeerDisconnect;
                     }
+
+                    @Override
+                    public NetworkFacade getNetworkFacade() {
+                        return nf;
+                    }
                 };
             }
 
