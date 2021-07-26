@@ -38,4 +38,32 @@ public class GeoHashExtraTest {
         geohashCol = GeoHashExtra.setBitsPrecision(geohashCol, 24);
         Assert.assertEquals(24, GeoHashExtra.getBitsPrecision(geohashCol));
     }
+
+    @Test
+    public void testStorageSize() {
+        Assert.assertEquals(ColumnType.GEOHASH, ColumnType.tagOf(ColumnType.GEOHASH));
+        Assert.assertEquals(0, GeoHashExtra.getBitsPrecision(ColumnType.GEOHASH));
+
+        int geohashCol = GeoHashExtra.setBitsPrecision(ColumnType.GEOHASH, 42);
+        Assert.assertEquals(ColumnType.GEOHASH, ColumnType.tagOf(geohashCol));
+        Assert.assertEquals(64, GeoHashExtra.storageSizeInBits(geohashCol));
+        Assert.assertEquals(3, GeoHashExtra.storageSizeInPow2(geohashCol));
+
+        geohashCol = GeoHashExtra.setBitsPrecision(geohashCol, 24);
+        Assert.assertEquals(32, GeoHashExtra.storageSizeInBits(geohashCol));
+        Assert.assertEquals(2, GeoHashExtra.storageSizeInPow2(geohashCol));
+
+        geohashCol = GeoHashExtra.setBitsPrecision(geohashCol, 13);
+        Assert.assertEquals(16, GeoHashExtra.storageSizeInBits(geohashCol));
+        Assert.assertEquals(1, GeoHashExtra.storageSizeInPow2(geohashCol));
+
+        geohashCol = GeoHashExtra.setBitsPrecision(geohashCol, 7);
+        Assert.assertEquals(8, GeoHashExtra.storageSizeInBits(geohashCol));
+        Assert.assertEquals(0, GeoHashExtra.storageSizeInPow2(geohashCol));
+
+        geohashCol = GeoHashExtra.setBitsPrecision(geohashCol, 0);
+        Assert.assertEquals(64, GeoHashExtra.storageSizeInBits(geohashCol));
+        Assert.assertEquals(3, GeoHashExtra.storageSizeInPow2(geohashCol));
+    }
+
 }

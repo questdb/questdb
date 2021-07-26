@@ -136,14 +136,26 @@ public final class ColumnType {
     }
 
     public static int pow2SizeOf(int columnType) {
-        return TYPE_SIZE_POW2[ColumnType.tagOf(columnType)];
+        final int tag = ColumnType.tagOf(columnType);
+
+        if (tag == ColumnType.GEOHASH) {
+            return GeoHashExtra.storageSizeInPow2(columnType);
+        }
+
+        return TYPE_SIZE_POW2[tag];
     }
 
     public static int sizeOf(int columnType) {
         final int tag = ColumnType.tagOf(columnType);
+
         if (tag == ColumnType.NULL) {
             return 0;
         }
+
+        if (tag == ColumnType.GEOHASH) {
+            return GeoHashExtra.storageSizeInBits(columnType) / Byte.SIZE;
+        }
+
         if (tag < ColumnType.BOOLEAN || tag > ColumnType.PARAMETER) {
             return -1;
         }

@@ -24,15 +24,31 @@
 
 package io.questdb.cairo;
 
+import io.questdb.std.Numbers;
+
 public class GeoHashExtra {
     private static final int BITS_OFFSET = 8;
 
     public static int setBitsPrecision(int type, int bits) {
-        assert bits > 0 && bits < 65;
+        assert bits >= 0 && bits < 61;
         return (type & ~(0xFF << BITS_OFFSET)) | (bits << BITS_OFFSET);
     }
 
     public static int getBitsPrecision(int type) {
         return (type >> BITS_OFFSET) & 0xFF;
     }
+
+    public static int storageSizeInBits(int type) {
+        int size = GeoHashExtra.getBitsPrecision(type);
+        if (size == 0) {
+            return 64; // variable length geohash
+        }
+        size = (size + Byte.SIZE - 1) & -Byte.SIZE; // round up to 8 bit
+        return Numbers.ceilPow2(size); // next pow of 2
+    }
+
+    public static int storageSizeInPow2(int type) {
+        return Numbers.msb(storageSizeInBits(type) / Byte.SIZE);
+    }
+
 }
