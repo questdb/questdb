@@ -69,6 +69,7 @@ public class SendAndReceiveRequestBuilder {
     private int requestCount = 1;
     private int compareLength = -1;
     private final int maxWaitTimeoutMs = 30000;
+    private boolean expectSendDisconnect;
 
     public void execute(
             String request,
@@ -139,6 +140,9 @@ public class SendAndReceiveRequestBuilder {
         Chars.asciiStrCpy(request, reqLen, ptr);
         while (sent < reqLen) {
             int n = nf.send(fd, ptr + sent, reqLen - sent);
+            if (n < 0 && expectSendDisconnect){
+                return;
+            }
             Assert.assertTrue(n > -1);
             sent += n;
         }
@@ -199,11 +203,14 @@ public class SendAndReceiveRequestBuilder {
                     expected = expected.substring(0, Math.min(compareLength, expected.length()) - 1);
                     actual = actual.length() > 0 ? actual.substring(0, Math.min(compareLength, actual.length()) - 1) : actual;
                 }
-                TestUtils.assertEquals(disconnected ? "Server disconnected" : null, expected, actual);
+                if (!expectSendDisconnect) {
+                    // expectSendDisconnect means that test expect disconnect during send or straight after
+                    TestUtils.assertEquals(disconnected ? "Server disconnected" : null, expected, actual);
+                }
             }
         }
 
-        if (disconnected && !expectDisconnect) {
+        if (disconnected && !expectDisconnect && !expectSendDisconnect) {
             LOG.error().$("disconnected?").$();
             Assert.fail();
         }
@@ -323,6 +330,11 @@ public class SendAndReceiveRequestBuilder {
 
     public SendAndReceiveRequestBuilder withExpectDisconnect(boolean expectDisconnect) {
         this.expectDisconnect = expectDisconnect;
+        return this;
+    }
+
+    public SendAndReceiveRequestBuilder withExpectSendDisconnect(boolean expectDisconnect) {
+        this.expectSendDisconnect = expectDisconnect;
         return this;
     }
 

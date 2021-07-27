@@ -42,10 +42,7 @@ import io.questdb.griffin.engine.functions.eq.EqDoubleFunctionFactory;
 import io.questdb.griffin.engine.functions.eq.EqIntFunctionFactory;
 import io.questdb.griffin.engine.functions.eq.EqLongFunctionFactory;
 import io.questdb.griffin.engine.functions.geohash.GeoHashNative;
-import io.questdb.griffin.engine.functions.groupby.CountLong256GroupByFunctionFactory;
-import io.questdb.griffin.engine.functions.groupby.MinDateGroupByFunctionFactory;
-import io.questdb.griffin.engine.functions.groupby.MinFloatGroupByFunctionFactory;
-import io.questdb.griffin.engine.functions.groupby.MinTimestampGroupByFunctionFactory;
+import io.questdb.griffin.engine.functions.groupby.*;
 import io.questdb.griffin.engine.functions.math.*;
 import io.questdb.griffin.engine.functions.str.LengthStrFunctionFactory;
 import io.questdb.griffin.engine.functions.str.LengthSymbolFunctionFactory;
@@ -82,6 +79,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
                 ColumnType.overloadDistance(ColumnType.INT, ColumnType.UNDEFINED);
                 Assert.fail();
             } catch (AssertionError e) {
+                TestUtils.assertContains(e.getMessage(), "Undefined not supported in overloads");
             }
         }
     }
@@ -1156,6 +1154,19 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
                 return 7.8;
             }
         });
+    }
+
+    @Test
+    public void testCountUpperCase() throws SqlException {
+        functions.add(new CountGroupByFunctionFactory());
+        final GenericRecordMetadata metadata = new GenericRecordMetadata();
+        metadata.add(new TableColumnMetadata("a", ColumnType.INT, null));
+        FunctionParser functionParser = createFunctionParser();
+        Function function = parseFunction("COUNT()", metadata, functionParser);
+        Assert.assertEquals(ColumnType.LONG, function.getType());
+        Assert.assertEquals(
+                "io.questdb.griffin.engine.functions.groupby.CountGroupByFunction",
+                function.getClass().getCanonicalName());
     }
 
     @Test

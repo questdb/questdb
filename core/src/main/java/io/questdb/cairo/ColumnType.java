@@ -154,7 +154,7 @@ public final class ColumnType {
         final int toTag = ColumnType.tagOf(to);
         // Functions cannot accept UNDEFINED type (signature is not supported)
         // this check is just in case
-        assert toTag > UNDEFINED;
+        assert toTag > UNDEFINED : "Undefined not supported in overloads";
         return overloadPriorityMatrix[OVERLOAD_MATRIX_SIZE * fromTag + toTag];
     }
 
