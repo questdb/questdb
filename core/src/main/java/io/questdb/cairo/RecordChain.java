@@ -50,10 +50,12 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
     private long varAppendOffset = 0L;
     private long nextRecordOffset = -1L;
     private RecordCursor symbolTableResolver;
+    private final ColumnTypes columnTypes;
 
     public RecordChain(@Transient ColumnTypes columnTypes, RecordSink recordSink, long pageSize, int maxPages) {
         this.mem = new ContiguousVirtualMemory(pageSize, maxPages);
         this.recordSink = recordSink;
+        this.columnTypes = columnTypes;
         int count = columnTypes.getColumnCount();
         long varOffset = 0L;
         long fixOffset = 0L;
@@ -385,6 +387,21 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
         @Override
         public CharSequence getSymB(int col) {
             return symbolTableResolver.getSymbolTable(col).valueBOf(getInt(col));
+        }
+
+        @Override
+        public long getGeoHash(int col) {
+            final int columnType = columnTypes.getColumnType(col);
+            switch (ColumnType.sizeOf(columnType)) {
+                case 1:
+                    return mem.getByte(fixedWithColumnOffset(col));
+                case 2:
+                    return mem.getShort(fixedWithColumnOffset(col));
+                case 4:
+                    return mem.getInt(fixedWithColumnOffset(col));
+                default:
+                    return mem.getLong(fixedWithColumnOffset(col));
+            }
         }
 
         private long fixedWithColumnOffset(int index) {

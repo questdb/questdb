@@ -611,9 +611,27 @@ public class SqlCompiler implements Closeable {
                     break;
                 case ColumnType.GEOHASH:
                     assert toColumnType == ColumnType.GEOHASH;
-                    asm.invokeInterface(rGetLong, 1);
-                    asm.invokeVirtual(wPutLong);
-                    break;
+                    final int sizeFrom = ColumnType.sizeOf(fromColumnType);
+                    final int sizeTo = ColumnType.sizeOf(toColumnType);
+                    assert sizeFrom == sizeTo;
+                    switch (sizeFrom) {
+                        case 1:
+                            asm.invokeInterface(rGetByte, 1);
+                            asm.invokeVirtual(wPutByte);
+                            break;
+                        case 2:
+                            asm.invokeInterface(rGetShort, 1);
+                            asm.invokeVirtual(wPutShort);
+                            break;
+                        case 4:
+                            asm.invokeInterface(rGetInt, 1);
+                            asm.invokeVirtual(wPutInt);
+                            break;
+                        default:
+                            asm.invokeInterface(rGetLong, 1);
+                            asm.invokeVirtual(wPutLong);
+                            break;
+                    }
                 default:
                     break;
             }

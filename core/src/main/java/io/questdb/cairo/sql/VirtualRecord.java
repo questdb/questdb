@@ -160,6 +160,11 @@ public class VirtualRecord implements ColumnTypes, Record {
     }
 
     @Override
+    public long getGeoHash(int col) {
+        return getFunction(col).getGeoHash(base);
+    }
+
+    @Override
     public int getColumnCount() {
         return columnCount;
     }

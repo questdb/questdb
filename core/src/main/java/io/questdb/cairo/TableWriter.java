@@ -4829,6 +4829,26 @@ public class TableWriter implements Closeable {
             putTimestamp(index, l);
         }
 
+        public void putGeoHash(int index, long value) {
+            int type = metadata.getColumnType(index);
+            final WriteOnlyVirtualMemory primaryColumn = getPrimaryColumn(index);
+            switch (ColumnType.sizeOf(type)) {
+                case 1:
+                    primaryColumn.putByte((byte)value);
+                    break;
+                case 2:
+                    primaryColumn.putShort((short) value);
+                    break;
+                case 4:
+                    primaryColumn.putInt((int) value);
+                    break;
+                default:
+                    primaryColumn.putLong(value);
+                    break;
+            }
+            notNull(index);
+        }
+
         private WriteOnlyVirtualMemory getPrimaryColumn(int columnIndex) {
             return activeColumns.getQuick(getPrimaryColumnIndex(columnIndex));
         }
