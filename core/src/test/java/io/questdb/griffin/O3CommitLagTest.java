@@ -41,6 +41,7 @@ import io.questdb.std.NumericException;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -215,7 +216,7 @@ public class O3CommitLagTest extends AbstractO3Test {
     @Test
     public void testBigUncommittedToMove() throws Exception {
         executeWithPool(0, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-            try(TableModel tableModel = new TableModel(engine.getConfiguration(), "table", PartitionBy.DAY)) {
+            try (TableModel tableModel = new TableModel(engine.getConfiguration(), "table", PartitionBy.DAY)) {
                 tableModel
                         .col("id", ColumnType.LONG)
                         .col("ok", ColumnType.FLOAT)
@@ -229,7 +230,7 @@ public class O3CommitLagTest extends AbstractO3Test {
     @Test
     public void testBigUncommittedMovesTimestampOnEdge() throws Exception {
         executeWithPool(0, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-            try(TableModel tableModel = new TableModel(engine.getConfiguration(), "table", PartitionBy.DAY)) {
+            try (TableModel tableModel = new TableModel(engine.getConfiguration(), "table", PartitionBy.DAY)) {
                 tableModel
                         .col("id", ColumnType.LONG)
                         .timestamp("ts");
@@ -241,11 +242,59 @@ public class O3CommitLagTest extends AbstractO3Test {
     @Test
     public void testBigUncommittedCheckStrColFixedAndVarMappedSizes() throws Exception {
         executeWithPool(0, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-            try(TableModel tableModel = new TableModel(engine.getConfiguration(), "table", PartitionBy.DAY)) {
+            try (TableModel tableModel = new TableModel(engine.getConfiguration(), "table", PartitionBy.DAY)) {
                 tableModel
                         .col("id", ColumnType.STRING)
                         .timestamp("ts");
                 testBigUncommittedMove1(engine, compiler, sqlExecutionContext, tableModel);
+            }
+        });
+    }
+
+    @Test
+    public void testRowCountWhenLagIsNextDay() throws Exception {
+        executeWithPool(0, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            try (TableModel tableModel = new TableModel(engine.getConfiguration(), "table", PartitionBy.DAY)) {
+                String[] dates = new String[]{
+                        "2021-01-01T00:05:00.000000Z",
+                        "2021-01-01T00:01:00.000000Z",
+                        "2021-01-02T00:05:31.000000Z",
+                        "2021-01-01T00:01:30.000000Z",
+                        "2021-01-02T00:00:30.000000Z",
+                };
+
+                // Run same test taking 2-n lines from dates
+                for (int length = 2; length <= dates.length; length++) {
+                    String tableName = "lll" + length;
+                    LOG.info().$("========= LENGTH ").$(length).$(" ================").$();
+                    compiler.compile("create table " + tableName + "( " +
+                            "ts timestamp" +
+                            ") timestamp(ts) partition by DAY " +
+                            " WITH maxUncommittedRows=1, commitLag=120s", sqlExecutionContext);
+
+                    try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "test")) {
+                        for (int i = 0; i < length; i++) {
+                            long ts = IntervalUtils.parseFloorPartialDate(dates[i]);
+                            Row r = writer.newRow(ts);
+                            r.append();
+
+                            Assert.assertEquals(i + 1, writer.size());
+                            writer.checkMaxAndCommitLag(CommitMode.NOSYNC);
+                            Assert.assertEquals(i + 1, writer.size());
+                        }
+
+                        writer.commit();
+
+                        sink.clear();
+                        TestUtils.printSql(compiler, sqlExecutionContext, "select count() from " + tableName, sink);
+                        TestUtils.assertEquals(
+                                "count\n" + length + "\n"
+                                , sink);
+
+                        Assert.assertEquals(length, writer.size());
+                        Assert.assertEquals(length > 2 ? 2 : 1, writer.getPartitionCount());
+                    }
+                }
             }
         });
     }
@@ -278,7 +327,7 @@ public class O3CommitLagTest extends AbstractO3Test {
         int longColIndex = -1;
         int flotColIndex = -1;
         int strColIndex = -1;
-        for(int i = 0; i < tableModel.getColumnCount(); i++) {
+        for (int i = 0; i < tableModel.getColumnCount(); i++) {
             switch (tableModel.getColumnType(i)) {
                 case ColumnType.LONG:
                     longColIndex = i;
@@ -293,7 +342,7 @@ public class O3CommitLagTest extends AbstractO3Test {
         }
 
         long start = IntervalUtils.parseFloorPartialDate("2021-04-27T08:00:00");
-        for (int mils = 2; mils < 6; mils +=2) {
+        for (int mils = 2; mils < 6; mils += 2) {
             long idCount = mils * 1_000_000L;
 
             // Create big commit with has big part before OOO starts
@@ -303,7 +352,7 @@ public class O3CommitLagTest extends AbstractO3Test {
 
             // Add 2 batches
             try (TableWriter o3 = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "o3", "testing");
-                    TableWriter ordered = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "ordered", "testing")) {
+                 TableWriter ordered = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "ordered", "testing")) {
                 for (int i = 0; i < iterations; i++) {
                     long backwards = iterations - i - 1;
                     final Rnd rnd = new Rnd();
@@ -1289,7 +1338,7 @@ public class O3CommitLagTest extends AbstractO3Test {
             insertUncommitted(compiler, sqlExecutionContext, sql, writer);
             writer.commit();
             TestUtils.printSql(compiler, sqlExecutionContext, "select count(*) from y", sink);
-            TestUtils.assertEquals( "count\n495\n", sink);
+            TestUtils.assertEquals("count\n495\n", sink);
         }
 
         TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where i<=375 or i>380", sink);

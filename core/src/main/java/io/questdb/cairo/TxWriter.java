@@ -188,13 +188,17 @@ public final class TxWriter extends TxReader implements Closeable {
     public void finishPartitionSizeUpdate(long minTimestamp, long maxTimestamp) {
         this.minTimestamp = minTimestamp;
         this.maxTimestamp = maxTimestamp;
+        finishPartitionSizeUpdate();
+    }
+
+    public void finishPartitionSizeUpdate() {
         assert getPartitionCount() > 0;
         this.transientRowCount = getPartitionSize(getPartitionCount() - 1);
         this.fixedRowCount = 0;
-        for (int i = 0, hi = getPartitionCount() - 1; i < hi; i++) {
+        this.txPartitionCount = getPartitionCount();
+        for (int i = 0, hi = txPartitionCount - 1; i < hi; i++) {
             this.fixedRowCount += getPartitionSize(i);
         }
-        txPartitionCount++;
     }
 
     public int getAppendedPartitionCount() {

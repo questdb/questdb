@@ -1080,7 +1080,8 @@ public class TableWriter implements Closeable {
     }
 
     public long size() {
-        return txFile.getRowCount();
+        // This is uncommitted row count
+        return txFile.getRowCount() + (hasO3() ? getO3RowCount() : 0L);
     }
 
     @Override
@@ -3100,6 +3101,9 @@ public class TableWriter implements Closeable {
             this.txFile.fixedRowCount += partitionSize;
         } else {
             // this is last partition
+            if (partitionTimestamp > lastPartitionTimestamp) {
+                this.txFile.fixedRowCount += this.txFile.transientRowCount;
+            }
             this.txFile.transientRowCount = partitionSize;
             this.txFile.maxTimestamp = Math.max(this.txFile.maxTimestamp, timestampMax);
         }
