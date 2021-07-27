@@ -26,19 +26,25 @@ package io.questdb.test.tools;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.*;
-import io.questdb.griffin.*;
+import io.questdb.griffin.CompiledQuery;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogRecord;
 import io.questdb.network.Net;
 import io.questdb.network.NetworkFacade;
+import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.MutableCharSink;
 import io.questdb.std.str.Path;
+import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 
 import java.io.*;
+import java.util.concurrent.atomic.AtomicInteger;
 
 public final class TestUtils {
 
@@ -673,6 +679,33 @@ public final class TestUtils {
             Assert.assertEquals("Column name " + i, metadataExpected.getColumnName(i), metadataActual.getColumnName(i));
             Assert.assertEquals("Column type " + i, metadataExpected.getColumnType(i), metadataActual.getColumnType(i));
         }
+    }
+
+    @NotNull
+    public static NetworkFacade getSendDelayNetworkFacade(int startDelayDelayAfter) {
+        return new NetworkFacadeImpl() {
+            final AtomicInteger totalSent = new AtomicInteger();
+
+            @Override
+            public int send(long fd, long buffer, int bufferLen) {
+                if (startDelayDelayAfter == 0) {
+                    return super.send(fd, buffer, bufferLen);
+                }
+
+                int sentNow = totalSent.get();
+                if (bufferLen > 0) {
+                    if (sentNow >= startDelayDelayAfter) {
+                        totalSent.set(0);
+                        return 0;
+                    }
+
+                    int result = super.send(fd, buffer, Math.min(bufferLen, startDelayDelayAfter - sentNow));
+                    totalSent.addAndGet(result);
+                    return result;
+                }
+                return 0;
+            }
+        };
     }
 
     @FunctionalInterface

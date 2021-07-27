@@ -36,10 +36,10 @@ public class FunctionFactoryCache {
     static final IntHashSet invalidFunctionNameChars = new IntHashSet();
     static final CharSequenceHashSet invalidFunctionNames = new CharSequenceHashSet();
     private static final Log LOG = LogFactory.getLog(FunctionFactoryCache.class);
-    private final CharSequenceObjHashMap<ObjList<FunctionFactoryDescriptor>> factories = new CharSequenceObjHashMap<>();
-    private final CharSequenceHashSet groupByFunctionNames = new CharSequenceHashSet();
-    private final CharSequenceHashSet cursorFunctionNames = new CharSequenceHashSet();
-    private final CharSequenceHashSet runtimeConstantFunctionNames = new CharSequenceHashSet();
+    private final LowerCaseCharSequenceObjHashMap<ObjList<FunctionFactoryDescriptor>> factories = new LowerCaseCharSequenceObjHashMap<>();
+    private final LowerCaseCharSequenceHashSet groupByFunctionNames = new LowerCaseCharSequenceHashSet();
+    private final LowerCaseCharSequenceHashSet cursorFunctionNames = new LowerCaseCharSequenceHashSet();
+    private final LowerCaseCharSequenceHashSet runtimeConstantFunctionNames = new LowerCaseCharSequenceHashSet();
 
     public FunctionFactoryCache(CairoConfiguration configuration, Iterable<FunctionFactory> functionFactories) {
         boolean enableTestFactories = configuration.enableTestFactories();
@@ -112,11 +112,11 @@ public class FunctionFactoryCache {
         return runtimeConstantFunctionNames.contains(name);
     }
 
-    private void addFactoryToList(CharSequenceObjHashMap<ObjList<FunctionFactoryDescriptor>> list, FunctionFactory factory) throws SqlException {
+    private void addFactoryToList(LowerCaseCharSequenceObjHashMap<ObjList<FunctionFactoryDescriptor>> list, FunctionFactory factory) throws SqlException {
         addFactoryToList(list, new FunctionFactoryDescriptor(factory));
     }
 
-    private void addFactoryToList(CharSequenceObjHashMap<ObjList<FunctionFactoryDescriptor>> list, FunctionFactoryDescriptor descriptor) {
+    private void addFactoryToList(LowerCaseCharSequenceObjHashMap<ObjList<FunctionFactoryDescriptor>> list, FunctionFactoryDescriptor descriptor) {
         String name = descriptor.getName();
         int index = list.keyIndex(name);
         ObjList<FunctionFactoryDescriptor> overload;

@@ -95,6 +95,8 @@ stages:
         timeoutInMinutes: 60
         variables:
           SOURCE_CODE_CHANGED: $[ dependencies.CheckChanges.outputs['check_changes.SOURCE_CODE_CHANGED'] ]
+          MAVEN_CACHE_FOLDER: $(HOME)/.m2/repository
+          MAVEN_OPTS: '-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) -Xmx3072m'
         steps:
           - checkout: self
             fetchDepth: 1
@@ -110,11 +112,16 @@ stages:
               args: $(System.PullRequest.PullRequestNumber)
               failOnStandardError: true
             condition: and(and(eq(variables['Agent.OS'], 'Linux'), eq(variables['jdk'], '1.11')), not(eq(variables['System.PullRequest.PullRequestId'], '')) )
+          - task: Cache@2
+            inputs:
+              key: '"questdb_main" | maven |"$(Agent.OS)" | **/pom.xml'
+              restoreKeys: |
+              path: $(MAVEN_CACHE_FOLDER)          
           - task: Maven@3
             displayName: "Compile with Maven"
             inputs:
               mavenPomFile: "core/pom.xml"
-              mavenOptions: "-Xmx3072m"
+              mavenOptions: "$(MAVEN_OPTS)"
               options: "compile -DskipTests -P build-web-console,use-built-in-nodejs -Dhttp.keepAlive=false"
               jdkVersionOption: $(jdk)
             condition: eq(variables['SOURCE_CODE_CHANGED'], 'false')
@@ -122,7 +129,7 @@ stages:
             displayName: "Run tests with Maven with Code Coverage"
             inputs:
               mavenPomFile: "core/pom.xml"
-              mavenOptions: "-Xmx3072m"
+              mavenOptions: "$(MAVEN_OPTS)"
               options: "--batch-mode --quiet -P build-web-console,use-built-in-nodejs -Dout=$(Build.SourcesDirectory)/ci/qlog.conf -Dhttp.keepAlive=false"
               jdkVersionOption: $(jdk)
               codeCoverageToolOption: "$(CODE_COVERAGE_TOOL_OPTION)"
@@ -140,7 +147,7 @@ stages:
             displayName: "Run tests with Maven"
             inputs:
               mavenPomFile: "core/pom.xml"
-              mavenOptions: "-Xmx3072m"
+              mavenOptions: "$(MAVEN_OPTS)"
               options: "--batch-mode --quiet -P build-web-console,use-built-in-nodejs -Dout=$(Build.SourcesDirectory)/ci/qlog.conf -Dhttp.keepAlive=false"
               jdkVersionOption: $(jdk)
             timeoutInMinutes: 55

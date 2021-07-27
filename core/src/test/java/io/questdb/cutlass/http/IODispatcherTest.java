@@ -1749,9 +1749,6 @@ public class IODispatcherTest {
         );
     }
 
-    // TODO: a partition switch is missing. When transientRowCount goes from 4 to 1 fixedRowCount
-    //  is not updated, this results in "rowsRejected":3, "rowsImported":2.
-    @Ignore("Edge case, no regression.")
     @Test
     public void testImportSettingCommitLagAndMaxUncommittedRows2() throws Exception {
         importWithCommitLagAndMaxUncommittedRowsTableNotExists(

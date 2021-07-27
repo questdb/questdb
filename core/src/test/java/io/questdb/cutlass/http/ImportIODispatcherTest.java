@@ -28,6 +28,9 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
+import io.questdb.cairo.sql.InsertMethod;
+import io.questdb.cairo.sql.InsertStatement;
+import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
@@ -45,6 +48,8 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import static io.questdb.test.tools.TestUtils.getSendDelayNetworkFacade;
+
 public class ImportIODispatcherTest {
     @Rule
     public TemporaryFolder temp = new TemporaryFolder();
@@ -52,15 +57,15 @@ public class ImportIODispatcherTest {
     private static final String RequestFooter = "\r\n" +
             "--------------------------27d997ca93d2689d--";
 
-    private static final String Request1Header = "POST /upload?name=trips HTTP/1.1\r\n" +
+    private static final String PostHeader = "POST /upload?name=trips HTTP/1.1\r\n" +
             "Host: localhost:9001\r\n" +
             "User-Agent: curl/7.64.0\r\n" +
             "Accept: */*\r\n" +
             "Content-Length: 437760673\r\n" +
             "Content-Type: multipart/form-data; boundary=------------------------27d997ca93d2689d\r\n" +
             "Expect: 100-continue\r\n" +
-            "\r\n" +
-            "--------------------------27d997ca93d2689d\r\n" +
+            "\r\n";
+    private static final String Request1SchemaPart = "--------------------------27d997ca93d2689d\r\n" +
             "Content-Disposition: form-data; name=\"schema\"; filename=\"schema.json\"\r\n" +
             "Content-Type: application/octet-stream\r\n" +
             "\r\n" +
@@ -79,12 +84,17 @@ public class ImportIODispatcherTest {
             "    \"type\": \"STRING\"\r\n" +
             "  }\r\n" +
             "]\r\n" +
-            "\r\n" +
-            "--------------------------27d997ca93d2689d\r\n" +
+            "\r\n";
+
+    private static final String Request1DataHeader = "--------------------------27d997ca93d2689d\r\n" +
             "Content-Disposition: form-data; name=\"data\"; filename=\"fhv_tripdata_2017-02.csv\"\r\n" +
             "Content-Type: application/octet-stream\r\n" +
             "\r\n" +
             "Col1,Pickup_DateTime,DropOff_datetime\r\n";
+
+    private static final String Request1Header = PostHeader +
+            Request1SchemaPart +
+            Request1DataHeader;
 
     private static final String ValidImportRequest1 = Request1Header +
             "B00008,2017-02-01 00:30:00,\r\n" +
@@ -112,6 +122,35 @@ public class ImportIODispatcherTest {
             "B00014,2017-02-01 15:33:00,\r\n" +
             "B00014,2017-02-01 15:45:00,\r\n" +
             RequestFooter;
+
+    private static final String InvertedRequest1 = PostHeader +
+            Request1DataHeader +
+            "B00008,2017-02-01 00:30:00,\r\n" +
+            "B00008,2017-02-01 00:40:00,\r\n" +
+            "B00009,2017-02-01 00:50:00,\r\n" +
+            "B00013,2017-02-01 00:51:00,\r\n" +
+            "B00013,2017-02-01 01:41:00,\r\n" +
+            "B00013,2017-02-01 02:00:00,\r\n" +
+            "B00013,2017-02-01 03:53:00,\r\n" +
+            "B00013,2017-02-01 04:44:00,\r\n" +
+            "B00013,2017-02-01 05:05:00,\r\n" +
+            "B00013,2017-02-01 06:54:00,\r\n" +
+            "B00014,2017-02-01 07:45:00,\r\n" +
+            "B00014,2017-02-01 08:45:00,\r\n" +
+            "B00014,2017-02-01 09:46:00,\r\n" +
+            "B00014,2017-02-01 10:54:00,\r\n" +
+            "B00014,2017-02-01 11:45:00,\r\n" +
+            "B00014,2017-02-01 11:45:00,\r\n" +
+            "B00014,2017-02-01 11:45:00,\r\n" +
+            "B00014,2017-02-01 12:26:00,\r\n" +
+            "B00014,2017-02-01 12:55:00,\r\n" +
+            "B00014,2017-02-01 13:47:00,\r\n" +
+            "B00014,2017-02-01 14:05:00,\r\n" +
+            "B00014,2017-02-01 14:58:00,\r\n" +
+            "B00014,2017-02-01 15:33:00,\r\n" +
+            "B00014,2017-02-01 15:45:00,\r\n" +
+            RequestFooter +
+            Request1SchemaPart;
 
     private static final String Request2Header = "POST /upload?name=trips HTTP/1.1\r\n" +
             "Host: localhost:9001\r\n" +
@@ -279,7 +318,6 @@ public class ImportIODispatcherTest {
     private final String DdlCols1 = "(Col1+STRING,Pickup_DateTime+TIMESTAMP,DropOff_datetime+STRING)";
     private final String DdlCols2 = "(Col1+STRING,Col2+STRING,Col3+STRING,Col4+STRING,Pickup_DateTime+TIMESTAMP)+timestamp(Pickup_DateTime)";
     private SqlCompiler compiler;
-    private BindVariableServiceImpl bindVariableService;
     private SqlExecutionContextImpl sqlExecutionContext;
 
     @Test
@@ -444,7 +482,7 @@ public class ImportIODispatcherTest {
                                         int hi = importRowCount / 2 * (batch + 1);
                                         String requestTemplate =
                                                 headers[tableIndex].replace("POST /upload?name=trips ", "POST /upload?name=" + tableName + " ")
-                                                        + GenerateImportCsv(low, hi, csvTemplate[tableIndex])
+                                                        + generateImportCsv(low, hi, csvTemplate[tableIndex])
                                                         + RequestFooter;
 
                                         new SendAndReceiveRequestBuilder()
@@ -678,9 +716,63 @@ public class ImportIODispatcherTest {
                 });
     }
 
+    @Test
+    public void testImportMisDetectsTimestampColumn() throws Exception {
+        testImportMisDetectsTimestampColumn(new HttpServerConfigurationBuilder(), 1000000);
+    }
+
+    @Test
+    public void testImportMisDetectsTimestampColumnSlowPeer() throws Exception {
+        testImportMisDetectsTimestampColumn(new HttpServerConfigurationBuilder().withNetwork(getSendDelayNetworkFacade(50)), 10);
+    }
+
+    public void testImportMisDetectsTimestampColumn(HttpServerConfigurationBuilder serverConfigBuilder, int rowCount) throws Exception {
+        new HttpQueryTestBuilder()
+                .withTempFolder(temp)
+                .withWorkerCount(1)
+                .withHttpServerConfigBuilder(serverConfigBuilder)
+                .withTelemetry(false)
+                .run((engine) -> {
+                    setupSql(engine);
+                    compiler.compile("create table trips(" +
+                            "timestamp TIMESTAMP," +
+                            "str STRING," +
+                            "i STRING" +
+                            ") timestamp(timestamp)", sqlExecutionContext);
+                    String request = PostHeader.replace("name=trips", "name=trips&skipLev=true") +
+                            Request1DataHeader +
+                            generateImportCsv(0, rowCount,"aaaaaaaaaaaaaaaaa,22222222222222222222,33333333333333333") +
+                            Request1SchemaPart;
+
+                    new SendAndReceiveRequestBuilder()
+                            .withExpectSendDisconnect(true)
+                            .execute(request,
+                            "HTTP/1.1 200 OK\r\n" +
+                                    "Server: questDB/1.0\r\n" +
+                                    "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                                    "Transfer-Encoding: chunked\r\n" +
+                                    "Content-Type: text/plain; charset=utf-8\r\n" +
+                                    "\r\n" +
+                                    "12\r\n" +
+                                    "not a timestamp ''\r\n" +
+                                    "00\r\n" +
+                                    "\r\n");
+
+                    CompiledQuery compiledQuery = compiler.compile("insert into trips values (" +
+                            "'2021-07-20T00:01:00', 'ABC', 'DEF'" +
+                            ")", sqlExecutionContext);
+                    final InsertStatement insertStatement = compiledQuery.getInsertStatement();
+                    try (InsertMethod insertMethod = insertStatement.createMethod(sqlExecutionContext)) {
+                        insertMethod.execute();
+                        insertMethod.commit();
+                    }
+                    compiler.close();
+                });
+    }
+
     public void setupSql(CairoEngine engine) {
         compiler = new SqlCompiler(engine);
-        bindVariableService = new BindVariableServiceImpl(engine.getConfiguration());
+        BindVariableServiceImpl bindVariableService = new BindVariableServiceImpl(engine.getConfiguration());
         sqlExecutionContext = new SqlExecutionContextImpl(
                 engine, 1, engine.getMessageBus())
                 .with(
@@ -702,7 +794,7 @@ public class ImportIODispatcherTest {
         return length;
     }
 
-    private String GenerateImportCsv(int low, int hi, String... columnTemplates) {
+    private String generateImportCsv(int low, int hi, String... columnTemplates) {
         StringBuilder csvStringBuilder = new StringBuilder();
         for (int i = low; i < hi; i++) {
             for (int j = 0; j < columnTemplates.length; j++) {

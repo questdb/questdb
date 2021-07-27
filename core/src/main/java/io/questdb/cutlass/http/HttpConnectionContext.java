@@ -456,6 +456,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
 
     private void failProcessor(HttpRequestProcessor processor, HttpException e, int reason) {
         pendingRetry = false;
+        boolean canClear = true;
         try {
             LOG.info()
                     .$("failed query result cannot be delivered. Kicked out [fd=").$(fd)
@@ -470,8 +471,13 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
             processor.parkRequest(this);
             resumeProcessor = processor;
             dispatcher.registerChannel(this, IOOperation.WRITE);
+            canClear = false;
+        } catch (ServerDisconnectException serverDisconnectException) {
+            dispatcher.disconnect(this, reason);
         } finally {
-            clear();
+            if (canClear) {
+                clear();
+            }
         }
     }
 
