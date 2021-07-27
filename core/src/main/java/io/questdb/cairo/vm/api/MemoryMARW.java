@@ -24,10 +24,10 @@
 
 package io.questdb.cairo.vm.api;
 
-public interface CMMemory extends ContinuousMemory, MappedMemory {
+import io.questdb.std.FilesFacade;
+import org.jetbrains.annotations.Nullable;
 
-    @Override
-    default boolean isMapped(long offset, long len) {
-        return offset + len < size();
-    }
+public interface MemoryMARW extends MemoryMW, MemoryARW, MemoryMA, MemoryMR {
+
+    void of(FilesFacade ff, long fd, @Nullable CharSequence name, long size);
 }

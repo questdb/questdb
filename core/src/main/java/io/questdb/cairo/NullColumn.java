@@ -24,12 +24,12 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.vm.api.MRMemory;
+import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.LPSZ;
 
-public class NullColumn implements MRMemory {
+public class NullColumn implements MemoryMR {
 
     public static final NullColumn INSTANCE = new NullColumn();
 
@@ -142,6 +142,21 @@ public class NullColumn implements MRMemory {
     }
 
     @Override
+    public long offsetInPage(long offset) {
+        return offset;
+    }
+
+    @Override
+    public int pageIndex(long offset) {
+        return 0;
+    }
+
+    @Override
+    public long getGrownLength() {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public FilesFacade getFilesFacade() {
         throw new UnsupportedOperationException();
     }
@@ -161,6 +176,11 @@ public class NullColumn implements MRMemory {
     }
 
     @Override
+    public boolean isMapped(long offset, long len) {
+        return false;
+    }
+
+    @Override
     public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size) {
         throw new UnsupportedOperationException();
     }
@@ -168,20 +188,5 @@ public class NullColumn implements MRMemory {
     @Override
     public void wholeFile(FilesFacade ff, LPSZ name) {
         throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public boolean isMapped(long offset, long len) {
-        return false;
-    }
-
-    @Override
-    public long offsetInPage(long offset) {
-        return offset;
-    }
-
-    @Override
-    public int pageIndex(long offset) {
-        return 0;
     }
 }

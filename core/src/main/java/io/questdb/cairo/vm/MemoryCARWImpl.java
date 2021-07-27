@@ -24,7 +24,7 @@
 
 package io.questdb.cairo.vm;
 
-import io.questdb.cairo.vm.api.CARWMemory;
+import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -32,18 +32,18 @@ import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
 
 /**
- * A version of {@link PARWMemoryImpl} that uses a single contiguous memory region instead of pages. Note that it still has the concept of a page such that the contiguous memory region will extend in page sizes.
+ * A version of {@link MemoryPARWImpl} that uses a single contiguous memory region instead of pages. Note that it still has the concept of a page such that the contiguous memory region will extend in page sizes.
  *
  * @author Patrick Mackinlay
  */
-public class CARWMemoryImpl extends AbstractCRMemory implements CARWMemory, Mutable {
-    private static final Log LOG = LogFactory.getLog(CARWMemoryImpl.class);
+public class MemoryCARWImpl extends AbstractMemoryCR implements MemoryCARW, Mutable {
+    private static final Log LOG = LogFactory.getLog(MemoryCARWImpl.class);
     private final int maxPages;
     private final Long256Acceptor long256Acceptor = this::putLong256;
     private long sizeMsb;
     private long appendAddress = 0;
 
-    public CARWMemoryImpl(long pageSize, int maxPages) {
+    public MemoryCARWImpl(long pageSize, int maxPages) {
         this.maxPages = maxPages;
         setPageSize(pageSize);
     }
@@ -146,11 +146,6 @@ public class CARWMemoryImpl extends AbstractCRMemory implements CARWMemory, Muta
     @Override
     public long size() {
         return lim - pageAddress;
-    }
-
-    public void zero() {
-        long baseLength = lim - pageAddress;
-        Vect.memset(pageAddress, baseLength, 0);
     }
 
     private void checkAndExtend(long address) {

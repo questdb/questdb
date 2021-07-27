@@ -26,7 +26,7 @@ package io.questdb.cairo.vm;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableUtils;
-import io.questdb.cairo.vm.api.ARWMemory;
+import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -35,10 +35,10 @@ import io.questdb.std.str.AbstractCharSequence;
 import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
 
-import static io.questdb.cairo.vm.VmUtils.STRING_LENGTH_BYTES;
+import static io.questdb.cairo.vm.Vm.STRING_LENGTH_BYTES;
 
-public class PARWMemoryImpl implements ARWMemory {
-    private static final Log LOG = LogFactory.getLog(PARWMemoryImpl.class);
+public class MemoryPARWImpl implements MemoryARW {
+    private static final Log LOG = LogFactory.getLog(MemoryPARWImpl.class);
     protected final LongList pages = new LongList(4, 0);
     private final ByteSequenceView bsview = new ByteSequenceView();
     private final CharSequenceView csview = new CharSequenceView();
@@ -59,12 +59,12 @@ public class PARWMemoryImpl implements ARWMemory {
     private long roOffsetHi = 0;
     private long absolutePointer;
 
-    public PARWMemoryImpl(long pageSize, int maxPages) {
+    public MemoryPARWImpl(long pageSize, int maxPages) {
         setExtendSegmentSize(pageSize);
         this.maxPages = maxPages;
     }
 
-    protected PARWMemoryImpl() {
+    protected MemoryPARWImpl() {
         maxPages = Integer.MAX_VALUE;
     }
 
@@ -83,6 +83,14 @@ public class PARWMemoryImpl implements ARWMemory {
             pages.setQuick(0, 0);
             pages.clear();
         }
+    }
+
+    public final long getAppendOffset() {
+        return baseOffset + appendPointer;
+    }
+
+    public long getExtendSegmentSize() {
+        return extendSegmentSize;
     }
 
     /**
@@ -337,17 +345,9 @@ public class PARWMemoryImpl implements ARWMemory {
         }
     }
 
-    public final long getAppendOffset() {
-        return baseOffset + appendPointer;
-    }
-
     @Override
     public void truncate() {
         clear();
-    }
-
-    public long getExtendSegmentSize() {
-        return extendSegmentSize;
     }
 
     protected final void setExtendSegmentSize(long extendSegmentSize) {
@@ -483,6 +483,11 @@ public class PARWMemoryImpl implements ARWMemory {
         } else {
             putStrSplit(offset + 4, value, pos, len);
         }
+    }
+
+    @Override
+    public void zero() {
+        throw new UnsupportedOperationException();
     }
 
     public void clear() {
@@ -663,6 +668,11 @@ public class PARWMemoryImpl implements ARWMemory {
     @Override
     public final int pageIndex(long offset) {
         return (int) (offset >> extendSegmentMsb);
+    }
+
+    @Override
+    public long getGrownLength() {
+        throw new UnsupportedOperationException();
     }
 
     public void getLong256(long offset, Long256Acceptor sink) {
@@ -1189,7 +1199,7 @@ public class PARWMemoryImpl implements ARWMemory {
 
         @Override
         public void copyTo(long address, final long start, final long length) {
-            PARWMemoryImpl.this.copyTo(address, this.offset + start, Math.min(length, this.len - start));
+            MemoryPARWImpl.this.copyTo(address, this.offset + start, Math.min(length, this.len - start));
         }
 
         @Override

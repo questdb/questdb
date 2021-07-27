@@ -24,5 +24,5 @@
 
 package io.questdb.cairo.vm.api;
 
-public interface ARWMemory extends AppendMemory, ReadMemory, WriteMemory{
+public interface MemoryCMARW extends MemoryCM, MemoryMARW, MemoryCMR {
 }

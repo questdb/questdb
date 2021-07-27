@@ -26,21 +26,21 @@ package io.questdb.cairo.vm;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableUtils;
-import io.questdb.cairo.vm.api.CMRMemory;
+import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.str.LPSZ;
 
-public class CMRMemoryImpl extends AbstractCRMemory implements CMRMemory {
-    private static final Log LOG = LogFactory.getLog(CMRMemoryImpl.class);
+public class MemoryCMRImpl extends AbstractMemoryCR implements MemoryCMR {
+    private static final Log LOG = LogFactory.getLog(MemoryCMRImpl.class);
 
-    public CMRMemoryImpl(FilesFacade ff, LPSZ name, long size) {
+    public MemoryCMRImpl(FilesFacade ff, LPSZ name, long size) {
         of(ff, name, 0, size);
     }
 
-    public CMRMemoryImpl() {
+    public MemoryCMRImpl() {
     }
 
     @Override

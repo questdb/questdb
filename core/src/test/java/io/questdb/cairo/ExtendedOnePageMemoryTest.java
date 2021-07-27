@@ -1,6 +1,6 @@
 package io.questdb.cairo;
 
-import io.questdb.cairo.vm.CMRMemoryImpl;
+import io.questdb.cairo.vm.MemoryCMRImpl;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.str.Path;
@@ -27,7 +27,7 @@ public class ExtendedOnePageMemoryTest {
     @Test
     public void testFailOnInitialMap() throws IOException {
         createFile();
-        try (CMRMemoryImpl mem = new CMRMemoryImpl()) {
+        try (MemoryCMRImpl mem = new MemoryCMRImpl()) {
             FILE_MAP_FAIL.set(true);
             try {
                 mem.smallFile(ff, path);
@@ -41,7 +41,7 @@ public class ExtendedOnePageMemoryTest {
     @Test
     public void testFailOnGrow() throws IOException {
         createFile();
-        try (CMRMemoryImpl mem = new CMRMemoryImpl()) {
+        try (MemoryCMRImpl mem = new MemoryCMRImpl()) {
             int sz = FILE_SIZE / 2;
             mem.of(ff, path, sz, sz);
             FILE_MAP_FAIL.set(true);

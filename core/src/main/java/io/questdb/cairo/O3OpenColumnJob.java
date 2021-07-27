@@ -25,8 +25,8 @@
 package io.questdb.cairo;
 
 import io.questdb.MessageBus;
-import io.questdb.cairo.vm.api.MAMemory;
-import io.questdb.cairo.vm.api.MARMemory;
+import io.questdb.cairo.vm.api.MemoryMA;
+import io.questdb.cairo.vm.api.MemoryMAR;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.AbstractQueueConsumerJob;
@@ -77,8 +77,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             long srcDataTop,
             long srcDataMax,
             boolean isIndexed,
-            MARMemory dstFixMem,
-            MARMemory dstVarMem,
+            MemoryMAR dstFixMem,
+            MemoryMAR dstVarMem,
             TableWriter tableWriter,
             BitmapIndexWriter indexWriter,
             long tmpBuf
@@ -746,7 +746,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             long srcTimestampAddr,
             long srcTimestampSize,
             long dstFixFd,
-            MARMemory dstFixMem,
+            MemoryMAR dstFixMem,
             long dstLen,
             TableWriter tableWriter,
             BitmapIndexWriter indexWriter
@@ -882,7 +882,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             long srcTimestampFd,
             long srcTimestampAddr,
             long srcTimestampSize,
-            MAMemory dstFixMem,
+            MemoryMA dstFixMem,
             long dstLen,
             TableWriter tableWriter
     ) {
@@ -1006,8 +1006,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             long srcTimestampSize,
             long activeFixFd,
             long activeVarFd,
-            MAMemory dstFixMem,
-            MAMemory dstVarMem,
+            MemoryMA dstFixMem,
+            MemoryMA dstVarMem,
             long dstLen,
             TableWriter tableWriter,
             long tmpBuf

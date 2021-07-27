@@ -24,8 +24,8 @@
 
 package org.questdb;
 
-import io.questdb.cairo.vm.CARWMemoryImpl;
-import io.questdb.cairo.vm.PARWMemoryImpl;
+import io.questdb.cairo.vm.MemoryCARWImpl;
+import io.questdb.cairo.vm.MemoryPARWImpl;
 import io.questdb.std.Rnd;
 import org.openjdk.jmh.annotations.*;
 import org.openjdk.jmh.runner.Runner;
@@ -39,9 +39,9 @@ import java.util.concurrent.TimeUnit;
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.NANOSECONDS)
 public class VirtualMemoryBenchmark {
-    private static final PARWMemoryImpl mem1 = new PARWMemoryImpl(1024 * 1024, Integer.MAX_VALUE);
-    private static final PARWMemoryImpl mem2 = new PARWMemoryImpl(1024 * 1024, Integer.MAX_VALUE);
-    private static final CARWMemoryImpl mem3 = new CARWMemoryImpl(1024 * 1024L, Integer.MAX_VALUE);
+    private static final MemoryPARWImpl mem1 = new MemoryPARWImpl(1024 * 1024, Integer.MAX_VALUE);
+    private static final MemoryPARWImpl mem2 = new MemoryPARWImpl(1024 * 1024, Integer.MAX_VALUE);
+    private static final MemoryCARWImpl mem3 = new MemoryCARWImpl(1024 * 1024L, Integer.MAX_VALUE);
     private static final Rnd rnd = new Rnd();
 
     public static void main(String[] args) throws RunnerException {

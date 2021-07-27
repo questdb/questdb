@@ -26,8 +26,8 @@ package io.questdb.cutlass.text;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.cairo.vm.CMARWMemoryImpl;
-import io.questdb.cairo.vm.api.MARWMemory;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cutlass.text.types.*;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -44,7 +44,7 @@ public class CairoTextWriter implements Closeable, Mutable {
     private final CairoConfiguration configuration;
     private final CairoEngine engine;
     private final LongList columnErrorCounts = new LongList();
-    private final MARWMemory ddlMem = new CMARWMemoryImpl();
+    private final MemoryMARW ddlMem = Vm.getMARWInstance();
     private final Path path;
     private final TableStructureAdapter tableStructureAdapter = new TableStructureAdapter();
     private final TypeManager typeManager;

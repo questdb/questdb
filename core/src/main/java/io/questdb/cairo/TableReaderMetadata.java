@@ -24,27 +24,27 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.vm.CMRMemoryImpl;
-import io.questdb.cairo.vm.VmUtils;
-import io.questdb.cairo.vm.api.MAMemory;
-import io.questdb.cairo.vm.api.MRMemory;
+import io.questdb.cairo.vm.MemoryCMRImpl;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryMA;
+import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
 
 import java.io.Closeable;
 
 public class TableReaderMetadata extends BaseRecordMetadata implements Closeable {
-    private final MRMemory metaMem;
+    private final MemoryMR metaMem;
     private final Path path;
     private final FilesFacade ff;
     private final LowerCaseCharSequenceIntHashMap tmpValidationMap = new LowerCaseCharSequenceIntHashMap();
     private int id;
-    private MRMemory transitionMeta;
+    private MemoryMR transitionMeta;
 
     public TableReaderMetadata(FilesFacade ff) {
         this.path = new Path();
         this.ff = ff;
-        this.metaMem = new CMRMemoryImpl();
+        this.metaMem = new MemoryCMRImpl();
         this.columnMetadata = new ObjList<>(columnCount);
         this.columnNameIndexMap = new LowerCaseCharSequenceIntHashMap();
     }
@@ -80,7 +80,7 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
                                 null
                         )
                 );
-                offset += VmUtils.getStorageLength(name);
+                offset += Vm.getStorageLength(name);
             }
         } catch (Throwable e) {
             close();
@@ -182,7 +182,7 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
         this.timestampIndex = metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX);
     }
 
-    public void cloneTo(MAMemory mem) {
+    public void cloneTo(MemoryMA mem) {
         long len = ff.length(metaMem.getFd());
         for (long p = 0; p < len; p++) {
             mem.putByte(metaMem.getByte(p));
@@ -197,11 +197,11 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
 
     public long createTransitionIndex() {
         if (transitionMeta == null) {
-            transitionMeta = new CMRMemoryImpl();
+            transitionMeta = new MemoryCMRImpl();
         }
 
         transitionMeta.smallFile(ff, path);
-        try (MRMemory metaMem = transitionMeta) {
+        try (MemoryMR metaMem = transitionMeta) {
 
             tmpValidationMap.clear();
             TableUtils.validate(ff, metaMem, tmpValidationMap);
@@ -230,7 +230,7 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
             long offset = TableUtils.getColumnNameOffset(columnCount);
             for (int i = 0; i < columnCount; i++) {
                 CharSequence name = metaMem.getStr(offset);
-                offset += VmUtils.getStorageLength(name);
+                offset += Vm.getStorageLength(name);
                 int oldPosition = columnNameIndexMap.get(name);
                 // write primary (immutable) index
                 if (oldPosition > -1
@@ -280,7 +280,7 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
         CharSequence name = null;
         for (int i = 0; i <= index; i++) {
             name = metaMem.getStr(offset);
-            offset += VmUtils.getStorageLength(name);
+            offset += Vm.getStorageLength(name);
         }
         assert name != null;
         return new TableColumnMetadata(

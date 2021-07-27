@@ -24,5 +24,9 @@
 
 package io.questdb.cairo.vm.api;
 
-public interface CMARWMemory extends CMMemory, MARWMemory, CMRMemory {
+public interface MemoryC {
+
+    long resize(long size);
+
+    long size();
 }

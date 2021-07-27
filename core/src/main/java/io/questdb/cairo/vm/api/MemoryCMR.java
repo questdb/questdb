@@ -24,9 +24,8 @@
 
 package io.questdb.cairo.vm.api;
 
-public interface ContinuousMemory {
-
-    long resize(long size);
-
-    long size();
+public interface MemoryCMR extends MemoryCM, MemoryMR {
+    default void growToFileSize() {
+        extend(getFilesFacade().length(getFd()));
+    }
 }

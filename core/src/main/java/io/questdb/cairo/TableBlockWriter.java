@@ -26,7 +26,7 @@ package io.questdb.cairo;
 
 import io.questdb.MessageBus;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.cairo.vm.VmUtils;
+import io.questdb.cairo.vm.Vm;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.AbstractQueueConsumerJob;
@@ -763,7 +763,7 @@ public class TableBlockWriter implements Closeable {
                 // so null will evaluate to just VirtualMemory.STRING_LENGTH_BYTES
                 // but for positive length values we need to subtract 2
                 // how do we do that? Lets use inverted sign bit
-                final long sz = (VmUtils.STRING_LENGTH_BYTES + 2L * (strLen + 1) - bit);
+                final long sz = (Vm.STRING_LENGTH_BYTES + 2L * (strLen + 1) - bit);
                 columnDataAddress += sz;
                 offset += sz;
             }

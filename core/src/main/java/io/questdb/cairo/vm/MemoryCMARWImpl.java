@@ -25,9 +25,9 @@
 package io.questdb.cairo.vm;
 
 import io.questdb.cairo.TableUtils;
-import io.questdb.cairo.vm.api.CARWMemory;
-import io.questdb.cairo.vm.api.CMARWMemory;
-import io.questdb.cairo.vm.api.MARMemory;
+import io.questdb.cairo.vm.api.MemoryCARW;
+import io.questdb.cairo.vm.api.MemoryCMARW;
+import io.questdb.cairo.vm.api.MemoryMAR;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
@@ -35,30 +35,18 @@ import io.questdb.std.str.LPSZ;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-public class CMARWMemoryImpl extends AbstractCRMemory implements CMARWMemory, CARWMemory, MARMemory {
-    private static final Log LOG = LogFactory.getLog(CMARWMemoryImpl.class);
+public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, MemoryCARW, MemoryMAR {
+    private static final Log LOG = LogFactory.getLog(MemoryCMARWImpl.class);
     private final Long256Acceptor long256Acceptor = this::putLong256;
     private long appendAddress = 0;
     private long minMappedMemorySize;
     private long extendSegmentMsb;
 
-    public CMARWMemoryImpl(FilesFacade ff, LPSZ name, long extendSegmentSize, long size) {
+    public MemoryCMARWImpl(FilesFacade ff, LPSZ name, long extendSegmentSize, long size) {
         of(ff, name, extendSegmentSize, size);
     }
 
-    public CMARWMemoryImpl() {
-    }
-
-    public static CMARWMemoryImpl small(FilesFacade ff, LPSZ name) {
-        return new CMARWMemoryImpl(ff, name, ff.getPageSize(), Long.MAX_VALUE);
-    }
-
-    public static CMARWMemoryImpl whole(FilesFacade ff, LPSZ name) {
-        return new CMARWMemoryImpl(ff, name, ff.getMapPageSize(), Long.MAX_VALUE);
-    }
-
-    public static CMARWMemoryImpl whole(FilesFacade ff, LPSZ name, long extendSegmentSize) {
-        return new CMARWMemoryImpl(ff, name, extendSegmentSize, Long.MAX_VALUE);
+    public MemoryCMARWImpl() {
     }
 
     @Override
@@ -67,6 +55,16 @@ public class CMARWMemoryImpl extends AbstractCRMemory implements CMARWMemory, CA
         final long result = appendAddress;
         appendAddress += bytes;
         return result;
+    }
+
+    @Override
+    public long getAppendOffset() {
+        return appendAddress - pageAddress;
+    }
+
+    @Override
+    public long getExtendSegmentSize() {
+        return extendSegmentMsb;
     }
 
     @Override
@@ -84,16 +82,6 @@ public class CMARWMemoryImpl extends AbstractCRMemory implements CMARWMemory, CA
     public void skip(long bytes) {
         checkAndExtend(appendAddress + bytes);
         appendAddress += bytes;
-    }
-
-    @Override
-    public long getAppendOffset() {
-        return appendAddress - pageAddress;
-    }
-
-    @Override
-    public long getExtendSegmentSize() {
-        return extendSegmentMsb;
     }
 
     @Override
@@ -127,7 +115,7 @@ public class CMARWMemoryImpl extends AbstractCRMemory implements CMARWMemory, CA
                 );
             } catch (Throwable e) {
                 appendAddress = pageAddress;
-                long truncatedToSize = VmUtils.bestEffortTruncate(ff, LOG, fd, 0, Files.PAGE_SIZE);
+                long truncatedToSize = Vm.bestEffortTruncate(ff, LOG, fd, 0, Files.PAGE_SIZE);
                 if (truncatedToSize != 0) {
                     if (truncatedToSize > 0) {
                         Vect.memset(pageAddress, truncatedToSize, 0);
@@ -166,7 +154,7 @@ public class CMARWMemoryImpl extends AbstractCRMemory implements CMARWMemory, CA
             long truncateSize = getAppendOffset();
             this.pageAddress = 0;
             try {
-                VmUtils.bestEffortClose(ff, LOG, fd, truncate, truncateSize, Files.PAGE_SIZE);
+                Vm.bestEffortClose(ff, LOG, fd, truncate, truncateSize, Files.PAGE_SIZE);
             } finally {
                 fd = -1;
             }

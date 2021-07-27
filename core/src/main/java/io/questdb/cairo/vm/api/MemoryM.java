@@ -30,7 +30,7 @@ import io.questdb.std.str.LPSZ;
 
 import java.io.Closeable;
 
-public interface MappedMemory extends Closeable {
+public interface MemoryM extends Closeable {
 
     FilesFacade getFilesFacade();
 

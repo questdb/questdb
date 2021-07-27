@@ -26,10 +26,11 @@ package io.questdb.cairo.vm.api;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableUtils;
-import io.questdb.cairo.vm.VmUtils;
+import io.questdb.cairo.vm.Vm;
 import io.questdb.std.*;
 
-public interface CARWMemory extends CRMemory, ARWMemory {
+public interface MemoryCARW extends MemoryCR, MemoryARW {
+
     default long putBin(BinarySequence value) {
         if (value != null) {
             final long offset = getAppendOffset();
@@ -217,9 +218,9 @@ public interface CARWMemory extends CRMemory, ARWMemory {
     }
 
     default void putStr(long offset, CharSequence value, int pos, int len) {
-        final long addr = appendAddressFor(offset, VmUtils.getStorageLength(len));
+        final long addr = appendAddressFor(offset, Vm.getStorageLength(len));
         Unsafe.getUnsafe().putInt(addr, len);
-        Chars.copyStrChars(value, pos, len, addr + VmUtils.STRING_LENGTH_BYTES);
+        Chars.copyStrChars(value, pos, len, addr + Vm.STRING_LENGTH_BYTES);
     }
 
     default void putLong256(CharSequence hexString, int start, int end, Long256Acceptor acceptor) {
@@ -236,7 +237,7 @@ public interface CARWMemory extends CRMemory, ARWMemory {
 
     default long putStrUnsafe(CharSequence value, int pos, int len) {
         final long offset = getAppendOffset();
-        final long storageLen = VmUtils.getStorageLength(len);
+        final long storageLen = Vm.getStorageLength(len);
         final long addr = appendAddressFor(storageLen);
         Unsafe.getUnsafe().putInt(addr, len);
         Chars.copyStrChars(value, pos, len, addr + Integer.BYTES);

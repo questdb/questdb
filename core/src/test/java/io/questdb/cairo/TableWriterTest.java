@@ -26,10 +26,10 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.vm.CARWMemoryImpl;
-import io.questdb.cairo.vm.CMARWMemoryImpl;
-import io.questdb.cairo.vm.api.CMARWMemory;
-import io.questdb.cairo.vm.api.MARMemory;
+import io.questdb.cairo.vm.MemoryCARWImpl;
+import io.questdb.cairo.vm.MemoryCMARWImpl;
+import io.questdb.cairo.vm.api.MemoryCMARW;
+import io.questdb.cairo.vm.api.MemoryMAR;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
@@ -937,7 +937,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
             // this contraption will verify that all timestamps that are
             // supposed to be stored have matching partitions
-            try (CARWMemoryImpl vmem = new CARWMemoryImpl(FF.getPageSize(), Integer.MAX_VALUE)) {
+            try (MemoryCARWImpl vmem = new MemoryCARWImpl(FF.getPageSize(), Integer.MAX_VALUE)) {
                 try (TableWriter writer = new TableWriter(configuration, PRODUCT)) {
                     long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
                     int i = 0;
@@ -1094,7 +1094,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
             // this contraption will verify that all timestamps that are
             // supposed to be stored have matching partitions
-            try (CARWMemoryImpl vmem = new CARWMemoryImpl(ff.getPageSize(), Integer.MAX_VALUE)) {
+            try (MemoryCARWImpl vmem = new MemoryCARWImpl(ff.getPageSize(), Integer.MAX_VALUE)) {
                 try (TableWriter writer = new TableWriter(new DefaultCairoConfiguration(root) {
                     @Override
                     public FilesFacade getFilesFacade() {
@@ -1165,7 +1165,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
             // this contraption will verify that all timestamps that are
             // supposed to be stored have matching partitions
-            try (CARWMemoryImpl vmem = new CARWMemoryImpl(ff.getPageSize(), Integer.MAX_VALUE)) {
+            try (MemoryCARWImpl vmem = new MemoryCARWImpl(ff.getPageSize(), Integer.MAX_VALUE)) {
                 try (TableWriter writer = new TableWriter(new DefaultCairoConfiguration(root) {
                     @Override
                     public FilesFacade getFilesFacade() {
@@ -1686,7 +1686,7 @@ public class TableWriterTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             CairoTestUtils.createAllTable(configuration, PartitionBy.NONE);
             try (
-                    CMARWMemory mem = new CMARWMemoryImpl();
+                    MemoryCMARW mem = new MemoryCMARWImpl();
                     Path path = new Path().of(root).concat("all").concat(TableUtils.TODO_FILE_NAME).$()
             ) {
                 mem.smallFile(FilesFacadeImpl.INSTANCE, path);
@@ -2586,7 +2586,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 w.commit();
 
                 for (int i = 0, n = w.columns.size(); i < n; i++) {
-                    MARMemory m = w.columns.getQuick(i);
+                    MemoryMAR m = w.columns.getQuick(i);
                     if (m != null) {
                         Assert.assertEquals(configuration.getAppendPageSize(), m.getExtendSegmentSize());
                     }
@@ -3744,7 +3744,7 @@ public class TableWriterTest extends AbstractCairoTest {
         });
     }
 
-    void verifyTimestampPartitions(CARWMemoryImpl vmem) {
+    void verifyTimestampPartitions(MemoryCARWImpl vmem) {
         int i;
         TimestampFormatCompiler compiler = new TimestampFormatCompiler();
         DateFormat fmt = compiler.compile("yyyy-MM-dd");

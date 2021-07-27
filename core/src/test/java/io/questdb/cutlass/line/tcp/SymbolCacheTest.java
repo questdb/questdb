@@ -2,8 +2,8 @@ package io.questdb.cutlass.line.tcp;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.SymbolTable;
-import io.questdb.cairo.vm.CMRMemoryImpl;
-import io.questdb.cairo.vm.api.MRMemory;
+import io.questdb.cairo.vm.MemoryCMRImpl;
+import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -23,7 +23,7 @@ public class SymbolCacheTest extends AbstractCairoTest {
                 CairoTestUtils.create(model);
                 try (
                         TableWriter writer = new TableWriter(configuration, tableName);
-                        MRMemory txMem = new CMRMemoryImpl()
+                        MemoryMR txMem = new MemoryCMRImpl()
                 ) {
                     int symColIndex1 = writer.getColumnIndex("symCol1");
                     int symColIndex2 = writer.getColumnIndex("symCol2");

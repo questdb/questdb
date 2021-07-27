@@ -24,9 +24,9 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.vm.CMARWMemoryImpl;
-import io.questdb.cairo.vm.PMAMemoryImpl;
-import io.questdb.cairo.vm.api.CMARWMemory;
+import io.questdb.cairo.vm.MemoryCMARWImpl;
+import io.questdb.cairo.vm.MemoryPMAImpl;
+import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Os;
 import io.questdb.std.str.Path;
@@ -166,7 +166,7 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
                     throw CairoException.instance(FilesFacadeImpl.INSTANCE.errno()).put("Cannot create dir: ").put(path);
                 }
 
-                try (PMAMemoryImpl mem = new PMAMemoryImpl()) {
+                try (MemoryPMAImpl mem = new MemoryPMAImpl()) {
 
                     mem.of(FilesFacadeImpl.INSTANCE, path.trimTo(rootLen).concat(TableUtils.META_FILE_NAME).$(), pageSize);
 
@@ -208,7 +208,7 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
                 long len = FilesFacadeImpl.INSTANCE.length(path);
 
                 try (TableReaderMetadata metadata = new TableReaderMetadata(FilesFacadeImpl.INSTANCE, path)) {
-                    try (CMARWMemory mem = new CMARWMemoryImpl()) {
+                    try (MemoryCMARW mem = new MemoryCMARWImpl()) {
                         mem.smallFile(FilesFacadeImpl.INSTANCE, path);
                         mem.jumpTo(0);
                         mem.putInt(columnCount);

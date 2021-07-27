@@ -24,10 +24,10 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.vm.CMARWMemoryImpl;
-import io.questdb.cairo.vm.PARWMemoryImpl;
-import io.questdb.cairo.vm.api.MARWMemory;
-import io.questdb.cairo.vm.api.ReadMemory;
+import io.questdb.cairo.vm.MemoryCMARWImpl;
+import io.questdb.cairo.vm.MemoryPARWImpl;
+import io.questdb.cairo.vm.api.MemoryMARW;
+import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
@@ -67,9 +67,9 @@ public class EngineMigration {
         long mem = Unsafe.malloc(tempMemSize);
 
         try (
-                PARWMemoryImpl virtualMem = new PARWMemoryImpl(ff.getPageSize(), 8);
+                MemoryPARWImpl virtualMem = new MemoryPARWImpl(ff.getPageSize(), 8);
                 Path path = new Path();
-                MARWMemory rwMemory = new CMARWMemoryImpl()
+                MemoryMARW rwMemory = new MemoryCMARWImpl()
         ) {
 
             MigrationContext context = new MigrationContext(mem, tempMemSize, virtualMem, rwMemory);
@@ -301,10 +301,10 @@ public class EngineMigration {
             backupFile(ff, path, migrationContext.getTablePath2(), TXN_FILE_NAME, VERSION_TX_STRUCT_UPDATE_1 - 1);
 
             LOG.debug().$("opening for rw [path=").$(path).I$();
-            MARWMemory txMem = migrationContext.createRwMemoryOf(ff, path.$());
+            MemoryMARW txMem = migrationContext.createRwMemoryOf(ff, path.$());
             long tempMem8b = migrationContext.getTempMemory(8);
 
-            PARWMemoryImpl txFileUpdate = migrationContext.getTempVirtualMem();
+            MemoryPARWImpl txFileUpdate = migrationContext.getTempVirtualMem();
             txFileUpdate.clear();
             txFileUpdate.jumpTo(0);
 
@@ -350,10 +350,10 @@ public class EngineMigration {
                 FilesFacade ff,
                 long tempMem8b,
                 Path path,
-                MARWMemory txMem,
+                MemoryMARW txMem,
                 int partitionBy,
                 int symbolsCount,
-                PARWMemoryImpl writeTo
+                MemoryPARWImpl writeTo
         ) {
             int rootLen = path.length();
 
@@ -387,7 +387,7 @@ public class EngineMigration {
             writeTo.putLong(0);
         }
 
-        private static boolean removedPartitionsIncludes(long ts, ReadMemory txMem, int symbolsCount) {
+        private static boolean removedPartitionsIncludes(long ts, MemoryR txMem, int symbolsCount) {
             long removedPartitionLo = TX_STRUCT_UPDATE_1_OFFSET_MAP_WRITER_COUNT + (symbolsCount + 1L) * Integer.BYTES;
             long removedPartitionCount = txMem.getInt(removedPartitionLo);
             long removedPartitionsHi = removedPartitionLo + Long.BYTES * removedPartitionCount;
@@ -405,20 +405,20 @@ public class EngineMigration {
     class MigrationContext {
         private final long tempMemory;
         private final int tempMemoryLen;
-        private final PARWMemoryImpl tempVirtualMem;
-        private final MARWMemory rwMemory;
+        private final MemoryPARWImpl tempVirtualMem;
+        private final MemoryMARW rwMemory;
         private Path tablePath;
         private long metadataFd;
         private Path tablePath2;
 
-        public MigrationContext(long mem, int tempMemSize, PARWMemoryImpl tempVirtualMem, MARWMemory rwMemory) {
+        public MigrationContext(long mem, int tempMemSize, MemoryPARWImpl tempVirtualMem, MemoryMARW rwMemory) {
             this.tempMemory = mem;
             this.tempMemoryLen = tempMemSize;
             this.tempVirtualMem = tempVirtualMem;
             this.rwMemory = rwMemory;
         }
 
-        public MARWMemory createRwMemoryOf(FilesFacade ff, Path path) {
+        public MemoryMARW createRwMemoryOf(FilesFacade ff, Path path) {
             // re-use same rwMemory
             // assumption that it is re-usable after the close() and then of()  methods called.
             rwMemory.smallFile(ff, path);
@@ -460,7 +460,7 @@ public class EngineMigration {
                     + " is available");
         }
 
-        public PARWMemoryImpl getTempVirtualMem() {
+        public MemoryPARWImpl getTempVirtualMem() {
             return tempVirtualMem;
         }
 

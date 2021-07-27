@@ -30,7 +30,7 @@ import io.questdb.std.str.CharSink;
 
 import java.io.Closeable;
 
-public interface ReadMemory extends Closeable {
+public interface MemoryR extends Closeable {
 
     @Override
     void close();
@@ -95,4 +95,6 @@ public interface ReadMemory extends Closeable {
         }
         return h;
     }
+
+    long getGrownLength();
 }

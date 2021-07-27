@@ -27,7 +27,9 @@ package io.questdb.cairo.vm;
 import io.questdb.cairo.AbstractCairoTest;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableUtils;
-import io.questdb.cairo.vm.api.ReadMemory;
+import io.questdb.cairo.vm.api.MemoryARW;
+import io.questdb.cairo.vm.api.MemoryMARW;
+import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
@@ -37,9 +39,9 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class ContinuousMappedMemoryTest extends AbstractCairoTest {
+public class ContinuousMemoryMTest extends AbstractCairoTest {
 
-    private static final Log LOG = LogFactory.getLog(ContinuousMappedMemoryTest.class);
+    private static final Log LOG = LogFactory.getLog(ContinuousMemoryMTest.class);
     private final Rnd rnd = new Rnd();
     private final long _4M = 4 * 1024 * 1024;
     private final long _8M = 2 * _4M;
@@ -296,7 +298,7 @@ public class ContinuousMappedMemoryTest extends AbstractCairoTest {
             ff.touch(path);
             final long fd = TableUtils.openRW(ff, path, LOG);
             try {
-                CMARWMemoryImpl mem = new CMARWMemoryImpl();
+                MemoryMARW mem = Vm.getMARWInstance();
                 mem.of(ff, fd, null, Long.MAX_VALUE);
 
                 mem.extend(ff.getMapPageSize() * 2);
@@ -364,7 +366,7 @@ public class ContinuousMappedMemoryTest extends AbstractCairoTest {
         try (Path path = new Path().of(root).concat("tmp3").$()) {
             ff.touch(path);
             try {
-                CMARWMemoryImpl mem = new CMARWMemoryImpl();
+                MemoryMARW mem = Vm.getMARWInstance();
                 try {
                     mem.of(ff, TableUtils.openRW(ff, path, LOG), null, Long.MAX_VALUE);
 
@@ -593,7 +595,7 @@ public class ContinuousMappedMemoryTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             try (final Path path = Path.getThreadLocal(root).concat("t.d").$()) {
                 rnd.reset();
-                CMARWMemoryImpl rwMem = new CMARWMemoryImpl(
+                MemoryMARW rwMem = Vm.getMARWInstance(
                         FilesFacadeImpl.INSTANCE,
                         path,
                         0,
@@ -660,7 +662,7 @@ public class ContinuousMappedMemoryTest extends AbstractCairoTest {
         try (Path path = new Path().of(root).concat("tmp1").$()) {
             ff.touch(path);
             try {
-                CMARWMemoryImpl mem = new CMARWMemoryImpl();
+                MemoryMARW mem = Vm.getMARWInstance();
                 try {
                     mem.of(ff, path, FilesFacadeImpl._16M, Long.MAX_VALUE);
                     // this is larger than page size
@@ -687,6 +689,7 @@ public class ContinuousMappedMemoryTest extends AbstractCairoTest {
         FilesFacade ff = new FilesFacadeImpl() {
             int counter = 1;
             boolean failTruncate = false;
+
             @Override
             public long mremap(long fd, long addr, long previousSize, long newSize, long offset, int mode) {
                 if (--counter < 0) {
@@ -708,7 +711,7 @@ public class ContinuousMappedMemoryTest extends AbstractCairoTest {
         try (Path path = new Path().of(root).concat("tmp4").$()) {
             ff.touch(path);
             try {
-                CMARWMemoryImpl mem = new CMARWMemoryImpl();
+                MemoryMARW mem = Vm.getMARWInstance();
                 try {
                     mem.of(ff, path, FilesFacadeImpl._16M, Long.MAX_VALUE);
                     // this is larger than page size
@@ -731,7 +734,7 @@ public class ContinuousMappedMemoryTest extends AbstractCairoTest {
 
                 // we expect memory to zero out the file, which failed to truncate
 
-                try (CMRMemoryImpl roMem = new CMRMemoryImpl(ff, path, fileLen)) {
+                try (MemoryCMRImpl roMem = new MemoryCMRImpl(ff, path, fileLen)) {
                     Assert.assertEquals(fileLen, roMem.size());
 
                     for (int i = 0; i < fileLen; i++) {
@@ -744,49 +747,49 @@ public class ContinuousMappedMemoryTest extends AbstractCairoTest {
         }
     }
 
-    private void assertBool(ReadMemory rwMem, int count) {
+    private void assertBool(MemoryR rwMem, int count) {
         rnd.reset();
         for (int i = 0; i < count; i++) {
             Assert.assertEquals(rnd.nextBoolean(), rwMem.getBool(i));
         }
     }
 
-    private void assertByte(ReadMemory rwMem, int count) {
+    private void assertByte(MemoryR rwMem, int count) {
         rnd.reset();
         for (int i = 0; i < count; i++) {
             Assert.assertEquals(rnd.nextByte(), rwMem.getByte(i));
         }
     }
 
-    private void assertChar(ReadMemory rwMem, int count) {
+    private void assertChar(MemoryR rwMem, int count) {
         rnd.reset();
         for (int i = 0; i < count; i++) {
             Assert.assertEquals(rnd.nextChar(), rwMem.getChar(i * 2L));
         }
     }
 
-    private void assertDouble(ReadMemory rwMem, int count) {
+    private void assertDouble(MemoryR rwMem, int count) {
         rnd.reset();
         for (int i = 0; i < count; i++) {
             Assert.assertEquals(rnd.nextDouble(), rwMem.getDouble(i * 8L), 0.000001);
         }
     }
 
-    private void assertFloat(ReadMemory rwMem, int count) {
+    private void assertFloat(MemoryR rwMem, int count) {
         rnd.reset();
         for (int i = 0; i < count; i++) {
             Assert.assertEquals(rnd.nextFloat(), rwMem.getFloat(i * 4L), 0.000001);
         }
     }
 
-    private void assertInt(ReadMemory rwMem, int count) {
+    private void assertInt(MemoryR rwMem, int count) {
         rnd.reset();
         for (int i = 0; i < count; i++) {
             Assert.assertEquals(rnd.nextInt(), rwMem.getInt(i * 4L));
         }
     }
 
-    private void assertLong(ReadMemory rwMem, int count) {
+    private void assertLong(MemoryR rwMem, int count) {
         rnd.reset();
         for (int i = 0; i < count; i++) {
             Assert.assertEquals(rnd.nextLong(), rwMem.getLong(i * 8L));
@@ -794,7 +797,7 @@ public class ContinuousMappedMemoryTest extends AbstractCairoTest {
     }
 
     @SuppressWarnings("SameParameterValue")
-    private void assertLong128(ReadMemory rwMem, int count) {
+    private void assertLong128(MemoryR rwMem, int count) {
         rnd.reset();
         for (int i = 0; i < count; i++) {
             Assert.assertEquals(rnd.nextLong(), rwMem.getLong(i * 16L));
@@ -803,7 +806,7 @@ public class ContinuousMappedMemoryTest extends AbstractCairoTest {
     }
 
     @SuppressWarnings("SameParameterValue")
-    private void assertLong256(ReadMemory rwMem, int count) {
+    private void assertLong256(MemoryR rwMem, int count) {
         rnd.reset();
         for (int i = 0; i < count; i++) {
             long l0 = rnd.nextLong();
@@ -830,7 +833,7 @@ public class ContinuousMappedMemoryTest extends AbstractCairoTest {
     }
 
     @SuppressWarnings("SameParameterValue")
-    private void assertRandomBool(ReadMemory rwMem, long MAX, int N) {
+    private void assertRandomBool(MemoryR rwMem, long MAX, int N) {
         rnd.reset();
         for (int i = 0; i < N; i++) {
             long offset = rnd.nextLong(MAX);
@@ -839,7 +842,7 @@ public class ContinuousMappedMemoryTest extends AbstractCairoTest {
     }
 
     @SuppressWarnings("SameParameterValue")
-    private void assertRandomByte(ReadMemory rwMem, long MAX, int N) {
+    private void assertRandomByte(MemoryR rwMem, long MAX, int N) {
         rnd.reset();
         for (int i = 0; i < N; i++) {
             long offset = rnd.nextLong(MAX);
@@ -848,7 +851,7 @@ public class ContinuousMappedMemoryTest extends AbstractCairoTest {
     }
 
     @SuppressWarnings("SameParameterValue")
-    private void assertRandomChar(ReadMemory rwMem, long MAX, int N) {
+    private void assertRandomChar(MemoryR rwMem, long MAX, int N) {
         rnd.reset();
         for (int i = 0; i < N; i++) {
             long offset = rnd.nextLong(MAX) * 2L;
@@ -857,7 +860,7 @@ public class ContinuousMappedMemoryTest extends AbstractCairoTest {
     }
 
     @SuppressWarnings("SameParameterValue")
-    private void assertRandomDouble(ReadMemory rwMem, long MAX, int N) {
+    private void assertRandomDouble(MemoryR rwMem, long MAX, int N) {
         rnd.reset();
         for (int i = 0; i < N; i++) {
             long offset = rnd.nextLong(MAX) * 8L;
@@ -866,7 +869,7 @@ public class ContinuousMappedMemoryTest extends AbstractCairoTest {
     }
 
     @SuppressWarnings("SameParameterValue")
-    private void assertRandomFloat(ReadMemory rwMem, long MAX, int N) {
+    private void assertRandomFloat(MemoryR rwMem, long MAX, int N) {
         rnd.reset();
         for (int i = 0; i < N; i++) {
             long offset = rnd.nextLong(MAX) * 4L;
@@ -875,7 +878,7 @@ public class ContinuousMappedMemoryTest extends AbstractCairoTest {
     }
 
     @SuppressWarnings("SameParameterValue")
-    private void assertRandomInt(ReadMemory rwMem, long MAX, int N) {
+    private void assertRandomInt(MemoryR rwMem, long MAX, int N) {
         rnd.reset();
         for (int i = 0; i < N; i++) {
             final long offset = rnd.nextLong(MAX) * 4L;
@@ -884,7 +887,7 @@ public class ContinuousMappedMemoryTest extends AbstractCairoTest {
     }
 
     @SuppressWarnings("SameParameterValue")
-    private void assertRandomLong(ReadMemory rwMem, long MAX, int N) {
+    private void assertRandomLong(MemoryR rwMem, long MAX, int N) {
         rnd.reset();
         for (int i = 0; i < N; i++) {
             long offset = rnd.nextLong(MAX) * 8L;
@@ -893,7 +896,7 @@ public class ContinuousMappedMemoryTest extends AbstractCairoTest {
     }
 
     @SuppressWarnings("SameParameterValue")
-    private void assertRandomShort(ReadMemory rwMem, long MAX, int N) {
+    private void assertRandomShort(MemoryR rwMem, long MAX, int N) {
         rnd.reset();
         for (int i = 0; i < N; i++) {
             long offset = rnd.nextLong(MAX);
@@ -901,7 +904,7 @@ public class ContinuousMappedMemoryTest extends AbstractCairoTest {
         }
     }
 
-    private void assertShort(ReadMemory rwMem, int count) {
+    private void assertShort(MemoryR rwMem, int count) {
         rnd.reset();
         for (int i = 0; i < count; i++) {
             Assert.assertEquals(rnd.nextShort(), rwMem.getShort(i * 2L));
@@ -917,14 +920,14 @@ public class ContinuousMappedMemoryTest extends AbstractCairoTest {
             final Path path = Path.getThreadLocal(root).concat("t.d").$();
             rnd.reset();
             try (
-                    CMARWMemoryImpl rwMem = new CMARWMemoryImpl(
+                    MemoryARW rwMem = Vm.getMARWInstance(
                             FilesFacadeImpl.INSTANCE,
                             path,
                             sz,
                             sz
                     );
 
-                    CMRMemoryImpl roMem = new CMRMemoryImpl(
+                    MemoryR roMem = Vm.getMARWInstance(
                             FilesFacadeImpl.INSTANCE,
                             path,
                             sz
@@ -940,6 +943,6 @@ public class ContinuousMappedMemoryTest extends AbstractCairoTest {
 
     @FunctionalInterface
     private interface MemTestCode {
-        void run(CMARWMemoryImpl rwMem, CMRMemoryImpl roMem);
+        void run(MemoryARW rwMem, MemoryR roMem);
     }
 }

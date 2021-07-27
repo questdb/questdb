@@ -26,9 +26,9 @@ package io.questdb.griffin.engine.functions.catalogue;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.*;
-import io.questdb.cairo.vm.CMRMemoryImpl;
-import io.questdb.cairo.vm.VmUtils;
-import io.questdb.cairo.vm.api.MRMemory;
+import io.questdb.cairo.vm.MemoryCMRImpl;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.CursorFunction;
@@ -77,7 +77,7 @@ public class AttributeCatalogueFunctionFactory implements FunctionFactory {
     private static class AttributeCatalogueCursorFactory extends AbstractRecordCursorFactory {
 
         private final Path path = new Path();
-        private final MRMemory metaMem = new CMRMemoryImpl();
+        private final MemoryMR metaMem = new MemoryCMRImpl();
         private final AttributeClassCatalogueCursor cursor;
 
         public AttributeCatalogueCursorFactory(CairoConfiguration configuration, RecordMetadata metadata) {
@@ -109,7 +109,7 @@ public class AttributeCatalogueFunctionFactory implements FunctionFactory {
         private final DiskReadingRecord diskReadingRecord = new DiskReadingRecord();
         private final NativeLPSZ nativeLPSZ = new NativeLPSZ();
         private final int plimit;
-        private final MRMemory metaMem;
+        private final MemoryMR metaMem;
         private long findFileStruct = 0;
         private int columnIndex = 0;
         private int tableId = 1000;
@@ -118,7 +118,7 @@ public class AttributeCatalogueFunctionFactory implements FunctionFactory {
         private boolean hasNextFile = true;
         private boolean foundMetadataFile = false;
 
-        public AttributeClassCatalogueCursor(CairoConfiguration configuration, Path path, MRMemory metaMem) {
+        public AttributeClassCatalogueCursor(CairoConfiguration configuration, Path path, MemoryMR metaMem) {
             this.ff = configuration.getFilesFacade();
             this.path = path;
             this.path.of(configuration.getRoot()).$();
@@ -211,7 +211,7 @@ public class AttributeCatalogueFunctionFactory implements FunctionFactory {
                             }
                             return true;
                         }
-                        offset += VmUtils.getStorageLength(name);
+                        offset += Vm.getStorageLength(name);
                     }
                 }
             } while (hasNextFile);

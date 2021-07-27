@@ -1,8 +1,8 @@
 package io.questdb.cairo;
 
-import io.questdb.cairo.vm.CMRMemoryImpl;
-import io.questdb.cairo.vm.PMAMemoryImpl;
-import io.questdb.cairo.vm.api.MRMemory;
+import io.questdb.cairo.vm.MemoryCMRImpl;
+import io.questdb.cairo.vm.MemoryPMAImpl;
+import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;
@@ -30,20 +30,20 @@ public class MemRemappedFileTest {
     @Test
     public void testReadOnlyMemory() {
         LOG.info().$("ReadOnlyMemory starting").$();
-        double micros = test(new CMRMemoryImpl());
+        double micros = test(new MemoryCMRImpl());
         LOG.info().$("ReadOnlyMemory took ").$(micros).$("ms").$();
     }
 
     @Test
     public void testExtendableOnePageMemory() {
         LOG.info().$("ExtendableOnePageMemory starting").$();
-        double micros = test(new CMRMemoryImpl());
+        double micros = test(new MemoryCMRImpl());
         LOG.info().$("ExtendableOnePageMemory took ").$(micros).$("ms").$();
     }
 
-    private double test(MRMemory readMem) {
+    private double test(MemoryMR readMem) {
         long nanos = 0;
-        try (PMAMemoryImpl appMem = new PMAMemoryImpl()) {
+        try (MemoryPMAImpl appMem = new MemoryPMAImpl()) {
             for (int cycle = 0; cycle < NCYCLES; cycle++) {
                 path.trimTo(0).concat(root).concat("file" + nFile).$();
                 nFile++;

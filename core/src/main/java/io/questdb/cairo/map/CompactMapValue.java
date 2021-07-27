@@ -24,17 +24,17 @@
 
 package io.questdb.cairo.map;
 
-import io.questdb.cairo.vm.CARWMemoryImpl;
+import io.questdb.cairo.vm.api.MemoryARW;
 
 public class CompactMapValue implements MapValue {
 
-    private final CARWMemoryImpl entries;
+    private final MemoryARW entries;
     private final long[] columnOffsets;
     private long currentValueOffset;
     private boolean _new;
     private CompactMapRecord record;
 
-    CompactMapValue(CARWMemoryImpl entries, long[] columnOffsets) {
+    CompactMapValue(MemoryARW entries, long[] columnOffsets) {
         this.entries = entries;
         this.columnOffsets = columnOffsets;
     }

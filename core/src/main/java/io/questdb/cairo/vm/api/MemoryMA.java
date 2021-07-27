@@ -24,7 +24,7 @@
 
 package io.questdb.cairo.vm.api;
 
-public interface MAMemory extends MappedMemory, AppendMemory {
+public interface MemoryMA extends MemoryM, MemoryA {
 
     void close(boolean truncate);
 

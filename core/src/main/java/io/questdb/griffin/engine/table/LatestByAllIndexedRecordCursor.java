@@ -28,7 +28,7 @@ import io.questdb.MessageBus;
 import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.DataFrame;
-import io.questdb.cairo.vm.api.ReadMemory;
+import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.geohash.GeoHashNative;
@@ -150,7 +150,7 @@ class LatestByAllIndexedRecordCursor extends AbstractRecordListCursor {
             if (hashColumnIndex > -1) {
                 final int columnBase = reader.getColumnBase(partitionIndex);
                 final int primaryColumnIndex = TableReader.getPrimaryColumnIndex(columnBase, hashColumnIndex);
-                final ReadMemory column = reader.getColumn(primaryColumnIndex);
+                final MemoryR column = reader.getColumn(primaryColumnIndex);
                 hashColumnAddress = column.getPageAddress(0);
             }
 

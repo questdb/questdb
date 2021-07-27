@@ -26,25 +26,25 @@ package io.questdb.cairo.vm;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableUtils;
-import io.questdb.cairo.vm.api.MARMemory;
+import io.questdb.cairo.vm.api.MemoryMAR;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.str.LPSZ;
 
-public class PMAMemoryImpl extends PARWMemoryImpl implements MARMemory {
-    private static final Log LOG = LogFactory.getLog(PMAMemoryImpl.class);
+public class MemoryPMAImpl extends MemoryPARWImpl implements MemoryMAR {
+    private static final Log LOG = LogFactory.getLog(MemoryPMAImpl.class);
     private FilesFacade ff;
     private long fd = -1;
     private long pageAddress = 0;
     private int mappedPage;
 
-    public PMAMemoryImpl(FilesFacade ff, LPSZ name, long pageSize) {
+    public MemoryPMAImpl(FilesFacade ff, LPSZ name, long pageSize) {
         of(ff, name, pageSize);
     }
 
-    public PMAMemoryImpl() {
+    public MemoryPMAImpl() {
     }
 
     @Override
@@ -54,7 +54,7 @@ public class PMAMemoryImpl extends PARWMemoryImpl implements MARMemory {
         super.close();
         if (fd != -1) {
             try {
-                VmUtils.bestEffortClose(ff, LOG, fd, truncate, sz, Files.PAGE_SIZE);
+                Vm.bestEffortClose(ff, LOG, fd, truncate, sz, Files.PAGE_SIZE);
             } finally {
                 fd = -1;
             }

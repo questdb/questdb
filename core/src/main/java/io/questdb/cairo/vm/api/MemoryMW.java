@@ -24,8 +24,7 @@
 
 package io.questdb.cairo.vm.api;
 
-public interface CMRMemory extends CMMemory, MRMemory {
-    default void growToFileSize() {
-        extend(getFilesFacade().length(getFd()));
-    }
+public interface MemoryMW extends MemoryM, MemoryW {
+    void setTruncateSize(long size);
+    void sync(boolean async);
 }

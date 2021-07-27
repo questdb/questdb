@@ -25,8 +25,8 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.sql.DataFrame;
-import io.questdb.cairo.vm.CMRMemoryImpl;
-import io.questdb.cairo.vm.api.ReadMemory;
+import io.questdb.cairo.vm.MemoryCMRImpl;
+import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -60,7 +60,7 @@ public class IntervalBwdDataFrameCursor extends AbstractIntervalDataFrameCursor 
             long rowCount = reader.openPartition(currentPartition);
             if (rowCount > 0) {
 
-                final ReadMemory column = reader.getColumn(TableReader.getPrimaryColumnIndex(reader.getColumnBase(currentPartition), timestampIndex));
+                final MemoryR column = reader.getColumn(TableReader.getPrimaryColumnIndex(reader.getColumnBase(currentPartition), timestampIndex));
                 final long intervalLo = intervals.getQuick(currentInterval * 2);
                 final long intervalHi = intervals.getQuick(currentInterval * 2 + 1);
 
@@ -99,7 +99,7 @@ public class IntervalBwdDataFrameCursor extends AbstractIntervalDataFrameCursor 
                 // calculate intersection for inclusive intervals "intervalLo" and "intervalHi"
                 final long lo;
                 if (partitionTimestampLo < intervalLo) {
-                    assert column instanceof CMRMemoryImpl;
+                    assert column instanceof MemoryCMRImpl;
                     lo = BinarySearch.find(column, intervalLo - 1, 0, limitHi, BinarySearch.SCAN_DOWN) + 1;
                 } else {
                     lo = 0;
@@ -107,7 +107,7 @@ public class IntervalBwdDataFrameCursor extends AbstractIntervalDataFrameCursor 
 
                 final long hi;
                 if (partitionTimestampHi > intervalHi) {
-                    assert column instanceof CMRMemoryImpl;
+                    assert column instanceof MemoryCMRImpl;
                     hi = BinarySearch.find(column, intervalHi, lo, limitHi, BinarySearch.SCAN_DOWN) + 1;
                 } else {
                     hi = limitHi + 1;

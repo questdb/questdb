@@ -25,7 +25,11 @@
 package io.questdb.std;
 
 import io.questdb.std.str.CharSink;
+//#if jdk.version==8
+//$import sun.misc.FDBigInteger;
+//#else
 import jdk.internal.math.FDBigInteger;
+//#endif
 import org.jetbrains.annotations.NotNull;
 
 import java.util.Arrays;
@@ -33,12 +37,6 @@ import java.util.Arrays;
 public final class Numbers {
     public static final int INT_NaN = Integer.MIN_VALUE;
     public static final long LONG_NaN = Long.MIN_VALUE;
-    //#if jdk.version!=8
-    static {
-        Module currentModule = Numbers.class.getModule();
-        Unsafe.addExports(Unsafe.JAVA_BASE_MODULE, currentModule, "jdk.internal.math");
-    }
-    //#endif
     public static final double TOLERANCE = 1E-15d;
     public static final int SIZE_1MB = 1024 * 1024;
     public static final char[] hexDigits = {'0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f'};
@@ -1390,11 +1388,11 @@ public final class Numbers {
         sink.put(hexDigit);
     }
 
-    //////////////////////
-
     private static double roundHalfUp0(double value, int scale) {
         return scale > 0 ? roundHalfUp0PosScale(value, scale) : roundHalfUp0NegScale(value, -scale);
     }
+
+    //////////////////////
 
     private static void appendInt10(CharSink sink, int i) {
         int c;
@@ -2385,6 +2383,7 @@ public final class Numbers {
         Module currentModule = Numbers.class.getModule();
         Unsafe.addExports(Unsafe.JAVA_BASE_MODULE, currentModule, "jdk.internal.math");
     }
+    //#endif
 
     static {
         pow10 = new long[20];

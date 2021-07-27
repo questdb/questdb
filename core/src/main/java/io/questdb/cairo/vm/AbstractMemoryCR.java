@@ -24,17 +24,14 @@
 
 package io.questdb.cairo.vm;
 
-import io.questdb.cairo.vm.api.CRMemory;
-import io.questdb.std.BinarySequence;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.Long256;
-import io.questdb.std.Long256Impl;
+import io.questdb.cairo.vm.api.MemoryCR;
+import io.questdb.std.*;
 
-public abstract class AbstractCRMemory implements CRMemory {
+public abstract class AbstractMemoryCR implements MemoryCR {
 
-    private final CRMemory.ByteSequenceView bsview = new CRMemory.ByteSequenceView();
-    private final CRMemory.CharSequenceView csview = new CRMemory.CharSequenceView();
-    private final CRMemory.CharSequenceView csview2 = new CRMemory.CharSequenceView();
+    private final MemoryCR.ByteSequenceView bsview = new MemoryCR.ByteSequenceView();
+    private final MemoryCR.CharSequenceView csview = new MemoryCR.CharSequenceView();
+    private final MemoryCR.CharSequenceView csview2 = new MemoryCR.CharSequenceView();
     private final Long256Impl long256 = new Long256Impl();
     private final Long256Impl long256B = new Long256Impl();
     protected long pageAddress = 0;
@@ -67,6 +64,11 @@ public abstract class AbstractCRMemory implements CRMemory {
     public long resize(long size) {
         extend(size);
         return pageAddress;
+    }
+
+    public void zero() {
+        long baseLength = lim - pageAddress;
+        Vect.memset(pageAddress, baseLength, 0);
     }
 
     @Override

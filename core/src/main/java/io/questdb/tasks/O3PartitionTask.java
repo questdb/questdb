@@ -26,8 +26,8 @@ package io.questdb.tasks;
 
 import io.questdb.cairo.O3Basket;
 import io.questdb.cairo.TableWriter;
-import io.questdb.cairo.vm.api.CARWMemory;
-import io.questdb.cairo.vm.api.MARMemory;
+import io.questdb.cairo.vm.api.MemoryCARW;
+import io.questdb.cairo.vm.api.MemoryMAR;
 import io.questdb.std.ObjList;
 
 import java.util.concurrent.atomic.AtomicInteger;
@@ -35,8 +35,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class O3PartitionTask {
     private CharSequence pathToTable;
     private int partitionBy;
-    private ObjList<MARMemory> columns;
-    private ObjList<CARWMemory> o3Columns;
+    private ObjList<MemoryMAR> columns;
+    private ObjList<MemoryCARW> o3Columns;
     private long srcOooLo;
     private long srcOooHi;
     private long srcOooMax;
@@ -53,7 +53,7 @@ public class O3PartitionTask {
     private AtomicInteger columnCounter;
     private O3Basket o3Basket;
 
-    public ObjList<MARMemory> getColumns() {
+    public ObjList<MemoryMAR> getColumns() {
         return columns;
     }
 
@@ -61,7 +61,7 @@ public class O3PartitionTask {
         return maxTimestamp;
     }
 
-    public ObjList<CARWMemory> getO3Columns() {
+    public ObjList<MemoryCARW> getO3Columns() {
         return o3Columns;
     }
 
@@ -132,8 +132,8 @@ public class O3PartitionTask {
     public void of(
             CharSequence path,
             int partitionBy,
-            ObjList<MARMemory> columns,
-            ObjList<CARWMemory> o3Columns,
+            ObjList<MemoryMAR> columns,
+            ObjList<MemoryCARW> o3Columns,
             long srcOooLo,
             long srcOooHi,
             long srcOooMax,

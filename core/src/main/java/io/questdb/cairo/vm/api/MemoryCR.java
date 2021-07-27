@@ -26,12 +26,12 @@ package io.questdb.cairo.vm.api;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableUtils;
-import io.questdb.cairo.vm.VmUtils;
+import io.questdb.cairo.vm.Vm;
 import io.questdb.std.*;
 import io.questdb.std.str.AbstractCharSequence;
 import io.questdb.std.str.CharSink;
 
-public interface CRMemory extends ContinuousMemory, ReadMemory {
+public interface MemoryCR extends MemoryC, MemoryR {
     default BinarySequence getBin(long offset, ByteSequenceView view) {
         final long addr = addressOf(offset);
         final long len = Unsafe.getUnsafe().getLong(addr);
@@ -110,7 +110,7 @@ public interface CRMemory extends ContinuousMemory, ReadMemory {
         final int len = Unsafe.getUnsafe().getInt(addr);
         if (len != TableUtils.NULL_LEN) {
             if (len + 4 + offset <= size()) {
-                return view.of(addr + VmUtils.STRING_LENGTH_BYTES, len);
+                return view.of(addr + Vm.STRING_LENGTH_BYTES, len);
             }
             throw CairoException.instance(0).put("String is outside of file boundary [offset=").put(offset).put(", len=").put(len).put(", size=").put(size()).put(']');
         }

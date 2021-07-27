@@ -25,7 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.sql.SymbolTable;
-import io.questdb.cairo.vm.VmUtils;
+import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.*;
 import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
@@ -128,7 +128,7 @@ public final class TableUtils {
 
     public static void createTable(
             FilesFacade ff,
-            MARWMemory memory,
+            MemoryMARW memory,
             Path path,
             @Transient CharSequence root,
             TableStructure structure,
@@ -140,7 +140,7 @@ public final class TableUtils {
 
     public static void createTable(
             FilesFacade ff,
-            MARWMemory memory,
+            MemoryMARW memory,
             Path path,
             @Transient CharSequence root,
             TableStructure structure,
@@ -158,7 +158,7 @@ public final class TableUtils {
         final int rootLen = path.length();
 
         final long dirFd = !ff.isRestrictedFileSystem() ? TableUtils.openRO(ff, path.$(), LOG) : 0;
-        try (MARWMemory mem = memory) {
+        try (MemoryMARW mem = memory) {
             mem.smallFile(ff, path.trimTo(rootLen).concat(META_FILE_NAME).$());
             mem.jumpTo(0);
             final int count = structure.getColumnCount();
@@ -246,7 +246,7 @@ public final class TableUtils {
         return META_OFFSET_COLUMN_TYPES + columnCount * META_COLUMN_DATA_SIZE;
     }
 
-    public static int getColumnType(ReadMemory metaMem, int columnIndex) {
+    public static int getColumnType(MemoryR metaMem, int columnIndex) {
         return metaMem.getByte(META_OFFSET_COLUMN_TYPES + columnIndex * META_COLUMN_DATA_SIZE);
     }
 
@@ -467,7 +467,7 @@ public final class TableUtils {
         }
     }
 
-    public static void resetTodoLog(FilesFacade ff, Path path, int rootLen, MARWMemory mem) {
+    public static void resetTodoLog(FilesFacade ff, Path path, int rootLen, MemoryMARW mem) {
         mem.smallFile(ff, path.trimTo(rootLen).concat(TODO_FILE_NAME).$());
         mem.jumpTo(0);
         mem.putLong(24, 0); // txn check
@@ -480,7 +480,7 @@ public final class TableUtils {
         mem.jumpTo(40);
     }
 
-    public static void resetTxn(MWMemory txMem, int symbolMapCount, long txn, long dataVersion, long partitionTableVersion) {
+    public static void resetTxn(MemoryMW txMem, int symbolMapCount, long txn, long dataVersion, long partitionTableVersion) {
         // txn to let readers know table is being reset
         txMem.putLong(TX_OFFSET_TXN, txn);
         Unsafe.getUnsafe().storeFence();
@@ -596,7 +596,7 @@ public final class TableUtils {
         }
     }
 
-    public static void validate(FilesFacade ff, MRMemory metaMem, LowerCaseCharSequenceIntHashMap nameIndex) {
+    public static void validate(FilesFacade ff, MemoryMR metaMem, LowerCaseCharSequenceIntHashMap nameIndex) {
         try {
             final int metaVersion = metaMem.getInt(TableUtils.META_OFFSET_VERSION);
             if (ColumnType.VERSION != metaVersion && metaVersion != 404) {
@@ -649,7 +649,7 @@ public final class TableUtils {
                 }
 
                 if (nameIndex.put(name, i)) {
-                    offset += VmUtils.getStorageLength(name);
+                    offset += Vm.getStorageLength(name);
                 } else {
                     throw validationException(metaMem).put("Duplicate column: ").put(name).put(" at [").put(i).put(']');
                 }
@@ -753,23 +753,23 @@ public final class TableUtils {
         return path.concat(columnName).put(FILE_SUFFIX_I).$();
     }
 
-    static long getColumnFlags(ReadMemory metaMem, int columnIndex) {
+    static long getColumnFlags(MemoryR metaMem, int columnIndex) {
         return metaMem.getLong(META_OFFSET_COLUMN_TYPES + columnIndex * META_COLUMN_DATA_SIZE + 1);
     }
 
-    static boolean isColumnIndexed(ReadMemory metaMem, int columnIndex) {
+    static boolean isColumnIndexed(MemoryR metaMem, int columnIndex) {
         return (getColumnFlags(metaMem, columnIndex) & META_FLAG_BIT_INDEXED) != 0;
     }
 
-    static boolean isSequential(ReadMemory metaMem, int columnIndex) {
+    static boolean isSequential(MemoryR metaMem, int columnIndex) {
         return (getColumnFlags(metaMem, columnIndex) & META_FLAG_BIT_SEQUENTIAL) != 0;
     }
 
-    static int getIndexBlockCapacity(ReadMemory metaMem, int columnIndex) {
+    static int getIndexBlockCapacity(MemoryR metaMem, int columnIndex) {
         return metaMem.getInt(META_OFFSET_COLUMN_TYPES + columnIndex * META_COLUMN_DATA_SIZE + 9);
     }
 
-    static int openMetaSwapFile(FilesFacade ff, MAMemory mem, Path path, int rootLen, int retryCount) {
+    static int openMetaSwapFile(FilesFacade ff, MemoryMA mem, Path path, int rootLen, int retryCount) {
         try {
             path.concat(META_SWAP_FILE_NAME).$();
             int l = path.length();
@@ -805,7 +805,7 @@ public final class TableUtils {
         }
     }
 
-    static void openMetaSwapFileByIndex(FilesFacade ff, MAMemory mem, Path path, int rootLen, int swapIndex) {
+    static void openMetaSwapFileByIndex(FilesFacade ff, MemoryMA mem, Path path, int rootLen, int swapIndex) {
         try {
             path.concat(META_SWAP_FILE_NAME);
             if (swapIndex > 0) {
@@ -818,7 +818,7 @@ public final class TableUtils {
         }
     }
 
-    private static CairoException validationException(MRMemory mem) {
+    private static CairoException validationException(MemoryMR mem) {
         return CairoException.instance(0).put("Invalid metadata at fd=").put(mem.getFd()).put(". ");
     }
 

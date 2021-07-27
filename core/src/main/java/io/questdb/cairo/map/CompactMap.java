@@ -27,8 +27,9 @@ package io.questdb.cairo.map;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.vm.CARWMemoryImpl;
-import io.questdb.cairo.vm.VmUtils;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryARW;
+import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
@@ -118,9 +119,9 @@ public class CompactMap implements Map {
                     5209859150892887590L
             };
 
-    private static final HashFunction DEFAULT_HASH = CARWMemoryImpl::hash0;
-    private final CARWMemoryImpl entries;
-    private final CARWMemoryImpl entrySlots;
+    private static final HashFunction DEFAULT_HASH = MemoryR::hash0;
+    private final MemoryARW entries;
+    private final MemoryARW entrySlots;
     private final Key key = new Key();
     private final CompactMapValue value;
     private final double loadFactor;
@@ -144,8 +145,8 @@ public class CompactMap implements Map {
     }
 
     CompactMap(int pageSize, ColumnTypes keyTypes, ColumnTypes valueTypes, long keyCapacity, double loadFactor, HashFunction hashFunction, int maxResizes, int maxPages) {
-        this.entries = new CARWMemoryImpl(pageSize, maxPages);
-        this.entrySlots = new CARWMemoryImpl(pageSize, maxPages);
+        this.entries = Vm.getARWInstance(pageSize, maxPages);
+        this.entrySlots = Vm.getARWInstance(pageSize, maxPages);
         try {
             this.loadFactor = loadFactor;
             this.columnOffsets = new long[keyTypes.getColumnCount() + valueTypes.getColumnCount()];
@@ -283,7 +284,7 @@ public class CompactMap implements Map {
 
     @FunctionalInterface
     public interface HashFunction {
-        long hash(CARWMemoryImpl mem, long offset, long size);
+        long hash(MemoryR mem, long offset, long size);
     }
 
     public class Key implements MapKey {
@@ -467,7 +468,7 @@ public class CompactMap implements Map {
                 entries.putLong(currentEntrySize);
                 int len = value.length();
                 entries.putStr(currentEntryOffset + currentEntrySize, value, 0, len);
-                currentEntrySize += VmUtils.getStorageLength(len);
+                currentEntrySize += Vm.getStorageLength(len);
             }
         }
 
@@ -477,7 +478,7 @@ public class CompactMap implements Map {
             entries.putLong(currentEntrySize);
             int len = hi - lo;
             entries.putStr(currentEntryOffset + currentEntrySize, value, lo, len);
-            currentEntrySize += VmUtils.getStorageLength(len);
+            currentEntrySize += Vm.getStorageLength(len);
         }
 
         @Override

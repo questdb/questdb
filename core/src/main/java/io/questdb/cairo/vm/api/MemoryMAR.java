@@ -24,5 +24,18 @@
 
 package io.questdb.cairo.vm.api;
 
-public interface MRMemory extends MappedMemory, ReadMemory {
+import io.questdb.cairo.vm.MemoryPMAImpl;
+
+public interface MemoryMAR extends MemoryMA, MemoryMR, MemoryR {
+
+    @Override
+    default long getAppendAddress() {
+        long appendOffset = getAppendOffset();
+        return getPageAddress(pageIndex(appendOffset)) + offsetInPage(appendOffset);
+    }
+
+    @Override
+    default long getAppendAddressSize() {
+        return getPageSize() - offsetInPage(getAppendOffset());
+    }
 }

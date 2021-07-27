@@ -26,10 +26,9 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.sql.SymbolTable;
-import io.questdb.cairo.vm.CMARWMemoryImpl;
-import io.questdb.cairo.vm.VmUtils;
-import io.questdb.cairo.vm.api.MAMemory;
-import io.questdb.cairo.vm.api.MARWMemory;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryMA;
+import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
@@ -46,8 +45,8 @@ public class SymbolMapWriter implements Closeable {
     public static final int HEADER_NULL_FLAG = 8;
     private static final Log LOG = LogFactory.getLog(SymbolMapWriter.class);
     private final BitmapIndexWriter indexWriter;
-    private final MARWMemory charMem;
-    private final MARWMemory offsetMem;
+    private final MemoryMARW charMem;
+    private final MemoryMARW offsetMem;
     private final CharSequenceIntHashMap cache;
     private final DirectCharSequence tmpSymbol;
     private final int maxHash;
@@ -84,7 +83,7 @@ public class SymbolMapWriter implements Closeable {
 
             // open "offset" memory and make sure we start appending from where
             // we left off. Where we left off is stored externally to symbol map
-            this.offsetMem = CMARWMemoryImpl.whole(ff, path, mapPageSize);
+            this.offsetMem = Vm.getWholeMARWInstance(ff, path, mapPageSize);
             final int symbolCapacity = offsetMem.getInt(HEADER_CAPACITY);
             final boolean useCache = offsetMem.getBool(HEADER_CACHE_ENABLED);
             this.offsetMem.jumpTo(keyToOffset(symbolCount));
@@ -93,7 +92,7 @@ public class SymbolMapWriter implements Closeable {
             this.indexWriter = new BitmapIndexWriter(configuration, path.trimTo(plen), name);
 
             // this is the place where symbol values are stored
-            this.charMem = CMARWMemoryImpl.whole(ff, charFileName(path.trimTo(plen), name), mapPageSize);
+            this.charMem = Vm.getWholeMARWInstance(ff, charFileName(path.trimTo(plen), name), mapPageSize);
 
             // move append pointer for symbol values in the correct place
             jumpCharMemToSymbolCount(symbolCount);
@@ -130,7 +129,7 @@ public class SymbolMapWriter implements Closeable {
 
     public static void createSymbolMapFiles(
             FilesFacade ff,
-            MAMemory mem,
+            MemoryMA mem,
             Path path,
             CharSequence columnName,
             int symbolCapacity,
@@ -269,7 +268,7 @@ public class SymbolMapWriter implements Closeable {
     private void jumpCharMemToSymbolCount(int symbolCount) {
         if (symbolCount > 0) {
             long lastSymbolOffset = this.offsetMem.getLong(keyToOffset(symbolCount - 1));
-            int l = VmUtils.getStorageLength(this.charMem.getStr(lastSymbolOffset));
+            int l = Vm.getStorageLength(this.charMem.getStr(lastSymbolOffset));
             this.charMem.jumpTo(lastSymbolOffset + l);
         } else {
             this.charMem.jumpTo(0);

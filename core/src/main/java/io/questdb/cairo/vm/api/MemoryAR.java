@@ -24,7 +24,5 @@
 
 package io.questdb.cairo.vm.api;
 
-public interface MWMemory extends MappedMemory, WriteMemory {
-    void setTruncateSize(long size);
-    void sync(boolean async);
+public interface MemoryAR extends MemoryA, MemoryR {
 }

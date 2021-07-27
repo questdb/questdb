@@ -28,7 +28,8 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
-import io.questdb.cairo.vm.CARWMemoryImpl;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryAR;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.StrFunction;
@@ -47,8 +48,8 @@ public class RndStringRndListFunctionFactory implements FunctionFactory {
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
 
         // todo: limit pages
-        CARWMemoryImpl strMem = new CARWMemoryImpl(1024 * 1024, Integer.MAX_VALUE);
-        CARWMemoryImpl idxMem = new CARWMemoryImpl(1024 * 1024, Integer.MAX_VALUE);
+        MemoryAR strMem = Vm.getARInstance(1024 * 1024, Integer.MAX_VALUE);
+        MemoryAR idxMem = Vm.getARInstance(1024 * 1024, Integer.MAX_VALUE);
 
         final int lo = args.getQuick(1).getInt(null);
         final int hi = args.getQuick(2).getInt(null);
@@ -74,18 +75,24 @@ public class RndStringRndListFunctionFactory implements FunctionFactory {
 
     private static final class Func extends StrFunction implements Function {
         private final int count;
-        private final CARWMemoryImpl strMem;
-        private final CARWMemoryImpl idxMem;
+        private final MemoryAR strMem;
+        private final MemoryAR idxMem;
         private final int strLo;
         private final int strHi;
         private Rnd rnd;
 
-        public Func(CARWMemoryImpl strMem, CARWMemoryImpl idxMem, int strLo, int strHi, int strCount, int nullRate) {
+        public Func(MemoryAR strMem, MemoryAR idxMem, int strLo, int strHi, int strCount, int nullRate) {
             this.count = strCount;
             this.strMem = strMem;
             this.idxMem = idxMem;
             this.strLo = strLo;
             this.strHi = strHi;
+        }
+
+        @Override
+        public void close() {
+            Misc.free(strMem);
+            Misc.free(idxMem);
         }
 
         @Override
@@ -111,26 +118,26 @@ public class RndStringRndListFunctionFactory implements FunctionFactory {
                 idxMem.putLong(o);
             }
         }
+    }
+
+    private static final class FixedFunc extends StrFunction implements Function {
+        private final int count;
+        private final MemoryAR strMem;
+        private final MemoryAR idxMem;
+        private final int strLen;
+        private Rnd rnd;
+
+        public FixedFunc(MemoryAR strMem, MemoryAR idxMem, int strLen, int strCount, int nullRate) {
+            this.count = strCount;
+            this.strMem = strMem;
+            this.idxMem = idxMem;
+            this.strLen = strLen;
+        }
 
         @Override
         public void close() {
             Misc.free(strMem);
             Misc.free(idxMem);
-        }
-    }
-
-    private static final class FixedFunc extends StrFunction implements Function {
-        private final int count;
-        private final CARWMemoryImpl strMem;
-        private final CARWMemoryImpl idxMem;
-        private final int strLen;
-        private Rnd rnd;
-
-        public FixedFunc(CARWMemoryImpl strMem, CARWMemoryImpl idxMem, int strLen, int strCount, int nullRate) {
-            this.count = strCount;
-            this.strMem = strMem;
-            this.idxMem = idxMem;
-            this.strLen = strLen;
         }
 
         @Override
@@ -155,12 +162,6 @@ public class RndStringRndListFunctionFactory implements FunctionFactory {
                 final long o = strMem.putStr(rnd.nextChars(strLen));
                 idxMem.putLong(o);
             }
-        }
-
-        @Override
-        public void close() {
-            Misc.free(strMem);
-            Misc.free(idxMem);
         }
     }
 }

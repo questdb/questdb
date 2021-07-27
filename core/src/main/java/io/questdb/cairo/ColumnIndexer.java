@@ -24,8 +24,8 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.vm.api.MAMemory;
-import io.questdb.cairo.vm.api.ReadMemory;
+import io.questdb.cairo.vm.api.MemoryMA;
+import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.std.str.Path;
 
 public interface ColumnIndexer {
@@ -37,7 +37,7 @@ public interface ColumnIndexer {
 
     void refreshSourceAndIndex(long loRow, long hiRow);
 
-    void index(ReadMemory mem, long loRow, long hiRow);
+    void index(MemoryR mem, long loRow, long hiRow);
 
     BitmapIndexWriter getWriter();
 
@@ -47,7 +47,7 @@ public interface ColumnIndexer {
             CairoConfiguration configuration,
             Path path,
             CharSequence name,
-            MAMemory columnMem,
+            MemoryMA columnMem,
             long columnTop
     );
 

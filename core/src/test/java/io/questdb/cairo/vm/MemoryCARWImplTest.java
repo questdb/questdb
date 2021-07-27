@@ -36,7 +36,7 @@ import org.junit.Test;
 
 import static org.junit.Assert.*;
 
-public class CARWMemoryImplTest {
+public class MemoryCARWImplTest {
 
     @Test
     public void testBinSequence() {
@@ -51,7 +51,7 @@ public class CARWMemoryImplTest {
     @Test
     public void testBinSequenceOnEdge() {
         final Rnd rnd = new Rnd();
-        try (CARWMemoryImpl mem = new CARWMemoryImpl(32, Integer.MAX_VALUE)) {
+        try (MemoryCARWImpl mem = new MemoryCARWImpl(32, Integer.MAX_VALUE)) {
             TestRecord.ArrayBinarySequence seq = new TestRecord.ArrayBinarySequence();
             int N = 33;
             int O = 10;
@@ -101,7 +101,7 @@ public class CARWMemoryImplTest {
     @Test
     public void testBool() {
         Rnd rnd = new Rnd();
-        try (CARWMemoryImpl mem = new CARWMemoryImpl(11, Integer.MAX_VALUE)) {
+        try (MemoryCARWImpl mem = new MemoryCARWImpl(11, Integer.MAX_VALUE)) {
             int n = 120;
 
             for (int i = 0; i < n; i++) {
@@ -119,7 +119,7 @@ public class CARWMemoryImplTest {
     @Test
     public void testBoolRnd() {
         Rnd rnd = new Rnd();
-        try (CARWMemoryImpl mem = new CARWMemoryImpl(11, Integer.MAX_VALUE)) {
+        try (MemoryCARWImpl mem = new MemoryCARWImpl(11, Integer.MAX_VALUE)) {
             int n = 120;
             long o = 0;
 
@@ -138,7 +138,7 @@ public class CARWMemoryImplTest {
     @Test
     public void testBulkCopy() {
         int N = 1000;
-        try (CARWMemoryImpl mem = new CARWMemoryImpl(128, Integer.MAX_VALUE)) {
+        try (MemoryCARWImpl mem = new MemoryCARWImpl(128, Integer.MAX_VALUE)) {
             for (int i = 0; i < N; i++) {
                 mem.putShort((short) i);
             }
@@ -163,7 +163,7 @@ public class CARWMemoryImplTest {
 
     @Test
     public void testByte() {
-        try (CARWMemoryImpl mem = new CARWMemoryImpl(11, Integer.MAX_VALUE)) {
+        try (MemoryCARWImpl mem = new MemoryCARWImpl(11, Integer.MAX_VALUE)) {
             int n = 120;
 
             for (int i = 0; i < n; i++) {
@@ -179,7 +179,7 @@ public class CARWMemoryImplTest {
 
     @Test
     public void testChar() {
-        try (CARWMemoryImpl mem = new CARWMemoryImpl(7, Integer.MAX_VALUE)) {
+        try (MemoryCARWImpl mem = new MemoryCARWImpl(7, Integer.MAX_VALUE)) {
             char n = 999;
             long o = 0;
             for (char i = n; i > 0; i--) {
@@ -198,7 +198,7 @@ public class CARWMemoryImplTest {
 
     @Test
     public void testCharWithOffset() {
-        try (CARWMemoryImpl mem = new CARWMemoryImpl(7, Integer.MAX_VALUE)) {
+        try (MemoryCARWImpl mem = new MemoryCARWImpl(7, Integer.MAX_VALUE)) {
             char n = 999;
             long o = 0;
             for (char i = n; i > 0; i--) {
@@ -216,7 +216,7 @@ public class CARWMemoryImplTest {
 
     @Test
     public void testLong256() {
-        try (CARWMemoryImpl mem = new CARWMemoryImpl(256, Integer.MAX_VALUE)) {
+        try (MemoryCARWImpl mem = new MemoryCARWImpl(256, Integer.MAX_VALUE)) {
             mem.putLong256("0xEA674fdDe714fd979de3EdF0F56AA9716B898ec8");
             mem.putLong256("0xEA674fdDe714fd979de3EdF0F56AA9716B898ec8");
         }
@@ -224,7 +224,7 @@ public class CARWMemoryImplTest {
 
     @Test
     public void testByteRandom() {
-        try (CARWMemoryImpl mem = new CARWMemoryImpl(128, Integer.MAX_VALUE)) {
+        try (MemoryCARWImpl mem = new MemoryCARWImpl(128, Integer.MAX_VALUE)) {
             long offset1 = 512;
             mem.putByte(offset1, (byte) 3);
             mem.putByte(offset1 + 1, (byte) 4);
@@ -238,7 +238,7 @@ public class CARWMemoryImplTest {
 
     @Test
     public void testByteRnd() {
-        try (CARWMemoryImpl mem = new CARWMemoryImpl(11, Integer.MAX_VALUE)) {
+        try (MemoryCARWImpl mem = new MemoryCARWImpl(11, Integer.MAX_VALUE)) {
             int n = 120;
 
             long o = 0;
@@ -255,7 +255,7 @@ public class CARWMemoryImplTest {
 
     @Test
     public void testDouble() {
-        try (CARWMemoryImpl mem = new CARWMemoryImpl(11, Integer.MAX_VALUE)) {
+        try (MemoryCARWImpl mem = new MemoryCARWImpl(11, Integer.MAX_VALUE)) {
             Rnd rnd = new Rnd();
             int n = 999;
 
@@ -282,7 +282,7 @@ public class CARWMemoryImplTest {
         long pageSize = 64;
         Rnd rnd = new Rnd();
         Long256Impl sink = new Long256Impl();
-        try (CARWMemoryImpl mem = new CARWMemoryImpl(pageSize, Integer.MAX_VALUE)) {
+        try (MemoryCARWImpl mem = new MemoryCARWImpl(pageSize, Integer.MAX_VALUE)) {
             for (int i = 0; i < 1000; i++) {
                 mem.putLong256(rnd.nextLong(), rnd.nextLong(), rnd.nextLong(), rnd.nextLong());
             }
@@ -311,7 +311,7 @@ public class CARWMemoryImplTest {
         long pageSize = 64;
         Rnd rnd = new Rnd();
         Long256Impl long256 = new Long256Impl();
-        try (CARWMemoryImpl mem = new CARWMemoryImpl(pageSize, Integer.MAX_VALUE)) {
+        try (MemoryCARWImpl mem = new MemoryCARWImpl(pageSize, Integer.MAX_VALUE)) {
             for (int i = 0; i < 1000; i++) {
                 long256.fromRnd(rnd);
                 mem.putLong256(long256);
@@ -335,7 +335,7 @@ public class CARWMemoryImplTest {
         long pageSize = 64;
         final int N = 1000;
         Long256Impl long256 = new Long256Impl();
-        try (CARWMemoryImpl mem = new CARWMemoryImpl(pageSize, Integer.MAX_VALUE)) {
+        try (MemoryCARWImpl mem = new MemoryCARWImpl(pageSize, Integer.MAX_VALUE)) {
             for (int i = 0; i < N; i++) {
                 mem.putLong256((CharSequence) null);
             }
@@ -361,7 +361,7 @@ public class CARWMemoryImplTest {
         Rnd rnd = new Rnd();
         long offset = 0;
         Long256Impl long256 = new Long256Impl();
-        try (CARWMemoryImpl mem = new CARWMemoryImpl(pageSize, Integer.MAX_VALUE)) {
+        try (MemoryCARWImpl mem = new MemoryCARWImpl(pageSize, Integer.MAX_VALUE)) {
             for (int i = 0; i < 1000; i++) {
                 long256.fromRnd(rnd);
                 mem.putLong256(offset, long256);
@@ -387,7 +387,7 @@ public class CARWMemoryImplTest {
         long pageSize = 128;
         Long256Impl long256 = new Long256Impl();
         Long256Impl long256a = new Long256Impl();
-        try (CARWMemoryImpl mem = new CARWMemoryImpl(pageSize, Integer.MAX_VALUE)) {
+        try (MemoryCARWImpl mem = new MemoryCARWImpl(pageSize, Integer.MAX_VALUE)) {
 
             mem.putLong256(expected);
             mem.putLong256(expected);
@@ -410,7 +410,7 @@ public class CARWMemoryImplTest {
         long pageSize = 128;
         Long256Impl long256 = new Long256Impl();
         Long256Impl long256a = new Long256Impl();
-        try (CARWMemoryImpl mem = new CARWMemoryImpl(pageSize, Integer.MAX_VALUE)) {
+        try (MemoryCARWImpl mem = new MemoryCARWImpl(pageSize, Integer.MAX_VALUE)) {
             mem.putLong256(expected);
             mem.putLong256(expected);
             mem.getLong256(0, long256);
@@ -469,7 +469,7 @@ public class CARWMemoryImplTest {
         long pageSize = 64;
         Rnd rnd = new Rnd();
         Long256Impl sink = new Long256Impl();
-        try (CARWMemoryImpl mem = new CARWMemoryImpl(pageSize, Integer.MAX_VALUE)) {
+        try (MemoryCARWImpl mem = new MemoryCARWImpl(pageSize, Integer.MAX_VALUE)) {
             long offset = 0;
             for (int i = 0; i < 1000; i++) {
                 mem.putLong256(offset, rnd.nextLong(), rnd.nextLong(), rnd.nextLong(), rnd.nextLong());
@@ -493,7 +493,7 @@ public class CARWMemoryImplTest {
     @Test
     public void testDoubleCompatibility() {
         long pageSize = 64;
-        try (CARWMemoryImpl mem = new CARWMemoryImpl(pageSize, Integer.MAX_VALUE)) {
+        try (MemoryCARWImpl mem = new MemoryCARWImpl(pageSize, Integer.MAX_VALUE)) {
             mem.putInt(10);
             mem.putDouble(8980980284.22234);
             assertEquals(8980980284.22234, mem.getDouble(4), 0.00001);
@@ -502,7 +502,7 @@ public class CARWMemoryImplTest {
 
     @Test
     public void testDoubleRnd() {
-        try (CARWMemoryImpl mem = new CARWMemoryImpl(11, Integer.MAX_VALUE)) {
+        try (MemoryCARWImpl mem = new MemoryCARWImpl(11, Integer.MAX_VALUE)) {
             Rnd rnd = new Rnd();
             int n = 999;
 
@@ -527,7 +527,7 @@ public class CARWMemoryImplTest {
     @Test
     public void testDoubleRndCompatibility() {
         long pageSize = 64;
-        try (CARWMemoryImpl mem = new CARWMemoryImpl(pageSize, Integer.MAX_VALUE)) {
+        try (MemoryCARWImpl mem = new MemoryCARWImpl(pageSize, Integer.MAX_VALUE)) {
             // prime
             mem.putInt(10, 900);
             mem.putDouble(22, 8980980284.22234);
@@ -539,14 +539,14 @@ public class CARWMemoryImplTest {
 
     @Test
     public void testEvenPageSize() {
-        try (CARWMemoryImpl mem = new CARWMemoryImpl(32, Integer.MAX_VALUE)) {
+        try (MemoryCARWImpl mem = new MemoryCARWImpl(32, Integer.MAX_VALUE)) {
             assertStrings(mem, false);
         }
     }
 
     @Test
     public void testFloat() {
-        try (CARWMemoryImpl mem = new CARWMemoryImpl(11, Integer.MAX_VALUE)) {
+        try (MemoryCARWImpl mem = new MemoryCARWImpl(11, Integer.MAX_VALUE)) {
             Rnd rnd = new Rnd();
             int n = 999;
 
@@ -569,7 +569,7 @@ public class CARWMemoryImplTest {
     @Test
     public void testFloatCompatibility() {
         long pageSize = 64;
-        try (CARWMemoryImpl mem = new CARWMemoryImpl(pageSize, Integer.MAX_VALUE)) {
+        try (MemoryCARWImpl mem = new MemoryCARWImpl(pageSize, Integer.MAX_VALUE)) {
             mem.putFloat(1024f);
             mem.putFloat(2048f);
             assertEquals(1024f, mem.getFloat(0), 0.00001f);
@@ -579,7 +579,7 @@ public class CARWMemoryImplTest {
 
     @Test
     public void testFloatRnd() {
-        try (CARWMemoryImpl mem = new CARWMemoryImpl(11, Integer.MAX_VALUE)) {
+        try (MemoryCARWImpl mem = new MemoryCARWImpl(11, Integer.MAX_VALUE)) {
             Rnd rnd = new Rnd();
             int n = 999;
 
@@ -604,7 +604,7 @@ public class CARWMemoryImplTest {
     @Test
     public void testFloatRndCompatibility() {
         long pageSize = 64;
-        try (CARWMemoryImpl mem = new CARWMemoryImpl(pageSize, Integer.MAX_VALUE)) {
+        try (MemoryCARWImpl mem = new MemoryCARWImpl(pageSize, Integer.MAX_VALUE)) {
             // prime
             mem.putByte(10, (byte) 5);
             mem.putFloat(61, 1024f);
@@ -616,7 +616,7 @@ public class CARWMemoryImplTest {
 
     @Test
     public void testInt() {
-        try (CARWMemoryImpl mem = new CARWMemoryImpl(7, Integer.MAX_VALUE)) {
+        try (MemoryCARWImpl mem = new MemoryCARWImpl(7, Integer.MAX_VALUE)) {
             mem.putByte((byte) 1);
             int n = 999;
             for (int i = n; i > 0; i--) {
@@ -636,7 +636,7 @@ public class CARWMemoryImplTest {
     @Test
     public void testIntCompatibility() {
         long pageSize = 64;
-        try (CARWMemoryImpl mem = new CARWMemoryImpl(pageSize, Integer.MAX_VALUE)) {
+        try (MemoryCARWImpl mem = new MemoryCARWImpl(pageSize, Integer.MAX_VALUE)) {
             mem.putInt(1024);
             mem.putInt(2048);
             assertEquals(1024, mem.getInt(0));
@@ -646,7 +646,7 @@ public class CARWMemoryImplTest {
 
     @Test
     public void testIntRnd() {
-        try (CARWMemoryImpl mem = new CARWMemoryImpl(7, Integer.MAX_VALUE)) {
+        try (MemoryCARWImpl mem = new MemoryCARWImpl(7, Integer.MAX_VALUE)) {
             long o = 1;
             mem.putByte(0, (byte) 1);
             int n = 999;
@@ -668,7 +668,7 @@ public class CARWMemoryImplTest {
     @Test
     public void testIntRndCompatibility() {
         long pageSize = 64;
-        try (CARWMemoryImpl mem = new CARWMemoryImpl(pageSize, Integer.MAX_VALUE)) {
+        try (MemoryCARWImpl mem = new MemoryCARWImpl(pageSize, Integer.MAX_VALUE)) {
             // prime page
             mem.putByte(10, (byte) 22);
             mem.putInt(15, 1024);
@@ -680,7 +680,7 @@ public class CARWMemoryImplTest {
 
     @Test
     public void testJumpTo() {
-        try (CARWMemoryImpl mem = new CARWMemoryImpl(11, Integer.MAX_VALUE)) {
+        try (MemoryCARWImpl mem = new MemoryCARWImpl(11, Integer.MAX_VALUE)) {
             mem.putByte((byte) 1);
             int n = 999;
             for (int i = n; i > 0; i--) {
@@ -704,7 +704,7 @@ public class CARWMemoryImplTest {
 
     @Test
     public void testJumpTo2() {
-        try (CARWMemoryImpl mem = new CARWMemoryImpl(11, Integer.MAX_VALUE)) {
+        try (MemoryCARWImpl mem = new MemoryCARWImpl(11, Integer.MAX_VALUE)) {
             mem.jumpTo(8);
             int n = 999;
             for (int i = n; i > 0; i--) {
@@ -721,7 +721,7 @@ public class CARWMemoryImplTest {
 
     @Test
     public void testJumpTo3() {
-        try (CARWMemoryImpl mem = new CARWMemoryImpl(11, Integer.MAX_VALUE)) {
+        try (MemoryCARWImpl mem = new MemoryCARWImpl(11, Integer.MAX_VALUE)) {
             mem.jumpTo(256);
             int n = 999;
             for (int i = n; i > 0; i--) {
@@ -752,7 +752,7 @@ public class CARWMemoryImplTest {
     @Test
     public void testLongCompatibility() {
         long pageSize = 64;
-        try (CARWMemoryImpl mem = new CARWMemoryImpl(pageSize, Integer.MAX_VALUE)) {
+        try (MemoryCARWImpl mem = new MemoryCARWImpl(pageSize, Integer.MAX_VALUE)) {
             mem.putLong(8980980284302834L);
             mem.putLong(897928374972983477L);
             assertEquals(8980980284302834L, mem.getLong(0));
@@ -762,7 +762,7 @@ public class CARWMemoryImplTest {
 
     @Test
     public void testLongEven() {
-        try (CARWMemoryImpl mem = new CARWMemoryImpl(11, Integer.MAX_VALUE)) {
+        try (MemoryCARWImpl mem = new MemoryCARWImpl(11, Integer.MAX_VALUE)) {
             int n = 999;
             for (int i = n; i > 0; i--) {
                 mem.putLong(i);
@@ -778,7 +778,7 @@ public class CARWMemoryImplTest {
 
     @Test
     public void testLongOdd() {
-        try (CARWMemoryImpl mem = new CARWMemoryImpl(11, Integer.MAX_VALUE)) {
+        try (MemoryCARWImpl mem = new MemoryCARWImpl(11, Integer.MAX_VALUE)) {
             mem.putByte((byte) 1);
             int n = 999;
             for (int i = n; i > 0; i--) {
@@ -798,7 +798,7 @@ public class CARWMemoryImplTest {
     @Test
     public void testLongRndCompatibility() {
         long pageSize = 64;
-        try (CARWMemoryImpl mem = new CARWMemoryImpl(pageSize, Integer.MAX_VALUE)) {
+        try (MemoryCARWImpl mem = new MemoryCARWImpl(pageSize, Integer.MAX_VALUE)) {
             mem.putLong(33, 8980980284302834L);
             mem.putLong(12, 897928374972983477L);
             assertEquals(8980980284302834L, mem.getLong(33));
@@ -808,7 +808,7 @@ public class CARWMemoryImplTest {
 
     @Test
     public void testLongRndEven() {
-        try (CARWMemoryImpl mem = new CARWMemoryImpl(11, Integer.MAX_VALUE)) {
+        try (MemoryCARWImpl mem = new MemoryCARWImpl(11, Integer.MAX_VALUE)) {
             int n = 999;
             long o = 0;
             for (int i = n; i > 0; i--) {
@@ -826,7 +826,7 @@ public class CARWMemoryImplTest {
 
     @Test
     public void testLongRndOdd() {
-        try (CARWMemoryImpl mem = new CARWMemoryImpl(11, Integer.MAX_VALUE)) {
+        try (MemoryCARWImpl mem = new MemoryCARWImpl(11, Integer.MAX_VALUE)) {
             mem.putByte(0, (byte) 1);
             int n = 999;
             long o = 1;
@@ -847,7 +847,7 @@ public class CARWMemoryImplTest {
 
     @Test
     public void testNullBin() {
-        try (CARWMemoryImpl mem = new CARWMemoryImpl(1024, Integer.MAX_VALUE)) {
+        try (MemoryCARWImpl mem = new MemoryCARWImpl(1024, Integer.MAX_VALUE)) {
             final TestBinarySequence binarySequence = new TestBinarySequence();
             final byte[] buf = new byte[0];
             binarySequence.of(buf);
@@ -867,21 +867,21 @@ public class CARWMemoryImplTest {
 
     @Test
     public void testOffPageSize() {
-        try (CARWMemoryImpl mem = new CARWMemoryImpl(12, Integer.MAX_VALUE)) {
+        try (MemoryCARWImpl mem = new MemoryCARWImpl(12, Integer.MAX_VALUE)) {
             assertStrings(mem, true);
         }
     }
 
     @Test
     public void testOkSize() {
-        try (CARWMemoryImpl mem = new CARWMemoryImpl(1024, Integer.MAX_VALUE)) {
+        try (MemoryCARWImpl mem = new MemoryCARWImpl(1024, Integer.MAX_VALUE)) {
             assertStrings(mem, false);
         }
     }
 
     @Test
     public void testShort() {
-        try (CARWMemoryImpl mem = new CARWMemoryImpl(7, Integer.MAX_VALUE)) {
+        try (MemoryCARWImpl mem = new MemoryCARWImpl(7, Integer.MAX_VALUE)) {
             mem.putByte((byte) 1);
             short n = 999;
             for (short i = n; i > 0; i--) {
@@ -901,7 +901,7 @@ public class CARWMemoryImplTest {
     @Test
     public void testShortCompatibility() {
         long pageSize = 64;
-        try (CARWMemoryImpl mem = new CARWMemoryImpl(pageSize, Integer.MAX_VALUE)) {
+        try (MemoryCARWImpl mem = new MemoryCARWImpl(pageSize, Integer.MAX_VALUE)) {
             mem.putShort((short) 1024);
             mem.putShort((short) 2048);
             assertEquals(1024, mem.getShort(0));
@@ -911,7 +911,7 @@ public class CARWMemoryImplTest {
 
     @Test
     public void testShortRnd() {
-        try (CARWMemoryImpl mem = new CARWMemoryImpl(7, Integer.MAX_VALUE)) {
+        try (MemoryCARWImpl mem = new MemoryCARWImpl(7, Integer.MAX_VALUE)) {
             long o = 1;
             mem.putByte(0, (byte) 1);
             short n = 999;
@@ -933,7 +933,7 @@ public class CARWMemoryImplTest {
     @Test
     public void testShortRndCompatibility() {
         long pageSize = 64;
-        try (CARWMemoryImpl mem = new CARWMemoryImpl(pageSize, Integer.MAX_VALUE)) {
+        try (MemoryCARWImpl mem = new MemoryCARWImpl(pageSize, Integer.MAX_VALUE)) {
             // prime the page
             mem.putShort(5, (short) 3);
             mem.putShort(11, (short) 1024);
@@ -945,7 +945,7 @@ public class CARWMemoryImplTest {
 
     @Test
     public void testSkip() {
-        try (CARWMemoryImpl mem = new CARWMemoryImpl(11, Integer.MAX_VALUE)) {
+        try (MemoryCARWImpl mem = new MemoryCARWImpl(11, Integer.MAX_VALUE)) {
             mem.putByte((byte) 1);
             int n = 999;
             for (int i = n; i > 0; i--) {
@@ -966,14 +966,14 @@ public class CARWMemoryImplTest {
 
     @Test
     public void testSmallEven() {
-        try (CARWMemoryImpl mem = new CARWMemoryImpl(2, Integer.MAX_VALUE)) {
+        try (MemoryCARWImpl mem = new MemoryCARWImpl(2, Integer.MAX_VALUE)) {
             assertStrings(mem, false);
         }
     }
 
     @Test
     public void testSmallOdd() {
-        try (CARWMemoryImpl mem = new CARWMemoryImpl(2, Integer.MAX_VALUE)) {
+        try (MemoryCARWImpl mem = new MemoryCARWImpl(2, Integer.MAX_VALUE)) {
             assertStrings(mem, true);
         }
     }
@@ -995,26 +995,26 @@ public class CARWMemoryImplTest {
 
     @Test
     public void testStringStorageDimensions() {
-        Assert.assertEquals(10, VmUtils.getStorageLength("xyz"));
-        assertEquals(4, VmUtils.getStorageLength(""));
-        assertEquals(4, VmUtils.getStorageLength(null));
+        Assert.assertEquals(10, Vm.getStorageLength("xyz"));
+        assertEquals(4, Vm.getStorageLength(""));
+        assertEquals(4, Vm.getStorageLength(null));
     }
 
-    private void assertStrings(CARWMemoryImpl mem, boolean b) {
+    private void assertStrings(MemoryCARWImpl mem, boolean b) {
         if (b) {
             mem.putByte((byte) 1);
         }
 
-        Assert.assertEquals(10, VmUtils.getStorageLength("123"));
-        Assert.assertEquals(6, VmUtils.getStorageLength("x"));
+        Assert.assertEquals(10, Vm.getStorageLength("123"));
+        Assert.assertEquals(6, Vm.getStorageLength("x"));
 
         long o1 = mem.putStr("123");
         long o2 = mem.putStr("0987654321abcd");
-        Assert.assertEquals(o2 - o1, VmUtils.getStorageLength("123"));
+        Assert.assertEquals(o2 - o1, Vm.getStorageLength("123"));
         long o3 = mem.putStr(null);
-        Assert.assertEquals(o3 - o2, VmUtils.getStorageLength("0987654321abcd"));
+        Assert.assertEquals(o3 - o2, Vm.getStorageLength("0987654321abcd"));
         long o4 = mem.putStr("xyz123");
-        Assert.assertEquals(o4 - o3, VmUtils.getStorageLength(null));
+        Assert.assertEquals(o4 - o3, Vm.getStorageLength(null));
         long o5 = mem.putNullStr();
         long o6 = mem.putStr("123ohh4", 3, 3);
         long o7 = mem.putStr(null, 0, 2);
@@ -1066,7 +1066,7 @@ public class CARWMemoryImplTest {
         final long bufAddr = Unsafe.malloc(buffer.length);
         binarySequence.of(buffer);
 
-        try (CARWMemoryImpl mem = new CARWMemoryImpl(mem1Size, Integer.MAX_VALUE)) {
+        try (MemoryCARWImpl mem = new MemoryCARWImpl(mem1Size, Integer.MAX_VALUE)) {
             Assert.assertEquals(Numbers.ceilPow2(mem1Size), mem.getMapPageSize());
             long offset1 = 0;
             for (int i = 0; i < n; i++) {
@@ -1092,7 +1092,7 @@ public class CARWMemoryImplTest {
                 offset1 += 8 + sz;
             }
 
-            try (CARWMemoryImpl mem2 = new CARWMemoryImpl(mem2Size, Integer.MAX_VALUE)) {
+            try (MemoryCARWImpl mem2 = new MemoryCARWImpl(mem2Size, Integer.MAX_VALUE)) {
                 Assert.assertEquals(Numbers.ceilPow2(mem2Size), mem2.getMapPageSize());
                 offset1 = 0;
                 for (int i = 0; i < n; i++) {
@@ -1148,7 +1148,7 @@ public class CARWMemoryImplTest {
         Rnd rnd = new Rnd();
         int N = 1000;
         final int M = 4;
-        try (CARWMemoryImpl mem = new CARWMemoryImpl(pageSize, Integer.MAX_VALUE)) {
+        try (MemoryCARWImpl mem = new MemoryCARWImpl(pageSize, Integer.MAX_VALUE)) {
             long o = offset;
             for (int i = 0; i < N; i++) {
                 int flag = rnd.nextInt();
@@ -1187,7 +1187,7 @@ public class CARWMemoryImplTest {
         int pageSize = 256;
         int maxPages = 3;
         int sz = 256 * 3;
-        try (CARWMemoryImpl mem = new CARWMemoryImpl(pageSize, maxPages)) {
+        try (MemoryCARWImpl mem = new MemoryCARWImpl(pageSize, maxPages)) {
             Assert.assertEquals(pageSize, mem.getMapPageSize());
             int n = 0;
             try {

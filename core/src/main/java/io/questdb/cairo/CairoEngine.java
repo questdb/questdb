@@ -31,7 +31,7 @@ import io.questdb.cairo.pool.ReaderPool;
 import io.questdb.cairo.pool.WriterPool;
 import io.questdb.cairo.pool.WriterSource;
 import io.questdb.cairo.sql.ReaderOutOfDateException;
-import io.questdb.cairo.vm.api.MARWMemory;
+import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.*;
@@ -116,7 +116,7 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public void createTable(
             CairoSecurityContext securityContext,
-            MARWMemory mem,
+            MemoryMARW mem,
             Path path,
             TableStructure struct
     ) {
@@ -144,7 +144,7 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public void createTableUnsafe(
             CairoSecurityContext securityContext,
-            MARWMemory mem,
+            MemoryMARW mem,
             Path path,
             TableStructure struct
     ) {

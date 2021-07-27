@@ -26,19 +26,19 @@ package io.questdb.cairo.vm;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableUtils;
-import io.questdb.cairo.vm.api.MAMemory;
+import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;
 
-public class PagedSlidingReadOnlyMemory extends PARWMemoryImpl {
+public class PagedSlidingReadOnlyMemory extends MemoryPARWImpl {
     private static final Log LOG = LogFactory.getLog(PagedSlidingReadOnlyMemory.class);
     private FilesFacade ff;
     private long fd = -1;
     private long size = 0;
     private long pageAddress;
     private int pageIndex;
-    private MAMemory parent;
+    private MemoryMA parent;
 
     @Override
     public void close() {
@@ -66,7 +66,7 @@ public class PagedSlidingReadOnlyMemory extends PARWMemoryImpl {
         return fd;
     }
 
-    public void of(MAMemory parent) {
+    public void of(MemoryMA parent) {
         close();
         this.ff = parent.getFilesFacade();
         this.fd = parent.getFd();

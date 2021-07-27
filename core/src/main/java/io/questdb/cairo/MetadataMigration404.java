@@ -24,9 +24,9 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.vm.CMRMemoryImpl;
-import io.questdb.cairo.vm.PMAMemoryImpl;
-import io.questdb.cairo.vm.api.MRMemory;
+import io.questdb.cairo.vm.MemoryCMRImpl;
+import io.questdb.cairo.vm.MemoryPMAImpl;
+import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
@@ -71,7 +71,7 @@ public class MetadataMigration404 {
         typeMapping.extendAndSet(LONG256, ColumnType.LONG256);
     }
 
-    public static void convert(FilesFacade ff, Path path1, Path path2, PMAMemoryImpl appendMem, MRMemory roMem) {
+    public static void convert(FilesFacade ff, Path path1, Path path2, MemoryPMAImpl appendMem, MemoryMR roMem) {
         final int plen = path1.length();
         path1.concat(TableUtils.META_FILE_NAME).$();
 
@@ -145,8 +145,8 @@ public class MetadataMigration404 {
 
     public static void main(String[] args) {
         try (
-                final MRMemory roMem = new CMRMemoryImpl();
-                final PMAMemoryImpl appendMem = new PMAMemoryImpl();
+                final MemoryMR roMem = new MemoryCMRImpl();
+                final MemoryPMAImpl appendMem = new MemoryPMAImpl();
                 final Path path1 = new Path();
                 final Path path2 = new Path()
         ) {

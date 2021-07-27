@@ -24,44 +24,10 @@
 
 package io.questdb.cairo.vm.api;
 
-import io.questdb.std.Long256;
-
-import java.io.Closeable;
-
-public interface WriteMemory extends Closeable {
-
-    long appendAddressFor(long offset, long bytes);
+public interface MemoryCM extends MemoryC, MemoryM {
 
     @Override
-    void close();
-
-    void putBlockOfBytes(long offset, long from, long len);
-
-    void putBool(long offset, boolean value);
-
-    void putByte(long offset, byte value);
-
-    void putChar(long offset, char value);
-
-    void putDouble(long offset, double value);
-
-    void putFloat(long offset, float value);
-
-    void putInt(long offset, int value);
-
-    void putLong(long offset, long value);
-
-    void putLong256(long offset, Long256 value);
-
-    void putLong256(long offset, long l0, long l1, long l2, long l3);
-
-    void putNullStr(long offset);
-
-    void putShort(long offset, short value);
-
-    void putStr(long offset, CharSequence value);
-
-    void putStr(long offset, CharSequence value, int pos, int len);
-
-    void truncate();
+    default boolean isMapped(long offset, long len) {
+        return offset + len < size();
+    }
 }
