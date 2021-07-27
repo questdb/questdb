@@ -389,10 +389,9 @@ public class ExpressionParserTest extends AbstractCairoTest {
         x("(select-choose a, b, c from (x))flongcast", "cast(f(select a,b,c from x) as long)");
     }
 
-    // TODO: work in progress
     @Test
     public void testCastGeoHash() throws SqlException {
-        x("'sp052w92'6ccast", "cast('sp052w92' as geohash(6c))");
+        x("'sp052w92'6cgeohashcast", "cast('sp052w92' as geohash(6c))");
     }
 
     @Test
