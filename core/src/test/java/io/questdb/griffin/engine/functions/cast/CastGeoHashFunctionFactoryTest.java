@@ -38,12 +38,10 @@ import org.junit.Test;
 
 public class CastGeoHashFunctionFactoryTest extends BaseFunctionFactoryTest {
 
-    // TODO: ExpressionParser to understand GEOHASH(8c), GEOHASH(40b)
     @Test
     public void testCastStringToGeoHash() throws SqlException {
         String expectedGeohash = "sp052w92";
         long expectedHash = 847187636514L;
-        long expectedHashz = -9223371189667139294L;
 
         functions.add(new CastStrToGeoHashFunctionFactory());
         FunctionParser functionParser = createFunctionParser();
@@ -57,17 +55,15 @@ public class CastGeoHashFunctionFactoryTest extends BaseFunctionFactoryTest {
         Assert.assertNotEquals(ColumnType.GEOHASH, function.getType());
         Assert.assertEquals(GeoHashExtra.setBitsPrecision(ColumnType.GEOHASH, expectedGeohash.length() * 5), function.getType());
         Assert.assertEquals(expectedGeohash.length() * 5, GeoHashExtra.getBitsPrecision(function.getType()));
-
-        Assert.assertEquals(expectedHashz, function.getGeoHash(null));
-        Assert.assertEquals(expectedHashz, function.getLong(null));
-        Assert.assertEquals(expectedHash, GeoHashNative.toHash(function.getLong(null)));
-        Assert.assertEquals(expectedGeohash.length(), GeoHashNative.hashSize(function.getLong(null)));
+        Assert.assertEquals(expectedHash, function.getGeoHash(null));
+        Assert.assertEquals(expectedHash, function.getLong(null));
+        Assert.assertEquals(0, GeoHashNative.hashSize(function.getLong(null)));
 
         StringSink sink = new StringSink();
         GeoHashNative.toString(
-                GeoHashNative.toHash(function.getLong(null)),
+                function.getLong(null),
                 GeoHashExtra.getBitsPrecision(function.getType()) / 5,
                 sink);
-        Assert.assertEquals(expectedGeohash, sink);
+        Assert.assertEquals(expectedGeohash, sink.toString());
     }
 }

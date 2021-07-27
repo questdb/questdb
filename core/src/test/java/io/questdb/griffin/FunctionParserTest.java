@@ -32,6 +32,7 @@ import io.questdb.griffin.engine.functions.*;
 import io.questdb.griffin.engine.functions.bool.InStrFunctionFactory;
 import io.questdb.griffin.engine.functions.bool.NotFunctionFactory;
 import io.questdb.griffin.engine.functions.bool.OrFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastStrToGeoHashFunctionFactory;
 import io.questdb.griffin.engine.functions.catalogue.CursorDereferenceFunctionFactory;
 import io.questdb.griffin.engine.functions.conditional.SwitchFunctionFactory;
 import io.questdb.griffin.engine.functions.constants.*;
@@ -1167,6 +1168,31 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         Assert.assertEquals(
                 "io.questdb.griffin.engine.functions.groupby.CountGroupByFunction",
                 function.getClass().getCanonicalName());
+    }
+
+    @Test
+    public void testGeoHashFunction() throws SqlException {
+        functions.add(new CastStrToGeoHashFunctionFactory());
+
+        final GenericRecordMetadata metadata = new GenericRecordMetadata();
+        metadata.add(new TableColumnMetadata("gh", GeoHashExtra.setBitsPrecision(ColumnType.GEOHASH, 25), null));
+
+        FunctionParser functionParser = createFunctionParser();
+        Record record = new Record() {
+            @Override
+            public long getGeoHash(int col) {
+                return getLong(col);
+            }
+
+            @Override
+            public long getLong(int col) {
+                return 847187636514L;
+            }
+        };
+
+        Function function = parseFunction("cast('sp052w92' as geohash(5c))", metadata, functionParser);
+        Assert.assertEquals(GeoHashExtra.setBitsPrecision(ColumnType.GEOHASH, 25), function.getType());
+        Assert.assertEquals(25854114, function.getGeoHash(record));
     }
 
     @Test

@@ -1633,19 +1633,17 @@ public final class SqlParser {
         return type;
     }
 
-    private @NotNull int parseGeoHashSize(GenericLexer lexer) throws SqlException {
-        expectTok(lexer, '(');
-        final CharSequence sizeStr = expectLiteral(lexer).token;
+    static int parseGeoHashSize(int position, CharSequence sizeStr) throws SqlException {
         if (sizeStr.length() < 2) {
-            throw SqlException.$(lexer.lastTokenPosition(),
-                    "GEOHASH size must be INT ended in case insensitive 'C', or 'B' for bits");
+            throw SqlException.position(position)
+                    .put("GEOHASH size must be INT ended in case insensitive 'C', or 'B' for bits");
         }
         int size;
         try {
             size = Numbers.parseInt(sizeStr.subSequence(0, sizeStr.length() - 1));
         } catch (NumericException e) {
-            throw SqlException.$(lexer.lastTokenPosition(),
-                    "GEOHASH size must be INT ended in case insensitive 'C', or 'B' for bits");
+            throw SqlException.position(position)
+                    .put("GEOHASH size must be INT ended in case insensitive 'C', or 'B' for bits");
         }
         switch (sizeStr.charAt(sizeStr.length() - 1)) {
             case 'C':
@@ -1656,14 +1654,20 @@ public final class SqlParser {
             case 'b':
                 break;
             default:
-                throw SqlException.$(lexer.lastTokenPosition(),
-                        "GEOHASH type size units must be either 'c', 'C' for chars, or 'b', 'B' for bits");
+                throw SqlException.position(position)
+                        .put("GEOHASH type size units must be either 'c', 'C' for chars, or 'b', 'B' for bits");
         }
         if (size <= 0 || size > 60) {
-            throw SqlException.position(lexer.lastTokenPosition())
+            throw SqlException.position(position)
                     .put("GEOHASH type precision range is [1, 60] bits, provided=")
                     .put(size);
         }
+        return size;
+    }
+
+    private int parseGeoHashSize(GenericLexer lexer) throws SqlException {
+        expectTok(lexer, '(');
+        int size = parseGeoHashSize(lexer.lastTokenPosition(), expectLiteral(lexer).token);
         expectTok(lexer, ')');
         return size;
     }

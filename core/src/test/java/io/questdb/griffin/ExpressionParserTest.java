@@ -390,8 +390,93 @@ public class ExpressionParserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCastGeoHash() throws SqlException {
-        x("'sp052w92'6cgeohashcast", "cast('sp052w92' as geohash(6c))");
+    public void testCastGeoHash1() throws SqlException {
+        x("'sp052w92'GEOHASH(6c)cast", "cast('sp052w92' as geohash(6c))");
+    }
+
+    @Test
+    public void testCastGeoHash2() throws SqlException {
+        x("'sp052w92'GEOHASH(60b)cast", "cast('sp052w92' as geohash(60b))");
+    }
+
+    @Test
+    public void testCastGeoHashMissingSize1() {
+        assertFail("cast('sp052w92' as geohash())",
+                27,
+                "GEOHASH type precision is missing");
+    }
+
+    @Test
+    public void testCastGeoHashMissingSize2() {
+        assertFail("cast('sp052w92' as geohash)",
+                26,
+                "not valid GEOHASH type literal, expected '(' found=')'");
+    }
+
+    @Test
+    public void testCastGeoHashMissingSize3() {
+        assertFail("cast('sp052w92' as geohash(21b)",
+                4,
+                "unbalanced (");
+    }
+
+    @Test
+    public void testCastGeoHashMissingSize4() {
+        assertFail("cast('sp052w92' as geohash(21 b))",
+                27,
+                "GEOHASH type size units must be either 'c', 'C' for chars, or 'b', 'B' for bits");
+    }
+
+    @Test
+    public void testCastGeoHashMissingSize5() {
+        assertFail("cast('sp052w92' as geohash(b))",
+                27,
+                "GEOHASH size must be INT ended in case insensitive 'C', or 'B' for bits");
+    }
+
+    @Test
+    public void testGeoHash1() throws SqlException {
+        x("GEOHASH(6c)", "geohash(6c)");
+    }
+
+    @Test
+    public void testGeoHash2() throws SqlException {
+        x("GEOHASH(31b)", "geohash(31b)");
+    }
+
+    @Test
+    public void testGeoHashFail1() {
+        assertFail("GEOHASH(",
+                7,
+                "GEOHASH type precision is missing");
+    }
+
+    @Test
+    public void testGeoHashFail2() {
+        assertFail("GEOHASH()",
+                8,
+                "GEOHASH type precision is missing");
+    }
+
+    @Test
+    public void testGeoHashFail3() {
+        assertFail("GEOHASH(13c)",
+                8,
+                "GEOHASH type precision range is [1, 60] bits, provided=65");
+    }
+
+    @Test
+    public void testGeoHashFail4() {
+        assertFail("GEOHASH(131b)",
+                8,
+                "GEOHASH type precision range is [1, 60] bits, provided=131");
+    }
+
+    @Test
+    public void testGeoHashFail5() {
+        assertFail("GEOHASH(-1c)",
+                8,
+                "GEOHASH size must be INT ended in case insensitive 'C', or 'B' for bits");
     }
 
     @Test

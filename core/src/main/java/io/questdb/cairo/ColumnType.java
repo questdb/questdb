@@ -146,9 +146,9 @@ public final class ColumnType {
             int bits = GeoHashExtra.getBitsPrecision(columnType);
             if (bits > 0) {
                 if (bits % 5 == 0) {
-                    sink.put(bits / 5).put("c");
+                    sink.put(bits / 5).put('c');
                 } else {
-                    sink.put(bits).put("b");
+                    sink.put(bits).put('b');
                 }
             }
             sink.put(')');

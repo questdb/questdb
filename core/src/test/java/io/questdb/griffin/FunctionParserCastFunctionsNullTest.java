@@ -26,19 +26,98 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
-import io.questdb.cairo.GeoHashExtra;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.engine.functions.cast.*;
 import io.questdb.std.CharSequenceIntHashMap;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import org.junit.Assert;
+import org.junit.Before;
 import org.junit.Test;
 
 import java.util.Arrays;
 import java.util.Collections;
 
 public class FunctionParserCastFunctionsNullTest extends BaseFunctionFactoryTest {
+
+    private FunctionParser functionParser;
+    private GenericRecordMetadata metadata;
+
+    @Before
+    public void setUp5() {
+        Arrays.stream(CAST_FUNCS).forEach(functions::add);
+        Collections.shuffle(functions);
+        functionParser = createFunctionParser();
+        metadata = new GenericRecordMetadata();
+    }
+
+    @Test
+    public void testCastNull() throws SqlException {
+        for (int i = 0; i < typeNames.size(); i++) {
+            CharSequence type = typeNames.getQuick(i);
+            Function function = parseFunction(String.format("cast(null as %s)", type), metadata, functionParser);
+            Assert.assertEquals(typeNameToId.get(type), function.getType());
+            Assert.assertEquals(true, function.isConstant());
+        }
+    }
+
+    @Test
+    public void testCastNullGeoHash1() throws SqlException {
+        Function function = parseFunction("cast(null as GeOhAsH(12c))", metadata, functionParser);
+        Assert.assertEquals(true, function.isConstant());
+        Assert.assertEquals(ColumnType.GEOHASH, function.getType());
+        Assert.assertEquals(Numbers.LONG_NaN, function.getGeoHash(null));
+        Assert.assertEquals(Numbers.LONG_NaN, function.getLong(null));
+    }
+
+    @Test
+    public void testCastNullGeoHash2() throws SqlException {
+        Function function = parseFunction("cast(null as GeOhAsH(60b))", metadata, functionParser);
+        Assert.assertEquals(true, function.isConstant());
+        Assert.assertEquals(ColumnType.GEOHASH, function.getType());
+        Assert.assertEquals(Numbers.LONG_NaN, function.getGeoHash(null));
+        Assert.assertEquals(Numbers.LONG_NaN, function.getLong(null));
+    }
+
+    @Test
+    public void testCastNullGeoHashMissingSize1() throws Exception {
+        assertFailure("cast(null as geohash())",
+                null,
+                21,
+                "GEOHASH type precision is missing");
+    }
+
+    @Test
+    public void testCastNullGeoHashMissingSize2() throws Exception {
+        assertFailure("cast(null as GEOHASH)",
+                null,
+                20,
+                "not valid GEOHASH type literal, expected '(' found=')'");
+    }
+
+    @Test
+    public void testCastNullGeoHashMissingSize3() throws Exception {
+        assertFailure("cast(null as GEOHASH(21b)",
+                null,
+                4,
+                "unbalanced (");
+    }
+
+    @Test
+    public void testCastNullGeoHashMissingSize4() throws Exception {
+        assertFailure("cast(null as GEOHASH(21 b))",
+                null,
+                21,
+                "GEOHASH type size units must be either 'c', 'C' for chars, or 'b', 'B' for bits");
+    }
+
+    @Test
+    public void testCastNullGeoHashMissingSize5() throws Exception {
+        assertFailure("cast(null as GEOHASH(c))",
+                null,
+                21,
+                "GEOHASH size must be INT ended in case insensitive 'C', or 'B' for bits");
+    }
 
     private static final FunctionFactory[] CAST_FUNCS = {
             new CastBooleanToBooleanFunctionFactory(),
@@ -77,32 +156,4 @@ public class FunctionParserCastFunctionsNullTest extends BaseFunctionFactoryTest
     }
 
     private static final ObjList<CharSequence> typeNames = typeNameToId.keys();
-
-    @Test
-    public void testCastNull() throws SqlException {
-        Arrays.stream(CAST_FUNCS).forEach(functions::add);
-        FunctionParser functionParser = createFunctionParser();
-        final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        for (int i = 0; i < typeNames.size(); i++) {
-            Collections.shuffle(functions);
-            CharSequence type = typeNames.getQuick(i);
-            Function function = parseFunction(String.format("cast(null as %s)", type), metadata, functionParser);
-            Assert.assertEquals(typeNameToId.get(type), function.getType());
-            Assert.assertEquals(true, function.isConstant());
-        }
-    }
-
-    // TODO: working on ExpressionParser for GeOhAsH(12c), GeOhAsH(60b)
-    @Test
-    public void testCastNullGeoHash() throws SqlException {
-        Arrays.stream(CAST_FUNCS).forEach(functions::add);
-        FunctionParser functionParser = createFunctionParser();
-        final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        Collections.shuffle(functions);
-        Function function = parseFunction("cast(null as GeOhAsH(12c))", metadata, functionParser);
-        Assert.assertEquals(true, function.isConstant());
-        Assert.assertEquals(GeoHashExtra.setBitsPrecision(ColumnType.GEOHASH, 60), function.getType());
-        Assert.assertEquals(Numbers.LONG_NaN, function.getGeoHash(null));
-        Assert.assertEquals(Numbers.LONG_NaN, function.getLong(null));
-    }
 }

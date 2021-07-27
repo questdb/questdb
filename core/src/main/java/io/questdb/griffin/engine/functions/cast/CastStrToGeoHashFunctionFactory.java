@@ -48,14 +48,15 @@ public class CastStrToGeoHashFunctionFactory implements FunctionFactory {
                                 IntList argPositions,
                                 CairoConfiguration configuration,
                                 SqlExecutionContext sqlExecutionContext) {
-        return new Func(args.getQuick(0));
+        return new Func(args);
     }
 
     private static class Func extends GeoHashFunction implements UnaryFunction {
         private final Function arg;
 
-        public Func(Function arg) {
-            this.arg = arg;
+        public Func(ObjList<Function> args) {
+            super(args.getQuick(1).getType());
+            this.arg = args.getQuick(0);
         }
 
         @Override
@@ -70,14 +71,22 @@ public class CastStrToGeoHashFunctionFactory implements FunctionFactory {
 
         @Override
         public long getGeoHash(Record rec) {
-            final CharSequence value = arg.getStr(rec);
+            CharSequence value = arg.getStr(rec);
             if (value == null || value.length() == 0) {
                 return Numbers.LONG_NaN;
             }
             try {
-                long hashz = GeoHashNative.fromString(value);
-                typep = GeoHashExtra.setBitsPrecision(ColumnType.GEOHASH, value.length() * 5);
-                return hashz;
+                int typeSize = GeoHashExtra.getBitsPrecision(typep);
+                int bits = value.length() * 5;
+                if (bits < typeSize) {
+                    // TODO: check what exception I can raise without generating garbage
+                    //  add a test around this, WIP
+                    throw new IllegalArgumentException("not enough bits to perform the cast");
+                }
+                if (bits != typeSize) {
+                    value = value.subSequence(0, typeSize / 5);
+                }
+                return GeoHashNative.fromString(value);
             } catch (IllegalArgumentException e) {
                 return Numbers.LONG_NaN;
             }

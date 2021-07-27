@@ -35,6 +35,10 @@ public class GeoHashTypeConstant extends GeoHashFunction implements TypeConstant
         super();
     }
 
+    public GeoHashTypeConstant(int typep) {
+        super(typep);
+    }
+
     @Override
     public long getLong(Record rec) {
         throw new UnsupportedOperationException();

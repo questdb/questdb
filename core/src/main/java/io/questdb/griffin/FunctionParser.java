@@ -26,6 +26,7 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GeoHashExtra;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.engine.functions.AbstractUnaryTimestampFunction;
 import io.questdb.griffin.engine.functions.CursorFunction;
@@ -276,6 +277,9 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
                 case ExpressionNode.QUERY:
                     functionStack.push(createCursorFunction(node));
                     break;
+                case ExpressionNode.GEOHASH_TYPE_SIZE:
+                    // ignore this node (rhs of GEOHASH)
+                    return;
                 default:
                     // lookup zero arg function from symbol table
                     functionStack.push(createFunction(node, null, null));
@@ -285,12 +289,16 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
             mutableArgs.clear();
             mutableArgs.setPos(argCount);
             mutableArgPositions.clear();
-            mutableArgPositions.setPos(argCount);
-            for (int n = 0; n < argCount; n++) {
-                mutableArgs.setQuick(n, functionStack.poll());
-                mutableArgPositions.setQuick(n, positionStack.pop());
+            if (node.type == ExpressionNode.GEOHASH_TYPE) {
+                functionStack.push(createGeoHashTypeConstant(node));
+            } else {
+                mutableArgPositions.setPos(argCount);
+                for (int n = 0; n < argCount; n++) {
+                    mutableArgs.setQuick(n, functionStack.poll());
+                    mutableArgPositions.setQuick(n, positionStack.pop());
+                }
+                functionStack.push(createFunction(node, mutableArgs, mutableArgPositions));
             }
-            functionStack.push(createFunction(node, mutableArgs, mutableArgPositions));
         }
         positionStack.push(node.position);
     }
@@ -457,6 +465,13 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
     private Function createCursorFunction(ExpressionNode node) throws SqlException {
         assert node.queryModel != null;
         return new CursorFunction(sqlCodeGenerator.generate(node.queryModel, sqlExecutionContext));
+    }
+
+    private TypeConstant createGeoHashTypeConstant(ExpressionNode node) throws SqlException {
+        assert node.type == ExpressionNode.GEOHASH_TYPE;
+        assert node.rhs.type == ExpressionNode.GEOHASH_TYPE_SIZE;
+        int bits = SqlParser.parseGeoHashSize(0, node.rhs.token);
+        return new GeoHashTypeConstant(GeoHashExtra.setBitsPrecision(ColumnType.GEOHASH, bits));
     }
 
     private Function createFunction(

@@ -27,15 +27,30 @@ package io.questdb.griffin;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.std.str.StringSink;
 
+import java.util.ArrayDeque;
+import java.util.Deque;
+
 public class RpnBuilder implements ExpressionParserListener {
+    private final Deque<ExpressionNode> stack = new ArrayDeque<>();
     private final StringSink sink = new StringSink();
 
     @Override
     public void onNode(ExpressionNode node) {
         if (node.queryModel != null) {
             sink.put('(').put(node.queryModel).put(')');
-        } else {
-            sink.put(node.token);
+            return;
+        }
+        switch (node.type) {
+            case ExpressionNode.GEOHASH_TYPE_SIZE:
+                stack.push(node);
+                break;
+
+            case ExpressionNode.GEOHASH_TYPE:
+                sink.put("GEOHASH").put('(').put(stack.poll().token).put(")");
+                break;
+
+            default:
+                sink.put(node.token);
         }
     }
 
