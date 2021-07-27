@@ -236,6 +236,7 @@ public class SqlCompiler implements Closeable {
         int wPutStrChar = asm.poolMethod(TableWriter.Row.class, "putStr", "(IC)V");
         int wPutChar = asm.poolMethod(TableWriter.Row.class, "putChar", "(IC)V");
         int wPutBin = asm.poolMethod(TableWriter.Row.class, "putBin", "(ILio/questdb/std/BinarySequence;)V");
+        int geohashTruncatePrecision = asm.poolMethod(ColumnType.class, "geohashTruncatePrecision", "(JII)J");
 
         int copyNameIndex = asm.poolUtf8("copy");
         int copySigIndex = asm.poolUtf8("(Lio/questdb/cairo/sql/Record;Lio/questdb/cairo/TableWriter$Row;)V");
@@ -260,20 +261,28 @@ public class SqlCompiler implements Closeable {
                 continue;
             }
 
+            final int toColumnType = to.getColumnType(toColumnIndex);
+            final int fromColumnType = from.getColumnType(i);
+            final int toColumnTypeTag = ColumnType.tagOf(toColumnType);
+
+            asm.iconst(fromColumnType);
+            asm.istore(3);
+            asm.iconst(toColumnType);
+            asm.istore(4);
+
             asm.aload(2);
             asm.iconst(toColumnIndex);
             asm.aload(1);
             asm.iconst(i);
 
-            final int toColumnType = ColumnType.tagOf(to.getColumnType(toColumnIndex));
-            int fromColumnType = ColumnType.tagOf(from.getColumnType(i));
-            if (fromColumnType == ColumnType.NULL) {
-                fromColumnType = toColumnType;
+            int fromColumnTypeTag = ColumnType.tagOf(fromColumnType);
+            if (fromColumnTypeTag == ColumnType.NULL) {
+                fromColumnTypeTag = toColumnTypeTag;
             }
-            switch (fromColumnType) {
+            switch (fromColumnTypeTag) {
                 case ColumnType.INT:
                     asm.invokeInterface(rGetInt, 1);
-                    switch (toColumnType) {
+                    switch (toColumnTypeTag) {
                         case ColumnType.LONG:
                             asm.i2l();
                             asm.invokeVirtual(wPutLong);
@@ -309,7 +318,7 @@ public class SqlCompiler implements Closeable {
                     break;
                 case ColumnType.LONG:
                     asm.invokeInterface(rGetLong, 1);
-                    switch (toColumnType) {
+                    switch (toColumnTypeTag) {
                         case ColumnType.INT:
                             asm.l2i();
                             asm.invokeVirtual(wPutInt);
@@ -345,7 +354,7 @@ public class SqlCompiler implements Closeable {
                     break;
                 case ColumnType.DATE:
                     asm.invokeInterface(rGetDate, 1);
-                    switch (toColumnType) {
+                    switch (toColumnTypeTag) {
                         case ColumnType.INT:
                             asm.l2i();
                             asm.invokeVirtual(wPutInt);
@@ -381,7 +390,7 @@ public class SqlCompiler implements Closeable {
                     break;
                 case ColumnType.TIMESTAMP:
                     asm.invokeInterface(rGetTimestamp, 1);
-                    switch (toColumnType) {
+                    switch (toColumnTypeTag) {
                         case ColumnType.INT:
                             asm.l2i();
                             asm.invokeVirtual(wPutInt);
@@ -417,7 +426,7 @@ public class SqlCompiler implements Closeable {
                     break;
                 case ColumnType.BYTE:
                     asm.invokeInterface(rGetByte, 1);
-                    switch (toColumnType) {
+                    switch (toColumnTypeTag) {
                         case ColumnType.INT:
                             asm.invokeVirtual(wPutInt);
                             break;
@@ -452,7 +461,7 @@ public class SqlCompiler implements Closeable {
                     break;
                 case ColumnType.SHORT:
                     asm.invokeInterface(rGetShort, 1);
-                    switch (toColumnType) {
+                    switch (toColumnTypeTag) {
                         case ColumnType.INT:
                             asm.invokeVirtual(wPutInt);
                             break;
@@ -491,7 +500,7 @@ public class SqlCompiler implements Closeable {
                     break;
                 case ColumnType.FLOAT:
                     asm.invokeInterface(rGetFloat, 1);
-                    switch (toColumnType) {
+                    switch (toColumnTypeTag) {
                         case ColumnType.INT:
                             asm.f2i();
                             asm.invokeVirtual(wPutInt);
@@ -529,7 +538,7 @@ public class SqlCompiler implements Closeable {
                     break;
                 case ColumnType.DOUBLE:
                     asm.invokeInterface(rGetDouble, 1);
-                    switch (toColumnType) {
+                    switch (toColumnTypeTag) {
                         case ColumnType.INT:
                             asm.d2i();
                             asm.invokeVirtual(wPutInt);
@@ -567,7 +576,7 @@ public class SqlCompiler implements Closeable {
                     break;
                 case ColumnType.CHAR:
                     asm.invokeInterface(rGetChar, 1);
-                    switch (toColumnType) {
+                    switch (toColumnTypeTag) {
                         case ColumnType.STRING:
                             asm.invokeVirtual(wPutStrChar);
                             break;
@@ -581,7 +590,7 @@ public class SqlCompiler implements Closeable {
                     break;
                 case ColumnType.SYMBOL:
                     asm.invokeInterface(rGetSym, 1);
-                    if (toColumnType == ColumnType.STRING) {
+                    if (toColumnTypeTag == ColumnType.STRING) {
                         asm.invokeVirtual(wPutStr);
                     } else {
                         asm.invokeVirtual(wPutSym);
@@ -589,7 +598,7 @@ public class SqlCompiler implements Closeable {
                     break;
                 case ColumnType.STRING:
                     asm.invokeInterface(rGetStr, 1);
-                    switch (toColumnType) {
+                    switch (toColumnTypeTag) {
                         case ColumnType.SYMBOL:
                             asm.invokeVirtual(wPutSym);
                             break;
@@ -610,28 +619,111 @@ public class SqlCompiler implements Closeable {
                     asm.invokeVirtual(wPutLong256);
                     break;
                 case ColumnType.GEOHASH:
-                    assert toColumnType == ColumnType.GEOHASH;
-                    final int sizeFrom = ColumnType.sizeOf(fromColumnType);
-                    final int sizeTo = ColumnType.sizeOf(toColumnType);
-                    assert sizeFrom == sizeTo;
+                    assert toColumnTypeTag == ColumnType.GEOHASH;
+                    final int sizeFrom = ColumnType.sizeOf(fromColumnTypeTag);
+                    final int sizeTo = ColumnType.sizeOf(toColumnTypeTag);
+
                     switch (sizeFrom) {
                         case 1:
-                            asm.invokeInterface(rGetByte, 1);
-                            asm.invokeVirtual(wPutByte);
+                            switch (sizeTo) {
+                                case 1:
+                                    asm.invokeInterface(rGetByte, 1);
+                                    asm.invokeVirtual(wPutByte);
+                                    break;
+                                default:
+                                    break; // impossible conversion
+                            }
                             break;
                         case 2:
-                            asm.invokeInterface(rGetShort, 1);
-                            asm.invokeVirtual(wPutShort);
+                            switch (sizeTo) {
+                                case 1:
+                                    asm.invokeInterface(rGetShort, 1);
+                                    asm.i2l();
+                                    asm.iload(3);
+                                    asm.iload(4);
+                                    asm.invokeStatic(geohashTruncatePrecision);
+                                    asm.l2i();
+                                    asm.i2b();
+                                    asm.invokeVirtual(wPutByte);
+                                    break;
+                                case 2:
+                                    asm.invokeInterface(rGetShort, 1);
+                                    asm.invokeVirtual(wPutShort);
+                                    break;
+                                default:
+                                    break; // impossible conversion
+                            }
                             break;
                         case 4:
-                            asm.invokeInterface(rGetInt, 1);
-                            asm.invokeVirtual(wPutInt);
+                            switch (sizeTo) {
+                                case 1:
+                                    asm.invokeInterface(rGetInt, 1);
+                                    asm.i2l();
+                                    asm.iload(3);
+                                    asm.iload(4);
+                                    asm.invokeStatic(geohashTruncatePrecision);
+                                    asm.l2i();
+                                    asm.i2b();
+                                    asm.invokeVirtual(wPutByte);
+                                    break;
+                                case 2:
+                                    asm.invokeInterface(rGetInt, 1);
+                                    asm.i2l();
+                                    asm.iload(3);
+                                    asm.iload(4);
+                                    asm.invokeStatic(geohashTruncatePrecision);
+                                    asm.l2i();
+                                    asm.i2s();
+                                    asm.invokeVirtual(wPutShort);
+                                    break;
+                                case 4:
+                                    asm.invokeInterface(rGetInt, 1);
+                                    asm.invokeVirtual(wPutInt);
+                                    break;
+                                default:
+                                    break; // impossible conversion
+                            }
+                            break;
+                        case 8:
+                            switch (sizeTo) {
+                                case 1:
+                                    asm.invokeInterface(rGetLong, 1);
+                                    asm.iload(3);
+                                    asm.iload(4);
+                                    asm.invokeStatic(geohashTruncatePrecision);
+                                    asm.l2i();
+                                    asm.i2b();
+                                    asm.invokeVirtual(wPutByte);
+                                    break;
+                                case 2:
+                                    asm.invokeInterface(rGetLong, 1);
+                                    asm.iload(3);
+                                    asm.iload(4);
+                                    asm.invokeStatic(geohashTruncatePrecision);
+                                    asm.l2i();
+                                    asm.i2s();
+                                    asm.invokeVirtual(wPutShort);
+                                    break;
+                                case 4:
+                                    asm.invokeInterface(rGetLong, 1);
+                                    asm.iload(3);
+                                    asm.iload(4);
+                                    asm.invokeStatic(geohashTruncatePrecision);
+                                    asm.l2i();
+                                    asm.invokeVirtual(wPutInt);
+                                    break;
+                                case 8:
+                                    asm.invokeInterface(rGetLong, 1);
+                                    asm.invokeVirtual(wPutLong);
+                                    break;
+                                default:
+                                    break; // impossible conversion
+                            }
                             break;
                         default:
-                            asm.invokeInterface(rGetLong, 1);
-                            asm.invokeVirtual(wPutLong);
-                            break;
+                            break; // impossible size
                     }
+                    break;
                 default:
                     break;
             }

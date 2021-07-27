@@ -115,6 +115,14 @@ public final class ColumnType {
         return GeoHashExtra.setBitsPrecision(ColumnType.GEOHASH, bits);
     }
 
+
+    public static long geohashTruncatePrecision(long value, int fromType, int toType) {
+        final int fromBits = GeoHashExtra.getBitsPrecision(fromType);
+        final int toBits = GeoHashExtra.getBitsPrecision(toType);
+        assert fromBits >= toBits;
+        return  value >>> (fromBits - toBits);
+    }
+
     public static int tagOf(int type) {
         return type & 0xFF;
     }
