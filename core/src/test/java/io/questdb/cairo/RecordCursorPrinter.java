@@ -157,7 +157,9 @@ public class RecordCursorPrinter {
                 sink.put(r.getLong(i));
                 break;
             case ColumnType.GEOHASH:
-                sink.put(GeoHashNative.toString(readGeoHash(r, i, columnType)));
+                GeoHashNative.toString(readGeoHash(r, i, columnType),
+                        GeoHashExtra.getBitsPrecision(m.getColumnType(i) / 5),
+                        sink);
                 break;
             case ColumnType.BYTE:
                 sink.put(r.getByte(i));

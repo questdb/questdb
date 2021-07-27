@@ -32,11 +32,13 @@ import io.questdb.griffin.BaseFunctionFactoryTest;
 import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.geohash.GeoHashNative;
+import io.questdb.std.str.StringSink;
 import org.junit.Assert;
 import org.junit.Test;
 
 public class CastGeoHashFunctionFactoryTest extends BaseFunctionFactoryTest {
 
+    // TODO: ExpressionParser to understand GEOHASH(8c), GEOHASH(40b)
     @Test
     public void testCastStringToGeoHash() throws SqlException {
         String expectedGeohash = "sp052w92";
@@ -47,7 +49,7 @@ public class CastGeoHashFunctionFactoryTest extends BaseFunctionFactoryTest {
         FunctionParser functionParser = createFunctionParser();
         GenericRecordMetadata metadata = new GenericRecordMetadata();
         Function function = parseFunction(
-                String.format("cast('%s' as GEOHASH)", expectedGeohash),
+                String.format("cast('%s' as GEOHASH(8c))", expectedGeohash),
                 metadata,
                 functionParser);
 
@@ -61,9 +63,11 @@ public class CastGeoHashFunctionFactoryTest extends BaseFunctionFactoryTest {
         Assert.assertEquals(expectedHash, GeoHashNative.toHash(function.getLong(null)));
         Assert.assertEquals(expectedGeohash.length(), GeoHashNative.hashSize(function.getLong(null)));
 
-        Assert.assertEquals(expectedGeohash,
-                GeoHashNative.toString(
-                        GeoHashNative.toHash(function.getLong(null)),
-                        GeoHashExtra.getBitsPrecision(function.getType()) / 5));
+        StringSink sink = new StringSink();
+        GeoHashNative.toString(
+                GeoHashNative.toHash(function.getLong(null)),
+                GeoHashExtra.getBitsPrecision(function.getType()) / 5,
+                sink);
+        Assert.assertEquals(expectedGeohash, sink);
     }
 }

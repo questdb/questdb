@@ -25,17 +25,27 @@
 package io.questdb.griffin.engine.functions;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GeoHashExtra;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.ScalarFunction;
+import io.questdb.griffin.engine.functions.geohash.GeoHashNative;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
-import io.questdb.std.Numbers;
 import io.questdb.std.str.CharSink;
 
 public abstract class GeoHashFunction implements ScalarFunction {
 
-    protected int typep = ColumnType.GEOHASH; // +number bits
+    protected int typep; // +number bits
+
+    protected GeoHashFunction() {
+        this(ColumnType.GEOHASH);
+    }
+
+    protected GeoHashFunction(int typep) {
+        assert ColumnType.GEOHASH == ColumnType.tagOf(typep);
+        this.typep = typep;
+    }
 
     @Override
     public final char getChar(Record rec) {
@@ -64,17 +74,17 @@ public abstract class GeoHashFunction implements ScalarFunction {
 
     @Override
     public final long getDate(Record rec) {
-        return getLong(rec);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public double getDouble(Record rec) {
-        return Numbers.longToDouble(getLong(rec));
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public float getFloat(Record rec) {
-        return Numbers.longToFloat(getLong(rec));
+        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -89,11 +99,6 @@ public abstract class GeoHashFunction implements ScalarFunction {
 
     @Override
     public final short getShort(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public final void getStr(Record rec, CharSink sink) {
         throw new UnsupportedOperationException();
     }
 
@@ -124,7 +129,7 @@ public abstract class GeoHashFunction implements ScalarFunction {
 
     @Override
     public final long getTimestamp(Record rec) {
-        return getLong(rec);
+        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -140,6 +145,12 @@ public abstract class GeoHashFunction implements ScalarFunction {
     @Override
     public final void getLong256(Record rec, CharSink sink) {
         throw new UnsupportedOperationException();
+    }
+
+    // TODO: use/test this, possible discard
+    @Override
+    public final void getStr(Record rec, CharSink sink) {
+        GeoHashNative.toString(getLong(rec), GeoHashExtra.getBitsPrecision(getType()), sink);
     }
 
     @Override

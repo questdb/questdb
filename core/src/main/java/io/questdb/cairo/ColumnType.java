@@ -27,6 +27,7 @@ package io.questdb.cairo;
 import io.questdb.std.IntObjHashMap;
 import io.questdb.std.Long256;
 import io.questdb.std.LowerCaseAsciiCharSequenceIntHashMap;
+import io.questdb.std.str.StringSink;
 
 // ColumnType layout - 32bit
 //
@@ -122,10 +123,26 @@ public final class ColumnType {
         return nameTypeMap.get(name);
     }
 
+    // TODO: overload to take a CharSink and avoid having to create one at each call
     public static String nameOf(int columnType) {
-        final int index = typeNameMap.keyIndex(ColumnType.tagOf(columnType));
+        final int tag = ColumnType.tagOf(columnType);
+        final int index = typeNameMap.keyIndex(tag);
         if (index > -1) {
             return "unknown";
+        }
+        if (ColumnType.GEOHASH == tag) {
+            StringSink sink = new StringSink();
+            sink.put(typeNameMap.valueAtQuick(index)).put('(');
+            int bits = GeoHashExtra.getBitsPrecision(columnType);
+            if (bits > 0) {
+                if (bits % 5 == 0) {
+                    sink.put(bits / 5).put("c");
+                } else {
+                    sink.put(bits).put("b");
+                }
+            }
+            sink.put(')');
+            return sink.toString();
         }
         return typeNameMap.valueAtQuick(index);
     }
@@ -163,7 +180,7 @@ public final class ColumnType {
         if (tag < ColumnType.BOOLEAN || tag > ColumnType.PARAMETER) {
             return -1;
         }
-        return TYPE_SIZE[columnType];
+        return TYPE_SIZE[tag];
     }
 
     static {

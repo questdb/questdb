@@ -1986,7 +1986,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     private void createGeohashTable() throws SqlException {
-        compiler.compile("create table pos(time timestamp, uuid symbol, hash8 symbol)" +
+        compiler.compile("create table pos(time timestamp, uuid symbol, hash8 geohash(8c))" +
                 ", index(uuid) timestamp(time) partition by DAY", sqlExecutionContext);
         executeInsert("insert into pos values('2021-05-11T00:00:00.083000Z','YYY','z31wzd5w')");
         executeInsert("insert into pos values('2021-05-10T23:59:59.150000Z','XXX','f91t48s7')");

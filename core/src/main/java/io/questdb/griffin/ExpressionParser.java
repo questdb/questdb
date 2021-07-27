@@ -507,7 +507,7 @@ class ExpressionParser {
                     case 'E':
 
                         if (prevBranch != BRANCH_DOT_DEREFERENCE) {
-//                         check if this is E'str'
+                            // check if this is E'str'
                             if (thisChar == 'E' && (tok.length() < 3 || tok.charAt(1) != '\'')) {
                                 processDefaultBranch = true;
                                 break;

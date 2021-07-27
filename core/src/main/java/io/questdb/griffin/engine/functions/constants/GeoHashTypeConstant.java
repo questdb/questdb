@@ -37,11 +37,11 @@ public class GeoHashTypeConstant extends GeoHashFunction implements TypeConstant
 
     @Override
     public long getLong(Record rec) {
-        return 0;
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public long getGeoHash(Record rec) {
-        return 0;
+        throw new UnsupportedOperationException();
     }
 }

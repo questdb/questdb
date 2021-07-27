@@ -24,10 +24,7 @@
 
 package io.questdb.griffin;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.PartitionBy;
-import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.*;
 import io.questdb.griffin.model.*;
 import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
@@ -1630,7 +1627,45 @@ public final class SqlParser {
         if (type == -1) {
             throw SqlException.$(lexer.lastTokenPosition(), "unsupported column type: ").put(tok);
         }
+        if (ColumnType.GEOHASH == type) {
+            return GeoHashExtra.setBitsPrecision(ColumnType.GEOHASH, parseGeoHashSize(lexer));
+        }
         return type;
+    }
+
+    private @NotNull int parseGeoHashSize(GenericLexer lexer) throws SqlException {
+        expectTok(lexer, '(');
+        final CharSequence sizeStr = expectLiteral(lexer).token;
+        if (sizeStr.length() < 2) {
+            throw SqlException.$(lexer.lastTokenPosition(),
+                    "GEOHASH size must be INT ended in case insensitive 'C', or 'B' for bits");
+        }
+        int size;
+        try {
+            size = Numbers.parseInt(sizeStr.subSequence(0, sizeStr.length() - 1));
+        } catch (NumericException e) {
+            throw SqlException.$(lexer.lastTokenPosition(),
+                    "GEOHASH size must be INT ended in case insensitive 'C', or 'B' for bits");
+        }
+        switch (sizeStr.charAt(sizeStr.length() - 1)) {
+            case 'C':
+            case 'c':
+                size *= 5;
+                break;
+            case 'B':
+            case 'b':
+                break;
+            default:
+                throw SqlException.$(lexer.lastTokenPosition(),
+                        "GEOHASH type size units must be either 'c', 'C' for chars, or 'b', 'B' for bits");
+        }
+        if (size <= 0 || size > 60) {
+            throw SqlException.position(lexer.lastTokenPosition())
+                    .put("GEOHASH type precision range is [1, 60] bits, provided=")
+                    .put(size);
+        }
+        expectTok(lexer, ')');
+        return size;
     }
 
     private @NotNull CharSequence tok(GenericLexer lexer, String expectedList) throws SqlException {

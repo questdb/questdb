@@ -26,9 +26,10 @@ package io.questdb.griffin.engine.functions.geohash;
 
 import io.questdb.std.CharSequenceHashSet;
 import io.questdb.std.DirectLongList;
+import io.questdb.std.str.CharSink;
 
 public class GeoHashNative {
-    static final int[] base32Indexes = {
+    static final byte[] base32Indexes = {
             0, 1, 2, 3, 4, 5, 6, 7,        // 30-37, '0'..'7'
             8, 9, -1, -1, -1, -1, -1, -1,  // 38-2F, '8','9'
             -1, -1, 10, 11, 12, 13, 14, 15, // 40-47, 'B'..'G'
@@ -52,16 +53,14 @@ public class GeoHashNative {
         long output = 0;
         for (int i = 0; i < hash.length(); ++i) {
             char c = hash.charAt(i);
-            int idx = base32Indexes[(int) c - 48];
+            byte idx = base32Indexes[(int) c - 48];
             if (idx < 0) {
                 throw new IllegalArgumentException(hash.toString());
             }
-            for (int bits = 4; bits >= 0; --bits) {
-                output <<= 1;
-                output |= ((idx >> bits) & 1) != 0 ? 1 : 0;
-            }
+            output <<= 5;
+            output |= (idx & 0x1F);
         }
-        return (((long) hash.length()) << 60L) + output;
+        return output;
     }
 
     public static long fromCoordinates(double lat, double lng, int bits) {
@@ -98,7 +97,7 @@ public class GeoHashNative {
                 }
             }
         }
-        return ((bits / 5L) << 60L) + result;
+        return result;
     }
 
     public static long fromBitString(CharSequence bits) {
@@ -114,23 +113,16 @@ public class GeoHashNative {
                 result = result << 1;
             }
         }
-        return ((bits.length() / 5L) << 60L) + result;
+        return result;
     }
 
-    public static String toString(long hash, int precision) {
-        if (precision < 0 || precision > 12) {
-            throw new IllegalArgumentException("precision range is [0, 12]");
+    public static void toString(long hash, int precision, CharSink sink) {
+        if (precision <= 0 || precision > 12) {
+            throw new IllegalArgumentException("precision range is [1, 12]");
         }
-        char[] chars = new char[precision];
-        for (int i = precision - 1; i >= 0; i--) {
-            chars[i] = base32[(int) (hash & 31)];
-            hash >>= 5;
+        for (int i=precision-1; i >= 0; --i) {
+            sink.put(base32[(int)((hash >> i * 5) & 0x1F)]);
         }
-        return new String(chars);
-    }
-
-    public static String toString(long hashz) {
-        return toString(hashz, hashSize(hashz));
     }
 
     public static long bitmask(int count, int shift) {
@@ -155,10 +147,10 @@ public class GeoHashNative {
         // skip first (search column name) element
         for (int i = 1, sz = prefixes.size(); i < sz; i++) {
             final CharSequence prefix = prefixes.get(i);
-            final long hashz = fromString(prefix);
-            final int bits = 5 * (int) (hashz >>> 60);
+            final long hash = fromString(prefix);
+            final int bits = 5 * prefix.length();
             final int shift = 8 * 5 - bits;
-            final long norm = (hashz & 0x0fffffffffffffffL) << shift;
+            final long norm = hash << shift;
             final long mask = bitmask(bits, shift);
 
             prefixesBits.add(norm);

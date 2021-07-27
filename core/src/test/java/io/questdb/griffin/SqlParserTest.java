@@ -1868,6 +1868,55 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testCreateTableWithGeoHash1() throws Exception {
+        assertCreateTable(
+                "create table x (gh GEOHASH(8c), t TIMESTAMP) timestamp(t) partition by DAY",
+                "create table x (gh GEOHASH(8c), t TIMESTAMP) timestamp(t) partition by DAY WITH maxUncommittedRows=10000, commitLag=250ms;");
+    }
+
+    @Test
+    public void testCreateTableWithGeoHash2() throws Exception {
+        assertCreateTable(
+                "create table x (gh GEOHASH(51b), t TIMESTAMP) timestamp(t) partition by DAY",
+                "create table x (gh GEOHASH(51b), t TIMESTAMP) timestamp(t) partition by DAY WITH maxUncommittedRows=10000, commitLag=250ms;");
+    }
+
+    @Test
+    public void testCreateTableWithGeoHashVariablePrecisionIsNotSupportedYet() throws Exception {
+        assertSyntaxError(
+                "create table x (gh GEOHASH(), t TIMESTAMP) timestamp(t) partition by DAY",
+                27, "literal expected");
+    }
+
+    @Test
+    public void testCreateTableWithGeoHashNoSizeUnit() throws Exception {
+        assertSyntaxError(
+                "create table x (gh GEOHASH(12), t TIMESTAMP) timestamp(t) partition by DAY",
+                27, "GEOHASH type size units must be either 'c', 'C' for chars, or 'b', 'B' for bits");
+    }
+
+    @Test
+    public void testCreateTableWithGeoHashWrongSizeUnit() throws Exception {
+        assertSyntaxError(
+                "create table x (gh GEOHASH(12s), t TIMESTAMP) timestamp(t) partition by DAY",
+                27, "GEOHASH type size units must be either 'c', 'C' for chars, or 'b', 'B' for bits");
+    }
+
+    @Test
+    public void testCreateTableWithGeoHashWrongSize1() throws Exception {
+        assertSyntaxError(
+                "create table x (gh GEOHASH(0b), t TIMESTAMP) timestamp(t) partition by DAY",
+                27, "GEOHASH type precision range is [1, 60] bits, provided=0");
+    }
+
+    @Test
+    public void testCreateTableWithGeoHashWrongSize2() throws Exception {
+        assertSyntaxError(
+                "create table x (gh GEOHASH(61b), t TIMESTAMP) timestamp(t) partition by DAY",
+                27, "GEOHASH type precision range is [1, 60] bits, provided=61");
+    }
+
+    @Test
     public void testCreateUnsupported() throws Exception {
         assertSyntaxError("create object x", 7, "table");
     }

@@ -26,9 +26,11 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.GeoHashExtra;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.engine.functions.cast.*;
 import io.questdb.std.CharSequenceIntHashMap;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import org.junit.Assert;
 import org.junit.Test;
@@ -72,7 +74,6 @@ public class FunctionParserCastFunctionsNullTest extends BaseFunctionFactoryTest
         typeNameToId.put("symbol", ColumnType.SYMBOL);
         typeNameToId.put("long256", ColumnType.LONG256);
         typeNameToId.put("binary", ColumnType.BINARY);
-        typeNameToId.put("geohash", ColumnType.GEOHASH);
     }
 
     private static final ObjList<CharSequence> typeNames = typeNameToId.keys();
@@ -89,5 +90,19 @@ public class FunctionParserCastFunctionsNullTest extends BaseFunctionFactoryTest
             Assert.assertEquals(typeNameToId.get(type), function.getType());
             Assert.assertEquals(true, function.isConstant());
         }
+    }
+
+    // TODO: working on ExpressionParser for GeOhAsH(12c), GeOhAsH(60b)
+    @Test
+    public void testCastNullGeoHash() throws SqlException {
+        Arrays.stream(CAST_FUNCS).forEach(functions::add);
+        FunctionParser functionParser = createFunctionParser();
+        final GenericRecordMetadata metadata = new GenericRecordMetadata();
+        Collections.shuffle(functions);
+        Function function = parseFunction("cast(null as GeOhAsH(12c))", metadata, functionParser);
+        Assert.assertEquals(true, function.isConstant());
+        Assert.assertEquals(GeoHashExtra.setBitsPrecision(ColumnType.GEOHASH, 60), function.getType());
+        Assert.assertEquals(Numbers.LONG_NaN, function.getGeoHash(null));
+        Assert.assertEquals(Numbers.LONG_NaN, function.getLong(null));
     }
 }

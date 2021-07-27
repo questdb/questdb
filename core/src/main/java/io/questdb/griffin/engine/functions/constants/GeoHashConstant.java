@@ -35,29 +35,29 @@ import io.questdb.std.Numbers;
 public class GeoHashConstant extends GeoHashFunction implements ConstantFunction {
     public static final GeoHashConstant NULL = new GeoHashConstant(Numbers.LONG_NaN, ColumnType.GEOHASH);
 
-    private final long hashz;
+    private final long hash; // does NOT encode size
 
-    public GeoHashConstant(long hashz, int typep) {
-        assert ColumnType.GEOHASH == ColumnType.tagOf(typep);
-        this.hashz = hashz;
-        this.typep = typep;
+    public GeoHashConstant(long hash, int typep) {
+        super(typep);
+        this.hash = hash;
     }
 
     public GeoHashConstant(CharSequence value) {
         if (value == null || value.length() == 0) {
-            hashz = Numbers.LONG_NaN;
+            hash = NULL.hash;
+            typep = NULL.typep;
         } else {
             CharSequence str = value;
             if (Chars.startsWith(value, '\'') && Chars.endsWith(value, '\'')) {
                 str = Chars.toString(value, 1, value.length() - 1);
             }
-            hashz = GeoHashNative.fromString(str);
+            hash = GeoHashNative.fromString(str);
             typep = GeoHashExtra.setBitsPrecision(ColumnType.GEOHASH, str.length() * 5);
         }
     }
 
-    public static GeoHashConstant newInstance(long hashz, int type) {
-        return hashz != Numbers.LONG_NaN ? new GeoHashConstant(hashz, type) : NULL;
+    public static GeoHashConstant newInstance(long hash, int type) {
+        return hash != Numbers.LONG_NaN ? new GeoHashConstant(hash, type) : NULL;
     }
 
     public static GeoHashConstant newInstance(CharSequence value) {
@@ -66,11 +66,11 @@ public class GeoHashConstant extends GeoHashFunction implements ConstantFunction
 
     @Override
     public final long getLong(Record rec) {
-        return hashz;
+        return hash;
     }
 
     @Override
     public final long getGeoHash(Record rec) {
-        return hashz;
+        return hash;
     }
 }

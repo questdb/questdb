@@ -329,7 +329,9 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         long hash = GeoHashNative.fromCoordinates(39.9830487269087, 0.02405432769681642, 6 * 5);
         testConstantPassThru(new GeoHashConstant(hash, ColumnType.GEOHASH));
         functions.clear();
-        testConstantPassThru(new GeoHashConstant(GeoHashNative.toString(hash, 6)));
+        sink.clear();
+        GeoHashNative.toString(hash, 6, sink);
+        testConstantPassThru(new GeoHashConstant(sink));
     }
 
     @Test
