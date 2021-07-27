@@ -123,7 +123,9 @@ public final class ColumnType {
         return nameTypeMap.get(name);
     }
 
-    // TODO: overload to take a CharSink and avoid having to create one at each call
+    // TODO: optimize this, we have fixed number of outcomes here, no need to allocate at all
+    //   1. we can only have 12 possibilities here geohash(1c)... geohash(12c)
+    //   2. or we can have 60-12=48 possibilities of geohash(1b)...geohash(60b)
     public static String nameOf(int columnType) {
         final int tag = ColumnType.tagOf(columnType);
         final int index = typeNameMap.keyIndex(tag);

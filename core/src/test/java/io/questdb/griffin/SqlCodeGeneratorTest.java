@@ -1947,8 +1947,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
 
-    // TODO: Fix f91t48s7 is missing by prefix f91, likely because column type in metadata is just 14, missing size
-    //   so next up is to fix literal for geohash type constant, to include parens with bit count or precision (groups of 5)
     @Test
     public void testLatestByAllIndexedGeohash() throws Exception {
         assertMemoryLeak(
@@ -1967,7 +1965,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 });
     }
 
-    // TODO: fix this test, also seems broken when we remove 'and hash8 within ('z31','bbx')' from where clause
     @Test
     public void testLatestByAllIndexedGeohashTimeRange() throws Exception {
         assertMemoryLeak(
@@ -1986,9 +1983,11 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     private void createGeohashTable() throws SqlException {
-        compiler.compile("create table pos(time timestamp, uuid symbol, hash8 geohash(8c))" +
-                ", index(uuid) timestamp(time) partition by DAY", sqlExecutionContext);
-        executeInsert("insert into pos values('2021-05-11T00:00:00.083000Z','YYY','z31wzd5w')");
+        compiler.compile(
+                "create table pos(time timestamp, uuid symbol, hash8 geohash(8c))" +
+                ", index(uuid) timestamp(time) partition by DAY",
+                sqlExecutionContext
+        );
         executeInsert("insert into pos values('2021-05-10T23:59:59.150000Z','XXX','f91t48s7')");
         executeInsert("insert into pos values('2021-05-10T23:59:59.322000Z','ddd','bbqyzfp6')");
         executeInsert("insert into pos values('2021-05-10T23:59:59.351000Z','bbb','9egcyrxq')");
@@ -1999,6 +1998,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
         executeInsert("insert into pos values('2021-05-11T00:00:00.066000Z','ddd','vcunv6j7')");
         executeInsert("insert into pos values('2021-05-11T00:00:00.072000Z','ccc','edez0n5y')");
         executeInsert("insert into pos values('2021-05-11T00:00:00.074000Z','aaa','fds32zgc')");
+        executeInsert("insert into pos values('2021-05-11T00:00:00.083000Z','YYY','z31wzd5w')");
         executeInsert("insert into pos values('2021-05-11T00:00:00.092000Z','ddd','v9nwc4ny')");
         executeInsert("insert into pos values('2021-05-11T00:00:00.107000Z','ccc','f6yb1yx9')");
         executeInsert("insert into pos values('2021-05-11T00:00:00.111000Z','ddd','bcnktpnw')");
