@@ -127,7 +127,7 @@ class ExpressionParser {
                 thisChar = tok.charAt(0);
                 prevBranch = thisBranch;
                 boolean processDefaultBranch = false;
-                int position = lexer.lastTokenPosition();
+                final int position = lexer.lastTokenPosition();
                 switch (thisChar) {
                     case '-':
                     case '+':
@@ -305,7 +305,7 @@ class ExpressionParser {
                                         ExpressionNode.GEOHASH_TYPE,
                                         "GEOHASH",
                                         Integer.MIN_VALUE,
-                                        lexer.lastTokenPosition());
+                                        position);
                                 node.paramCount = 1;
                                 opStack.push(node);
                                 opStack.push(expressionNodePool.next().of(
