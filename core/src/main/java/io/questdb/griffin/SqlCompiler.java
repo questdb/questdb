@@ -265,11 +265,6 @@ public class SqlCompiler implements Closeable {
             final int fromColumnType = from.getColumnType(i);
             final int toColumnTypeTag = ColumnType.tagOf(toColumnType);
 
-            asm.iconst(fromColumnType);
-            asm.istore(3);
-            asm.iconst(toColumnType);
-            asm.istore(4);
-
             asm.aload(2);
             asm.iconst(toColumnIndex);
             asm.aload(1);
@@ -639,8 +634,8 @@ public class SqlCompiler implements Closeable {
                                 case 1:
                                     asm.invokeInterface(rGetShort, 1);
                                     asm.i2l();
-                                    asm.iload(3);
-                                    asm.iload(4);
+                                    asm.iconst(fromColumnType);
+                                    asm.iconst(toColumnType);
                                     asm.invokeStatic(geohashTruncatePrecision);
                                     asm.l2i();
                                     asm.i2b();
@@ -659,8 +654,8 @@ public class SqlCompiler implements Closeable {
                                 case 1:
                                     asm.invokeInterface(rGetInt, 1);
                                     asm.i2l();
-                                    asm.iload(3);
-                                    asm.iload(4);
+                                    asm.iconst(fromColumnType);
+                                    asm.iconst(toColumnType);
                                     asm.invokeStatic(geohashTruncatePrecision);
                                     asm.l2i();
                                     asm.i2b();
@@ -669,9 +664,8 @@ public class SqlCompiler implements Closeable {
                                 case 2:
                                     asm.invokeInterface(rGetInt, 1);
                                     asm.i2l();
-                                    asm.iload(3);
-                                    asm.iload(4);
-                                    asm.invokeStatic(geohashTruncatePrecision);
+                                    asm.iconst(fromColumnType);
+                                    asm.iconst(toColumnType);
                                     asm.l2i();
                                     asm.i2s();
                                     asm.invokeVirtual(wPutShort);
@@ -688,8 +682,8 @@ public class SqlCompiler implements Closeable {
                             switch (sizeTo) {
                                 case 1:
                                     asm.invokeInterface(rGetLong, 1);
-                                    asm.iload(3);
-                                    asm.iload(4);
+                                    asm.iconst(fromColumnType);
+                                    asm.iconst(toColumnType);
                                     asm.invokeStatic(geohashTruncatePrecision);
                                     asm.l2i();
                                     asm.i2b();
@@ -697,8 +691,8 @@ public class SqlCompiler implements Closeable {
                                     break;
                                 case 2:
                                     asm.invokeInterface(rGetLong, 1);
-                                    asm.iload(3);
-                                    asm.iload(4);
+                                    asm.iconst(fromColumnType);
+                                    asm.iconst(toColumnType);
                                     asm.invokeStatic(geohashTruncatePrecision);
                                     asm.l2i();
                                     asm.i2s();
@@ -706,8 +700,8 @@ public class SqlCompiler implements Closeable {
                                     break;
                                 case 4:
                                     asm.invokeInterface(rGetLong, 1);
-                                    asm.iload(3);
-                                    asm.iload(4);
+                                    asm.iconst(fromColumnType);
+                                    asm.iconst(toColumnType);
                                     asm.invokeStatic(geohashTruncatePrecision);
                                     asm.l2i();
                                     asm.invokeVirtual(wPutInt);
