@@ -80,6 +80,36 @@ public class AsOfJoinTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testAsofJoinDynamicTimestamp() throws Exception {
+        compiler.compile(
+                "create table positions2 as (" +
+                        "select x, cast(x * 1000000L as TIMESTAMP) time from long_sequence(10)" +
+                        ") timestamp(time)", sqlExecutionContext);
+
+        assertSql("select t1.time1 + 1 as time, t1.x, t2.x, t1.x - t2.x\n" +
+                        "from \n" +
+                        "(\n" +
+                        "    (\n" +
+                        "        select time - 1 as time1, x\n" +
+                        "        from positions2\n" +
+                        "    )\n" +
+                        "    timestamp(time1)\n" +
+                        ") t1\n" +
+                        "asof join positions2 t2",
+                "time\tx\tx1\tcolumn\n" +
+                        "1970-01-01T00:00:01.000000Z\t1\tNaN\tNaN\n" +
+                        "1970-01-01T00:00:02.000000Z\t2\t1\t1\n" +
+                        "1970-01-01T00:00:03.000000Z\t3\t2\t1\n" +
+                        "1970-01-01T00:00:04.000000Z\t4\t3\t1\n" +
+                        "1970-01-01T00:00:05.000000Z\t5\t4\t1\n" +
+                        "1970-01-01T00:00:06.000000Z\t6\t5\t1\n" +
+                        "1970-01-01T00:00:07.000000Z\t7\t6\t1\n" +
+                        "1970-01-01T00:00:08.000000Z\t8\t7\t1\n" +
+                        "1970-01-01T00:00:09.000000Z\t9\t8\t1\n" +
+                        "1970-01-01T00:00:10.000000Z\t10\t9\t1\n");
+    }
+
+    @Test
     public void testAsofJoinForSelectWithTimestamps() throws Exception {
         final String expected = "tag\thi\tlo\tts\tts1\n" +
                 "AA\t315515118\t315515118\t1970-01-03T00:00:00.000000Z\t1970-01-03T00:00:00.000000Z\n" +

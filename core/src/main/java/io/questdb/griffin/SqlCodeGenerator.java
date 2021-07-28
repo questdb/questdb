@@ -54,6 +54,7 @@ import org.jetbrains.annotations.Nullable;
 import static io.questdb.griffin.SqlKeywords.*;
 import static io.questdb.griffin.model.ExpressionNode.FUNCTION;
 import static io.questdb.griffin.model.ExpressionNode.LITERAL;
+import static io.questdb.griffin.model.QueryModel.*;
 
 public class SqlCodeGenerator implements Mutable {
     public static final int GKK_VANILLA_INT = 0;
@@ -61,7 +62,7 @@ public class SqlCodeGenerator implements Mutable {
     private static final IntHashSet limitTypes = new IntHashSet();
     private static final FullFatJoinGenerator CREATE_FULL_FAT_LT_JOIN = SqlCodeGenerator::createFullFatLtJoin;
     private static final FullFatJoinGenerator CREATE_FULL_FAT_AS_OF_JOIN = SqlCodeGenerator::createFullFatAsOfJoin;
-    private static final boolean[] joinsRequiringTimestamp = {false, false, false, true, true, false, true};
+    private static final boolean[] joinsRequiringTimestamp = new boolean[JOIN_MAX + 1];
     private static final IntObjHashMap<VectorAggregateFunctionConstructor> sumConstructors = new IntObjHashMap<>();
     private static final IntObjHashMap<VectorAggregateFunctionConstructor> ksumConstructors = new IntObjHashMap<>();
     private static final IntObjHashMap<VectorAggregateFunctionConstructor> nsumConstructors = new IntObjHashMap<>();
@@ -101,6 +102,15 @@ public class SqlCodeGenerator implements Mutable {
     private final IntList groupByFunctionPositions = new IntList();
     private boolean fullFatJoins = false;
     private final CharSequenceHashSet prefixes = new CharSequenceHashSet();
+
+    static {
+        joinsRequiringTimestamp[JOIN_INNER] = false;
+        joinsRequiringTimestamp[JOIN_OUTER] = false;
+        joinsRequiringTimestamp[JOIN_CROSS] = false;
+        joinsRequiringTimestamp[JOIN_ASOF] = true;
+        joinsRequiringTimestamp[JOIN_SPLICE] = true;
+        joinsRequiringTimestamp[JOIN_LT] = true;
+    }
 
     public SqlCodeGenerator(
             CairoEngine engine,
@@ -508,7 +518,7 @@ public class SqlCodeGenerator implements Mutable {
         valueTypes.add(ColumnType.LONG);
 
         if (slave.recordCursorSupportsRandomAccess() && !fullFatJoins) {
-            if (joinType == QueryModel.JOIN_INNER) {
+            if (joinType == JOIN_INNER) {
                 return new HashJoinLightRecordCursorFactory(
                         configuration,
                         metadata,
@@ -543,7 +553,7 @@ public class SqlCodeGenerator implements Mutable {
                 false
         );
 
-        if (joinType == QueryModel.JOIN_INNER) {
+        if (joinType == JOIN_INNER) {
             return new HashJoinRecordCursorFactory(
                     configuration,
                     metadata,
@@ -708,15 +718,19 @@ public class SqlCodeGenerator implements Mutable {
 
         try {
             int n = ordered.size();
-            assert n > 0;
+            assert n > 1;
             for (int i = 0; i < n; i++) {
                 int index = ordered.getQuick(i);
                 QueryModel slaveModel = joinModels.getQuick(index);
 
-                boolean pop = false;
-                if (master != null) {
+                if (i > 0) {
                     executionContext.pushTimestampRequiredFlag(joinsRequiringTimestamp[slaveModel.getJoinType()]);
-                    pop = true;
+                } else { // i == 0
+                    // This is first model in the sequence of joins
+                    // TS requirement is symmetrical on both right and left sides
+                    // check if next join requires a timestamp
+                    int nextJointType = joinModels.getQuick(ordered.getQuick(1)).getJoinType();
+                    executionContext.pushTimestampRequiredFlag(joinsRequiringTimestamp[nextJointType]);
                 }
 
                 try {
@@ -739,7 +753,7 @@ public class SqlCodeGenerator implements Mutable {
                         final RecordMetadata slaveMetadata = slave.getMetadata();
 
                         switch (joinType) {
-                            case QueryModel.JOIN_CROSS:
+                            case JOIN_CROSS:
                                 master = new CrossJoinRecordCursorFactory(
                                         createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata),
                                         master,
@@ -748,7 +762,7 @@ public class SqlCodeGenerator implements Mutable {
                                 );
                                 masterAlias = null;
                                 break;
-                            case QueryModel.JOIN_ASOF:
+                            case JOIN_ASOF:
                                 validateBothTimestamps(slaveModel, masterMetadata, slaveMetadata);
                                 processJoinContext(index == 1, slaveModel.getContext(), masterMetadata, slaveMetadata);
                                 if (slave.recordCursorSupportsRandomAccess() && !fullFatJoins) {
@@ -793,7 +807,7 @@ public class SqlCodeGenerator implements Mutable {
                                 }
                                 masterAlias = null;
                                 break;
-                            case QueryModel.JOIN_LT:
+                            case JOIN_LT:
                                 validateBothTimestamps(slaveModel, masterMetadata, slaveMetadata);
                                 processJoinContext(index == 1, slaveModel.getContext(), masterMetadata, slaveMetadata);
                                 if (slave.recordCursorSupportsRandomAccess() && !fullFatJoins) {
@@ -838,7 +852,7 @@ public class SqlCodeGenerator implements Mutable {
                                 }
                                 masterAlias = null;
                                 break;
-                            case QueryModel.JOIN_SPLICE:
+                            case JOIN_SPLICE:
                                 validateBothTimestamps(slaveModel, masterMetadata, slaveMetadata);
                                 processJoinContext(index == 1, slaveModel.getContext(), masterMetadata, slaveMetadata);
                                 if (slave.recordCursorSupportsRandomAccess() && master.recordCursorSupportsRandomAccess() && !fullFatJoins) {
@@ -878,9 +892,7 @@ public class SqlCodeGenerator implements Mutable {
                         }
                     }
                 } finally {
-                    if (pop) {
-                        executionContext.popTimestampRequiredFlag();
-                    }
+                    executionContext.popTimestampRequiredFlag();
                 }
 
                 // check if there are post-filters
