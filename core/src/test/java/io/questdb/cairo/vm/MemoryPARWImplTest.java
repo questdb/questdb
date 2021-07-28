@@ -28,15 +28,22 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TestRecord;
 import io.questdb.griffin.engine.TestBinarySequence;
+import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.BeforeClass;
 import org.junit.Test;
 
 import static org.junit.Assert.*;
 
-public class ContiguousVirtualMemoryTest {
+public class MemoryPARWImplTest {
+
+    @BeforeClass
+    public static void setUpClass() {
+        LogFactory.getLog(MemoryPARWImplTest.class);
+    }
 
     @Test
     public void testBinSequence() {
@@ -51,7 +58,7 @@ public class ContiguousVirtualMemoryTest {
     @Test
     public void testBinSequenceOnEdge() {
         final Rnd rnd = new Rnd();
-        try (ContiguousVirtualMemory mem = new ContiguousVirtualMemory(32, Integer.MAX_VALUE)) {
+        try (MemoryPARWImpl mem = new MemoryPARWImpl(32, Integer.MAX_VALUE)) {
             TestRecord.ArrayBinarySequence seq = new TestRecord.ArrayBinarySequence();
             int N = 33;
             int O = 10;
@@ -101,7 +108,7 @@ public class ContiguousVirtualMemoryTest {
     @Test
     public void testBool() {
         Rnd rnd = new Rnd();
-        try (ContiguousVirtualMemory mem = new ContiguousVirtualMemory(11, Integer.MAX_VALUE)) {
+        try (MemoryPARWImpl mem = new MemoryPARWImpl(11, Integer.MAX_VALUE)) {
             int n = 120;
 
             for (int i = 0; i < n; i++) {
@@ -119,7 +126,7 @@ public class ContiguousVirtualMemoryTest {
     @Test
     public void testBoolRnd() {
         Rnd rnd = new Rnd();
-        try (ContiguousVirtualMemory mem = new ContiguousVirtualMemory(11, Integer.MAX_VALUE)) {
+        try (MemoryPARWImpl mem = new MemoryPARWImpl(11, Integer.MAX_VALUE)) {
             int n = 120;
             long o = 0;
 
@@ -138,7 +145,7 @@ public class ContiguousVirtualMemoryTest {
     @Test
     public void testBulkCopy() {
         int N = 1000;
-        try (ContiguousVirtualMemory mem = new ContiguousVirtualMemory(128, Integer.MAX_VALUE)) {
+        try (MemoryPARWImpl mem = new MemoryPARWImpl(128, Integer.MAX_VALUE)) {
             for (int i = 0; i < N; i++) {
                 mem.putShort((short) i);
             }
@@ -147,7 +154,7 @@ public class ContiguousVirtualMemoryTest {
             long offset = 0;
             short i = 0;
             while (target > 0) {
-                long len = mem.getMemorySize() - offset;
+                long len = mem.pageRemaining(offset);
                 target -= len;
                 long address = mem.addressOf(offset);
                 offset += len;
@@ -162,7 +169,7 @@ public class ContiguousVirtualMemoryTest {
 
     @Test
     public void testByte() {
-        try (ContiguousVirtualMemory mem = new ContiguousVirtualMemory(11, Integer.MAX_VALUE)) {
+        try (MemoryPARWImpl mem = new MemoryPARWImpl(11, Integer.MAX_VALUE)) {
             int n = 120;
 
             for (int i = 0; i < n; i++) {
@@ -177,8 +184,39 @@ public class ContiguousVirtualMemoryTest {
     }
 
     @Test
+    public void testByteRandom() {
+        try (MemoryPARWImpl mem = new MemoryPARWImpl(128, Integer.MAX_VALUE)) {
+            long offset1 = 512;
+            mem.putByte(offset1, (byte) 3);
+            mem.putByte(offset1 + 1, (byte) 4);
+            mem.jumpTo(offset1 + 2);
+            mem.putByte((byte) 5);
+            assertEquals(3, mem.getByte(offset1));
+            assertEquals(4, mem.getByte(offset1 + 1));
+            assertEquals(5, mem.getByte(offset1 + 2));
+        }
+    }
+
+    @Test
+    public void testByteRnd() {
+        try (MemoryPARWImpl mem = new MemoryPARWImpl(11, Integer.MAX_VALUE)) {
+            int n = 120;
+
+            long o = 0;
+            for (int i = 0; i < n; i++, o++) {
+                mem.putByte(o, (byte) i);
+            }
+
+            o = 0;
+            for (int i = 0; i < n; i++) {
+                assertEquals(i, mem.getByte(o++));
+            }
+        }
+    }
+
+    @Test
     public void testChar() {
-        try (ContiguousVirtualMemory mem = new ContiguousVirtualMemory(7, Integer.MAX_VALUE)) {
+        try (MemoryPARWImpl mem = new MemoryPARWImpl(7, Integer.MAX_VALUE)) {
             char n = 999;
             long o = 0;
             for (char i = n; i > 0; i--) {
@@ -197,7 +235,7 @@ public class ContiguousVirtualMemoryTest {
 
     @Test
     public void testCharWithOffset() {
-        try (ContiguousVirtualMemory mem = new ContiguousVirtualMemory(7, Integer.MAX_VALUE)) {
+        try (MemoryPARWImpl mem = new MemoryPARWImpl(7, Integer.MAX_VALUE)) {
             char n = 999;
             long o = 0;
             for (char i = n; i > 0; i--) {
@@ -214,47 +252,8 @@ public class ContiguousVirtualMemoryTest {
     }
 
     @Test
-    public void testLong256() {
-        try (ContiguousVirtualMemory mem = new ContiguousVirtualMemory(256, Integer.MAX_VALUE)) {
-            mem.putLong256("0xEA674fdDe714fd979de3EdF0F56AA9716B898ec8");
-            mem.putLong256("0xEA674fdDe714fd979de3EdF0F56AA9716B898ec8");
-        }
-    }
-
-    @Test
-    public void testByteRandom() {
-        try (ContiguousVirtualMemory mem = new ContiguousVirtualMemory(128, Integer.MAX_VALUE)) {
-            long offset1 = 512;
-            mem.putByte(offset1, (byte) 3);
-            mem.putByte(offset1 + 1, (byte) 4);
-            mem.jumpTo(offset1 + 2);
-            mem.putByte((byte) 5);
-            assertEquals(3, mem.getByte(offset1));
-            assertEquals(4, mem.getByte(offset1 + 1));
-            assertEquals(5, mem.getByte(offset1 + 2));
-        }
-    }
-
-    @Test
-    public void testByteRnd() {
-        try (ContiguousVirtualMemory mem = new ContiguousVirtualMemory(11, Integer.MAX_VALUE)) {
-            int n = 120;
-
-            long o = 0;
-            for (int i = 0; i < n; i++, o++) {
-                mem.putByte(o, (byte) i);
-            }
-
-            o = 0;
-            for (int i = 0; i < n; i++) {
-                assertEquals(i, mem.getByte(o++));
-            }
-        }
-    }
-
-    @Test
     public void testDouble() {
-        try (ContiguousVirtualMemory mem = new ContiguousVirtualMemory(11, Integer.MAX_VALUE)) {
+        try (MemoryPARWImpl mem = new MemoryPARWImpl(11, Integer.MAX_VALUE)) {
             Rnd rnd = new Rnd();
             int n = 999;
 
@@ -277,11 +276,295 @@ public class ContiguousVirtualMemoryTest {
     }
 
     @Test
+    public void testDoubleCompatibility() {
+        long pageSize = 64;
+        try (MemoryPARWImpl mem = new MemoryPARWImpl(pageSize, Integer.MAX_VALUE)) {
+            mem.putInt(10);
+            mem.putDouble(8980980284.22234);
+            mem.putDoubleBytes(8979283749.72983477);
+            assertEquals(8980980284.22234, mem.getDoubleBytes(0, 4, pageSize), 0.00001);
+            assertEquals(8979283749.72983477, mem.getDouble(12), 0.00001);
+        }
+    }
+
+    @Test
+    public void testDoubleRnd() {
+        try (MemoryPARWImpl mem = new MemoryPARWImpl(11, Integer.MAX_VALUE)) {
+            Rnd rnd = new Rnd();
+            int n = 999;
+
+            long o = 1;
+            mem.putByte((byte) 1);
+
+            for (int i = 0; i < n; i++) {
+                mem.putDouble(o, rnd.nextDouble());
+                o += 8;
+            }
+
+            rnd.reset();
+            o = 1;
+            assertEquals(1, mem.getByte(0));
+            for (int i = 0; i < n; i++) {
+                assertEquals(rnd.nextDouble(), mem.getDouble(o), 0.00001);
+                o += 8;
+            }
+        }
+    }
+
+    @Test
+    public void testDoubleRndCompatibility() {
+        long pageSize = 64;
+        try (MemoryPARWImpl mem = new MemoryPARWImpl(pageSize, Integer.MAX_VALUE)) {
+            // prime
+            mem.putInt(10, 900);
+            mem.putDouble(22, 8980980284.22234);
+            mem.putDoubleBytes(84, 8979283749.72983477);
+            assertEquals(8980980284.22234, mem.getDoubleBytes(0, 22, pageSize), 0.00001);
+            assertEquals(8979283749.72983477, mem.getDouble(84), 0.00001);
+        }
+    }
+
+    @Test
+    public void testEvenPageSize() {
+        try (MemoryPARWImpl mem = new MemoryPARWImpl(32, Integer.MAX_VALUE)) {
+            assertStrings(mem, false);
+        }
+    }
+
+    @Test
+    public void testExtendDoesNotMoveAppendPosition() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            long pageSize = 128;
+            try (MemoryPARWImpl mem = new MemoryPARWImpl(pageSize, Integer.MAX_VALUE)) {
+                Assert.assertEquals(0, mem.getAppendOffset());
+                Assert.assertEquals(0, mem.getPageCount());
+
+                mem.extend(pageSize * 5);
+                Assert.assertEquals(0, mem.getAppendOffset());
+                Assert.assertEquals(5, mem.getPageCount());
+            }
+        });
+    }
+
+    @Test
+    public void testFloat() {
+        try (MemoryPARWImpl mem = new MemoryPARWImpl(11, Integer.MAX_VALUE)) {
+            Rnd rnd = new Rnd();
+            int n = 999;
+
+            mem.putByte((byte) 1);
+
+            for (int i = 0; i < n; i++) {
+                mem.putFloat(rnd.nextFloat());
+            }
+
+            rnd.reset();
+            long o = 1;
+            assertEquals(1, mem.getByte(0));
+            for (int i = 0; i < n; i++) {
+                assertEquals(rnd.nextFloat(), mem.getFloat(o), 0.00001f);
+                o += 4;
+            }
+        }
+    }
+
+    @Test
+    public void testFloatCompatibility() {
+        long pageSize = 64;
+        try (MemoryPARWImpl mem = new MemoryPARWImpl(pageSize, Integer.MAX_VALUE)) {
+            mem.putFloat(1024f);
+            mem.putFloatBytes(2048f);
+            assertEquals(1024f, mem.getFloatBytes(0, 0), 0.00001f);
+            assertEquals(2048f, mem.getFloat(4), 0.0001f);
+        }
+    }
+
+    @Test
+    public void testFloatRnd() {
+        try (MemoryPARWImpl mem = new MemoryPARWImpl(11, Integer.MAX_VALUE)) {
+            Rnd rnd = new Rnd();
+            int n = 999;
+
+            long o = 1;
+            mem.putByte((byte) 1);
+
+            for (int i = 0; i < n; i++) {
+                mem.putFloat(o, rnd.nextFloat());
+                o += 4;
+            }
+
+            rnd.reset();
+            o = 1;
+            assertEquals(1, mem.getByte(0));
+            for (int i = 0; i < n; i++) {
+                assertEquals(rnd.nextFloat(), mem.getFloat(o), 0.00001f);
+                o += 4;
+            }
+        }
+    }
+
+    @Test
+    public void testFloatRndCompatibility() {
+        long pageSize = 64;
+        try (MemoryPARWImpl mem = new MemoryPARWImpl(pageSize, Integer.MAX_VALUE)) {
+            // prime
+            mem.putByte(10, (byte) 5);
+            mem.putFloat(61, 1024f);
+            mem.putFloatBytes(99, 2048f);
+            assertEquals(1024f, mem.getFloatBytes(0, 61), 0.00001f);
+            assertEquals(2048f, mem.getFloat(99), 0.0001f);
+        }
+    }
+
+    @Test
+    public void testInt() {
+        try (MemoryPARWImpl mem = new MemoryPARWImpl(7, Integer.MAX_VALUE)) {
+            mem.putByte((byte) 1);
+            int n = 999;
+            for (int i = n; i > 0; i--) {
+                mem.putInt(i);
+            }
+
+            long o = 1;
+            assertEquals(1, mem.getByte(0));
+
+            for (int i = n; i > 0; i--) {
+                assertEquals(i, mem.getInt(o));
+                o += 4;
+            }
+        }
+    }
+
+    @Test
+    public void testIntCompatibility() {
+        long pageSize = 64;
+        try (MemoryPARWImpl mem = new MemoryPARWImpl(pageSize, Integer.MAX_VALUE)) {
+            mem.putInt(1024);
+            mem.putIntBytes(2048);
+            assertEquals(1024, mem.getIntBytes(0, 0));
+            assertEquals(2048, mem.getInt(4));
+        }
+    }
+
+    @Test
+    public void testIntRnd() {
+        try (MemoryPARWImpl mem = new MemoryPARWImpl(7, Integer.MAX_VALUE)) {
+            long o = 1;
+            mem.putByte(0, (byte) 1);
+            int n = 999;
+            for (int i = n; i > 0; i--) {
+                mem.putInt(o, i);
+                o += 4;
+            }
+
+            o = 1;
+            assertEquals(1, mem.getByte(0));
+
+            for (int i = n; i > 0; i--) {
+                assertEquals(i, mem.getInt(o));
+                o += 4;
+            }
+        }
+    }
+
+    @Test
+    public void testIntRndCompatibility() {
+        long pageSize = 64;
+        try (MemoryPARWImpl mem = new MemoryPARWImpl(pageSize, Integer.MAX_VALUE)) {
+            // prime page
+            mem.putByte(10, (byte) 22);
+            mem.putInt(15, 1024);
+            mem.putIntBytes(55, 2048);
+            assertEquals(1024, mem.getIntBytes(0, 15));
+            assertEquals(2048, mem.getInt(55));
+        }
+    }
+
+    @Test
+    public void testJumpTo() {
+        try (MemoryPARWImpl mem = new MemoryPARWImpl(11, Integer.MAX_VALUE)) {
+            mem.putByte((byte) 1);
+            int n = 999;
+            for (int i = n; i > 0; i--) {
+                mem.putLong(i);
+            }
+
+            assertEquals(1, mem.getByte(0));
+
+            mem.jumpTo(1);
+            for (int i = n; i > 0; i--) {
+                mem.putLong(n - i);
+            }
+
+            long o = 1;
+            for (int i = n; i > 0; i--) {
+                assertEquals(n - i, mem.getLong(o));
+                o += 8;
+            }
+        }
+    }
+
+    @Test
+    public void testJumpTo2() {
+        try (MemoryPARWImpl mem = new MemoryPARWImpl(11, Integer.MAX_VALUE)) {
+            mem.jumpTo(8);
+            int n = 999;
+            for (int i = n; i > 0; i--) {
+                mem.putLong(i);
+            }
+            long o = 8;
+            for (int i = n; i > 0; i--) {
+                assertEquals(i, mem.getLong(o));
+                o += 8;
+            }
+
+        }
+    }
+
+    @Test
+    public void testJumpTo3() {
+        try (MemoryPARWImpl mem = new MemoryPARWImpl(11, Integer.MAX_VALUE)) {
+            mem.jumpTo(256);
+            int n = 999;
+            for (int i = n; i > 0; i--) {
+                mem.putLong(i);
+            }
+            long o = 256;
+            for (int i = n; i > 0; i--) {
+                assertEquals(i, mem.getLong(o));
+                o += 8;
+            }
+
+            mem.jumpTo(0);
+            mem.jumpTo(5);
+            mem.jumpTo(0);
+            for (int i = n; i > 0; i--) {
+                mem.putLong(i);
+            }
+
+            o = 0;
+            for (int i = n; i > 0; i--) {
+                assertEquals(i, mem.getLong(o));
+                o += 8;
+            }
+
+        }
+    }
+
+    @Test
+    public void testLong256() {
+        try (MemoryPARWImpl mem = new MemoryPARWImpl(256, Integer.MAX_VALUE)) {
+            mem.putLong256("0xEA674fdDe714fd979de3EdF0F56AA9716B898ec8");
+            mem.putLong256("0xEA674fdDe714fd979de3EdF0F56AA9716B898ec8");
+        }
+    }
+
+    @Test
     public void testLong256Direct() {
         long pageSize = 64;
         Rnd rnd = new Rnd();
         Long256Impl sink = new Long256Impl();
-        try (ContiguousVirtualMemory mem = new ContiguousVirtualMemory(pageSize, Integer.MAX_VALUE)) {
+        try (MemoryPARWImpl mem = new MemoryPARWImpl(pageSize, Integer.MAX_VALUE)) {
             for (int i = 0; i < 1000; i++) {
                 mem.putLong256(rnd.nextLong(), rnd.nextLong(), rnd.nextLong(), rnd.nextLong());
             }
@@ -306,29 +589,58 @@ public class ContiguousVirtualMemoryTest {
     }
 
     @Test
-    public void testLong256Obj() {
+    public void testLong256DirectExternallySequenced() {
         long pageSize = 64;
         Rnd rnd = new Rnd();
-        Long256Impl long256 = new Long256Impl();
-        try (ContiguousVirtualMemory mem = new ContiguousVirtualMemory(pageSize, Integer.MAX_VALUE)) {
+        Long256Impl sink = new Long256Impl();
+        try (MemoryPARWImpl mem = new MemoryPARWImpl(pageSize, Integer.MAX_VALUE)) {
+            long offset = 0;
             for (int i = 0; i < 1000; i++) {
-                long256.setLong0(rnd.nextLong());
-                long256.setLong1(rnd.nextLong());
-                long256.setLong2(rnd.nextLong());
-                long256.setLong3(rnd.nextLong());
-                mem.putLong256(long256);
+                mem.putLong256(offset, rnd.nextLong(), rnd.nextLong(), rnd.nextLong(), rnd.nextLong());
+                offset += Long256.BYTES;
             }
 
             rnd.reset();
-            long offset = 0;
+            offset = 0;
+
             for (int i = 0; i < 1000; i++) {
-                mem.getLong256(offset, long256);
+                mem.getLong256(offset, sink);
                 offset += Long256.BYTES;
-                Assert.assertEquals(rnd.nextLong(), long256.getLong0());
-                Assert.assertEquals(rnd.nextLong(), long256.getLong1());
-                Assert.assertEquals(rnd.nextLong(), long256.getLong2());
-                Assert.assertEquals(rnd.nextLong(), long256.getLong3());
+                Assert.assertEquals(rnd.nextLong(), sink.getLong0());
+                Assert.assertEquals(rnd.nextLong(), sink.getLong1());
+                Assert.assertEquals(rnd.nextLong(), sink.getLong2());
+                Assert.assertEquals(rnd.nextLong(), sink.getLong3());
             }
+        }
+    }
+
+    @Test
+    public void testLong256FullStr() {
+        String expected = "0x5c504ed432cb51138bcf09aa5e8a410dd4a1e204ef84bfed1be16dfba1b22060";
+        long pageSize = 128;
+        Long256Impl long256 = new Long256Impl();
+        Long256Impl long256a = new Long256Impl();
+        try (MemoryPARWImpl mem = new MemoryPARWImpl(pageSize, Integer.MAX_VALUE)) {
+
+            mem.putLong256(expected);
+            mem.putLong256(expected);
+
+            mem.getLong256(0, long256);
+            String actual = "0x" + Long.toHexString(long256.getLong3())
+                    + Long.toHexString(long256.getLong2())
+                    + Long.toHexString(long256.getLong1())
+                    + Long.toHexString(long256.getLong0()
+            );
+
+            Assert.assertEquals(expected, actual);
+            mem.getLong256(Long256.BYTES, long256a);
+
+            String actual2 = "0x" + Long.toHexString(long256a.getLong3())
+                    + Long.toHexString(long256a.getLong2())
+                    + Long.toHexString(long256a.getLong1())
+                    + Long.toHexString(long256a.getLong0()
+            );
+            Assert.assertEquals(expected, actual2);
         }
     }
 
@@ -337,7 +649,7 @@ public class ContiguousVirtualMemoryTest {
         long pageSize = 64;
         final int N = 1000;
         Long256Impl long256 = new Long256Impl();
-        try (ContiguousVirtualMemory mem = new ContiguousVirtualMemory(pageSize, Integer.MAX_VALUE)) {
+        try (MemoryPARWImpl mem = new MemoryPARWImpl(pageSize, Integer.MAX_VALUE)) {
             for (int i = 0; i < N; i++) {
                 mem.putLong256((CharSequence) null);
             }
@@ -358,17 +670,38 @@ public class ContiguousVirtualMemoryTest {
     }
 
     @Test
+    public void testLong256Obj() {
+        long pageSize = 64;
+        Rnd rnd = new Rnd();
+        Long256Impl long256 = new Long256Impl();
+        try (MemoryPARWImpl mem = new MemoryPARWImpl(pageSize, Integer.MAX_VALUE)) {
+            for (int i = 0; i < 1000; i++) {
+                long256.fromRnd(rnd);
+                mem.putLong256(long256);
+            }
+
+            rnd.reset();
+            long offset = 0;
+            for (int i = 0; i < 1000; i++) {
+                mem.getLong256(offset, long256);
+                offset += Long256.BYTES;
+                Assert.assertEquals(rnd.nextLong(), long256.getLong0());
+                Assert.assertEquals(rnd.nextLong(), long256.getLong1());
+                Assert.assertEquals(rnd.nextLong(), long256.getLong2());
+                Assert.assertEquals(rnd.nextLong(), long256.getLong3());
+            }
+        }
+    }
+
+    @Test
     public void testLong256ObjExternallySequenced() {
         long pageSize = 64;
         Rnd rnd = new Rnd();
         long offset = 0;
         Long256Impl long256 = new Long256Impl();
-        try (ContiguousVirtualMemory mem = new ContiguousVirtualMemory(pageSize, Integer.MAX_VALUE)) {
+        try (MemoryPARWImpl mem = new MemoryPARWImpl(pageSize, Integer.MAX_VALUE)) {
             for (int i = 0; i < 1000; i++) {
-                long256.setLong0(rnd.nextLong());
-                long256.setLong1(rnd.nextLong());
-                long256.setLong2(rnd.nextLong());
-                long256.setLong3(rnd.nextLong());
+                long256.fromRnd(rnd);
                 mem.putLong256(offset, long256);
                 offset += Long256.BYTES;
             }
@@ -387,35 +720,12 @@ public class ContiguousVirtualMemoryTest {
     }
 
     @Test
-    public void testLong256FullStr() {
-        String expected = "0x5c504ed432cb51138bcf09aa5e8a410dd4a1e204ef84bfed1be16dfba1b22060";
-        long pageSize = 128;
-        Long256Impl long256 = new Long256Impl();
-        Long256Impl long256a = new Long256Impl();
-        try (ContiguousVirtualMemory mem = new ContiguousVirtualMemory(pageSize, Integer.MAX_VALUE)) {
-
-            mem.putLong256(expected);
-            mem.putLong256(expected);
-
-            mem.getLong256(0, long256);
-            String actual = "0x" + Long.toHexString(long256.getLong3()) + Long.toHexString(long256.getLong2()) + Long.toHexString(long256.getLong1()) + Long.toHexString(long256.getLong0());
-
-            Assert.assertEquals(expected, actual);
-            mem.getLong256(Long256.BYTES, long256a);
-
-            String actual2 = "0x" + Long.toHexString(long256a.getLong3()) + Long.toHexString(long256a.getLong2()) + Long.toHexString(long256a.getLong1()) +
-                    Long.toHexString(long256a.getLong0());
-            Assert.assertEquals(expected, actual2);
-        }
-    }
-
-    @Test
     public void testLong256PartialStr() {
         final String expected = "0x5c504ed432cb51138bcf09aa5e8a410dd4a1e204ef84bfed";
         long pageSize = 128;
         Long256Impl long256 = new Long256Impl();
         Long256Impl long256a = new Long256Impl();
-        try (ContiguousVirtualMemory mem = new ContiguousVirtualMemory(pageSize, Integer.MAX_VALUE)) {
+        try (MemoryPARWImpl mem = new MemoryPARWImpl(pageSize, Integer.MAX_VALUE)) {
             mem.putLong256(expected);
             mem.putLong256(expected);
             mem.getLong256(0, long256);
@@ -470,304 +780,19 @@ public class ContiguousVirtualMemoryTest {
     }
 
     @Test
-    public void testLong256DirectExternallySequenced() {
-        long pageSize = 64;
-        Rnd rnd = new Rnd();
-        Long256Impl sink = new Long256Impl();
-        try (ContiguousVirtualMemory mem = new ContiguousVirtualMemory(pageSize, Integer.MAX_VALUE)) {
-            long offset = 0;
-            for (int i = 0; i < 1000; i++) {
-                mem.putLong256(offset, rnd.nextLong(), rnd.nextLong(), rnd.nextLong(), rnd.nextLong());
-                offset += Long256.BYTES;
-            }
-
-            rnd.reset();
-            offset = 0;
-
-            for (int i = 0; i < 1000; i++) {
-                mem.getLong256(offset, sink);
-                offset += Long256.BYTES;
-                Assert.assertEquals(rnd.nextLong(), sink.getLong0());
-                Assert.assertEquals(rnd.nextLong(), sink.getLong1());
-                Assert.assertEquals(rnd.nextLong(), sink.getLong2());
-                Assert.assertEquals(rnd.nextLong(), sink.getLong3());
-            }
-        }
-    }
-
-    @Test
-    public void testDoubleCompatibility() {
-        long pageSize = 64;
-        try (ContiguousVirtualMemory mem = new ContiguousVirtualMemory(pageSize, Integer.MAX_VALUE)) {
-            mem.putInt(10);
-            mem.putDouble(8980980284.22234);
-            assertEquals(8980980284.22234, mem.getDouble(4), 0.00001);
-        }
-    }
-
-    @Test
-    public void testDoubleRnd() {
-        try (ContiguousVirtualMemory mem = new ContiguousVirtualMemory(11, Integer.MAX_VALUE)) {
-            Rnd rnd = new Rnd();
-            int n = 999;
-
-            long o = 1;
-            mem.putByte((byte) 1);
-
-            for (int i = 0; i < n; i++) {
-                mem.putDouble(o, rnd.nextDouble());
-                o += 8;
-            }
-
-            rnd.reset();
-            o = 1;
-            assertEquals(1, mem.getByte(0));
-            for (int i = 0; i < n; i++) {
-                assertEquals(rnd.nextDouble(), mem.getDouble(o), 0.00001);
-                o += 8;
-            }
-        }
-    }
-
-    @Test
-    public void testDoubleRndCompatibility() {
-        long pageSize = 64;
-        try (ContiguousVirtualMemory mem = new ContiguousVirtualMemory(pageSize, Integer.MAX_VALUE)) {
-            // prime
-            mem.putInt(10, 900);
-            mem.putDouble(22, 8980980284.22234);
-            mem.putDouble(84, 8979283749.72983477);
-            assertEquals(8980980284.22234, mem.getDouble(22), 0.00001);
-            assertEquals(8979283749.72983477, mem.getDouble(84), 0.00001);
-        }
-    }
-
-    @Test
-    public void testEvenPageSize() {
-        try (ContiguousVirtualMemory mem = new ContiguousVirtualMemory(32, Integer.MAX_VALUE)) {
-            assertStrings(mem, false);
-        }
-    }
-
-    @Test
-    public void testFloat() {
-        try (ContiguousVirtualMemory mem = new ContiguousVirtualMemory(11, Integer.MAX_VALUE)) {
-            Rnd rnd = new Rnd();
-            int n = 999;
-
-            mem.putByte((byte) 1);
-
-            for (int i = 0; i < n; i++) {
-                mem.putFloat(rnd.nextFloat());
-            }
-
-            rnd.reset();
-            long o = 1;
-            assertEquals(1, mem.getByte(0));
-            for (int i = 0; i < n; i++) {
-                assertEquals(rnd.nextFloat(), mem.getFloat(o), 0.00001f);
-                o += 4;
-            }
-        }
-    }
-
-    @Test
-    public void testFloatCompatibility() {
-        long pageSize = 64;
-        try (ContiguousVirtualMemory mem = new ContiguousVirtualMemory(pageSize, Integer.MAX_VALUE)) {
-            mem.putFloat(1024f);
-            mem.putFloat(2048f);
-            assertEquals(1024f, mem.getFloat(0), 0.00001f);
-            assertEquals(2048f, mem.getFloat(4), 0.0001f);
-        }
-    }
-
-    @Test
-    public void testFloatRnd() {
-        try (ContiguousVirtualMemory mem = new ContiguousVirtualMemory(11, Integer.MAX_VALUE)) {
-            Rnd rnd = new Rnd();
-            int n = 999;
-
-            long o = 1;
-            mem.putByte((byte) 1);
-
-            for (int i = 0; i < n; i++) {
-                mem.putFloat(o, rnd.nextFloat());
-                o += 4;
-            }
-
-            rnd.reset();
-            o = 1;
-            assertEquals(1, mem.getByte(0));
-            for (int i = 0; i < n; i++) {
-                assertEquals(rnd.nextFloat(), mem.getFloat(o), 0.00001f);
-                o += 4;
-            }
-        }
-    }
-
-    @Test
-    public void testFloatRndCompatibility() {
-        long pageSize = 64;
-        try (ContiguousVirtualMemory mem = new ContiguousVirtualMemory(pageSize, Integer.MAX_VALUE)) {
-            // prime
-            mem.putByte(10, (byte) 5);
-            mem.putFloat(61, 1024f);
-            mem.putFloat(99, 2048f);
-            assertEquals(1024f, mem.getFloat(61), 0.00001f);
-            assertEquals(2048f, mem.getFloat(99), 0.0001f);
-        }
-    }
-
-    @Test
-    public void testInt() {
-        try (ContiguousVirtualMemory mem = new ContiguousVirtualMemory(7, Integer.MAX_VALUE)) {
-            mem.putByte((byte) 1);
-            int n = 999;
-            for (int i = n; i > 0; i--) {
-                mem.putInt(i);
-            }
-
-            long o = 1;
-            assertEquals(1, mem.getByte(0));
-
-            for (int i = n; i > 0; i--) {
-                assertEquals(i, mem.getInt(o));
-                o += 4;
-            }
-        }
-    }
-
-    @Test
-    public void testIntCompatibility() {
-        long pageSize = 64;
-        try (ContiguousVirtualMemory mem = new ContiguousVirtualMemory(pageSize, Integer.MAX_VALUE)) {
-            mem.putInt(1024);
-            mem.putInt(2048);
-            assertEquals(1024, mem.getInt(0));
-            assertEquals(2048, mem.getInt(4));
-        }
-    }
-
-    @Test
-    public void testIntRnd() {
-        try (ContiguousVirtualMemory mem = new ContiguousVirtualMemory(7, Integer.MAX_VALUE)) {
-            long o = 1;
-            mem.putByte(0, (byte) 1);
-            int n = 999;
-            for (int i = n; i > 0; i--) {
-                mem.putInt(o, i);
-                o += 4;
-            }
-
-            o = 1;
-            assertEquals(1, mem.getByte(0));
-
-            for (int i = n; i > 0; i--) {
-                assertEquals(i, mem.getInt(o));
-                o += 4;
-            }
-        }
-    }
-
-    @Test
-    public void testIntRndCompatibility() {
-        long pageSize = 64;
-        try (ContiguousVirtualMemory mem = new ContiguousVirtualMemory(pageSize, Integer.MAX_VALUE)) {
-            // prime page
-            mem.putByte(10, (byte) 22);
-            mem.putInt(15, 1024);
-            mem.putInt(55, 2048);
-            assertEquals(1024, mem.getInt(15));
-            assertEquals(2048, mem.getInt(55));
-        }
-    }
-
-    @Test
-    public void testJumpTo() {
-        try (ContiguousVirtualMemory mem = new ContiguousVirtualMemory(11, Integer.MAX_VALUE)) {
-            mem.putByte((byte) 1);
-            int n = 999;
-            for (int i = n; i > 0; i--) {
-                mem.putLong(i);
-            }
-
-            assertEquals(1, mem.getByte(0));
-
-            mem.jumpTo(1);
-            for (int i = n; i > 0; i--) {
-                mem.putLong(n - i);
-            }
-
-            long o = 1;
-            for (int i = n; i > 0; i--) {
-                assertEquals(n - i, mem.getLong(o));
-                o += 8;
-            }
-        }
-    }
-
-    @Test
-    public void testJumpTo2() {
-        try (ContiguousVirtualMemory mem = new ContiguousVirtualMemory(11, Integer.MAX_VALUE)) {
-            mem.jumpTo(8);
-            int n = 999;
-            for (int i = n; i > 0; i--) {
-                mem.putLong(i);
-            }
-            long o = 8;
-            for (int i = n; i > 0; i--) {
-                assertEquals(i, mem.getLong(o));
-                o += 8;
-            }
-
-        }
-    }
-
-    @Test
-    public void testJumpTo3() {
-        try (ContiguousVirtualMemory mem = new ContiguousVirtualMemory(11, Integer.MAX_VALUE)) {
-            mem.jumpTo(256);
-            int n = 999;
-            for (int i = n; i > 0; i--) {
-                mem.putLong(i);
-            }
-            long o = 256;
-            for (int i = n; i > 0; i--) {
-                assertEquals(i, mem.getLong(o));
-                o += 8;
-            }
-
-            mem.jumpTo(0);
-            mem.jumpTo(5);
-            mem.jumpTo(0);
-            for (int i = n; i > 0; i--) {
-                mem.putLong(i);
-            }
-
-            o = 0;
-            for (int i = n; i > 0; i--) {
-                assertEquals(i, mem.getLong(o));
-                o += 8;
-            }
-
-        }
-    }
-
-    @Test
     public void testLongCompatibility() {
         long pageSize = 64;
-        try (ContiguousVirtualMemory mem = new ContiguousVirtualMemory(pageSize, Integer.MAX_VALUE)) {
+        try (MemoryPARWImpl mem = new MemoryPARWImpl(pageSize, Integer.MAX_VALUE)) {
             mem.putLong(8980980284302834L);
-            mem.putLong(897928374972983477L);
-            assertEquals(8980980284302834L, mem.getLong(0));
+            mem.putLongBytes(897928374972983477L);
+            assertEquals(8980980284302834L, mem.getLongBytes(0, 0, pageSize));
             assertEquals(897928374972983477L, mem.getLong(8));
         }
     }
 
     @Test
     public void testLongEven() {
-        try (ContiguousVirtualMemory mem = new ContiguousVirtualMemory(11, Integer.MAX_VALUE)) {
+        try (MemoryPARWImpl mem = new MemoryPARWImpl(11, Integer.MAX_VALUE)) {
             int n = 999;
             for (int i = n; i > 0; i--) {
                 mem.putLong(i);
@@ -783,7 +808,7 @@ public class ContiguousVirtualMemoryTest {
 
     @Test
     public void testLongOdd() {
-        try (ContiguousVirtualMemory mem = new ContiguousVirtualMemory(11, Integer.MAX_VALUE)) {
+        try (MemoryPARWImpl mem = new MemoryPARWImpl(11, Integer.MAX_VALUE)) {
             mem.putByte((byte) 1);
             int n = 999;
             for (int i = n; i > 0; i--) {
@@ -803,17 +828,17 @@ public class ContiguousVirtualMemoryTest {
     @Test
     public void testLongRndCompatibility() {
         long pageSize = 64;
-        try (ContiguousVirtualMemory mem = new ContiguousVirtualMemory(pageSize, Integer.MAX_VALUE)) {
+        try (MemoryPARWImpl mem = new MemoryPARWImpl(pageSize, Integer.MAX_VALUE)) {
             mem.putLong(33, 8980980284302834L);
-            mem.putLong(12, 897928374972983477L);
-            assertEquals(8980980284302834L, mem.getLong(33));
+            mem.putLongBytes(12, 897928374972983477L);
+            assertEquals(8980980284302834L, mem.getLongBytes(0, 33, pageSize));
             assertEquals(897928374972983477L, mem.getLong(12));
         }
     }
 
     @Test
     public void testLongRndEven() {
-        try (ContiguousVirtualMemory mem = new ContiguousVirtualMemory(11, Integer.MAX_VALUE)) {
+        try (MemoryPARWImpl mem = new MemoryPARWImpl(11, Integer.MAX_VALUE)) {
             int n = 999;
             long o = 0;
             for (int i = n; i > 0; i--) {
@@ -831,7 +856,7 @@ public class ContiguousVirtualMemoryTest {
 
     @Test
     public void testLongRndOdd() {
-        try (ContiguousVirtualMemory mem = new ContiguousVirtualMemory(11, Integer.MAX_VALUE)) {
+        try (MemoryPARWImpl mem = new MemoryPARWImpl(11, Integer.MAX_VALUE)) {
             mem.putByte(0, (byte) 1);
             int n = 999;
             long o = 1;
@@ -851,8 +876,34 @@ public class ContiguousVirtualMemoryTest {
     }
 
     @Test
+    public void testMaxPages() {
+        int pageSize = 256;
+        int maxPages = 3;
+        int sz = 256 * 3;
+        try (MemoryPARWImpl mem = new MemoryPARWImpl(pageSize, maxPages)) {
+            Assert.assertEquals(pageSize, mem.getExtendSegmentSize());
+            int n = 0;
+            try {
+                while (n <= sz) {
+                    mem.putByte((byte) n);
+                    n++;
+                }
+                Assert.fail();
+            } catch (CairoException ex) {
+                Assert.assertTrue(ex.getMessage().contains("breached"));
+            }
+            Assert.assertEquals(sz, n);
+
+            for (n = 0; n < sz; n++) {
+                byte b = mem.getByte(n);
+                Assert.assertEquals((byte) n, b);
+            }
+        }
+    }
+
+    @Test
     public void testNullBin() {
-        try (ContiguousVirtualMemory mem = new ContiguousVirtualMemory(1024, Integer.MAX_VALUE)) {
+        try (MemoryPARWImpl mem = new MemoryPARWImpl(1024, Integer.MAX_VALUE)) {
             final TestBinarySequence binarySequence = new TestBinarySequence();
             final byte[] buf = new byte[0];
             binarySequence.of(buf);
@@ -872,21 +923,21 @@ public class ContiguousVirtualMemoryTest {
 
     @Test
     public void testOffPageSize() {
-        try (ContiguousVirtualMemory mem = new ContiguousVirtualMemory(12, Integer.MAX_VALUE)) {
+        try (MemoryPARWImpl mem = new MemoryPARWImpl(12, Integer.MAX_VALUE)) {
             assertStrings(mem, true);
         }
     }
 
     @Test
     public void testOkSize() {
-        try (ContiguousVirtualMemory mem = new ContiguousVirtualMemory(1024, Integer.MAX_VALUE)) {
+        try (MemoryPARWImpl mem = new MemoryPARWImpl(1024, Integer.MAX_VALUE)) {
             assertStrings(mem, false);
         }
     }
 
     @Test
     public void testShort() {
-        try (ContiguousVirtualMemory mem = new ContiguousVirtualMemory(7, Integer.MAX_VALUE)) {
+        try (MemoryPARWImpl mem = new MemoryPARWImpl(7, Integer.MAX_VALUE)) {
             mem.putByte((byte) 1);
             short n = 999;
             for (short i = n; i > 0; i--) {
@@ -906,17 +957,17 @@ public class ContiguousVirtualMemoryTest {
     @Test
     public void testShortCompatibility() {
         long pageSize = 64;
-        try (ContiguousVirtualMemory mem = new ContiguousVirtualMemory(pageSize, Integer.MAX_VALUE)) {
+        try (MemoryPARWImpl mem = new MemoryPARWImpl(pageSize, Integer.MAX_VALUE)) {
             mem.putShort((short) 1024);
-            mem.putShort((short) 2048);
-            assertEquals(1024, mem.getShort(0));
+            mem.putShortBytes((short) 2048);
+            assertEquals(1024, mem.getShortBytes(0, 0, pageSize));
             assertEquals(2048, mem.getShort(2));
         }
     }
 
     @Test
     public void testShortRnd() {
-        try (ContiguousVirtualMemory mem = new ContiguousVirtualMemory(7, Integer.MAX_VALUE)) {
+        try (MemoryPARWImpl mem = new MemoryPARWImpl(7, Integer.MAX_VALUE)) {
             long o = 1;
             mem.putByte(0, (byte) 1);
             short n = 999;
@@ -938,19 +989,19 @@ public class ContiguousVirtualMemoryTest {
     @Test
     public void testShortRndCompatibility() {
         long pageSize = 64;
-        try (ContiguousVirtualMemory mem = new ContiguousVirtualMemory(pageSize, Integer.MAX_VALUE)) {
+        try (MemoryPARWImpl mem = new MemoryPARWImpl(pageSize, Integer.MAX_VALUE)) {
             // prime the page
             mem.putShort(5, (short) 3);
             mem.putShort(11, (short) 1024);
-            mem.putShort(33, (short) 2048);
-            assertEquals(1024, mem.getShort(11));
+            mem.putShortBytes(33, (short) 2048);
+            assertEquals(1024, mem.getShortBytes(0, 11, pageSize));
             assertEquals(2048, mem.getShort(33));
         }
     }
 
     @Test
     public void testSkip() {
-        try (ContiguousVirtualMemory mem = new ContiguousVirtualMemory(11, Integer.MAX_VALUE)) {
+        try (MemoryPARWImpl mem = new MemoryPARWImpl(11, Integer.MAX_VALUE)) {
             mem.putByte((byte) 1);
             int n = 999;
             for (int i = n; i > 0; i--) {
@@ -971,14 +1022,14 @@ public class ContiguousVirtualMemoryTest {
 
     @Test
     public void testSmallEven() {
-        try (ContiguousVirtualMemory mem = new ContiguousVirtualMemory(2, Integer.MAX_VALUE)) {
+        try (MemoryPARWImpl mem = new MemoryPARWImpl(2, Integer.MAX_VALUE)) {
             assertStrings(mem, false);
         }
     }
 
     @Test
     public void testSmallOdd() {
-        try (ContiguousVirtualMemory mem = new ContiguousVirtualMemory(2, Integer.MAX_VALUE)) {
+        try (MemoryPARWImpl mem = new MemoryPARWImpl(2, Integer.MAX_VALUE)) {
             assertStrings(mem, true);
         }
     }
@@ -1000,26 +1051,26 @@ public class ContiguousVirtualMemoryTest {
 
     @Test
     public void testStringStorageDimensions() {
-        Assert.assertEquals(10, VmUtils.getStorageLength("xyz"));
-        assertEquals(4, VmUtils.getStorageLength(""));
-        assertEquals(4, VmUtils.getStorageLength(null));
+        assertEquals(10, Vm.getStorageLength("xyz"));
+        assertEquals(4, Vm.getStorageLength(""));
+        assertEquals(4, Vm.getStorageLength(null));
     }
 
-    private void assertStrings(ContiguousVirtualMemory mem, boolean b) {
+    private void assertStrings(MemoryPARWImpl mem, boolean b) {
         if (b) {
             mem.putByte((byte) 1);
         }
 
-        Assert.assertEquals(10, VmUtils.getStorageLength("123"));
-        Assert.assertEquals(6, VmUtils.getStorageLength("x"));
+        Assert.assertEquals(10, Vm.getStorageLength("123"));
+        Assert.assertEquals(6, Vm.getStorageLength("x"));
 
         long o1 = mem.putStr("123");
         long o2 = mem.putStr("0987654321abcd");
-        Assert.assertEquals(o2 - o1, VmUtils.getStorageLength("123"));
+        Assert.assertEquals(o2 - o1, Vm.getStorageLength("123"));
         long o3 = mem.putStr(null);
-        Assert.assertEquals(o3 - o2, VmUtils.getStorageLength("0987654321abcd"));
+        Assert.assertEquals(o3 - o2, Vm.getStorageLength("0987654321abcd"));
         long o4 = mem.putStr("xyz123");
-        Assert.assertEquals(o4 - o3, VmUtils.getStorageLength(null));
+        Assert.assertEquals(o4 - o3, Vm.getStorageLength(null));
         long o5 = mem.putNullStr();
         long o6 = mem.putStr("123ohh4", 3, 3);
         long o7 = mem.putStr(null, 0, 2);
@@ -1071,8 +1122,8 @@ public class ContiguousVirtualMemoryTest {
         final long bufAddr = Unsafe.malloc(buffer.length);
         binarySequence.of(buffer);
 
-        try (ContiguousVirtualMemory mem = new ContiguousVirtualMemory(mem1Size, Integer.MAX_VALUE)) {
-            Assert.assertEquals(Numbers.ceilPow2(mem1Size), mem.getMapPageSize());
+        try (MemoryPARWImpl mem = new MemoryPARWImpl(mem1Size, Integer.MAX_VALUE)) {
+            Assert.assertEquals(Numbers.ceilPow2(mem1Size), mem.getExtendSegmentSize());
             long offset1 = 0;
             for (int i = 0; i < n; i++) {
                 long o;
@@ -1097,8 +1148,8 @@ public class ContiguousVirtualMemoryTest {
                 offset1 += 8 + sz;
             }
 
-            try (ContiguousVirtualMemory mem2 = new ContiguousVirtualMemory(mem2Size, Integer.MAX_VALUE)) {
-                Assert.assertEquals(Numbers.ceilPow2(mem2Size), mem2.getMapPageSize());
+            try (MemoryPARWImpl mem2 = new MemoryPARWImpl(mem2Size, Integer.MAX_VALUE)) {
+                Assert.assertEquals(Numbers.ceilPow2(mem2Size), mem2.getExtendSegmentSize());
                 offset1 = 0;
                 for (int i = 0; i < n; i++) {
                     BinarySequence sequence = mem.getBin(offset1);
@@ -1153,7 +1204,7 @@ public class ContiguousVirtualMemoryTest {
         Rnd rnd = new Rnd();
         int N = 1000;
         final int M = 4;
-        try (ContiguousVirtualMemory mem = new ContiguousVirtualMemory(pageSize, Integer.MAX_VALUE)) {
+        try (MemoryPARWImpl mem = new MemoryPARWImpl(pageSize, Integer.MAX_VALUE)) {
             long o = offset;
             for (int i = 0; i < N; i++) {
                 int flag = rnd.nextInt();
@@ -1187,29 +1238,4 @@ public class ContiguousVirtualMemoryTest {
         }
     }
 
-    @Test
-    public void testMaxPages() {
-        int pageSize = 256;
-        int maxPages = 3;
-        int sz = 256 * 3;
-        try (ContiguousVirtualMemory mem = new ContiguousVirtualMemory(pageSize, maxPages)) {
-            Assert.assertEquals(pageSize, mem.getMapPageSize());
-            int n = 0;
-            try {
-                while (n <= sz) {
-                    mem.putByte((byte) n);
-                    n++;
-                }
-                Assert.fail();
-            } catch (CairoException ex) {
-                Assert.assertTrue(ex.getMessage().contains("breached"));
-            }
-            Assert.assertEquals(sz, n);
-
-            for (n = 0; n < sz; n++) {
-                byte b = mem.getByte(n);
-                Assert.assertEquals((byte) n, b);
-            }
-        }
-    }
 }

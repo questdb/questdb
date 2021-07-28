@@ -26,6 +26,7 @@ package io.questdb.cairo.vm;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -34,12 +35,10 @@ import io.questdb.std.str.AbstractCharSequence;
 import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
 
-import java.io.Closeable;
+import static io.questdb.cairo.vm.Vm.STRING_LENGTH_BYTES;
 
-import static io.questdb.cairo.vm.VmUtils.STRING_LENGTH_BYTES;
-
-public class PagedVirtualMemory implements ReadWriteVirtualMemory, Closeable {
-    private static final Log LOG = LogFactory.getLog(PagedVirtualMemory.class);
+public class MemoryPARWImpl implements MemoryARW {
+    private static final Log LOG = LogFactory.getLog(MemoryPARWImpl.class);
     protected final LongList pages = new LongList(4, 0);
     private final ByteSequenceView bsview = new ByteSequenceView();
     private final CharSequenceView csview = new CharSequenceView();
@@ -48,10 +47,10 @@ public class PagedVirtualMemory implements ReadWriteVirtualMemory, Closeable {
     private final Long256Impl long256B = new Long256Impl();
     private final int maxPages;
     private final InPageLong256FromCharSequenceDecoder inPageLong256Decoder = new InPageLong256FromCharSequenceDecoder();
-    private final StradlingPageLong256FromCharSequenceDecoder stradlingPageLong256Decoder = new StradlingPageLong256FromCharSequenceDecoder();
-    private long pageSize;
-    private int bits;
-    private long mod;
+    private final StraddlingPageLong256FromCharSequenceDecoder straddlingPageLong256Decoder = new StraddlingPageLong256FromCharSequenceDecoder();
+    private long extendSegmentSize;
+    private int extendSegmentMsb;
+    private long extendSegmentMod;
     private long appendPointer = -1;
     private long pageHi = -1;
     private long pageLo = -1;
@@ -60,227 +59,38 @@ public class PagedVirtualMemory implements ReadWriteVirtualMemory, Closeable {
     private long roOffsetHi = 0;
     private long absolutePointer;
 
-    public PagedVirtualMemory(long pageSize, int maxPages) {
-        setPageSize(pageSize);
+    public MemoryPARWImpl(long pageSize, int maxPages) {
+        setExtendSegmentSize(pageSize);
         this.maxPages = maxPages;
     }
 
-    protected PagedVirtualMemory() {
+    protected MemoryPARWImpl() {
         maxPages = Integer.MAX_VALUE;
     }
 
-    private static void copyStrChars(CharSequence value, int pos, int len, long address) {
-        for (int i = 0; i < len; i++) {
-            char c = value.charAt(i + pos);
-            Unsafe.getUnsafe().putChar(address + 2L * i, c);
-        }
-    }
-
-    public boolean isMapped(long offset, long size) {
-        int pageIndex = pageIndex(offset);
-        int pageEndIndex = pageIndex(offset + size - 1);
-        if (pageIndex == pageEndIndex) {
-            return getPageAddress(pageIndex) > 0;
-        }
-        return false;
-    }
-
-    public long addressOf(long offset) {
-        if (roOffsetLo < offset && offset < roOffsetHi) {
-            return absolutePointer + offset;
-        }
-        return addressOf0(offset);
-    }
-
-    public void clearHotPage() {
-        roOffsetLo = roOffsetHi = 0;
+    @Override
+    public long appendAddressFor(long bytes) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void close() {
-        clearPages();
-        appendPointer = -1;
-        pageHi = -1;
-        pageLo = -1;
-        baseOffset = 1;
-        clearHotPage();
-    }
-
-    public void clear() {
+        // clear releases all pages but first
+        clear();
         int n = pages.size();
-        if (n > 1) {
-            for (int i = 1; i < n; i++) {
-                release(i, pages.getQuick(i));
-                pages.set(i, 0);
-            }
+        if (n > 0) {
+            release(pages.getQuick(0));
+            pages.setQuick(0, 0);
+            pages.clear();
         }
-        appendPointer = -1;
-        pageHi = -1;
-        pageLo = -1;
-        baseOffset = 1;
-        clearHotPage();
-    }
-
-    public int getPageCount() {
-        return pages.size();
     }
 
     public final long getAppendOffset() {
         return baseOffset + appendPointer;
     }
 
-    @Override
-    public long size() {
-        return getAppendOffset();
-    }
-
-    public final BinarySequence getBin(long offset) {
-        final long len = getLong(offset);
-        if (len == -1) {
-            return null;
-        }
-        return bsview.of(offset + 8, len);
-    }
-
-    public final long getBinLen(long offset) {
-        return getLong(offset);
-    }
-
-    public boolean getBool(long offset) {
-        return getByte(offset) == 1;
-    }
-
-    public final byte getByte(long offset) {
-        if (roOffsetLo < offset && offset < roOffsetHi - 1) {
-            return Unsafe.getUnsafe().getByte(absolutePointer + offset);
-        }
-        return getByte0(offset);
-    }
-
-    public final char getChar(long offset) {
-        if (roOffsetLo < offset && offset < roOffsetHi - Character.BYTES) {
-            return Unsafe.getUnsafe().getChar(absolutePointer + offset);
-        }
-        return getChar0(offset);
-    }
-
-    public final double getDouble(long offset) {
-        if (roOffsetLo < offset && offset < roOffsetHi - Double.BYTES) {
-            return Unsafe.getUnsafe().getDouble(absolutePointer + offset);
-        }
-        return getDouble0(offset);
-    }
-
-    public final float getFloat(long offset) {
-        if (roOffsetLo < offset && offset < roOffsetHi - Float.BYTES) {
-            return Unsafe.getUnsafe().getFloat(absolutePointer + offset);
-        }
-        return getFloat0(offset);
-    }
-
-    public final int getInt(long offset) {
-        if (roOffsetLo < offset && offset < roOffsetHi - Integer.BYTES) {
-            return Unsafe.getUnsafe().getInt(absolutePointer + offset);
-        }
-        return getInt0(offset);
-    }
-
-    public long getLong(long offset) {
-        if (roOffsetLo < offset && offset < roOffsetHi - Long.BYTES) {
-            return Unsafe.getUnsafe().getLong(absolutePointer + offset);
-        }
-        return getLong0(offset);
-    }
-
-    public void getLong256(long offset, CharSink sink) {
-        final long a, b, c, d;
-        if (roOffsetLo < offset && offset < roOffsetHi - Long256.BYTES) {
-            a = Unsafe.getUnsafe().getLong(absolutePointer + offset);
-            b = Unsafe.getUnsafe().getLong(absolutePointer + offset + Long.BYTES);
-            c = Unsafe.getUnsafe().getLong(absolutePointer + offset + Long.BYTES * 2);
-            d = Unsafe.getUnsafe().getLong(absolutePointer + offset + Long.BYTES * 3);
-        } else {
-            a = getLong(offset);
-            b = getLong(offset + Long.BYTES);
-            c = getLong(offset + Long.BYTES * 2);
-            d = getLong(offset + Long.BYTES * 3);
-        }
-        Numbers.appendLong256(a, b, c, d, sink);
-    }
-
-    public void getLong256(long offset, Long256Sink sink) {
-        if (roOffsetLo < offset && offset < roOffsetHi - Long256.BYTES) {
-            sink.setLong0(Unsafe.getUnsafe().getLong(absolutePointer + offset));
-            sink.setLong1(Unsafe.getUnsafe().getLong(absolutePointer + offset + Long.BYTES));
-            sink.setLong2(Unsafe.getUnsafe().getLong(absolutePointer + offset + Long.BYTES * 2));
-            sink.setLong3(Unsafe.getUnsafe().getLong(absolutePointer + offset + Long.BYTES * 3));
-        } else {
-            sink.setLong0(getLong(offset));
-            sink.setLong1(getLong(offset + Long.BYTES));
-            sink.setLong2(getLong(offset + Long.BYTES * 2));
-            sink.setLong3(getLong(offset + Long.BYTES * 3));
-        }
-    }
-
-    public Long256 getLong256A(long offset) {
-        getLong256(offset, long256);
-        return long256;
-    }
-
-    public Long256 getLong256B(long offset) {
-        getLong256(offset, long256B);
-        return long256B;
-    }
-
-    public final short getShort(long offset) {
-        if (roOffsetLo < offset && offset < roOffsetHi - Short.BYTES) {
-            return Unsafe.getUnsafe().getShort(absolutePointer + offset);
-        }
-        return getShort0(offset);
-    }
-
-    public final CharSequence getStr(long offset) {
-        return getStr0(offset, csview);
-    }
-
-    public final CharSequence getStr0(long offset, CharSequenceView view) {
-        final int len = getInt(offset);
-        if (len == TableUtils.NULL_LEN) {
-            return null;
-        }
-
-        if (len == 0) {
-            return "";
-        }
-
-        return view.of(offset + STRING_LENGTH_BYTES, len);
-    }
-
-    public final CharSequence getStr2(long offset) {
-        return getStr0(offset, csview2);
-    }
-
-    public final int getStrLen(long offset) {
-        return getInt(offset);
-    }
-
-    public long hash(long offset, long size) {
-        if (roOffsetLo < offset && offset < roOffsetHi - size) {
-            long n = size - (size % 8);
-            long address = absolutePointer + offset;
-
-            long h = 179426491L;
-            for (long i = 0; i < n; i += 8) {
-                h = (h << 5) - h + Unsafe.getUnsafe().getLong(address + i);
-            }
-
-            for (; n < size; n++) {
-                h = (h << 5) - h + Unsafe.getUnsafe().getByte(address + n);
-            }
-            return h;
-        }
-
-        return hashSlow(offset, size);
+    public long getExtendSegmentSize() {
+        return extendSegmentSize;
     }
 
     /**
@@ -299,10 +109,6 @@ public class PagedVirtualMemory implements ReadWriteVirtualMemory, Closeable {
         } else {
             jumpTo0(offset);
         }
-    }
-
-    public long pageRemaining(long offset) {
-        return getPageSize(pageIndex(offset)) - offsetInPage(offset);
     }
 
     @Override
@@ -324,38 +130,37 @@ public class PagedVirtualMemory implements ReadWriteVirtualMemory, Closeable {
         return offset;
     }
 
-    public void copyTo(long address, long offset, long len) {
-        while (len > 0) {
-            final int page = pageIndex(offset);
-            final long pageSize = getPageSize(page);
-            final long pageAddress = getPageAddress(page);
-            assert pageAddress > 0;
-            final long offsetInPage = offsetInPage(offset);
-            final long bytesToCopy = Math.min(len, pageSize - offsetInPage);
-            Vect.memcpy(pageAddress + offsetInPage, address, bytesToCopy);
-            len -= bytesToCopy;
-            offset += bytesToCopy;
-            address += bytesToCopy;
+    @Override
+    public final long putBin(long from, long len) {
+        final long offset = getAppendOffset();
+        putLong(len > 0 ? len : TableUtils.NULL_LEN);
+        if (len < 1) {
+            return offset;
+        }
+
+        if (len < pageHi - appendPointer) {
+            Vect.memcpy(from, appendPointer, len);
+            appendPointer += len;
+        } else {
+            putBinSlit(from, len);
+        }
+
+        return offset;
+    }
+
+    @Override
+    public final void putBlockOfBytes(long from, long len) {
+        if (len < pageHi - appendPointer) {
+            Vect.memcpy(from, appendPointer, len);
+            appendPointer += len;
+        } else {
+            putBinSlit(from, len);
         }
     }
 
     @Override
     public void putBool(boolean value) {
         putByte((byte) (value ? 1 : 0));
-    }
-
-    @Override
-    public void putBool(long offset, boolean value) {
-        putByte(offset, (byte) (value ? 1 : 0));
-    }
-
-    @Override
-    public final void putByte(long offset, byte value) {
-        if (roOffsetLo < offset && offset < roOffsetHi - 1) {
-            Unsafe.getUnsafe().putByte(absolutePointer + offset, value);
-        } else {
-            putByteRnd(offset, value);
-        }
     }
 
     @Override
@@ -367,30 +172,12 @@ public class PagedVirtualMemory implements ReadWriteVirtualMemory, Closeable {
     }
 
     @Override
-    public void putChar(long offset, char value) {
-        if (roOffsetLo < offset && offset < roOffsetHi - 2) {
-            Unsafe.getUnsafe().putChar(absolutePointer + offset, value);
-        } else {
-            putCharBytes(offset, value);
-        }
-    }
-
-    @Override
     public final void putChar(char value) {
         if (pageHi - appendPointer > 1) {
             Unsafe.getUnsafe().putChar(appendPointer, value);
             appendPointer += 2;
         } else {
             putCharBytes(value);
-        }
-    }
-
-    @Override
-    public void putDouble(long offset, double value) {
-        if (roOffsetLo < offset && offset < roOffsetHi - 8) {
-            Unsafe.getUnsafe().putDouble(absolutePointer + offset, value);
-        } else {
-            putDoubleBytes(offset, value);
         }
     }
 
@@ -405,15 +192,6 @@ public class PagedVirtualMemory implements ReadWriteVirtualMemory, Closeable {
     }
 
     @Override
-    public void putFloat(long offset, float value) {
-        if (roOffsetLo < offset && offset < roOffsetHi - 4) {
-            Unsafe.getUnsafe().putFloat(absolutePointer + offset, value);
-        } else {
-            putFloatBytes(offset, value);
-        }
-    }
-
-    @Override
     public final void putFloat(float value) {
         if (pageHi - appendPointer > 3) {
             Unsafe.getUnsafe().putFloat(appendPointer, value);
@@ -424,30 +202,12 @@ public class PagedVirtualMemory implements ReadWriteVirtualMemory, Closeable {
     }
 
     @Override
-    public void putInt(long offset, int value) {
-        if (roOffsetLo < offset && offset < roOffsetHi - Integer.BYTES) {
-            Unsafe.getUnsafe().putInt(absolutePointer + offset, value);
-        } else {
-            putIntBytes(offset, value);
-        }
-    }
-
-    @Override
     public final void putInt(int value) {
         if (pageHi - appendPointer > 3) {
             Unsafe.getUnsafe().putInt(appendPointer, value);
             appendPointer += 4;
         } else {
             putIntBytes(value);
-        }
-    }
-
-    @Override
-    public void putLong(long offset, long value) {
-        if (roOffsetLo < offset && offset < roOffsetHi - 8) {
-            Unsafe.getUnsafe().putLong(absolutePointer + offset, value);
-        } else {
-            putLongBytes(offset, value);
         }
     }
 
@@ -470,32 +230,6 @@ public class PagedVirtualMemory implements ReadWriteVirtualMemory, Closeable {
         } else {
             putLong(l1);
             putLong(l2);
-        }
-    }
-
-    @Override
-    public void putLong256(long offset, Long256 value) {
-        putLong256(
-                offset,
-                value.getLong0(),
-                value.getLong1(),
-                value.getLong2(),
-                value.getLong3()
-        );
-    }
-
-    @Override
-    public void putLong256(long offset, long l0, long l1, long l2, long l3) {
-        if (roOffsetLo < offset && offset < roOffsetHi - Long256.BYTES) {
-            Unsafe.getUnsafe().putLong(absolutePointer + offset, l0);
-            Unsafe.getUnsafe().putLong(absolutePointer + offset + Long.BYTES, l1);
-            Unsafe.getUnsafe().putLong(absolutePointer + offset + Long.BYTES * 2, l2);
-            Unsafe.getUnsafe().putLong(absolutePointer + offset + Long.BYTES * 3, l3);
-        } else {
-            putLong(offset, l0);
-            putLong(offset + Long.BYTES, l1);
-            putLong(offset + Long.BYTES * 2, l2);
-            putLong(offset + Long.BYTES * 3, l3);
         }
     }
 
@@ -528,7 +262,7 @@ public class PagedVirtualMemory implements ReadWriteVirtualMemory, Closeable {
     @Override
     public final void putLong256(CharSequence hexString) {
         if (pageHi - appendPointer < 4 * Long.BYTES) {
-            stradlingPageLong256Decoder.putLong256(hexString);
+            straddlingPageLong256Decoder.putLong256(hexString);
         } else {
             inPageLong256Decoder.putLong256(hexString);
         }
@@ -537,7 +271,7 @@ public class PagedVirtualMemory implements ReadWriteVirtualMemory, Closeable {
     @Override
     public final void putLong256(@NotNull CharSequence hexString, int start, int end) {
         if (pageHi - appendPointer < 4 * Long.BYTES) {
-            stradlingPageLong256Decoder.putLong256(hexString, start, end);
+            straddlingPageLong256Decoder.putLong256(hexString, start, end);
         } else {
             inPageLong256Decoder.putLong256(hexString, start, end);
         }
@@ -555,30 +289,6 @@ public class PagedVirtualMemory implements ReadWriteVirtualMemory, Closeable {
         final long offset = getAppendOffset();
         putInt(TableUtils.NULL_LEN);
         return offset;
-    }
-
-    @Override
-    public final void putNullStr(long offset) {
-        putInt(offset, TableUtils.NULL_LEN);
-    }
-
-    @Override
-    public final void putBlockOfBytes(long from, long len) {
-        if (len < pageHi - appendPointer) {
-            Vect.memcpy(from, appendPointer, len);
-            appendPointer += len;
-        } else {
-            putBinSlit(from, len);
-        }
-    }
-
-    @Override
-    public void putShort(long offset, short value) {
-        if (roOffsetLo < offset && offset < roOffsetHi - 2) {
-            Unsafe.getUnsafe().putShort(absolutePointer + offset, value);
-        } else {
-            putShortBytes(offset, value);
-        }
     }
 
     @Override
@@ -620,6 +330,142 @@ public class PagedVirtualMemory implements ReadWriteVirtualMemory, Closeable {
         return putStr0(value, pos, len);
     }
 
+    /**
+     * Skips given number of bytes. Same as logically appending 0-bytes. Advantage of this method is that
+     * no memory write takes place.
+     *
+     * @param bytes number of bytes to skip
+     */
+    public void skip(long bytes) {
+        assert bytes >= 0;
+        if (pageHi - appendPointer > bytes) {
+            appendPointer += bytes;
+        } else {
+            skip0(bytes);
+        }
+    }
+
+    @Override
+    public void truncate() {
+        clear();
+    }
+
+    protected final void setExtendSegmentSize(long extendSegmentSize) {
+        clear();
+        this.extendSegmentSize = Numbers.ceilPow2(extendSegmentSize);
+        this.extendSegmentMsb = Numbers.msb(this.extendSegmentSize);
+        this.extendSegmentMod = this.extendSegmentSize - 1;
+    }
+
+    @Override
+    public long appendAddressFor(long offset, long bytes) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void putBlockOfBytes(long offset, long from, long len) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void putBool(long offset, boolean value) {
+        putByte(offset, (byte) (value ? 1 : 0));
+    }
+
+    @Override
+    public final void putByte(long offset, byte value) {
+        if (roOffsetLo < offset && offset < roOffsetHi - 1) {
+            Unsafe.getUnsafe().putByte(absolutePointer + offset, value);
+        } else {
+            putByteRnd(offset, value);
+        }
+    }
+
+    @Override
+    public void putChar(long offset, char value) {
+        if (roOffsetLo < offset && offset < roOffsetHi - 2) {
+            Unsafe.getUnsafe().putChar(absolutePointer + offset, value);
+        } else {
+            putCharBytes(offset, value);
+        }
+    }
+
+    @Override
+    public void putDouble(long offset, double value) {
+        if (roOffsetLo < offset && offset < roOffsetHi - 8) {
+            Unsafe.getUnsafe().putDouble(absolutePointer + offset, value);
+        } else {
+            putDoubleBytes(offset, value);
+        }
+    }
+
+    @Override
+    public void putFloat(long offset, float value) {
+        if (roOffsetLo < offset && offset < roOffsetHi - 4) {
+            Unsafe.getUnsafe().putFloat(absolutePointer + offset, value);
+        } else {
+            putFloatBytes(offset, value);
+        }
+    }
+
+    @Override
+    public void putInt(long offset, int value) {
+        if (roOffsetLo < offset && offset < roOffsetHi - Integer.BYTES) {
+            Unsafe.getUnsafe().putInt(absolutePointer + offset, value);
+        } else {
+            putIntBytes(offset, value);
+        }
+    }
+
+    @Override
+    public void putLong(long offset, long value) {
+        if (roOffsetLo < offset && offset < roOffsetHi - 8) {
+            Unsafe.getUnsafe().putLong(absolutePointer + offset, value);
+        } else {
+            putLongBytes(offset, value);
+        }
+    }
+
+    @Override
+    public void putLong256(long offset, Long256 value) {
+        putLong256(
+                offset,
+                value.getLong0(),
+                value.getLong1(),
+                value.getLong2(),
+                value.getLong3()
+        );
+    }
+
+    @Override
+    public void putLong256(long offset, long l0, long l1, long l2, long l3) {
+        if (roOffsetLo < offset && offset < roOffsetHi - Long256.BYTES) {
+            Unsafe.getUnsafe().putLong(absolutePointer + offset, l0);
+            Unsafe.getUnsafe().putLong(absolutePointer + offset + Long.BYTES, l1);
+            Unsafe.getUnsafe().putLong(absolutePointer + offset + Long.BYTES * 2, l2);
+            Unsafe.getUnsafe().putLong(absolutePointer + offset + Long.BYTES * 3, l3);
+        } else {
+            putLong(offset, l0);
+            putLong(offset + Long.BYTES, l1);
+            putLong(offset + Long.BYTES * 2, l2);
+            putLong(offset + Long.BYTES * 3, l3);
+        }
+    }
+
+    @Override
+    public final void putNullStr(long offset) {
+        putInt(offset, TableUtils.NULL_LEN);
+    }
+
+    @Override
+    public void putShort(long offset, short value) {
+        if (roOffsetLo < offset && offset < roOffsetHi - 2) {
+            Unsafe.getUnsafe().putShort(absolutePointer + offset, value);
+        } else {
+            putShortBytes(offset, value);
+        }
+    }
+
     @Override
     public void putStr(long offset, CharSequence value) {
         if (value == null) {
@@ -639,37 +485,264 @@ public class PagedVirtualMemory implements ReadWriteVirtualMemory, Closeable {
         }
     }
 
-    /**
-     * Skips given number of bytes. Same as logically appending 0-bytes. Advantage of this method is that
-     * no memory write takes place.
-     *
-     * @param bytes number of bytes to skip
-     */
-    public void skip(long bytes) {
-        assert bytes >= 0;
-        if (pageHi - appendPointer > bytes) {
-            appendPointer += bytes;
-        } else {
-            skip0(bytes);
+    @Override
+    public void zero() {
+        throw new UnsupportedOperationException();
+    }
+
+    public void clear() {
+        releaseAllPagesButFirst();
+        appendPointer = -1;
+        pageHi = -1;
+        pageLo = -1;
+        baseOffset = 1;
+        clearHotPage();
+    }
+
+    public void clearHotPage() {
+        roOffsetLo = roOffsetHi = 0;
+    }
+
+    public void copyTo(long address, long offset, long len) {
+        final long pageSize = getPageSize();
+        while (len > 0) {
+            final int page = pageIndex(offset);
+            final long pageAddress = getPageAddress(page);
+            assert pageAddress > 0;
+            final long offsetInPage = offsetInPage(offset);
+            final long bytesToCopy = Math.min(len, pageSize - offsetInPage);
+            Vect.memcpy(pageAddress + offsetInPage, address, bytesToCopy);
+            len -= bytesToCopy;
+            offset += bytesToCopy;
+            address += bytesToCopy;
         }
     }
 
-    @Override
-    public final long putBin(long from, long len) {
-        final long offset = getAppendOffset();
-        putLong(len > 0 ? len : TableUtils.NULL_LEN);
-        if (len < 1) {
-            return offset;
+    public final BinarySequence getBin(long offset) {
+        final long len = getLong(offset);
+        if (len == -1) {
+            return null;
         }
+        return bsview.of(offset + 8, len);
+    }
 
-        if (len < pageHi - appendPointer) {
-            Vect.memcpy(from, appendPointer, len);
-            appendPointer += len;
+    public final long getBinLen(long offset) {
+        return getLong(offset);
+    }
+
+    public boolean getBool(long offset) {
+        return getByte(offset) == 1;
+    }
+
+    public final byte getByte(long offset) {
+        if (roOffsetLo < offset && offset < roOffsetHi - 1) {
+            return Unsafe.getUnsafe().getByte(absolutePointer + offset);
+        }
+        return getByte0(offset);
+    }
+
+    public final double getDouble(long offset) {
+        if (roOffsetLo < offset && offset < roOffsetHi - Double.BYTES) {
+            return Unsafe.getUnsafe().getDouble(absolutePointer + offset);
+        }
+        return getDouble0(offset);
+    }
+
+    public final float getFloat(long offset) {
+        if (roOffsetLo < offset && offset < roOffsetHi - Float.BYTES) {
+            return Unsafe.getUnsafe().getFloat(absolutePointer + offset);
+        }
+        return getFloat0(offset);
+    }
+
+    public final int getInt(long offset) {
+        if (roOffsetLo < offset && offset < roOffsetHi - Integer.BYTES) {
+            return Unsafe.getUnsafe().getInt(absolutePointer + offset);
+        }
+        return getInt0(offset);
+    }
+
+    public long getLong(long offset) {
+        if (roOffsetLo < offset && offset < roOffsetHi - Long.BYTES) {
+            return Unsafe.getUnsafe().getLong(absolutePointer + offset);
+        }
+        return getLong0(offset);
+    }
+
+    /**
+     * Provides address of page for read operations. Memory writes never call this.
+     *
+     * @param page page index, starting from 0
+     * @return native address of page
+     */
+    public long getPageAddress(int page) {
+        if (page < pages.size()) {
+            return pages.getQuick(page);
+        }
+        return 0L;
+    }
+
+    public int getPageCount() {
+        return pages.size();
+    }
+
+    public long getPageSize() {
+        return getExtendSegmentSize();
+    }
+
+    public final short getShort(long offset) {
+        if (roOffsetLo < offset && offset < roOffsetHi - Short.BYTES) {
+            return Unsafe.getUnsafe().getShort(absolutePointer + offset);
+        }
+        return getShort0(offset);
+    }
+
+    public final CharSequence getStr(long offset) {
+        return getStr0(offset, csview);
+    }
+
+    public final CharSequence getStr2(long offset) {
+        return getStr0(offset, csview2);
+    }
+
+    public Long256 getLong256A(long offset) {
+        getLong256(offset, long256);
+        return long256;
+    }
+
+    public void getLong256(long offset, CharSink sink) {
+        final long a, b, c, d;
+        if (roOffsetLo < offset && offset < roOffsetHi - Long256.BYTES) {
+            a = Unsafe.getUnsafe().getLong(absolutePointer + offset);
+            b = Unsafe.getUnsafe().getLong(absolutePointer + offset + Long.BYTES);
+            c = Unsafe.getUnsafe().getLong(absolutePointer + offset + Long.BYTES * 2);
+            d = Unsafe.getUnsafe().getLong(absolutePointer + offset + Long.BYTES * 3);
         } else {
-            putBinSlit(from, len);
+            a = getLong(offset);
+            b = getLong(offset + Long.BYTES);
+            c = getLong(offset + Long.BYTES * 2);
+            d = getLong(offset + Long.BYTES * 3);
+        }
+        Numbers.appendLong256(a, b, c, d, sink);
+    }
+
+    public Long256 getLong256B(long offset) {
+        getLong256(offset, long256B);
+        return long256B;
+    }
+
+    public final char getChar(long offset) {
+        if (roOffsetLo < offset && offset < roOffsetHi - Character.BYTES) {
+            return Unsafe.getUnsafe().getChar(absolutePointer + offset);
+        }
+        return getChar0(offset);
+    }
+
+    public final int getStrLen(long offset) {
+        return getInt(offset);
+    }
+
+    @Override
+    public void extend(long size) {
+        assert size > 0;
+        mapWritePage(pageIndex(size - 1));
+    }
+
+    @Override
+    public long size() {
+        return getAppendOffset();
+    }
+
+    public long addressOf(long offset) {
+        if (roOffsetLo < offset && offset < roOffsetHi) {
+            return absolutePointer + offset;
+        }
+        return addressOf0(offset);
+    }
+
+    @Override
+    public long offsetInPage(long offset) {
+        return offset & extendSegmentMod;
+    }
+
+    @Override
+    public final int pageIndex(long offset) {
+        return (int) (offset >> extendSegmentMsb);
+    }
+
+    @Override
+    public long getGrownLength() {
+        throw new UnsupportedOperationException();
+    }
+
+    public void getLong256(long offset, Long256Acceptor sink) {
+        if (roOffsetLo < offset && offset < roOffsetHi - Long256.BYTES) {
+            sink.setAll(
+                    Unsafe.getUnsafe().getLong(absolutePointer + offset),
+                    Unsafe.getUnsafe().getLong(absolutePointer + offset + Long.BYTES),
+                    Unsafe.getUnsafe().getLong(absolutePointer + offset + Long.BYTES * 2),
+                    Unsafe.getUnsafe().getLong(absolutePointer + offset + Long.BYTES * 3)
+            );
+        } else {
+            sink.setAll(
+                    getLong(offset),
+                    getLong(offset + Long.BYTES),
+                    getLong(offset + Long.BYTES * 2),
+                    getLong(offset + Long.BYTES * 3)
+            );
+        }
+    }
+
+    public final CharSequence getStr0(long offset, CharSequenceView view) {
+        final int len = getInt(offset);
+        if (len == TableUtils.NULL_LEN) {
+            return null;
         }
 
-        return offset;
+        if (len == 0) {
+            return "";
+        }
+
+        return view.of(offset + STRING_LENGTH_BYTES, len);
+    }
+
+    public long hash(long offset, long size) {
+        if (roOffsetLo < offset && offset < roOffsetHi - size) {
+            long n = size - (size % 8);
+            long address = absolutePointer + offset;
+
+            long h = 179426491L;
+            for (long i = 0; i < n; i += 8) {
+                h = (h << 5) - h + Unsafe.getUnsafe().getLong(address + i);
+            }
+
+            for (; n < size; n++) {
+                h = (h << 5) - h + Unsafe.getUnsafe().getByte(address + n);
+            }
+            return h;
+        }
+
+        return hash0(offset, size);
+    }
+
+    public boolean isMapped(long offset, long len) {
+        int pageIndex = pageIndex(offset);
+        int pageEndIndex = pageIndex(offset + len - 1);
+        if (pageIndex == pageEndIndex) {
+            return getPageAddress(pageIndex) > 0;
+        }
+        return false;
+    }
+
+    public long pageRemaining(long offset) {
+        return getPageSize() - offsetInPage(offset);
+    }
+
+    private static void copyStrChars(CharSequence value, int pos, int len, long address) {
+        for (int i = 0; i < len; i++) {
+            char c = value.charAt(i + pos);
+            Unsafe.getUnsafe().putChar(address + 2L * i, c);
+        }
     }
 
     private long addressOf0(long offset) {
@@ -677,26 +750,16 @@ public class PagedVirtualMemory implements ReadWriteVirtualMemory, Closeable {
     }
 
     protected long allocateNextPage(int page) {
-        LOG.debug().$("new page [size=").$(getMapPageSize()).I$();
+        LOG.debug().$("new page [size=").$(getExtendSegmentSize()).I$();
         if (page >= maxPages) {
             throw LimitOverflowException.instance().put("Maximum number of pages (").put(maxPages).put(") breached in VirtualMemory");
         }
-        return Unsafe.malloc(getMapPageSize());
+        return Unsafe.malloc(getExtendSegmentSize());
     }
 
     protected long cachePageAddress(int index, long address) {
         pages.extendAndSet(index, address);
         return address;
-    }
-
-    private void clearPages() {
-        int n = pages.size();
-        if (n > 0) {
-            for (int i = 0; i < n; i++) {
-                release(i, pages.getQuick(i));
-            }
-        }
-        pages.erase();
     }
 
     /**
@@ -706,14 +769,9 @@ public class PagedVirtualMemory implements ReadWriteVirtualMemory, Closeable {
         long pageAddress = getPageAddress(page);
         assert pageAddress > 0;
         roOffsetLo = pageOffset(page) - 1;
-        roOffsetHi = roOffsetLo + getPageSize(page) + 1;
+        roOffsetHi = roOffsetLo + getPageSize() + 1;
         absolutePointer = pageAddress - roOffsetLo - 1;
         return pageAddress;
-    }
-
-    protected void ensurePagesListCapacity(long size) {
-        int capacity = pageIndex(size) + 1;
-        pages.ensureCapacity(capacity);
     }
 
     private byte getByte0(long offset) {
@@ -723,7 +781,7 @@ public class PagedVirtualMemory implements ReadWriteVirtualMemory, Closeable {
     private char getChar0(long offset) {
         int page = pageIndex(offset);
         long pageOffset = offsetInPage(offset);
-        final long pageSize = getPageSize(page);
+        final long pageSize = getPageSize();
 
         if (pageSize - pageOffset > 1) {
             return Unsafe.getUnsafe().getChar(computeHotPage(page) + pageOffset);
@@ -751,7 +809,7 @@ public class PagedVirtualMemory implements ReadWriteVirtualMemory, Closeable {
     private double getDouble0(long offset) {
         int page = pageIndex(offset);
         long pageOffset = offsetInPage(offset);
-        final long pageSize = getPageSize(page);
+        final long pageSize = getPageSize();
 
         if (pageSize - pageOffset > 7) {
             return Unsafe.getUnsafe().getDouble(computeHotPage(page) + pageOffset);
@@ -767,7 +825,7 @@ public class PagedVirtualMemory implements ReadWriteVirtualMemory, Closeable {
         int page = pageIndex(offset);
         long pageOffset = offsetInPage(offset);
 
-        if (getPageSize(page) - pageOffset > 3) {
+        if (getPageSize() - pageOffset > 3) {
             return Unsafe.getUnsafe().getFloat(computeHotPage(page) + pageOffset);
         }
         return getFloatBytes(page, pageOffset);
@@ -781,7 +839,7 @@ public class PagedVirtualMemory implements ReadWriteVirtualMemory, Closeable {
         int page = pageIndex(offset);
         long pageOffset = offsetInPage(offset);
 
-        if (getPageSize(page) - pageOffset > 3) {
+        if (getPageSize() - pageOffset > 3) {
             return Unsafe.getUnsafe().getInt(computeHotPage(page) + pageOffset);
         }
         return getIntBytes(page, pageOffset);
@@ -790,7 +848,7 @@ public class PagedVirtualMemory implements ReadWriteVirtualMemory, Closeable {
     int getIntBytes(int page, long pageOffset) {
         int value = 0;
         long pageAddress = getPageAddress(page);
-        final long pageSize = getPageSize(page);
+        final long pageSize = getPageSize();
 
         for (int i = 0; i < 4; i++) {
             if (pageOffset == pageSize) {
@@ -806,7 +864,7 @@ public class PagedVirtualMemory implements ReadWriteVirtualMemory, Closeable {
     private long getLong0(long offset) {
         int page = pageIndex(offset);
         long pageOffset = offsetInPage(offset);
-        final long pageSize = getPageSize(page);
+        final long pageSize = getPageSize();
 
         if (pageSize - pageOffset > 7) {
             return Unsafe.getUnsafe().getLong(computeHotPage(page) + pageOffset);
@@ -829,31 +887,10 @@ public class PagedVirtualMemory implements ReadWriteVirtualMemory, Closeable {
         return value;
     }
 
-    public long getMapPageSize() {
-        return pageSize;
-    }
-
-    /**
-     * Provides address of page for read operations. Memory writes never call this.
-     *
-     * @param page page index, starting from 0
-     * @return native address of page
-     */
-    public long getPageAddress(int page) {
-        if (page < pages.size()) {
-            return pages.getQuick(page);
-        }
-        return 0L;
-    }
-
-    public long getPageSize(int page) {
-        return getMapPageSize();
-    }
-
     private short getShort0(long offset) {
         int page = pageIndex(offset);
         long pageOffset = offsetInPage(offset);
-        final long pageSize = getPageSize(page);
+        final long pageSize = getPageSize();
 
         if (pageSize - pageOffset > 1) {
             return Unsafe.getUnsafe().getShort(computeHotPage(page) + pageOffset);
@@ -879,28 +916,10 @@ public class PagedVirtualMemory implements ReadWriteVirtualMemory, Closeable {
         return value;
     }
 
-    private long hashSlow(long offset, long size) {
-        long n = size - (size & 7);
-        long h = 179426491L;
-        for (long i = 0; i < n; i += 8) {
-            h = (h << 5) - h + getLong(offset + i);
-        }
-
-        for (; n < size; n++) {
-            h = (h << 5) - h + getByte(offset + n);
-        }
-        return h;
-    }
-
-    @Override
-    public void grow(long size) {
-        jumpTo(size);
-    }
-
     private void jumpTo0(long offset) {
         int page = pageIndex(offset);
         pageLo = mapWritePage(page);
-        pageHi = pageLo + getPageSize(page);
+        pageHi = pageLo + getPageSize();
         baseOffset = pageOffset(page + 1) - pageHi;
         appendPointer = pageLo + offsetInPage(offset);
         pageLo--;
@@ -911,7 +930,7 @@ public class PagedVirtualMemory implements ReadWriteVirtualMemory, Closeable {
         long pageAddress = mapWritePage(page);
         assert pageAddress != 0;
         roOffsetLo = pageOffset(page) - 1;
-        roOffsetHi = roOffsetLo + getPageSize(page) + 1;
+        roOffsetHi = roOffsetLo + getPageSize() + 1;
         absolutePointer = pageAddress - roOffsetLo - 1;
         return pageAddress;
     }
@@ -927,21 +946,13 @@ public class PagedVirtualMemory implements ReadWriteVirtualMemory, Closeable {
         return cachePageAddress(page, allocateNextPage(page));
     }
 
-    public long offsetInPage(long offset) {
-        return offset & mod;
-    }
-
     private void pageAt(long offset) {
         int page = pageIndex(offset);
         updateLimits(page, mapWritePage(page));
     }
 
-    public final int pageIndex(long offset) {
-        return (int) (offset >> bits);
-    }
-
     protected final long pageOffset(int page) {
-        return ((long) page << bits);
+        return ((long) page << extendSegmentMsb);
     }
 
     private void putBin0(BinarySequence value, long len, long remaining) {
@@ -965,15 +976,20 @@ public class PagedVirtualMemory implements ReadWriteVirtualMemory, Closeable {
         value.copyTo(appendPointer, pos, len);
     }
 
-    public void zero() {
-        for (int i = 0, n = pages.size(); i < n; i++) {
-            long address = pages.getQuick(i);
-            if (address == 0) {
-                address = allocateNextPage(i);
-                pages.setQuick(i, address);
+    private void putBinSlit(long start, long len) {
+        do {
+            int half = (int) (pageHi - appendPointer);
+            if (len <= half) {
+                Vect.memcpy(start, appendPointer, len);
+                appendPointer += len;
+                break;
             }
-            Vect.memset(address, pageSize, 0);
-        }
+
+            Vect.memcpy(start, appendPointer, half);
+            pageAt(getAppendOffset() + half);  // +1?
+            len -= half;
+            start += half;
+        } while (true);
     }
 
     private void putByteRnd(long offset, byte value) {
@@ -1108,18 +1124,21 @@ public class PagedVirtualMemory implements ReadWriteVirtualMemory, Closeable {
         }
     }
 
-    protected void release(int page, long address) {
+    protected void release(long address) {
         if (address != 0) {
-            Unsafe.free(address, getPageSize(page));
+            Unsafe.free(address, getPageSize());
         }
     }
 
-    protected final void setPageSize(long pageSize) {
-        clearPages();
-        this.pageSize = Numbers.ceilPow2(pageSize);
-        this.bits = Numbers.msb(this.pageSize);
-        this.mod = this.pageSize - 1;
-        clearHotPage();
+    protected void releaseAllPagesButFirst() {
+        final int n = pages.size();
+        for (int i = 1; i < n; i++) {
+            release(pages.getQuick(i));
+            pages.setQuick(i, 0);
+        }
+        if (n > 0) {
+            pages.setPos(1);
+        }
     }
 
     private void skip0(long bytes) {
@@ -1128,7 +1147,7 @@ public class PagedVirtualMemory implements ReadWriteVirtualMemory, Closeable {
 
     protected final void updateLimits(int page, long pageAddress) {
         pageLo = pageAddress - 1;
-        pageHi = pageAddress + getPageSize(page);
+        pageHi = pageAddress + getPageSize();
         baseOffset = pageOffset(page + 1) - pageHi;
         this.appendPointer = pageAddress;
     }
@@ -1144,7 +1163,7 @@ public class PagedVirtualMemory implements ReadWriteVirtualMemory, Closeable {
 
         @Override
         public char charAt(int index) {
-            return PagedVirtualMemory.this.getChar(offset + index * 2L);
+            return getChar(offset + index * 2L);
         }
 
         CharSequenceView of(long offset, int len) {
@@ -1175,12 +1194,19 @@ public class PagedVirtualMemory implements ReadWriteVirtualMemory, Closeable {
 
         @Override
         public void copyTo(long address, final long start, final long length) {
-            PagedVirtualMemory.this.copyTo(address, this.offset + start, Math.min(length, this.len - start));
+            MemoryPARWImpl.this.copyTo(address, this.offset + start, Math.min(length, this.len - start));
         }
 
         @Override
         public long length() {
             return len;
+        }
+
+        private void calculateBlobAddress(long offset) {
+            final int page = pageIndex(offset);
+            final long pa = getPageAddress(page);
+            this.readAddress = pa + offsetInPage(offset);
+            this.readLimit = pa + getPageSize();
         }
 
         ByteSequenceView of(long offset, long len) {
@@ -1191,36 +1217,21 @@ public class PagedVirtualMemory implements ReadWriteVirtualMemory, Closeable {
             return this;
         }
 
-        private void calculateBlobAddress(long offset) {
-            final int page = pageIndex(offset);
-            final long pa = getPageAddress(page);
-            this.readAddress = pa + offsetInPage(offset);
-            this.readLimit = pa + getPageSize(page);
-        }
-
         private byte updatePosAndGet(long index) {
             calculateBlobAddress(this.offset + index);
             return Unsafe.getUnsafe().getByte(readAddress++);
         }
     }
 
-    private void putBinSlit(long start, long len) {
-        do {
-            int half = (int) (pageHi - appendPointer);
-            if (len <= half) {
-                Vect.memcpy(start, appendPointer, len);
-                appendPointer += len;
-                break;
-            }
-
-            Vect.memcpy(start, appendPointer, half);
-            pageAt(getAppendOffset() + half);  // +1?
-            len -= half;
-            start += half;
-        } while (true);
-    }
-
     private class InPageLong256FromCharSequenceDecoder extends Long256FromCharSequenceDecoder {
+        @Override
+        public void setAll(long l0, long l1, long l2, long l3) {
+            Unsafe.getUnsafe().putLong(appendPointer, l0);
+            Unsafe.getUnsafe().putLong(appendPointer + 8, l1);
+            Unsafe.getUnsafe().putLong(appendPointer + 16, l2);
+            Unsafe.getUnsafe().putLong(appendPointer + 24, l3);
+        }
+
         private void putLong256(CharSequence hexString) {
             final int len;
             if (hexString == null || (len = hexString.length()) == 0) {
@@ -1229,14 +1240,6 @@ public class PagedVirtualMemory implements ReadWriteVirtualMemory, Closeable {
             } else {
                 putLong256(hexString, 2, len);
             }
-        }
-
-        @Override
-        public void onDecoded(long l0, long l1, long l2, long l3) {
-            Unsafe.getUnsafe().putLong(appendPointer, l0);
-            Unsafe.getUnsafe().putLong(appendPointer + 8, l1);
-            Unsafe.getUnsafe().putLong(appendPointer + 16, l2);
-            Unsafe.getUnsafe().putLong(appendPointer + 24, l3);
         }
 
         private void putLong256(CharSequence hexString, int start, int end) {
@@ -1249,7 +1252,15 @@ public class PagedVirtualMemory implements ReadWriteVirtualMemory, Closeable {
         }
     }
 
-    private class StradlingPageLong256FromCharSequenceDecoder extends Long256FromCharSequenceDecoder {
+    private class StraddlingPageLong256FromCharSequenceDecoder extends Long256FromCharSequenceDecoder {
+        @Override
+        public void setAll(long l0, long l1, long l2, long l3) {
+            putLong(l0);
+            putLong(l1);
+            putLong(l2);
+            putLong(l3);
+        }
+
         private void putLong256(CharSequence hexString) {
             final int len;
             if (hexString == null || (len = hexString.length()) == 0) {
@@ -1260,14 +1271,6 @@ public class PagedVirtualMemory implements ReadWriteVirtualMemory, Closeable {
             } else {
                 putLong256(hexString, 2, len);
             }
-        }
-
-        @Override
-        public void onDecoded(long l0, long l1, long l2, long l3) {
-            putLong(l0);
-            putLong(l1);
-            putLong(l2);
-            putLong(l3);
         }
 
         private void putLong256(CharSequence hexString, int start, int end) {

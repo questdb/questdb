@@ -1,20 +1,13 @@
 package io.questdb.cutlass.line.tcp;
 
-import io.questdb.cairo.vm.MappedReadOnlyMemory;
-import io.questdb.cairo.vm.SinglePageMappedReadOnlyPageMemory;
-import org.junit.Assert;
-import org.junit.Test;
-
-import io.questdb.cairo.AbstractCairoTest;
-import io.questdb.cairo.CairoTestUtils;
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.PartitionBy;
-import io.questdb.cairo.TableModel;
-import io.questdb.cairo.TableUtils;
-import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.*;
 import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
+import org.junit.Test;
 
 public class SymbolCacheTest extends AbstractCairoTest {
     @Test
@@ -22,22 +15,22 @@ public class SymbolCacheTest extends AbstractCairoTest {
         String tableName = "tb1";
         TestUtils.assertMemoryLeak(() -> {
             try (Path path = new Path();
-                    TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY)
-                            .col("symCol1", ColumnType.SYMBOL)
-                            .col("symCol2", ColumnType.SYMBOL);
-                    SymbolCache cache = new SymbolCache()
+                 TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY)
+                         .col("symCol1", ColumnType.SYMBOL)
+                         .col("symCol2", ColumnType.SYMBOL);
+                 SymbolCache cache = new SymbolCache()
             ) {
                 CairoTestUtils.create(model);
                 try (
                         TableWriter writer = new TableWriter(configuration, tableName);
-                        MappedReadOnlyMemory txMem = new SinglePageMappedReadOnlyPageMemory()
+                        MemoryMR txMem = Vm.getMRInstance()
                 ) {
                     int symColIndex1 = writer.getColumnIndex("symCol1");
                     int symColIndex2 = writer.getColumnIndex("symCol2");
                     long symCountOffset = TableUtils.getSymbolWriterIndexOffset(symColIndex2);
                     long transientSymCountOffset = TableUtils.getSymbolWriterTransientIndexOffset(symColIndex2);
                     path.of(configuration.getRoot()).concat(tableName);
-                    txMem.of(configuration.getFilesFacade(), path.concat(TableUtils.TXN_FILE_NAME).$(), configuration.getFilesFacade().getPageSize(),
+                    txMem.partialFile(configuration.getFilesFacade(), path.concat(TableUtils.TXN_FILE_NAME).$(),
                             transientSymCountOffset + Integer.BYTES);
                     cache.of(configuration, path.of(configuration.getRoot()).concat(tableName), "symCol2", symColIndex2);
 
@@ -116,7 +109,7 @@ public class SymbolCacheTest extends AbstractCairoTest {
                     symCountOffset = TableUtils.getSymbolWriterIndexOffset(symColIndex2);
                     transientSymCountOffset = TableUtils.getSymbolWriterTransientIndexOffset(symColIndex2);
                     path.of(configuration.getRoot()).concat(tableName);
-                    txMem.of(configuration.getFilesFacade(), path.concat(TableUtils.TXN_FILE_NAME).$(), configuration.getFilesFacade().getPageSize(),
+                    txMem.partialFile(configuration.getFilesFacade(), path.concat(TableUtils.TXN_FILE_NAME).$(),
                             transientSymCountOffset + Integer.BYTES);
                     cache.of(configuration, path.of(configuration.getRoot()).concat(tableName), "symCol2", symColIndex2);
 

@@ -22,22 +22,20 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.vm;
+package io.questdb.cairo.vm.api;
 
-import io.questdb.std.FilesFacade;
-import io.questdb.std.str.LPSZ;
+import io.questdb.cairo.vm.MemoryPMAImpl;
 
-import java.io.Closeable;
+public interface MemoryMAR extends MemoryMA, MemoryMR, MemoryR {
 
-public interface Mappable extends Closeable {
     @Override
-    void close();
+    default long getAppendAddress() {
+        long appendOffset = getAppendOffset();
+        return getPageAddress(pageIndex(appendOffset)) + offsetInPage(appendOffset);
+    }
 
-    void of(FilesFacade ff, LPSZ name, long pageSize, long size);
-
-    void of(FilesFacade ff, LPSZ name, long pageSize);
-
-    boolean isDeleted();
-
-    long getFd();
+    @Override
+    default long getAppendAddressSize() {
+        return getPageSize() - offsetInPage(getAppendOffset());
+    }
 }

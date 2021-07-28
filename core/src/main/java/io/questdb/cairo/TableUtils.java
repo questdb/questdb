@@ -25,7 +25,8 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.sql.SymbolTable;
-import io.questdb.cairo.vm.*;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.*;
 import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -119,9 +120,15 @@ public final class TableUtils {
     private TableUtils() {
     }
 
+    public static void allocateDiskSpace(FilesFacade ff, long fd, long size) {
+        if (ff.length(fd) < size && !ff.allocate(fd, size)) {
+            throw CairoException.instance(ff.errno()).put("No space left [size=").put(size).put(", fd=").put(fd).put(']');
+        }
+    }
+
     public static void createTable(
             FilesFacade ff,
-            AppendOnlyVirtualMemory memory,
+            MemoryMARW memory,
             Path path,
             @Transient CharSequence root,
             TableStructure structure,
@@ -133,7 +140,7 @@ public final class TableUtils {
 
     public static void createTable(
             FilesFacade ff,
-            AppendOnlyVirtualMemory memory,
+            MemoryMARW memory,
             Path path,
             @Transient CharSequence root,
             TableStructure structure,
@@ -151,8 +158,9 @@ public final class TableUtils {
         final int rootLen = path.length();
 
         final long dirFd = !ff.isRestrictedFileSystem() ? TableUtils.openRO(ff, path.$(), LOG) : 0;
-        try (AppendOnlyVirtualMemory mem = memory) {
-            mem.of(ff, path.trimTo(rootLen).concat(META_FILE_NAME).$(), ff.getPageSize());
+        try (MemoryMARW mem = memory) {
+            mem.smallFile(ff, path.trimTo(rootLen).concat(META_FILE_NAME).$());
+            mem.jumpTo(0);
             final int count = structure.getColumnCount();
             path.trimTo(rootLen);
             mem.putInt(count);
@@ -198,7 +206,7 @@ public final class TableUtils {
                     symbolMapCount++;
                 }
             }
-            mem.of(ff, path.trimTo(rootLen).concat(TXN_FILE_NAME).$(), ff.getPageSize());
+            mem.smallFile(ff, path.trimTo(rootLen).concat(TXN_FILE_NAME).$());
             TableUtils.resetTxn(mem, symbolMapCount, 0L, INITIAL_TXN, 0L);
             resetTodoLog(ff, path, rootLen, mem);
             // allocate txn scoreboard
@@ -238,7 +246,7 @@ public final class TableUtils {
         return META_OFFSET_COLUMN_TYPES + columnCount * META_COLUMN_DATA_SIZE;
     }
 
-    public static int getColumnType(ReadOnlyVirtualMemory metaMem, int columnIndex) {
+    public static int getColumnType(MemoryR metaMem, int columnIndex) {
         return metaMem.getByte(META_OFFSET_COLUMN_TYPES + columnIndex * META_COLUMN_DATA_SIZE);
     }
 
@@ -367,13 +375,64 @@ public final class TableUtils {
         path.put(".lock").$();
     }
 
-    public static long mapRWOrClose(FilesFacade ff, LPSZ path, long fd, long size) {
-        final long mem = ff.mmap(fd, size, 0, Files.MAP_RW);
-        if (mem == -1) {
-            ff.close(fd);
-            throw CairoException.instance(ff.errno()).put("Could not mmap [file=").put(path).put(']');
+    public static long mapRO(FilesFacade ff, long fd, long size) {
+        return mapRO(ff, fd, size, 0);
+    }
+
+    public static long mapRO(FilesFacade ff, long fd, long size, long offset) {
+        final long address = ff.mmap(fd, size, offset, Files.MAP_RO);
+        if (address == FilesFacade.MAP_FAILED) {
+            throw CairoException.instance(ff.errno())
+                    .put("could not mmap ")
+                    .put(" [size=").put(size)
+                    .put(", fd=").put(fd)
+                    .put(", memUsed=").put(Unsafe.getMemUsed())
+                    .put(", fileLen=").put(ff.length(fd))
+                    .put(']');
         }
-        return mem;
+        return address;
+    }
+
+    public static long mapRW(FilesFacade ff, long fd, long size) {
+        return mapRW(ff, fd, size, 0);
+    }
+
+    public static long mapRW(FilesFacade ff, long fd, long size, long offset) {
+        allocateDiskSpace(ff, fd, size + offset);
+        long addr = ff.mmap(fd, size, offset, Files.MAP_RW);
+        if (addr > -1) {
+            return addr;
+        }
+        throw CairoException.instance(ff.errno()).put("could not mmap column [fd=").put(fd).put(", size=").put(size).put(']');
+    }
+
+    public static long mapRWOrClose(FilesFacade ff, long fd, long size) {
+        try {
+            return TableUtils.mapRW(ff, fd, size);
+        } catch (CairoException e) {
+            ff.close(fd);
+            throw e;
+        }
+    }
+
+    public static long mremap(
+            FilesFacade ff,
+            long fd,
+            long prevAddress,
+            long prevSize,
+            long newSize,
+            int mapMode
+    ) {
+        final long page = ff.mremap(fd, prevAddress, prevSize, newSize, 0, mapMode);
+        if (page == FilesFacade.MAP_FAILED) {
+            int errno = ff.errno();
+            // Closing memory will truncate size to current append offset.
+            // Since the failed resize can occur before append offset can be
+            // explicitly set, we must assume that file size should be
+            // equal to previous memory size
+            throw CairoException.instance(errno).put("could not remap file [previousSize=").put(prevSize).put(", newSize=").put(newSize).put(", fd=").put(fd).put(']');
+        }
+        return page;
     }
 
     public static void oldPartitionName(Path path, long txn) {
@@ -393,14 +452,24 @@ public final class TableUtils {
         throw CairoException.instance(ff.errno()).put("could not open read-only [file=").put(path).put(']');
     }
 
+    public static long openRW(FilesFacade ff, LPSZ path, Log log) {
+        final long fd = ff.openRW(path);
+        if (fd > -1) {
+            log.debug().$("open [file=").$(path).$(", fd=").$(fd).$(']').$();
+            return fd;
+        }
+        throw CairoException.instance(ff.errno()).put("could not open read-write [file=").put(path).put(']');
+    }
+
     public static void renameOrFail(FilesFacade ff, Path src, Path dst) {
         if (!ff.rename(src, dst)) {
             throw CairoException.instance(ff.errno()).put("could not rename ").put(src).put(" -> ").put(dst);
         }
     }
 
-    public static void resetTodoLog(FilesFacade ff, Path path, int rootLen, MappedReadWriteMemory mem) {
-        mem.of(ff, path.trimTo(rootLen).concat(TODO_FILE_NAME).$(), ff.getPageSize());
+    public static void resetTodoLog(FilesFacade ff, Path path, int rootLen, MemoryMARW mem) {
+        mem.smallFile(ff, path.trimTo(rootLen).concat(TODO_FILE_NAME).$());
+        mem.jumpTo(0);
         mem.putLong(24, 0); // txn check
         Unsafe.getUnsafe().storeFence();
         mem.putLong(8, 0); // hashLo
@@ -408,10 +477,10 @@ public final class TableUtils {
         Unsafe.getUnsafe().storeFence();
         mem.putLong(0, 0); // txn
         mem.putLong(32, 0); // count
-        mem.setSize(40);
+        mem.jumpTo(40);
     }
 
-    public static void resetTxn(PagedVirtualMemory txMem, int symbolMapCount, long txn, long dataVersion, long partitionTableVersion) {
+    public static void resetTxn(MemoryMW txMem, int symbolMapCount, long txn, long dataVersion, long partitionTableVersion) {
         // txn to let readers know table is being reset
         txMem.putLong(TX_OFFSET_TXN, txn);
         Unsafe.getUnsafe().storeFence();
@@ -448,7 +517,7 @@ public final class TableUtils {
 
         // make sure we put append pointer behind our data so that
         // files does not get truncated when closing
-        txMem.jumpTo(getPartitionTableIndexOffset(symbolMapCount, 0));
+        txMem.setTruncateSize(getPartitionTableIndexOffset(symbolMapCount, 0));
     }
 
     /**
@@ -527,7 +596,7 @@ public final class TableUtils {
         }
     }
 
-    public static void validate(FilesFacade ff, MappedReadOnlyMemory metaMem, LowerCaseCharSequenceIntHashMap nameIndex) {
+    public static void validate(FilesFacade ff, MemoryMR metaMem, LowerCaseCharSequenceIntHashMap nameIndex) {
         try {
             final int metaVersion = metaMem.getInt(TableUtils.META_OFFSET_VERSION);
             if (ColumnType.VERSION != metaVersion && metaVersion != 404) {
@@ -580,7 +649,7 @@ public final class TableUtils {
                 }
 
                 if (nameIndex.put(name, i)) {
-                    offset += VmUtils.getStorageLength(name);
+                    offset += Vm.getStorageLength(name);
                 } else {
                     throw validationException(metaMem).put("Duplicate column: ").put(name).put(" at [").put(i).put(']');
                 }
@@ -627,7 +696,7 @@ public final class TableUtils {
         try {
             //noinspection SuspiciousNameCombination
             Unsafe.getUnsafe().putLong(tempBuf, columnTop);
-            O3Utils.allocateDiskSpace(ff, fd, Long.BYTES);
+            allocateDiskSpace(ff, fd, Long.BYTES);
             if (ff.write(fd, tempBuf, Long.BYTES, 0) != Long.BYTES) {
                 throw CairoException.instance(ff.errno()).put("could not write top file [path=").put(path).put(']');
             }
@@ -684,23 +753,23 @@ public final class TableUtils {
         return path.concat(columnName).put(FILE_SUFFIX_I).$();
     }
 
-    static long getColumnFlags(ReadOnlyVirtualMemory metaMem, int columnIndex) {
+    static long getColumnFlags(MemoryR metaMem, int columnIndex) {
         return metaMem.getLong(META_OFFSET_COLUMN_TYPES + columnIndex * META_COLUMN_DATA_SIZE + 1);
     }
 
-    static boolean isColumnIndexed(ReadOnlyVirtualMemory metaMem, int columnIndex) {
+    static boolean isColumnIndexed(MemoryR metaMem, int columnIndex) {
         return (getColumnFlags(metaMem, columnIndex) & META_FLAG_BIT_INDEXED) != 0;
     }
 
-    static boolean isSequential(ReadOnlyVirtualMemory metaMem, int columnIndex) {
+    static boolean isSequential(MemoryR metaMem, int columnIndex) {
         return (getColumnFlags(metaMem, columnIndex) & META_FLAG_BIT_SEQUENTIAL) != 0;
     }
 
-    static int getIndexBlockCapacity(ReadOnlyVirtualMemory metaMem, int columnIndex) {
+    static int getIndexBlockCapacity(MemoryR metaMem, int columnIndex) {
         return metaMem.getInt(META_OFFSET_COLUMN_TYPES + columnIndex * META_COLUMN_DATA_SIZE + 9);
     }
 
-    static int openMetaSwapFile(FilesFacade ff, AppendOnlyVirtualMemory mem, Path path, int rootLen, int retryCount) {
+    static int openMetaSwapFile(FilesFacade ff, MemoryMA mem, Path path, int rootLen, int retryCount) {
         try {
             path.concat(META_SWAP_FILE_NAME).$();
             int l = path.length();
@@ -713,7 +782,8 @@ public final class TableUtils {
 
                 if (!ff.exists(path) || ff.remove(path)) {
                     try {
-                        mem.of(ff, path, ff.getPageSize());
+                        mem.smallFile(ff, path);
+                        mem.jumpTo(0);
                         return index;
                     } catch (CairoException e) {
                         // right, cannot open file for some reason?
@@ -735,20 +805,20 @@ public final class TableUtils {
         }
     }
 
-    static void openMetaSwapFileByIndex(FilesFacade ff, AppendOnlyVirtualMemory mem, Path path, int rootLen, int swapIndex) {
+    static void openMetaSwapFileByIndex(FilesFacade ff, MemoryMA mem, Path path, int rootLen, int swapIndex) {
         try {
             path.concat(META_SWAP_FILE_NAME);
             if (swapIndex > 0) {
                 path.put('.').put(swapIndex);
             }
             path.$();
-            mem.of(ff, path, ff.getPageSize());
+            mem.smallFile(ff, path);
         } finally {
             path.trimTo(rootLen);
         }
     }
 
-    private static CairoException validationException(MappedReadOnlyMemory mem) {
+    private static CairoException validationException(MemoryMR mem) {
         return CairoException.instance(0).put("Invalid metadata at fd=").put(mem.getFd()).put(". ");
     }
 
@@ -808,6 +878,12 @@ public final class TableUtils {
         }
     }
 
+    static void createDirsOrFail(FilesFacade ff, Path path, int mkDirMode) {
+        if (ff.mkdirs(path, mkDirMode) != 0) {
+            throw CairoException.instance(ff.errno()).put("could not create directories [file=").put(path).put(']');
+        }
+    }
+
     // Scans timestamp file
     // returns size of partition detected, e.g. size of monotonic increase
     // of timestamp longs read from 0 offset to the end of the file
@@ -819,10 +895,7 @@ public final class TableUtils {
                 final long fd = TableUtils.openRO(ff, path, LOG);
                 try {
                     long fileSize = ff.length(fd);
-                    long mappedMem = ff.mmap(fd, fileSize, 0, Files.MAP_RO);
-                    if (mappedMem < 0) {
-                        throw CairoException.instance(ff.errno()).put("Cannot map: ").put(path);
-                    }
+                    long mappedMem = mapRO(ff, fd, fileSize);
                     try {
                         long minTimestamp;
                         long maxTimestamp = timestamp;
@@ -857,28 +930,8 @@ public final class TableUtils {
         }
     }
 
-    static void createDirsOrFail(FilesFacade ff, Path path, int mkDirMode) {
-        if (ff.mkdirs(path, mkDirMode) != 0) {
-            throw CairoException.instance(ff.errno()).put("could not create directories [file=").put(path).put(']');
-        }
-    }
-
-    static long openRW(FilesFacade ff, LPSZ path, Log log) {
-        final long fd = ff.openRW(path);
-        if (fd > -1) {
-            log.debug().$("open [file=").$(path).$(", fd=").$(fd).$(']').$();
-            return fd;
-        }
-        throw CairoException.instance(ff.errno()).put("could not open read-write [file=").put(path).put(']');
-    }
-
-    static long openCleanRW(FilesFacade ff, LPSZ path, long size, Log log) {
-        final long fd = ff.openCleanRW(path, size);
-        if (fd > -1) {
-            log.debug().$("open clean [file=").$(path).$(", fd=").$(fd).$(']').$();
-            return fd;
-        }
-        throw CairoException.instance(ff.errno()).put("could not open read-write with clean allocation [file=").put(path).put(']');
+    public interface FailureCloseable {
+        void close(long prevSize);
     }
 
     static {

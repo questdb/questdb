@@ -24,7 +24,17 @@
 
 package io.questdb.cairo;
 
-import static io.questdb.cairo.TableUtils.iFile;
+import io.questdb.MessageBus;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.mp.AbstractQueueConsumerJob;
+import io.questdb.mp.RingQueue;
+import io.questdb.mp.Sequence;
+import io.questdb.std.*;
+import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.str.Path;
 
 import java.io.Closeable;
 import java.util.Arrays;
@@ -32,24 +42,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.LockSupport;
 
-import io.questdb.MessageBus;
-import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.cairo.vm.VmUtils;
-import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
-import io.questdb.mp.AbstractQueueConsumerJob;
-import io.questdb.mp.RingQueue;
-import io.questdb.mp.Sequence;
-import io.questdb.std.Files;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.LongList;
-import io.questdb.std.LongObjHashMap;
-import io.questdb.std.Misc;
-import io.questdb.std.ObjList;
-import io.questdb.std.Unsafe;
-import io.questdb.std.Vect;
-import io.questdb.std.datetime.microtime.Timestamps;
-import io.questdb.std.str.Path;
+import static io.questdb.cairo.TableUtils.iFile;
 
 public class TableBlockWriter implements Closeable {
     private static final Log LOG = LogFactory.getLog(TableBlockWriter.class);
@@ -143,20 +136,7 @@ public class TableBlockWriter implements Closeable {
         long alignedMapOffset = (mapOffset / ff.getPageSize()) * ff.getPageSize();
         long addressOffsetDueToAlignment = mapOffset - alignedMapOffset;
         long alignedMapSz = mapSz + addressOffsetDueToAlignment;
-        long fileSz = ff.length(fd);
-        long minFileSz = mapOffset + alignedMapSz;
-        if (fileSz < minFileSz) {
-            if (!ff.allocate(fd, minFileSz)) {
-                throw CairoException.instance(ff.errno()).put("Could not allocate file for append fd=").put(fd).put(", offset=").put(mapOffset).put(", size=")
-                        .put(mapSz);
-            }
-        }
-        long address = ff.mmap(fd, alignedMapSz, alignedMapOffset, Files.MAP_RW);
-        if (address == -1) {
-            int errno = ff.errno();
-            throw CairoException.instance(ff.errno()).put("Could not mmap append fd=").put(fd).put(", offset=").put(mapOffset).put(", size=").put(mapSz).put(", errno=")
-                    .put(errno);
-        }
+        long address = TableUtils.mapRW(ff, fd, alignedMapSz, alignedMapOffset);
         assert (address / ff.getPageSize()) * ff.getPageSize() == address; // address MUST be page aligned
         return address + addressOffsetDueToAlignment;
     }
@@ -783,7 +763,7 @@ public class TableBlockWriter implements Closeable {
                 // so null will evaluate to just VirtualMemory.STRING_LENGTH_BYTES
                 // but for positive length values we need to subtract 2
                 // how do we do that? Lets use inverted sign bit
-                final long sz = (VmUtils.STRING_LENGTH_BYTES + 2L * (strLen + 1) - bit);
+                final long sz = (Vm.STRING_LENGTH_BYTES + 2L * (strLen + 1) - bit);
                 columnDataAddress += sz;
                 offset += sz;
             }

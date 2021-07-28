@@ -28,14 +28,17 @@ import io.questdb.MessageBus;
 import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.DataFrame;
+import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.griffin.SqlException;
-import io.questdb.cairo.vm.ReadOnlyVirtualMemory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.geohash.GeoHashNative;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SOUnboundedCountDownLatch;
 import io.questdb.mp.Sequence;
-import io.questdb.std.*;
+import io.questdb.std.DirectLongList;
+import io.questdb.std.IntList;
+import io.questdb.std.Rows;
+import io.questdb.std.Vect;
 import io.questdb.tasks.LatestByTask;
 import org.jetbrains.annotations.NotNull;
 
@@ -147,7 +150,7 @@ class LatestByAllIndexedRecordCursor extends AbstractRecordListCursor {
             if (hashColumnIndex > -1) {
                 final int columnBase = reader.getColumnBase(partitionIndex);
                 final int primaryColumnIndex = TableReader.getPrimaryColumnIndex(columnBase, hashColumnIndex);
-                final ReadOnlyVirtualMemory column = reader.getColumn(primaryColumnIndex);
+                final MemoryR column = reader.getColumn(primaryColumnIndex);
                 hashColumnAddress = column.getPageAddress(0);
             }
 

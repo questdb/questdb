@@ -37,6 +37,8 @@ import io.questdb.std.*;
 
 import java.lang.ThreadLocal;
 
+import static io.questdb.std.Long256FromCharSequenceDecoder.decode;
+
 public class EqLong256StrFunctionFactory implements FunctionFactory {
     private static final ThreadLocal<Long256Decoder> DECODER = ThreadLocal.withInitial(Long256Decoder::new);
 
@@ -99,14 +101,14 @@ public class EqLong256StrFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class Long256Decoder extends Long256FromCharSequenceDecoder {
+    private static class Long256Decoder {
         private long long0;
         private long long1;
         private long long2;
         private long long3;
+        private final Long256Acceptor decoder = this::setAll;
 
-        @Override
-        public void onDecoded(long l0, long l1, long l2, long l3) {
+        public void setAll(long l0, long l1, long l2, long l3) {
             long0 = l0;
             long1 = l1;
             long2 = l2;
@@ -114,7 +116,7 @@ public class EqLong256StrFunctionFactory implements FunctionFactory {
         }
 
         private Func newInstance(Function arg, CharSequence hexLong256) throws NumericException {
-            decode(hexLong256, 2, hexLong256.length(), this);
+            decode(hexLong256, 2, hexLong256.length(), decoder);
             return new Func(arg, long0, long1, long2, long3);
         }
     }

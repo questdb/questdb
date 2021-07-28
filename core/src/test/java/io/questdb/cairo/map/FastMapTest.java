@@ -158,41 +158,28 @@ public class FastMapTest extends AbstractCairoTest {
             final int N = 100000;
             for (int i = 0; i < N; i++) {
                 MapKey key = map.withKey();
-
-                long256.setLong0(rnd.nextLong());
-                long256.setLong1(rnd.nextLong());
-                long256.setLong2(rnd.nextLong());
-                long256.setLong3(rnd.nextLong());
-
+                long256.fromRnd(rnd);
                 key.putLong256(long256);
                 key.putChar(rnd.nextChar());
 
                 MapValue value = key.createValue();
                 Assert.assertTrue(value.isNew());
-
                 value.putDouble(0, rnd.nextDouble());
             }
-
 
             rnd.reset();
 
             // assert that all values are good
             for (int i = 0; i < N; i++) {
                 MapKey key = map.withKey();
-                long256.setLong0(rnd.nextLong());
-                long256.setLong1(rnd.nextLong());
-                long256.setLong2(rnd.nextLong());
-                long256.setLong3(rnd.nextLong());
-
+                long256.fromRnd(rnd);
                 key.putLong256(long256);
                 key.putChar(rnd.nextChar());
-
 
                 MapValue value = key.createValue();
                 Assert.assertFalse(value.isNew());
                 Assert.assertEquals(rnd.nextDouble(), value.getDouble(0), 0.000000001d);
             }
-
 
             try (RecordCursor cursor = map.getCursor()) {
                 rnd.reset();
@@ -836,11 +823,7 @@ public class FastMapTest extends AbstractCairoTest {
     private void assertCursorLong256(Rnd rnd, RecordCursor cursor, Long256Impl long256) {
         final Record record = cursor.getRecord();
         while (cursor.hasNext()) {
-            long256.setLong0(rnd.nextLong());
-            long256.setLong1(rnd.nextLong());
-            long256.setLong2(rnd.nextLong());
-            long256.setLong3(rnd.nextLong());
-
+            long256.fromRnd(rnd);
             Long256 long256a = record.getLong256A(1);
             Long256 long256b = record.getLong256B(1);
 

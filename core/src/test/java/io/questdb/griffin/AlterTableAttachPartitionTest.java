@@ -439,7 +439,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             }
         };
 
-        testSqlFailedOnFsOperation(ff, "Cannot map");
+        testSqlFailedOnFsOperation(ff, "could not mmap");
     }
 
     @Test

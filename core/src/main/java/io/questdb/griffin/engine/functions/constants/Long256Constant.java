@@ -37,11 +37,13 @@ public class Long256Constant extends Long256Function implements ConstantFunction
         this(that.getLong0(), that.getLong1(), that.getLong2(), that.getLong3());
     }
 
-    public Long256Constant(long a, long b, long c, long d) {
-        value.setLong0(a);
-        value.setLong1(b);
-        value.setLong2(c);
-        value.setLong3(d);
+    public Long256Constant(long l0, long l1, long l2, long l3) {
+        value.setAll(l0, l1, l2, l3);
+    }
+
+    @Override
+    public void getLong256(Record rec, CharSink sink) {
+        value.toSink(sink);
     }
 
     @Override
@@ -52,10 +54,5 @@ public class Long256Constant extends Long256Function implements ConstantFunction
     @Override
     public Long256 getLong256B(Record rec) {
         return value;
-    }
-
-    @Override
-    public void getLong256(Record rec, CharSink sink) {
-        value.toSink(sink);
     }
 }

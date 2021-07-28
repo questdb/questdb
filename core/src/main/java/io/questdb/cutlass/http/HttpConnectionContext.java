@@ -435,12 +435,11 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
                         start = multipartContentParser.getResumePtr();
                         shiftReceiveBufferUnprocessedBytes(start, unprocessedSize);
                         dispatcher.registerChannel(this, IOOperation.READ);
-                        break;
                     } else {
                         // Header does not fit receive buffer
                         failProcessor(processor, BufferOverflowException.INSTANCE, DISCONNECT_REASON_MULTIPART_HEADER_TOO_BIG);
-                        break;
                     }
+                    break;
                 }
             }
         }

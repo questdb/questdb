@@ -24,13 +24,13 @@
 
 package io.questdb.cutlass.line.tcp;
 
-import java.io.Closeable;
-
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectByteCharSequence;
+
+import java.io.Closeable;
 
 public class NewLineProtoParser implements Closeable {
     public static final long NULL_TIMESTAMP = Long.MIN_VALUE;

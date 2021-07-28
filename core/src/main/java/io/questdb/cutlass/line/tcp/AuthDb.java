@@ -26,7 +26,10 @@ package io.questdb.cutlass.line.tcp;
 
 import io.questdb.std.CharSequenceObjHashMap;
 
-import java.io.*;
+import java.io.BufferedInputStream;
+import java.io.BufferedReader;
+import java.io.FileInputStream;
+import java.io.InputStreamReader;
 import java.math.BigInteger;
 import java.security.*;
 import java.security.interfaces.ECKey;

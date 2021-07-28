@@ -24,9 +24,9 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.vm.AppendOnlyVirtualMemory;
-import io.questdb.cairo.vm.MappedReadOnlyMemory;
-import io.questdb.cairo.vm.SinglePageMappedReadOnlyPageMemory;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryMA;
+import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
@@ -53,25 +53,7 @@ public class MetadataMigration404 {
     private static final IntList typeMapping = new IntList();
     private static final Log LOG = LogFactory.getLog(MetadataMigration404.class);
 
-    static {
-        typeMapping.extendAndSet(BOOLEAN, ColumnType.BOOLEAN);
-        typeMapping.extendAndSet(BYTE, ColumnType.BYTE);
-        typeMapping.extendAndSet(SHORT, ColumnType.SHORT);
-        typeMapping.extendAndSet(INT, ColumnType.INT);
-        typeMapping.extendAndSet(LONG, ColumnType.LONG);
-        typeMapping.extendAndSet(FLOAT, ColumnType.FLOAT);
-        typeMapping.extendAndSet(DOUBLE, ColumnType.DOUBLE);
-        typeMapping.extendAndSet(STRING, ColumnType.STRING);
-        typeMapping.extendAndSet(SYMBOL, ColumnType.SYMBOL);
-        typeMapping.extendAndSet(BINARY, ColumnType.BINARY);
-        typeMapping.extendAndSet(DATE, ColumnType.DATE);
-        typeMapping.extendAndSet(PARAMETER, ColumnType.PARAMETER);
-        typeMapping.extendAndSet(TIMESTAMP, ColumnType.TIMESTAMP);
-        typeMapping.extendAndSet(CHAR, ColumnType.CHAR);
-        typeMapping.extendAndSet(LONG256, ColumnType.LONG256);
-    }
-
-    public static void convert(FilesFacade ff, Path path1, Path path2, AppendOnlyVirtualMemory appendMem, MappedReadOnlyMemory roMem) {
+    public static void convert(FilesFacade ff, Path path1, Path path2, MemoryMA appendMem, MemoryMR roMem) {
         final int plen = path1.length();
         path1.concat(TableUtils.META_FILE_NAME).$();
 
@@ -79,7 +61,7 @@ public class MetadataMigration404 {
             return;
         }
 
-        roMem.of(ff, path1, ff.getPageSize(), ff.length(path1));
+        roMem.smallFile(ff, path1);
 
         if (roMem.getInt(12) == ColumnType.VERSION) {
             LOG.error().$("already up to date ").$(path1).$();
@@ -89,7 +71,8 @@ public class MetadataMigration404 {
         path1.trimTo(plen);
         path1.concat("_meta.1").$();
 
-        appendMem.of(ff, path1, ff.getPageSize());
+        appendMem.smallFile(ff, path1);
+        appendMem.jumpTo(0);
 
         // column count
         final int columnCount = roMem.getInt(0);
@@ -144,8 +127,8 @@ public class MetadataMigration404 {
 
     public static void main(String[] args) {
         try (
-                final MappedReadOnlyMemory roMem = new SinglePageMappedReadOnlyPageMemory();
-                final AppendOnlyVirtualMemory appendMem = new AppendOnlyVirtualMemory();
+                final MemoryMR roMem = Vm.getMRInstance() ;
+                final MemoryMA appendMem = Vm.getMARInstance();
                 final Path path1 = new Path();
                 final Path path2 = new Path()
         ) {
@@ -178,5 +161,23 @@ public class MetadataMigration404 {
                     roMem
             );
         }
+    }
+
+    static {
+        typeMapping.extendAndSet(BOOLEAN, ColumnType.BOOLEAN);
+        typeMapping.extendAndSet(BYTE, ColumnType.BYTE);
+        typeMapping.extendAndSet(SHORT, ColumnType.SHORT);
+        typeMapping.extendAndSet(INT, ColumnType.INT);
+        typeMapping.extendAndSet(LONG, ColumnType.LONG);
+        typeMapping.extendAndSet(FLOAT, ColumnType.FLOAT);
+        typeMapping.extendAndSet(DOUBLE, ColumnType.DOUBLE);
+        typeMapping.extendAndSet(STRING, ColumnType.STRING);
+        typeMapping.extendAndSet(SYMBOL, ColumnType.SYMBOL);
+        typeMapping.extendAndSet(BINARY, ColumnType.BINARY);
+        typeMapping.extendAndSet(DATE, ColumnType.DATE);
+        typeMapping.extendAndSet(PARAMETER, ColumnType.PARAMETER);
+        typeMapping.extendAndSet(TIMESTAMP, ColumnType.TIMESTAMP);
+        typeMapping.extendAndSet(CHAR, ColumnType.CHAR);
+        typeMapping.extendAndSet(LONG256, ColumnType.LONG256);
     }
 }

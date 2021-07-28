@@ -25,8 +25,9 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.sql.RowCursor;
-import io.questdb.cairo.vm.PagedMappedReadWriteMemory;
-import io.questdb.cairo.vm.PagedVirtualMemory;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
@@ -36,8 +37,8 @@ import java.io.Closeable;
 
 public class BitmapIndexWriter implements Closeable, Mutable {
     private static final Log LOG = LogFactory.getLog(BitmapIndexWriter.class);
-    private final PagedMappedReadWriteMemory keyMem = new PagedMappedReadWriteMemory();
-    private final PagedMappedReadWriteMemory valueMem = new PagedMappedReadWriteMemory();
+    private final MemoryMARW keyMem = Vm.getMARWInstance();
+    private final MemoryMARW valueMem = Vm.getMARWInstance();
     private final Cursor cursor = new Cursor();
     private int blockCapacity;
     private int blockValueCountMod;
@@ -59,7 +60,7 @@ public class BitmapIndexWriter implements Closeable, Mutable {
         close();
     }
 
-    public static void initKeyMemory(PagedVirtualMemory keyMem, int blockValueCount) {
+    public static void initKeyMemory(MemoryA keyMem, int blockValueCount) {
 
         // block value count must be power of 2
         assert blockValueCount == Numbers.ceilPow2(blockValueCount);
@@ -173,14 +174,14 @@ public class BitmapIndexWriter implements Closeable, Mutable {
                 // todo: copy from source
                 if (ff.truncate(keyFd, 0)) {
                     kFdUnassigned = false;
-                    this.keyMem.of(ff, keyFd, pageSize);
+                    this.keyMem.of(ff, keyFd, null, pageSize);
                     initKeyMemory(this.keyMem, TableUtils.MIN_INDEX_VALUE_BLOCK_SIZE);
                 } else {
                     throw CairoException.instance(ff.errno()).put("Could not truncate [fd=").put(keyFd).put(']');
                 }
             } else {
                 kFdUnassigned = false;
-                this.keyMem.of(ff, keyFd, pageSize);
+                this.keyMem.of(ff, keyFd, null, pageSize);
             }
             long keyMemSize = this.keyMem.getAppendOffset();
             // check if key file header is present
@@ -211,14 +212,14 @@ public class BitmapIndexWriter implements Closeable, Mutable {
             if (init) {
                 if (ff.truncate(valueFd, 0)) {
                     vFdUnassigned = false;
-                    this.valueMem.of(ff, valueFd, pageSize);
+                    this.valueMem.of(ff, valueFd, null, pageSize);
                     this.valueMem.jumpTo(0);
                 } else {
                     throw CairoException.instance(ff.errno()).put("Could not truncate [fd=").put(valueFd).put(']');
                 }
             } else {
                 vFdUnassigned = false;
-                this.valueMem.of(ff, valueFd, pageSize);
+                this.valueMem.of(ff, valueFd, null, pageSize);
             }
             this.valueMemSize = this.keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_VALUE_MEM_SIZE);
 
@@ -246,12 +247,10 @@ public class BitmapIndexWriter implements Closeable, Mutable {
 
     final public void of(CairoConfiguration configuration, Path path, CharSequence name) {
         close();
-        long pageSize = configuration.getFilesFacade().getMapPageSize();
-        int plen = path.length();
-
+        final int plen = path.length();
         try {
             boolean exists = configuration.getFilesFacade().exists(BitmapIndexUtils.keyFileName(path, name));
-            this.keyMem.of(configuration.getFilesFacade(), path, pageSize);
+            this.keyMem.wholeFile(configuration.getFilesFacade(), path);
             if (!exists) {
                 LOG.error().$(path).$(" not found").$();
                 throw CairoException.instance(0).put("Index does not exist: ").put(path);
@@ -283,7 +282,7 @@ public class BitmapIndexWriter implements Closeable, Mutable {
                 throw CairoException.instance(0).put("Sequence mismatch on ").put(path);
             }
 
-            this.valueMem.of(configuration.getFilesFacade(), BitmapIndexUtils.valueFileName(path.trimTo(plen), name), pageSize);
+            this.valueMem.wholeFile(configuration.getFilesFacade(), BitmapIndexUtils.valueFileName(path.trimTo(plen), name));
             this.valueMemSize = this.keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_VALUE_MEM_SIZE);
 
             if (this.valueMem.getAppendOffset() < this.valueMemSize) {

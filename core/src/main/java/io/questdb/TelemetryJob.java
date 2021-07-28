@@ -24,7 +24,10 @@
 
 package io.questdb;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -39,7 +42,6 @@ import io.questdb.std.Long256;
 import io.questdb.std.Misc;
 import io.questdb.std.NanosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
-import io.questdb.std.str.Path;
 import io.questdb.tasks.TelemetryTask;
 import org.jetbrains.annotations.Nullable;
 
@@ -82,9 +84,9 @@ public class TelemetryJob extends SynchronizedJob implements Closeable {
             compiler.compile(
                     "CREATE TABLE IF NOT EXISTS " + configTableName + " (id long256, enabled boolean, version symbol, os symbol, package symbol)",
                     sqlExecutionContext);
-            tryAddColumn(compiler, sqlExecutionContext, configTableName, "version symbol");
-            tryAddColumn(compiler, sqlExecutionContext, configTableName, "os symbol");
-            tryAddColumn(compiler, sqlExecutionContext, configTableName, "package symbol");
+            tryAddColumn(compiler, sqlExecutionContext, "version symbol");
+            tryAddColumn(compiler, sqlExecutionContext, "os symbol");
+            tryAddColumn(compiler, sqlExecutionContext, "package symbol");
             
             if (enabled) {
                 try {
@@ -123,7 +125,7 @@ public class TelemetryJob extends SynchronizedJob implements Closeable {
         }
     }
 
-    private void tryAddColumn(SqlCompiler compiler, SqlExecutionContext executionContext, CharSequence tableName, CharSequence columnDetails) {
+    private void tryAddColumn(SqlCompiler compiler, SqlExecutionContext executionContext, CharSequence columnDetails) {
         try {
             compiler.compile(
                     "ALTER TABLE " + configTableName + " ADD COLUMN " + columnDetails + ")",
@@ -140,10 +142,8 @@ public class TelemetryJob extends SynchronizedJob implements Closeable {
             newRow(Telemetry.SYSTEM_EVENT_DOWN);
             writer.commit();
             writer = Misc.free(writer);
-            configWriter = Misc.free(configWriter);
-        } else {
-            configWriter = Misc.free(configWriter);
         }
+        configWriter = Misc.free(configWriter);
     }
 
     @Override

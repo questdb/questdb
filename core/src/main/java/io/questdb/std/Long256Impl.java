@@ -26,7 +26,7 @@ package io.questdb.std;
 
 import io.questdb.std.str.CharSink;
 
-public class Long256Impl implements Long256Sink, Long256, Sinkable, Long256Acceptor {
+public class Long256Impl implements Long256, Sinkable, Long256Acceptor {
 
     public static final Long256Impl NULL_LONG256 = new Long256Impl();
     private long l0;
@@ -55,14 +55,18 @@ public class Long256Impl implements Long256Sink, Long256, Sinkable, Long256Accep
         return l0 == that.l0 && l1 == that.l1 && l2 == that.l2 && l3 == that.l3;
     }
 
-    @Override
-    public long getLong0() {
-        return l0;
+    public void fromRnd(Rnd rnd) {
+        setAll(
+                rnd.nextLong(),
+                rnd.nextLong(),
+                rnd.nextLong(),
+                rnd.nextLong()
+        );
     }
 
     @Override
-    public void setLong0(long value) {
-        this.l0 = value;
+    public long getLong0() {
+        return l0;
     }
 
     @Override
@@ -71,18 +75,8 @@ public class Long256Impl implements Long256Sink, Long256, Sinkable, Long256Accep
     }
 
     @Override
-    public void setLong1(long value) {
-        this.l1 = value;
-    }
-
-    @Override
     public long getLong2() {
         return l2;
-    }
-
-    @Override
-    public void setLong2(long value) {
-        this.l2 = value;
     }
 
     @Override
@@ -91,18 +85,6 @@ public class Long256Impl implements Long256Sink, Long256, Sinkable, Long256Accep
     }
 
     @Override
-    public void setLong3(long value) {
-        this.l3 = value;
-    }
-
-    @Override
-    public void onDecoded(long l0, long l1, long l2, long l3) {
-        this.l0 = l0;
-        this.l1 = l1;
-        this.l2 = l2;
-        this.l3 = l3;
-    }
-
     public void setAll(long l0, long l1, long l2, long l3) {
         this.l0 = l0;
         this.l1 = l1;
@@ -116,9 +98,11 @@ public class Long256Impl implements Long256Sink, Long256, Sinkable, Long256Accep
     }
 
     static {
-        NULL_LONG256.setLong0(Numbers.LONG_NaN);
-        NULL_LONG256.setLong1(Numbers.LONG_NaN);
-        NULL_LONG256.setLong2(Numbers.LONG_NaN);
-        NULL_LONG256.setLong3(Numbers.LONG_NaN);
+        NULL_LONG256.setAll(
+                Numbers.LONG_NaN,
+                Numbers.LONG_NaN,
+                Numbers.LONG_NaN,
+                Numbers.LONG_NaN
+        );
     }
 }
