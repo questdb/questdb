@@ -26,6 +26,7 @@ package io.questdb.cutlass.http.processors;
 
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GeoHashExtra;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -122,6 +123,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         skewedValueWriters.extendAndSet(ColumnType.BINARY, this::putSkewedBinValue);
         skewedValueWriters.extendAndSet(ColumnType.LONG256, this::putSkewedLong256Value);
         skewedValueWriters.extendAndSet(ColumnType.CURSOR, JsonQueryProcessorState::putCursorValue);
+        skewedValueWriters.extendAndSet(ColumnType.GEOHASH, this::putSkewedGeoHashValue);
 
         allValueWriters.extendAndSet(ColumnType.BOOLEAN, JsonQueryProcessorState::putBooleanValue);
         allValueWriters.extendAndSet(ColumnType.BYTE, JsonQueryProcessorState::putByteValue);
@@ -138,6 +140,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         allValueWriters.extendAndSet(ColumnType.BINARY, JsonQueryProcessorState::putBinValue);
         allValueWriters.extendAndSet(ColumnType.LONG256, JsonQueryProcessorState::putLong256Value);
         allValueWriters.extendAndSet(ColumnType.RECORD, JsonQueryProcessorState::putCursorValue);
+        allValueWriters.extendAndSet(ColumnType.GEOHASH, JsonQueryProcessorState::putGeoHashValue);
 
         this.nanosecondClock = nanosecondClock;
         this.floatScale = floatScale;
@@ -339,6 +342,15 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
             return;
         }
         socket.put('"').putISODate(t).put('"');
+    }
+
+    private static void putGeoHashValue(HttpChunkedResponseSocket socket, Record rec, int col) {
+        final long l = rec.getGeoHash(col);
+        if (l == GeoHashExtra.NULL) {
+            socket.put("null");
+        } else {
+            socket.put(l);
+        }
     }
 
     private static void putCursorValue(HttpChunkedResponseSocket socket, Record rec, int col) {
@@ -575,7 +587,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                     columnType = ColumnType.STRING;
                 }
                 this.columnTypes.add(columnType);
-                this.valueWriters.add(allValueWriters.getQuick(columnType));
+                this.valueWriters.add(allValueWriters.getQuick(ColumnType.tagOf(columnType)));
                 this.columnNames.add(metadata.getColumnName(i));
             }
         }
@@ -733,6 +745,10 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
 
     private void putSkewedTimestampValue(HttpChunkedResponseSocket socket, Record rec, int col) {
         putTimestampValue(socket, rec, columnSkewList.getQuick(col));
+    }
+
+    private void putSkewedGeoHashValue(HttpChunkedResponseSocket socket, Record rec, int col) {
+        putGeoHashValue(socket, rec, columnSkewList.getQuick(col));
     }
 
     void resume(HttpChunkedResponseSocket socket) throws PeerDisconnectedException, PeerIsSlowToReadException {

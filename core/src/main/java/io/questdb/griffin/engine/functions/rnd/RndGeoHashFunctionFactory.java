@@ -25,13 +25,14 @@
 package io.questdb.griffin.engine.functions.rnd;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.LongFunction;
+import io.questdb.griffin.engine.functions.GeoHashFunction;
 import io.questdb.griffin.engine.functions.geohash.GeoHashNative;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
@@ -58,12 +59,13 @@ public class RndGeoHashFunctionFactory implements FunctionFactory {
         return new RndFunction(bits);
     }
 
-    private static class RndFunction extends LongFunction implements Function {
+    private static class RndFunction extends GeoHashFunction implements Function {
 
         private final int bits;
         private Rnd rnd;
 
         public RndFunction(int bits) {
+            super(ColumnType.geohashWithPrecision(bits));
             this.bits = bits;
         }
 
@@ -80,6 +82,11 @@ public class RndGeoHashFunctionFactory implements FunctionFactory {
             assert x >= -90.0 && x <= 90.0;
             assert y >= -180.0 && y <= 180.0;
             return GeoHashNative.fromCoordinates(x, y, this.bits);
+        }
+
+        @Override
+        public long getGeoHash(Record rec) {
+            return getLong(rec);
         }
 
         @Override

@@ -27,6 +27,9 @@ package io.questdb.cairo;
 import io.questdb.std.Numbers;
 
 public class GeoHashExtra {
+
+    public static final long NULL = -1L;
+
     private static final int BITS_OFFSET = 8;
 
     public static int setBitsPrecision(int type, int bits) {
