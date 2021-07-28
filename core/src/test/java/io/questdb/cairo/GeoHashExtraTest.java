@@ -141,6 +141,6 @@ public class GeoHashExtraTest {
                     .put(")\n");
         }
         Assert.assertEquals(expected, expected);
-        Assert.assertEquals("GEOHASH()", ColumnType.nameOf(ColumnType.GEOHASH));
+        Assert.assertEquals("GEOHASH", ColumnType.nameOf(ColumnType.GEOHASH));
     }
 }
