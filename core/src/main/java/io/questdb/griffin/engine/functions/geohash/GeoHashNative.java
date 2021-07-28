@@ -116,11 +116,11 @@ public class GeoHashNative {
         return result;
     }
 
-    public static void toString(long hash, int precision, CharSink sink) {
-        if (precision <= 0 || precision > 12) {
+    public static void toString(long hash, int chars, CharSink sink) {
+        if (chars < 1 || chars > 12) {
             throw new IllegalArgumentException("precision range is [1, 12]");
         }
-        for (int i=precision-1; i >= 0; --i) {
+        for (int i=chars-1; i >= 0; --i) {
             sink.put(base32[(int)((hash >> i * 5) & 0x1F)]);
         }
     }

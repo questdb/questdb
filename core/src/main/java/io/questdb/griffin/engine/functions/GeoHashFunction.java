@@ -147,10 +147,9 @@ public abstract class GeoHashFunction implements ScalarFunction {
         throw new UnsupportedOperationException();
     }
 
-    // TODO: use/test this, possible discard
     @Override
     public final void getStr(Record rec, CharSink sink) {
-        GeoHashNative.toString(getLong(rec), GeoHashExtra.getBitsPrecision(getType()), sink);
+        GeoHashNative.toString(getLong(rec), GeoHashExtra.getBitsPrecision(getType()) / 5, sink);
     }
 
     @Override
