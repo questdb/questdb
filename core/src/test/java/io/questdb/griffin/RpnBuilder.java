@@ -24,6 +24,7 @@
 
 package io.questdb.griffin;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.std.str.StringSink;
 
@@ -46,7 +47,7 @@ public class RpnBuilder implements ExpressionParserListener {
                 break;
 
             case ExpressionNode.GEOHASH_TYPE:
-                sink.put("GEOHASH").put('(').put(stack.poll().token).put(")");
+                sink.put(ColumnType.nameOf(ColumnType.GEOHASH)).put('(').put(stack.poll().token).put(")");
                 break;
 
             default:

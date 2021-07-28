@@ -35,6 +35,7 @@ import io.questdb.std.str.StringSink;
 // +---------------+------------------------+-------------------------+
 // |    1 bit      |        23 bits         |         8 bits          |
 // +---------------+------------------------+-------------------------+
+
 /**
  * Column types as numeric (integer) values
  */
@@ -69,6 +70,7 @@ public final class ColumnType {
     public static final int MAX = NULL;
     public static final int NO_OVERLOAD = 10000;
     private static final IntObjHashMap<String> typeNameMap = new IntObjHashMap<>();
+    private static final IntObjHashMap<String> geoHashTypeNameMap = new IntObjHashMap<>();
     private static final LowerCaseAsciiCharSequenceIntHashMap nameTypeMap = new LowerCaseAsciiCharSequenceIntHashMap();
     private static final int[] TYPE_SIZE_POW2 = new int[ColumnType.PARAMETER + 1];
     private static final int[] TYPE_SIZE = new int[ColumnType.PARAMETER + 1];
@@ -120,7 +122,7 @@ public final class ColumnType {
         final int fromBits = GeoHashExtra.getBitsPrecision(fromType);
         final int toBits = GeoHashExtra.getBitsPrecision(toType);
         assert fromBits >= toBits;
-        return  value >>> (fromBits - toBits);
+        return value >>> (fromBits - toBits);
     }
 
     public static int tagOf(int type) {
@@ -131,9 +133,6 @@ public final class ColumnType {
         return nameTypeMap.get(name);
     }
 
-    // TODO: optimize this, we have fixed number of outcomes here, no need to allocate at all
-    //   1. we can only have 12 possibilities here geohash(1c)... geohash(12c)
-    //   2. or we can have 60-12=48 possibilities of geohash(1b)...geohash(60b)
     public static String nameOf(int columnType) {
         final int tag = ColumnType.tagOf(columnType);
         final int index = typeNameMap.keyIndex(tag);
@@ -141,18 +140,11 @@ public final class ColumnType {
             return "unknown";
         }
         if (ColumnType.GEOHASH == tag) {
-            StringSink sink = new StringSink();
-            sink.put(typeNameMap.valueAtQuick(index)).put('(');
-            int bits = GeoHashExtra.getBitsPrecision(columnType);
-            if (bits > 0) {
-                if (bits % 5 == 0) {
-                    sink.put(bits / 5).put('c');
-                } else {
-                    sink.put(bits).put('b');
-                }
+            String name = geoHashTypeNameMap.get(columnType);
+            if (name == null) {
+                return typeNameMap.get(GEOHASH);
             }
-            sink.put(')');
-            return sink.toString();
+            return name;
         }
         return typeNameMap.valueAtQuick(index);
     }
@@ -209,10 +201,22 @@ public final class ColumnType {
         typeNameMap.put(PARAMETER, "PARAMETER");
         typeNameMap.put(TIMESTAMP, "TIMESTAMP");
         typeNameMap.put(LONG256, "LONG256");
-        typeNameMap.put(GEOHASH, "GEOHASH");
         typeNameMap.put(CURSOR, "CURSOR");
         typeNameMap.put(RECORD, "RECORD");
         typeNameMap.put(VAR_ARG, "VARARG");
+        typeNameMap.put(GEOHASH, "GEOHASH");
+
+        StringSink sink = new StringSink();
+        for (int c = 1; c <= 12; c++) {
+            sink.clear();
+            sink.put(typeNameMap.get(GEOHASH)).put('(').put(c).put("c)");
+            geoHashTypeNameMap.put(GeoHashExtra.setBitsPrecision(GEOHASH, c * 5), sink.toString());
+        }
+        for (int b = 1; b <= 60; b++) {
+            sink.clear();
+            sink.put(typeNameMap.get(GEOHASH)).put('(').put(b).put("b)");
+            geoHashTypeNameMap.put(GeoHashExtra.setBitsPrecision(GEOHASH, b), sink.toString());
+        }
 
         nameTypeMap.put("boolean", BOOLEAN);
         nameTypeMap.put("byte", BYTE);
@@ -237,33 +241,33 @@ public final class ColumnType {
         nameTypeMap.put("real", ColumnType.FLOAT);
         nameTypeMap.put("bytea", ColumnType.STRING);
 
-        TYPE_SIZE_POW2[ColumnType.BOOLEAN] = 0;
-        TYPE_SIZE_POW2[ColumnType.BYTE] = 0;
-        TYPE_SIZE_POW2[ColumnType.SHORT] = 1;
-        TYPE_SIZE_POW2[ColumnType.CHAR] = 1;
-        TYPE_SIZE_POW2[ColumnType.FLOAT] = 2;
-        TYPE_SIZE_POW2[ColumnType.INT] = 2;
-        TYPE_SIZE_POW2[ColumnType.SYMBOL] = 2;
-        TYPE_SIZE_POW2[ColumnType.DOUBLE] = 3;
-        TYPE_SIZE_POW2[ColumnType.LONG] = 3;
-        TYPE_SIZE_POW2[ColumnType.DATE] = 3;
-        TYPE_SIZE_POW2[ColumnType.TIMESTAMP] = 3;
-        TYPE_SIZE_POW2[ColumnType.LONG256] = 5;
-        TYPE_SIZE_POW2[ColumnType.GEOHASH] = 3;
+        TYPE_SIZE_POW2[BOOLEAN] = 0;
+        TYPE_SIZE_POW2[BYTE] = 0;
+        TYPE_SIZE_POW2[SHORT] = 1;
+        TYPE_SIZE_POW2[CHAR] = 1;
+        TYPE_SIZE_POW2[FLOAT] = 2;
+        TYPE_SIZE_POW2[INT] = 2;
+        TYPE_SIZE_POW2[SYMBOL] = 2;
+        TYPE_SIZE_POW2[DOUBLE] = 3;
+        TYPE_SIZE_POW2[LONG] = 3;
+        TYPE_SIZE_POW2[DATE] = 3;
+        TYPE_SIZE_POW2[TIMESTAMP] = 3;
+        TYPE_SIZE_POW2[LONG256] = 5;
+        TYPE_SIZE_POW2[GEOHASH] = 3;
 
-        TYPE_SIZE[ColumnType.BOOLEAN] = Byte.BYTES;
-        TYPE_SIZE[ColumnType.BYTE] = Byte.BYTES;
-        TYPE_SIZE[ColumnType.SHORT] = Short.BYTES;
-        TYPE_SIZE[ColumnType.CHAR] = Character.BYTES;
-        TYPE_SIZE[ColumnType.FLOAT] = Float.BYTES;
-        TYPE_SIZE[ColumnType.INT] = Integer.BYTES;
-        TYPE_SIZE[ColumnType.SYMBOL] = Integer.BYTES;
-        TYPE_SIZE[ColumnType.DOUBLE] = Double.BYTES;
-        TYPE_SIZE[ColumnType.LONG] = Long.BYTES;
-        TYPE_SIZE[ColumnType.DATE] = Long.BYTES;
-        TYPE_SIZE[ColumnType.TIMESTAMP] = Long.BYTES;
-        TYPE_SIZE[ColumnType.LONG256] = Long256.BYTES;
-        TYPE_SIZE[ColumnType.GEOHASH] = Long.BYTES; // current size is long. can be int/short for storage optimization
+        TYPE_SIZE[BOOLEAN] = Byte.BYTES;
+        TYPE_SIZE[BYTE] = Byte.BYTES;
+        TYPE_SIZE[SHORT] = Short.BYTES;
+        TYPE_SIZE[CHAR] = Character.BYTES;
+        TYPE_SIZE[FLOAT] = Float.BYTES;
+        TYPE_SIZE[INT] = Integer.BYTES;
+        TYPE_SIZE[SYMBOL] = Integer.BYTES;
+        TYPE_SIZE[DOUBLE] = Double.BYTES;
+        TYPE_SIZE[LONG] = Long.BYTES;
+        TYPE_SIZE[DATE] = Long.BYTES;
+        TYPE_SIZE[TIMESTAMP] = Long.BYTES;
+        TYPE_SIZE[LONG256] = Long256.BYTES;
+        TYPE_SIZE[GEOHASH] = Long.BYTES; // current size is long. can be int/short for storage optimization
     }
 
     private static int indexOf(int[] list, int value) {

@@ -25,6 +25,7 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.griffin.engine.functions.constants.GeoHashTypeConstant;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.std.*;
 
@@ -303,7 +304,7 @@ class ExpressionParser {
                                 SqlParser.parseGeoHashSize(lexer.lastTokenPosition(), tok);
                                 node = expressionNodePool.next().of(
                                         ExpressionNode.GEOHASH_TYPE,
-                                        "GEOHASH",
+                                        ColumnType.nameOf(ColumnType.GEOHASH),
                                         Integer.MIN_VALUE,
                                         position);
                                 node.paramCount = 1;
