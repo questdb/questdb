@@ -26,10 +26,8 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.sql.SymbolTable;
-import io.questdb.cairo.vm.MemoryCMRImpl;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMR;
-import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
@@ -40,8 +38,8 @@ import java.io.Closeable;
 public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
     private static final Log LOG = LogFactory.getLog(SymbolMapReaderImpl.class);
     private final BitmapIndexBwdReader indexReader = new BitmapIndexBwdReader();
-    private final MemoryMR charMem = new MemoryCMRImpl();
-    private final MemoryMR offsetMem = new MemoryCMRImpl();
+    private final MemoryMR charMem = Vm.getMRInstance();
+    private final MemoryMR offsetMem = Vm.getMRInstance();
     private final ObjList<String> cache = new ObjList<>();
     private int maxHash;
     private boolean cached;

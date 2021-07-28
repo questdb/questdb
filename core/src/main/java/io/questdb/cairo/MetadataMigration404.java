@@ -24,8 +24,8 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.vm.MemoryCMRImpl;
-import io.questdb.cairo.vm.MemoryPMAImpl;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -53,25 +53,7 @@ public class MetadataMigration404 {
     private static final IntList typeMapping = new IntList();
     private static final Log LOG = LogFactory.getLog(MetadataMigration404.class);
 
-    static {
-        typeMapping.extendAndSet(BOOLEAN, ColumnType.BOOLEAN);
-        typeMapping.extendAndSet(BYTE, ColumnType.BYTE);
-        typeMapping.extendAndSet(SHORT, ColumnType.SHORT);
-        typeMapping.extendAndSet(INT, ColumnType.INT);
-        typeMapping.extendAndSet(LONG, ColumnType.LONG);
-        typeMapping.extendAndSet(FLOAT, ColumnType.FLOAT);
-        typeMapping.extendAndSet(DOUBLE, ColumnType.DOUBLE);
-        typeMapping.extendAndSet(STRING, ColumnType.STRING);
-        typeMapping.extendAndSet(SYMBOL, ColumnType.SYMBOL);
-        typeMapping.extendAndSet(BINARY, ColumnType.BINARY);
-        typeMapping.extendAndSet(DATE, ColumnType.DATE);
-        typeMapping.extendAndSet(PARAMETER, ColumnType.PARAMETER);
-        typeMapping.extendAndSet(TIMESTAMP, ColumnType.TIMESTAMP);
-        typeMapping.extendAndSet(CHAR, ColumnType.CHAR);
-        typeMapping.extendAndSet(LONG256, ColumnType.LONG256);
-    }
-
-    public static void convert(FilesFacade ff, Path path1, Path path2, MemoryPMAImpl appendMem, MemoryMR roMem) {
+    public static void convert(FilesFacade ff, Path path1, Path path2, MemoryMA appendMem, MemoryMR roMem) {
         final int plen = path1.length();
         path1.concat(TableUtils.META_FILE_NAME).$();
 
@@ -145,8 +127,8 @@ public class MetadataMigration404 {
 
     public static void main(String[] args) {
         try (
-                final MemoryMR roMem = new MemoryCMRImpl();
-                final MemoryPMAImpl appendMem = new MemoryPMAImpl();
+                final MemoryMR roMem = Vm.getMRInstance() ;
+                final MemoryMA appendMem = Vm.getMARInstance();
                 final Path path1 = new Path();
                 final Path path2 = new Path()
         ) {
@@ -179,5 +161,23 @@ public class MetadataMigration404 {
                     roMem
             );
         }
+    }
+
+    static {
+        typeMapping.extendAndSet(BOOLEAN, ColumnType.BOOLEAN);
+        typeMapping.extendAndSet(BYTE, ColumnType.BYTE);
+        typeMapping.extendAndSet(SHORT, ColumnType.SHORT);
+        typeMapping.extendAndSet(INT, ColumnType.INT);
+        typeMapping.extendAndSet(LONG, ColumnType.LONG);
+        typeMapping.extendAndSet(FLOAT, ColumnType.FLOAT);
+        typeMapping.extendAndSet(DOUBLE, ColumnType.DOUBLE);
+        typeMapping.extendAndSet(STRING, ColumnType.STRING);
+        typeMapping.extendAndSet(SYMBOL, ColumnType.SYMBOL);
+        typeMapping.extendAndSet(BINARY, ColumnType.BINARY);
+        typeMapping.extendAndSet(DATE, ColumnType.DATE);
+        typeMapping.extendAndSet(PARAMETER, ColumnType.PARAMETER);
+        typeMapping.extendAndSet(TIMESTAMP, ColumnType.TIMESTAMP);
+        typeMapping.extendAndSet(CHAR, ColumnType.CHAR);
+        typeMapping.extendAndSet(LONG256, ColumnType.LONG256);
     }
 }

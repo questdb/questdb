@@ -26,7 +26,7 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.vm.MemoryCMARWImpl;
+import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
@@ -77,7 +77,7 @@ public class TableReadFailTest extends AbstractCairoTest {
             try (
                     Path path = new Path();
                     TableReader reader = new TableReader(configuration, "x");
-                    MemoryCMARW mem = new MemoryCMARWImpl()
+                    MemoryCMARW mem = Vm.getCMARWInstance()
             ) {
 
                 final Rnd rnd = new Rnd();

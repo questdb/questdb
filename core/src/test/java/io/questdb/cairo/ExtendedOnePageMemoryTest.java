@@ -1,6 +1,7 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.vm.MemoryCMRImpl;
+import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.str.Path;
@@ -15,54 +16,15 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 public class ExtendedOnePageMemoryTest {
     private static final int FILE_SIZE = 1024;
+    private static final Path path = new Path(4096);
+    private static final AtomicBoolean FILE_MAP_FAIL = new AtomicBoolean(false);
     @ClassRule
     public static TemporaryFolder temp = new TemporaryFolder();
-
-    private static final Path path = new Path(4096);
-
     private static FilesFacade ff;
 
-    private static final AtomicBoolean FILE_MAP_FAIL = new AtomicBoolean(false);
-
-    @Test
-    public void testFailOnInitialMap() throws IOException {
-        createFile();
-        try (MemoryCMRImpl mem = new MemoryCMRImpl()) {
-            FILE_MAP_FAIL.set(true);
-            try {
-                mem.smallFile(ff, path);
-                Assert.fail();
-            } catch (CairoException ex) {
-                TestUtils.assertContains(ex.getFlyweightMessage(), "could not mmap");
-            }
-        }
-    }
-
-    @Test
-    public void testFailOnGrow() throws IOException {
-        createFile();
-        try (MemoryCMRImpl mem = new MemoryCMRImpl()) {
-            int sz = FILE_SIZE / 2;
-            mem.of(ff, path, sz, sz);
-            FILE_MAP_FAIL.set(true);
-            sz *= 2;
-            try {
-                mem.extend(sz);
-                Assert.fail();
-            } catch (CairoException ex) {
-                TestUtils.assertContains(ex.getFlyweightMessage(), "could not remap");
-            }
-        }
-    }
-
-    private void createFile() throws IOException {
-        File f = temp.newFile();
-        try (FileOutputStream fos = new FileOutputStream(f)) {
-            for (int i = 0; i < ExtendedOnePageMemoryTest.FILE_SIZE; i++) {
-                fos.write(0);
-            }
-        }
-        path.of(f.getCanonicalPath()).$();
+    @AfterClass
+    public static void afterClass() {
+        path.close();
     }
 
     @BeforeClass
@@ -86,8 +48,44 @@ public class ExtendedOnePageMemoryTest {
         };
     }
 
-    @AfterClass
-    public static void afterClass() {
-        path.close();
+    @Test
+    public void testFailOnGrow() throws IOException {
+        createFile();
+        try (MemoryMR mem = new MemoryCMRImpl()) {
+            int sz = FILE_SIZE / 2;
+            mem.of(ff, path, sz, sz);
+            FILE_MAP_FAIL.set(true);
+            sz *= 2;
+            try {
+                mem.extend(sz);
+                Assert.fail();
+            } catch (CairoException ex) {
+                TestUtils.assertContains(ex.getFlyweightMessage(), "could not remap");
+            }
+        }
+    }
+
+    @Test
+    public void testFailOnInitialMap() throws IOException {
+        createFile();
+        try (MemoryMR mem = new MemoryCMRImpl()) {
+            FILE_MAP_FAIL.set(true);
+            try {
+                mem.smallFile(ff, path);
+                Assert.fail();
+            } catch (CairoException ex) {
+                TestUtils.assertContains(ex.getFlyweightMessage(), "could not mmap");
+            }
+        }
+    }
+
+    private void createFile() throws IOException {
+        File f = temp.newFile();
+        try (FileOutputStream fos = new FileOutputStream(f)) {
+            for (int i = 0; i < ExtendedOnePageMemoryTest.FILE_SIZE; i++) {
+                fos.write(0);
+            }
+        }
+        path.of(f.getCanonicalPath()).$();
     }
 }

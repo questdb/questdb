@@ -25,13 +25,12 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.sql.RowCursor;
-import io.questdb.cairo.vm.MemoryCMARWImpl;
-import io.questdb.cairo.vm.MemoryPMAImpl;
 import io.questdb.cairo.vm.PagedSlidingReadOnlyMemory;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.vm.api.MemoryMAR;
+import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.griffin.engine.functions.geohash.GeoHashNative;
 import io.questdb.griffin.engine.table.LatestByArguments;
 import io.questdb.std.*;
@@ -193,7 +192,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
 
             try (BitmapIndexBwdReader reader = new BitmapIndexBwdReader(configuration, path.trimTo(plen), "x", 0)) {
 
-                try (MemoryCMARW mem = new MemoryCMARWImpl()) {
+                try (MemoryMARW mem = Vm.getMARWInstance()) {
                     try (Path path = new Path()) {
                         path.of(configuration.getRoot()).concat("x").put(".k").$();
                         mem.wholeFile(configuration.getFilesFacade(), path);
@@ -621,7 +620,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
 
             try (BitmapIndexFwdReader reader = new BitmapIndexFwdReader(configuration, path.trimTo(plen), "x", 0)) {
 
-                try (MemoryCMARW mem = new MemoryCMARWImpl()) {
+                try (MemoryMARW mem = Vm.getMARWInstance()) {
                     try (Path path = new Path()) {
                         path.of(configuration.getRoot()).concat("x").put(".k").$();
                         mem.smallFile(configuration.getFilesFacade(), path);
@@ -772,7 +771,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
         int N = 100000000;
         final int MOD = 1024;
         TestUtils.assertMemoryLeak(() -> {
-            try (MemoryMAR mem = new MemoryPMAImpl()) {
+            try (MemoryMAR mem = Vm.getMARInstance()) {
 
                 mem.wholeFile(configuration.getFilesFacade(), path.concat("x.dat").$());
 

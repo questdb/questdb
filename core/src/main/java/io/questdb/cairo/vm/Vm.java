@@ -87,6 +87,14 @@ public class Vm {
         return new MemoryCMARWImpl(ff, name, pageSize, maxPages);
     }
 
+    public static MemoryCMARW getCMARWInstance() {
+        return new MemoryCMARWImpl();
+    }
+
+    public static MemoryMA getMAInstance() {
+        return new MemoryPMAImpl();
+    }
+
     public static MemoryMAR getMARInstance() {
         return new MemoryPMAImpl();
     }
@@ -99,12 +107,12 @@ public class Vm {
         return new MemoryCMARWImpl(ff, name, extendSegmentSize, size);
     }
 
-    public static MemoryMARW getMARWInstance(FilesFacade ff, LPSZ name, long size) {
-        return new MemoryCMARWImpl(ff, name, ff.getMapPageSize(), size);
-    }
-
     public static MemoryMR getMRInstance() {
         return new MemoryCMRImpl();
+    }
+
+    public static MemoryMR getMRInstance(FilesFacade ff, LPSZ name, long size) {
+        return new MemoryCMRImpl(ff, name, size);
     }
 
     public static MemoryA getSmallAInstance(FilesFacade ff, LPSZ name) {

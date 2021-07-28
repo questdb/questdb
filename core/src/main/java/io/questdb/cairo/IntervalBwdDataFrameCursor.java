@@ -25,7 +25,6 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.sql.DataFrame;
-import io.questdb.cairo.vm.MemoryCMRImpl;
 import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
 import io.questdb.log.Log;
@@ -99,7 +98,6 @@ public class IntervalBwdDataFrameCursor extends AbstractIntervalDataFrameCursor 
                 // calculate intersection for inclusive intervals "intervalLo" and "intervalHi"
                 final long lo;
                 if (partitionTimestampLo < intervalLo) {
-                    assert column instanceof MemoryCMRImpl;
                     lo = BinarySearch.find(column, intervalLo - 1, 0, limitHi, BinarySearch.SCAN_DOWN) + 1;
                 } else {
                     lo = 0;
@@ -107,7 +105,6 @@ public class IntervalBwdDataFrameCursor extends AbstractIntervalDataFrameCursor 
 
                 final long hi;
                 if (partitionTimestampHi > intervalHi) {
-                    assert column instanceof MemoryCMRImpl;
                     hi = BinarySearch.find(column, intervalHi, lo, limitHi, BinarySearch.SCAN_DOWN) + 1;
                 } else {
                     hi = limitHi + 1;

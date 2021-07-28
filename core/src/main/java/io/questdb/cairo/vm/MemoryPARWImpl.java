@@ -774,11 +774,6 @@ public class MemoryPARWImpl implements MemoryARW {
         return pageAddress;
     }
 
-    protected void ensurePagesListCapacity(long size) {
-        int capacity = pageIndex(size) + 1;
-        pages.ensureCapacity(capacity);
-    }
-
     private byte getByte0(long offset) {
         return Unsafe.getUnsafe().getByte(computeHotPage(pageIndex(offset)) + offsetInPage(offset));
     }

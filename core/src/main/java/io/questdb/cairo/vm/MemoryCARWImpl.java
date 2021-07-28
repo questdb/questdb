@@ -145,7 +145,7 @@ public class MemoryCARWImpl extends AbstractMemoryCR implements MemoryCARW, Muta
 
     @Override
     public long size() {
-        return lim - pageAddress;
+        return size;
     }
 
     private void checkAndExtend(long address) {
@@ -169,10 +169,6 @@ public class MemoryCARWImpl extends AbstractMemoryCR implements MemoryCARW, Muta
             LOG.debug().$("extended [oldBase=").$(pageAddress).$(", newBase=").$(newBaseAddress).$(", oldSize=").$(oldSize).$(", newSize=").$(size).$(']').$();
         }
         handleMemoryReallocation(newBaseAddress, size);
-    }
-
-    protected long getMapPageSize() {
-        return size;
     }
 
     protected final void handleMemoryReallocation(long newBaseAddress, long newSize) {

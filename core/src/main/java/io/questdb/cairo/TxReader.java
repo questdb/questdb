@@ -24,8 +24,8 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.vm.MemoryCMRImpl;
-import io.questdb.cairo.vm.api.MemoryCMR;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
@@ -56,7 +56,7 @@ public class TxReader implements Closeable {
     protected int partitionBy;
     protected long partitionTableVersion;
     protected int attachedPartitionsSize = 0;
-    private MemoryCMR roTxMem;
+    private MemoryMR roTxMem;
 
     public TxReader(FilesFacade ff, Path path, int partitionBy) {
         this.ff = ff;
@@ -287,10 +287,10 @@ public class TxReader implements Closeable {
         }
     }
 
-    protected MemoryCMR openTxnFile(FilesFacade ff, Path path, int rootLen) {
+    protected MemoryMR openTxnFile(FilesFacade ff, Path path, int rootLen) {
         try {
             if (this.ff.exists(this.path.concat(TXN_FILE_NAME).$())) {
-                return new MemoryCMRImpl(ff, path, ff.length(path));
+                return Vm.getMRInstance(ff, path, ff.length(path));
             }
             throw CairoException.instance(ff.errno()).put("Cannot append. File does not exist: ").put(this.path);
         } finally {

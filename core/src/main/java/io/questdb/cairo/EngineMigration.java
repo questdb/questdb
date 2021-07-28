@@ -24,8 +24,8 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.vm.MemoryCMARWImpl;
-import io.questdb.cairo.vm.MemoryPARWImpl;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.log.Log;
@@ -67,9 +67,9 @@ public class EngineMigration {
         long mem = Unsafe.malloc(tempMemSize);
 
         try (
-                MemoryPARWImpl virtualMem = new MemoryPARWImpl(ff.getPageSize(), 8);
+                MemoryARW virtualMem = Vm.getARWInstance(ff.getPageSize(), 8);
                 Path path = new Path();
-                MemoryMARW rwMemory = new MemoryCMARWImpl()
+                MemoryMARW rwMemory = Vm.getMARWInstance()
         ) {
 
             MigrationContext context = new MigrationContext(mem, tempMemSize, virtualMem, rwMemory);
@@ -304,8 +304,7 @@ public class EngineMigration {
             MemoryMARW txMem = migrationContext.createRwMemoryOf(ff, path.$());
             long tempMem8b = migrationContext.getTempMemory(8);
 
-            MemoryPARWImpl txFileUpdate = migrationContext.getTempVirtualMem();
-            txFileUpdate.clear();
+            MemoryARW txFileUpdate = migrationContext.getTempVirtualMem();
             txFileUpdate.jumpTo(0);
 
             try {
@@ -353,7 +352,7 @@ public class EngineMigration {
                 MemoryMARW txMem,
                 int partitionBy,
                 int symbolsCount,
-                MemoryPARWImpl writeTo
+                MemoryARW writeTo
         ) {
             int rootLen = path.length();
 
@@ -405,13 +404,13 @@ public class EngineMigration {
     class MigrationContext {
         private final long tempMemory;
         private final int tempMemoryLen;
-        private final MemoryPARWImpl tempVirtualMem;
+        private final MemoryARW tempVirtualMem;
         private final MemoryMARW rwMemory;
         private Path tablePath;
         private long metadataFd;
         private Path tablePath2;
 
-        public MigrationContext(long mem, int tempMemSize, MemoryPARWImpl tempVirtualMem, MemoryMARW rwMemory) {
+        public MigrationContext(long mem, int tempMemSize, MemoryARW tempVirtualMem, MemoryMARW rwMemory) {
             this.tempMemory = mem;
             this.tempMemoryLen = tempMemSize;
             this.tempVirtualMem = tempVirtualMem;
@@ -460,7 +459,7 @@ public class EngineMigration {
                     + " is available");
         }
 
-        public MemoryPARWImpl getTempVirtualMem() {
+        public MemoryARW getTempVirtualMem() {
             return tempVirtualMem;
         }
 

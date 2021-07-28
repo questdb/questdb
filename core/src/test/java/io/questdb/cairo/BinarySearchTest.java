@@ -24,11 +24,11 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.vm.MemoryCMRImpl;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.vm.api.MemoryMA;
+import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
@@ -76,7 +76,7 @@ public class BinarySearchTest extends AbstractCairoTest {
                     }
 
                     long max = 100 * 3 - 1;
-                    try (MemoryCMRImpl mem = new MemoryCMRImpl(FilesFacadeImpl.INSTANCE, path, 400 * Long.BYTES)) {
+                    try (MemoryMR mem = Vm.getMRInstance(FilesFacadeImpl.INSTANCE, path, 400 * Long.BYTES)) {
                         long index = BinarySearch.find(mem, -20, 0, max, BinarySearch.SCAN_DOWN);
                         Assert.assertEquals(-1, index);
                     }
@@ -93,7 +93,7 @@ public class BinarySearchTest extends AbstractCairoTest {
                 appendMem.putLong(1);
                 appendMem.putLong(3);
 
-                try (MemoryCMRImpl mem = new MemoryCMRImpl(FilesFacadeImpl.INSTANCE, path, 400 * Long.BYTES)) {
+                try (MemoryMR mem = Vm.getMRInstance(FilesFacadeImpl.INSTANCE, path, 400 * Long.BYTES)) {
                     Assert.assertEquals(0, BinarySearch.find(mem, 2, 0, 1, BinarySearch.SCAN_DOWN));
                 }
             }
@@ -134,7 +134,7 @@ public class BinarySearchTest extends AbstractCairoTest {
                     appendMem.putLong(1);
                     appendMem.putLong(3);
 
-                    try (MemoryCMRImpl mem = new MemoryCMRImpl(FilesFacadeImpl.INSTANCE, path, 400 * Long.BYTES)) {
+                    try (MemoryMR mem = Vm.getMRInstance(FilesFacadeImpl.INSTANCE, path, 400 * Long.BYTES)) {
                         Assert.assertEquals(0, BinarySearch.find(mem, 2, 0, 1, BinarySearch.SCAN_UP));
                     }
                 }
@@ -209,7 +209,7 @@ public class BinarySearchTest extends AbstractCairoTest {
                     }
 
                     long max = distinctValueCount * repeatCount - 1;
-                    try (MemoryCMRImpl mem = new MemoryCMRImpl(FilesFacadeImpl.INSTANCE, path, 400 * Long.BYTES)) {
+                    try (MemoryMR mem = Vm.getMRInstance(FilesFacadeImpl.INSTANCE, path, 400 * Long.BYTES)) {
                         long index = BinarySearch.find(mem, searchValue, 0, max, scanDirection);
                         if (searchValue > distinctValueCount - 1) {
                             Assert.assertEquals(max, index);

@@ -180,6 +180,11 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     }
 
     @Override
+    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize) {
+        of(ff, name, extendSegmentSize, Long.MAX_VALUE);
+    }
+
+    @Override
     public void close() {
         close(true);
     }

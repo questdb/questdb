@@ -24,8 +24,7 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.vm.MemoryCMRImpl;
-import io.questdb.cairo.vm.MemoryCMARWImpl;
+import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.log.Log;
@@ -127,8 +126,8 @@ public class MetadataMigration400 {
 
     public static void main(String[] args) {
         try (
-                final MemoryMR roMem = new MemoryCMRImpl();
-                final MemoryMARW appendMem = new MemoryCMARWImpl();
+                final MemoryMR roMem = Vm.getMRInstance();
+                final MemoryMARW appendMem = Vm.getMARWInstance();
                 final Path path1 = new Path();
                 final Path path2 = new Path()
         ) {

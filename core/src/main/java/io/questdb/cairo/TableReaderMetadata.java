@@ -24,7 +24,6 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.vm.MemoryCMRImpl;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.cairo.vm.api.MemoryMR;
@@ -44,7 +43,7 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
     public TableReaderMetadata(FilesFacade ff) {
         this.path = new Path();
         this.ff = ff;
-        this.metaMem = new MemoryCMRImpl();
+        this.metaMem = Vm.getMRInstance();
         this.columnMetadata = new ObjList<>(columnCount);
         this.columnNameIndexMap = new LowerCaseCharSequenceIntHashMap();
     }
@@ -197,7 +196,7 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
 
     public long createTransitionIndex() {
         if (transitionMeta == null) {
-            transitionMeta = new MemoryCMRImpl();
+            transitionMeta = Vm.getMRInstance();
         }
 
         transitionMeta.smallFile(ff, path);

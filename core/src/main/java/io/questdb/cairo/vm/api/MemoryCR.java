@@ -95,16 +95,6 @@ public interface MemoryCR extends MemoryC, MemoryR {
         return getInt(offset);
     }
 
-    default void getLong256(long offset, Long256Acceptor sink) {
-        long addr = addressOf(offset + Long.BYTES * 4);
-        sink.setAll(
-                Unsafe.getUnsafe().getLong(addr - Long.BYTES * 4),
-                Unsafe.getUnsafe().getLong(addr - Long.BYTES * 3),
-                Unsafe.getUnsafe().getLong(addr - Long.BYTES * 2),
-                Unsafe.getUnsafe().getLong(addr - Long.BYTES)
-        );
-    }
-
     default CharSequence getStr(long offset, CharSequenceView view) {
         long addr = addressOf(offset);
         final int len = Unsafe.getUnsafe().getInt(addr);

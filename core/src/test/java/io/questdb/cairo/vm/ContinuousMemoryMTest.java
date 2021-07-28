@@ -27,9 +27,7 @@ package io.questdb.cairo.vm;
 import io.questdb.cairo.AbstractCairoTest;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableUtils;
-import io.questdb.cairo.vm.api.MemoryARW;
-import io.questdb.cairo.vm.api.MemoryMARW;
-import io.questdb.cairo.vm.api.MemoryR;
+import io.questdb.cairo.vm.api.*;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
@@ -734,7 +732,7 @@ public class ContinuousMemoryMTest extends AbstractCairoTest {
 
                 // we expect memory to zero out the file, which failed to truncate
 
-                try (MemoryCMRImpl roMem = new MemoryCMRImpl(ff, path, fileLen)) {
+                try (MemoryMR roMem = new MemoryCMRImpl(ff, path, fileLen)) {
                     Assert.assertEquals(fileLen, roMem.size());
 
                     for (int i = 0; i < fileLen; i++) {
@@ -920,14 +918,14 @@ public class ContinuousMemoryMTest extends AbstractCairoTest {
             final Path path = Path.getThreadLocal(root).concat("t.d").$();
             rnd.reset();
             try (
-                    MemoryARW rwMem = Vm.getMARWInstance(
+                    MemoryCMARW rwMem = Vm.getCMARWInstance(
                             FilesFacadeImpl.INSTANCE,
                             path,
                             sz,
                             sz
                     );
 
-                    MemoryR roMem = Vm.getMARWInstance(
+                    MemoryCMR roMem = new MemoryCMRImpl(
                             FilesFacadeImpl.INSTANCE,
                             path,
                             sz

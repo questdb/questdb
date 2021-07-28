@@ -63,7 +63,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     private final CairoConfiguration configuration;
     private final IntList symbolCountSnapshot = new IntList();
     private final TxReader txFile;
-    private final MemoryMR todoMem = new MemoryCMRImpl();
+    private final MemoryMR todoMem = Vm.getMRInstance();
     private final TxnScoreboard txnScoreboard;
     private int partitionCount;
     private LongList columnTops;
@@ -602,7 +602,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             boolean lastPartition
     ) {
         MemoryMR mem1 = tempCopyStruct.mem1;
-        final boolean reload = (mem1 instanceof MemoryCMRImpl || mem1 instanceof NullColumn) && mem1.isDeleted();
+        final boolean reload = mem1 != null && mem1.isDeleted();
         final int index = getPrimaryColumnIndex(columnBase, columnIndex);
         tempCopyStruct.mem1 = columns.getAndSetQuick(index, mem1);
         tempCopyStruct.mem2 = columns.getAndSetQuick(index + 1, tempCopyStruct.mem2);
@@ -902,11 +902,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         if (mem != null && mem != NullColumn.INSTANCE) {
             mem.wholeFile(ff, path);
         } else {
-            if (lastPartition) {
-                mem = new MemoryCMRImpl(ff, path, ff.getMapPageSize());
-            } else {
-                mem = new MemoryCMRImpl(ff, path, ff.length(path));
-            }
+            mem = Vm.getMRInstance(ff, path, lastPartition ? ff.getMapPageSize() : ff.length(path));
             columns.setQuick(primaryIndex, mem);
         }
         return mem;

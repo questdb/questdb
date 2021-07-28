@@ -1,7 +1,8 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.vm.MemoryCMRImpl;
-import io.questdb.cairo.vm.MemoryPMAImpl;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -43,7 +44,7 @@ public class MemRemappedFileTest {
 
     private double test(MemoryMR readMem) {
         long nanos = 0;
-        try (MemoryPMAImpl appMem = new MemoryPMAImpl()) {
+        try (MemoryMA appMem = Vm.getMAInstance()) {
             for (int cycle = 0; cycle < NCYCLES; cycle++) {
                 path.trimTo(0).concat(root).concat("file" + nFile).$();
                 nFile++;

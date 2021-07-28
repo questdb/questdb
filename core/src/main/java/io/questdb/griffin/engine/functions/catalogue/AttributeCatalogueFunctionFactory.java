@@ -26,7 +26,6 @@ package io.questdb.griffin.engine.functions.catalogue;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.*;
-import io.questdb.cairo.vm.MemoryCMRImpl;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.griffin.FunctionFactory;
@@ -77,7 +76,7 @@ public class AttributeCatalogueFunctionFactory implements FunctionFactory {
     private static class AttributeCatalogueCursorFactory extends AbstractRecordCursorFactory {
 
         private final Path path = new Path();
-        private final MemoryMR metaMem = new MemoryCMRImpl();
+        private final MemoryMR metaMem = Vm.getMRInstance();
         private final AttributeClassCatalogueCursor cursor;
 
         public AttributeCatalogueCursorFactory(CairoConfiguration configuration, RecordMetadata metadata) {

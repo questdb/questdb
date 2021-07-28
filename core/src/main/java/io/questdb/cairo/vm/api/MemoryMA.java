@@ -24,6 +24,9 @@
 
 package io.questdb.cairo.vm.api;
 
+import io.questdb.std.FilesFacade;
+import io.questdb.std.str.LPSZ;
+
 public interface MemoryMA extends MemoryM, MemoryA {
 
     void close(boolean truncate);
@@ -33,4 +36,6 @@ public interface MemoryMA extends MemoryM, MemoryA {
     long getAppendAddressSize();
 
     void sync(boolean async);
+
+    void of(FilesFacade ff, LPSZ name, long extendSegmentSize);
 }
