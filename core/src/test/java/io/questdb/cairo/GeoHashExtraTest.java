@@ -108,11 +108,11 @@ public class GeoHashExtraTest {
                 "GEOHASH(37b) -> 9486 (37)\n" +
                 "GEOHASH(38b) -> 9742 (38)\n" +
                 "GEOHASH(39b) -> 9998 (39)\n" +
+                "GEOHASH(8c) -> 10254 (40)\n" +
                 "GEOHASH(41b) -> 10510 (41)\n" +
                 "GEOHASH(42b) -> 10766 (42)\n" +
                 "GEOHASH(43b) -> 11022 (43)\n" +
                 "GEOHASH(44b) -> 11278 (44)\n" +
-                "GEOHASH(8c) -> 10254 (40)\n" +
                 "GEOHASH(9c) -> 11534 (45)\n" +
                 "GEOHASH(46b) -> 11790 (46)\n" +
                 "GEOHASH(47b) -> 12046 (47)\n" +
