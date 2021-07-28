@@ -85,11 +85,6 @@ public class RndGeoHashFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public long getGeoHash(Record rec) {
-            return getLong(rec);
-        }
-
-        @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
             this.rnd = executionContext.getRandom();
         }

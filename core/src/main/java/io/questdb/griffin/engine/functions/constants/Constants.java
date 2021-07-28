@@ -63,7 +63,7 @@ public final class Constants {
         Constants.typeConstants.extendAndSet(ColumnType.FLOAT, FloatTypeConstant.INSTANCE);
         Constants.typeConstants.extendAndSet(ColumnType.BINARY, BinTypeConstant.INSTANCE);
         Constants.typeConstants.extendAndSet(ColumnType.LONG256, Long256TypeConstant.INSTANCE);
-        Constants.typeConstants.extendAndSet(ColumnType.GEOHASH, GeoHashTypeConstant.INSTANCE);
+        // GEOHASH has 60 type constants
     }
 
     public static ConstantFunction getNullConstant(int columnType) {

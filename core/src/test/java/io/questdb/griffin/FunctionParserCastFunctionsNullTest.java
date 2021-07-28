@@ -26,10 +26,10 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.GeoHashExtra;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.engine.functions.cast.*;
 import io.questdb.std.CharSequenceIntHashMap;
-import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import org.junit.Assert;
 import org.junit.Before;
@@ -66,8 +66,8 @@ public class FunctionParserCastFunctionsNullTest extends BaseFunctionFactoryTest
         Function function = parseFunction("cast(null as GeOhAsH(12c))", metadata, functionParser);
         Assert.assertEquals(true, function.isConstant());
         Assert.assertEquals(ColumnType.GEOHASH, function.getType());
-        Assert.assertEquals(Numbers.LONG_NaN, function.getGeoHash(null));
-        Assert.assertEquals(Numbers.LONG_NaN, function.getLong(null));
+        Assert.assertEquals(GeoHashExtra.NULL, function.getGeoHash(null));
+        Assert.assertEquals(GeoHashExtra.NULL, function.getLong(null));
     }
 
     @Test
@@ -75,8 +75,8 @@ public class FunctionParserCastFunctionsNullTest extends BaseFunctionFactoryTest
         Function function = parseFunction("cast(null as GeOhAsH(60b))", metadata, functionParser);
         Assert.assertEquals(true, function.isConstant());
         Assert.assertEquals(ColumnType.GEOHASH, function.getType());
-        Assert.assertEquals(Numbers.LONG_NaN, function.getGeoHash(null));
-        Assert.assertEquals(Numbers.LONG_NaN, function.getLong(null));
+        Assert.assertEquals(GeoHashExtra.NULL, function.getGeoHash(null));
+        Assert.assertEquals(GeoHashExtra.NULL, function.getLong(null));
     }
 
     @Test

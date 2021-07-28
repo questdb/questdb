@@ -29,11 +29,6 @@ import io.questdb.griffin.TypeConstant;
 import io.questdb.griffin.engine.functions.GeoHashFunction;
 
 public class GeoHashTypeConstant extends GeoHashFunction implements TypeConstant {
-    public static final GeoHashTypeConstant INSTANCE = new GeoHashTypeConstant();
-
-    public GeoHashTypeConstant() {
-        super();
-    }
 
     public GeoHashTypeConstant(int typep) {
         super(typep);

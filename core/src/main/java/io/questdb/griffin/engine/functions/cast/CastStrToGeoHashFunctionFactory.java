@@ -73,7 +73,7 @@ public class CastStrToGeoHashFunctionFactory implements FunctionFactory {
         public long getGeoHash(Record rec) {
             CharSequence value = arg.getStr(rec);
             if (value == null || value.length() == 0) {
-                return Numbers.LONG_NaN;
+                return GeoHashExtra.NULL;
             }
             try {
                 int typeSize = GeoHashExtra.getBitsPrecision(typep);
@@ -88,7 +88,7 @@ public class CastStrToGeoHashFunctionFactory implements FunctionFactory {
                 }
                 return GeoHashNative.fromString(value);
             } catch (IllegalArgumentException e) {
-                return Numbers.LONG_NaN;
+                return GeoHashExtra.NULL;
             }
         }
     }

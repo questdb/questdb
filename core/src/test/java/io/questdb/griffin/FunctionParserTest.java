@@ -774,22 +774,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
                                         IntList argPositions,
                                         CairoConfiguration configuration1,
                                         SqlExecutionContext sqlExecutionContext) {
-                return new GeoHashFunction() {
-                    @Override
-                    public long getLong(Record rec) {
-                        return 0;
-                    }
-
-                    @Override
-                    public long getGeoHash(Record rec) {
-                        return 0;
-                    }
-
-                    @Override
-                    public boolean isConstant() {
-                        return true;
-                    }
-                };
+                return GeoHashConstant.NULL;
             }
         });
 

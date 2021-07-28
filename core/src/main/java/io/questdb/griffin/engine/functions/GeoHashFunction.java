@@ -38,10 +38,6 @@ public abstract class GeoHashFunction implements ScalarFunction {
 
     protected int typep; // +number bits
 
-    protected GeoHashFunction() {
-        this(ColumnType.GEOHASH);
-    }
-
     protected GeoHashFunction(int typep) {
         assert ColumnType.GEOHASH == ColumnType.tagOf(typep);
         this.typep = typep;
@@ -150,6 +146,11 @@ public abstract class GeoHashFunction implements ScalarFunction {
     @Override
     public final void getStr(Record rec, CharSink sink) {
         GeoHashNative.toString(getLong(rec), GeoHashExtra.getBitsPrecision(getType()) / 5, sink);
+    }
+
+    @Override
+    public long getGeoHash(Record rec) {
+        return getLong(rec);
     }
 
     @Override
