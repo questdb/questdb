@@ -201,28 +201,6 @@ public class EngineMigrationTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testAssignTableId() throws Exception {
-        assertMemoryLeak(() -> {
-            // This test has to run in a separate engine from the base test engine
-            // because of removal of mapped file _tab_index.d with every test
-            replaceDbContent(); // last tableId is 16. 10 skipped + 7 tables generated
-            // we need to remove "upgrade" file for the engine to upgrade tables
-            // remember, this is the second instance of the engine
-            assertRemoveUpgradeFile();
-
-            try (CairoEngine engine2 = new CairoEngine(configuration)) {
-                // check if constructor upgrades test
-                try (TableReader reader = engine2.getReader(sqlExecutionContext.getCairoSecurityContext(), "y_416")) {
-                    Assert.assertEquals(17, reader.getMetadata().getId());
-                }
-                try (TableReader reader = engine2.getReader(sqlExecutionContext.getCairoSecurityContext(), "y_419")) {
-                    Assert.assertEquals(11, reader.getMetadata().getId());
-                }
-            }
-        });
-    }
-
-    @Test
     public void testCannotReadMetadata() throws Exception {
         assertMemoryLeak(() -> {
             // roll table id up
@@ -438,7 +416,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
         }
 
         // Downgrade version meta
-        replaceDbContent();
+        replaceDbContent("/migration/dbRoot_noid.zip");
         downgradeMetaDataFile(src);
 
         // Act
@@ -452,7 +430,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
         TestUtils.assertEquals(expected, executeSql(queryNew));
 
         // Third time, downgrade and migrate
-        replaceDbContent();
+        replaceDbContent("/migration/dbRoot_noid.zip");
         downgradeMetaDataFile(src);
         new EngineMigration(engine, configuration).migrateEngineTo(ColumnType.VERSION);
         TestUtils.assertEquals(expected, executeSql(queryNew));
@@ -541,7 +519,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
         };
     }
 
-    private static void assertRemoveUpgradeFile() {
+    public static void assertRemoveUpgradeFile() {
         try (Path path = new Path()) {
             path.of(configuration.getRoot()).concat(TableUtils.UPGRADE_FILE_NAME).$();
             Assert.assertTrue(!FilesFacadeImpl.INSTANCE.exists(path) || FilesFacadeImpl.INSTANCE.remove(path));
@@ -574,7 +552,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
         }
 
         // There are no symbols, no partition, tx file is same. Downgrade version
-        replaceDbContent();
+        replaceDbContent("/migration/dbRoot_noid.zip");
         downgradeTxFile(src, removedPartitions);
 
         // Act
@@ -588,7 +566,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
         TestUtils.assertEquals(expected, executeSql(queryNew));
 
         // Third time, downgrade and migrate
-        replaceDbContent();
+        replaceDbContent("/migration/dbRoot_noid.zip");
         downgradeTxFile(src, removedPartitions);
         new EngineMigration(engine, configuration).migrateEngineTo(ColumnType.VERSION);
         TestUtils.assertEquals(expected, executeSql(queryNew));
@@ -675,12 +653,15 @@ public class EngineMigrationTest extends AbstractGriffinTest {
         return sink;
     }
 
-    private static void replaceDbContent() throws IOException {
-        final String oldVersionTableZip = "/migration/dbRoot.zip";
+    public static void replaceDbContent(String path) throws IOException {
+
+        engine.releaseAllReaders();
+        engine.releaseAllWriters();
+
         final byte[] buffer = new byte[1024 * 1024];
-        URL resource = EngineMigrationTest.class.getResource(oldVersionTableZip);
+        URL resource = EngineMigrationTest.class.getResource(path);
         Assert.assertNotNull(resource);
-        try (final InputStream is = EngineMigrationTest.class.getResourceAsStream(oldVersionTableZip)) {
+        try (final InputStream is = EngineMigrationTest.class.getResourceAsStream(path)) {
             Assert.assertNotNull(is);
             try (ZipInputStream zip = new ZipInputStream(is)) {
                 ZipEntry ze;
