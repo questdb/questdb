@@ -140,7 +140,7 @@ public class GeoHashExtraTest {
                     .put(GeoHashExtra.getBitsPrecision(type))
                     .put(")\n");
         }
-        Assert.assertEquals(expected, expected);
+        Assert.assertEquals(expected, everything.toString()git);
         Assert.assertEquals("GEOHASH", ColumnType.nameOf(ColumnType.GEOHASH));
     }
 }
