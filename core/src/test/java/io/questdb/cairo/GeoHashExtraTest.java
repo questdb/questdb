@@ -23,6 +23,7 @@
  ******************************************************************************/
 
 package io.questdb.cairo;
+import io.questdb.std.str.StringSink;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -66,4 +67,80 @@ public class GeoHashExtraTest {
         Assert.assertEquals(3, GeoHashExtra.storageSizeInPow2(geohashCol));
     }
 
+    @Test
+    public void testGeoHashTypeName() {
+        String expected = "GEOHASH(1b) -> 270 (1)\n" +
+                "GEOHASH(2b) -> 526 (2)\n" +
+                "GEOHASH(3b) -> 782 (3)\n" +
+                "GEOHASH(4b) -> 1038 (4)\n" +
+                "GEOHASH(1c) -> 1294 (5)\n" +
+                "GEOHASH(6b) -> 1550 (6)\n" +
+                "GEOHASH(7b) -> 1806 (7)\n" +
+                "GEOHASH(8b) -> 2062 (8)\n" +
+                "GEOHASH(9b) -> 2318 (9)\n" +
+                "GEOHASH(2c) -> 2574 (10)\n" +
+                "GEOHASH(11b) -> 2830 (11)\n" +
+                "GEOHASH(12b) -> 3086 (12)\n" +
+                "GEOHASH(13b) -> 3342 (13)\n" +
+                "GEOHASH(14b) -> 3598 (14)\n" +
+                "GEOHASH(3c) -> 3854 (15)\n" +
+                "GEOHASH(16b) -> 4110 (16)\n" +
+                "GEOHASH(17b) -> 4366 (17)\n" +
+                "GEOHASH(18b) -> 4622 (18)\n" +
+                "GEOHASH(19b) -> 4878 (19)\n" +
+                "GEOHASH(4c) -> 5134 (20)\n" +
+                "GEOHASH(21b) -> 5390 (21)\n" +
+                "GEOHASH(22b) -> 5646 (22)\n" +
+                "GEOHASH(23b) -> 5902 (23)\n" +
+                "GEOHASH(24b) -> 6158 (24)\n" +
+                "GEOHASH(5c) -> 6414 (25)\n" +
+                "GEOHASH(26b) -> 6670 (26)\n" +
+                "GEOHASH(27b) -> 6926 (27)\n" +
+                "GEOHASH(28b) -> 7182 (28)\n" +
+                "GEOHASH(29b) -> 7438 (29)\n" +
+                "GEOHASH(6c) -> 7694 (30)\n" +
+                "GEOHASH(31b) -> 7950 (31)\n" +
+                "GEOHASH(32b) -> 8206 (32)\n" +
+                "GEOHASH(33b) -> 8462 (33)\n" +
+                "GEOHASH(34b) -> 8718 (34)\n" +
+                "GEOHASH(7c) -> 8974 (35)\n" +
+                "GEOHASH(36b) -> 9230 (36)\n" +
+                "GEOHASH(37b) -> 9486 (37)\n" +
+                "GEOHASH(38b) -> 9742 (38)\n" +
+                "GEOHASH(39b) -> 9998 (39)\n" +
+                "GEOHASH(41b) -> 10510 (41)\n" +
+                "GEOHASH(42b) -> 10766 (42)\n" +
+                "GEOHASH(43b) -> 11022 (43)\n" +
+                "GEOHASH(44b) -> 11278 (44)\n" +
+                "GEOHASH(8c) -> 10254 (40)\n" +
+                "GEOHASH(9c) -> 11534 (45)\n" +
+                "GEOHASH(46b) -> 11790 (46)\n" +
+                "GEOHASH(47b) -> 12046 (47)\n" +
+                "GEOHASH(48b) -> 12302 (48)\n" +
+                "GEOHASH(49b) -> 12558 (49)\n" +
+                "GEOHASH(10c) -> 12814 (50)\n" +
+                "GEOHASH(51b) -> 13070 (51)\n" +
+                "GEOHASH(52b) -> 13326 (52)\n" +
+                "GEOHASH(53b) -> 13582 (53)\n" +
+                "GEOHASH(54b) -> 13838 (54)\n" +
+                "GEOHASH(11c) -> 14094 (55)\n" +
+                "GEOHASH(56b) -> 14350 (56)\n" +
+                "GEOHASH(57b) -> 14606 (57)\n" +
+                "GEOHASH(58b) -> 14862 (58)\n" +
+                "GEOHASH(59b) -> 15118 (59)\n" +
+                "GEOHASH(12c) -> 15374 (60)\n";
+        StringSink everything = new StringSink();
+        for (int b = 1; b <= 60; b++) {
+            int type = GeoHashExtra.setBitsPrecision(ColumnType.GEOHASH, b);
+            String name = ColumnType.nameOf(type);
+            everything.put(name)
+                    .put(" -> ")
+                    .put(type)
+                    .put(" (")
+                    .put(GeoHashExtra.getBitsPrecision(type))
+                    .put(")\n");
+        }
+        Assert.assertEquals(expected, everything.toString()git);
+        Assert.assertEquals("GEOHASH", ColumnType.nameOf(ColumnType.GEOHASH));
+    }
 }
