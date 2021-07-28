@@ -4833,7 +4833,7 @@ public class TableWriter implements Closeable {
 
         public void putGeoHash(int index, long value) {
             int type = metadata.getColumnType(index);
-            final WriteOnlyVirtualMemory primaryColumn = getPrimaryColumn(index);
+            final MemoryA primaryColumn = getPrimaryColumn(index);
             switch (ColumnType.sizeOf(type)) {
                 case 1:
                     primaryColumn.putByte((byte)value);

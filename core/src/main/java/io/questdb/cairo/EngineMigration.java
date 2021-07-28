@@ -24,7 +24,6 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.vm.*;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.cairo.vm.api.MemoryMARW;
@@ -414,7 +413,7 @@ public class EngineMigration {
             }
 
             // Metadata file should already be backed up
-            final MappedReadWriteMemory rwMem = migrationContext.rwMemory;
+            final MemoryMARW rwMem = migrationContext.rwMemory;
             rwMem.of(ff, path, ff.getPageSize());
 
             // column count

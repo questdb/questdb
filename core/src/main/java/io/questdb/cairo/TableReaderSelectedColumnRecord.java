@@ -25,7 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.vm.ReadOnlyVirtualMemory;
+import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.IntList;
 import io.questdb.std.Long256;
@@ -248,7 +248,7 @@ public class TableReaderSelectedColumnRecord implements Record {
         final long offset = getAdjustedRecordIndex(col) * Long.BYTES;
         final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(offset, index);
 
-        final ReadOnlyVirtualMemory column = reader.getColumn(absoluteColumnIndex);
+        final MemoryR column = reader.getColumn(absoluteColumnIndex);
         final int columnType = reader.getMetadata().getColumnType(col);
         switch (ColumnType.sizeOf(columnType)) {
             case 1:
