@@ -2399,7 +2399,7 @@ public class SqlCompiler implements Closeable {
             if (ColumnType.GEOHASH == ColumnType.tagOf(columnType)) {
                 assert function.isConstant();
                 if (ColumnType.STRING == ColumnType.tagOf(function.getType())) {
-                    f = GeoHashConstant.newInstance(function.getStr(null));
+                    f = converstStrToGeohashConst(function, functionPosition);
                 } else {
                     throw SqlException.position(0)
                             .put("cannot cast ")
@@ -2420,6 +2420,14 @@ public class SqlCompiler implements Closeable {
                 metadata.getColumnType(metadataColumnIndex),
                 metadata.getColumnName(metadataColumnIndex)
         );
+    }
+
+    private static Function converstStrToGeohashConst(Function function, int position) throws SqlException {
+        try {
+            return GeoHashConstant.newInstance(function.getStr(null));
+        } catch (NumericException e) {
+            throw SqlException.position(position).put("cannot parse geohash, invalid value");
+        }
     }
 
     private InsertModel validateAndOptimiseInsertAsSelect(

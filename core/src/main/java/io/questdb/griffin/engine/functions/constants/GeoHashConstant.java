@@ -30,7 +30,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.GeoHashFunction;
 import io.questdb.griffin.engine.functions.geohash.GeoHashNative;
 import io.questdb.std.Chars;
-import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
 
 public class GeoHashConstant extends GeoHashFunction implements ConstantFunction {
     public static final GeoHashConstant NULL = new GeoHashConstant(GeoHashExtra.NULL, ColumnType.GEOHASH);
@@ -42,7 +42,7 @@ public class GeoHashConstant extends GeoHashFunction implements ConstantFunction
         this.hash = hash;
     }
 
-    public GeoHashConstant(CharSequence value) {
+    public GeoHashConstant(CharSequence value) throws NumericException {
         super(ColumnType.GEOHASH);
         if (value == null || value.length() == 0) {
             hash = NULL.hash;
@@ -60,7 +60,7 @@ public class GeoHashConstant extends GeoHashFunction implements ConstantFunction
         return hash != GeoHashExtra.NULL ? new GeoHashConstant(hash, type) : NULL;
     }
 
-    public static GeoHashConstant newInstance(CharSequence value) {
+    public static GeoHashConstant newInstance(CharSequence value) throws NumericException {
         return value != null && value.length() > 0 ? new GeoHashConstant(value) : NULL;
     }
 

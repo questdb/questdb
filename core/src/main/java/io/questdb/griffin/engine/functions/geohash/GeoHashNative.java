@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.geohash;
 
 import io.questdb.std.CharSequenceHashSet;
 import io.questdb.std.DirectLongList;
+import io.questdb.std.NumericException;
 import io.questdb.std.str.CharSink;
 
 public class GeoHashNative {
@@ -49,13 +50,13 @@ public class GeoHashNative {
             's', 't', 'u', 'v', 'w', 'x', 'y', 'z'
     };
 
-    public static long fromString(CharSequence hash) {
+    public static long fromString(CharSequence hash) throws NumericException {
         long output = 0;
         for (int i = 0; i < hash.length(); ++i) {
             char c = hash.charAt(i);
             byte idx = base32Indexes[(int) c - 48];
             if (idx < 0) {
-                throw new IllegalArgumentException(hash.toString());
+                throw NumericException.INSTANCE;
             }
             output <<= 5;
             output |= (idx & 0x1F);
@@ -100,17 +101,19 @@ public class GeoHashNative {
         return result;
     }
 
-    public static long fromBitString(CharSequence bits) {
-        if (bits.length() % 5 != 0) {
-            throw new IllegalArgumentException("length must be a multiple of 5 from 0 to 60");
+    public static long fromBitString(CharSequence bits) throws NumericException {
+        if (bits.length() > 60) {
+            throw NumericException.INSTANCE;
         }
         long result = 0;
         for (int i = 0; i < bits.length(); i++) {
             char c = bits.charAt(i);
             if (c == '1') {
                 result = (result << 1) | 1;
-            } else {
+            } else if (c == '0') {
                 result = result << 1;
+            } else {
+                throw NumericException.INSTANCE;
             }
         }
         return result;
@@ -146,15 +149,19 @@ public class GeoHashNative {
         prefixesBits.clear();
         // skip first (search column name) element
         for (int i = 1, sz = prefixes.size(); i < sz; i++) {
-            final CharSequence prefix = prefixes.get(i);
-            final long hash = fromString(prefix);
-            final int bits = 5 * prefix.length();
-            final int shift = 8 * 5 - bits;
-            final long norm = hash << shift;
-            final long mask = bitmask(bits, shift);
+            try {
+                final CharSequence prefix = prefixes.get(i);
+                final long hash = fromString(prefix);
+                final int bits = 5 * prefix.length();
+                final int shift = 8 * 5 - bits;
+                final long norm = hash << shift;
+                final long mask = bitmask(bits, shift);
 
-            prefixesBits.add(norm);
-            prefixesBits.add(mask);
+                prefixesBits.add(norm);
+                prefixesBits.add(mask);
+            } catch (NumericException e) {
+                // Skip invalid geo hashes
+            }
         }
     }
 

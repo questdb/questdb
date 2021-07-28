@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.functions.geohash;
 import io.questdb.griffin.engine.table.LatestByArguments;
 import io.questdb.std.CharSequenceHashSet;
 import io.questdb.std.DirectLongList;
+import io.questdb.std.NumericException;
 import io.questdb.std.str.StringSink;
 import org.junit.Assert;
 import org.junit.Test;
@@ -50,7 +51,7 @@ public class GeoHashNativeTest {
     }
 
     @Test
-    public void testFromString() {
+    public void testFromString() throws NumericException {
         final long gh = GeoHashNative.fromCoordinates(lat, lon, 8 * 5);
         sink.clear();
         GeoHashNative.toString(gh, 8, sink);
@@ -58,10 +59,8 @@ public class GeoHashNativeTest {
         Assert.assertEquals(gh, gh1);
     }
 
-
-
     @Test
-    public void testFromCoordinates() {
+    public void testFromCoordinates() throws NumericException {
         Assert.assertEquals(GeoHashNative.fromCoordinates(lat, lon, 1 * 5), GeoHashNative.fromBitString("11100"));
         Assert.assertEquals(GeoHashNative.fromCoordinates(lat, lon, 2 * 5), GeoHashNative.fromBitString("1110011001"));
         Assert.assertEquals(GeoHashNative.fromCoordinates(lat, lon, 3 * 5), GeoHashNative.fromBitString("111001100111100"));
@@ -176,7 +175,7 @@ public class GeoHashNativeTest {
     }
 
     @Test
-    public void testLatLon() {
+    public void testLatLon() throws NumericException {
         String expected = "24 -> s\n" +
                 "789 -> sp\n" +
                 "25248 -> sp0\n" +
