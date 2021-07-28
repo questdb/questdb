@@ -141,10 +141,7 @@ public final class ColumnType {
         }
         if (ColumnType.GEOHASH == tag) {
             String name = geoHashTypeNameMap.get(columnType);
-            if (name == null) {
-                return typeNameMap.get(GEOHASH);
-            }
-            return name;
+            return name != null ? name : "GEOHASH";
         }
         return typeNameMap.valueAtQuick(index);
     }
@@ -207,15 +204,18 @@ public final class ColumnType {
         typeNameMap.put(GEOHASH, "GEOHASH");
 
         StringSink sink = new StringSink();
+
+        for (int b = 1; b <= 60; b++) {
+            if (b % 5 != 0) {
+                sink.clear();
+                sink.put("GEOHASH(").put(b).put("b)");
+                geoHashTypeNameMap.put(GeoHashExtra.setBitsPrecision(GEOHASH, b), sink.toString());
+            }
+        }
         for (int c = 1; c <= 12; c++) {
             sink.clear();
-            sink.put(typeNameMap.get(GEOHASH)).put('(').put(c).put("c)");
+            sink.put("GEOHASH(").put(c).put("c)");
             geoHashTypeNameMap.put(GeoHashExtra.setBitsPrecision(GEOHASH, c * 5), sink.toString());
-        }
-        for (int b = 1; b <= 60; b++) {
-            sink.clear();
-            sink.put(typeNameMap.get(GEOHASH)).put('(').put(b).put("b)");
-            geoHashTypeNameMap.put(GeoHashExtra.setBitsPrecision(GEOHASH, b), sink.toString());
         }
 
         nameTypeMap.put("boolean", BOOLEAN);
