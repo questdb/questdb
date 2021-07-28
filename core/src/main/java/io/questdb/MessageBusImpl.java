@@ -26,7 +26,10 @@ package io.questdb;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.TableBlockWriter.TableBlockWriterTaskHolder;
-import io.questdb.mp.*;
+import io.questdb.mp.MCSequence;
+import io.questdb.mp.MPSequence;
+import io.questdb.mp.RingQueue;
+import io.questdb.mp.Sequence;
 import io.questdb.tasks.*;
 import org.jetbrains.annotations.NotNull;
 

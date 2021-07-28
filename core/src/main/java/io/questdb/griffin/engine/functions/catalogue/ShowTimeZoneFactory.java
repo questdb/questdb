@@ -30,7 +30,6 @@ import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 
 public class ShowTimeZoneFactory implements RecordCursorFactory {
@@ -45,7 +44,7 @@ public class ShowTimeZoneFactory implements RecordCursorFactory {
     private final StringValueRecordCursor cursor = new StringValueRecordCursor(RECORD);
 
     @Override
-    public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
+    public RecordCursor getCursor(SqlExecutionContext executionContext) {
         cursor.toTop();
         return cursor;
     }

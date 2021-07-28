@@ -57,7 +57,7 @@ public class TypeOfFunctionFactory implements FunctionFactory {
     }
 
     static final Function NULL = new StrConstant("NULL");
-    static Function[] TYPE_NAMES;
+    static final Function[] TYPE_NAMES;
 
     static {
         TYPE_NAMES = new Function[ColumnType.MAX + 1];

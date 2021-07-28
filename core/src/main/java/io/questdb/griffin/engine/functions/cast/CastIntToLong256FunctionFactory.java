@@ -65,7 +65,7 @@ public class CastIntToLong256FunctionFactory implements FunctionFactory {
             if (value == Numbers.INT_NaN) {
                 return Long256Impl.NULL_LONG256;
             }
-            long256a.setLong0(value);
+            long256a.setAll(value, 0, 0, 0);
             return long256a;
         }
 
@@ -75,7 +75,7 @@ public class CastIntToLong256FunctionFactory implements FunctionFactory {
             if (value == Numbers.INT_NaN) {
                 return Long256Impl.NULL_LONG256;
             }
-            long256b.setLong0(value);
+            long256b.setAll(value, 0, 0, 0);
             return long256b;
         }
 

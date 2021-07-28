@@ -241,6 +241,40 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
     }
 
     @Test
+    public void testChar() throws SqlException {
+        bindVariableService.setChar("abc", 'x');
+        Function func = expr(":abc")
+                .$();
+
+        func.init(null, sqlExecutionContext);
+        Assert.assertEquals('x', func.getChar(builder.getRecord()));
+
+        bindVariableService.setChar("abc", 'y');
+        Assert.assertEquals('y', func.getChar(builder.getRecord()));
+    }
+
+    @Test
+    public void testCharIndexed() throws SqlException {
+        bindVariableService.setChar(0, 'C');
+        bindVariableService.setChar(1, 'A');
+
+        Function func = expr("$1 || $2")
+                .withFunction(new ConcatFunctionFactory())
+                .$();
+
+        func.init(null, sqlExecutionContext);
+        TestUtils.assertEquals("CA", func.getStr(builder.getRecord()));
+
+        bindVariableService.setChar(1, '0');
+
+        func.init(null, sqlExecutionContext);
+
+        TestUtils.assertEquals("C0", func.getStr(builder.getRecord()));
+
+        func.close();
+    }
+
+    @Test
     public void testDate() throws SqlException, NumericException {
         bindVariableService.setDate("xyz", DateFormatUtils.parseUTCDate("2015-04-10T10:00:00.000Z"));
         Function func = expr("to_str(:xyz, 'yyyy-MM')")
@@ -252,19 +286,6 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
 
         bindVariableService.setDate("xyz", DateFormatUtils.parseUTCDate("2015-08-10T10:00:00.000Z"));
         TestUtils.assertEquals("2015-08", func.getStr(builder.getRecord()));
-    }
-
-    @Test
-    public void testChar() throws SqlException {
-        bindVariableService.setChar("abc", 'x');
-        Function func = expr(":abc")
-                .$();
-
-        func.init(null, sqlExecutionContext);
-        Assert.assertEquals('x', func.getChar(builder.getRecord()));
-
-        bindVariableService.setChar("abc", 'y');
-        Assert.assertEquals('y', func.getChar(builder.getRecord()));
     }
 
     @Test
@@ -320,24 +341,19 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
     }
 
     @Test
-    public void testCharIndexed() throws SqlException {
-        bindVariableService.setChar(0, 'C');
-        bindVariableService.setChar(1, 'A');
+    public void testExplicitlyIndexedInvalidIndex() throws SqlException {
+        bindVariableService.setFloat(2, Float.NaN);
+        bindVariableService.setFloat(0, 7.6f);
+        bindVariableService.setFloat(1, 9.21f);
 
-        Function func = expr("$1 || $2")
-                .withFunction(new ConcatFunctionFactory())
-                .$();
-
-        func.init(null, sqlExecutionContext);
-        TestUtils.assertEquals("CA", func.getStr(builder.getRecord()));
-
-        bindVariableService.setChar(1, '0');
-
-        func.init(null, sqlExecutionContext);
-
-        TestUtils.assertEquals("C0", func.getStr(builder.getRecord()));
-
-        func.close();
+        try {
+            expr("$0 + $2")
+                    .withFunction(new AddFloatFunctionFactory())
+                    .$();
+            Assert.fail();
+        } catch (SqlException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "invalid bind variable index");
+        }
     }
 
     @Test
@@ -359,22 +375,6 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
         Assert.assertEquals(25.88f, func.getFloat(builder.getRecord()), 0.001f);
 
         func.close();
-    }
-
-    @Test
-    public void testExplicitlyIndexedInvalidIndex() throws SqlException {
-        bindVariableService.setFloat(2, Float.NaN);
-        bindVariableService.setFloat(0, 7.6f);
-        bindVariableService.setFloat(1, 9.21f);
-
-        try {
-            expr("$0 + $2")
-                    .withFunction(new AddFloatFunctionFactory())
-                    .$();
-            Assert.fail();
-        } catch (SqlException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "invalid bind variable index");
-        }
     }
 
     @Test
@@ -463,58 +463,6 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
     }
 
     @Test
-    public void testLong256Compare() throws SqlException {
-        bindVariableService.setLong256("x", 1, 2, 3, 4);
-        bindVariableService.setLong256("y", 1, 2, 3, 4);
-
-        Function func = expr(":x = :y")
-                .withFunction(new EqLong256FunctionFactory())
-                .$();
-
-        func.init(null, sqlExecutionContext);
-
-        Assert.assertTrue(func.getBool(builder.getRecord()));
-
-        bindVariableService.setLong256("y", 2, 4, 5, 6);
-        Assert.assertFalse(func.getBool(builder.getRecord()));
-    }
-
-    @Test
-    public void testLong256() throws SqlException {
-        bindVariableService.setLong256("x", 1, 2, 3, 4);
-
-        Function func = expr(":x")
-                .$();
-
-        func.init(null, sqlExecutionContext);
-
-        Long256 longA = func.getLong256A(builder.getRecord());
-        Long256 longB = func.getLong256B(builder.getRecord());
-        Assert.assertSame(longA, longB);
-
-        sink.clear();
-        func.getLong256(builder.getRecord(), sink);
-        TestUtils.assertEquals("0x04000000000000000300000000000000020000000000000001", sink);
-
-        sink.clear();
-        bindVariableService.setLong256("x");
-        func.getLong256(builder.getRecord(), sink);
-        TestUtils.assertEquals("", sink);
-
-        // test we can set the wrapper
-        Long256Impl wrapper = new Long256Impl();
-        wrapper.setLong0(999);
-        wrapper.setLong1(888);
-        wrapper.setLong2(777);
-        wrapper.setLong3(666);
-
-        bindVariableService.setLong256("x", wrapper);
-        sink.clear();
-        func.getLong256(builder.getRecord(), sink);
-        TestUtils.assertEquals("0x029a0000000000000309000000000000037800000000000003e7", sink);
-    }
-
-    @Test
     public void testIntIndexed() throws SqlException {
         bindVariableService.setInt(2, 9000);
         bindVariableService.setInt(0, 9);
@@ -549,6 +497,55 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
     }
 
     @Test
+    public void testLong256() throws SqlException {
+        bindVariableService.setLong256("x", 1, 2, 3, 4);
+
+        Function func = expr(":x")
+                .$();
+
+        func.init(null, sqlExecutionContext);
+
+        Long256 longA = func.getLong256A(builder.getRecord());
+        Long256 longB = func.getLong256B(builder.getRecord());
+        Assert.assertSame(longA, longB);
+
+        sink.clear();
+        func.getLong256(builder.getRecord(), sink);
+        TestUtils.assertEquals("0x04000000000000000300000000000000020000000000000001", sink);
+
+        sink.clear();
+        bindVariableService.setLong256("x");
+        func.getLong256(builder.getRecord(), sink);
+        TestUtils.assertEquals("", sink);
+
+        // test we can set the wrapper
+        Long256Impl wrapper = new Long256Impl();
+        wrapper.setAll(999, 888, 777, 666);
+
+        bindVariableService.setLong256("x", wrapper);
+        sink.clear();
+        func.getLong256(builder.getRecord(), sink);
+        TestUtils.assertEquals("0x029a0000000000000309000000000000037800000000000003e7", sink);
+    }
+
+    @Test
+    public void testLong256Compare() throws SqlException {
+        bindVariableService.setLong256("x", 1, 2, 3, 4);
+        bindVariableService.setLong256("y", 1, 2, 3, 4);
+
+        Function func = expr(":x = :y")
+                .withFunction(new EqLong256FunctionFactory())
+                .$();
+
+        func.init(null, sqlExecutionContext);
+
+        Assert.assertTrue(func.getBool(builder.getRecord()));
+
+        bindVariableService.setLong256("y", 2, 4, 5, 6);
+        Assert.assertFalse(func.getBool(builder.getRecord()));
+    }
+
+    @Test
     public void testLongIndexed() throws SqlException {
         bindVariableService.setLong(2, 90000);
         bindVariableService.setLong(0, 9);
@@ -564,6 +561,78 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
         bindVariableService.setLong(0, 11);
         bindVariableService.setLong(1, 33);
         Assert.assertEquals(44L, func.getLong(builder.getRecord()));
+    }
+
+    @Test
+    public void testLowercaseIndexedStr() throws SqlException {
+        bindVariableService.setLong(2, 10000);
+        bindVariableService.setInt(0, 1);
+        bindVariableService.setStr(1, "abcDEFghiJKLmnoPQRstuVXZ");
+        Function func = expr("to_lowercase($2)")
+                .withFunction(new ToLowercaseFunctionFactory())
+                .$();
+
+        func.init(null, sqlExecutionContext);
+        TestUtils.assertEquals("abcdefghijklmnopqrstuvxz", func.getStr(builder.getRecord()));
+    }
+
+    @Test
+    public void testLowercaseStr() throws SqlException {
+        bindVariableService.setStr("str", "abcDEFghiJKLmnoPQRstuVXZ");
+        Function func = expr("to_lowercase(:str)")
+                .withFunction(new ToLowercaseFunctionFactory())
+                .$();
+
+        func.init(null, sqlExecutionContext);
+        TestUtils.assertEquals("abcdefghijklmnopqrstuvxz", func.getStr(builder.getRecord()));
+    }
+
+    @Test
+    public void testNonAsciiLowerCaseIndexedStr() throws SqlException {
+        bindVariableService.setLong(2, 10000);
+        bindVariableService.setInt(0, 1);
+        bindVariableService.setStr(1, "abcDEFghiJKLm...() { _; } >_[$($())] { <<< %(='%') \"noPQRstuVXZ");
+        Function func = expr("to_lowercase($2)")
+                .withFunction(new ToLowercaseFunctionFactory())
+                .$();
+
+        func.init(null, sqlExecutionContext);
+        TestUtils.assertEquals("abcdefghijklm...() { _; } >_[$($())] { <<< %(='%') \"nopqrstuvxz", func.getStr(builder.getRecord()));
+    }
+
+    @Test
+    public void testNonAsciiLowerCaseStr() throws SqlException {
+        bindVariableService.setStr("str", "abcDEFghiJKLm...() { _; } >_[$($())] { <<< %(='%') \"noPQRstuVXZ");
+        Function func = expr("to_lowercase(:str)")
+                .withFunction(new ToLowercaseFunctionFactory())
+                .$();
+
+        func.init(null, sqlExecutionContext);
+        TestUtils.assertEquals("abcdefghijklm...() { _; } >_[$($())] { <<< %(='%') \"nopqrstuvxz", func.getStr(builder.getRecord()));
+    }
+
+    @Test
+    public void testNonAsciiUpperCaseIndexedStr() throws SqlException {
+        bindVariableService.setLong(2, 10000);
+        bindVariableService.setInt(0, 1);
+        bindVariableService.setStr(1, "abcDEFghiJKLm...() { _; } >_[$($())] { <<< %(='%') \"noPQRstuVXZ");
+        Function func = expr("to_uppercase($2)")
+                .withFunction(new ToUppercaseFunctionFactory())
+                .$();
+
+        func.init(null, sqlExecutionContext);
+        TestUtils.assertEquals("ABCDEFGHIJKLM...() { _; } >_[$($())] { <<< %(='%') \"NOPQRSTUVXZ", func.getStr(builder.getRecord()));
+    }
+
+    @Test
+    public void testNonAsciiUpperCaseStr() throws SqlException {
+        bindVariableService.setStr("str", "abcDEFghiJKLm...() { _; } >_[$($())] { <<< %(='%') \"noPQRstuVXZ");
+        Function func = expr("to_uppercase(:str)")
+                .withFunction(new ToUppercaseFunctionFactory())
+                .$();
+
+        func.init(null, sqlExecutionContext);
+        TestUtils.assertEquals("ABCDEFGHIJKLM...() { _; } >_[$($())] { <<< %(='%') \"NOPQRSTUVXZ", func.getStr(builder.getRecord()));
     }
 
     @Test
@@ -595,102 +664,6 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
 
         bindVariableService.setShort(0, (short) 33);
         Assert.assertEquals(55, func.getShort(builder.getRecord()));
-    }
-
-    @Test
-    public void testUppercaseStr() throws SqlException {
-        bindVariableService.setStr("str", "abcDEFghiJKLmnoPQRstuVXZ");
-        Function func = expr("to_uppercase(:str)")
-                .withFunction(new ToUppercaseFunctionFactory())
-                .$();
-
-        func.init(null, sqlExecutionContext);
-        TestUtils.assertEquals("ABCDEFGHIJKLMNOPQRSTUVXZ", func.getStr(builder.getRecord()));
-    }
-
-    @Test
-    public void testNonAsciiUpperCaseStr() throws SqlException {
-        bindVariableService.setStr("str", "abcDEFghiJKLm...() { _; } >_[$($())] { <<< %(='%') \"noPQRstuVXZ");
-        Function func = expr("to_uppercase(:str)")
-                .withFunction(new ToUppercaseFunctionFactory())
-                .$();
-
-        func.init(null, sqlExecutionContext);
-        TestUtils.assertEquals("ABCDEFGHIJKLM...() { _; } >_[$($())] { <<< %(='%') \"NOPQRSTUVXZ", func.getStr(builder.getRecord()));
-    }
-
-    @Test
-    public void testLowercaseStr() throws SqlException {
-        bindVariableService.setStr("str", "abcDEFghiJKLmnoPQRstuVXZ");
-        Function func = expr("to_lowercase(:str)")
-                .withFunction(new ToLowercaseFunctionFactory())
-                .$();
-
-        func.init(null, sqlExecutionContext);
-        TestUtils.assertEquals("abcdefghijklmnopqrstuvxz", func.getStr(builder.getRecord()));
-    }
-
-    @Test
-    public void testNonAsciiLowerCaseStr() throws SqlException {
-        bindVariableService.setStr("str", "abcDEFghiJKLm...() { _; } >_[$($())] { <<< %(='%') \"noPQRstuVXZ");
-        Function func = expr("to_lowercase(:str)")
-                .withFunction(new ToLowercaseFunctionFactory())
-                .$();
-
-        func.init(null, sqlExecutionContext);
-        TestUtils.assertEquals("abcdefghijklm...() { _; } >_[$($())] { <<< %(='%') \"nopqrstuvxz", func.getStr(builder.getRecord()));
-    }
-
-    @Test
-    public void testUppercaseIndexedStr() throws SqlException {
-        bindVariableService.setLong(2, 10000);
-        bindVariableService.setInt(0, 1);
-        bindVariableService.setStr(1, "abcDEFghiJKLmnoPQRstuVXZ");
-        Function func = expr("to_uppercase($2)")
-                .withFunction(new ToUppercaseFunctionFactory())
-                .$();
-
-        func.init(null, sqlExecutionContext);
-        TestUtils.assertEquals("ABCDEFGHIJKLMNOPQRSTUVXZ", func.getStr(builder.getRecord()));
-    }
-
-    @Test
-    public void testNonAsciiUpperCaseIndexedStr() throws SqlException {
-        bindVariableService.setLong(2, 10000);
-        bindVariableService.setInt(0, 1);
-        bindVariableService.setStr(1, "abcDEFghiJKLm...() { _; } >_[$($())] { <<< %(='%') \"noPQRstuVXZ");
-        Function func = expr("to_uppercase($2)")
-                .withFunction(new ToUppercaseFunctionFactory())
-                .$();
-
-        func.init(null, sqlExecutionContext);
-        TestUtils.assertEquals("ABCDEFGHIJKLM...() { _; } >_[$($())] { <<< %(='%') \"NOPQRSTUVXZ", func.getStr(builder.getRecord()));
-    }
-
-    @Test
-    public void testLowercaseIndexedStr() throws SqlException {
-        bindVariableService.setLong(2, 10000);
-        bindVariableService.setInt(0, 1);
-        bindVariableService.setStr(1, "abcDEFghiJKLmnoPQRstuVXZ");
-        Function func = expr("to_lowercase($2)")
-                .withFunction(new ToLowercaseFunctionFactory())
-                .$();
-
-        func.init(null, sqlExecutionContext);
-        TestUtils.assertEquals("abcdefghijklmnopqrstuvxz", func.getStr(builder.getRecord()));
-    }
-
-    @Test
-    public void testNonAsciiLowerCaseIndexedStr() throws SqlException {
-        bindVariableService.setLong(2, 10000);
-        bindVariableService.setInt(0, 1);
-        bindVariableService.setStr(1, "abcDEFghiJKLm...() { _; } >_[$($())] { <<< %(='%') \"noPQRstuVXZ");
-        Function func = expr("to_lowercase($2)")
-                .withFunction(new ToLowercaseFunctionFactory())
-                .$();
-
-        func.init(null, sqlExecutionContext);
-        TestUtils.assertEquals("abcdefghijklm...() { _; } >_[$($())] { <<< %(='%') \"nopqrstuvxz", func.getStr(builder.getRecord()));
     }
 
     @Test
@@ -793,6 +766,30 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
             Assert.assertEquals(8, e.getPosition());
             TestUtils.assertContains(e.getFlyweightMessage(), "undefined bind variable: :xyz");
         }
+    }
+
+    @Test
+    public void testUppercaseIndexedStr() throws SqlException {
+        bindVariableService.setLong(2, 10000);
+        bindVariableService.setInt(0, 1);
+        bindVariableService.setStr(1, "abcDEFghiJKLmnoPQRstuVXZ");
+        Function func = expr("to_uppercase($2)")
+                .withFunction(new ToUppercaseFunctionFactory())
+                .$();
+
+        func.init(null, sqlExecutionContext);
+        TestUtils.assertEquals("ABCDEFGHIJKLMNOPQRSTUVXZ", func.getStr(builder.getRecord()));
+    }
+
+    @Test
+    public void testUppercaseStr() throws SqlException {
+        bindVariableService.setStr("str", "abcDEFghiJKLmnoPQRstuVXZ");
+        Function func = expr("to_uppercase(:str)")
+                .withFunction(new ToUppercaseFunctionFactory())
+                .$();
+
+        func.init(null, sqlExecutionContext);
+        TestUtils.assertEquals("ABCDEFGHIJKLMNOPQRSTUVXZ", func.getStr(builder.getRecord()));
     }
 
     private FunctionBuilder expr(String expression) {

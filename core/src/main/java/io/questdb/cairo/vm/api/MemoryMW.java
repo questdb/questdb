@@ -22,14 +22,9 @@
  *
  ******************************************************************************/
 
-package io.questdb.std;
+package io.questdb.cairo.vm.api;
 
-public interface Long256Sink {
-    void setLong0(long value);
-
-    void setLong1(long value);
-
-    void setLong2(long value);
-
-    void setLong3(long value);
+public interface MemoryMW extends MemoryM, MemoryW {
+    void setTruncateSize(long size);
+    void sync(boolean async);
 }

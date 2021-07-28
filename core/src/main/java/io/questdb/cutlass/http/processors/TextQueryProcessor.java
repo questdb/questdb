@@ -465,14 +465,13 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                 }
                 break;
             case ColumnType.NULL:
+            case ColumnType.BINARY:
                 break;
             case ColumnType.STRING:
                 putStringOrNull(socket, rec.getStr(col));
                 break;
             case ColumnType.SYMBOL:
                 putStringOrNull(socket, rec.getSym(col));
-                break;
-            case ColumnType.BINARY:
                 break;
             case ColumnType.LONG256:
                 rec.getLong256(col, socket);

@@ -24,7 +24,14 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.vm.*;
+import io.questdb.cairo.vm.MemoryCMRImpl;
+import io.questdb.cairo.vm.MemoryPMAImpl;
+import io.questdb.cairo.vm.PagedSlidingReadOnlyMemory;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryARW;
+import io.questdb.cairo.vm.api.MemoryCMARW;
+import io.questdb.cairo.vm.api.MemoryMA;
+import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
@@ -75,7 +82,7 @@ public class CairoMemoryTest {
         int failureCount = 0;
         try (Path path = new Path()) {
             path.of(temp.newFile().getAbsolutePath());
-            try (AppendOnlyVirtualMemory mem = new AppendOnlyVirtualMemory()) {
+            try (MemoryMA mem = Vm.getMAInstance()) {
                 mem.of(ff, path.$(), ff.getPageSize() * 2);
                 int i = 0;
                 while (i < N) {
@@ -90,6 +97,45 @@ public class CairoMemoryTest {
             }
         }
         Assert.assertTrue(failureCount > 0);
+        Assert.assertEquals(used, Unsafe.getMemUsed());
+        Assert.assertEquals(openFileCount, ff.getOpenFileCount());
+    }
+
+    @Test
+    public void testAppendAllocateError() throws Exception {
+        long used = Unsafe.getMemUsed();
+
+        class X extends FilesFacadeImpl {
+            int count = 2;
+            boolean allClear = false;
+
+            @Override
+            public boolean allocate(long fd, long size) {
+                if (allClear || --count > 0) {
+                    return super.allocate(fd, size);
+                }
+                allClear = true;
+                return false;
+            }
+        }
+
+        X ff = new X();
+
+        long openFileCount = ff.getOpenFileCount();
+        try (Path path = new Path().of(temp.newFile().getAbsolutePath()).$()) {
+            try (MemoryPMAImpl mem = new MemoryPMAImpl(ff, path, 2 * ff.getPageSize())) {
+                try {
+                    for (int i = 0; i < N * 10; i++) {
+                        mem.putLong(i);
+                    }
+                    Assert.fail();
+                } catch (CairoException ignore) {
+
+                }
+                Assert.assertTrue(mem.getAppendOffset() > 0);
+            }
+        }
+
         Assert.assertEquals(used, Unsafe.getMemUsed());
         Assert.assertEquals(openFileCount, ff.getOpenFileCount());
     }
@@ -117,7 +163,7 @@ public class CairoMemoryTest {
         try (Path path = new Path()) {
             path.of(temp.getRoot().getAbsolutePath());
             int prefixLen = path.length();
-            try (AppendOnlyVirtualMemory mem = new AppendOnlyVirtualMemory()) {
+            try (MemoryMA mem = Vm.getMAInstance()) {
                 Rnd rnd = new Rnd();
                 for (int k = 0; k < 10; k++) {
                     path.trimTo(prefixLen).concat(rnd.nextString(10));
@@ -155,46 +201,7 @@ public class CairoMemoryTest {
 
     @Test
     public void testAppendMemoryJump() throws Exception {
-        testVirtualMemoryJump(path -> new AppendOnlyVirtualMemory(FF, path, FF.getPageSize()));
-    }
-
-    @Test
-    public void testAppendAllocateError() throws Exception {
-        long used = Unsafe.getMemUsed();
-
-        class X extends FilesFacadeImpl {
-            int count = 2;
-            boolean allClear = false;
-
-            @Override
-            public boolean allocate(long fd, long size) {
-                if (allClear || --count > 0) {
-                    return super.allocate(fd, size);
-                }
-                allClear = true;
-                return false;
-            }
-        }
-
-        X ff = new X();
-
-        long openFileCount = ff.getOpenFileCount();
-        try (Path path = new Path().of(temp.newFile().getAbsolutePath()).$()) {
-            try (AppendOnlyVirtualMemory mem = new AppendOnlyVirtualMemory(ff, path, 2 * ff.getPageSize())) {
-                try {
-                    for (int i = 0; i < N * 10; i++) {
-                        mem.putLong(i);
-                    }
-                    Assert.fail();
-                } catch (CairoException ignore) {
-
-                }
-                Assert.assertTrue(mem.getAppendOffset() > 0);
-            }
-        }
-
-        Assert.assertEquals(used, Unsafe.getMemUsed());
-        Assert.assertEquals(openFileCount, ff.getOpenFileCount());
+        testVirtualMemoryJump(path -> new MemoryPMAImpl(FF, path, FF.getPageSize()));
     }
 
     @Test
@@ -220,7 +227,7 @@ public class CairoMemoryTest {
         try (Path path = new Path()) {
             path.of(temp.getRoot().getAbsolutePath());
             int prefixLen = path.length();
-            try (PagedMappedReadWriteMemory mem = new PagedMappedReadWriteMemory()) {
+            try (MemoryCMARW mem = Vm.getCMARWInstance()) {
                 Rnd rnd = new Rnd();
                 for (int k = 0; k < 10; k++) {
                     path.trimTo(prefixLen).concat(rnd.nextString(10));
@@ -236,12 +243,12 @@ public class CairoMemoryTest {
 
                     if (fail) {
                         try {
-                            mem.of(ff, path, 2 * ff.getPageSize());
+                            mem.of(ff, path, 2 * ff.getPageSize(), Long.MAX_VALUE);
                             Assert.fail();
                         } catch (CairoException ignored) {
                         }
                     } else {
-                        mem.of(ff, path, 2 * ff.getPageSize());
+                        mem.of(ff, path, 2 * ff.getPageSize(), Long.MAX_VALUE);
                         for (int i = 0; i < N; i++) {
                             mem.putLong(i);
                         }
@@ -257,16 +264,11 @@ public class CairoMemoryTest {
     }
 
     @Test
-    public void testReadWriteMemoryJump() throws Exception {
-        testVirtualMemoryJump(path -> new PagedMappedReadWriteMemory(FF, path, FF.getPageSize()));
-    }
-
-    @Test
     public void testReadWriteMemoryTruncate() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (Path path = new Path().of(temp.newFile().getAbsolutePath()).$()) {
                 int pageSize = 1024 * 1024;
-                try (PagedMappedReadWriteMemory mem = new PagedMappedReadWriteMemory(FF, path, pageSize)) {
+                try (MemoryCMARW mem = Vm.getSmallCMARWInstance(FF, path)) {
                     int count = 2 * pageSize / Long.BYTES;
                     for (int i = 0; i < count; i++) {
                         mem.putLong(i);
@@ -309,7 +311,7 @@ public class CairoMemoryTest {
                 path.of(temp.getRoot().getAbsolutePath());
                 final int N = 100000;
                 final Rnd rnd = new Rnd();
-                try (AppendOnlyVirtualMemory mem = new AppendOnlyVirtualMemory()) {
+                try (MemoryMA mem = Vm.getMAInstance()) {
                     mem.of(FF, path.concat("x.dat").$(), FF.getPageSize());
 
 
@@ -365,7 +367,7 @@ public class CairoMemoryTest {
                         return super.mmap(fd, len, offset, flags);
                     }
                 };
-                try (AppendOnlyVirtualMemory mem = new AppendOnlyVirtualMemory()) {
+                try (MemoryMA mem = Vm.getMAInstance()) {
                     mem.of(ff, path.concat("x.dat").$(), ff.getPageSize());
 
                     for (int i = 0; i < N; i++) {
@@ -382,7 +384,7 @@ public class CairoMemoryTest {
                             }
                             Assert.fail();
                         } catch (CairoException e) {
-                            TestUtils.assertContains(e.getMessage(), "Cannot map read-only page");
+                            TestUtils.assertContains(e.getMessage(), "could not mmap");
                         }
 
                         rnd.reset();
@@ -399,7 +401,7 @@ public class CairoMemoryTest {
     public void testWriteAndRead() throws Exception {
         long used = Unsafe.getMemUsed();
         try (Path path = new Path().of(temp.newFile().getAbsolutePath()).$()) {
-            try (PagedMappedReadWriteMemory mem = new PagedMappedReadWriteMemory(FF, path, 2 * FF.getPageSize())) {
+            try (MemoryCMARW mem = Vm.getCMARWInstance(FF, path, 2 * FF.getPageSize(), Long.MAX_VALUE)) {
                 for (int i = 0; i < N; i++) {
                     mem.putLong(i);
                 }
@@ -410,7 +412,7 @@ public class CairoMemoryTest {
 
                 Assert.assertEquals(8L * N, mem.getAppendOffset());
             }
-            try (PagedMappedReadWriteMemory mem = new PagedMappedReadWriteMemory(FF, path, FF.getPageSize())) {
+            try (MemoryCMARW mem = Vm.getSmallCMARWInstance(FF, path)) {
                 for (int i = 0; i < N; i++) {
                     Assert.assertEquals(i, mem.getLong(i * 8));
                 }
@@ -423,13 +425,13 @@ public class CairoMemoryTest {
     public void testWriteAndReadWithReadOnlyMem() throws Exception {
         long used = Unsafe.getMemUsed();
         try (Path path = new Path().of(temp.newFile().getAbsolutePath()).$()) {
-            try (PagedMappedReadWriteMemory mem = new PagedMappedReadWriteMemory(FF, path, 2 * FF.getPageSize())) {
+            try (MemoryCMARW mem = Vm.getCMARWInstance(FF, path, 2 * FF.getPageSize(), Long.MAX_VALUE)) {
                 for (int i = 0; i < N; i++) {
                     mem.putLong(i);
                 }
                 Assert.assertEquals(8L * N, mem.getAppendOffset());
             }
-            try (MappedReadOnlyMemory mem = new SinglePageMappedReadOnlyPageMemory(FF, path, FF.getPageSize(), 8L * N)) {
+            try (MemoryMR mem = new MemoryCMRImpl(FF, path, 8L * N)) {
                 for (int i = 0; i < N; i++) {
                     Assert.assertEquals(i, mem.getLong(i * 8));
                 }
@@ -440,49 +442,47 @@ public class CairoMemoryTest {
 
     @Test
     public void testWriteOverMapFailuresAndRead() throws Exception {
-        long used = Unsafe.getMemUsed();
         Rnd rnd = new Rnd();
         class X extends FilesFacadeImpl {
             @Override
-            public long mmap(long fd, long len, long offset, int flags) {
+            public long getMapPageSize() {
+                return super.getPageSize();
+            }
+
+            @Override
+            public long mremap(long fd, long addr, long previousSize, long newSize, long offset, int mode) {
                 if (rnd.nextBoolean()) {
                     return -1;
                 }
-                return super.mmap(fd, len, offset, flags);
+                return super.mremap(fd, addr, previousSize, newSize, offset, mode);
             }
         }
-
-        int writeFailureCount = 0;
 
         final X ff = new X();
-
-        try (Path path = new Path().of(temp.newFile().getAbsolutePath()).$()) {
-            try (PagedMappedReadWriteMemory mem = new PagedMappedReadWriteMemory(ff, path, 2 * ff.getPageSize())) {
-                int i = 0;
-                while (i < N) {
-                    try {
-                        mem.putLong(i);
-                        i++;
-                    } catch (CairoException ignore) {
-                        writeFailureCount++;
+        TestUtils.assertMemoryLeak(() -> {
+            int writeFailureCount = 0;
+            try (Path path = new Path().of(temp.newFile().getAbsolutePath()).$()) {
+                try (MemoryCMARW mem = Vm.getSmallCMARWInstance(ff, path)) {
+                    int i = 0;
+                    while (i < N) {
+                        try {
+                            mem.putLong(i);
+                            i++;
+                        } catch (CairoException ignore) {
+                            writeFailureCount++;
+                            break;
+                        }
                     }
                 }
-                // read in place
-                for (i = 0; i < N; i++) {
-                    Assert.assertEquals(i, mem.getLong(i * 8L));
-                }
-
-                Assert.assertEquals(8L * N, mem.getAppendOffset());
             }
-        }
-        Assert.assertTrue(writeFailureCount > 0);
-        Assert.assertEquals(used, Unsafe.getMemUsed());
+            Assert.assertTrue(writeFailureCount > 0);
+        });
     }
 
     private void testVirtualMemoryJump(VirtualMemoryFactory factory) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (Path path = new Path().of(temp.newFile().getAbsolutePath()).$()) {
-                try (PagedVirtualMemory mem = factory.newInstance(path)) {
+                try (MemoryARW mem = factory.newInstance(path)) {
                     for (int i = 0; i < 100; i++) {
                         mem.putLong(i);
                     }
@@ -494,7 +494,7 @@ public class CairoMemoryTest {
                     mem.jumpTo(800);
                 }
 
-                try (MappedReadOnlyMemory roMem = new SinglePageMappedReadOnlyPageMemory(FF, path, FF.getPageSize(), 800)) {
+                try (MemoryMR roMem = new MemoryCMRImpl(FF, path, 800)) {
                     for (int i = 0; i < 50; i++) {
                         Assert.assertEquals(50 - i, roMem.getLong(i * 8));
                     }
@@ -509,6 +509,6 @@ public class CairoMemoryTest {
 
     @FunctionalInterface
     private interface VirtualMemoryFactory {
-        PagedVirtualMemory newInstance(Path path);
+        MemoryARW newInstance(Path path);
     }
 }

@@ -61,13 +61,13 @@ public class CastByteToLong256FunctionFactory implements FunctionFactory {
 
         @Override
         public Long256 getLong256A(Record rec) {
-            long256a.setLong0(arg.getByte(rec));
+            long256a.setAll(arg.getByte(rec), 0, 0, 0);
             return long256a;
         }
 
         @Override
         public Long256 getLong256B(Record rec) {
-            long256b.setLong0(arg.getByte(rec));
+            long256b.setAll(arg.getByte(rec), 0, 0, 0);
             return long256b;
         }
 

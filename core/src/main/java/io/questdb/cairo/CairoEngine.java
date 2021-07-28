@@ -31,7 +31,7 @@ import io.questdb.cairo.pool.ReaderPool;
 import io.questdb.cairo.pool.WriterPool;
 import io.questdb.cairo.pool.WriterSource;
 import io.questdb.cairo.sql.ReaderOutOfDateException;
-import io.questdb.cairo.vm.AppendOnlyVirtualMemory;
+import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.*;
@@ -91,19 +91,12 @@ public class CairoEngine implements Closeable, WriterSource {
         freeTableId();
         FilesFacade ff = configuration.getFilesFacade();
         Path path = Path.getThreadLocal(configuration.getRoot()).concat(TableUtils.TAB_INDEX_FILE_NAME).$();
-        tableIdFd = TableUtils.openFileRWOrFail(ff, path);
-        final long fileSize = ff.length(tableIdFd);
-        if (fileSize < Long.BYTES) {
-            if (!ff.allocate(tableIdFd, Files.PAGE_SIZE)) {
-                ff.close(tableIdFd);
-                throw CairoException.instance(ff.errno()).put("Could not allocate [file=").put(path).put(", actual=").put(fileSize).put(", desired=").put(this.tableIdMemSize).put(']');
-            }
-        }
-
-        this.tableIdMem = ff.mmap(tableIdFd, tableIdMemSize, 0, Files.MAP_RW);
-        if (tableIdMem == -1) {
-            ff.close(tableIdFd);
-            throw CairoException.instance(ff.errno()).put("Could not mmap [file=").put(path).put(']');
+        try {
+            tableIdFd = TableUtils.openFileRWOrFail(ff, path);
+            this.tableIdMem = TableUtils.mapRW(ff, tableIdFd, tableIdMemSize);
+        } catch (Throwable e) {
+            close();
+            throw e;
         }
     }
 
@@ -123,7 +116,7 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public void createTable(
             CairoSecurityContext securityContext,
-            AppendOnlyVirtualMemory mem,
+            MemoryMARW mem,
             Path path,
             TableStructure struct
     ) {
@@ -151,7 +144,7 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public void createTableUnsafe(
             CairoSecurityContext securityContext,
-            AppendOnlyVirtualMemory mem,
+            MemoryMARW mem,
             Path path,
             TableStructure struct
     ) {

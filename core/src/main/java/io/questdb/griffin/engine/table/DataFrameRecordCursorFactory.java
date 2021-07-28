@@ -26,7 +26,7 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.*;
-import io.questdb.cairo.vm.ReadOnlyVirtualMemory;
+import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
@@ -194,13 +194,13 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
                         }
 
                         if (loRemaining > 0) {
-                            final ReadOnlyVirtualMemory col = reader.getColumn(TableReader.getPrimaryColumnIndex(base, columnIndexes.getQuick(i)));
+                            final MemoryR col = reader.getColumn(TableReader.getPrimaryColumnIndex(base, columnIndexes.getQuick(i)));
                             if (col instanceof NullColumn) {
                                 columnPageNextAddress.setQuick(i, 0);
                                 pageNRowsRemaining.setQuick(i, 0);
                             } else {
                                 int page = pages.getQuick(i);
-                                long pageSize = col.getPageSize(page) >> columnSizes.getQuick(i);
+                                long pageSize = col.getPageSize() >> columnSizes.getQuick(i);
                                 if (pageSize < loRemaining) {
                                     throw CairoException.instance(0).put("partition is not mapped as single page, cannot perform vector calculation");
                                 }
@@ -297,11 +297,11 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
                     } else if (partitionRemaining > 0) {
                         final int page = pages.getQuick(i);
                         pages.setQuick(i, page + 1);
-                        final ReadOnlyVirtualMemory col = reader.getColumn(TableReader.getPrimaryColumnIndex(base, columnIndexes.getQuick(i)));
+                        final MemoryR col = reader.getColumn(TableReader.getPrimaryColumnIndex(base, columnIndexes.getQuick(i)));
                         // page size is liable to change after it is mapped
                         // it is important to map page first and call pageSize() after
                         columnPageNextAddress.setQuick(i, col.getPageAddress(page));
-                        psz = !(col instanceof NullColumn) ? col.getPageSize(page) >> columnSizes.getQuick(i) : partitionRemaining;
+                        psz = !(col instanceof NullColumn) ? col.getPageSize() >> columnSizes.getQuick(i) : partitionRemaining;
                         final long m = Math.min(psz, partitionRemaining);
                         pageNRowsRemaining.setQuick(i, m);
                         if (min > m) {

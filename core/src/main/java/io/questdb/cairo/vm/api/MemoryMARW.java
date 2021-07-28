@@ -22,37 +22,12 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.vm;
+package io.questdb.cairo.vm.api;
 
-import io.questdb.log.Log;
 import io.questdb.std.FilesFacade;
+import org.jetbrains.annotations.Nullable;
 
-public class VmUtils {
-    public static final int STRING_LENGTH_BYTES = 4;
+public interface MemoryMARW extends MemoryMW, MemoryARW, MemoryMA, MemoryMR {
 
-    public static int getStorageLength(CharSequence s) {
-        if (s == null) {
-            return STRING_LENGTH_BYTES;
-        }
-
-        return STRING_LENGTH_BYTES + s.length() * 2;
-    }
-
-    public static long getStorageLength(int len) {
-        return STRING_LENGTH_BYTES + len * 2L;
-    }
-
-    public static void bestEffortClose(FilesFacade ff, Log log, long fd, boolean truncate, long size, long mapPageSize) {
-        try {
-            if (truncate) {
-                AppendOnlyVirtualMemory.bestEffortTruncate(ff, log, fd, size, mapPageSize);
-            } else {
-                log.debug().$("closed [fd=").$(fd).$(']').$();
-            }
-        } finally {
-            if (fd > 0) {
-                ff.close(fd);
-            }
-        }
-    }
+    void of(FilesFacade ff, long fd, @Nullable CharSequence name, long size);
 }

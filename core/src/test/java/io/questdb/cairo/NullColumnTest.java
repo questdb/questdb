@@ -125,7 +125,7 @@ public class NullColumnTest {
     public void testGrow() {
         // this method does nothing. Make sure it doesn corrupt state of singleton and
         // doesn't throw exception
-        NullColumn.INSTANCE.grow(100000);
+        NullColumn.INSTANCE.extend(100000);
     }
 
     @Test

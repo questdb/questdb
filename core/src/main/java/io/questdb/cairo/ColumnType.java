@@ -96,7 +96,6 @@ public final class ColumnType {
     private static final int[] overloadPriorityMatrix;
 
     static {
-        assert OVERLOAD_MATRIX_SIZE > MAX;
         overloadPriorityMatrix = new int[OVERLOAD_MATRIX_SIZE * OVERLOAD_MATRIX_SIZE];
         for (int i = UNDEFINED; i < MAX; i++) {
             for (int j = BOOLEAN; j < MAX; j++) {

@@ -1,11 +1,11 @@
 package io.questdb.cairo;
 
-import io.questdb.cairo.vm.AppendOnlyVirtualMemory;
-import io.questdb.cairo.vm.MappedReadOnlyMemory;
-import io.questdb.cairo.vm.SinglePageMappedReadOnlyPageMemory;
+import io.questdb.cairo.vm.MemoryCMRImpl;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryMA;
+import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.str.Path;
@@ -31,20 +31,20 @@ public class MemRemappedFileTest {
     @Test
     public void testReadOnlyMemory() {
         LOG.info().$("ReadOnlyMemory starting").$();
-        double micros = test(new SinglePageMappedReadOnlyPageMemory());
+        double micros = test(new MemoryCMRImpl());
         LOG.info().$("ReadOnlyMemory took ").$(micros).$("ms").$();
     }
 
     @Test
     public void testExtendableOnePageMemory() {
         LOG.info().$("ExtendableOnePageMemory starting").$();
-        double micros = test(new SinglePageMappedReadOnlyPageMemory());
+        double micros = test(new MemoryCMRImpl());
         LOG.info().$("ExtendableOnePageMemory took ").$(micros).$("ms").$();
     }
 
-    private double test(MappedReadOnlyMemory readMem) {
+    private double test(MemoryMR readMem) {
         long nanos = 0;
-        try (AppendOnlyVirtualMemory appMem = new AppendOnlyVirtualMemory()) {
+        try (MemoryMA appMem = Vm.getMAInstance()) {
             for (int cycle = 0; cycle < NCYCLES; cycle++) {
                 path.trimTo(0).concat(root).concat("file" + nFile).$();
                 nFile++;
@@ -64,9 +64,9 @@ public class MemRemappedFileTest {
                         expectedTotal += b;
                     }
                     if (nPage == 0) {
-                        readMem.of(ff, path, MAPPING_PAGE_SIZE, newSize);
+                        readMem.smallFile(ff, path);
                     } else {
-                        readMem.grow(newSize);
+                        readMem.extend(newSize);
                     }
                     for (int i = 0; i < MAPPING_PAGE_SIZE; i++) {
                         actualTotal += readMem.getByte(offset);

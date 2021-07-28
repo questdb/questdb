@@ -445,7 +445,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         }
                         Assert.fail();
                     } catch (CairoException e) {
-                        TestUtils.assertContains(e.getFlyweightMessage(), "Could not mmap");
+                        TestUtils.assertContains(e.getFlyweightMessage(), "could not mmap");
                     }
                     Assert.assertEquals(0, engine.getBusyReaderCount());
                     Assert.assertEquals(0, engine.getBusyWriterCount());
@@ -3480,7 +3480,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         compiler.compile("select b, sum(a), k from x sample by 3h fill(linear)", sqlExecutionContext);
                         Assert.fail();
                     } catch (SqlException e) {
-                        Assert.assertTrue(Chars.contains(e.getMessage(), "Could not mmap"));
+                        Assert.assertTrue(Chars.contains(e.getMessage(), "could not mmap"));
                     }
                     Assert.assertEquals(0, engine.getBusyReaderCount());
                     Assert.assertEquals(0, engine.getBusyWriterCount());
@@ -3532,7 +3532,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         }
                         Assert.fail();
                     } catch (CairoException e) {
-                        Assert.assertTrue(Chars.contains(e.getMessage(), "Could not mmap"));
+                        Assert.assertTrue(Chars.contains(e.getMessage(), "could not mmap"));
                     }
                     Assert.assertEquals(0, engine.getBusyReaderCount());
                     Assert.assertEquals(0, engine.getBusyWriterCount());

@@ -31,7 +31,6 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 
 public class ShowColumnsRecordCursorFactory implements RecordCursorFactory {
@@ -63,7 +62,7 @@ public class ShowColumnsRecordCursorFactory implements RecordCursorFactory {
     }
 
     @Override
-    public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
+    public RecordCursor getCursor(SqlExecutionContext executionContext) {
         return cursor.of(executionContext);
     }
 

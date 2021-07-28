@@ -28,8 +28,8 @@ import io.questdb.std.Unsafe;
 
 public final class LatestByArguments {
     public static final long MEMORY_SIZE = 7 * 8;
-    private static final long KEY_LO_OFFSET = 0 * 8;
-    private static final long KEY_HI_OFFSET = 1 * 8;
+    private static final long KEY_LO_OFFSET = 0;
+    private static final long KEY_HI_OFFSET = 8;
     private static final long ROWS_ADDRESS_OFFSET = 2 * 8;
     private static final long ROWS_CAPACITY_OFFSET = 3 * 8;
     private static final long ROWS_SIZE_OFFSET = 4 * 8;

@@ -35,10 +35,10 @@ import io.questdb.network.IODispatcher;
 import io.questdb.network.IODispatchers;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.*;
+import io.questdb.std.str.Path;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
-import io.questdb.std.str.Path;
 
 public class LineTcpServer implements Closeable {
     private static final Log LOG = LogFactory.getLog(LineTcpServer.class);

@@ -27,8 +27,9 @@ package io.questdb.cairo.map;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.vm.ContiguousVirtualMemory;
-import io.questdb.cairo.vm.VmUtils;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryARW;
+import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
@@ -118,9 +119,9 @@ public class CompactMap implements Map {
                     5209859150892887590L
             };
 
-    private static final HashFunction DEFAULT_HASH = ContiguousVirtualMemory::hash;
-    private final ContiguousVirtualMemory entries;
-    private final ContiguousVirtualMemory entrySlots;
+    private static final HashFunction DEFAULT_HASH = MemoryR::hash0;
+    private final MemoryARW entries;
+    private final MemoryARW entrySlots;
     private final Key key = new Key();
     private final CompactMapValue value;
     private final double loadFactor;
@@ -144,8 +145,8 @@ public class CompactMap implements Map {
     }
 
     CompactMap(int pageSize, ColumnTypes keyTypes, ColumnTypes valueTypes, long keyCapacity, double loadFactor, HashFunction hashFunction, int maxResizes, int maxPages) {
-        this.entries = new ContiguousVirtualMemory(pageSize, maxPages);
-        this.entrySlots = new ContiguousVirtualMemory(pageSize, maxPages);
+        this.entries = Vm.getARWInstance(pageSize, maxPages);
+        this.entrySlots = Vm.getARWInstance(pageSize, maxPages);
         try {
             this.loadFactor = loadFactor;
             this.columnOffsets = new long[keyTypes.getColumnCount() + valueTypes.getColumnCount()];
@@ -216,7 +217,7 @@ public class CompactMap implements Map {
         // it is out of the way we can calculate key hash on contiguous memory.
 
         // entry actual size always starts with sum of fixed size columns we have
-        // and may grow when we add variable key values.
+        // and may setSize when we add variable key values.
         currentEntrySize = entryFixedSize;
 
         return key;
@@ -287,7 +288,7 @@ public class CompactMap implements Map {
 
     @FunctionalInterface
     public interface HashFunction {
-        long hash(ContiguousVirtualMemory mem, long offset, long size);
+        long hash(MemoryR mem, long offset, long size);
     }
 
     public class Key implements MapKey {
@@ -471,7 +472,7 @@ public class CompactMap implements Map {
                 entries.putLong(currentEntrySize);
                 int len = value.length();
                 entries.putStr(currentEntryOffset + currentEntrySize, value, 0, len);
-                currentEntrySize += VmUtils.getStorageLength(len);
+                currentEntrySize += Vm.getStorageLength(len);
             }
         }
 
@@ -481,7 +482,7 @@ public class CompactMap implements Map {
             entries.putLong(currentEntrySize);
             int len = hi - lo;
             entries.putStr(currentEntryOffset + currentEntrySize, value, lo, len);
-            currentEntrySize += VmUtils.getStorageLength(len);
+            currentEntrySize += Vm.getStorageLength(len);
         }
 
         @Override
@@ -641,7 +642,7 @@ public class CompactMap implements Map {
                 int dist = findFreeSlot(parentSlot);
 
                 if (dist == 0) {
-                    // we are out of space; let parent method know that we have to grow slots and retry
+                    // we are out of space; let parent method know that we have to setSize slots and retry
                     return false;
                 }
 
@@ -697,7 +698,7 @@ public class CompactMap implements Map {
 
             if (++size == keyCapacity) {
                 // reached capacity?
-                // no need to populate slot, grow() will do the job for us
+                // no need to populate slot, setSize() will do the job for us
                 grow();
             } else {
                 setOffsetAt(slot, currentEntryOffset);

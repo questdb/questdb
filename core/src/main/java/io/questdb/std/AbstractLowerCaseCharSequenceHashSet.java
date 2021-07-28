@@ -68,7 +68,7 @@ public abstract class AbstractLowerCaseCharSequenceHashSet implements Mutable {
             return index;
         }
 
-        if (Chars.equalsLowerCase(key, keys[index])) {
+        if (Chars.equalsIgnoreCase(key, keys[index])) {
             return -index - 1;
         }
 
@@ -153,7 +153,7 @@ public abstract class AbstractLowerCaseCharSequenceHashSet implements Mutable {
             if (keys[index] == noEntryKey) {
                 return index;
             }
-            if (Chars.equalsLowerCase(key, keys[index])) {
+            if (Chars.equalsIgnoreCase(key, keys[index])) {
                 return -index - 1;
             }
         } while (true);

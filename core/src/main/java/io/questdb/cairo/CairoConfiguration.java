@@ -29,6 +29,7 @@ import io.questdb.TelemetryConfiguration;
 import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.NanosecondClock;
+import io.questdb.std.NanosecondClockImpl;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
@@ -78,7 +79,9 @@ public interface CairoConfiguration {
 
     MillisecondClock getMillisecondClock();
 
-    NanosecondClock getNanosecondClock();
+    default NanosecondClock getNanosecondClock() {
+        return NanosecondClockImpl.INSTANCE;
+    }
 
     int getMkDirMode();
 

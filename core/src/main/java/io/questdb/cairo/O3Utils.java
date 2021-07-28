@@ -26,7 +26,6 @@ package io.questdb.cairo;
 
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
@@ -128,35 +127,6 @@ public class O3Utils {
         if (fd > 0) {
             LOG.debug().$("closed [fd=").$(fd).$(']').$();
             ff.close(fd);
-        }
-    }
-
-    static long mapRO(FilesFacade ff, long fd, long size) {
-        final long address = ff.mmap(fd, size, 0, Files.MAP_RO);
-        if (address == FilesFacade.MAP_FAILED) {
-            throw CairoException.instance(ff.errno())
-                    .put("Could not mmap timestamp column ")
-                    .put(" [size=").put(size)
-                    .put(", fd=").put(fd)
-                    .put(", memUsed=").put(Unsafe.getMemUsed())
-                    .put(", fileLen=").put(ff.length(fd))
-                    .put(']');
-        }
-        return address;
-    }
-
-    static long mapRW(FilesFacade ff, long fd, long size) {
-        allocateDiskSpace(ff, fd, size);
-        long addr = ff.mmap(fd, size, 0, Files.MAP_RW);
-        if (addr > -1) {
-            return addr;
-        }
-        throw CairoException.instance(ff.errno()).put("could not mmap column [fd=").put(fd).put(", size=").put(size).put(']');
-    }
-
-    static void allocateDiskSpace(FilesFacade ff, long fd, long size) {
-        if (!ff.allocate(fd, size)) {
-            throw CairoException.instance(ff.errno()).put("No space left [size=").put(size).put(", fd=").put(fd).put(']');
         }
     }
 }

@@ -26,8 +26,10 @@ package io.questdb.cairo;
 
 import io.questdb.MessageBus;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.cairo.vm.AppendOnlyVirtualMemory;
-import io.questdb.cairo.vm.ContiguousVirtualMemory;
+import io.questdb.cairo.vm.api.MemoryARW;
+import io.questdb.cairo.vm.api.MemoryCARW;
+import io.questdb.cairo.vm.api.MemoryMA;
+import io.questdb.cairo.vm.api.MemoryMAR;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.AbstractQueueConsumerJob;
@@ -58,8 +60,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
     public static void processPartition(
             CharSequence pathToTable,
             int partitionBy,
-            ObjList<AppendOnlyVirtualMemory> columns,
-            ObjList<ContiguousVirtualMemory> oooColumns,
+            ObjList<MemoryMAR> columns,
+            ObjList<MemoryCARW> oooColumns,
             long srcOooLo,
             long srcOooHi,
             long srcOooMax,
@@ -177,7 +179,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     srcTimestampSize = srcDataMax * 8L;
                     // negative fd indicates descriptor reuse
                     srcTimestampFd = -columns.getQuick(getPrimaryColumnIndex(timestampIndex)).getFd();
-                    srcTimestampAddr = O3Utils.mapRW(ff, -srcTimestampFd, srcTimestampSize);
+                    srcTimestampAddr = mapRW(ff, -srcTimestampFd, srcTimestampSize);
                 } else {
                     srcTimestampSize = srcDataMax * 8L;
                     // out of order data is going into archive partition
@@ -188,7 +190,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
                     // also track the fd that we need to eventually close
                     srcTimestampFd = openRW(ff, path, LOG);
-                    srcTimestampAddr = O3Utils.mapRW(ff, srcTimestampFd, srcTimestampSize);
+                    srcTimestampAddr = mapRW(ff, srcTimestampFd, srcTimestampSize);
                     dataTimestampHi = Unsafe.getUnsafe().getLong(srcTimestampAddr + srcTimestampSize - Long.BYTES);
                 }
                 dataTimestampLo = Unsafe.getUnsafe().getLong(srcTimestampAddr);
@@ -548,8 +550,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         // srcOooHi is index inclusive of value
         final CharSequence pathToTable = task.getPathToTable();
         final int partitionBy = task.getPartitionBy();
-        final ObjList<AppendOnlyVirtualMemory> columns = task.getColumns();
-        final ObjList<ContiguousVirtualMemory> oooColumns = task.getO3Columns();
+        final ObjList<MemoryMAR> columns = task.getColumns();
+        final ObjList<MemoryCARW> oooColumns = task.getO3Columns();
         final long srcOooLo = task.getSrcOooLo();
         final long srcOooHi = task.getSrcOooHi();
         final long srcOooMax = task.getSrcOooMax();
@@ -709,8 +711,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
     private static void publishOpenColumnTasks(
             long txn,
-            ObjList<AppendOnlyVirtualMemory> columns,
-            ObjList<ContiguousVirtualMemory> oooColumns,
+            ObjList<MemoryMAR> columns,
+            ObjList<MemoryCARW> oooColumns,
             CharSequence pathToTable,
             long srcOooLo,
             long srcOooHi,
@@ -768,10 +770,10 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 final int colOffset = TableWriter.getPrimaryColumnIndex(i);
                 final boolean notTheTimestamp = i != timestampIndex;
                 final int columnType = metadata.getColumnType(i);
-                final ContiguousVirtualMemory oooMem1 = oooColumns.getQuick(colOffset);
-                final ContiguousVirtualMemory oooMem2 = oooColumns.getQuick(colOffset + 1);
-                final AppendOnlyVirtualMemory mem1 = columns.getQuick(colOffset);
-                final AppendOnlyVirtualMemory mem2 = columns.getQuick(colOffset + 1);
+                final MemoryARW oooMem1 = oooColumns.getQuick(colOffset);
+                final MemoryARW oooMem2 = oooColumns.getQuick(colOffset + 1);
+                final MemoryMA mem1 = columns.getQuick(colOffset);
+                final MemoryMA mem2 = columns.getQuick(colOffset + 1);
                 final long activeFixFd;
                 final long activeVarFd;
                 final long srcDataTop;

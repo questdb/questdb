@@ -30,7 +30,9 @@ import io.questdb.cairo.sql.ReaderOutOfDateException;
 import io.questdb.griffin.engine.table.LongTreeSet;
 import io.questdb.mp.Job;
 import io.questdb.mp.SOCountDownLatch;
+import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.LongList;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
@@ -432,6 +434,57 @@ public class CairoEngineTest extends AbstractCairoTest {
                 } catch (ReaderOutOfDateException ignored) {
                 }
                 Assert.assertTrue(engine.clear());
+            }
+        });
+    }
+
+    @Test
+    public void testCannotMapTableId() throws Exception {
+        TestUtils.assertMemoryLeak(new TestUtils.LeakProneCode() {
+            @Override
+            public void run() {
+                ff = new FilesFacadeImpl() {
+                    private long theFD = 0;
+                    private boolean failNextAlloc = false;
+
+                    @Override
+                    public boolean allocate(long fd, long size) {
+                        if (failNextAlloc) {
+                            failNextAlloc = false;
+                            return false;
+                        }
+                        return super.allocate(fd, size);
+                    }
+
+                    @Override
+                    public long length(long fd) {
+                        if (theFD == fd) {
+                            failNextAlloc = true;
+                            theFD = 0;
+                            return 0;
+                        }
+                        return super.length(fd);
+                    }
+
+                    @Override
+                    public long openRW(LPSZ name) {
+                        long fd = super.openRW(name);
+                        if (Chars.endsWith(name, TableUtils.TAB_INDEX_FILE_NAME)) {
+                            theFD = fd;
+                        }
+                        return fd;
+                    }
+                };
+
+                try {
+                    new CairoEngine(configuration);
+                    Assert.fail();
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "No space left");
+                } finally {
+                    ff = null;
+                }
+                Path.clearThreadLocals();
             }
         });
     }
