@@ -27,6 +27,7 @@ package io.questdb.cairo;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.cairo.vm.api.MemoryCMARW;
+import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.griffin.AbstractGriffinTest;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
@@ -441,7 +442,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
 
         assertSql("select maxUncommittedRows, commitLag from tables where name = '" + src.getName() + "'",
                 "maxUncommittedRows\tcommitLag\n" +
-                        +configOverrideMaxUncommittedRows + "\t" + configOverrideCommitLag + "\n");
+                        configOverrideMaxUncommittedRows + "\t" + configOverrideCommitLag + "\n");
     }
 
     private void downgradeMetaDataFile(TableModel tableModel) {
@@ -452,15 +453,9 @@ public class EngineMigrationTest extends AbstractGriffinTest {
             setMetadataVersion(tableModel, ff, path, VERSION_TBL_META_COMMIT_LAG);
 
             path.concat(root).concat(tableModel.getName()).concat(TableUtils.META_FILE_NAME);
-            long fd = ff.openRO(path.$());
-            Assert.assertTrue(fd >= 0);
-
-            long fileSize = ff.length(fd);
-            ff.close(fd);
-            try (MemoryARW rwTx = Vm.getSmallARWInstance(ff, path.$())) {
+            try (MemoryMARW rwTx = Vm.getSmallMARWInstance(ff, path.$())) {
                 rwTx.putInt(META_OFFSET_MAX_UNCOMMITTED_ROWS, 0);
                 rwTx.putLong(META_OFFSET_COMMIT_LAG, 0);
-                rwTx.jumpTo(fileSize);
             }
 
             setMetadataVersion(tableModel, ff, path, VERSION_TBL_META_COMMIT_LAG);
@@ -469,19 +464,13 @@ public class EngineMigrationTest extends AbstractGriffinTest {
     }
 
     private void setMetadataVersion(TableModel tableModel, FilesFacade ff, Path path, int version) {
-        int pathLen = path.length();
+        final int pathLen = path.length();
 
         try {
             path.trimTo(0).concat(root).concat(tableModel.getName()).concat(TableUtils.META_FILE_NAME);
-            long fd = ff.openRO(path.$());
-            Assert.assertTrue(fd >= 0);
-
-            long fileSize = ff.length(fd);
-            ff.close(fd);
-            try (MemoryARW rwTx = Vm.getSmallARWInstance(ff, path.$())) {
+            try (MemoryARW rwTx = Vm.getSmallMARWInstance(ff, path.$())) {
                 if (rwTx.getInt(META_OFFSET_VERSION) > version - 1) {
                     rwTx.putInt(META_OFFSET_VERSION, version - 1);
-                    rwTx.jumpTo(fileSize);
                 }
             }
         } finally {
@@ -494,7 +483,6 @@ public class EngineMigrationTest extends AbstractGriffinTest {
         if (ff.exists(path.$())) {
             try (MemoryCMARW rwTx = Vm.getSmallCMARWInstance(ff, path.$())) {
                 rwTx.putInt(0, EngineMigration.VERSION_TBL_META_COMMIT_LAG - 1);
-                rwTx.jumpTo(Integer.BYTES);
             }
         }
     }
@@ -598,8 +586,9 @@ public class EngineMigrationTest extends AbstractGriffinTest {
 
             path.trimTo(0).concat(root).concat(src.getName()).concat(TXN_FILE_NAME);
             try (MemoryCMARW rwTx = Vm.getSmallCMARWInstance(ff, path.$())) {
+                rwTx.toTop();
                 rwTx.putInt(TX_STRUCT_UPDATE_1_OFFSET_MAP_WRITER_COUNT, symbolCounts.size());
-                rwTx.jumpTo(TX_STRUCT_UPDATE_1_OFFSET_MAP_WRITER_COUNT + 4);
+                rwTx.skip(TX_STRUCT_UPDATE_1_OFFSET_MAP_WRITER_COUNT + 4);
 
                 // Tx file used to have 4 bytes per symbol
                 for (int i = 0; i < symbolCounts.size(); i++) {
@@ -632,7 +621,6 @@ public class EngineMigrationTest extends AbstractGriffinTest {
                     }
                     try (MemoryCMARW rwAr = Vm.getSmallCMARWInstance(ff, path.$())) {
                         rwAr.putLong(partitionSize);
-                        rwAr.jumpTo(8);
                     }
                 }
             }

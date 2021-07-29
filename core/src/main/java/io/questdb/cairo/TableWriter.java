@@ -31,6 +31,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.vm.MemoryLogAImpl;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.*;
 import io.questdb.griffin.SqlException;
@@ -71,6 +72,8 @@ public class TableWriter implements Closeable {
     private final static RemoveFileLambda REMOVE_OR_LOG = TableWriter::removeFileAndOrLog;
     private final static RemoveFileLambda REMOVE_OR_EXCEPTION = TableWriter::removeOrException;
     final ObjList<MemoryMAR> columns;
+    private final ObjList<MemoryMAR> logColumns;
+    private final ObjList<MemoryLogAImpl> spliceColumns;
     private final ObjList<SymbolMapWriter> symbolMapWriters;
     private final ObjList<SymbolMapWriter> denseSymbolMapWriters;
     private final ObjList<WriterTransientSymbolCountChangeHandler> denseSymbolTransientCountHandlers;
@@ -257,6 +260,8 @@ public class TableWriter implements Closeable {
             }
             this.refs.extendAndSet(columnCount, 0);
             this.columns = new ObjList<>(columnCount * 2);
+            this.logColumns = new ObjList<>(columnCount * 2);
+            this.spliceColumns = new ObjList<>(columnCount * 2);
             this.o3Columns = new ObjList<>(columnCount * 2);
             this.o3Columns2 = new ObjList<>(columnCount * 2);
             this.row.activeColumns = columns;
@@ -1760,17 +1765,28 @@ public class TableWriter implements Closeable {
         final MemoryCARW oooSecondary;
         final MemoryCARW oooPrimary2 = Vm.getCARWInstance(MEM_PAGE_SIZE, Integer.MAX_VALUE);
         final MemoryCARW oooSecondary2;
+
+
+        final MemoryMAR logPrimary = Vm.getMARInstance();
+        final MemoryMAR logSecondary;
+        final MemoryLogAImpl splicePrimary = new MemoryLogAImpl();
+        final MemoryLogAImpl spliceSecondary;
+
         switch (type) {
             case ColumnType.BINARY:
             case ColumnType.STRING:
                 secondary = Vm.getMARInstance();
                 oooSecondary = Vm.getCARWInstance(MEM_PAGE_SIZE, Integer.MAX_VALUE);
                 oooSecondary2 = Vm.getCARWInstance(MEM_PAGE_SIZE, Integer.MAX_VALUE);
+                logSecondary = Vm.getMARInstance();
+                spliceSecondary = new MemoryLogAImpl();
                 break;
             default:
                 secondary = null;
                 oooSecondary = null;
                 oooSecondary2 = null;
+                logSecondary = null;
+                spliceSecondary = null;
                 break;
         }
         columns.add(primary);
@@ -1781,6 +1797,11 @@ public class TableWriter implements Closeable {
         o3Columns2.add(oooSecondary2);
         configureNullSetters(nullSetters, type, primary, secondary);
         configureNullSetters(o3NullSetters, type, oooPrimary, oooSecondary);
+        logColumns.add(logPrimary);
+        logColumns.add(logSecondary);
+        spliceColumns.add(splicePrimary);
+        spliceColumns.add(spliceSecondary);
+
         if (indexFlag) {
             indexers.extendAndSet((columns.size() - 1) / 2, new SymbolColumnIndexer());
             populateDenseIndexerList();
@@ -2076,6 +2097,8 @@ public class TableWriter implements Closeable {
         }
         Misc.freeObjListAndKeepObjects(o3Columns);
         Misc.freeObjListAndKeepObjects(o3Columns2);
+        Misc.freeObjListAndKeepObjects(logColumns);
+        Misc.freeObjListAndKeepObjects(spliceColumns);
     }
 
     private void freeIndexers() {
@@ -3644,13 +3667,51 @@ public class TableWriter implements Closeable {
                     indexer.configureFollowerAndWriter(configuration, path, name, getPrimaryColumn(i), columnTop);
                 }
             }
-            LOG.info().$("switched partition [path='").$(path).$("']").$();
+            LOG.info().$("switched partition [path='").$(path).I$();
         } catch (Throwable e) {
             distressed = true;
             throw e;
         } finally {
             path.trimTo(rootLen);
         }
+    }
+
+    public void enableTransactionLog() {
+        final long txn = getTxn();
+        txnScoreboard.acquireTxn(txn);
+
+        try {
+            path.concat("log").put('.').put(txn);
+            int plen = path.length();
+
+            // create dir
+            if (ff.mkdirs(path.slash$(), configuration.getMkDirMode()) == 0) {
+                for (int i = 0; i < columnCount; i++) {
+                    final CharSequence name = metadata.getColumnName(i);
+                    final int primaryIndex = getPrimaryColumnIndex(i);
+                    final int secondaryIndex = getSecondaryColumnIndex(i);
+                    final MemoryMAR logMem1 = logColumns.getQuick(primaryIndex);
+                    logMem1.of(ff, dFile(path.trimTo(plen), name), configuration.getAppendPageSize(), Long.MAX_VALUE);
+
+                    final MemoryLogAImpl spliceColumn1 = spliceColumns.getQuick(primaryIndex);
+                    spliceColumn1.of(logMem1, row.activeColumns.getQuick(primaryIndex));
+
+                    final MemoryMAR logMem2 = logColumns.getQuick(secondaryIndex);
+                    if (logMem2 != null) {
+                        logMem2.of(ff, iFile(path.trimTo(plen), name), configuration.getAppendPageSize(), Long.MAX_VALUE);
+
+                        final MemoryLogAImpl spliceColumn2 = spliceColumns.getQuick(secondaryIndex);
+                        spliceColumn2.of(logMem2, row.activeColumns.getQuick(secondaryIndex));
+                    }
+                }
+                row.activeColumns = spliceColumns;
+            } else {
+                throw CairoException.instance(ff.errno()).put("Could not create directory: ").put(path);
+            }
+        } finally {
+            path.trimTo(rootLen);
+        }
+
     }
 
     private long openTodoMem() {

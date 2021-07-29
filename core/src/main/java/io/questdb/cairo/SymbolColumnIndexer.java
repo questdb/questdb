@@ -24,7 +24,7 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.vm.PagedSlidingReadOnlyMemory;
+import io.questdb.cairo.vm.MemorySRImpl;
 import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.std.Misc;
@@ -37,7 +37,7 @@ class SymbolColumnIndexer implements ColumnIndexer, Closeable {
 
     private static final long SEQUENCE_OFFSET;
     private final BitmapIndexWriter writer = new BitmapIndexWriter();
-    private final PagedSlidingReadOnlyMemory mem = new PagedSlidingReadOnlyMemory();
+    private final MemorySRImpl mem = new MemorySRImpl();
     private long columnTop;
     @SuppressWarnings({"unused", "FieldCanBeLocal", "FieldMayBeFinal"})
     private volatile long sequence = 0L;

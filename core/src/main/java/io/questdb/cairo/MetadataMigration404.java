@@ -25,7 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.vm.Vm;
-import io.questdb.cairo.vm.api.MemoryMA;
+import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -53,7 +53,7 @@ public class MetadataMigration404 {
     private static final IntList typeMapping = new IntList();
     private static final Log LOG = LogFactory.getLog(MetadataMigration404.class);
 
-    public static void convert(FilesFacade ff, Path path1, Path path2, MemoryMA appendMem, MemoryMR roMem) {
+    public static void convert(FilesFacade ff, Path path1, Path path2, MemoryMARW appendMem, MemoryMR roMem) {
         final int plen = path1.length();
         path1.concat(TableUtils.META_FILE_NAME).$();
 
@@ -72,7 +72,7 @@ public class MetadataMigration404 {
         path1.concat("_meta.1").$();
 
         appendMem.smallFile(ff, path1);
-        appendMem.jumpTo(0);
+        appendMem.toTop();
 
         // column count
         final int columnCount = roMem.getInt(0);
@@ -80,28 +80,28 @@ public class MetadataMigration404 {
         appendMem.putInt(roMem.getInt(4));
         appendMem.putInt(roMem.getInt(8));
         appendMem.putInt(ColumnType.VERSION);
-        appendMem.jumpTo(TableUtils.META_OFFSET_COLUMN_TYPES);
 
         long offset = TableUtils.META_OFFSET_COLUMN_TYPES;
 
         for (int i = 0; i < columnCount; i++) {
-            appendMem.putByte((byte) typeMapping.getQuick(roMem.getByte(offset)));
+            appendMem.putByte(offset, (byte) typeMapping.getQuick(roMem.getByte(offset)));
             long flags = 0;
             if (roMem.getBool(offset + 1)) {
                 flags |= TableUtils.META_FLAG_BIT_INDEXED;
             }
-            appendMem.putLong(flags);
-            appendMem.putInt(roMem.getInt(offset + 2));
+            appendMem.putLong(offset + 1, flags);
+            appendMem.putInt(offset + 2, roMem.getInt(offset + 2));
             appendMem.skip(TableUtils.META_COLUMN_DATA_RESERVED); // reserved
             offset += TableUtils.META_COLUMN_DATA_SIZE;
         }
 
         for (int i = 0; i < columnCount; i++) {
             CharSequence s = roMem.getStr(offset);
-            appendMem.putStr(s);
+            appendMem.putStr(offset, s);
             offset += s.length() * 2L + 4;
         }
         roMem.close();
+        appendMem.setSize(offset);
         appendMem.close();
 
         // rename
@@ -127,8 +127,8 @@ public class MetadataMigration404 {
 
     public static void main(String[] args) {
         try (
-                final MemoryMR roMem = Vm.getMRInstance() ;
-                final MemoryMA appendMem = Vm.getMARInstance();
+                final MemoryMR roMem = Vm.getMRInstance();
+                final MemoryMARW appendMem = Vm.getMARWInstance();
                 final Path path1 = new Path();
                 final Path path2 = new Path()
         ) {

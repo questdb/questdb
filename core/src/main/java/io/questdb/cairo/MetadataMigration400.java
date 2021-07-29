@@ -79,28 +79,26 @@ public class MetadataMigration400 {
         appendMem.putInt(roMem.getInt(4));
         appendMem.putInt(roMem.getInt(8));
         appendMem.putInt(ColumnType.VERSION);
-        appendMem.jumpTo(TableUtils.META_OFFSET_COLUMN_TYPES);
-
         long offset = TableUtils.META_OFFSET_COLUMN_TYPES;
 
         for (int i = 0; i < columnCount; i++) {
-            appendMem.putByte((byte) typeMapping.getQuick(roMem.getByte(offset)));
+            appendMem.putByte(offset, (byte) typeMapping.getQuick(roMem.getByte(offset)));
             long flags = 0;
             if (roMem.getBool(offset + 1)) {
                 flags |= TableUtils.META_FLAG_BIT_INDEXED;
             }
-            appendMem.putLong(flags);
-            appendMem.putInt(roMem.getInt(offset + 2));
-            appendMem.skip(TableUtils.META_COLUMN_DATA_RESERVED); // reserved
+            appendMem.putLong(offset + 1, flags);
+            appendMem.putInt(offset + 2, roMem.getInt(offset + 2));
             offset += TableUtils.META_COLUMN_DATA_SIZE;
         }
 
         for (int i = 0; i < columnCount; i++) {
             CharSequence s = roMem.getStr(offset);
-            appendMem.putStr(s);
+            appendMem.putStr(offset, s);
             offset += s.length() * 2L + 4;
         }
         roMem.close();
+        appendMem.setSize(offset);
         appendMem.close();
 
         // rename

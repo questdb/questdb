@@ -54,8 +54,8 @@ public class VirtualMemoryIntReadBenchmark {
 
     @Setup(Level.Iteration)
     public void reset() {
-        mem1.jumpTo(0);
-        mem2.jumpTo(0);
+        mem1.clear();
+        mem2.clear();
         long o = 0;
         for (int i = 0; i < 10000; i++) {
             mem1.putInt(o, i);

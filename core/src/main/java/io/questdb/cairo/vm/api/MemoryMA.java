@@ -38,4 +38,12 @@ public interface MemoryMA extends MemoryM, MemoryA {
     void sync(boolean async);
 
     void of(FilesFacade ff, LPSZ name, long extendSegmentSize);
+
+    default void setSize(long size) {
+        jumpTo(size);
+    }
+
+    default void toTop() {
+        jumpTo(0);
+    }
 }

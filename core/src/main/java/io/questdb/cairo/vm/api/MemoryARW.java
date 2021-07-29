@@ -25,4 +25,5 @@
 package io.questdb.cairo.vm.api;
 
 public interface MemoryARW extends MemoryA, MemoryR, MemoryW, MemoryAR {
+    long appendAddressFor(long bytes);
 }

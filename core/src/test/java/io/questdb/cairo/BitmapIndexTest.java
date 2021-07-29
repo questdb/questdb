@@ -25,12 +25,9 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.sql.RowCursor;
-import io.questdb.cairo.vm.PagedSlidingReadOnlyMemory;
+import io.questdb.cairo.vm.MemorySRImpl;
 import io.questdb.cairo.vm.Vm;
-import io.questdb.cairo.vm.api.MemoryA;
-import io.questdb.cairo.vm.api.MemoryCMARW;
-import io.questdb.cairo.vm.api.MemoryMAR;
-import io.questdb.cairo.vm.api.MemoryMARW;
+import io.questdb.cairo.vm.api.*;
 import io.questdb.griffin.engine.functions.geohash.GeoHashNative;
 import io.questdb.griffin.engine.table.LatestByArguments;
 import io.questdb.std.*;
@@ -55,7 +52,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
         int plen = path.length();
         try {
             final FilesFacade ff = configuration.getFilesFacade();
-            try (MemoryA mem = Vm.getSmallAInstance(ff, BitmapIndexUtils.keyFileName(path, name))) {
+            try (MemoryMA mem = Vm.getSmallMAInstance(ff, BitmapIndexUtils.keyFileName(path, name))) {
                 BitmapIndexWriter.initKeyMemory(mem, Numbers.ceilPow2(valueBlockCapacity));
             }
             ff.touch(BitmapIndexUtils.valueFileName(path.trimTo(plen), name));
@@ -197,10 +194,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
                         path.of(configuration.getRoot()).concat("x").put(".k").$();
                         mem.wholeFile(configuration.getFilesFacade(), path);
                     }
-
-                    long offset = BitmapIndexUtils.getKeyEntryOffset(0);
-                    mem.jumpTo(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_VALUE_COUNT);
-                    mem.putLong(10);
+                    mem.putLong(BitmapIndexUtils.getKeyEntryOffset(0) + BitmapIndexUtils.KEY_ENTRY_OFFSET_VALUE_COUNT, 10);
 
                     try {
                         reader.getCursor(true, 0, 0, Long.MAX_VALUE);
@@ -322,8 +316,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
             ) {
                 // change sequence but not sequence check
                 long seq = mem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE);
-                mem.jumpTo(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE);
-                mem.putLong(22);
+                mem.putLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE, 22);
 
                 try {
                     reader.getCursor(true, 10, 0, Long.MAX_VALUE);
@@ -339,8 +332,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
                     Assert.assertTrue(Chars.contains(e.getMessage(), "could not consistently"));
                 }
 
-                mem.jumpTo(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE);
-                mem.putLong(seq);
+                mem.putLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE, seq);
 
                 // test that index recovers
                 cursor = reader.getCursor(true, 0, 0, Long.MAX_VALUE);
@@ -627,8 +619,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
                     }
 
                     long offset = BitmapIndexUtils.getKeyEntryOffset(0);
-                    mem.jumpTo(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_VALUE_COUNT);
-                    mem.putLong(10);
+                    mem.putLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_VALUE_COUNT, 10);
 
                     try {
                         reader.getCursor(true, 0, 0, Long.MAX_VALUE);
@@ -721,8 +712,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
             ) {
                 // change sequence but not sequence check
                 long seq = mem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE);
-                mem.jumpTo(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE);
-                mem.putLong(22);
+                mem.putLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE,22);
 
                 try {
                     reader.getCursor(true, 10, 0, Long.MAX_VALUE);
@@ -740,8 +730,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
                     Assert.assertTrue(Chars.contains(e.getMessage(), "could not consistently"));
                 }
 
-                mem.jumpTo(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE);
-                mem.putLong(seq);
+                mem.putLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE, seq);
 
                 // test that index recovers
                 cursor = reader.getCursor(true, 0, 0, Long.MAX_VALUE);
@@ -779,7 +768,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
                     mem.putInt(rnd.nextPositiveInt() & (MOD - 1));
                 }
 
-                try (PagedSlidingReadOnlyMemory rwin = new PagedSlidingReadOnlyMemory()) {
+                try (MemorySRImpl rwin = new MemorySRImpl()) {
                     rwin.of(mem);
 
                     create(configuration, path.trimTo(plen), "x", N / MOD / 128);
@@ -1043,7 +1032,6 @@ public class BitmapIndexTest extends AbstractCairoTest {
     public void testWriterConstructorIncorrectValueCount() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (MemoryA mem = openKey()) {
-                mem.jumpTo(0);
                 mem.putByte(BitmapIndexUtils.SIGNATURE);
                 mem.skip(9);
                 mem.putLong(1000);
@@ -1069,7 +1057,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
         });
     }
 
-    private static void indexInts(PagedSlidingReadOnlyMemory srcMem, BitmapIndexWriter writer, long hi) {
+    private static void indexInts(MemorySRImpl srcMem, BitmapIndexWriter writer, long hi) {
         srcMem.updateSize();
         for (long r = 0L; r < hi; r++) {
             final long offset = r * 4;
@@ -1153,16 +1141,17 @@ public class BitmapIndexTest extends AbstractCairoTest {
 
     private MemoryA openKey() {
         try (Path path = new Path()) {
-            return Vm.getSmallCMARWInstance(
+            MemoryMA mem = Vm.getSmallCMARWInstance(
                     configuration.getFilesFacade(),
                     path.of(configuration.getRoot()).concat("x").put(".k").$()
             );
+            mem.toTop();
+            return mem;
         }
     }
 
     private void setupIndexHeader() {
         try (MemoryA mem = openKey()) {
-            mem.jumpTo(0);
             mem.putByte(BitmapIndexUtils.SIGNATURE);
             mem.putLong(10); // sequence
             mem.putLong(0); // value mem size

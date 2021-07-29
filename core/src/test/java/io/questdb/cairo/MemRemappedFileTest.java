@@ -57,7 +57,7 @@ public class MemRemappedFileTest {
                 for (int nPage = 0; nPage < NPAGES; nPage++) {
                     long newSize = MAPPING_PAGE_SIZE * (nPage + 1);
                     appMem.of(ff, path, newSize);
-                    appMem.jumpTo(newSize - MAPPING_PAGE_SIZE);
+                    appMem.skip(newSize - MAPPING_PAGE_SIZE);
                     for (int i = 0; i < MAPPING_PAGE_SIZE; i++) {
                         byte b = (byte) rand.nextInt();
                         appMem.putByte(b);

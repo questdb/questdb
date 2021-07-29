@@ -92,11 +92,11 @@ public class Vm {
     }
 
     public static MemoryMA getMAInstance() {
-        return new MemoryPMAImpl();
+        return new MemoryPMARImpl();
     }
 
     public static MemoryMAR getMARInstance() {
-        return new MemoryPMAImpl();
+        return new MemoryPMARImpl();
     }
 
     public static MemoryMARW getMARWInstance() {
@@ -115,11 +115,11 @@ public class Vm {
         return new MemoryCMRImpl(ff, name, size);
     }
 
-    public static MemoryA getSmallAInstance(FilesFacade ff, LPSZ name) {
+    public static MemoryMA getSmallMAInstance(FilesFacade ff, LPSZ name) {
         return new MemoryCMARWImpl(ff, name, ff.getPageSize(), Long.MAX_VALUE);
     }
 
-    public static MemoryARW getSmallARWInstance(FilesFacade ff, LPSZ name) {
+    public static MemoryMARW getSmallMARWInstance(FilesFacade ff, LPSZ name) {
         return new MemoryCMARWImpl(ff, name, ff.getPageSize(), Long.MAX_VALUE);
     }
 
