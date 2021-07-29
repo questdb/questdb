@@ -34,6 +34,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.geohash.GeoHashNative;
 import io.questdb.std.NumericException;
 import io.questdb.std.str.StringSink;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -90,22 +91,96 @@ public class CastGeoHashFunctionFactoryTest extends BaseFunctionFactoryTest {
 
     @Test
     public void testCastStringToGeoHashSizesBinary() throws SqlException, NumericException {
-        String geohash = "sp052w92p1p8ignore";
-        int geohashLen = Math.min(geohash.length(), 12);
+        String longHash = "sp052w92bcdeignore";
+        int geohashLen = 12;
         functions.add(new CastStrToGeoHashFunctionFactory());
         FunctionParser functionParser = createFunctionParser();
         GenericRecordMetadata metadata = new GenericRecordMetadata();
-        long fullGeohash = GeoHashNative.fromString(geohash);
-        Assert.assertEquals(888340623145993896L, fullGeohash);
-        for (int c = 1; c <= geohashLen; c++) {
-            String expectedGeohash = geohash.substring(0, c);
-            for (int b = 1; b <= c * 5 || c == 0; b++) {
-                String castExpr = String.format("cast('%s' as geohash(%sb))", expectedGeohash, b);
-                Function function = parseFunction(castExpr, metadata, functionParser);
+        long fullGeohash = GeoHashNative.fromString(longHash, geohashLen);
+
+        for (int i = 1; i <= geohashLen; i++) {
+            for (int b = 1; b <= i * 5; b++) {
+                String castExpr = String.format("cast('%s' as geohash(%sb))", longHash, b);
+                Function function = parseFunction(
+                        castExpr,
+                        metadata,
+                        functionParser);
                 Assert.assertTrue(castExpr, function.isConstant());
                 Assert.assertEquals(castExpr, b, GeoHashExtra.getBitsPrecision(function.getType()));
                 Assert.assertEquals(castExpr, fullGeohash >>> (geohashLen * 5 - b), function.getLong(null));
             }
         }
+    }
+
+    @Test
+    public void testCastEmptyString() throws SqlException {
+        functions.add(new CastStrToGeoHashFunctionFactory());
+        FunctionParser functionParser = createFunctionParser();
+        GenericRecordMetadata metadata = new GenericRecordMetadata();
+
+        String castExpr = "cast('' as geohash(1b))";
+        Function function = parseFunction(castExpr, metadata, functionParser);
+
+        Assert.assertTrue(function.isConstant());
+        Assert.assertEquals(1, GeoHashExtra.getBitsPrecision(function.getType()));
+        Assert.assertEquals(GeoHashExtra.NULL, function.getGeoHash(null));
+    }
+
+    @Test
+    public void testCastNullToGeohash() throws SqlException {
+        functions.add(new CastStrToGeoHashFunctionFactory());
+        FunctionParser functionParser = createFunctionParser();
+        GenericRecordMetadata metadata = new GenericRecordMetadata();
+
+        String castExpr = "cast(NULL as geohash(10b))";
+        Function function = parseFunction(castExpr, metadata, functionParser);
+
+        Assert.assertTrue(function.isConstant());
+        Assert.assertEquals(10, GeoHashExtra.getBitsPrecision(function.getType()));
+        Assert.assertEquals(GeoHashExtra.NULL, function.getGeoHash(null));
+    }
+
+    @Test
+    public void testCastInvalidCharToGeohash() {
+        functions.add(new CastStrToGeoHashFunctionFactory());
+        FunctionParser functionParser = createFunctionParser();
+        GenericRecordMetadata metadata = new GenericRecordMetadata();
+
+        try {
+            String castExpr = "cast('a' as geohash(1c))";
+            parseFunction(castExpr, metadata, functionParser);
+        } catch (SqlException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "invalid GEOHASH");
+            Assert.assertEquals(5, e.getPosition());
+        }
+    }
+
+    @Test
+    public void testCastInvalidCharToGeohash2() {
+        functions.add(new CastStrToGeoHashFunctionFactory());
+        FunctionParser functionParser = createFunctionParser();
+        GenericRecordMetadata metadata = new GenericRecordMetadata();
+
+        try {
+            String castExpr = "cast('^' as geohash(1c))";
+            parseFunction(castExpr, metadata, functionParser);
+        } catch (SqlException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "invalid GEOHASH");
+            Assert.assertEquals(5, e.getPosition());
+        }
+    }
+
+    @Test
+    public void testCastStringTooLongForGeohash() throws SqlException, NumericException {
+        functions.add(new CastStrToGeoHashFunctionFactory());
+        FunctionParser functionParser = createFunctionParser();
+        GenericRecordMetadata metadata = new GenericRecordMetadata();
+
+        String castExpr = "cast('sp052w92bcde2569' as geohash(1c))";
+        Function function = parseFunction(castExpr, metadata, functionParser);
+
+        Assert.assertTrue(function.isConstant());
+        Assert.assertEquals(5, GeoHashExtra.getBitsPrecision(function.getType()));
+        Assert.assertEquals(GeoHashNative.fromStringNl("s"), function.getGeoHash(null));
     }
 }

@@ -34,7 +34,6 @@ import io.questdb.std.NumericException;
 
 public class GeoHashConstant extends GeoHashFunction implements ConstantFunction {
     public static final GeoHashConstant NULL = new GeoHashConstant(GeoHashExtra.NULL, ColumnType.GEOHASH);
-
     private final long hash; // does NOT encode size
 
     public GeoHashConstant(long hash, int typep) {
@@ -42,26 +41,8 @@ public class GeoHashConstant extends GeoHashFunction implements ConstantFunction
         this.hash = hash;
     }
 
-    public GeoHashConstant(CharSequence value) throws NumericException {
-        super(ColumnType.GEOHASH);
-        if (value == null || value.length() == 0) {
-            hash = NULL.hash;
-        } else {
-            CharSequence str = value;
-            if (Chars.startsWith(value, '\'') && Chars.endsWith(value, '\'')) {
-                str = Chars.toString(value, 1, value.length() - 1);
-            }
-            hash = GeoHashNative.fromString(str);
-            typep = GeoHashExtra.setBitsPrecision(typep, str.length() * 5);
-        }
-    }
-
     public static GeoHashConstant newInstance(long hash, int type) {
-        return hash != GeoHashExtra.NULL ? new GeoHashConstant(hash, type) : NULL;
-    }
-
-    public static GeoHashConstant newInstance(CharSequence value) throws NumericException {
-        return value != null && value.length() > 0 ? new GeoHashConstant(value) : NULL;
+        return new GeoHashConstant(hash, type);
     }
 
     @Override

@@ -32,11 +32,11 @@ import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cutlass.text.Atomicity;
 import io.questdb.cutlass.text.TextException;
 import io.questdb.cutlass.text.TextLoader;
+import io.questdb.griffin.engine.functions.cast.CastStrToGeoHashFunctionFactory;
 import io.questdb.griffin.engine.functions.catalogue.ShowSearchPathCursorFactory;
 import io.questdb.griffin.engine.functions.catalogue.ShowStandardConformingStringsCursorFactory;
 import io.questdb.griffin.engine.functions.catalogue.ShowTimeZoneFactory;
 import io.questdb.griffin.engine.functions.catalogue.ShowTransactionIsolationLevelCursorFactory;
-import io.questdb.griffin.engine.functions.constants.GeoHashConstant;
 import io.questdb.griffin.engine.table.ShowColumnsRecordCursorFactory;
 import io.questdb.griffin.engine.table.TableListRecordCursorFactory;
 import io.questdb.griffin.model.*;
@@ -2386,7 +2386,6 @@ public class SqlCompiler implements Closeable {
     ) throws SqlException {
 
         final int columnType = metadata.getColumnType(metadataColumnIndex);
-
         if (function.isUndefined()) {
             function.assignType(columnType, bindVariableService);
         }
@@ -2395,11 +2394,9 @@ public class SqlCompiler implements Closeable {
             if (metadataColumnIndex == writerTimestampIndex) {
                 return function;
             }
-            Function f = function;
             if (ColumnType.GEOHASH == ColumnType.tagOf(columnType)) {
-                assert function.isConstant();
                 if (ColumnType.STRING == ColumnType.tagOf(function.getType())) {
-                    f = converstStrToGeohashConst(function, functionPosition);
+                    function = new CastStrToGeoHashFunctionFactory.Func(columnType, function, functionPosition);
                 } else {
                     throw SqlException.position(0)
                             .put("cannot cast ")
@@ -2408,9 +2405,9 @@ public class SqlCompiler implements Closeable {
                             .put(ColumnType.nameOf(ColumnType.GEOHASH));
                 }
             }
-            valueFunctions.add(f);
+            valueFunctions.add(function);
             listColumnFilter.add(metadataColumnIndex + 1);
-            return f;
+            return function;
         }
 
         throw SqlException.inconvertibleTypes(
@@ -2420,14 +2417,6 @@ public class SqlCompiler implements Closeable {
                 metadata.getColumnType(metadataColumnIndex),
                 metadata.getColumnName(metadataColumnIndex)
         );
-    }
-
-    private static Function converstStrToGeohashConst(Function function, int position) throws SqlException {
-        try {
-            return GeoHashConstant.newInstance(function.getStr(null));
-        } catch (NumericException e) {
-            throw SqlException.position(position).put("cannot parse geohash, invalid value");
-        }
     }
 
     private InsertModel validateAndOptimiseInsertAsSelect(

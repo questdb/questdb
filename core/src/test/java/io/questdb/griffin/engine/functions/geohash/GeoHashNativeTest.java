@@ -55,7 +55,7 @@ public class GeoHashNativeTest {
         final long gh = GeoHashNative.fromCoordinates(lat, lon, 8 * 5);
         sink.clear();
         GeoHashNative.toString(gh, 8, sink);
-        final long gh1 = GeoHashNative.fromString(sink);
+        final long gh1 = GeoHashNative.fromStringNl(sink);
         Assert.assertEquals(gh, gh1);
     }
 
@@ -205,7 +205,7 @@ public class GeoHashNativeTest {
         }
 
         for (int i=0; i < maxGeoHashSizeChars; i++) {
-            final long gh = GeoHashNative.fromString(expectedStr[i]);
+            final long gh = GeoHashNative.fromStringNl(expectedStr[i]);
             Assert.assertEquals(expectedHash[i], gh);
             sink.clear();
             GeoHashNative.toString(gh, expectedStr[i].length(), sink);

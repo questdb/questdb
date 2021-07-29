@@ -33,11 +33,13 @@ public class GeoHashExtra {
     private static final int BITS_OFFSET = 8;
 
     public static int setBitsPrecision(int type, int bits) {
+        assert ColumnType.tagOf(type) == ColumnType.GEOHASH; // This maybe relaxed in the future
         assert bits >= 0 && bits < 61;
         return (type & ~(0xFF << BITS_OFFSET)) | (bits << BITS_OFFSET);
     }
 
     public static int getBitsPrecision(int type) {
+        assert ColumnType.tagOf(type) == ColumnType.GEOHASH; // This maybe relaxed in the future
         return (type >> BITS_OFFSET) & 0xFF;
     }
 

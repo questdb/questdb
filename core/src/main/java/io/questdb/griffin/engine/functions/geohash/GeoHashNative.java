@@ -24,12 +24,18 @@
 
 package io.questdb.griffin.engine.functions.geohash;
 
+import io.questdb.cairo.GeoHashExtra;
 import io.questdb.std.CharSequenceHashSet;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.NumericException;
 import io.questdb.std.str.CharSink;
 
 public class GeoHashNative {
+    public static final int MAX_STRING_LENGTH = 12;
+    public static final int MAX_BITS_LENGTH = 60;
+    private static final char MAX_CHAR = 'z' + 1;
+    private static final char MIN_CHAR = '0' - 1;
+
     static final byte[] base32Indexes = {
             0, 1, 2, 3, 4, 5, 6, 7,        // 30-37, '0'..'7'
             8, 9, -1, -1, -1, -1, -1, -1,  // 38-2F, '8','9'
@@ -50,18 +56,28 @@ public class GeoHashNative {
             's', 't', 'u', 'v', 'w', 'x', 'y', 'z'
     };
 
-    public static long fromString(CharSequence hash) throws NumericException {
+    public static long fromString(CharSequence hash, int parseLen) throws NumericException {
+        assert parseLen <= MAX_STRING_LENGTH && hash.length() >= parseLen;
         long output = 0;
-        for (int i = 0; i < Math.min(hash.length(), 12); ++i) {
+        for (int i = 0; i < parseLen; ++i) {
             char c = hash.charAt(i);
-            byte idx = base32Indexes[(int) c - 48];
-            if (idx < 0) {
-                throw NumericException.INSTANCE;
+            if (c > MIN_CHAR && c < MAX_CHAR) {
+                byte idx = base32Indexes[(int) c - 48];
+                if (idx >= 0) {
+                    output = (output << 5) | idx;
+                    continue;
+                }
             }
-            output <<= 5;
-            output |= (idx & 0x1F);
+            throw NumericException.INSTANCE;
         }
         return output;
+    }
+
+    public static long fromStringNl(CharSequence hash) throws NumericException {
+        if (hash == null || hash.length() == 0) {
+            return GeoHashExtra.NULL;
+        }
+        return fromString(hash, Math.min(MAX_STRING_LENGTH, hash.length()));
     }
 
     public static long fromCoordinates(double lat, double lng, int bits) {
@@ -151,7 +167,10 @@ public class GeoHashNative {
         for (int i = 1, sz = prefixes.size(); i < sz; i++) {
             try {
                 final CharSequence prefix = prefixes.get(i);
-                final long hash = fromString(prefix);
+                final long hash = fromStringNl(prefix);
+                if (hash == GeoHashExtra.NULL) {
+                    continue;
+                }
                 final int bits = 5 * prefix.length();
                 final int shift = 8 * 5 - bits;
                 final long norm = hash << shift;

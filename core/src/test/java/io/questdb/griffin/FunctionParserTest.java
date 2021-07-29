@@ -330,7 +330,6 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         functions.clear();
         sink.clear();
         GeoHashNative.toString(hash, 6, sink);
-        testConstantPassThru(new GeoHashConstant(sink));
     }
 
     @Test

@@ -37,6 +37,8 @@ import io.questdb.griffin.engine.functions.constants.GeoHashConstant;
 import io.questdb.griffin.engine.functions.geohash.GeoHashNative;
 import io.questdb.std.*;
 
+import static io.questdb.griffin.engine.functions.geohash.GeoHashNative.MAX_BITS_LENGTH;
+
 public class CastStrToGeoHashFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
@@ -51,51 +53,60 @@ public class CastStrToGeoHashFunctionFactory implements FunctionFactory {
                                 SqlExecutionContext sqlExecutionContext) throws SqlException {
         Function value = args.getQuick(0);
         int argPosition = argPositions.getQuick(0);
-        int targetTypep = args.getQuick(1).getType();
+        int geoType = args.getQuick(1).getType();
         if (value.isConstant()) {
             try {
+                int bitsPrecision = GeoHashExtra.getBitsPrecision(geoType);
+                assert bitsPrecision > 0 && bitsPrecision < MAX_BITS_LENGTH + 1;
                 return GeoHashConstant.newInstance(
-                        getGeoHashImpl(targetTypep, value.getStr(null), argPosition),
-                        targetTypep
+                        getGeoHashImpl(value.getStr(null), argPosition, bitsPrecision),
+                        geoType
                 );
             } catch (NumericException e) {
-                throw SqlException.position(argPosition).put("invalid GEOHASH symbol");
+                // throw SqlException if string literal is invalid geohash
+                // runtime parsing errors will result in NULL geohash
+                throw SqlException.position(argPosition).put("invalid GEOHASH");
             }
         }
-        return new Func(targetTypep, value, argPosition);
+        return new Func(geoType, args.getQuick(0), argPosition);
     }
 
-    private static long getGeoHashImpl(int targetTypep, CharSequence value, int position) throws SqlException, NumericException {
+    private static long getGeoHashImpl(CharSequence value, int position, int typeBits) throws SqlException, NumericException {
         if (value == null || value.length() == 0) {
             return GeoHashExtra.NULL;
         }
         int actualBits = value.length() * 5;
-        int typepBits = GeoHashExtra.getBitsPrecision(targetTypep);
-        if (actualBits < typepBits) {
+        if (actualBits < typeBits) {
             throw SqlException.position(position).put("string is too short to cast to chosen GEOHASH precision");
         }
-        return GeoHashNative.fromString(value) >>> (actualBits - typepBits);
+        // Don't parse full string, it can be over 12 chars and result in overflow
+        int parseChars = (typeBits - 1) / 5 + 1;
+        long lvalue = GeoHashNative.fromString(value, parseChars);
+        return lvalue >>> (parseChars * 5 - typeBits);
     }
 
-    private static class Func extends GeoHashFunction implements UnaryFunction {
-        private final Function value;
+    public static class Func extends GeoHashFunction implements UnaryFunction {
+        private final Function arg;
         private final int position;
+        private final int bitsPrecision;
 
-        public Func(int targetTypep, Function value, int position) {
-            super(targetTypep);
-            this.value = value;
+        public Func(int geoType, Function arg, int position) {
+            super(geoType);
+            this.arg = arg;
             this.position = position;
+            this.bitsPrecision = GeoHashExtra.getBitsPrecision(geoType);
+            assert this.bitsPrecision > 0 && this.bitsPrecision < MAX_BITS_LENGTH + 1;
         }
 
         @Override
         public Function getArg() {
-            return value;
+            return arg;
         }
 
         @Override
         public long getLong(Record rec) {
             try {
-                return getGeoHashImpl(GeoHashExtra.getBitsPrecision(typep), value.getStr(rec), position);
+                return getGeoHashImpl(arg.getStr(rec), position, bitsPrecision);
             } catch (SqlException | NumericException e) {
                 return GeoHashExtra.NULL;
             }
