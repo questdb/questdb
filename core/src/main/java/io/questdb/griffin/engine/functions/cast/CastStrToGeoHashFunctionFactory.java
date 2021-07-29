@@ -104,6 +104,21 @@ public class CastStrToGeoHashFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public byte getByte(Record rec) {
+            return (byte) getLong(rec);
+        }
+
+        @Override
+        public short getShort(Record rec) {
+            return (short) getLong(rec);
+        }
+
+        @Override
+        public int getInt(Record rec) {
+            return (int) getLong(rec);
+        }
+
+        @Override
         public long getLong(Record rec) {
             try {
                 return getGeoHashImpl(arg.getStr(rec), position, bitsPrecision);

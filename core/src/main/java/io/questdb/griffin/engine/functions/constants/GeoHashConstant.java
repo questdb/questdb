@@ -46,6 +46,21 @@ public class GeoHashConstant extends GeoHashFunction implements ConstantFunction
     }
 
     @Override
+    public byte getByte(Record rec) {
+        return (byte) getLong(rec);
+    }
+
+    @Override
+    public short getShort(Record rec) {
+        return (short) getLong(rec);
+    }
+
+    @Override
+    public int getInt(Record rec) {
+        return (int) getLong(rec);
+    }
+
+    @Override
     public final long getLong(Record rec) {
         return hash;
     }
