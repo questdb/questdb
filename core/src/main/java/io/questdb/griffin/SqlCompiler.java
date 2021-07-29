@@ -679,6 +679,7 @@ public class SqlCompiler implements Closeable {
                                     break; // impossible conversion
                             }
                             break;
+                        // TODO: Missing case 0: // NULL has size 0
                         case 8:
                             switch (sizeTo) {
                                 case 1:

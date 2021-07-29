@@ -52,8 +52,6 @@ public class InsertNullTest extends AbstractGriffinTest {
             {"binary", ""}
     };
 
-    // TODO: add tests inserting null in geohash
-
     @Test
     public void testInsertNull() throws Exception {
         for (int i = 0; i < TYPES.length; i++) {
