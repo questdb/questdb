@@ -616,8 +616,8 @@ public class SqlCompiler implements Closeable {
                     break;
                 case ColumnType.GEOHASH:
                     assert toColumnTypeTag == ColumnType.GEOHASH;
-                    final int sizeFrom = ColumnType.sizeOf(fromColumnTypeTag);
-                    final int sizeTo = ColumnType.sizeOf(toColumnTypeTag);
+                    final int sizeFrom = ColumnType.sizeOf(fromColumnType);
+                    final int sizeTo = ColumnType.sizeOf(toColumnType);
 
                     switch (sizeFrom) {
                         case 1:

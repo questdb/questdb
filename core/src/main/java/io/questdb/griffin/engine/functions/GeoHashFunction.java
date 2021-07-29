@@ -64,7 +64,7 @@ public abstract class GeoHashFunction implements ScalarFunction {
     }
 
     @Override
-    public final byte getByte(Record rec) {
+    public byte getByte(Record rec) {
         throw new UnsupportedOperationException();
     }
 
@@ -84,7 +84,7 @@ public abstract class GeoHashFunction implements ScalarFunction {
     }
 
     @Override
-    public final int getInt(Record rec) {
+    public int getInt(Record rec) {
         throw new UnsupportedOperationException();
     }
 
@@ -94,7 +94,7 @@ public abstract class GeoHashFunction implements ScalarFunction {
     }
 
     @Override
-    public final short getShort(Record rec) {
+    public short getShort(Record rec) {
         throw new UnsupportedOperationException();
     }
 
