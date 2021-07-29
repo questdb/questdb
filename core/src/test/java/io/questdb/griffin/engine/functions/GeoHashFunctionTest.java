@@ -27,7 +27,6 @@ package io.questdb.griffin.engine.functions;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashExtra;
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.engine.functions.constants.GeoHashConstant;
 import io.questdb.std.str.StringSink;
 import org.junit.Assert;
 import org.junit.Test;

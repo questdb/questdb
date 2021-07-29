@@ -33,21 +33,29 @@ import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.geohash.GeoHashNative;
 import io.questdb.std.NumericException;
-import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Before;
 import org.junit.Test;
 
 public class CastGeoHashFunctionFactoryTest extends BaseFunctionFactoryTest {
+
+    private FunctionParser functionParser;
+    private GenericRecordMetadata metadata;
+
+    @Before
+    public void setUp5() {
+        functions.add(new CastStrToGeoHashFunctionFactory());
+        functions.add(new CastGeoHashToGeoHashFunctionFactory());
+        functionParser = createFunctionParser();
+        metadata = new GenericRecordMetadata();
+    }
 
     @Test
     public void testCastStringToGeoHash() throws SqlException {
         String expectedGeohash = "sp052w92";
         long expectedHash = 847187636514L;
 
-        functions.add(new CastStrToGeoHashFunctionFactory());
-        FunctionParser functionParser = createFunctionParser();
-        GenericRecordMetadata metadata = new GenericRecordMetadata();
         Function function = parseFunction(
                 String.format("cast('%s' as GEOHASH(8c))", expectedGeohash),
                 metadata,
@@ -60,18 +68,12 @@ public class CastGeoHashFunctionFactoryTest extends BaseFunctionFactoryTest {
         Assert.assertEquals(expectedHash, function.getGeoHash(null));
         Assert.assertEquals(expectedHash, function.getLong(null));
         Assert.assertEquals(0, GeoHashNative.hashSize(function.getLong(null)));
-
-        StringSink sink = new StringSink();
-        GeoHashNative.toString(function.getLong(null), GeoHashExtra.getBitsPrecision(function.getType()) / 5, sink);
-        Assert.assertEquals(expectedGeohash, sink.toString());
+        assertGeoHashStrEquals(expectedGeohash, function);
     }
 
     @Test
     public void testCastStringToGeoHashSizesChar() throws SqlException {
         String longHash = "sp052w92bcde";
-        functions.add(new CastStrToGeoHashFunctionFactory());
-        FunctionParser functionParser = createFunctionParser();
-        GenericRecordMetadata metadata = new GenericRecordMetadata();
 
         for (int i = 0; i < longHash.length(); i++) {
             String expectedGeohash = longHash.substring(0, i + 1);
@@ -92,12 +94,8 @@ public class CastGeoHashFunctionFactoryTest extends BaseFunctionFactoryTest {
     public void testCastStringToGeoHashSizesBinary() throws SqlException, NumericException {
         String geohash = "sp052w92p1p8ignore";
         int geohashLen = Math.min(geohash.length(), 12);
-        functions.add(new CastStrToGeoHashFunctionFactory());
-        FunctionParser functionParser = createFunctionParser();
-        GenericRecordMetadata metadata = new GenericRecordMetadata();
         long fullGeohash = GeoHashNative.fromStringNl(geohash);
         Assert.assertEquals(888340623145993896L, fullGeohash);
-        StringSink sink = new StringSink();
         for (int c = 1; c <= geohashLen; c++) {
             String expectedGeohash = geohash.substring(0, c);
             Function function = null;
@@ -108,18 +106,12 @@ public class CastGeoHashFunctionFactoryTest extends BaseFunctionFactoryTest {
                 Assert.assertEquals(castExpr, b, GeoHashExtra.getBitsPrecision(function.getType()));
                 Assert.assertEquals(castExpr, fullGeohash >>> (geohashLen * 5 - b), function.getLong(null));
             }
-            sink.clear();
-            GeoHashNative.toString(function.getLong(null), GeoHashExtra.getBitsPrecision(function.getType()) / 5, sink);
-            Assert.assertEquals(expectedGeohash, sink.toString());
+            assertGeoHashStrEquals(expectedGeohash, function);
         }
     }
 
     @Test
     public void testCastEmptyString() throws SqlException {
-        functions.add(new CastStrToGeoHashFunctionFactory());
-        FunctionParser functionParser = createFunctionParser();
-        GenericRecordMetadata metadata = new GenericRecordMetadata();
-
         String castExpr = "cast('' as geohash(1b))";
         Function function = parseFunction(castExpr, metadata, functionParser);
 
@@ -130,10 +122,6 @@ public class CastGeoHashFunctionFactoryTest extends BaseFunctionFactoryTest {
 
     @Test
     public void testCastNullToGeohash() throws SqlException {
-        functions.add(new CastStrToGeoHashFunctionFactory());
-        FunctionParser functionParser = createFunctionParser();
-        GenericRecordMetadata metadata = new GenericRecordMetadata();
-
         String castExpr = "cast(NULL as geohash(10b))";
         Function function = parseFunction(castExpr, metadata, functionParser);
 
@@ -144,10 +132,6 @@ public class CastGeoHashFunctionFactoryTest extends BaseFunctionFactoryTest {
 
     @Test
     public void testCastInvalidCharToGeohash() {
-        functions.add(new CastStrToGeoHashFunctionFactory());
-        FunctionParser functionParser = createFunctionParser();
-        GenericRecordMetadata metadata = new GenericRecordMetadata();
-
         try {
             String castExpr = "cast('a' as geohash(1c))";
             parseFunction(castExpr, metadata, functionParser);
@@ -159,10 +143,6 @@ public class CastGeoHashFunctionFactoryTest extends BaseFunctionFactoryTest {
 
     @Test
     public void testCastInvalidCharToGeohash2() {
-        functions.add(new CastStrToGeoHashFunctionFactory());
-        FunctionParser functionParser = createFunctionParser();
-        GenericRecordMetadata metadata = new GenericRecordMetadata();
-
         try {
             String castExpr = "cast('^' as geohash(1c))";
             parseFunction(castExpr, metadata, functionParser);
@@ -174,15 +154,20 @@ public class CastGeoHashFunctionFactoryTest extends BaseFunctionFactoryTest {
 
     @Test
     public void testCastStringTooLongForGeohash() throws SqlException, NumericException {
-        functions.add(new CastStrToGeoHashFunctionFactory());
-        FunctionParser functionParser = createFunctionParser();
-        GenericRecordMetadata metadata = new GenericRecordMetadata();
-
         String castExpr = "cast('sp052w92bcde2569' as geohash(1c))";
         Function function = parseFunction(castExpr, metadata, functionParser);
 
         Assert.assertTrue(function.isConstant());
         Assert.assertEquals(5, GeoHashExtra.getBitsPrecision(function.getType()));
         Assert.assertEquals(GeoHashNative.fromStringNl("s"), function.getGeoHash(null));
+    }
+
+    private void assertGeoHashStrEquals(String expectedGeohash, Function function) {
+        sink.clear();
+        GeoHashNative.toString(
+                function.getLong(null),
+                GeoHashExtra.getBitsPrecision(function.getType()) / 5,
+                sink);
+        Assert.assertEquals(expectedGeohash, sink.toString());
     }
 }

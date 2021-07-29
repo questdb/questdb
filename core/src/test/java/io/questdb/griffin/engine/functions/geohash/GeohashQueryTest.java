@@ -32,7 +32,7 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class GeohashQueryTests extends AbstractGriffinTest {
+public class GeohashQueryTest extends AbstractGriffinTest {
     @Test
     public void testGeohashDowncast() throws SqlException {
         assertSql("select cast(cast('questdb' as geohash(7c)) as geohash(6c)) from long_sequence(1)\n" +
@@ -82,7 +82,7 @@ public class GeohashQueryTests extends AbstractGriffinTest {
 
     @Test
     public void testGeohashReadAllCharLengths() throws SqlException {
-        for(int l = 12; l > -1; l--) {
+        for(int l = 12; l > 0; l--) {
             String tableName = "pos" + l;
             compiler.compile(String.format("create table %s(hash geohash(%sc))", tableName, l), sqlExecutionContext);
             executeInsert(String.format("insert into %s values('1234567890quest')", tableName));

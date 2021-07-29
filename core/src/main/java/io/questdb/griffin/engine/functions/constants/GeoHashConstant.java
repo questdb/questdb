@@ -24,13 +24,8 @@
 
 package io.questdb.griffin.engine.functions.constants;
 
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.GeoHashExtra;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.GeoHashFunction;
-import io.questdb.griffin.engine.functions.geohash.GeoHashNative;
-import io.questdb.std.Chars;
-import io.questdb.std.NumericException;
 
 public class GeoHashConstant extends GeoHashFunction implements ConstantFunction {
     private final long hash; // does NOT encode size
