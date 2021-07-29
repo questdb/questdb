@@ -52,7 +52,7 @@ public class GeoHashNative {
 
     public static long fromString(CharSequence hash) throws NumericException {
         long output = 0;
-        for (int i = 0; i < hash.length(); ++i) {
+        for (int i = 0; i < Math.min(hash.length(), 12); ++i) {
             char c = hash.charAt(i);
             byte idx = base32Indexes[(int) c - 48];
             if (idx < 0) {

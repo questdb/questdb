@@ -51,57 +51,51 @@ public class CastStrToGeoHashFunctionFactory implements FunctionFactory {
                                 SqlExecutionContext sqlExecutionContext) throws SqlException {
         Function value = args.getQuick(0);
         int argPosition = argPositions.getQuick(0);
-        int geoType = args.getQuick(1).getType();
+        int targetTypep = args.getQuick(1).getType();
         if (value.isConstant()) {
             try {
                 return GeoHashConstant.newInstance(
-                        getGeoHashImpl(geoType, value.getStr(null), argPosition),
-                        geoType
+                        getGeoHashImpl(targetTypep, value.getStr(null), argPosition),
+                        targetTypep
                 );
             } catch (NumericException e) {
-                throw SqlException.position(argPosition).put("invalid geohash symbol");
+                throw SqlException.position(argPosition).put("invalid GEOHASH symbol");
             }
         }
-        return new Func(geoType, args, argPosition);
+        return new Func(targetTypep, value, argPosition);
     }
 
-    private static long getGeoHashImpl(int typep, CharSequence value, int position) throws SqlException, NumericException {
+    private static long getGeoHashImpl(int targetTypep, CharSequence value, int position) throws SqlException, NumericException {
         if (value == null || value.length() == 0) {
-            return Numbers.LONG_NaN;
+            return GeoHashExtra.NULL;
         }
-        int typeBits = GeoHashExtra.getBitsPrecision(typep);
         int actualBits = value.length() * 5;
-        if (actualBits < typeBits) {
-            throw SqlException.position(position).put("string is too short to cast to chosen geohash precision");
+        int typepBits = GeoHashExtra.getBitsPrecision(targetTypep);
+        if (actualBits < typepBits) {
+            throw SqlException.position(position).put("string is too short to cast to chosen GEOHASH precision");
         }
-        long lvalue = GeoHashNative.fromString(value);
-        return lvalue >>> (actualBits - typeBits);
+        return GeoHashNative.fromString(value) >>> (actualBits - typepBits);
     }
 
     private static class Func extends GeoHashFunction implements UnaryFunction {
-        private final Function arg;
+        private final Function value;
         private final int position;
 
-        public Func(int geoType, ObjList<Function> args, int position) {
-            super(geoType);
-            this.arg = args.getQuick(0);
+        public Func(int targetTypep, Function value, int position) {
+            super(targetTypep);
+            this.value = value;
             this.position = position;
         }
 
         @Override
         public Function getArg() {
-            return arg;
+            return value;
         }
 
         @Override
         public long getLong(Record rec) {
-            return getGeoHash(rec);
-        }
-
-        @Override
-        public long getGeoHash(Record rec) {
             try {
-                return getGeoHashImpl(arg.getType(), arg.getStr(rec), position);
+                return getGeoHashImpl(GeoHashExtra.getBitsPrecision(typep), value.getStr(rec), position);
             } catch (SqlException | NumericException e) {
                 return GeoHashExtra.NULL;
             }
