@@ -213,4 +213,37 @@ public class GeoHashNativeTest {
         }
         Assert.assertEquals(expected, everything.toString());
     }
+
+    @Test
+    public void testToString() {
+        assertSuccess(-1, Integer.MIN_VALUE, "");
+        assertSuccess(-1L, Integer.MAX_VALUE, "");
+        assertSuccess(27760644473312309L, 11, "sp052w92p1p");
+    }
+
+    @Test
+    public void testToStringInvalidSizeInChars() {
+        assertFail(0, 0, "precision range is [1, 12]");
+        assertFail(0, 13, "precision range is [1, 12]");
+    }
+
+    private static void assertFail(long hash, int chars, String message) {
+        try {
+            sink.clear();
+            GeoHashNative.toString(hash, chars, sink);
+            Assert.fail();
+        } catch (IllegalArgumentException err) {
+            Assert.assertEquals(message, err.getMessage());
+        }
+    }
+
+    private static void assertSuccess(long hash, int chars, String message) {
+        try {
+            sink.clear();
+            GeoHashNative.toString(hash, chars, sink);
+            Assert.assertEquals(message, sink.toString());
+        } catch (IllegalArgumentException err) {
+            Assert.fail();
+        }
+    }
 }

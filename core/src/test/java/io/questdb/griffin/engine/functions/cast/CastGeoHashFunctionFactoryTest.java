@@ -75,7 +75,6 @@ public class CastGeoHashFunctionFactoryTest extends BaseFunctionFactoryTest {
 
         for (int i = 0; i < longHash.length(); i++) {
             String expectedGeohash = longHash.substring(0, i + 1);
-
             for (int j = 0; j <= i; j++) {
                 int parsedGeoHashLen = j + 1;
                 String castExpr = String.format("cast('%s' as geohash(%sc))", expectedGeohash, parsedGeoHashLen);
@@ -91,24 +90,27 @@ public class CastGeoHashFunctionFactoryTest extends BaseFunctionFactoryTest {
 
     @Test
     public void testCastStringToGeoHashSizesBinary() throws SqlException, NumericException {
-        String longHash = "sp052w92bcdeignore";
-        int geohashLen = 12;
+        String geohash = "sp052w92p1p8ignore";
+        int geohashLen = Math.min(geohash.length(), 12);
         functions.add(new CastStrToGeoHashFunctionFactory());
         FunctionParser functionParser = createFunctionParser();
         GenericRecordMetadata metadata = new GenericRecordMetadata();
-        long fullGeohash = GeoHashNative.fromString(longHash, geohashLen);
-
-        for (int i = 1; i <= geohashLen; i++) {
-            for (int b = 1; b <= i * 5; b++) {
-                String castExpr = String.format("cast('%s' as geohash(%sb))", longHash, b);
-                Function function = parseFunction(
-                        castExpr,
-                        metadata,
-                        functionParser);
+        long fullGeohash = GeoHashNative.fromStringNl(geohash);
+        Assert.assertEquals(888340623145993896L, fullGeohash);
+        StringSink sink = new StringSink();
+        for (int c = 1; c <= geohashLen; c++) {
+            String expectedGeohash = geohash.substring(0, c);
+            Function function = null;
+            for (int b = 1; b <= c * 5; b++) {
+                String castExpr = String.format("cast('%s' as geohash(%sb))", expectedGeohash, b);
+                function = parseFunction(castExpr, metadata, functionParser);
                 Assert.assertTrue(castExpr, function.isConstant());
                 Assert.assertEquals(castExpr, b, GeoHashExtra.getBitsPrecision(function.getType()));
                 Assert.assertEquals(castExpr, fullGeohash >>> (geohashLen * 5 - b), function.getLong(null));
             }
+            sink.clear();
+            function.getStr(null, sink);
+            Assert.assertEquals(expectedGeohash, sink.toString());
         }
     }
 
