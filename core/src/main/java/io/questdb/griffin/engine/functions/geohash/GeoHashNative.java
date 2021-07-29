@@ -137,12 +137,11 @@ public class GeoHashNative {
 
     public static void toString(long hash, int chars, CharSink sink) {
         if (hash != GeoHashExtra.NULL) {
-            if (chars < 1 || chars > 12) {
+            if (chars < 1 || chars > GeoHashNative.MAX_STRING_LENGTH) {
                 throw new IllegalArgumentException("precision range is [1, 12]");
             }
-
-            for (int i=chars-1; i >= 0; --i) {
-                sink.put(base32[(int)((hash >> i * 5) & 0x1F)]);
+            for (int i = chars - 1; i >= 0; --i) {
+                sink.put(base32[(int) ((hash >> i * 5) & 0x1F)]);
             }
         }
     }

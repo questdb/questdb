@@ -82,7 +82,8 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
             throw SqlException.invalidColumn(position, name);
         }
 
-        switch (ColumnType.tagOf(metadata.getColumnType(index))) {
+        int columnType = metadata.getColumnType(index);
+        switch (ColumnType.tagOf(columnType)) {
             case ColumnType.BOOLEAN:
                 return BooleanColumn.newInstance(index);
             case ColumnType.BYTE:
@@ -111,10 +112,16 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
                 return TimestampColumn.newInstance(index);
             case ColumnType.RECORD:
                 return new RecordColumn(index, metadata.getMetadata(index));
+            case ColumnType.GEOHASH:
+                return GeoHashColumn.newInstance(index, columnType);
             case ColumnType.NULL:
                 return NullConstant.NULL;
-            default:
+            case ColumnType.LONG256:
                 return Long256Column.newInstance(index);
+            default:
+                throw SqlException.position(position)
+                        .put("unsupported column type ")
+                        .put(ColumnType.nameOf(columnType));
         }
     }
 

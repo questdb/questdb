@@ -59,6 +59,7 @@ public class SqlCompiler implements Closeable {
     public static final ObjList<String> sqlControlSymbols = new ObjList<>(8);
     private final static Log LOG = LogFactory.getLog(SqlCompiler.class);
     private static final IntList castGroups = new IntList();
+    private static final CastStrToGeoHashFunctionFactory GEO_HASH_FUNCTION_FACTORY = new CastStrToGeoHashFunctionFactory();
     protected final GenericLexer lexer;
     protected final Path path = new Path();
     protected final CairoEngine engine;
@@ -2397,9 +2398,9 @@ public class SqlCompiler implements Closeable {
             }
             if (ColumnType.GEOHASH == ColumnType.tagOf(columnType)) {
                 if (ColumnType.STRING == ColumnType.tagOf(function.getType())) {
-                    function = new CastStrToGeoHashFunctionFactory.Func(columnType, function, functionPosition);
+                    function = GEO_HASH_FUNCTION_FACTORY.newInstance(functionPosition, columnType, function);
                 } else {
-                    throw SqlException.position(0)
+                    throw SqlException.position(functionPosition)
                             .put("cannot cast ")
                             .put(ColumnType.nameOf(function.getType()))
                             .put(" to ")

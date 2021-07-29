@@ -54,6 +54,10 @@ public class CastStrToGeoHashFunctionFactory implements FunctionFactory {
         Function value = args.getQuick(0);
         int argPosition = argPositions.getQuick(0);
         int geoType = args.getQuick(1).getType();
+        return newInstance(argPosition, geoType, value);
+    }
+
+    public Function newInstance(int argPosition, int geoType, Function value) throws SqlException {
         if (value.isConstant()) {
             try {
                 int bitsPrecision = GeoHashExtra.getBitsPrecision(geoType);
@@ -68,7 +72,7 @@ public class CastStrToGeoHashFunctionFactory implements FunctionFactory {
                 throw SqlException.position(argPosition).put("invalid GEOHASH");
             }
         }
-        return new Func(geoType, args.getQuick(0), argPosition);
+        return new Func(geoType, value, argPosition);
     }
 
     private static long getGeoHashImpl(CharSequence value, int position, int typeBits) throws SqlException, NumericException {

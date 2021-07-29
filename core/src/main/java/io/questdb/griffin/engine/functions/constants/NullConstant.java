@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.constants;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GeoHashExtra;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -190,7 +191,7 @@ public final class NullConstant implements ConstantFunction, ScalarFunction {
 
     @Override
     public long getGeoHash(Record rec) {
-        return GeoHashConstant.NULL.getGeoHash(null);
+        return GeoHashExtra.NULL;
     }
 
     @Override

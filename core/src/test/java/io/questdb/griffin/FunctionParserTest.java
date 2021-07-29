@@ -324,7 +324,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
     }
 
     @Test
-    public void testExplicitConstantGeoHash() throws SqlException, NumericException {
+    public void testExplicitConstantGeoHash() throws SqlException {
         long hash = GeoHashNative.fromCoordinates(39.9830487269087, 0.02405432769681642, 6 * 5);
         testConstantPassThru(new GeoHashConstant(hash, ColumnType.GEOHASH));
         functions.clear();
@@ -757,28 +757,6 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
 
         Function function = parseFunction("x()", new GenericRecordMetadata(), createFunctionParser());
         Assert.assertTrue(function instanceof LongConstant);
-    }
-
-    @Test
-    public void testImplicitConstantGeoHash() throws SqlException {
-        functions.add(new FunctionFactory() {
-            @Override
-            public String getSignature() {
-                return "x()";
-            }
-
-            @Override
-            public Function newInstance(int position,
-                                        ObjList<Function> args,
-                                        IntList argPositions,
-                                        CairoConfiguration configuration1,
-                                        SqlExecutionContext sqlExecutionContext) {
-                return GeoHashConstant.NULL;
-            }
-        });
-
-        Function function = parseFunction("x()", new GenericRecordMetadata(), createFunctionParser());
-        Assert.assertTrue(function instanceof GeoHashConstant);
     }
 
     @Test

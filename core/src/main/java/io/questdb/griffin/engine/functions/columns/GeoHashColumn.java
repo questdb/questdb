@@ -22,45 +22,25 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.constants;
+package io.questdb.griffin.engine.functions.columns;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.GeoHashExtra;
-import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.GeoHashFunction;
-import io.questdb.griffin.engine.functions.geohash.GeoHashNative;
-import io.questdb.std.Chars;
-import io.questdb.std.NumericException;
 
-public class GeoHashConstant extends GeoHashFunction implements ConstantFunction {
-    private final long hash; // does NOT encode size
-
-    public GeoHashConstant(long hash, int typep) {
-        super(typep);
-        this.hash = hash;
-    }
-
-    public static GeoHashConstant newInstance(long hash, int type) {
-        return new GeoHashConstant(hash, type);
-    }
-
-    @Override
-    public byte getByte(Record rec) {
-        return (byte) getLong(rec);
-    }
-
-    @Override
-    public short getShort(Record rec) {
-        return (short) getLong(rec);
-    }
-
-    @Override
-    public int getInt(Record rec) {
-        return (int) getLong(rec);
-    }
-
-    @Override
-    public final long getLong(Record rec) {
-        return hash;
+public class GeoHashColumn {
+    public static GeoHashFunction newInstance(int columnIndex, int columnType) throws SqlException {
+        switch (ColumnType.sizeOf(columnType)) {
+            case 8:
+                return new GeoHashColumnLong(columnIndex, columnType);
+            case 4:
+                return new GeoHashColumnInt(columnIndex, columnType);
+            case 2:
+                return new GeoHashColumnShort(columnIndex, columnType);
+            case 1:
+                return new GeoHashColumnByte(columnIndex, columnType);
+            default:
+                throw SqlException.position(0).put("unsupported column type ").put(ColumnType.nameOf(columnType));
+        }
     }
 }

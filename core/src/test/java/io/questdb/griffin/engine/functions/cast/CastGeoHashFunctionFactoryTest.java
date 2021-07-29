@@ -62,7 +62,7 @@ public class CastGeoHashFunctionFactoryTest extends BaseFunctionFactoryTest {
         Assert.assertEquals(0, GeoHashNative.hashSize(function.getLong(null)));
 
         StringSink sink = new StringSink();
-        function.getStr(null, sink);
+        GeoHashNative.toString(function.getLong(null), GeoHashExtra.getBitsPrecision(function.getType()) / 5, sink);
         Assert.assertEquals(expectedGeohash, sink.toString());
     }
 
@@ -109,7 +109,7 @@ public class CastGeoHashFunctionFactoryTest extends BaseFunctionFactoryTest {
                 Assert.assertEquals(castExpr, fullGeohash >>> (geohashLen * 5 - b), function.getLong(null));
             }
             sink.clear();
-            function.getStr(null, sink);
+            GeoHashNative.toString(function.getLong(null), GeoHashExtra.getBitsPrecision(function.getType()) / 5, sink);
             Assert.assertEquals(expectedGeohash, sink.toString());
         }
     }

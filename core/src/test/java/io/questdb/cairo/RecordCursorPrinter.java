@@ -190,16 +190,6 @@ public class RecordCursorPrinter {
     }
 
     private long readGeoHash(Record r, int index, int type) {
-        final int size = ColumnType.sizeOf(type);
-        switch (size) {
-            case 1:
-                return r.getByte(index);
-            case 2:
-                return r.getShort(index);
-            case 4:
-                return r.getInt(index);
-            default:
-                return r.getLong(index);
-        }
+        return r.getLong(index);
     }
 }

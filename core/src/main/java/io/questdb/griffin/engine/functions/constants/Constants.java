@@ -25,7 +25,9 @@
 package io.questdb.griffin.engine.functions.constants;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GeoHashExtra;
 import io.questdb.griffin.TypeConstant;
+import io.questdb.griffin.engine.functions.geohash.GeoHashNative;
 import io.questdb.std.ObjList;
 
 public final class Constants {
@@ -47,7 +49,11 @@ public final class Constants {
         Constants.nullConstants.extendAndSet(ColumnType.FLOAT, FloatConstant.NULL);
         Constants.nullConstants.extendAndSet(ColumnType.BINARY, NullBinConstant.INSTANCE);
         Constants.nullConstants.extendAndSet(ColumnType.LONG256, Long256NullConstant.INSTANCE);
-        Constants.nullConstants.extendAndSet(ColumnType.GEOHASH, GeoHashConstant.NULL);
+
+        for(int i = 0; i < GeoHashNative.MAX_BITS_LENGTH; i++) {
+            int type = GeoHashExtra.setBitsPrecision(ColumnType.GEOHASH, i + 1);
+            Constants.nullConstants.extendAndSet(type, GeoHashConstant.newInstance(GeoHashExtra.NULL, type));
+        }
 
         Constants.typeConstants.extendAndSet(ColumnType.INT, IntTypeConstant.INSTANCE);
         Constants.typeConstants.extendAndSet(ColumnType.STRING, StrTypeConstant.INSTANCE);
@@ -67,7 +73,7 @@ public final class Constants {
     }
 
     public static ConstantFunction getNullConstant(int columnType) {
-        return nullConstants.getQuick(ColumnType.tagOf(columnType));
+        return nullConstants.getQuick(columnType);
     }
 
     public static TypeConstant getTypeConstant(int columnType) {

@@ -43,26 +43,14 @@ public class GeoHashFunctionTest {
 
     @Test
     public void testGetStrIntoSink1() {
-        Assert.assertEquals(GeoHashConstant.NULL.getLong(null), nullFunction.getLong(null));
+        Assert.assertEquals(GeoHashExtra.NULL, nullFunction.getLong(null));
         Assert.assertEquals(nullFunction.getLong(null), nullFunction.getGeoHash(null));
         StringSink sink = new StringSink();
-        nullFunction.getStr(null, sink);
-        Assert.assertEquals("", sink.toString());
-    }
-
-    @Test
-    public void testGetStrIntoSink2() {
-        GeoHashFunction function = new GeoHashFunction(GeoHashExtra.setBitsPrecision(ColumnType.GEOHASH, 60)) {
-            @Override
-            public long getLong(Record rec) {
-                return 888340623145993896L; // sp052w92p1p8
-            }
-        };
-
-
-        StringSink sink = new StringSink();
-        function.getStr(null, sink);
-        Assert.assertEquals("sp052w92p1p8", sink.toString());
+        try {
+            nullFunction.getStr(null, sink);
+            Assert.fail();
+        } catch (UnsupportedOperationException e) {
+        }
     }
 
     @Test(expected = UnsupportedOperationException.class)

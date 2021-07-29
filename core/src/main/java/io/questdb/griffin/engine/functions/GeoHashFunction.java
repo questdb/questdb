@@ -25,11 +25,9 @@
 package io.questdb.griffin.engine.functions;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.GeoHashExtra;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.ScalarFunction;
-import io.questdb.griffin.engine.functions.geohash.GeoHashNative;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.str.CharSink;
@@ -145,7 +143,7 @@ public abstract class GeoHashFunction implements ScalarFunction {
 
     @Override
     public final void getStr(Record rec, CharSink sink) {
-        GeoHashNative.toString(getLong(rec), GeoHashExtra.getBitsPrecision(getType()) / 5, sink);
+        throw new UnsupportedOperationException();
     }
 
     @Override
