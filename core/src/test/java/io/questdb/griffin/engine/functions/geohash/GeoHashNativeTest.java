@@ -28,6 +28,7 @@ import io.questdb.griffin.engine.table.LatestByArguments;
 import io.questdb.std.CharSequenceHashSet;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.NumericException;
+import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 import org.junit.Assert;
 import org.junit.Test;
@@ -190,8 +191,8 @@ public class GeoHashNativeTest {
                 "888340623145993896 -> sp052w92p1p8\n";
 
         final int maxGeoHashSizeChars = 12;
-        String [] expectedStr = new String[maxGeoHashSizeChars];
-        long [] expectedHash = new long[maxGeoHashSizeChars];
+        String[] expectedStr = new String[maxGeoHashSizeChars];
+        long[] expectedHash = new long[maxGeoHashSizeChars];
         StringSink everything = new StringSink();
 
         for (int precision = 1; precision <= maxGeoHashSizeChars; precision++) {
@@ -204,7 +205,7 @@ public class GeoHashNativeTest {
             everything.put(expectedHash[precision - 1]).put(" -> ").put(expectedStr[precision - 1]).put('\n');
         }
 
-        for (int i=0; i < maxGeoHashSizeChars; i++) {
+        for (int i = 0; i < maxGeoHashSizeChars; i++) {
             final long gh = GeoHashNative.fromStringNl(expectedStr[i]);
             Assert.assertEquals(expectedHash[i], gh);
             sink.clear();
@@ -216,31 +217,60 @@ public class GeoHashNativeTest {
 
     @Test
     public void testToString() {
-        assertSuccess(-1, Integer.MIN_VALUE, "");
-        assertSuccess(-1L, Integer.MAX_VALUE, "");
-        assertSuccess(27760644473312309L, 11, "sp052w92p1p");
+        assertSuccess(-1, Integer.MIN_VALUE, "", toString);
+        assertSuccess(-1L, Integer.MAX_VALUE, "", toString);
+        assertSuccess(27760644473312309L, 11, "sp052w92p1p", toString);
     }
 
     @Test
     public void testToStringInvalidSizeInChars() {
-        assertFail(0, 0, "precision range is [1, 12]");
-        assertFail(0, 13, "precision range is [1, 12]");
+        assertFail(0, 0, "precision range is [1, 12]", toString);
+        assertFail(0, 13, "precision range is [1, 12]", toString);
     }
 
-    private static void assertFail(long hash, int chars, String message) {
+    @Test
+    public void testToBitStringNull() {
+        assertSuccess(-1, Integer.MIN_VALUE, "", toBitString);
+        assertSuccess(-1L, Integer.MAX_VALUE, "", toBitString);
+    }
+
+    @Test
+    public void testToBitString() throws NumericException {
+        long hash = 27760644473312309L;
+        String expected = "1100010101000000010100010111000100100010101010000110101";
+        Assert.assertEquals(expected, Long.toBinaryString(hash));
+        assertSuccess(hash, expected.length(), expected, toBitString);
+        Assert.assertEquals(hash, GeoHashNative.fromBitString(expected));
+    }
+
+    @Test
+    public void testToBitStringInvalidSizeInBits() {
+        assertFail(0, 0, "bits range is [1, 60]", toBitString);
+        assertFail(0, 61, "bits range is [1, 60]", toBitString);
+    }
+
+    @FunctionalInterface
+    private interface StringConverter {
+        void convert(long hash, int size, CharSink sink);
+    }
+
+    private static final StringConverter toString = GeoHashNative::toString;
+    private static final StringConverter toBitString = GeoHashNative::toBitString;
+
+    private static void assertFail(long hash, int size, String message, StringConverter converter) {
         try {
             sink.clear();
-            GeoHashNative.toString(hash, chars, sink);
+            converter.convert(hash, size, sink);
             Assert.fail();
         } catch (IllegalArgumentException err) {
             Assert.assertEquals(message, err.getMessage());
         }
     }
 
-    private static void assertSuccess(long hash, int chars, String message) {
+    private static void assertSuccess(long hash, int size, String message, StringConverter converter) {
         try {
             sink.clear();
-            GeoHashNative.toString(hash, chars, sink);
+            converter.convert(hash, size, sink);
             Assert.assertEquals(message, sink.toString());
         } catch (IllegalArgumentException err) {
             Assert.fail();

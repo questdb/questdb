@@ -135,8 +135,19 @@ public class GeoHashNative {
         return result;
     }
 
-    public static void toString(long hash, int chars, CharSink sink) {
+    public static void toBitString(long hash, int bits, CharSink sink) {
         if (hash != GeoHashExtra.NULL) {
+            if (bits < 1 || bits > GeoHashNative.MAX_BITS_LENGTH) {
+                throw new IllegalArgumentException("bits range is [1, 60]");
+            }
+            for (int i = bits - 1; i >= 0; --i) {
+                sink.put(((hash >> i) & 1) == 1? '1' : '0');
+            }
+        }
+    }
+
+    public static void toString(long hash, int chars, CharSink sink) {
+        if (hash != GeoHashExtra.NULL) { // TODO: HASH comes in as 0, test testInsertNullGeoHash
             if (chars < 1 || chars > GeoHashNative.MAX_STRING_LENGTH) {
                 throw new IllegalArgumentException("precision range is [1, 12]");
             }

@@ -159,14 +159,9 @@ public class RecordCursorPrinter {
             case ColumnType.GEOHASH:
                 int bitsPrecision = GeoHashExtra.getBitsPrecision(m.getColumnType(i));
                 if (bitsPrecision % 5 == 0) {
-                    GeoHashNative.toString(
-                            readGeoHash(r, i, columnType),
-                            bitsPrecision / 5,
-                            sink
-                    );
+                    GeoHashNative.toString(readGeoHash(r, i, columnType),bitsPrecision / 5, sink);
                 } else {
-                    // TODO: make GC free
-                    sink.put(Long.toBinaryString(readGeoHash(r, i, columnType)));
+                    GeoHashNative.toBitString(readGeoHash(r, i, columnType), bitsPrecision, sink);
                 }
                 break;
             case ColumnType.BYTE:
